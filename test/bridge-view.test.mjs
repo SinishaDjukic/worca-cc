@@ -210,3 +210,18 @@ test('cards: bridged badge, needs-sign-in pill + Sign in button, degradation lin
   assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'terms', bridged: 'copilot' }, { doc }).querySelector('.badge').textContent, 'needs acknowledgement');
   assert.equal(degradationLine(claude), '');
 });
+
+// The Test-connection verdict has to land where the eye is: a pill in the button row, empty until a
+// test runs. The hint line under the description reads as "nothing happened" (#models UX).
+test('providers card: every key-based row carries an empty result pill beside its buttons', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const card = renderProvidersCard(PROVIDERS, { doc });
+  for (const name of ['openai', 'anthropic']) {
+    const row = card.querySelector(`.mv-pv-row[data-provider="${name}"]`);
+    const pill = row.querySelector('.mv-pv-btns .mv-pv-result');
+    assert.ok(pill, `${name} has a result pill`);
+    assert.equal(pill.textContent, '', 'silent until a test runs');
+    assert.equal(pill.className, 'mv-pv-result', 'the is-on state is added by the flow');
+    assert.ok(row.querySelector('.mv-pv-test'), 'and the button it belongs to');
+  }
+});

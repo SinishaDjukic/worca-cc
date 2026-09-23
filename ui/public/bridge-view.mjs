@@ -207,6 +207,9 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     row.appendChild(ctl);
 
     const btns = h(doc, 'div', 'mv-pv-btns');
+    // The verdict belongs NEXT TO the button that asks for it: the hint line under the description
+    // is in the other column, and a one-line grey answer there reads as "nothing happened".
+    btns.appendChild(h(doc, 'span', 'mv-pv-result', ''));
     if (name === 'openai') {
       // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
       const browse = h(doc, 'button', 'btn-ghost mv-pv-browse', 'Import models…');

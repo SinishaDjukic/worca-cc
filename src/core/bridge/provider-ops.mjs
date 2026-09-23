@@ -238,11 +238,16 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
 // ── key-based providers: connection test ────────────────────────────────────
 
 /**
- * A cheap reachability + auth check for openai / anthropic (§8.1): GET the
- * models list with the configured key. Never throws.
+ * A cheap reachability + auth check for openai / anthropic (§8.1): GET the models list with the
+ * configured key. Never throws.
+ *
+ * `baseUrl` / `apiKey` test values that are NOT stored yet — what the user has typed into the
+ * Providers card. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
+ * press Test, and the answer was "no API key configured", because it had tested api.openai.com.
+ * A masked echo (••…) means "keep what is stored" exactly as a save does.
  * @returns {Promise<{ok:true, models?:number}|{ok:false, message:string}>}
  */
-export async function testProviderConnection(name, { fetch: f = globalThis.fetch } = {}) {
+export async function testProviderConnection(name, { fetch: f = globalThis.fetch, baseUrl = '', apiKey } = {}) {
   if (name === 'copilot') {
     const c = providerConfig('copilot');
     const token = resolveProviderSecret(c.githubToken);
@@ -250,9 +255,16 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
   }
   if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
-  const p = providerConfig(name);
+  const stored = providerConfig(name);
+  const typedKey = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
+  const p = {
+    ...stored,
+    ...(baseUrl && isUpstreamBaseUrl(baseUrl) ? { baseUrl: baseUrl.trim().replace(/\/+$/, '') } : {}),
+    ...(typedKey === null ? {} : { apiKey: typedKey }),
+  };
   const key = resolveProviderSecret(p.apiKey);
-  if (!key && (providerSecretSet(name) || !keyOptional(name, p.baseUrl))) return { ok: false, message: providerSecretSet(name) ? 'the key\'s ${VAR} is not set in worca\'s environment' : 'no API key configured' };
+  const keyIsSet = typedKey === null ? providerSecretSet(name) : !!typedKey;
+  if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
   const base = (p.baseUrl || '').replace(/\/+$/, '');
   const url = name === 'anthropic' ? (/\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`) : `${base}/models`;
   const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : (key ? { authorization: `Bearer ${key}` } : {});

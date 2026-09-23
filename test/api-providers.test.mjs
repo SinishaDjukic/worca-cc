@@ -196,6 +196,13 @@ test('provider connection test: openai against the stub', async () => {
     const c = await post('/api/providers/copilot/test');
     assert.equal(c.body.ok, false);
     assert.match(c.body.message, /not signed in/);
+    // The card sends what is on screen: an unsaved local base URL is tested as typed, keylessly.
+    let asked = null;
+    globalThis.fetch = async (url, init) => { const u = String(url); if (u.startsWith(base)) return github(url, init); asked = [u, init.headers.authorization ?? null]; return jsonRes(200, { data: [{ id: 'x' }] }); };
+    const typed = await post('/api/providers/openai/test', { baseUrl: 'http://127.0.0.1:11434/v1' });
+    assert.deepEqual(typed.body, { ok: true, models: 1 });
+    // The endpoint is the typed one; the STORED key still travels, because this provider has one.
+    assert.deepEqual(asked, ['http://127.0.0.1:11434/v1/models', 'Bearer sk-live-key-1234']);
   } finally {
     globalThis.fetch = github;
   }

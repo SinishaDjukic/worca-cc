@@ -4898,7 +4898,13 @@ app.post('/api/providers/openai/import-models', async (req, res) => {
 });
 
 app.post('/api/providers/:name/test', async (req, res) => {
-  res.json(await testProviderConnection(req.params.name));
+  // The card tests what is ON SCREEN (§8.1): an unsaved base URL or key is sent with the request,
+  // so "Test connection" answers for the endpoint the user is looking at, not the stored one.
+  const b = req.body || {};
+  res.json(await testProviderConnection(req.params.name, {
+    baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '',
+    ...(typeof b.apiKey === 'string' ? { apiKey: b.apiKey } : {}),
+  }));
 });
 
 app.post('/api/providers/copilot/import-models', async (req, res) => {

@@ -3519,6 +3519,7 @@ function goAddModel(restore) {
   mvState.openCreate = true;
   mvState.openShare = false;
   mvState.prefill = null;
+  mvState.revealPanel = true;              // survives the view switch: loadModelsView repaints
   showView('settings', 'models'); // loadModelsView renders the open editor
 }
 
@@ -11766,6 +11767,10 @@ const mvState = {
   // whose payload — server, base URL, rows, warnings — is endpointModels.
   providers: null, signIn: null, openImport: false, importModels: [], copilotModels: [],
   endpointModels: null,
+  // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
+  // render under the Providers card, which is taller than the viewport on a laptop, so opening one
+  // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
+  revealPanel: false,
 };
 
 function setModelsMsg(text, kind) {
@@ -11805,6 +11810,23 @@ function renderModelsViewBody() {
     projectName: pp ? pp.split('/').pop() : '',
   }));
   el.modelsList.replaceChildren(frag);
+  if (mvState.revealPanel) {
+    mvState.revealPanel = false;
+    revealModelsPanel();
+  }
+}
+
+/** Bring the open editor / import sheet into view and put the caret in its first field. */
+function revealModelsPanel() {
+  const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
+  if (!panel) return;
+  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
+  // Only a fresh create starts empty enough to type into; focusing an edit or a sheet would
+  // steal the caret from whatever the user was reading.
+  if (!mvState.editing && !mvState.openImport) {
+    const first = panel.querySelector('input:not([type="checkbox"]):not([disabled]), select, textarea');
+    try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }
 }
 
 // "Hide built-in models" (#422): one settings key, saved on change. Every picker
@@ -11917,6 +11939,7 @@ async function duplicateModelFlow(id) {
     ...(src.cost ? { cost: src.cost } : {}),
     duplicatedFrom: src.id,
   };
+  mvState.revealPanel = true;
   renderModelsViewBody();
 }
 
@@ -11929,6 +11952,7 @@ async function editPluginCopyFlow(plugin, id) {
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = data;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   } catch (e) {
     setModelsMsg(e.message, 'err');
@@ -12089,20 +12113,62 @@ async function patchProviderFlow(name, body, { okText = 'Saved.' } = {}) {
   }
 }
 
+/** The Test-connection verdict, in the pill beside the button (and the row's hint line with it). */
+function setProviderResult(name, state, text) {
+  const pill = el.modelsList && el.modelsList.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
+  if (!pill) return;
+  pill.className = `mv-pv-result${state ? ` is-on is-${state}` : ''}`;
+  pill.textContent = text || '';
+}
+
 async function testProviderFlow(btn) {
   const name = btn.dataset.provider;
+  // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
+  // and a local endpoint therefore answers for itself instead of for api.openai.com.
+  const typed = (name === 'copilot' ? null : collectProviderRow(el.modelsList, name)) || {};
   btn.disabled = true;
-  setProviderMsg(name, 'Testing…');
+  setProviderResult(name, 'busy', 'Testing…');
+  setProviderMsg(name, '');
   try {
-    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: 'POST' });
+    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(typed.baseUrl ? { baseUrl: typed.baseUrl } : {}), ...(typed.apiKey !== undefined ? { apiKey: typed.apiKey } : {}) }),
+    });
     const data = await safeJson(res);
-    if (data.ok) setProviderMsg(name, `✓ reachable${data.models != null ? ` — ${data.models} models listed` : ''}`);
-    else setProviderMsg(name, `✗ ${data.message || data.error || `HTTP ${res.status}`}`, true);
+    const where = typed.baseUrl || (mvState.providers && mvState.providers[name] && mvState.providers[name].baseUrl) || '';
+    const unsaved = hasUnsavedProviderEdits(name, typed);
+    if (data.ok) {
+      setProviderResult(name, 'ok', `Reachable${data.models != null ? ` — ${data.models} model${data.models === 1 ? '' : 's'}` : ''}`);
+      setProviderMsg(name, `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${unsaved ? ' Press Save to keep these settings.' : ''}`);
+    } else {
+      const why = data.message || data.error || `HTTP ${res.status}`;
+      setProviderResult(name, 'err', 'Failed');
+      setProviderMsg(name, `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}`, true);
+    }
   } catch (e) {
-    setProviderMsg(name, `✗ ${e.message}`, true);
+    setProviderResult(name, 'err', 'Failed');
+    setProviderMsg(name, e.message, true);
   } finally {
     btn.disabled = false;
   }
+}
+
+/** Whether the row carries edits the user has not saved — the test used them, the runs will not. */
+function hasUnsavedProviderEdits(name, typed) {
+  const cur = (mvState.providers && mvState.providers[name]) || {};
+  if (typed.apiKey !== undefined) return true;
+  return !!(typed.baseUrl && typed.baseUrl.replace(/\/+$/, '') !== String(cur.baseUrl || '').replace(/\/+$/, ''));
+}
+
+/** One line of "what to do about it" for the failures that have an obvious answer. */
+function providerFixHint(why) {
+  const w = String(why).toLowerCase();
+  if (w.includes('authentication failed')) return ' — check the API key, then Save.';
+  if (w.includes('no api key configured')) return ' — set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('${var} is not set')) return ' — set that variable in the shell that starts Worca, then restart it.';
+  if (w.includes('unreachable')) return ' — is the server running, and is the base URL right?';
+  if (w.includes('endpoint answered 404')) return ' — the base URL usually ends in /v1.';
+  return '';
 }
 
 async function refreshCopilotQuotaFlow(btn) {
@@ -12130,6 +12196,7 @@ async function openImportFlow(btn) {
     mvState.copilotModels = data.models || [];
     mvState.openImport = true;
     mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   } catch (e) {
     setProviderMsg('copilot', e.message, true);
@@ -12152,6 +12219,7 @@ async function openEndpointImportFlow(btn) {
     mvState.endpointModels = data;
     mvState.openImport = 'endpoint';
     mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    mvState.revealPanel = true;
     renderModelsViewBody();
     setProviderMsg('openai', '');
   } catch (e) {
@@ -12377,6 +12445,7 @@ if (el.modelsList) {
       mvState.openCreate = false;
       mvState.openShare = false;
       mvState.prefill = null;
+      mvState.revealPanel = true;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-delete')) {
       deleteModelFlow(t.dataset.id);
@@ -12477,6 +12546,7 @@ if (el.modelCreateBtn) {
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = null;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   });
 }
@@ -12486,6 +12556,7 @@ if (el.modelShareBtn) {
     mvState.openCreate = false;
     mvState.prefill = null;
     mvState.openShare = true;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   });
 }

@@ -2560,7 +2560,15 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
 .mv-pv-main .hint{margin:0;}
 .mv-pv-ctl{display:grid;gap:10px;align-content:start;}
-.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
+/* Test connection's verdict, beside the button (bridge-view.mjs renderProvidersCard). Empty until
+   a test runs, so the row keeps its rhythm. */
+.mv-pv-result{margin-right:auto;display:none;align-items:center;gap:6px;min-width:0;padding:5px 10px;border-radius:999px;
+  font:600 12px var(--sans);background:var(--field);color:var(--ink-2);overflow-wrap:anywhere;}
+.mv-pv-result.is-on{display:inline-flex;}
+.mv-pv-result.is-ok{background:var(--green-bg);color:var(--green-ink);}
+.mv-pv-result.is-err{background:var(--red-bg);color:var(--red-ink);}
+.mv-pv-result.is-busy{color:var(--ink-3);}
 .mv-pv-btns .btn-ghost,.mv-pv-btns .btn-go{padding:7px 12px;font-size:12px;}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12.5px;padding:9px 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
