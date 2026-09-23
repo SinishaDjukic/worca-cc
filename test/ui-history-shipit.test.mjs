@@ -197,11 +197,23 @@ const PR_OK = { ok: true, url: 'https://x/pull/7', mergeable: 'MERGEABLE', exist
 
 // Shapes mirror GET /api/pr/remotes.
 const remote = (name, owner, url) => ({ name, fetchUrl: url, pushUrl: url, host: 'github.com', owner, repo: 'repo', slug: `${owner}/repo` });
+// A run outside a chain: `chain` is just its source; `branches` are each remote's
+// remote-tracking branches (the server drops HEAD and the run's own branch only).
 const REMOTES = { ok: true, remotes: [remote('origin', 'me', 'https://github.com/me/repo.git')],
-  defaults: { pushRemote: 'origin', baseRemote: 'origin' }, remembered: null };
+  defaults: { pushRemote: 'origin', baseRemote: 'origin' }, remembered: null,
+  chain: ['feat/log-ux'], defaultBase: 'feat/log-ux', branches: { origin: ['feat/log-ux', 'main'] } };
 const FORK_REMOTES = { ok: true,
   remotes: [remote('origin', 'me', 'https://github.com/me/repo.git'), remote('upstream', 'up', 'git@github.com:up/repo.git')],
-  defaults: { pushRemote: 'origin', baseRemote: 'upstream' }, remembered: null };
+  defaults: { pushRemote: 'origin', baseRemote: 'upstream' }, remembered: null,
+  chain: ['feat/log-ux'], defaultBase: 'feat/log-ux',
+  branches: { origin: ['feat/log-ux', 'main'], upstream: ['feat/log-ux', 'main'] } };
+// dev -> nb1 -> this run (started from nb1's feature branch `feat/log-ux`): the ROOT is the default.
+const CHAIN_REMOTES = { ...FORK_REMOTES, chain: ['dev', 'nb1', 'feat/log-ux'], defaultBase: 'dev',
+  branches: { origin: ['feat/log-ux', 'main', 'mine'], upstream: ['dev', 'main', 'nb1', 'release'] } };
+const baseSelOf = (modal) => modal.querySelector('.shipit-base-branch');
+// The pick's structure: [optgroup label | null for a bare option, [values]].
+const groupsOf = (sel) => [...sel.children].map((c) => (c.tagName === 'OPTGROUP'
+  ? [c.label, [...c.children].map((o) => o.value)] : [null, [c.value]]));
 const remotesCalls = (ctx) => ctx.calls.filter((c) => /\/api\/pr\/remotes\?/.test(c.url));   // like prPosts above
 const optionValues = (sel) => [...sel.options].map((o) => o.value);
 
@@ -228,7 +240,9 @@ test('detail Create PR opens the ship-it modal with the summary + branch → bas
   assert.match(modal.textContent, /\+412/);
   assert.match(modal.textContent, /−188/);            // U+2212 — this is a COUNT
   assert.match(modal.querySelector('.shipit-branch').textContent, /log-ux/);
-  assert.equal(modal.querySelector('.shipit-base').textContent, 'feat/log-ux');
+  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, false, 'the base is a pick, in the summary line');
+  assert.equal(baseSelOf(modal).value, 'feat/log-ux');
+  assert.equal(modal.querySelector('.shipit-base').textContent, '', 'the plain text gives way to the pick');
   assert.match(modal.querySelector('.shipit-sub').textContent, /Implement Log-UX Review Fixes/);
 });
 
@@ -263,7 +277,7 @@ test('confirm POSTs /api/pr and swaps the header control to a link + merge pill'
   const post = prPosts(ctx)[0];
   assert.ok(post, 'the confirm button POSTs /api/pr');
   assert.deepEqual(JSON.parse(post.opts.body),
-    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin' });
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux' });
   assert.equal(modal.classList.contains('hidden'), true, 'a successful ship closes the modal');
   const link = hdPrLink(ctx.window);
   assert.equal(link.hidden, false);
@@ -627,7 +641,7 @@ test('the modal loads the project remotes into both selects with the server defa
   assert.equal(baseSel.value, 'upstream');
   assert.equal(pushSel.disabled, false);
   assert.match(modal.querySelector('.shipit-remotes-hint').textContent, /me:worca-cc\/log-ux-fcec04e8 → up\/repo feat\/log-ux/);
-  assert.equal(modal.querySelector('.shipit-base').textContent, 'feat/log-ux', 'the summary line is untouched');
+  assert.equal(baseSelOf(modal).value, 'feat/log-ux', 'the summary line offers the run\'s source');
   const req = remotesCalls(ctx)[0];
   assert.ok(req && req.url.includes(`projectKey=${KEY}`) && req.url.includes(`id=${ROW.id}`), 'resolved by key + id');
 });
@@ -642,7 +656,7 @@ test('confirm POSTs the chosen push/base remotes', async () => {
   click(ctx.window, modal.querySelector('.shipit-ok'));
   await settle(ctx.window, 6);
   assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
-    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin' });
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'origin', baseBranch: 'feat/log-ux' });
   assert.equal(hdPrLink(ctx.window).hidden, false);
 });
 
@@ -650,6 +664,8 @@ test('when the remotes cannot be loaded the selectors stay hidden and the POST o
   const ctx = await bootShip({ remotes: null, arms: prArm(PR_OK) });
   const modal = await openModal(ctx);
   assert.equal(modal.querySelector('.shipit-remotes').hidden, true);
+  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, true, 'no chain known: no pick');
+  assert.equal(modal.querySelector('.shipit-base').textContent, 'feat/log-ux', 'the plain source text stays');
   click(ctx.window, modal.querySelector('.shipit-ok'));
   await settle(ctx.window, 6);
   assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id });
@@ -686,8 +702,10 @@ test('selects are disabled while the POST is in flight and re-enabled on failure
   const sel = modal.querySelector('.shipit-push-remote');
   click(ctx.window, modal.querySelector('.shipit-ok'));
   assert.equal(sel.disabled, true, 'locked while the POST is in flight');
+  assert.equal(baseSelOf(modal).disabled, true, 'the base pick is locked with it');
   await settle(ctx.window, 6);
   assert.equal(sel.disabled, false, 'unlocked so the user can pick another remote and retry');
+  assert.equal(baseSelOf(modal).disabled, false);
   assert.match(modal.querySelector('.shipit-err').textContent, /push failed/);
 });
 
@@ -711,9 +729,97 @@ test('remotes that arrive after confirm was pressed stay disabled until that POS
   await settle(ctx.window, 3);
   assert.equal(modal.querySelector('.shipit-remotes').hidden, false, 'the list still paints');
   assert.equal(modal.querySelector('.shipit-push-remote').disabled, true, 'but stays locked under the in-flight POST');
+  assert.equal(baseSelOf(modal).disabled, true, 'the base pick too');
   assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id },
     'that POST went out without the fields (server defaults)');
   releasePost();
   await settle(ctx.window, 6);
   assert.equal(modal.querySelector('.shipit-push-remote').disabled, false, 'unlocked once the POST failed');
+});
+
+// ---------------------------------------------------------------------------
+// Base branch: a run chain defaults to its ROOT; the base remote's branches follow
+// ---------------------------------------------------------------------------
+
+test('a chained run preselects the chain root and POSTs it as baseBranch', async () => {
+  const ctx = await bootShip({ remotes: CHAIN_REMOTES, arms: prArm(PR_OK) });
+  const modal = await openModal(ctx);
+  const sel = baseSelOf(modal);
+  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, false);
+  assert.deepEqual(groupsOf(sel), [
+    ['This chain', ['dev', 'nb1', 'feat/log-ux']],             // root first, ending with the direct source
+    ['Branches on upstream', ['main', 'release']],              // the base remote's OTHER branches, no duplicates
+  ]);
+  assert.equal(sel.value, 'dev', 'the chain ROOT, not the direct source');
+  assert.equal(sel.disabled, false);
+  assert.match(modal.querySelector('.shipit-remotes-hint').textContent, /→ up\/repo dev$/, 'the hint names the chosen base');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body),
+    { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, pushRemote: 'origin', baseRemote: 'upstream', baseBranch: 'dev' });
+});
+
+test('a run outside a chain offers its source first, with no "This chain" group', async () => {
+  const ctx = await bootShip();
+  const modal = await openModal(ctx);
+  assert.deepEqual(groupsOf(baseSelOf(modal)), [[null, ['feat/log-ux']], ['Branches on origin', ['main']]]);
+  assert.equal(baseSelOf(modal).value, 'feat/log-ux');
+});
+
+test('switching the base remote re-lists its branches and keeps a pick that still exists', async () => {
+  const ctx = await bootShip({ remotes: CHAIN_REMOTES, arms: prArm(PR_OK) });
+  const { window } = ctx;
+  const modal = await openModal(ctx);
+  const sel = baseSelOf(modal);
+  const remoteSel = modal.querySelector('.shipit-base-remote');
+  const pick = (v) => { sel.value = v; sel.dispatchEvent(new window.Event('change')); };
+  const toRemote = (v) => { remoteSel.value = v; remoteSel.dispatchEvent(new window.Event('change')); };
+
+  pick('release');
+  assert.match(modal.querySelector('.shipit-remotes-hint').textContent, /→ up\/repo release$/);
+  toRemote('origin');
+  assert.deepEqual(groupsOf(sel), [['This chain', ['dev', 'nb1', 'feat/log-ux']], ['Branches on origin', ['main', 'mine']]]);
+  assert.equal(sel.value, 'dev', 'origin has no release: back to the default');
+  pick('main');
+  toRemote('upstream');
+  assert.equal(sel.value, 'main', 'a pick the new remote still has is kept');
+  pick('nb1');
+  toRemote('origin');
+  assert.equal(sel.value, 'nb1', 'a chain branch is always kept');
+  assert.equal(remotesCalls(ctx).length, 1, 'the branches came with the remotes: no refetch');
+  click(window, modal.querySelector('.shipit-ok'));
+  await settle(window, 6);
+  assert.equal(JSON.parse(prPosts(ctx)[0].opts.body).baseBranch, 'nb1');
+});
+
+test('remotes that cannot be loaded still offer the known chain, and the pick unlocks after a failed POST', async () => {
+  const ctx = await bootShip({
+    arms: (url, opts) => {
+      if (/\/api\/pr\/remotes\?/.test(url)) return fail(500, { error: 'git remote failed: x', chain: ['dev', 'nb1', 'feat/log-ux'], defaultBase: 'dev' });
+      if (url.endsWith('/api/pr') && opts.method === 'POST') return fail(500, { error: 'gh pr create failed: no such base' });
+      return null;
+    },
+  });
+  const modal = await openModal(ctx);
+  assert.equal(modal.querySelector('.shipit-remotes').hidden, true, 'no remotes: the remote selects stay hidden');
+  assert.equal(modal.querySelector('.shipit-base-wrap').hidden, false, 'the chain is still offered');
+  assert.deepEqual(groupsOf(baseSelOf(modal)), [['This chain', ['dev', 'nb1', 'feat/log-ux']]]);
+  assert.equal(baseSelOf(modal).value, 'dev');
+  click(ctx.window, modal.querySelector('.shipit-ok'));
+  assert.equal(baseSelOf(modal).disabled, true, 'locked while the POST is in flight');
+  await settle(ctx.window, 6);
+  assert.deepEqual(JSON.parse(prPosts(ctx)[0].opts.body), { projectDir: '/tmp/proj', projectKey: KEY, id: ROW.id, baseBranch: 'dev' });
+  assert.match(modal.querySelector('.shipit-err').textContent, /no such base/, 'gh\'s error surfaces in the dialog');
+  assert.equal(baseSelOf(modal).disabled, false, 'unlocked for a retry with another base');
+});
+
+test('a re-open starts from the fresh default, not the previous pick', async () => {
+  const ctx = await bootShip({ remotes: CHAIN_REMOTES });
+  const { window } = ctx;
+  const modal = await openModal(ctx);
+  baseSelOf(modal).value = 'nb1';
+  click(window, modal.querySelector('.shipit-cancel'));
+  click(window, hdPr(window));
+  await settle(window);
+  assert.equal(baseSelOf(modal).value, 'dev');
 });

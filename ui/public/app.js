@@ -16060,6 +16060,34 @@ function fillRemoteSelect(select, remotes, chosen) {
   if (chosen && remotes.some((r) => r.name === chosen)) select.value = chosen;
 }
 
+// The branch the PR targets: the base-branch pick once it is offered, else the
+// run's recorded source (the POST then omits baseBranch and the server uses it).
+function shipItChosenBase(modal, record) {
+  return modal.querySelector('.shipit-base-wrap').hidden
+    ? (record.sourceBranch || '') : modal.querySelector('.shipit-base-branch').value;
+}
+
+// Fill the base-branch pick: the group "This chain" (root first, ending with the
+// direct source) when the run is part of a chain — a lone source is a bare option —
+// then the base remote's other branches. Keeps the current pick when it is still
+// offered, else `fallback` (the server's defaultBase), else the first option.
+function fillShipItBaseSelect(select, chain, remoteName, remoteBranches, fallback) {
+  const keep = select.value;
+  select.innerHTML = '';
+  const group = (label, names) => {
+    const og = document.createElement('optgroup');
+    og.label = label;
+    for (const n of names) og.appendChild(option(n, n));
+    select.appendChild(og);
+  };
+  if (chain.length > 1) group('This chain', chain);
+  else for (const n of chain) select.appendChild(option(n, n));
+  const others = remoteBranches.filter((b) => !chain.includes(b));
+  if (remoteName && others.length) group(`Branches on ${remoteName}`, others);
+  const offered = (v) => !!v && [...select.options].some((o) => o.value === v);
+  select.value = offered(keep) ? keep : (offered(fallback) ? fallback : (select.options[0]?.value || ''));
+}
+
 // Hint under the selects: names the cross-repo head when the two remotes point at
 // different repositories ("me:branch → up/repo main"); empty otherwise.
 function paintShipItRemotesHint(modal, remotes, record) {
@@ -16068,25 +16096,32 @@ function paintShipItRemotesHint(modal, remotes, record) {
   const base = byName('.shipit-base-remote');
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
   modal.querySelector('.shipit-remotes-hint').textContent = cross
-    ? `Cross-repo: ${push.owner}:${record.branch || ''} → ${base.slug} ${record.sourceBranch || ''}`
+    ? `Cross-repo: ${push.owner}:${record.branch || ''} → ${base.slug} ${shipItChosenBase(modal, record)}`
     : '';
 }
 
 function setShipItRemotesDisabled(modal, on) {
-  for (const s of modal.querySelectorAll('.shipit-remotes select')) s.disabled = on;
+  for (const s of modal.querySelectorAll('.shipit-remotes select, .shipit-base-branch')) s.disabled = on;
 }
 
-// Load the project's remotes into the two selects. `isClosed` reports whether this
-// generation's modal was already torn down. On any failure (network, non-2xx, or a
-// body without a `remotes` array — safeJson answers `{}` for an unparseable body and
-// the UI test harness answers un-armed URLs with a generic config payload) the block
-// stays hidden and the POST simply omits the fields (the server applies its defaults).
+// Load the project's remotes into the two selects, and the base-branch choices into
+// the summary's pick. `isClosed` reports whether this generation's modal was already
+// torn down. On any failure (network, non-2xx, or a body without a `remotes` array —
+// safeJson answers `{}` for an unparseable body and the UI test harness answers
+// un-armed URLs with a generic config payload) the block stays hidden and the POST
+// simply omits the fields (the server applies its defaults). The base-branch pick
+// needs only the chain, which a failed remote list still carries; without it the
+// plain source text stays and the POST omits baseBranch.
 async function loadShipItRemotes(modal, record, gen, isClosed) {
   const box = modal.querySelector('.shipit-remotes');
   const pushSel = modal.querySelector('.shipit-push-remote');
   const baseSel = modal.querySelector('.shipit-base-remote');
+  const branchWrap = modal.querySelector('.shipit-base-wrap');
+  const branchSel = modal.querySelector('.shipit-base-branch');
   box.hidden = true;
   pushSel.innerHTML = ''; baseSel.innerHTML = '';
+  branchWrap.hidden = true;
+  branchSel.innerHTML = '';
   setShipItRemotesDisabled(modal, true);
   modal.querySelector('.shipit-remotes-hint').textContent = '';
   const qs = new URLSearchParams({ id: record.id });
@@ -16097,18 +16132,35 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
     const data = await safeJson(res);
     if (gen !== shipItRemotesGen || isClosed()) return;              // stale: cancelled or re-opened since
     const remotes = res.ok && Array.isArray(data.remotes) ? data.remotes.filter((r) => r && r.name) : [];
-    if (!remotes.length) return;
-    const d = data.defaults || {};
-    fillRemoteSelect(pushSel, remotes, d.pushRemote);
-    fillRemoteSelect(baseSel, remotes, d.baseRemote);
+    const names = (list) => (Array.isArray(list) ? list.filter((b) => typeof b === 'string' && b) : []);
+    const chain = names(data.chain);
+    if (!remotes.length && !chain.length) return;
+    if (remotes.length) {
+      const d = data.defaults || {};
+      fillRemoteSelect(pushSel, remotes, d.pushRemote);
+      fillRemoteSelect(baseSel, remotes, d.baseRemote);
+      box.hidden = false;
+    }
+    // The base remote's branches come with the list (one per remote), so a switch
+    // of the base remote re-lists them without a fetch of its own.
+    const byRemote = data.branches && typeof data.branches === 'object' ? data.branches : {};
+    const paintBranches = () => fillShipItBaseSelect(branchSel, chain, box.hidden ? null : baseSel.value,
+      box.hidden ? [] : names(byRemote[baseSel.value]), data.defaultBase);
+    if (chain.length) {
+      paintBranches();
+      branchWrap.hidden = false;
+      modal.querySelector('.shipit-base').textContent = '';
+      modal.querySelector('.shipit-summary').hidden = false;
+    }
     // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
     // without the fields): paint the list, but keep it locked until that POST settles.
     setShipItRemotesDisabled(modal, modal.querySelector('.shipit-ok').disabled);
-    box.hidden = false;
-    paintShipItRemotesHint(modal, remotes, record);
+    const paintHint = () => paintShipItRemotesHint(modal, remotes, record);
+    paintHint();
     // Property assignment, not addEventListener: re-runs per open without stacking.
-    pushSel.onchange = () => paintShipItRemotesHint(modal, remotes, record);
-    baseSel.onchange = pushSel.onchange;
+    pushSel.onchange = paintHint;
+    baseSel.onchange = () => { if (chain.length) paintBranches(); paintHint(); };
+    branchSel.onchange = paintHint;
   } catch {
     /* remotes unavailable: block stays hidden, POST omits the fields */
   }
@@ -16179,6 +16231,7 @@ function openShipItModal(record, data) {
       payload.pushRemote = q('.shipit-push-remote').value;
       payload.baseRemote = q('.shipit-base-remote').value;
     }
+    if (!q('.shipit-base-wrap').hidden) payload.baseBranch = q('.shipit-base-branch').value;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -16219,7 +16272,7 @@ function openShipItModal(record, data) {
       if (closed) return;
       okBtn.disabled = false;
       okBtn.textContent = 'Open pull request';
-      if (!q('.shipit-remotes').hidden) setShipItRemotesDisabled(modal, false);
+      if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       err.hidden = false;
       err.textContent = `Could not open PR: ${e2.message}`;
     }

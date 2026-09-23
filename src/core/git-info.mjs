@@ -438,6 +438,28 @@ export async function listRemotes(projectDir) {
   return { ok: true, remotes };
 }
 
+/**
+ * The branches each named remote has, from the LOCAL remote-tracking refs
+ * (`refs/remotes/<remote>/*` — no network, as fresh as the last fetch). A remote
+ * name may itself hold a slash, so the longest matching name owns a ref; the
+ * symbolic `HEAD` is dropped. Never throws:
+ * { ok:true, byRemote:{ [name]: string[] } } | { ok:false, byRemote:{}, error }.
+ */
+export async function listRemoteBranches(projectDir, remoteNames = []) {
+  if (!projectDir) return { ok: false, byRemote: {}, error: 'projectDir is required' };
+  const r = await _run('git', ['for-each-ref', '--format=%(refname)', 'refs/remotes/'], { cwd: projectDir });
+  if (!r.ok) return { ok: false, byRemote: {}, error: (r.stderr || '').trim() || `git exited ${r.code}` };
+  const names = [...remoteNames].sort((a, b) => b.length - a.length);
+  const byRemote = Object.fromEntries(remoteNames.map((n) => [n, []]));
+  for (const raw of (r.stdout || '').split(/\r?\n/)) {
+    const rest = raw.trim().startsWith('refs/remotes/') ? raw.trim().slice('refs/remotes/'.length) : '';
+    const name = rest && names.find((n) => rest.startsWith(`${n}/`));
+    const branch = name ? rest.slice(name.length + 1) : '';
+    if (branch && branch !== 'HEAD') byRemote[name].push(branch);
+  }
+  return { ok: true, byRemote };
+}
+
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.
 export const _testing = {
   defaultRun,

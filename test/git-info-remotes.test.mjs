@@ -4,7 +4,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, prHeadRef,
+  parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
   pushBranch, createPr, prMergeable, findPrForBranch, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 
@@ -82,6 +82,34 @@ test('listRemotes: empty output is an empty list; git failures are reported with
   gitInfo.setRunner(() => fail('fatal: not a git repository', 128));
   assert.deepEqual(await listRemotes('/nope'), { ok: false, remotes: [], error: 'fatal: not a git repository' });
   assert.deepEqual(await listRemotes(''), { ok: false, remotes: [], error: 'projectDir is required' });
+});
+
+test('listRemoteBranches groups the LOCAL remote-tracking refs by remote and drops HEAD', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, opts) => {
+    seen.push([cmd, ...args, opts?.cwd]);
+    return okOut([
+      'refs/remotes/origin/HEAD',
+      'refs/remotes/origin/dev',
+      'refs/remotes/origin/feat/x',
+      'refs/remotes/origin/main',
+      'refs/remotes/team/fork/main',          // a remote whose NAME holds a slash: longest prefix wins
+      'refs/remotes/team/other',
+      'refs/remotes/gone/main',               // a remote that is not in the list any more
+      '',
+    ].join('\n'));
+  });
+  const r = await listRemoteBranches('/repo', ['origin', 'team', 'team/fork', 'upstream']);
+  assert.deepEqual(seen, [['git', 'for-each-ref', '--format=%(refname)', 'refs/remotes/', '/repo']], 'local refs only — no fetch, no ls-remote');
+  assert.deepEqual(r, { ok: true, byRemote: {
+    origin: ['dev', 'feat/x', 'main'], team: ['other'], 'team/fork': ['main'], upstream: [],
+  } });
+});
+
+test('listRemoteBranches: git failures are reported without throwing', async () => {
+  gitInfo.setRunner(() => fail('fatal: not a git repository', 128));
+  assert.deepEqual(await listRemoteBranches('/nope', ['origin']), { ok: false, byRemote: {}, error: 'fatal: not a git repository' });
+  assert.deepEqual(await listRemoteBranches('', ['origin']), { ok: false, byRemote: {}, error: 'projectDir is required' });
 });
 
 test('pushBranch pushes to the chosen remote (origin by default)', async () => {

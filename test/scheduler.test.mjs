@@ -15,6 +15,7 @@ import {
   dependentsOfWorkflow, dueTickets, runDueTickets, recordOutcome, recoverScheduler, purgeScheduler,
   scheduleCounts, summarizeRequest, RETRY_BACKOFF_MIN, AFTER_RUN_AT,
   afterRefOf, predecessorState, previousBranchesOf, dependentsOfRun, resolveAfterRef,
+  chainBaseBranchesOf, markTicketFired,
 } from '../src/core/scheduler.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { listNotifications, unreadCount } from '../src/core/notifications.mjs';
@@ -570,4 +571,79 @@ test('archiving the predecessor (History delete keeps the row, removes its branc
   assert.deepEqual(out.missed, [t.id]); assert.deepEqual(out.fired, []);
   assert.equal(getTicket(t.id).failReason, 'The run before it was archived.');
   assert.equal(listNotifications().find((x) => x.ticketId === t.id).message, 'was waiting for ‘Old’, which was archived.');
+});
+
+// ── chainBaseBranchesOf: the PR dialog's base-branch choices along a run chain ──
+const DAY = 24 * HOUR;
+const chainRun = (id, source, feature) =>
+  seedPipelineRow({ id, title: id, status: 'done', startedAt: new Date(T0).toISOString(), branch: { source, feature } });
+// The ticket that started `pipelineId` after `after`, fired at T0 (so a purge 31 days later drops it).
+const chainFire = (pipelineId, after, sourceFromPrevious = true) => {
+  const t = createTicket({ projectDir: DIR, title: pipelineId, request: REQ, after, sourceFromPrevious, now: T0 });
+  markTicketFired(t.id, { pipelineId, now: T0 });
+  return t;
+};
+
+test('chainBaseBranchesOf walks a from-its-branch chain back to its root, root first', () => {
+  // dev → nb1 → nb2 → nb3: each run started from the previous run's feature branch.
+  chainRun('c0000001', 'dev', 'nb1');
+  chainRun('c0000002', 'nb1', 'nb2');
+  chainRun('c0000003', 'nb2', 'nb3');
+  const t2 = chainFire('c0000002', { kind: 'pipeline', id: 'c0000001' });
+  chainFire('c0000003', { kind: 'ticket', id: t2.id });      // chained on the TICKET that became nb2
+  assert.deepEqual(chainBaseBranchesOf('c0000003'), ['dev', 'nb1', 'nb2']);
+  assert.deepEqual(chainBaseBranchesOf('c0000002'), ['dev', 'nb1']);
+  assert.deepEqual(chainBaseBranchesOf('c0000001'), ['dev'], 'a run no ticket started is its own root');
+  assert.deepEqual(chainBaseBranchesOf('nope'), [], 'no run, no branches');
+});
+
+test('chainBaseBranchesOf stops at a link that did not start from its predecessor\'s branch', () => {
+  // nb2 waited for nb1 and even names nb1 as its source, but was NOT started "from its branch".
+  chainRun('c0000011', 'dev', 'nb1');
+  chainRun('c0000012', 'nb1', 'nb2');
+  chainRun('c0000013', 'nb2', 'nb3');
+  chainFire('c0000012', { kind: 'pipeline', id: 'c0000011' }, false);
+  chainFire('c0000013', { kind: 'pipeline', id: 'c0000012' });
+  assert.deepEqual(chainBaseBranchesOf('c0000013'), ['nb1', 'nb2']);
+  // A timed ticket (no predecessor at all) is a chain start too.
+  chainRun('c0000014', 'main', 'nb4');
+  markTicketFired(createTicket({ projectDir: DIR, title: 'T', runAtMs: T0, request: REQ, now: T0 }).id, { pipelineId: 'c0000014', now: T0 });
+  assert.deepEqual(chainBaseBranchesOf('c0000014'), ['main']);
+});
+
+test('chainBaseBranchesOf ends the walk at a purged or missing link — the run\'s own source is the fallback', () => {
+  chainRun('c0000021', 'dev', 'nb1');
+  chainRun('c0000022', 'nb1', 'nb2');
+  chainRun('c0000023', 'nb2', 'nb3');
+  const t2 = chainFire('c0000022', { kind: 'pipeline', id: 'c0000021' });
+  chainFire('c0000023', { kind: 'ticket', id: t2.id });
+  assert.deepEqual(chainBaseBranchesOf('c0000023'), ['dev', 'nb1', 'nb2']);
+  // Fired tickets are purged after TICKET_RETENTION_DAYS: with them goes the only record of the link.
+  assert.equal(purgeScheduler({ now: T0 + 31 * DAY }).tickets, 2);
+  assert.deepEqual(chainBaseBranchesOf('c0000023'), ['nb2']);
+  assert.deepEqual(chainBaseBranchesOf('c0000022'), ['nb1']);
+  // A predecessor ticket that is gone while the dependent's ticket is still there.
+  chainRun('c0000024', 'nb3', 'nb4');
+  chainFire('c0000024', { kind: 'ticket', id: 'purged-ticket' });
+  assert.deepEqual(chainBaseBranchesOf('c0000024'), ['nb3']);
+  // A predecessor pipeline row that is gone.
+  chainRun('c0000025', 'nb4', 'nb5');
+  chainFire('c0000025', { kind: 'pipeline', id: 'zzzzzzzz' });
+  assert.deepEqual(chainBaseBranchesOf('c0000025'), ['nb4']);
+});
+
+test('chainBaseBranchesOf stops where the predecessor\'s feature is not this run\'s source, and survives a cycle', () => {
+  chainRun('c0000031', 'dev', 'nb1');
+  chainRun('c0000032', 'hotfix', 'nb2');                   // renamed/rebased: not nb1's branch any more
+  chainFire('c0000032', { kind: 'pipeline', id: 'c0000031' });
+  assert.deepEqual(chainBaseBranchesOf('c0000032'), ['hotfix']);
+  // A hand-made cycle (x after y, y after x) must terminate.
+  chainRun('c0000033', 'ny', 'nx');
+  chainRun('c0000034', 'nx', 'ny');
+  chainFire('c0000033', { kind: 'pipeline', id: 'c0000034' });
+  chainFire('c0000034', { kind: 'pipeline', id: 'c0000033' });
+  assert.deepEqual(chainBaseBranchesOf('c0000034'), ['ny', 'nx'], 'the walk stops at the first repeated run');
+  // A run without a recorded source has nothing to offer.
+  chainRun('c0000035', null, 'nb9');
+  assert.deepEqual(chainBaseBranchesOf('c0000035'), []);
 });
