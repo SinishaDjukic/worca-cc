@@ -207,6 +207,16 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     row.appendChild(ctl);
 
     const btns = h(doc, 'div', 'mv-pv-btns');
+    // The verdict belongs NEXT TO the button that asks for it: the hint line under the description
+    // is in the other column, and a one-line grey answer there reads as "nothing happened".
+    btns.appendChild(h(doc, 'span', 'mv-pv-result', ''));
+    if (name === 'openai') {
+      // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
+      const browse = h(doc, 'button', 'btn-ghost mv-pv-browse', 'Import models…');
+      browse.type = 'button'; browse.dataset.provider = name;
+      browse.title = 'List what this endpoint serves (llama.cpp, Ollama, LM Studio, vLLM…) and import the ones you want';
+      btns.appendChild(browse);
+    }
     const test = h(doc, 'button', 'btn-ghost mv-pv-test', 'Test connection');
     test.type = 'button'; test.dataset.provider = name;
     btns.appendChild(test);
@@ -318,6 +328,82 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   const btns = h(doc, 'div', 'mv-editor-btns');
   const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
   go.type = 'button'; go.disabled = !list.length;
+  const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
+  cancel.type = 'button';
+  btns.appendChild(go); btns.appendChild(cancel);
+  root.appendChild(btns);
+  return root;
+}
+
+/**
+ * The import sheet over GET /api/providers/openai/models (§8.4): what one OpenAI-compatible
+ * endpoint serves. Same chrome and same checkbox contract as the Copilot sheet — collectImportSheet
+ * reads both — with the columns a local server decides a pipeline on: the window ONE request gets,
+ * tool calls, and whether the model is loaded.
+ */
+export function renderEndpointSheet(payload, { doc = globalThis.document } = {}) {
+  const p = payload || {};
+  const list = Array.isArray(p.models) ? p.models : [];
+  const root = h(doc, 'section', 'card mv-editor mvi mvi-ep');
+  root.dataset.source = 'endpoint';
+  root.dataset.baseurl = p.baseUrl || '';
+  root.appendChild(h(doc, 'h3', 'mv-editor-title', `Import from ${p.serverLabel || 'this endpoint'}`));
+  root.appendChild(h(doc, 'small', 'hint', `${p.baseUrl || ''} — these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
+  for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
+  if (!list.length) {
+    root.appendChild(h(doc, 'div', 'hist-empty', 'This endpoint lists no models.'));
+  } else {
+    const tbl = h(doc, 'table', 'tm-tbl mvi-tbl');
+    const thead = h(doc, 'thead');
+    const hr = h(doc, 'tr');
+    const allTh = h(doc, 'th');
+    const all = h(doc, 'input', 'mvi-all'); all.type = 'checkbox'; all.title = 'Select all importable';
+    allTh.appendChild(all);
+    hr.appendChild(allTh);
+    for (const t of ['Model', 'Detail', 'Window', 'Tools', 'Vision', 'Status']) hr.appendChild(h(doc, 'th', null, t));
+    thead.appendChild(hr);
+    tbl.appendChild(thead);
+    const tbody = h(doc, 'tbody');
+    for (const m of list) {
+      const tr = h(doc, 'tr');
+      tr.dataset.id = m.id;
+      const blocked = m.importable === false;
+      if (blocked) tr.className = 'mvi-disabled';
+      const cbTd = h(doc, 'td');
+      const cb = h(doc, 'input', 'mvi-cb'); cb.type = 'checkbox'; cb.value = m.id; cb.disabled = blocked;
+      cbTd.appendChild(cb);
+      tr.appendChild(cbTd);
+      const nameTd = h(doc, 'td');
+      nameTd.appendChild(h(doc, 'b', null, m.name || m.id));
+      nameTd.appendChild(h(doc, 'small', 'hint mvi-id', m.catalogId || ''));
+      tr.appendChild(nameTd);
+      tr.appendChild(h(doc, 'td', null, m.detail || '—'));
+      // The served window is the one a prompt limit may be pinned from; the trained one is context.
+      const ctxTd = h(doc, 'td', 'num', fmtK(m.servedContext));
+      if (!m.servedContext && m.trainedContext) {
+        ctxTd.textContent = '';
+        ctxTd.appendChild(h(doc, 'span', 'mvi-ctx-unknown', `? · supports ${fmtK(m.trainedContext)}`));
+      }
+      tr.appendChild(ctxTd);
+      tr.appendChild(h(doc, 'td', null, m.toolCalls === null || m.toolCalls === undefined ? '?' : yesNo(m.toolCalls)));
+      tr.appendChild(h(doc, 'td', null, m.vision === null || m.vision === undefined ? '?' : yesNo(m.vision)));
+      const status = [];
+      if (m.inCatalog) status.push('in catalog ✓');
+      if (m.loaded === true) status.push('loaded');
+      else if (m.loaded === false) status.push('not loaded');
+      if (blocked) status.push(m.blocked || 'not importable');
+      tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);
+    root.appendChild(tbl);
+  }
+  const msg = h(doc, 'p', 'form-msg mvi-msg');
+  msg.setAttribute('aria-live', 'polite');
+  root.appendChild(msg);
+  const btns = h(doc, 'div', 'mv-editor-btns');
+  const go = h(doc, 'button', 'btn-go mvi-go', 'Import selected');
+  go.type = 'button'; go.disabled = !list.some((m) => m.importable !== false);
   const cancel = h(doc, 'button', 'btn-ghost mvi-cancel', 'Cancel');
   cancel.type = 'button';
   btns.appendChild(go); btns.appendChild(cancel);

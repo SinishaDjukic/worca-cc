@@ -12,7 +12,10 @@ import { listGlobalModels, addGlobalModel, updateGlobalModel, updateProvider, pr
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
 import { providerReadiness } from '../bridge/registry.mjs';
-import { providersState, patchProvider, copilotModelsForImport, importCopilotModels, testProviderConnection } from '../bridge/provider-ops.mjs';
+import {
+  providersState, patchProvider, copilotModelsForImport, importCopilotModels, testProviderConnection,
+  endpointModelsForImport, importEndpointModels,
+} from '../bridge/provider-ops.mjs';
 import { UPSTREAM_PROVIDERS } from '../model-env.mjs';
 import { createModelChangeValidator, mergeEditPatch, maskEntry } from './model-proposal.mjs';
 
@@ -24,6 +27,7 @@ export const validateModelChange = createModelChangeValidator({
   addModel: addGlobalModel, updateModel: updateGlobalModel, updateProvider,
   providerConfig, providerReadiness, modelRefs: globalModelRefs, envHas,
   copilotModels: () => copilotModelsForImport(),
+  endpointModels: (baseUrl) => endpointModelsForImport({ baseUrl }),
 });
 
 /**
@@ -83,6 +87,15 @@ export async function applyModelChange(card, io = {}) {
       await (io.patchProvider ?? patchProvider)(c.provider, c.set || {});
       return { ok: true, detail: `${c.provider} provider saved` };
     }
+    case 'import_endpoint': {
+      const r = await (io.importEndpoint ?? importEndpointModels)(c.ids || [], { baseUrl: c.baseUrl || '' });
+      const bits = [];
+      if (r.created?.length) bits.push(`added ${r.created.join(', ')}`);
+      if (r.updated?.length) bits.push(`refreshed ${r.updated.join(', ')}`);
+      // The endpoint's skips carry a reason (an embedding model, no tool calls); Copilot's are ids.
+      if (r.skipped?.length) bits.push(`skipped ${r.skipped.map((s) => (typeof s === 'string' ? s : `${s.id} (${s.why})`)).join(', ')}`);
+      return { ok: true, detail: `${bits.join(' · ') || 'nothing to import'} — from ${r.serverLabel || r.baseUrl || 'the endpoint'}` };
+    }
     case 'import_copilot': {
       const r = await (io.importCopilot ?? importCopilotModels)(c.ids || []);
       const bits = [];
@@ -106,6 +119,7 @@ export function defaultModelDeps({ threadId = null } = {}) {   // eslint-disable
       providers: () => providersState(),
       test: (name) => testProviderConnection(name),
       copilotModels: () => copilotModelsForImport(),
+      endpointModels: (baseUrl) => endpointModelsForImport({ baseUrl }),
       validateChange: validateModelChange,
     },
   };

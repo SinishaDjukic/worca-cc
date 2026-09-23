@@ -115,7 +115,7 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from './models-view.mjs';
 import {
-  renderProvidersCard, collectProviderRow, renderImportSheet, collectImportSheet, applyImportSelectAll,
+  renderProvidersCard, collectProviderRow, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -3548,6 +3548,7 @@ function goAddModel(restore) {
   mvState.openCreate = true;
   mvState.openShare = false;
   mvState.prefill = null;
+  mvState.revealPanel = true;              // survives the view switch: loadModelsView repaints
   showView('settings', 'models'); // loadModelsView renders the open editor
 }
 
@@ -12041,7 +12042,14 @@ const mvState = {
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
+  // openImport is false, true (Copilot) or 'endpoint' (an OpenAI-compatible server, §8.4),
+  // whose payload — server, base URL, rows, warnings — is endpointModels.
   providers: null, signIn: null, openImport: false, importModels: [], copilotModels: [],
+  endpointModels: null,
+  // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
+  // render under the Providers card, which is taller than the viewport on a laptop, so opening one
+  // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
+  revealPanel: false,
 };
 
 function setModelsMsg(text, kind) {
@@ -12059,7 +12067,9 @@ function renderModelsViewBody() {
   // Providers card first (§8.1): sign-in state and keys sit above the catalog
   // they unlock. Kept across repaints, including an in-flight device flow.
   frag.appendChild(renderProvidersCard(mvState.providers, { signIn: mvState.signIn }));
-  if (mvState.openImport) {
+  if (mvState.openImport === 'endpoint') {
+    frag.appendChild(renderEndpointSheet(mvState.endpointModels));
+  } else if (mvState.openImport) {
     frag.appendChild(renderImportSheet(mvState.importModels));
   } else if (mvState.openShare) {
     frag.appendChild(renderExportWizard(d.models || []));
@@ -12079,6 +12089,23 @@ function renderModelsViewBody() {
     projectName: pp ? pp.split('/').pop() : '',
   }));
   el.modelsList.replaceChildren(frag);
+  if (mvState.revealPanel) {
+    mvState.revealPanel = false;
+    revealModelsPanel();
+  }
+}
+
+/** Bring the open editor / import sheet into view and put the caret in its first field. */
+function revealModelsPanel() {
+  const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
+  if (!panel) return;
+  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
+  // Only a fresh create starts empty enough to type into; focusing an edit or a sheet would
+  // steal the caret from whatever the user was reading.
+  if (!mvState.editing && !mvState.openImport) {
+    const first = panel.querySelector('input:not([type="checkbox"]):not([disabled]), select, textarea');
+    try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }
 }
 
 // "Hide built-in models" (#422): one settings key, saved on change. Every picker
@@ -12191,6 +12218,7 @@ async function duplicateModelFlow(id) {
     ...(src.cost ? { cost: src.cost } : {}),
     duplicatedFrom: src.id,
   };
+  mvState.revealPanel = true;
   renderModelsViewBody();
 }
 
@@ -12203,6 +12231,7 @@ async function editPluginCopyFlow(plugin, id) {
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = data;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   } catch (e) {
     setModelsMsg(e.message, 'err');
@@ -12363,20 +12392,62 @@ async function patchProviderFlow(name, body, { okText = 'Saved.' } = {}) {
   }
 }
 
+/** The Test-connection verdict, in the pill beside the button (and the row's hint line with it). */
+function setProviderResult(name, state, text) {
+  const pill = el.modelsList && el.modelsList.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
+  if (!pill) return;
+  pill.className = `mv-pv-result${state ? ` is-on is-${state}` : ''}`;
+  pill.textContent = text || '';
+}
+
 async function testProviderFlow(btn) {
   const name = btn.dataset.provider;
+  // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
+  // and a local endpoint therefore answers for itself instead of for api.openai.com.
+  const typed = (name === 'copilot' ? null : collectProviderRow(el.modelsList, name)) || {};
   btn.disabled = true;
-  setProviderMsg(name, 'Testing…');
+  setProviderResult(name, 'busy', 'Testing…');
+  setProviderMsg(name, '');
   try {
-    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, { method: 'POST' });
+    const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...(typed.baseUrl ? { baseUrl: typed.baseUrl } : {}), ...(typed.apiKey !== undefined ? { apiKey: typed.apiKey } : {}) }),
+    });
     const data = await safeJson(res);
-    if (data.ok) setProviderMsg(name, `✓ reachable${data.models != null ? ` — ${data.models} models listed` : ''}`);
-    else setProviderMsg(name, `✗ ${data.message || data.error || `HTTP ${res.status}`}`, true);
+    const where = typed.baseUrl || (mvState.providers && mvState.providers[name] && mvState.providers[name].baseUrl) || '';
+    const unsaved = hasUnsavedProviderEdits(name, typed);
+    if (data.ok) {
+      setProviderResult(name, 'ok', `Reachable${data.models != null ? ` — ${data.models} model${data.models === 1 ? '' : 's'}` : ''}`);
+      setProviderMsg(name, `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${unsaved ? ' Press Save to keep these settings.' : ''}`);
+    } else {
+      const why = data.message || data.error || `HTTP ${res.status}`;
+      setProviderResult(name, 'err', 'Failed');
+      setProviderMsg(name, `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}`, true);
+    }
   } catch (e) {
-    setProviderMsg(name, `✗ ${e.message}`, true);
+    setProviderResult(name, 'err', 'Failed');
+    setProviderMsg(name, e.message, true);
   } finally {
     btn.disabled = false;
   }
+}
+
+/** Whether the row carries edits the user has not saved — the test used them, the runs will not. */
+function hasUnsavedProviderEdits(name, typed) {
+  const cur = (mvState.providers && mvState.providers[name]) || {};
+  if (typed.apiKey !== undefined) return true;
+  return !!(typed.baseUrl && typed.baseUrl.replace(/\/+$/, '') !== String(cur.baseUrl || '').replace(/\/+$/, ''));
+}
+
+/** One line of "what to do about it" for the failures that have an obvious answer. */
+function providerFixHint(why) {
+  const w = String(why).toLowerCase();
+  if (w.includes('authentication failed')) return ' — check the API key, then Save.';
+  if (w.includes('no api key configured')) return ' — set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('${var} is not set')) return ' — set that variable in the shell that starts Worca, then restart it.';
+  if (w.includes('unreachable')) return ' — is the server running, and is the base URL right?';
+  if (w.includes('endpoint answered 404')) return ' — the base URL usually ends in /v1.';
+  return '';
 }
 
 async function refreshCopilotQuotaFlow(btn) {
@@ -12404,9 +12475,34 @@ async function openImportFlow(btn) {
     mvState.copilotModels = data.models || [];
     mvState.openImport = true;
     mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   } catch (e) {
     setProviderMsg('copilot', e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** §8.4 for a server you run: list what the base URL in the row serves, then show the sheet. */
+async function openEndpointImportFlow(btn) {
+  const row = btn.closest('.mv-pv-row');
+  const input = row && row.querySelector('.mv-pv-baseurl');
+  const baseUrl = input ? input.value.trim() : '';
+  btn.disabled = true;
+  setProviderMsg('openai', 'Asking the endpoint what it serves…');
+  try {
+    const res = await fetch(`/api/providers/openai/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`);
+    const data = await safeJson(res);
+    if (!res.ok) return setProviderMsg('openai', data.error || `HTTP ${res.status}`, true);
+    mvState.endpointModels = data;
+    mvState.openImport = 'endpoint';
+    mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
+    mvState.revealPanel = true;
+    renderModelsViewBody();
+    setProviderMsg('openai', '');
+  } catch (e) {
+    setProviderMsg('openai', e.message, true);
   } finally {
     btn.disabled = false;
   }
@@ -12421,7 +12517,10 @@ async function importModelsFlow() {
   if (!ids.length) return say('Pick at least one model.', 'err');
   say('Importing…');
   try {
-    const res = await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    const endpoint = sheet.dataset.source === 'endpoint';
+    const res = endpoint
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
+      : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`, 'err');
     mvState.openImport = false;
@@ -12429,7 +12528,9 @@ async function importModelsFlow() {
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
-    setModelsMsg(`Imported from Copilot: ${parts.join(', ') || 'nothing changed'}.`, 'ok');
+    // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
+    const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
     say(e.message, 'err');
@@ -12623,6 +12724,7 @@ if (el.modelsList) {
       mvState.openCreate = false;
       mvState.openShare = false;
       mvState.prefill = null;
+      mvState.revealPanel = true;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-delete')) {
       deleteModelFlow(t.dataset.id);
@@ -12654,6 +12756,8 @@ if (el.modelsList) {
       if (body) patchProviderFlow(t.dataset.provider, body);
     } else if (t.classList.contains('mv-pv-test')) {
       testProviderFlow(t);
+    } else if (t.classList.contains('mv-pv-browse')) {
+      openEndpointImportFlow(t);
     } else if (t.classList.contains('mv-signin')) {
       scrollToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvi-go')) {
@@ -12721,6 +12825,7 @@ if (el.modelCreateBtn) {
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = null;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   });
 }
@@ -12730,6 +12835,7 @@ if (el.modelShareBtn) {
     mvState.openCreate = false;
     mvState.prefill = null;
     mvState.openShare = true;
+    mvState.revealPanel = true;
     renderModelsViewBody();
   });
 }

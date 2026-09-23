@@ -10,7 +10,7 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addGlobalModel, updateProvider, removeGlobalModel } from '../src/core/settings.mjs';
+import { addGlobalModel, updateProvider, removeGlobalModel, providerConfig } from '../src/core/settings.mjs';
 import { startBridge, stopBridge, bridgeSecret, bridgeBaseUrl, bridgeRunning } from '../src/core/bridge/server.mjs';
 import { resolveModelEnv, bridgedModelInfo, modelHasBaseUrlRouting } from '../src/core/config.mjs';
 import { bridgeCallsFor, _resetBridgeTelemetry } from '../src/core/bridge/telemetry.mjs';
@@ -154,6 +154,41 @@ test('a local OpenAI-compatible endpoint (llama.cpp, Ollama) needs no key: ready
     assert.equal(bridgedModelInfo('gw-gpt').reason, 'no_key');
   } finally {
     await updateProvider('openai', { apiKey: '${MY_KEY}' });
+  }
+});
+
+// The Providers card tests what is ON SCREEN: testing the stored values instead made the button
+// answer for api.openai.com while the user was looking at their llama.cpp URL — "no API key
+// configured" for an endpoint that needs none.
+test('the connection test takes the base URL and key the user typed, and a masked echo keeps the stored one', async () => {
+  const calls = [];
+  const okFetch = async (url, init) => { calls.push([String(url), init.headers.authorization ?? null]); return new Response('{"data":[{"id":"m"}]}', { status: 200 }); };
+  // A local URL that is not stored anywhere: keyless, and tested where it was typed.
+  const restore = providerConfig('openai');        // this suite's live chat stub — put it back exactly
+  await updateProvider('openai', { apiKey: null, baseUrl: 'https://api.openai.com/v1' });
+  try {
+    const typed = await testProviderConnection('openai', { fetch: okFetch, baseUrl: 'http://127.0.0.1:8080/v1' });
+    assert.deepEqual(typed, { ok: true, models: 1 });
+    assert.deepEqual(calls.at(-1), ['http://127.0.0.1:8080/v1/models', null], 'the typed endpoint, no Authorization');
+    // …while the stored one still decides when nothing is typed: a remote URL with no key is refused,
+    // and the message names the endpoint it judged.
+    const stored = await testProviderConnection('openai', { fetch: okFetch });
+    assert.equal(stored.ok, false);
+    assert.match(stored.message, /no API key configured for https:\/\/api\.openai\.com\/v1/);
+    // A key typed into the field is used as typed…
+    const withKey = await testProviderConnection('openai', { fetch: okFetch, apiKey: 'sk-typed' });
+    assert.equal(withKey.ok, true);
+    assert.equal(calls.at(-1)[1], 'Bearer sk-typed');
+    // …a masked echo means "keep", so the stored key is what travels.
+    await updateProvider('openai', { apiKey: 'sk-stored' });
+    const echoed = await testProviderConnection('openai', { fetch: okFetch, apiKey: '••••••ored' });
+    assert.equal(echoed.ok, true);
+    assert.equal(calls.at(-1)[1], 'Bearer sk-stored');
+    // An unusable base URL is ignored rather than tested as a relative path.
+    await testProviderConnection('openai', { fetch: okFetch, baseUrl: 'not a url' });
+    assert.equal(calls.at(-1)[0], 'https://api.openai.com/v1/models');
+  } finally {
+    await updateProvider('openai', { apiKey: restore.apiKey, baseUrl: restore.baseUrl, maxConcurrent: restore.maxConcurrent });
   }
 });
 

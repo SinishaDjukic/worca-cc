@@ -11,12 +11,13 @@ import {
   copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn,
   listGlobalModels, addGlobalModel, updateGlobalModel,
 } from '../settings.mjs';
-import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS, isUpstreamBaseUrl } from '../model-env.mjs';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel,
 } from './providers/copilot.mjs';
 import { keyOptional } from './registry.mjs';
+import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 
 // ── Copilot sign-in sessions (in memory; a device code lives ~15 min) ────────
 const sessions = new Map();   // deviceCode -> { startedAt, expiresAt, interval, lastPoll }
@@ -173,14 +174,80 @@ export async function importCopilotModels(ids, { fetch: f } = {}) {
   return { created, updated, skipped };
 }
 
+// ── OpenAI-compatible endpoints: discovery, import ──────────────────────────
+
+/** The provider's own base URL when the caller names none, trailing slash trimmed. */
+function endpointBase(baseUrl) {
+  const b = String(baseUrl || '').trim() || providerConfig('openai').baseUrl || '';
+  if (!isUpstreamBaseUrl(b)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
+  return b.replace(/\/+$/, '');
+}
+
+/**
+ * What an OpenAI-compatible endpoint serves, each row with `catalogId` and `inCatalog` (§8.4's
+ * Copilot import, for a server you run: llama.cpp, Ollama, LM Studio, vLLM, a gateway).
+ * @param {{baseUrl?:string, fetch?:typeof fetch}} [opts]
+ */
+export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
+  const base = endpointBase(baseUrl);
+  const p = providerConfig('openai');
+  const key = resolveProviderSecret(p.apiKey);
+  const out = await listEndpointModels(base, { apiKey: key, fetch: f });
+  const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  return {
+    ...out,
+    models: out.models.map((m) => {
+      const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+      const usable = importableModel(m);
+      return { ...m, catalogId: entry.id, inCatalog: have.has(entry.id.toLowerCase()), importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
+    }),
+  };
+}
+
+/**
+ * Import endpoint models into the catalog. A new id gets the full entry; an existing one keeps the
+ * label, efforts and pricing you edited and only has its upstream refreshed — the Copilot rule.
+ * @param {string[]} ids  model ids as the endpoint reports them (not catalog ids)
+ * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>, server:string, baseUrl:string}>}
+ */
+export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
+  const wanted = new Set((Array.isArray(ids) ? ids : []).map((s) => String(s)));
+  if (!wanted.size) throw new Error('pick at least one model to import');
+  const out = await endpointModelsForImport({ baseUrl, fetch: f });
+  const byId = new Map(out.models.map((m) => [m.id, m]));
+  const p = providerConfig('openai');
+  const created = []; const updated = []; const skipped = [];
+  for (const id of wanted) {
+    const m = byId.get(id);
+    if (!m) { skipped.push({ id, why: 'the endpoint does not serve it' }); continue; }
+    if (!m.importable) { skipped.push({ id, why: m.blocked || 'not usable in a pipeline' }); continue; }
+    const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+    const current = listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
+    if (current) {
+      if (!current.upstream || current.upstream.provider !== 'openai') { skipped.push({ id, why: `"${current.id}" already exists and is not an OpenAI-compatible entry` }); continue; }
+      await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
+      updated.push(current.id);
+    } else {
+      await addGlobalModel(entry);
+      created.push(entry.id);
+    }
+  }
+  return { created, updated, skipped, server: out.server, serverLabel: out.serverLabel, baseUrl: out.baseUrl, warnings: out.warnings };
+}
+
 // ── key-based providers: connection test ────────────────────────────────────
 
 /**
- * A cheap reachability + auth check for openai / anthropic (§8.1): GET the
- * models list with the configured key. Never throws.
+ * A cheap reachability + auth check for openai / anthropic (§8.1): GET the models list with the
+ * configured key. Never throws.
+ *
+ * `baseUrl` / `apiKey` test values that are NOT stored yet — what the user has typed into the
+ * Providers card. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
+ * press Test, and the answer was "no API key configured", because it had tested api.openai.com.
+ * A masked echo (••…) means "keep what is stored" exactly as a save does.
  * @returns {Promise<{ok:true, models?:number}|{ok:false, message:string}>}
  */
-export async function testProviderConnection(name, { fetch: f = globalThis.fetch } = {}) {
+export async function testProviderConnection(name, { fetch: f = globalThis.fetch, baseUrl = '', apiKey } = {}) {
   if (name === 'copilot') {
     const c = providerConfig('copilot');
     const token = resolveProviderSecret(c.githubToken);
@@ -188,9 +255,16 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
   }
   if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
-  const p = providerConfig(name);
+  const stored = providerConfig(name);
+  const typedKey = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
+  const p = {
+    ...stored,
+    ...(baseUrl && isUpstreamBaseUrl(baseUrl) ? { baseUrl: baseUrl.trim().replace(/\/+$/, '') } : {}),
+    ...(typedKey === null ? {} : { apiKey: typedKey }),
+  };
   const key = resolveProviderSecret(p.apiKey);
-  if (!key && (providerSecretSet(name) || !keyOptional(name, p.baseUrl))) return { ok: false, message: providerSecretSet(name) ? 'the key\'s ${VAR} is not set in worca\'s environment' : 'no API key configured' };
+  const keyIsSet = typedKey === null ? providerSecretSet(name) : !!typedKey;
+  if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
   const base = (p.baseUrl || '').replace(/\/+$/, '');
   const url = name === 'anthropic' ? (/\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`) : `${base}/models`;
   const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : (key ? { authorization: `Bearer ${key}` } : {});

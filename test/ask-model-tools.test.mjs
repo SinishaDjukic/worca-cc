@@ -10,7 +10,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { createModelChangeValidator, mergeEditPatch, maskEntry, modelEventPrompt, modelNoticeText, LOCAL_MIN_WINDOW } from '../src/core/ask/model-proposal.mjs';
+import { createModelChangeValidator, mergeEditPatch, maskEntry, modelEventPrompt, modelNoticeText, LOCAL_MIN_WINDOW, MODEL_CHANGE_KINDS } from '../src/core/ask/model-proposal.mjs';
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
 import { labelForTool } from '../src/core/ask/events.mjs';
@@ -184,6 +184,54 @@ test('import_copilot: only ids the account offers; the rows say added or refresh
   assert.match(r.errors[0], /import_copilot needs ids/);
 });
 
+test('import_endpoint: the card quotes the window the server serves and refuses a row it would not import', async () => {
+  const endpoint = {
+    server: 'ollama', serverLabel: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1',
+    warnings: ['Ollama serves a 4096-token window by default'],
+    models: [
+      { id: 'qwen3-coder:30b', name: 'qwen3-coder:30b', catalogId: 'ollama-qwen3-coder-30b', servedContext: 65536, trainedContext: 262144, importable: true, inCatalog: false },
+      { id: 'small:1b', name: 'small:1b', catalogId: 'ollama-small-1b', servedContext: 8192, trainedContext: 32768, importable: true, inCatalog: true },
+      { id: 'unknown:7b', name: 'unknown:7b', catalogId: 'ollama-unknown-7b', servedContext: null, trainedContext: 131072, importable: true, inCatalog: false },
+      { id: 'nomic:latest', name: 'nomic:latest', catalogId: 'ollama-nomic-latest', importable: false, blocked: 'an embedding model — not a chat model' },
+    ],
+  };
+  assert.ok(MODEL_CHANGE_KINDS.includes('import_endpoint'));
+  const seen = [];
+  const { validate } = fixture();
+  const withEp = createModelChangeValidator({
+    listGlobalModels: () => [], listPluginModels: () => [], policyModels: () => [], predefined: [],
+    addModel: async (m) => m, updateModel: async () => ({}), updateProvider: async () => ({}),
+    providerConfig: () => ({ baseUrl: 'https://api.openai.com/v1' }), providerReadiness: () => ({ ok: true }),
+    modelRefs: () => ({ steps: [], nodes: [] }), envHas: () => true,
+    endpointModels: async (baseUrl) => { seen.push(baseUrl); return endpoint; },
+  });
+  assert.match((await validate({ kind: 'import_endpoint', ids: ['x'] })).errors[0], /endpoint discovery is unavailable/);
+
+  const r = await withEp({ kind: 'import_endpoint', baseUrl: 'http://127.0.0.1:11434/v1', ids: ['qwen3-coder:30b', 'small:1b', 'unknown:7b'], note: 'the local box' });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(seen, ['http://127.0.0.1:11434/v1']);
+  assert.equal(r.card.kind, 'import_endpoint');
+  assert.equal(r.card.summary, 'Import 3 models from Ollama');
+  assert.equal(r.card.target, 'http://127.0.0.1:11434/v1');
+  assert.deepEqual(r.card.rows, [
+    { field: 'qwen3-coder:30b', before: null, after: 'added as ollama-qwen3-coder-30b · 65536 tokens' },
+    { field: 'small:1b', before: 'in catalog', after: 'refreshed · 8192 tokens' },
+    { field: 'unknown:7b', before: null, after: 'added as ollama-unknown-7b · window not reported (supports 131072)' },
+  ]);
+  const w = r.card.warnings.join('\n');
+  assert.match(w, /^Ollama serves a 4096-token window by default$/m, 'the server\'s own warning rides along');
+  assert.match(w, /small:1b: 8192 tokens is below the 65536 a pipeline needs/);
+  assert.match(w, /unknown:7b: the server does not report the window it serves/);
+  assert.deepEqual(r.card.change, { ids: ['qwen3-coder:30b', 'small:1b', 'unknown:7b'], baseUrl: 'http://127.0.0.1:11434/v1' });
+
+  assert.match((await withEp({ kind: 'import_endpoint', ids: ['nomic:latest'] })).errors[0], /^nomic:latest: an embedding model/);
+  assert.match((await withEp({ kind: 'import_endpoint', ids: ['ghost'] })).errors[0], /Ollama at http:\/\/127\.0\.0\.1:11434\/v1 does not serve: ghost/);
+  assert.match((await withEp({ kind: 'import_endpoint', ids: [] })).errors[0], /import_endpoint needs ids/);
+  // A card made without a baseUrl applies against the provider's own.
+  const dflt = await withEp({ kind: 'import_endpoint', ids: ['qwen3-coder:30b'] });
+  assert.deepEqual(dflt.card.change, { ids: ['qwen3-coder:30b'] });
+});
+
 test('maskEntry masks credentials, keeps routing readable and ${VAR} references readable', () => {
   const m = maskEntry({ id: 'x', env: {
     ANTHROPIC_AUTH_TOKEN: 'literal-secret-value', OPENAI_API_KEY: '${REF}', ANTHROPIC_BASE_URL: 'https://gw.example.com',
@@ -216,11 +264,12 @@ test('tools: the family is listed only with a models bundle, last, and dispatche
     providers: async () => ({ openai: { keySet: false } }),
     test: async (n) => { seen.push(n); return { ok: true }; },
     copilotModels: async () => { throw new Error('not signed in to GitHub Copilot'); },
+    endpointModels: async (baseUrl) => ({ server: 'ollama', baseUrl: baseUrl || 'http://127.0.0.1:11434/v1', models: [] }),
     validateChange: async (i) => ({ ok: false, errors: [`got ${i.kind}`] }),
   } });
   const names = tools.list().map((t) => t.name);
-  assert.deepEqual(names.slice(-5), ['list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'propose_model_change']);
-  assert.deepEqual(names.slice(0, -5), none, 'every other tool is unchanged');
+  assert.deepEqual(names.slice(-6), ['list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change']);
+  assert.deepEqual(names.slice(0, -6), none, 'every other tool is unchanged');
   assert.deepEqual(await tools.call('list_models', {}), { models: [{ id: 'm' }] });
   assert.deepEqual(await tools.call('get_providers', {}), { openai: { keySet: false } });
   assert.deepEqual(await tools.call('test_provider', { provider: 'openai' }), { ok: true });
@@ -228,6 +277,7 @@ test('tools: the family is listed only with a models bundle, last, and dispatche
   await assert.rejects(() => tools.call('test_provider', { provider: 'x' }), /provider must be copilot, openai or anthropic/);
   await assert.rejects(() => tools.call('list_copilot_models', {}), /list_copilot_models: not signed in to GitHub Copilot/);
   assert.deepEqual(await tools.call('propose_model_change', { kind: 'provider' }), { ok: false, errors: ['got provider'] });
+  assert.deepEqual(await tools.call('list_endpoint_models', { baseUrl: 'http://127.0.0.1:8080/v1' }), { server: 'ollama', baseUrl: 'http://127.0.0.1:8080/v1', models: [] });
   const desc = tools.list().find((t) => t.name === 'propose_model_change').description;
   assert.match(desc, /never the value: a literal key is refused/);
 });
@@ -235,13 +285,27 @@ test('tools: the family is listed only with a models bundle, last, and dispatche
 test('activity labels and the system prompt carry the family', () => {
   assert.equal(labelForTool('mcp__worca__propose_model_change'), 'Proposing a model change');
   assert.equal(labelForTool('mcp__worca__test_provider', { provider: 'openai' }), 'Testing openai');
-  for (const t of ['list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'propose_model_change']) {
+  for (const t of ['list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change']) {
     assert.ok(ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1.')).includes(t), `rule 1 lists ${t}`);
   }
   const r18 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('18.'));
   assert.match(r18, /upstream\.baseUrl and upstream\.apiKey win over the provider's/);
   assert.match(r18, /at least 64k/);
   assert.match(r18, /\[worca event\] model card <id> applied/);
+});
+
+// The tools and the rules NAME the wire protocols; a name the validator does not know sends the
+// model into a refusal it can only recover from by guessing (upstream.api "anthropic-messages"
+// was exactly that). Pin both to UPSTREAM_APIS.
+test('the api names in the tool descriptions and rule 18 are the ones the validator accepts', async () => {
+  const { UPSTREAM_APIS } = await import('../src/core/model-env.mjs');
+  const tools = createAskTools({ limits: {}, redact: (s) => s, models: { list: async () => ({}), providers: async () => ({}), test: async () => ({}), copilotModels: async () => [], validateChange: async () => ({}) } });
+  const text = [...tools.list().filter((t) => t.name === 'list_models' || t.name === 'propose_model_change').map((t) => t.description),
+    ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('18.'))].join('\n');
+  for (const api of UPSTREAM_APIS) assert.ok(new RegExp(`(^|[^-\\w])${api}([^-\\w]|$)`).test(text), `names the api "${api}"`);
+  for (const wrong of ['anthropic-messages', 'anthropic_messages', 'openai_chat', 'messages']) {
+    assert.ok(!text.includes(wrong), `never names a protocol "${wrong}" the validator would refuse`);
+  }
 });
 
 test('applyModelChange replays each kind through the setters and re-merges an edit onto the entry as it is now', async () => {
@@ -253,6 +317,7 @@ test('applyModelChange replays each kind through the setters and re-merges an ed
     removeModel: async (id) => { log.push(['remove', id]); return { clearedSteps: 1, clearedNodes: 1 }; },
     patchProvider: async (n, s) => { log.push(['provider', n, s]); },
     importCopilot: async (ids) => { log.push(['import', ids]); return { created: ['copilot-gpt-5'], updated: [], skipped: ['x'] }; },
+    importEndpoint: async (ids, o) => { log.push(['import-endpoint', ids, o]); return { created: ['ollama-qwen3-coder-30b'], updated: [], skipped: [{ id: 'nomic', why: 'an embedding model' }], serverLabel: 'Ollama' }; },
   };
   assert.deepEqual(await applyModelChange({ kind: 'add_model', change: { model: { id: 'n' } } }, io), { ok: true, detail: 'n is in the catalog' });
   assert.deepEqual(await applyModelChange({ kind: 'edit_model', change: { id: 'OA', patch: { upstream: { model: 'gpt-5.1' } } } }, io), { ok: true, detail: 'oa updated' });
@@ -263,6 +328,9 @@ test('applyModelChange replays each kind through the setters and re-merges an ed
     { ok: true, detail: 'oa removed · Settings › Memory defragment model cleared' }, 'the Settings › Memory ref it cleared is named too');
   assert.deepEqual(await applyModelChange({ kind: 'provider', change: { provider: 'openai', set: { baseUrl: 'http://x/v1' } } }, io), { ok: true, detail: 'openai provider saved' });
   assert.deepEqual(await applyModelChange({ kind: 'import_copilot', change: { ids: ['gpt-5', 'x'] } }, io), { ok: true, detail: 'added copilot-gpt-5 · skipped x' });
+  assert.deepEqual(await applyModelChange({ kind: 'import_endpoint', change: { ids: ['qwen3-coder:30b'], baseUrl: 'http://127.0.0.1:11434/v1' } }, io),
+    { ok: true, detail: 'added ollama-qwen3-coder-30b · skipped nomic (an embedding model) — from Ollama' });
+  assert.deepEqual(log.at(-1)[2], { baseUrl: 'http://127.0.0.1:11434/v1' }, 'the card\'s endpoint, not the provider default');
   await assert.rejects(() => applyModelChange({ kind: 'edit_model', change: { id: 'gone', patch: {} } }, io), /no longer in the catalog/);
   await assert.rejects(() => applyModelChange({ kind: 'nope' }, io), /unknown model change kind/);
 });

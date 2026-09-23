@@ -2569,7 +2569,15 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
 .mv-pv-main .hint{margin:0;}
 .mv-pv-ctl{display:grid;gap:10px;align-content:start;}
-.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;}
+.mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
+/* Test connection's verdict, beside the button (bridge-view.mjs renderProvidersCard). Empty until
+   a test runs, so the row keeps its rhythm. */
+.mv-pv-result{margin-right:auto;display:none;align-items:center;gap:6px;min-width:0;padding:5px 10px;border-radius:999px;
+  font:600 12px var(--sans);background:var(--field);color:var(--ink-2);overflow-wrap:anywhere;}
+.mv-pv-result.is-on{display:inline-flex;}
+.mv-pv-result.is-ok{background:var(--green-bg);color:var(--green-ink);}
+.mv-pv-result.is-err{background:var(--red-bg);color:var(--red-ink);}
+.mv-pv-result.is-busy{color:var(--ink-3);}
 .mv-pv-btns .btn-ghost,.mv-pv-btns .btn-go{padding:7px 12px;font-size:12px;}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12.5px;padding:9px 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
@@ -4396,6 +4404,9 @@ body.rail-collapsed .ask-dock{left:76px;}
 .ask-scard-v{color:var(--ink);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;}
 .ask-scard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}
 .ask-card-start.is-danger{background:var(--red-ink);color:var(--on-status);}
+/* endpoint import sheet (bridge-view.mjs renderEndpointSheet): the server's own warnings, and a window it would not name */
+.mvi-warn{display:block;color:var(--amber-ink);}
+.mvi-ctx-unknown{color:var(--ink-3);font-size:11.5px;}
 /* model card (buildModelCard; docs/models.md "Ask Worca"): the policy card's change list + what will still block the model */
 .ask-modcard-warn{color:var(--amber-ink);}
 .ask-modcard .ask-card-sched-link{align-self:flex-start;margin-top:2px;}

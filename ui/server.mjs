@@ -130,6 +130,7 @@ import { startBridge } from '../src/core/bridge/server.mjs';
 import {
   providersState, patchProvider, acknowledgeTerms, beginCopilotLogin, pollCopilotLogin, copilotLogout,
   copilotModelsForImport, importCopilotModels, testProviderConnection,
+  endpointModelsForImport, importEndpointModels,
 } from '../src/core/bridge/provider-ops.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
@@ -5109,8 +5110,37 @@ app.get('/api/providers/copilot/models', async (req, res) => {
   }
 });
 
+// What an OpenAI-compatible endpoint serves (§8.4): llama.cpp, Ollama, LM Studio, vLLM or a
+// gateway, asked on its own surface so the rows carry real context windows and tool support.
+// ?baseUrl= overrides the provider's own, so a second local server can be browsed without
+// saving it first. Same reach as Test connection: the UI is loopback-only.
+app.get('/api/providers/openai/models', async (req, res) => {
+  try {
+    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '' }));
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
+app.post('/api/providers/openai/import-models', async (req, res) => {
+  const b = req.body || {};
+  try {
+    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '' });
+    emitChanged('settings-changed');
+    res.json({ ...result, models: maskedGlobalModels() });
+  } catch (err) {
+    return providerError(res, err);
+  }
+});
+
 app.post('/api/providers/:name/test', async (req, res) => {
-  res.json(await testProviderConnection(req.params.name));
+  // The card tests what is ON SCREEN (§8.1): an unsaved base URL or key is sent with the request,
+  // so "Test connection" answers for the endpoint the user is looking at, not the stored one.
+  const b = req.body || {};
+  res.json(await testProviderConnection(req.params.name, {
+    baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '',
+    ...(typeof b.apiKey === 'string' ? { apiKey: b.apiKey } : {}),
+  }));
 });
 
 app.post('/api/providers/copilot/import-models', async (req, res) => {
