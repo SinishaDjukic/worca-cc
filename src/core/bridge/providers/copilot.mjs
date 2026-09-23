@@ -12,6 +12,8 @@
 // Every network call takes an injectable `fetch` so the whole module is
 // testable against a stub without touching github.com.
 
+import { EFFORTS, REASONING_EFFORT_LEVELS } from '../../model-env.mjs';
+
 export const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 export const GITHUB_SCOPES = 'read:user';
 export const GITHUB_BASE = 'https://github.com';
@@ -84,7 +86,11 @@ export function bodyHasImage(body) {
 /** 'agent' when the last message continues a tool loop, else 'user' (§7.1). */
 export function requestInitiator(body) {
   const msgs = body && Array.isArray(body.messages) ? body.messages : [];
-  const last = msgs[msgs.length - 1];
+  // The CLI appends its mid-conversation system reminders AFTER the turn they
+  // ride on (…, user[tool_result], system): the turn is the last message before them.
+  let i = msgs.length - 1;
+  while (i >= 0 && msgs[i] && msgs[i].role === 'system') i -= 1;
+  const last = msgs[i];
   if (!last) return 'user';
   if (last.role === 'assistant') return 'agent';
   if (Array.isArray(last.content) && last.content.some((b) => b?.type === 'tool_result')) return 'agent';
@@ -190,7 +196,12 @@ export function normalizeCopilotModel(m) {
   const supports = caps.supports && typeof caps.supports === 'object' ? caps.supports : {};
   const limits = caps.limits && typeof caps.limits === 'object' ? caps.limits : {};
   const vendor = typeof m.vendor === 'string' ? m.vendor : '';
-  const reasoning = supports.reasoning_effort === true || supports.thinking === true || REASONING_ID_RE.test(m.id);
+  // Copilot lists a model's reasoning-effort levels (an array); older payloads sent `true`.
+  const efforts = Array.isArray(supports.reasoning_effort)
+    ? REASONING_EFFORT_LEVELS.filter((e) => supports.reasoning_effort.includes(e))
+    : null;
+  const reasoning = (efforts !== null && efforts.some((e) => e !== 'none'))
+    || supports.reasoning_effort === true || supports.thinking === true || REASONING_ID_RE.test(m.id);
   return {
     id: m.id,
     name: typeof m.name === 'string' && m.name ? m.name : m.id,
@@ -203,6 +214,8 @@ export function normalizeCopilotModel(m) {
     toolCalls: supports.tool_calls !== false,
     vision: supports.vision === true,
     reasoning,
+    reasoningEfforts: efforts && efforts.length ? efforts : null,
+    endpoints: Array.isArray(m.supported_endpoints) ? m.supported_endpoints.filter((e) => typeof e === 'string') : null,
     maxPromptTokens: Number(limits.max_prompt_tokens) || null,
     maxOutputTokens: Number(limits.max_output_tokens) || null,
     contextWindow: Number(limits.max_context_window_tokens) || null,
@@ -214,19 +227,52 @@ export function isAnthropicVendor(m) {
   return /anthropic/i.test(m.vendor || '') || /^claude/i.test(m.id || '');
 }
 
+/**
+ * The wire protocol an imported Copilot model is driven through
+ * (2026-09-23-bridge-openai-responses-design.md §11): Anthropic models pass
+ * through; an OpenAI model uses the Responses API whenever Copilot serves it
+ * there (its reasoning then carries across tool turns); any other model uses
+ * it only when Copilot serves it nowhere else; no endpoint list (legacy
+ * models) → chat completions.
+ */
+export function copilotApiFor(m) {
+  if (isAnthropicVendor(m)) return 'anthropic';
+  const eps = Array.isArray(m.endpoints) ? m.endpoints : null;
+  if (eps && eps.includes('/responses') && (/openai/i.test(m.vendor || '') || !eps.includes('/chat/completions'))) return 'openai-responses';
+  return 'openai-chat';
+}
+
+/**
+ * Worca efforts for an imported Copilot model: every effort (undefined) for an
+ * Anthropic model; the Worca efforts among the model's listed levels when
+ * Copilot lists them (all four → undefined; none in common → medium, which the
+ * bridge maps to the nearest listed level); else every effort for a reasoning
+ * model and medium otherwise.
+ */
+export function copilotEfforts(m) {
+  if (isAnthropicVendor(m)) return undefined;
+  if (Array.isArray(m.reasoningEfforts) && m.reasoningEfforts.length) {
+    const eff = EFFORTS.filter((e) => m.reasoningEfforts.includes(e));
+    if (!eff.length) return ['medium'];
+    return eff.length === EFFORTS.length ? undefined : eff;
+  }
+  return m.reasoning ? undefined : ['medium'];
+}
+
 /** The catalog entry an import creates for a Copilot model (§8.4). */
 export function catalogEntryForCopilotModel(m) {
-  const anthropic = isAnthropicVendor(m);
+  const api = copilotApiFor(m);
   const capabilities = {
     toolCalls: m.toolCalls, vision: m.vision, reasoning: m.reasoning,
     ...(m.maxPromptTokens ? { maxPromptTokens: m.maxPromptTokens } : {}),
     ...(m.maxOutputTokens ? { maxOutputTokens: m.maxOutputTokens } : {}),
+    ...(api !== 'anthropic' && Array.isArray(m.reasoningEfforts) && m.reasoningEfforts.length ? { reasoningEfforts: m.reasoningEfforts } : {}),
   };
   return {
     id: `copilot-${m.id}`,
     label: `${m.name} (Copilot)`,
-    efforts: anthropic || m.reasoning ? undefined : ['medium'],
-    upstream: { provider: 'copilot', api: anthropic ? 'anthropic' : 'openai-chat', model: m.id, capabilities },
+    efforts: copilotEfforts(m),
+    upstream: { provider: 'copilot', api, model: m.id, capabilities },
     cost: { free: true },
   };
 }

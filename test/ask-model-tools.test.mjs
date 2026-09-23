@@ -87,6 +87,13 @@ test('warnings: no prompt limit on a translated model, a too-small local window,
   assert.match(r.card.warnings.join('\n'), new RegExp(`a 32768-token window is too small for pipelines — serve at least ${LOCAL_MIN_WINDOW}`));
 });
 
+test('warnings: an openai-responses model without a prompt limit is flagged like a chat one', async () => {
+  const { validate } = fixture();
+  const r = await validate({ kind: 'add_model', model: { id: 'r', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-5-codex' } } });
+  assert.ok(r.card, JSON.stringify(r));
+  assert.match(r.card.warnings.join('\n'), /no prompt limit \(capabilities\.maxPromptTokens\)/);
+});
+
 test('read-only sources and unknown ids are refused with a way forward', async () => {
   const { validate } = fixture({ plugins: [{ id: 'plug-m', plugin: 'acme' }], policy: [{ id: 'team-m', home: 'org/repo' }] });
   assert.match((await validate({ kind: 'edit_model', id: 'plug-m', model: { label: 'x' } })).errors[0], /comes from plugin acme and is read-only/);
@@ -176,7 +183,7 @@ test('import_copilot: only ids the account offers; the rows say added or refresh
   let r = await validate({ kind: 'import_copilot', ids: ['gpt-5', 'claude-sonnet-4.5', 'gpt-5'] });
   assert.equal(r.ok, true);
   assert.equal(r.card.summary, 'Import 2 Copilot models');
-  assert.deepEqual(r.card.rows.map((x) => x.after), ['added as copilot-gpt-5', 'capabilities refreshed']);
+  assert.deepEqual(r.card.rows.map((x) => x.after), ['added as copilot-gpt-5', 'API and capabilities refreshed']);
   assert.deepEqual(r.card.change, { ids: ['gpt-5', 'claude-sonnet-4.5'] });
   r = await validate({ kind: 'import_copilot', ids: ['o9'] });
   assert.match(r.errors[0], /not offered to this Copilot account: o9/);
@@ -364,4 +371,14 @@ test('settings setters: dryRun validates exactly as a write and returns the woul
   assert.equal(prov.baseUrl, 'http://127.0.0.1:8080/v1');
   await assert.rejects(() => updateProvider('openai', { maxConcurrent: 999 }, { dryRun: true }), /maxConcurrent must be an integer/);
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), start, 'nothing was written');
+});
+
+test('mergeEditPatch: re-pointing an entry to another provider or upstream model drops the old model\'s effort levels unless the patch restates them', () => {
+  const cur = { id: 'copilot-gpt-5.5', upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.5', capabilities: { reasoning: true, reasoningEfforts: ['low', 'medium', 'high'] } } };
+  assert.deepEqual(mergeEditPatch(cur, { upstream: { provider: 'openai', model: 'o3' } }).upstream.capabilities, { reasoning: true });
+  assert.deepEqual(mergeEditPatch(cur, { upstream: { model: 'gpt-5.4', capabilities: { reasoningEfforts: ['low', 'high'] } } }).upstream.capabilities, { reasoning: true, reasoningEfforts: ['low', 'high'] });
+  assert.deepEqual(mergeEditPatch(cur, { upstream: { capabilities: { maxPromptTokens: 1000 } } }).upstream.capabilities, { reasoning: true, reasoningEfforts: ['low', 'medium', 'high'], maxPromptTokens: 1000 });
+  // The same id restated with padding is not a re-point (the store trims it).
+  assert.deepEqual(mergeEditPatch(cur, { upstream: { model: ' gpt-5.5 ' } }).upstream.capabilities, { reasoning: true, reasoningEfforts: ['low', 'medium', 'high'] });
+  assert.deepEqual(mergeEditPatch({ upstream: { provider: 'copilot', api: 'openai-chat', model: 'm', capabilities: { reasoningEfforts: ['low'] } } }, { upstream: { model: 'n' } }).upstream, { provider: 'copilot', api: 'openai-chat', model: 'n' });
 });

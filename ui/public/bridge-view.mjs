@@ -15,9 +15,43 @@ function h(doc, tag, cls, text) {
 }
 
 /** Mirrors model-env.mjs PROVIDER_APIS — the server validates; this is the form. */
-export const PROVIDER_APIS = { copilot: ['anthropic', 'openai-chat'], openai: ['openai-chat'], anthropic: ['anthropic'] };
+export const PROVIDER_APIS = { copilot: ['anthropic', 'openai-chat', 'openai-responses'], openai: ['openai-chat', 'openai-responses'], anthropic: ['anthropic'] };
+/** Mirrors model-env.mjs TRANSLATED_APIS: the apis the bridge translates (no passthrough). */
+export const TRANSLATED_APIS = ['openai-chat', 'openai-responses'];
 export const PROVIDER_LABELS = { copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' };
-export const API_LABELS = { anthropic: 'Anthropic Messages', 'openai-chat': 'OpenAI chat completions' };
+export const API_LABELS = { anthropic: 'Anthropic Messages', 'openai-chat': 'OpenAI chat completions', 'openai-responses': 'OpenAI Responses' };
+/** The import sheet's short API column. */
+const API_SHORT = { anthropic: 'Messages', 'openai-chat': 'chat', 'openai-responses': 'Responses' };
+
+/**
+ * The effort levels an imported model listed, stashed on the Connection block
+ * (spec §6.3) — only while the provider and the upstream model id are still the
+ * ones they came from — or null.
+ */
+function storedReasoningEfforts(conn, provider) {
+  const raw = conn && conn.dataset ? conn.dataset.reasoningEfforts : '';
+  if (!raw || conn.dataset.reasoningEffortsProvider !== provider) return null;
+  const modelIn = conn.querySelector('.mv-conn-model');
+  if ((modelIn ? modelIn.value.trim() : '') !== (conn.dataset.reasoningEffortsModel || '')) return null;
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) && list.length ? list : null;
+  } catch { return null; }
+}
+
+/** Stash (or clear) an upstream's effort levels on the Connection block: no form field edits them. */
+function stashReasoningEfforts(conn, upstream) {
+  const list = upstream && upstream.capabilities && upstream.capabilities.reasoningEfforts;
+  if (Array.isArray(list) && list.length) {
+    conn.dataset.reasoningEfforts = JSON.stringify(list);
+    conn.dataset.reasoningEffortsProvider = upstream.provider;
+    conn.dataset.reasoningEffortsModel = String(upstream.model || '').trim();
+  } else {
+    delete conn.dataset.reasoningEfforts;
+    delete conn.dataset.reasoningEffortsProvider;
+    delete conn.dataset.reasoningEffortsModel;
+  }
+}
 export const CAPABILITY_FLAGS = [['toolCalls', 'Tool calls'], ['vision', 'Vision'], ['reasoning', 'Reasoning']];
 
 /** The notice every Copilot sign-in must acknowledge (§8.2). One source of truth: the UI modal and the CLI print it. */
@@ -33,12 +67,15 @@ export const COPILOT_TERMS = Object.freeze({
   confirm: 'Continue',
 });
 
-/** One-line degradation copy for a translated (openai-chat) model, '' otherwise (§8.5). */
+/** One-line degradation copy for a translated (openai-chat / openai-responses) model, '' otherwise (§8.5). */
 export function degradationLine(m) {
-  if (!m || !m.upstream || m.upstream.api !== 'openai-chat') return '';
+  if (!m || !m.upstream || !TRANSLATED_APIS.includes(m.upstream.api)) return '';
   const caps = m.upstream.capabilities || {};
   const limit = caps.maxPromptTokens ? `, prompt limit ~${Math.round(caps.maxPromptTokens / 1000)}k tokens` : '';
-  return `translated — no thinking blocks, no WebSearch/WebFetch${limit}`;
+  const lead = m.upstream.api === 'openai-responses'
+    ? 'translated — reasoning summaries only, no WebSearch/WebFetch'
+    : 'translated — no thinking blocks, no WebSearch/WebFetch';
+  return `${lead}${limit}`;
 }
 
 /** The `bridged: <provider>` badge for a catalog card, or null. */
@@ -195,7 +232,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
         : k.keyOptional ? h(doc, 'span', 'badge green', 'local — no key needed') : h(doc, 'span', 'badge grey', 'no key'));
     main.appendChild(rh);
     main.appendChild(h(doc, 'small', 'hint', name === 'openai'
-      ? 'OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway — anything with a /chat/completions endpoint. Models run through the translation layer (no thinking blocks, no web tools).'
+      ? 'OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway — anything with a /chat/completions or /responses endpoint. Models run through the translation layer (no web tools).'
       : 'A gateway that already speaks the Anthropic Messages API but needs a key Worca holds for it. Calls pass through untouched.'));
     if (k.keySource === 'env') main.appendChild(h(doc, 'small', 'hint', `Key read from your shell env (${k.keyRef}).`));
     main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
@@ -294,7 +331,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
   const root = h(doc, 'section', 'card mv-editor mvi');
   root.appendChild(h(doc, 'h3', 'mv-editor-title', 'Import from GitHub Copilot'));
   root.appendChild(h(doc, 'small', 'hint',
-    'These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no thinking blocks, no web tools). Imported entries are priced free — Copilot bills premium requests, not tokens — and Worca counts requests per run.'));
+    'These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no web tools; reasoning arrives as summaries on the Responses API). Imported entries are priced free — Copilot bills premium requests, not tokens — and Worca counts requests per run.'));
   const list = Array.isArray(models) ? models : [];
   if (!list.length) {
     root.appendChild(h(doc, 'div', 'hist-empty', 'Copilot returned no chat models for this account.'));
@@ -306,7 +343,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
     const all = h(doc, 'input', 'mvi-all'); all.type = 'checkbox'; all.title = 'Select all importable';
     allTh.appendChild(all);
     hr.appendChild(allTh);
-    for (const t of ['Model', 'Vendor', 'Context', 'Tools', 'Vision', 'Reasoning', 'Status']) hr.appendChild(h(doc, 'th', null, t));
+    for (const t of ['Model', 'Vendor', 'Context', 'Tools', 'Vision', 'Reasoning', 'API', 'Status']) hr.appendChild(h(doc, 'th', null, t));
     thead.appendChild(hr);
     tbl.appendChild(thead);
     const tbody = h(doc, 'tbody');
@@ -328,6 +365,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       tr.appendChild(h(doc, 'td', null, yesNo(m.toolCalls)));
       tr.appendChild(h(doc, 'td', null, yesNo(m.vision)));
       tr.appendChild(h(doc, 'td', null, yesNo(m.reasoning)));
+      tr.appendChild(h(doc, 'td', 'mvi-api', API_SHORT[m.api] || '—'));
       const status = [];
       if (m.inCatalog) status.push('in catalog ✓');
       if (m.preview) status.push('preview');
@@ -450,6 +488,7 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
   const groupName = `mv-conn-mode-${editing ? model.id : 'new'}`;
   const wrap = h(doc, 'div', 'mv-conn');
   wrap.dataset.provider = upstream ? upstream.provider : '';
+  stashReasoningEfforts(wrap, upstream);
 
   const modes = h(doc, 'div', 'mv-conn-modes');
   const startMode = upstream ? 'provider' : (editing && model.env && Object.keys(model.env).length ? 'env' : 'direct');
@@ -611,28 +650,43 @@ export function applyConnectionMode(connEl) {
   }
   const note = conn.querySelector('.mv-conn-note');
   if (note) {
+    const copilotPricing = provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : '';
     note.textContent = mode !== 'provider' ? '' : api === 'openai-chat'
-      ? `Translated: no thinking blocks, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : ''}`
-      : provider === 'copilot' ? 'Copilot’s native Anthropic endpoint: thinking blocks and cache accounting arrive intact. Copilot bills premium requests, so Pricing defaults to Free.'
-        : 'Passthrough: the request reaches the endpoint untouched; only auth and headers are added.';
+      ? `Translated: no thinking blocks, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
+      : api === 'openai-responses'
+        ? `Translated to the Responses API: reasoning summaries arrive as thinking, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
+        : provider === 'copilot' ? 'Copilot’s native Anthropic endpoint: thinking blocks and cache accounting arrive intact. Copilot bills premium requests, so Pricing defaults to Free.'
+          : 'Passthrough: the request reaches the endpoint untouched; only auth and headers are added.';
   }
   const reasoning = !!conn.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]')?.checked;
   // Efforts live in the editor grid beside this block.
   const editor = conn.closest ? conn.closest('.mv-editor') : null;
   const effCbs = editor ? [...editor.querySelectorAll('.mv-effort-cb')] : [];
   const effHint = editor ? editor.querySelector('.mv-efforts-hint') : null;
-  const translatedNoReasoning = mode === 'provider' && api === 'openai-chat' && !reasoning;
+  const translated = mode === 'provider' && TRANSLATED_APIS.includes(api);
+  const translatedNoReasoning = translated && !reasoning;
+  // The model's own effort levels (carried from Import): offer only the Worca efforts it lists.
+  const levels = translated && reasoning ? storedReasoningEfforts(conn, provider) : null;
+  const offered = levels ? effCbs.map((cb) => cb.value).filter((v) => levels.includes(v)) : null;
+  const allowed = offered && !offered.length ? ['medium'] : offered;
   for (const cb of effCbs) {
     if (translatedNoReasoning) {
       cb.disabled = cb.value !== 'medium';
       if (cb.value !== 'medium') cb.checked = false; else cb.checked = true;
+    } else if (allowed) {
+      cb.disabled = !allowed.includes(cb.value);
+      if (cb.disabled) cb.checked = false;
     } else cb.disabled = false;
   }
+  // Every stored effort fell outside the model's levels: offer its levels rather than
+  // save an empty list (the server reads empty as every effort, the disabled ones too).
+  if (allowed && !effCbs.some((cb) => cb.checked)) for (const cb of effCbs) if (allowed.includes(cb.value)) cb.checked = true;
   if (effHint) {
     effHint.textContent = translatedNoReasoning
       ? 'This model has no reasoning control; effort would be ignored — only medium is offered.'
-      : mode === 'provider' && api === 'openai-chat' ? 'Maps to reasoning_effort low / medium / high — xhigh and max are not distinct.'
-        : 'All checked = every effort (the default).';
+      : levels ? `Maps to this model's effort levels: ${levels.join(', ')}.`
+        : translated ? 'Maps to reasoning_effort low / medium / high — xhigh and max are not distinct.'
+          : 'All checked = every effort (the default).';
   }
 }
 
@@ -640,6 +694,7 @@ export function applyConnectionMode(connEl) {
 export function setModelUpstream(connEl, upstream) {
   const conn = connEl.classList && connEl.classList.contains('mv-conn') ? connEl : connEl.querySelector('.mv-conn');
   if (!conn) return;
+  stashReasoningEfforts(conn, upstream);
   const mode = upstream ? 'provider' : 'direct';
   for (const rb of conn.querySelectorAll('.mv-conn-mode-rb')) rb.checked = rb.value === mode;
   if (upstream) {
@@ -689,6 +744,9 @@ export function collectConnection(connEl) {
     const v = (inp.value || '').trim();
     if (v !== '') capabilities[inp.dataset.limit] = Number(v);
   }
+  // The model's effort levels ride along unedited while it stays a translated reasoning model on the same provider.
+  const levels = storedReasoningEfforts(conn, provider);
+  if (levels && capabilities.reasoning && TRANSLATED_APIS.includes(api)) capabilities.reasoningEfforts = levels;
   upstream.capabilities = capabilities;
   return { upstream };
 }

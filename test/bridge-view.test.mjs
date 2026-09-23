@@ -110,14 +110,14 @@ test('connection: create defaults to direct with the provider block hidden; prov
   assert.equal(conn.querySelector('.mv-conn-body').hidden, false);
   assert.equal(conn.dataset.provider, 'copilot');
   const api = conn.querySelector('.mv-conn-api');
-  assert.deepEqual([...api.options].map((o) => o.value), ['anthropic', 'openai-chat']);
+  assert.deepEqual([...api.options].map((o) => o.value), ['anthropic', 'openai-chat', 'openai-responses']);
   assert.equal(conn.querySelector('.mv-conn-adv').hidden, true);          // copilot: no key/base URL
   assert.match(conn.querySelector('.mv-conn-provider-hint').textContent, /Connected as @octo/);
   assert.match(conn.querySelector('.mv-conn-note').textContent, /native Anthropic endpoint/);
   conn.querySelector('.mv-conn-provider').value = 'openai';
   applyConnectionMode(conn);
-  assert.deepEqual([...api.options].map((o) => o.value), ['openai-chat']);
-  assert.equal(api.disabled, true);
+  assert.deepEqual([...api.options].map((o) => o.value), ['openai-chat', 'openai-responses']);
+  assert.equal(api.disabled, false);
   assert.equal(conn.querySelector('.mv-conn-adv').hidden, false);
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Translated/);
   conn.querySelector('.mv-conn-provider').value = 'anthropic';
@@ -224,4 +224,92 @@ test('providers card: every key-based row carries an empty result pill beside it
     assert.equal(pill.className, 'mv-pv-result', 'the is-on state is added by the flow');
     assert.ok(row.querySelector('.mv-pv-test'), 'and the button it belongs to');
   }
+});
+
+test('import sheet: an API column names the wire protocol each model will use', () => {
+  const sheet = renderImportSheet([
+    { id: 'gpt-6-astra', name: 'GPT-6 Astra', vendor: 'OpenAI', api: 'openai-responses', pickerEnabled: true, policyState: 'enabled' },
+    { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', vendor: 'Google', api: 'openai-chat', pickerEnabled: true, policyState: 'enabled' },
+    { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', vendor: 'Anthropic', api: 'anthropic', pickerEnabled: true, policyState: 'enabled' },
+    { id: 'old', name: 'Old', vendor: 'OpenAI', pickerEnabled: true, policyState: 'enabled' },
+  ], { doc });
+  assert.deepEqual([...sheet.querySelectorAll('thead th')].slice(1).map((t) => t.textContent), ['Model', 'Vendor', 'Context', 'Tools', 'Vision', 'Reasoning', 'API', 'Status']);
+  assert.deepEqual([...sheet.querySelectorAll('.mvi-api')].map((t) => t.textContent), ['Responses', 'chat', 'Messages', '—']);
+});
+
+test('connection + cards: the Responses API is offered for copilot and openai, labelled, and described', () => {
+  const conn = renderConnectionSection(null, { doc, providers: PROVIDERS });
+  setModelUpstream(conn, { provider: 'openai', api: 'openai-responses', model: 'gpt-5-codex', capabilities: { reasoning: true } });
+  assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
+  assert.match(conn.querySelector('.mv-conn-note').textContent, /^Translated to the Responses API: reasoning summaries arrive as thinking, WebSearch\/WebFetch withheld/);
+  assert.equal(collectConnection(conn).upstream.api, 'openai-responses');
+  setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra' });
+  assert.match(conn.querySelector('.mv-conn-note').textContent, /Copilot bills premium requests, so Pricing defaults to Free\.$/);
+  assert.equal(degradationLine({ upstream: { api: 'openai-responses', capabilities: { maxPromptTokens: 272000 } } }), 'translated — reasoning summaries only, no WebSearch/WebFetch, prompt limit ~272k tokens');
+  assert.equal(degradationLine({ upstream: { api: 'openai-chat', capabilities: {} } }), 'translated — no thinking blocks, no WebSearch/WebFetch');
+  assert.match(bridgedBadge({ bridged: 'copilot', upstream: { model: 'gpt-6-astra', api: 'openai-responses' } }, { doc }).title, /as gpt-6-astra \(OpenAI Responses\)/);
+});
+
+test('editor: stored efforts all outside the model\'s levels fall back to the levels it offers — never an empty (= every effort) save', () => {
+  const stored = { id: 'copilot-gpt-5.4', label: 'GPT-5.4 (Copilot)', efforts: ['max'], upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.4', capabilities: { reasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'] } } };
+  const editor = renderModelEditor(stored, EFFORTS, { doc, providers: PROVIDERS });
+  doc.body.appendChild(editor);
+  try {
+    applyConnectionModeIn(editor);
+    assert.deepEqual([...editor.querySelectorAll('.mv-effort-cb')].map((c) => [c.value, c.checked, c.disabled]), [['medium', true, false], ['high', true, false], ['xhigh', true, false], ['max', false, true]]);
+    assert.deepEqual(collectModelEditor(editor).body.efforts, ['medium', 'high', 'xhigh']);
+  } finally {
+    editor.remove();
+  }
+});
+
+test('editor: an imported Responses entry keeps its effort list on save, offers only the listed efforts, and drops the list when Reasoning is unchecked', () => {
+  const stored = {
+    id: 'copilot-gpt-5.4', label: 'GPT-5.4 (Copilot)',
+    upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.4', capabilities: { toolCalls: true, vision: true, reasoning: true, maxPromptTokens: 272000, reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'] } },
+    cost: { free: true },
+  };
+  const editor = renderModelEditor(stored, EFFORTS, { doc, providers: PROVIDERS });
+  doc.body.appendChild(editor);
+  try {
+    applyConnectionModeIn(editor);
+    const cbs = [...editor.querySelectorAll('.mv-effort-cb')];
+    assert.deepEqual(cbs.map((c) => [c.value, c.disabled]), [['medium', false], ['high', false], ['xhigh', false], ['max', true]]);
+    assert.equal(cbs[3].checked, false);
+    assert.equal(editor.querySelector('.mv-efforts-hint').textContent, "Maps to this model's effort levels: none, low, medium, high, xhigh.");
+    const saved = collectModelEditor(editor).body;
+    assert.deepEqual(saved.upstream.capabilities.reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh']);
+    assert.deepEqual(saved.efforts, ['medium', 'high', 'xhigh']);
+    editor.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = false;
+    applyConnectionModeIn(editor);
+    assert.equal('reasoningEfforts' in collectModelEditor(editor).body.upstream.capabilities, false);
+    editor.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = true;
+    editor.querySelector('.mv-conn-api').value = 'openai-chat';                       // chat keeps the list too (it maps effort the same way)
+    applyConnectionModeIn(editor);
+    assert.deepEqual(collectModelEditor(editor).body.upstream.capabilities.reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh']);
+    editor.querySelector('.mv-conn-api').value = 'anthropic';                          // passthrough: the CLI speaks effort itself
+    applyConnectionModeIn(editor);
+    assert.equal('reasoningEfforts' in collectModelEditor(editor).body.upstream.capabilities, false);
+    editor.querySelector('.mv-conn-api').value = 'openai-chat';
+    applyConnectionModeIn(editor);
+    const modelIn = editor.querySelector('.mv-conn-model');
+    const maxCb = () => [...editor.querySelectorAll('.mv-effort-cb')].find((c) => c.value === 'max');
+    modelIn.value = 'gpt-5.4-mini';                                                    // another upstream model: gpt-5.4's levels do not apply
+    applyConnectionModeIn(editor);
+    assert.equal('reasoningEfforts' in collectModelEditor(editor).body.upstream.capabilities, false);
+    assert.equal(maxCb().disabled, false);
+    modelIn.value = ' gpt-5.4 ';                                                        // back to it: the levels return
+    applyConnectionModeIn(editor);
+    assert.deepEqual(collectModelEditor(editor).body.upstream.capabilities.reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh']);
+    assert.equal(maxCb().disabled, true);
+    editor.querySelector('.mv-conn-provider').value = 'openai';                       // another provider: Copilot's levels do not apply
+    applyConnectionModeIn(editor);
+    assert.equal('reasoningEfforts' in collectModelEditor(editor).body.upstream.capabilities, false);
+  } finally {
+    editor.remove();
+  }
+  // Loading a different upstream (Edit a copy / import prefill) replaces the stash — even on the same provider and model.
+  const conn = renderConnectionSection(stored, { doc });
+  setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.4', capabilities: { reasoning: true } });
+  assert.equal('reasoningEfforts' in collectConnection(conn).upstream.capabilities, false);
 });

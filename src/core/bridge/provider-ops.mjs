@@ -11,10 +11,10 @@ import {
   copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn,
   listGlobalModels, addGlobalModel, updateGlobalModel,
 } from '../settings.mjs';
-import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS, isUpstreamBaseUrl } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, EFFORTS } from '../model-env.mjs';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
-  listCopilotModels, copilotUsage, catalogEntryForCopilotModel,
+  listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
 } from './providers/copilot.mjs';
 import { keyOptional } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
@@ -139,14 +139,15 @@ export async function copilotModelsForImport({ fetch: f } = {}) {
   if (!token) throw Object.assign(new Error('not signed in to GitHub Copilot'), { code: 'NOT_SIGNED_IN' });
   const list = await listCopilotModels(token, { accountType: c.accountType, fetch: f });
   const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
-  return list.map((m) => ({ ...m, catalogId: `copilot-${m.id}`, inCatalog: have.has(`copilot-${m.id}`.toLowerCase()) }))
+  return list.map((m) => ({ ...m, api: copilotApiFor(m), catalogId: `copilot-${m.id}`, inCatalog: have.has(`copilot-${m.id}`.toLowerCase()) }))
     .sort((a, b) => (Number(b.pickerEnabled) - Number(a.pickerEnabled)) || a.name.localeCompare(b.name));
 }
 
 /**
  * Import Copilot models into the catalog (§8.4). A new id gets the full
- * import shape; an existing `copilot-*` id only has its capabilities (and api,
- * should the vendor route change) refreshed — a user-edited label, efforts or
+ * import shape; an existing `copilot-*` id has its api, upstream model and
+ * capabilities refreshed, and its efforts widened only when they are the old
+ * importer's automatic medium-only default — a user-edited label, efforts or
  * pricing is never overwritten.
  * @param {string[]} ids  Copilot model ids (not catalog ids)
  * @returns {Promise<{created:string[], updated:string[], skipped:string[]}>}
@@ -164,7 +165,19 @@ export async function importCopilotModels(ids, { fetch: f } = {}) {
     if (m.inCatalog) {
       const current = listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
       if (!current || !current.upstream || current.upstream.provider !== 'copilot') { skipped.push(id); continue; }
-      await updateGlobalModel(current.id, { upstream: { ...current.upstream, api: entry.upstream.api, model: entry.upstream.model, capabilities: entry.upstream.capabilities } });
+      const patch = { upstream: { ...current.upstream, api: entry.upstream.api, model: entry.upstream.model, capabilities: entry.upstream.capabilities } };
+      // Before Copilot listed effort levels, a translated model the id regex missed
+      // was stored non-reasoning and trimmed to medium. Widen exactly that automatic
+      // default — never a list the user chose: a reasoning entry pinned to medium
+      // stays, and an Anthropic entry was never trimmed, so its medium is the user's.
+      const autoMediumOnly = current.upstream.api !== 'anthropic' && entry.upstream.api !== 'anthropic'
+        && Array.isArray(current.efforts) && current.efforts.length === 1 && current.efforts[0] === 'medium'
+        && !(current.upstream.capabilities && current.upstream.capabilities.reasoning === true);
+      if (autoMediumOnly) {
+        const next = entry.efforts === undefined ? [...EFFORTS] : entry.efforts;
+        if (!(next.length === 1 && next[0] === 'medium')) patch.efforts = next;
+      }
+      await updateGlobalModel(current.id, patch);
       updated.push(current.id);
     } else {
       await addGlobalModel(entry);
@@ -206,7 +219,7 @@ export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
 
 /**
  * Import endpoint models into the catalog. A new id gets the full entry; an existing one keeps the
- * label, efforts and pricing you edited and only has its upstream refreshed — the Copilot rule.
+ * label, efforts and pricing you edited and only has its upstream refreshed.
  * @param {string[]} ids  model ids as the endpoint reports them (not catalog ids)
  * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>, server:string, baseUrl:string}>}
  */

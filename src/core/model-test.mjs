@@ -9,6 +9,7 @@ import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv } from './config.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { classifyError } from './recoverable-error.mjs';
+import { bridgeEvents } from './bridge/telemetry.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
 const REPLY_CAP = 100;
@@ -56,6 +57,17 @@ export async function testModel(id, { signal, bin, run = runClaude } = {}) {
   }
   const timer = setTimeout(() => ctrl.abort(), TEST_TIMEOUT_MS);
   timer.unref?.();
+  // A bridged model's failure is recorded by the in-process bridge with the
+  // upstream's reason; the CLI's stderr for such a run carries only warnings
+  // (unrecognized_model, connectors disabled), so that reason wins. The test's
+  // own call is untagged (resolveModelEnv(id) passes no execution id); a
+  // pipeline node run on the same model is tagged and ignored. An untagged
+  // call (Ask, titles) failing on the same id during the Test is picked up
+  // too — rare, and still a real failure of this model.
+  const want = String(id || '').toLowerCase();
+  let bridgeFailure = null;
+  const onBridgeFailure = (e) => { if (e && !e.tag && String(e.catalogId || '').toLowerCase() === want) bridgeFailure = e; };
+  bridgeEvents.on('failure', onBridgeFailure);
   try {
     const { text } = await run({
       cwd: process.cwd(),
@@ -76,17 +88,29 @@ export async function testModel(id, { signal, bin, run = runClaude } = {}) {
     }
     return { ok: true, text: reply.slice(0, REPLY_CAP) };
   } catch (err) {
-    if (err && err.name === 'AbortError') {
+    // The Test's own timer can fire while the CLI still retries a failure the
+    // bridge booked (it retries a 5xx well past TEST_TIMEOUT_MS): that failure
+    // is the answer. A Test the caller cancelled stays a timeout.
+    const booked = bridgeFailure && bridgeFailure.message && !(signal && signal.aborted);
+    if (err && err.name === 'AbortError' && !booked) {
       return { ok: false, errorClass: 'timeout', message: `Timed out after ${TEST_TIMEOUT_MS / 1000}s`, hint: hintFor('timeout') };
     }
-    const message = err && err.message ? err.message : String(err);
-    const errorClass = (err && err.errorClass) || classifyError(message);
+    const message = bridgeFailure && bridgeFailure.message
+      ? String(bridgeFailure.message)
+      : (err && err.message ? err.message : String(err));
+    const errorClass = bridgeFailure && bridgeFailure.message
+      ? classifyError(message)
+      : ((err && err.errorClass) || classifyError(message));
     // A bridged model whose provider is not usable (model-bridge-design.md
     // §8.5): resolveModelEnv fails fast with `bridgeReason`, and the hint
-    // names the fix instead of the generic credential advice.
-    const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider) : hintFor(errorClass);
+    // names the fix instead of the generic credential advice. A bridge failure
+    // classed `network` ("endpoint unreachable", "upstream error (500)") is not
+    // an ANTHROPIC_BASE_URL problem: no hint, so the UI shows the message.
+    const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider)
+      : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? '' : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };
   } finally {
+    bridgeEvents.off('failure', onBridgeFailure);
     clearTimeout(timer);
     if (signal) signal.removeEventListener?.('abort', onOuterAbort);
   }

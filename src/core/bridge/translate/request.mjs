@@ -8,42 +8,19 @@
 //
 // Scope is what Claude Code actually sends. Reference implementations for the
 // edge cases: ericc-ch/copilot-api, voidsteed/copilot-proxy-api (both MIT).
+// Helpers shared with the Responses translator live in common.mjs.
 
-/** Anthropic server-side tool types — no chat/completions equivalent (§5.3). */
-export const SERVER_TOOL_RE = /^(web_search|web_fetch|computer|text_editor|bash|code_execution|memory)(_\d{8})?$/;
+import {
+  SERVER_TOOL_RE, budgetToReasoningEffort, textOf, imageUrl, flattenToolResult,
+  referencedToolNames, requestedEffort, mapEffort,
+} from './common.mjs';
 
-/** Efforts (CLI `--effort` -> `output_config.effort`) -> OpenAI reasoning_effort. */
-const EFFORT_TO_REASONING = { low: 'low', medium: 'medium', high: 'high', xhigh: 'high', max: 'high' };
+export { SERVER_TOOL_RE, budgetToReasoningEffort };
 
-/** Thinking budget bands -> reasoning_effort (§5.1). */
-export function budgetToReasoningEffort(budget) {
-  const n = Number(budget);
-  if (!Number.isFinite(n) || n <= 0) return 'medium';
-  if (n < 4000) return 'low';
-  if (n < 16000) return 'medium';
-  return 'high';
-}
-
-/** Text of a block list (text blocks only), joined with blank lines. */
-function textOf(content) {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text)
-    .join('\n\n');
-}
-
-/** An Anthropic image block -> chat/completions image_url part (data URI). */
+/** An Anthropic image block -> chat/completions image_url part (data URI), or null. */
 function imagePart(block) {
-  const src = block.source || {};
-  if (src.type === 'base64' && src.media_type && src.data) {
-    return { type: 'image_url', image_url: { url: `data:${src.media_type};base64,${src.data}` } };
-  }
-  if (src.type === 'url' && typeof src.url === 'string') {
-    return { type: 'image_url', image_url: { url: src.url } };
-  }
-  return null;
+  const url = imageUrl(block);
+  return url ? { type: 'image_url', image_url: { url } } : null;
 }
 
 /**
@@ -81,29 +58,10 @@ function compact(parts) {
   return parts;
 }
 
-/** Flatten a tool_result's content to text; images come back separately (§5.2). */
-function toolResultContent(content, caps, warn) {
-  if (typeof content === 'string') return { text: content, images: [] };
-  if (!Array.isArray(content)) return { text: content == null ? '' : String(content), images: [] };
-  const texts = [];
-  const images = [];
-  for (const b of content) {
-    if (!b || typeof b !== 'object') continue;
-    if (b.type === 'text' && typeof b.text === 'string') texts.push(b.text);
-    // ToolSearch's result: the named tool is now in `tools` on this request.
-    else if (b.type === 'tool_reference') texts.push(`Tool loaded: ${b.tool_name || b.name || 'unknown'}`);
-    else if (b.type === 'image') {
-      if (caps.vision === false) { warn('image'); texts.push('[image omitted: model has no vision]'); }
-      else { const p = imagePart(b); if (p) images.push(p); else warn('image'); }
-    } else warn(b.type);
-  }
-  return { text: texts.join('\n\n'), images };
-}
-
 /**
  * Translate one Messages API request body.
  * @param {object} body  the Anthropic request as the CLI sent it
- * @param {{upstreamModel:string, capabilities?:{toolCalls?:boolean, vision?:boolean, reasoning?:boolean, maxOutputTokens?:number}}} opts
+ * @param {{upstreamModel:string, capabilities?:{toolCalls?:boolean, vision?:boolean, reasoning?:boolean, maxOutputTokens?:number, reasoningEfforts?:string[]}}} opts
  * @returns {{body?:object, warnings:string[], error?:{type:string,message:string}}}
  */
 export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
@@ -157,9 +115,9 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
     const rest = blocks.filter((b) => b && b.type !== 'tool_result');
     const relocated = [];
     for (const r of results) {
-      const { text, images } = toolResultContent(r.content, caps, warn);
+      const { text, imageUrls } = flattenToolResult(r.content, caps, warn);
       messages.push({ role: 'tool', tool_call_id: String(r.tool_use_id || ''), content: text || (r.is_error ? 'error' : '') });
-      relocated.push(...images);
+      relocated.push(...imageUrls.map((url) => ({ type: 'image_url', image_url: { url } })));
     }
     const parts = userParts(rest, caps, warn);
     parts.push(...relocated);
@@ -175,14 +133,7 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
   }
 
   // ── tools ──
-  const referenced = new Set();
-  for (const m of src) {
-    if (!m || !Array.isArray(m.content)) continue;
-    for (const b of m.content) {
-      if (!b || b.type !== 'tool_result' || !Array.isArray(b.content)) continue;
-      for (const r of b.content) if (r && r.type === 'tool_reference' && r.tool_name) referenced.add(String(r.tool_name));
-    }
-  }
+  const referenced = referencedToolNames(src);
   let tools;
   if (Array.isArray(body.tools) && body.tools.length) {
     if (caps.toolCalls === false) return fail(`model ${upstreamModel} does not support tool calls`);
@@ -190,8 +141,7 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
     for (const t of body.tools) {
       if (!t || typeof t !== 'object') continue;
       // Tool search: a deferred tool is sent only once a ToolSearch result has
-      // referenced it (the Anthropic API expands tool_reference blocks against
-      // these definitions server-side; chat/completions has no such step).
+      // referenced it (common.mjs#referencedToolNames).
       if (t.defer_loading === true && !referenced.has(String(t.name || ''))) continue;
       if (t.type && t.type !== 'custom' && SERVER_TOOL_RE.test(String(t.type))) {
         return fail(`tool ${JSON.stringify(t.name || t.type)} is an Anthropic server tool and cannot run through ${upstreamModel} (openai-chat bridge)`);
@@ -235,15 +185,8 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
   if (body.metadata !== undefined) warn('metadata');
 
   // ── reasoning ──
-  let effort;
-  if (body.thinking && typeof body.thinking === 'object' && body.thinking.type === 'enabled') {
-    effort = budgetToReasoningEffort(body.thinking.budget_tokens);
-  }
-  const oc = body.output_config;
-  if (oc && typeof oc === 'object' && typeof oc.effort === 'string' && EFFORT_TO_REASONING[oc.effort]) {
-    effort = EFFORT_TO_REASONING[oc.effort];
-  }
-  if (effort) { if (reasoning) out.reasoning_effort = effort; else warn('thinking'); }
+  const effort = requestedEffort(body);
+  if (effort) { if (reasoning) out.reasoning_effort = mapEffort(effort, caps); else warn('thinking'); }
 
   // ── stream ──
   if (body.stream === true) { out.stream = true; out.stream_options = { include_usage: true }; }

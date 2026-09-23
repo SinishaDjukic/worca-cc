@@ -71,7 +71,7 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 | `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options` |
 | `taskSources[].multiProfile` | `true` → one install holds several independent configurations (two Jira servers, two orgs), each with its own config/secrets/state. Users create profiles in the UI and bind each project/workspace to one. Omit it and the source uses a single implicit `default` profile — identical to before profiles existed |
 | `taskSources[].inputs[]` | per-run UI — see next table. **Exactly one `task-browser` required** |
-| `models[]` | catalog entries: `id`, `label`, `efforts`, `env` (literal or `{"secret": "<key>"}`), `cost` (`{free:true}` \| `{perMtok:{…}}`), and `upstream` for a bridged model — `{provider: "copilot"\|"openai"\|"anthropic", api: "anthropic"\|"openai-chat", model, baseUrl?, apiKey? (a `${VAR}` ref only, never a literal), headers?, capabilities?}`. A `copilot` entry resolves against each user's own sign-in |
+| `models[]` | catalog entries: `id`, `label`, `efforts`, `env` (literal or `{"secret": "<key>"}`), `cost` (`{free:true}` \| `{perMtok:{…}}`), and `upstream` for a bridged model — `{provider: "copilot"\|"openai"\|"anthropic", api: "anthropic"\|"openai-chat"\|"openai-responses", model, baseUrl?, apiKey? (a `${VAR}` ref only, never a literal), headers?, capabilities? (toolCalls, vision, reasoning, maxPromptTokens, maxOutputTokens, reasoningEfforts)}`. A `copilot` entry resolves against each user's own sign-in |
 | `modelSecrets[]` | `{key, label}` — the secrets `models[].env` may reference; prompted for at install |
 
 ## Marketplace manifest (repo-level, optional)

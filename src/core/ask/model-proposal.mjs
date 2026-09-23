@@ -10,7 +10,7 @@
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in and its
 // notice stay on the Providers card.
-import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
 const MAX_IMPORT = 40;
@@ -112,6 +112,17 @@ export function mergeEditPatch(current, patch) {
       } else if (isClear(v)) delete next[k];
       else next[k] = v;
     }
+    // A model's effort levels (capabilities.reasoningEfforts) belong to that model on that
+    // provider: re-pointing the entry drops them unless the patch restates them — the editor's rule.
+    // Ids compare trimmed, as the store keeps them (assertModelUpstream) and the editor compares them.
+    const cur = current && current.upstream ? current.upstream : {};
+    const same = (a, b) => String(a ?? '').trim() === String(b ?? '').trim();
+    const restated = isObj(patch.upstream.capabilities) && 'reasoningEfforts' in patch.upstream.capabilities;
+    if ((!same(next.provider, cur.provider) || !same(next.model, cur.model)) && !restated && next.capabilities && next.capabilities.reasoningEfforts) {
+      const caps = { ...next.capabilities };
+      delete caps.reasoningEfforts;
+      if (Object.keys(caps).length) next.capabilities = caps; else delete next.capabilities;
+    }
     out.upstream = next;
   }
   return out;
@@ -188,7 +199,7 @@ export function createModelChangeValidator(r) {
       if (!ready.ok && !keyRef) w.push(`${ready.message} — the model shows "needs sign-in" until then`);
       const caps = m.upstream.capabilities || {};
       const base = m.upstream.baseUrl || (m.upstream.provider !== 'copilot' ? r.providerConfig(m.upstream.provider).baseUrl : null);
-      if (m.upstream.api === 'openai-chat' && !caps.maxPromptTokens) {
+      if (isTranslatedApi(m.upstream.api) && !caps.maxPromptTokens) {
         w.push('no prompt limit (capabilities.maxPromptTokens) — the CLI then assumes a 200k window and compacts too late; set it to what the endpoint serves');
       } else if (base && isLocalBaseUrl(base) && caps.maxPromptTokens < LOCAL_MIN_WINDOW) {
         w.push(`a ${caps.maxPromptTokens}-token window is too small for pipelines — serve at least ${LOCAL_MIN_WINDOW} (llama.cpp -c ${LOCAL_MIN_WINDOW}) and raise the limit to match`);
@@ -295,7 +306,7 @@ export function createModelChangeValidator(r) {
     const byId = new Map(list.map((m) => [m.id, m]));
     const unknown = ids.filter((id) => !byId.has(id));
     if (unknown.length) return { ok: false, errors: [`not offered to this Copilot account: ${unknown.join(', ')} — list_copilot_models shows what is`] };
-    const rows = ids.map((id) => { const m = byId.get(id); return { field: m.name || id, before: m.inCatalog ? 'in catalog' : null, after: m.inCatalog ? 'capabilities refreshed' : `added as copilot-${id}` }; });
+    const rows = ids.map((id) => { const m = byId.get(id); return { field: m.name || id, before: m.inCatalog ? 'in catalog' : null, after: m.inCatalog ? 'API and capabilities refreshed' : `added as copilot-${id}` }; });
     return { ok: true, card: {
       type: 'model', kind: 'import_copilot', target: 'copilot',
       summary: `Import ${ids.length} Copilot model${ids.length === 1 ? '' : 's'}`, note, rows, warnings: [], change: { ids },

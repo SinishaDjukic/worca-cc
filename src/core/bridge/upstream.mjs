@@ -7,7 +7,9 @@
 import { toChatRequest } from './translate/request.mjs';
 import { ChatStreamTranslator, SseDataParser, serializeSse } from './translate/stream.mjs';
 import { toMessagesResponse } from './translate/response.mjs';
-import { mapUpstreamError, mapNetworkError, bridgeErrors, PAYLOAD_CEILING_BYTES } from './errors.mjs';
+import { toResponsesRequest } from './translate/responses-request.mjs';
+import { ResponsesStreamTranslator, toMessagesResponseFromResponses } from './translate/responses-stream.mjs';
+import { mapUpstreamError, mapNetworkError, bridgeErrors, anthropicError, isFailedResponseOverflow, PAYLOAD_CEILING_BYTES } from './errors.mjs';
 import { copilotToken, invalidateCopilotToken, copilotApiHost, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
 import { upstreamSettings, providerReadiness } from './registry.mjs';
 import { KeyedSemaphore } from './semaphore.mjs';
@@ -36,7 +38,7 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
     const build = async (force) => {
       const { token, apiHost } = await copilotToken(us.githubToken, { fetch: f, force });
       const host = apiHost || copilotApiHost(us.accountType);
-      const path = us.api === 'anthropic' ? '/v1/messages' : '/chat/completions';
+      const path = us.api === 'anthropic' ? '/v1/messages' : us.api === 'openai-responses' ? '/responses' : '/chat/completions';
       const headers = { ...copilotHeaders(token, { vision, initiator }), ...us.headers };
       if (us.api === 'anthropic') {
         headers['anthropic-version'] = requestHeaders['anthropic-version'] || '2023-06-01';
@@ -62,7 +64,7 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
   }
   const base = (us.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   return {
-    url: `${base}/chat/completions`,
+    url: `${base}/${us.api === 'openai-responses' ? 'responses' : 'chat/completions'}`,
     headers: { 'content-type': 'application/json', ...(us.apiKey ? { authorization: `Bearer ${us.apiKey}` } : {}), ...us.headers },
     provider: us.provider,
     initiator,
@@ -96,7 +98,8 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
   if (us.api === 'anthropic') {
     outBody = { ...body, model: us.model };
   } else {
-    const t = toChatRequest(body, { upstreamModel: us.model, capabilities: us.capabilities });
+    const responses = us.api === 'openai-responses';
+    const t = (responses ? toResponsesRequest : toChatRequest)(body, { upstreamModel: us.model, capabilities: us.capabilities });
     if (t.error) {
       const e = bridgeErrors.unsupported(t.error.message);
       recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: e.status, message: e.body.error.message });
@@ -105,7 +108,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     for (const w of t.warnings) {
       const line = w === 'max_tokens clamped'
         ? 'max_tokens clamped to the model\'s output limit'
-        : `${w} has no chat/completions equivalent — dropped`;
+        : `${w} has no ${responses ? 'Responses API' : 'chat/completions'} equivalent — dropped`;
       warnOnce(`${entry.id}:${w}`, `[worca] bridge: model ${JSON.stringify(entry.id)}: ${line}`, log);
     }
     outBody = t.body;
@@ -176,11 +179,35 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
 
     if (!streaming) {
       const j = await res.json();
-      return reply.json(200, toMessagesResponse(j, { model: entry.id }));
+      if (us.api === 'openai-responses' && j && j.status === 'failed') {
+        // A buffered Responses body reports its failure with HTTP 200: answer it as the error it is.
+        const fe = j.error && typeof j.error === 'object' ? j.error : {};
+        const e = isFailedResponseOverflow(fe.code, fe.message)
+          ? bridgeErrors.tooLarge()
+          : anthropicError(502, 'api_error', `${us.provider}: upstream error — ${fe.message || fe.code || 'the response failed'}`);
+        recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: 200, message: e.body.error.message });
+        return reply.json(e.status, e.body);
+      }
+      return reply.json(200, us.api === 'openai-responses'
+        ? toMessagesResponseFromResponses(j, { model: entry.id, upstreamModel: us.model })
+        : toMessagesResponse(j, { model: entry.id }));
     }
 
     reply.status(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-    const translator = new ChatStreamTranslator({ model: entry.id });
+    const translator = us.api === 'openai-responses'
+      ? new ResponsesStreamTranslator({ model: entry.id, upstreamModel: us.model })
+      : new ChatStreamTranslator({ model: entry.id });
+    // A Responses stream can fail mid-flight (response.failed / error): book it
+    // like an upstream refusal, so the Test button can name the reason. The
+    // chat stream's events pass through untouched.
+    const booked = (events) => {
+      if (us.api === 'openai-responses') {
+        for (const e of events) {
+          if (e.event === 'error') recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: 200, message: e.data.error.message });
+        }
+      }
+      return events;
+    };
     const parser = new SseDataParser();
     const decoder = new TextDecoder();
     let ping = setInterval(() => reply.write('event: ping\ndata: {"type":"ping"}\n\n'), PING_INTERVAL_MS);
@@ -191,14 +218,14 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         for await (const chunk of res.body) {
           const text = decoder.decode(chunk, { stream: true });
           for (const obj of parser.feed(text)) {
-            const events = translator.push(obj);
+            const events = booked(translator.push(obj));
             if (events.length) { reply.write(serializeSse(events)); bump(); }
           }
           if (parser.done) break;
         }
-        for (const obj of parser.end()) reply.write(serializeSse(translator.push(obj)));
+        for (const obj of parser.end()) reply.write(serializeSse(booked(translator.push(obj))));
       }
-      reply.write(serializeSse(translator.finish()));
+      reply.write(serializeSse(booked(translator.finish())));
     } finally {
       clearInterval(ping);
     }

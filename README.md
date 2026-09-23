@@ -238,7 +238,7 @@ See [`docs/team-policy.md`](docs/team-policy.md).
   in-process bridge lets the Claude Code CLI run against a Copilot subscription
   (Claude models through Copilot's native Anthropic endpoint, thinking intact;
   GPT, Gemini and the rest through a translation layer) or any
-  `/chat/completions` endpoint — no LiteLLM, no second daemon. Sign in once on
+  `/chat/completions` or `/responses` endpoint — no LiteLLM, no second daemon. Sign in once on
   Settings › Models › Providers, import Copilot's models, pick them anywhere.
   See [`docs/models.md`](docs/models.md).
 

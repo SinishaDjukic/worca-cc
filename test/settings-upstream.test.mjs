@@ -13,7 +13,7 @@ import {
   providerConfig, allProviders, updateProvider, providerSecretSet, resolveProviderSecret,
   copilotTermsAcknowledged, acknowledgeCopilotTerms, clearCopilotSignIn, readSettings,
 } from '../src/core/settings.mjs';
-import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, COPILOT_TERMS_VERSION } from '../src/core/model-env.mjs';
+import { assertModelUpstream, assertModelCapabilities, upstreamEnvConflict, bridgeExcludedTools, isTranslatedApi, UPSTREAM_APIS, COPILOT_TERMS_VERSION } from '../src/core/model-env.mjs';
 import { normalizeManifest } from '../src/core/plugin-manifest.mjs';
 import { normalizePolicyDoc } from '../src/core/policy/registry.mjs';
 
@@ -173,4 +173,30 @@ test('team policy: upstream shipped, a literal key drops the entry', () => {
   assert.deepEqual(models.map((m) => m.id), ['pol-gpt']);
   assert.equal(models[0].upstream.model, 'g');
   assert.ok((doc.warnings || []).some((w) => /pol-bad.*\$\{VAR\}/.test(w)));
+});
+
+test('openai-responses api + reasoningEfforts capability: accepted where allowed, validated, normalized, stored', async () => {
+  assert.deepEqual(UPSTREAM_APIS, ['anthropic', 'openai-chat', 'openai-responses']);
+  assert.deepEqual(
+    assertModelUpstream({ provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra', capabilities: { reasoning: true, reasoningEfforts: ['max', 'low', 'medium', 'low'] } }),
+    { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra', capabilities: { reasoning: true, reasoningEfforts: ['low', 'medium', 'max'] } },
+  );
+  assert.equal(assertModelUpstream({ provider: 'openai', api: 'openai-responses', model: 'gpt-5-codex' }).api, 'openai-responses');
+  assert.throws(() => assertModelUpstream({ provider: 'anthropic', api: 'openai-responses', model: 'm' }), /cannot be driven through api openai-responses/);
+  assert.throws(() => assertModelCapabilities({ reasoningEfforts: 'high' }), /reasoningEfforts must be an array of effort levels/);
+  assert.throws(() => assertModelCapabilities({ reasoningEfforts: ['turbo'] }), /reasoningEfforts: unknown level "turbo" — allowed: none, minimal, low, medium, high, xhigh, max/);
+  assert.equal(assertModelCapabilities({ reasoningEfforts: [] }), undefined);
+  assert.equal(assertModelCapabilities({ reasoningEfforts: null }), undefined);
+  assert.throws(() => assertModelCapabilities({ colour: true }), /allowed: toolCalls, vision, reasoning, maxPromptTokens, maxOutputTokens, reasoningEfforts/);
+  assert.deepEqual(bridgeExcludedTools({ api: 'openai-responses' }), ['WebSearch', 'WebFetch']);
+  assert.equal(isTranslatedApi('openai-responses'), true);
+  assert.equal(isTranslatedApi('openai-chat'), true);
+  assert.equal(isTranslatedApi('anthropic'), false);
+  assert.equal(isTranslatedApi(undefined), false);
+  await withSandbox(async () => {
+    await addGlobalModel({ id: 'copilot-gpt-6-astra', upstream: { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra', capabilities: { reasoning: true, reasoningEfforts: ['low', 'high'] } } });
+    const stored = (await readRaw()).models.find((m) => m.id === 'copilot-gpt-6-astra');
+    assert.deepEqual(stored.upstream, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra', capabilities: { reasoning: true, reasoningEfforts: ['low', 'high'] } });
+    assert.deepEqual(listGlobalModels().find((m) => m.id === 'copilot-gpt-6-astra').upstream.capabilities.reasoningEfforts, ['low', 'high']);
+  });
 });

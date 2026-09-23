@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken, _resetCopilotCache,
   copilotHeaders, githubHeaders, copilotApiHost, bodyHasImage, requestInitiator,
-  normalizeCopilotModel, catalogEntryForCopilotModel, listCopilotModels, copilotUsage, GITHUB_CLIENT_ID,
+  normalizeCopilotModel, catalogEntryForCopilotModel, copilotApiFor, listCopilotModels, copilotUsage, GITHUB_CLIENT_ID,
 } from '../src/core/bridge/providers/copilot.mjs';
 
 const jsonRes = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body), headers: new Map() });
@@ -151,4 +151,55 @@ test('usage: the premium-request snapshot, or null without one', async () => {
   assert.equal(await copilotUsage('gho', { fetch: g }), null);
   const h = stub([[/copilot_internal\/user$/, () => jsonRes(403, {})]]);
   assert.equal(await copilotUsage('gho', { fetch: h }), null);
+});
+
+test('models: supported_endpoints and effort lists drive the api, the reasoning flag and the efforts', () => {
+  const astra = normalizeCopilotModel({ id: 'gpt-6-astra', name: 'GPT-6 Astra', vendor: 'OpenAI', supported_endpoints: ['/responses', 'ws:/responses'], capabilities: { type: 'chat', supports: { tool_calls: true, vision: true, reasoning_effort: ['low', 'medium', 'high', 'xhigh', 'max'] }, limits: { max_prompt_tokens: 272000, max_output_tokens: 128000 } } });
+  assert.equal(astra.reasoning, true);                         // the id regex misses gpt-6; the list says so
+  assert.deepEqual(astra.reasoningEfforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(astra.endpoints, ['/responses', 'ws:/responses']);
+  assert.equal(copilotApiFor(astra), 'openai-responses');
+  const ea = catalogEntryForCopilotModel(astra);
+  assert.equal(ea.efforts, undefined);                         // every Worca effort is listed
+  assert.deepEqual(ea.upstream, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra', capabilities: { toolCalls: true, vision: true, reasoning: true, maxPromptTokens: 272000, maxOutputTokens: 128000, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] } });
+
+  const both = normalizeCopilotModel({ id: 'gpt-5.4', name: 'GPT-5.4', vendor: 'OpenAI', supported_endpoints: ['/responses', '/chat/completions', 'ws:/responses'], capabilities: { type: 'chat', supports: { reasoning_effort: ['none', 'low', 'medium', 'high', 'xhigh'] } } });
+  assert.equal(copilotApiFor(both), 'openai-responses');       // an OpenAI model goes to Responses whenever it is served there
+  assert.deepEqual(catalogEntryForCopilotModel(both).efforts, ['medium', 'high', 'xhigh']);
+  assert.equal(copilotApiFor({ ...both, vendor: 'Azure OpenAI' }), 'openai-responses');
+
+  const gem = normalizeCopilotModel({ id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', vendor: 'Google', supported_endpoints: ['/chat/completions'], capabilities: { type: 'chat', supports: { reasoning_effort: ['low', 'medium', 'high'] } } });
+  assert.equal(gem.reasoning, true);
+  assert.equal(copilotApiFor(gem), 'openai-chat');
+  assert.deepEqual(catalogEntryForCopilotModel(gem).efforts, ['medium', 'high']);
+  assert.deepEqual(catalogEntryForCopilotModel(gem).upstream.capabilities.reasoningEfforts, ['low', 'medium', 'high']);
+
+  assert.equal(copilotApiFor({ id: 'grok', vendor: 'xAI', endpoints: ['/responses', '/chat/completions'] }), 'openai-chat');   // other vendors keep chat when it is served
+  assert.equal(copilotApiFor({ id: 'grok', vendor: 'xAI', endpoints: ['/responses'] }), 'openai-responses');                  // …unless only Responses is
+  assert.equal(copilotApiFor({ id: 'gpt-4o', vendor: 'Azure OpenAI', endpoints: null }), 'openai-chat');                       // legacy: no list
+  assert.equal(copilotApiFor({ id: 'claude-x', vendor: 'Anthropic', endpoints: ['/v1/messages', '/chat/completions'] }), 'anthropic');
+
+  const lowOnly = normalizeCopilotModel({ id: 'tiny', name: 'tiny', vendor: 'OpenAI', capabilities: { type: 'chat', supports: { reasoning_effort: ['low'] } } });
+  assert.deepEqual(catalogEntryForCopilotModel(lowOnly).efforts, ['medium']);   // nothing in common: medium, mapped down to low per request
+  const noneOnly = normalizeCopilotModel({ id: 'plain', name: 'plain', vendor: 'OpenAI', capabilities: { type: 'chat', supports: { reasoning_effort: ['none'] } } });
+  assert.equal(noneOnly.reasoning, false);
+  assert.deepEqual(catalogEntryForCopilotModel(noneOnly).efforts, ['medium']);
+  const legacy = normalizeCopilotModel({ id: 'gpt-4.1', name: 'GPT-4.1', vendor: 'OpenAI', capabilities: { type: 'chat', supports: { tool_calls: true } } });
+  assert.equal(legacy.endpoints, null);
+  assert.equal(legacy.reasoningEfforts, null);
+  assert.equal('reasoningEfforts' in catalogEntryForCopilotModel(legacy).upstream.capabilities, false);
+  const claude = normalizeCopilotModel({ id: 'claude-sonnet-5', name: 'Claude Sonnet 5', vendor: 'Anthropic', capabilities: { type: 'chat', supports: { reasoning_effort: ['low', 'high'] } } });
+  assert.equal('reasoningEfforts' in catalogEntryForCopilotModel(claude).upstream.capabilities, false);   // passthrough: the CLI speaks effort itself
+});
+
+test('initiator: the CLI\'s trailing system reminders do not turn a tool-loop continuation into a user turn', () => {
+  const call = { role: 'assistant', content: [{ type: 'thinking', thinking: 't', signature: 's' }, { type: 'tool_use', id: 't1', name: 'Read', input: {} }] };
+  const result = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] };
+  const reminder = { role: 'system', content: [{ type: 'text', text: '<total_tokens>14999970 tokens left</total_tokens>' }] };
+  // The shape of both captured CLI continuations: … assistant > user(tool_result) > system.
+  assert.equal(requestInitiator({ messages: [{ role: 'user', content: 'go' }, { role: 'system', content: 'deferred tools' }, call, result, reminder] }), 'agent');
+  assert.equal(requestInitiator({ messages: [{ role: 'user', content: 'go' }, call, reminder, { role: 'system', content: 'more' }] }), 'agent');
+  // A new prompt stays a user turn, with or without a reminder after it.
+  assert.equal(requestInitiator({ messages: [{ role: 'user', content: 'go' }, reminder] }), 'user');
+  assert.equal(requestInitiator({ messages: [reminder] }), 'user');
 });
