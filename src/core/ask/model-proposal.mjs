@@ -229,6 +229,7 @@ export function createModelChangeValidator(r) {
       const warnings = [];
       if (n) warnings.push(`${n} workflow ${n === 1 ? 'node uses' : 'nodes use'} this model — ${n === 1 ? 'it falls' : 'they fall'} back to the default model`);
       if (refs.predefinedShadow) warnings.push('this entry overrides a built-in model — removing it restores the built-in');
+      if (refs.memoryDefrag) warnings.push('Memory defragment runs use this model (Settings › Memory) — they fall back to the default');
       return { ok: true, card: {
         type: 'model', kind, target: current.id, summary: `Remove model ${current.label || current.id}`, note,
         rows: entryRows(maskEntry(current)).map((x) => ({ field: x.field, before: x.value, after: null })),

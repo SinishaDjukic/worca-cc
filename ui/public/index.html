@@ -316,6 +316,10 @@
                     </div>
                     <!-- Workspace mode: one source-branch dropdown per member project. -->
                     <div class="ws-source-branches hidden" id="ws-source-branches"></div>
+                    <div class="switch-row ws-src-prev hidden" id="ws-source-previous-row">
+                      <div class="switch" id="ws-source-previous" role="switch" tabindex="0" aria-checked="false" aria-label="Branch off the run before it"></div>
+                      <span class="txt">Branch off the run before it</span>
+                    </div>
                     <small class="hint" id="sourceBranchHint">The worktree branches off this. Defaults to the current branch.</small>
                   </div>
 
@@ -532,6 +536,7 @@
                   <button type="button" class="btn-resume" title="Resume — restart this paused pipeline where it left off" aria-label="Resume" hidden><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg></button>
                   <button type="button" class="btn-pause" title="Pause — gracefully stop the session so it can be resumed" aria-label="Pause"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg></button>
                   <button type="button" class="btn-stop" title="Stop this pipeline" aria-label="Stop"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg></button>
+                  <button type="button" class="rc-after" title="Schedule a run after this" aria-label="Schedule a run after this" data-min-level="advanced" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg></button>
                   <button type="button" class="rc-open" title="Open run" aria-label="Open run"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
                 </div>
               </div>
@@ -597,12 +602,6 @@
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
                   </button>
-                  <!-- Report this run: hidden until the run reaches a terminal state
-                       (paintRdTerminal), because a mid-flight run has no totals to
-                       report. paintRdTerminal appends .rd-history-link after this
-                       button, so the painted row reads
-                       Stop · Report this run · View in History. -->
-                  <button type="button" class="rd-report btn-ghost" hidden data-min-level="advanced">Report this run</button>
                 </div>
                 <!-- Inline error slot for failed actions, on the HEADER so it is never
                      pushed below the fold by the graph or a tab body (mirrors .hd-error). -->
@@ -723,6 +722,7 @@
                   <span class="hist-merge" hidden data-min-level="expert"></span>
                   <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-after btn-ghost" hidden data-min-level="advanced">Schedule a run after this</button>
                 </div>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
@@ -1470,6 +1470,12 @@
                   </select>
                 </div>
               </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="budgetHumanRate">Developer rate (USD/h)</label>
+                </div>
+                <input id="budgetHumanRate" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" />
+              </div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
                 <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
@@ -1828,6 +1834,30 @@
                 <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
+            <!-- Settings › Memory: the model + effort EVERY Memory defragment run uses (memory-defrag-model.mjs).
+                 Expert, like the health card's Defragment. No ⓘ and empty hints: the settings-view census
+                 (test/ui-settings-tooltips.test.mjs) pins both. A plain .card like the health card, NOT a
+                 .settings-card: that census (About last, twelve cards) counts the General tab's cards. -->
+            <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
+              <div class="label-row"><h2>Defragment model</h2></div>
+              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
+              <div class="mem-model-row">
+                <div class="field">
+                  <div class="label-row"><label for="memDefragModel">Model</label></div>
+                  <select id="memDefragModel" class="select" aria-label="Defragment model"></select>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="memDefragEffort">Effort</label></div>
+                  <select id="memDefragEffort" class="select" aria-label="Defragment effort"></select>
+                </div>
+              </div>
+              <small class="hint" id="memDefragModelNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="memDefragModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="memDefragModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="memDefragModelMsg"></small>
+            </section>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>
             <div id="memory-host" class="mem-host"></div>
           </section>

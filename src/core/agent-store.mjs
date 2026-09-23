@@ -28,7 +28,7 @@ function err(message, code) { return Object.assign(new Error(message), { code })
  *  (including the v1 wiring the registry still derives, which P8 owns) MERGES. */
 const V2_CLEARABLE = ['verdict', 'sideEffect', 'mockRole', 'wantsRequest', 'workspaceFanOut',
   'workspaceStrategy', 'workspaceVariantOf', 'placeable', 'scope', 'domain', 'icon', 'ask',
-  'promptHints', 'requiresSkills'];
+  'promptHints', 'requiresSkills', 'humanEffort'];
 
 /**
  * GATE 1 for a sidecar's ask forms (ask-forms spec §5, §11). The SAME checks the

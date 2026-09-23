@@ -758,7 +758,14 @@ export function deleteRefsSummary(id, refs) {
     ...((refs && refs.nodes) || []).map((n) => n.projectKey),
     ...((refs && refs.steps) || []).map((s) => s.projectKey),
   ]).size;
-  if (!nodes && !steps) return `Delete model "${id}"? No pipeline configuration references it.`;
+  // Settings › Memory's defragment model is the one GLOBAL ref (globalModelRefs `memoryDefrag`).
+  const defrag = !!(refs && refs.memoryDefrag);
+  if (!nodes && !steps) {
+    return defrag
+      ? `Delete model "${id}"? Memory defragment runs use it (Settings › Memory) — that setting is cleared and they fall back to the default.`
+      : `Delete model "${id}"? No pipeline configuration references it.`;
+  }
   return `Delete model "${id}"? This also clears ${nodes} node selection${nodes === 1 ? '' : 's'} and ` +
-    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}.`;
+    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}` +
+    (defrag ? ', and the Memory defragment model (Settings › Memory).' : '.');
 }

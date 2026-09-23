@@ -380,6 +380,8 @@ body.view-workspaces .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .hint{display:block;color:var(--ink-3);font-size:12px;margin-top:7px;line-height:1.45;}
 .hint.err{color:var(--red-ink);}
 .hint.warn{color:var(--amber-ink);}
+.stat-tile .stat-value.is-neg{color:var(--red-ink);}
+.stat-tile .stat-value.is-pos{color:var(--green-ink);}
 
 .input,.select,.textarea,.ta-hl-back,
 input[type="text"],input[type="number"],textarea,select{
@@ -1471,6 +1473,7 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .ws-src-name{font-weight:600;font-size:12.5px;color:var(--ink-2);}
 .ws-src-row .select-wrap{width:100%;}
 .ws-src-row select[disabled]{opacity:.55;}
+.ws-src-prev { margin-top: 6px; }
 
 /* Workspaces list: the Projects list's shape (one card headed "Workspaces · N", a row per
    workspace that IS the control), on its own ids. The page rides the pd- classes below. */
@@ -2226,8 +2229,11 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .stat-tile{padding:18px 20px;}
 .stat-label{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600;}
 .stat-ico{width:16px;height:16px;color:var(--ink-3);flex:0 0 auto;}
-.stat-delta{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
-  padding:2px 8px;border-radius:999px;}
+.stat-delta,.stat-mult{margin-left:auto;background:var(--field);color:var(--ink-2);font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:999px;white-space:nowrap;}
+/* Saved's "9.0× spend" pill sits far right; when a delta pill precedes it, that one takes the
+   auto margin and the two share the label row's 8px gap. */
+.stat-delta+.stat-mult{margin-left:0;}
 .stat-value{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--ink);margin-top:8px;line-height:1.2;}
 .stat-frac{font-size:16px;color:var(--ink-3);}
 .stat-sub{display:block;color:var(--ink-3);font-size:11.5px;margin-top:6px;}
@@ -2306,11 +2312,14 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .tm-tbl td{padding:9px 10px;border-bottom:1px solid var(--line);}
 .tm-tbl tbody tr[data-filter-dim]{cursor:pointer;} .tm-tbl tbody tr[data-filter-dim]:hover,.tm-tbl tbody tr.on{background:var(--field);}
 .tm-tbl tr.dim td{color:var(--ink-3);}
+.tm-tbl td.tm-saved.pos{color:var(--green-ink);} .tm-tbl td.tm-saved.neg{color:var(--red-ink);}
 .tm-runs-foot{display:flex;align-items:center;gap:12px;margin-top:8px;}
 .tm-share{display:inline-block;width:90px;height:6px;border-radius:3px;background:var(--field);vertical-align:middle;}
 .tm-share-fill{display:block;height:100%;border-radius:3px;background:var(--blue);}
 .tm-runs{margin-top:18px;} .tm-runs-head{display:flex;align-items:center;justify-content:space-between;}
 .tm-run-tbl .tm-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Actor and Started never wrap: with the Saved column in, Title (ellipsis) and Workflow give way first. */
+.tm-run-tbl td:nth-last-child(-n+2){white-space:nowrap;}
 .badge.grey{background:var(--field);color:var(--ink-2);}
 .tm-empty{display:grid;grid-template-columns:1fr 1fr;gap:14px;} .tm-empty .card{padding:22px;}
 .tm-step{font-size:11px;letter-spacing:.08em;font-weight:700;color:var(--ink-2);}
@@ -3209,6 +3218,11 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
 .mem-health-head .mem-defrag{margin-left:auto;}
+/* Settings → Memory: the Defragment model card above the scope (app.js paintMemDefragModelSettings). */
+.mem-model-card{margin-bottom:16px;}
+.mem-model-text{margin:0 0 12px;color:var(--ink-2);font-size:13px;line-height:1.5;}
+.mem-model-row{display:flex;flex-wrap:wrap;gap:12px;}
+.mem-model-row .field{flex:1 1 220px;margin-bottom:0;}
 .mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}
 .mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}
@@ -3283,6 +3297,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-pr:hover{opacity:.88;}
 .hd-pr-link{flex:0 0 auto;font:600 12.5px var(--sans);}
 .hd-pr-link[hidden]{display:none;}
+.hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
+.hd-after[hidden]{display:none;}
 
 /* WIDTH GOES ON `#shipit-modal .card`, NOT `.shipit-card`. The markup is
    `<div class="card shipit-card">` inside `.viewer-modal`, and
@@ -3397,7 +3413,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-more:focus-visible,.hd-report:focus-visible,
-.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,
+.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,.hd-after:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.hist-open:focus-visible,
 .hist-branch-copy:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
@@ -3459,8 +3475,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .rc-qpill{display:inline-flex;align-items:center;padding:5px 11px;border-radius:999px;
   background:var(--amber-bg);color:var(--amber-ink);font:700 11.5px var(--sans);white-space:nowrap;}
 .rc-qpill[hidden]{display:none;}
-/* the four 30px icon buttons; .rc-open mirrors .hist-open exactly */
-.rc-acts .btn-pause,.rc-acts .btn-resume,.rc-acts .btn-stop,.rc-open{
+/* the five 30px icon buttons; .rc-open mirrors .hist-open exactly */
+.rc-acts .btn-pause,.rc-acts .btn-resume,.rc-acts .btn-stop,.rc-after,.rc-open{
   display:inline-flex;align-items:center;justify-content:center;gap:0;
   width:30px;height:30px;padding:0;border-radius:9px;background:var(--panel);cursor:pointer;}
 .rc-acts .btn-pause,.rc-acts .btn-resume{border:1px solid var(--amber);color:var(--amber-ink);}
@@ -3471,9 +3487,15 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    with `.rc-acts .btn-pause` above and would LOSE on source order — a paused card
    would show both buttons. Re-state it at the cluster's specificity. */
 .rc-acts .btn-pause[hidden],.rc-acts .btn-resume[hidden]{display:none;}
+/* Same footgun for the run-chain button: the shared `display:inline-flex` above is an
+   AUTHOR rule and outranks the UA `[hidden]{display:none}`, so paintRunCard's
+   `afterBtn.hidden = true` would not hide it. Re-state it here. */
+.rc-acts .rc-after[hidden]{display:none;}
 .rc-open{border:1px solid var(--line);color:var(--ink-2);}
 .rc-open:hover{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
-.rc-open:focus-visible,.rc-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rc-after{border:1px solid var(--line);color:var(--ink-2);}
+.rc-after:hover{background:var(--ink);color:var(--on-ink);border-color:var(--ink);}
+.rc-after:focus-visible,.rc-open:focus-visible,.rc-branch-copy:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* ---------- Running redesign: shared keyframes (C2 — declared ONCE, here) ----------
    @keyframes are name-resolved, not cascaded, so their position relative to the
    rules that use them is irrelevant; what matters is that there is exactly one of
@@ -5140,6 +5162,13 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .sched-presets button{flex:1 1 auto;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
 .sched-quick{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;}
 .sched-quick[hidden]{display:none;}
+.sched-kind{display:flex;margin-bottom:14px;}
+.sched-kind button{flex:1 1 0;padding:11px 12px;font-size:13px;}
+.sched-after{display:grid;gap:10px;}
+/* paint() hides the presets seg and the After block by the `hidden` PROPERTY. `.sched-presets`
+   (display:flex) and `.sched-after` (display:grid) are AUTHOR display rules and outrank the UA
+   [hidden]{display:none} — the .sched-quick[hidden] footgun above. Restate both. */
+.sched-presets[hidden],.sched-after[hidden]{display:none;}
 .sched-chip{border:1.5px solid transparent;cursor:pointer;font-family:inherit;transition:background .14s,border-color .14s;}
 .sched-chip:hover{border-color:var(--line-2);}
 .sched-chip.on{background:var(--surface);border-color:var(--ink);color:var(--ink);}
@@ -5171,7 +5200,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 /* the Schedules view: a tab strip (the Statistics .seg) over one pane at a time */
 .sched-tabs{display:flex;margin-bottom:18px;}
 .sched-pane[hidden]{display:none;}
-.sched-list{display:flex;flex-direction:column;gap:14px;max-width:960px;}
+.sched-list{display:flex;flex-direction:column;gap:14px;}
 .sched-group-title{font:700 11.5px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);margin:6px 4px -2px;}
 .sched-item{padding:18px 20px;}
 .sched-item.attention{border:1.5px solid var(--amber);box-shadow:0 0 0 4px var(--amber-bg),var(--shadow);}

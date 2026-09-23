@@ -164,7 +164,7 @@ test('a message POST racing DELETE never starts a turn; nothing survives the del
   const mod = await import('../ui/server.mjs');
   const del = raw('DELETE', `/api/ask/threads/${thread.id}`);
   await new Promise((r) => setTimeout(r, 5));                                 // DELETE is now inside its git await
-  const msg = await raw('POST', `/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: 'claude-opus-5', effort: 'high' });
+  const msg = await raw('POST', `/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: 'claude-opus-5-5', effort: 'high' });
   assert.ok(msg.status === 409 || msg.status === 404, `POST during delete must be refused, got ${msg.status} ${msg.text}`);
   assert.equal((await del).status, 200);
   assert.equal(mod._testing.askJobs.has(thread.id), false, 'no live job survives the delete');

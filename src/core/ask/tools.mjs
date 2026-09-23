@@ -298,7 +298,11 @@ const SCHEDULE_UNTIL = SCHEMA.s('every only: last date, YYYY-MM-DD');
 const SCHEDULE_COUNT = SCHEMA.i('every only: stop after this many runs', 1, 1000);
 const SCHEDULE_OVERLAP = SCHEMA.s('every only, when the previous run is still going: skip (default) | queue | start');
 const SCHEDULE_MAX_FAILURES = SCHEMA.i('every only: pause after this many failures in a row (0 = never; default from Settings, usually 3)', 0, 100);
-const SCHEDULE_FIELDS = { when: SCHEDULE_WHEN, every: SCHEDULE_EVERY, until: SCHEDULE_UNTIL, count: SCHEDULE_COUNT, overlap: SCHEDULE_OVERLAP, maxFailures: SCHEDULE_MAX_FAILURES };
+const SCHEDULE_AFTER = SCHEMA.s('run ONCE when another run ends: a run id (list_runs) or a one-off scheduled run id (list_schedules). Instead of when / every');
+const SCHEDULE_AFTER_POLICY = SCHEMA.s('after only: done (default — start only when that run finishes) | any (also when it fails or is stopped)');
+const SCHEDULE_SOURCE_FROM_PREVIOUS = SCHEMA.b('after only: start on that run\'s feature branch, so this run builds on its changes (never together with sourceBranch)');
+const SCHEDULE_FIELDS = { when: SCHEDULE_WHEN, every: SCHEDULE_EVERY, until: SCHEDULE_UNTIL, count: SCHEDULE_COUNT, overlap: SCHEDULE_OVERLAP, maxFailures: SCHEDULE_MAX_FAILURES,
+  after: SCHEDULE_AFTER, afterPolicy: SCHEDULE_AFTER_POLICY, sourceFromPrevious: SCHEDULE_SOURCE_FROM_PREVIOUS };
 
 /**
  * @param {object} deps  see tool-deps.mjs#defaultToolDeps for the real bundle
@@ -338,7 +342,7 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts (projects only). Returns {ok:true, card} or {ok:false, errors}.',
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts (projects only). Returns {ok:true, card} or {ok:false, errors}.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto, projects only)'),
         brief: SCHEMA.s('the full task description for the run (≤ 8000 chars); omit when you give source'),
         source: { type: 'object', additionalProperties: false, required: ['plugin', 'sourceId', 'taskId'],
@@ -499,12 +503,13 @@ export function createAskTools(deps) {
       inputSchema: SCHEMA.obj({ unread: SCHEMA.b('only unread problems'), problems: SCHEMA.b('only problems (missed, failed, paused itself, run error)'),
         limit: SCHEMA.i('max items (default 20, max 100)', 1, 100) }) },
     { name: 'preview_schedule',
-      description: 'Turn the user\'s words into a schedule WITHOUT creating anything: when (once) → the exact date and time; every (repeat) → the rule as a sentence and its next three dates. Read in the user\'s timezone. Use it to check a phrase before propose_run or propose_schedule_change, and quote its dates — never compute dates yourself.',
+      description: 'Turn the user\'s words into a schedule WITHOUT creating anything: when (once) → the exact date and time; every (repeat) → the rule as a sentence and its next three dates; after (another run) → the run it will wait for. Read in the user\'s timezone. Use it to check a phrase before propose_run or propose_schedule_change, and quote its dates — never compute dates yourself.',
       inputSchema: SCHEMA.obj({ ...SCHEDULE_FIELDS }) },
     { name: 'propose_schedule_change',
-      description: 'Propose a change to an existing schedule for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. action: "run_now" (start a scheduled run now, or one extra run of a repeating schedule — the schedule keeps its times), "move" (a one-off run to a new `when`), "edit" (a repeating schedule: any of every, until, count, overlap, maxFailures, title — the pending run is replaced), "cancel" (a one-off run), "delete" (a repeating schedule). Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
+      description: 'Propose a change to an existing schedule for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. action: "run_now" (start a scheduled run now, or one extra run of a repeating schedule — the schedule keeps its times), "move" (a one-off run to a new `when`, or to `after` another run), "edit" (a repeating schedule: any of every, until, count, overlap, maxFailures, title — the pending run is replaced), "cancel" (a one-off run), "delete" (a repeating schedule). Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('schedule id (sch_…) or scheduled run id'), action: SCHEMA.s('run_now | move | edit | cancel | delete'),
         when: SCHEDULE_WHEN, every: SCHEDULE_EVERY, until: SCHEDULE_UNTIL, count: SCHEDULE_COUNT, overlap: SCHEDULE_OVERLAP, maxFailures: SCHEDULE_MAX_FAILURES,
+        after: SCHEDULE_AFTER, afterPolicy: SCHEDULE_AFTER_POLICY, sourceFromPrevious: SCHEDULE_SOURCE_FROM_PREVIOUS,
         title: SCHEMA.s('edit: a new name for the schedule'), note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['id', 'action']) },
     { name: 'pause_schedule',
       description: 'Pause a repeating schedule (sch_…): its pending run is dropped and nothing starts until it is resumed. Reversible; only when the user asks.',
@@ -1089,12 +1094,18 @@ export function createAskTools(deps) {
     runsCount: s.runsCount, lastResult: s.lastResult, request: shapeRequest(s.summary),
     ...(s.askCardId ? { askCardId: s.askCardId } : {}),
   });
-  const shapeTicket = (t) => ({
-    id: t.id, kind: 'once', title: deps.redact(t.title || ''), projectKey: t.projectKey, workspaceId: t.workspaceId,
-    scheduleId: t.scheduleId, runAt: t.runAt, when: whenOf(t.runAt), status: t.status,
-    failReason: t.failReason ? deps.redact(t.failReason) : null, pipelineId: t.pipelineId, attempts: t.attempts,
-    ifMissed: t.ifMissed, graceMin: t.graceMin, heldByTerminal: !!t.ownerPid, request: shapeRequest(t.summary),
-  });
+  const shapeTicket = (t) => {
+    // Run chains (spec D11): a waiting after-ticket's run_at is the year-9999 sentinel — never a time to show.
+    // The model sees what it waits for instead; `after.id` is a run id (get_run) or a scheduled run id (get_schedule).
+    const waiting = !!t.after && String(t.runAt || '').startsWith('9999-12-31');
+    return {
+      id: t.id, kind: 'once', title: deps.redact(t.title || ''), projectKey: t.projectKey, workspaceId: t.workspaceId,
+      scheduleId: t.scheduleId, runAt: waiting ? null : t.runAt, when: waiting ? 'after another run' : whenOf(t.runAt), status: t.status,
+      after: t.after ? { kind: t.after.kind, id: t.after.id, policy: t.after.policy } : null, sourceFromPrevious: !!t.sourceFromPrevious,
+      failReason: t.failReason ? deps.redact(t.failReason) : null, pipelineId: t.pipelineId, attempts: t.attempts,
+      ifMissed: t.ifMissed, graceMin: t.graceMin, heldByTerminal: !!t.ownerPid, request: shapeRequest(t.summary),
+    };
+  };
   const shapeNotice = (n) => ({
     id: n.id, kind: n.kind, severity: n.severity, unread: n.unread, title: deps.redact(n.title || ''), message: deps.redact(n.message || ''),
     at: n.createdAt, when: whenOf(n.createdAt), scheduleId: n.scheduleId, runId: n.ticketId, pipelineId: n.pipelineId, resolved: !!n.resolvedAt,
@@ -1776,7 +1787,7 @@ export function createAskTools(deps) {
     },
     async preview_schedule(input) {
       const sch = schedulesOf('preview_schedule');
-      if (!str(input.when) && !str(input.every)) throw new AskToolError('preview_schedule: give when (once) or every (repeat)');
+      if (!str(input.when) && !str(input.every) && !str(input.after)) throw new AskToolError('preview_schedule: give when (once), every (repeat) or after (another run)');
       const r = sch.preview(input, { nowMs: sch.now() });
       if (!r.ok) return r;
       return { ok: true, ...r.schedule };

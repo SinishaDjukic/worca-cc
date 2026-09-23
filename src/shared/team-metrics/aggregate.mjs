@@ -80,6 +80,7 @@ export function weekStartMs(ms) {
 
 const startOf = (r) => Date.parse(r.startedAt);
 const usdOf = (r) => (Number.isFinite(r?.cost?.usd) ? r.cost.usd : 0);
+const hoursOf = (r) => (Number.isFinite(r?.human?.hours) ? r.human.hours : 0);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const sum = (a) => a.reduce((s, x) => s + x, 0);
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -127,18 +128,26 @@ export function applyFilter(records, filter = {}) {
   return records.filter((r) => active.every(([dim, key]) => DIMENSIONS[dim](r).some((k) => k.key === key)));
 }
 
-function computeKpis(rs, now) {
+function computeKpis(rs, now, humanRateUsd = 0) {
   const n = rs.length;
   const count = (res) => rs.filter((r) => r.result === res).length;
   const usd = sum(rs.map(usdOf));
+  const hours = round2(sum(rs.map(hoursOf)));
   const paired = rs.filter((r) => isNum(r.wallMs) && isNum(r.activeMs));
-  const wallSum = sum(paired.map((r) => r.wallMs));
+  // Autonomy = active ÷ (wall − paused): a run parked on a pause or a crash was not waiting on a
+  // human, so its parked time leaves the denominator. `pausedMs` is additive — records pushed
+  // before it existed park nothing.
+  const wallSum = sum(paired.map((r) => Math.max(0, r.wallMs - (isNum(r.pausedMs) ? r.pausedMs : 0))));
   const withPr = rs.filter((r) => r.pr && (r.pr.url || r.pr.number != null));
   const reviews = rs.map((r) => r.cycles?.review).filter(isNum);
   const d = new Date(now);
   const monthStart = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
   return {
     spendUsd: round2(usd),
+    // Human hours (money-saved design §9.2): records without `human` count 0 h; `humanRuns` gates the tile.
+    humanHours: hours,
+    humanRuns: rs.filter((r) => Number.isFinite(r?.human?.hours)).length,
+    savedUsd: round2(hours * humanRateUsd - usd),
     spendThisMonthUsd: round2(sum(rs.filter((r) => startOf(r) >= monthStart).map(usdOf))),
     runs: n,
     done: count('done'), failed: count('failed'), stopped: count('stopped'),
@@ -173,6 +182,8 @@ const pct = (cur, prev) => (isNum(cur) && isNum(prev) && prev > 0 ? (cur - prev)
 function deltas(k, p) {
   return {
     spendPct: pct(k.spendUsd, p.spendUsd),
+    humanHoursPct: pct(k.humanHours, p.humanHours),
+    savedPct: pct(k.savedUsd, p.savedUsd),
     runsPct: pct(k.runs, p.runs),
     costPerRunPct: pct(k.costPerRunUsd, p.costPerRunUsd),
     durationPct: pct(k.durationMedianMs, p.durationMedianMs),
@@ -285,11 +296,17 @@ export function safeHttpUrl(u) {
   try { const x = new URL(u); return x.protocol === 'https:' || x.protocol === 'http:' ? x.href : null; } catch { return null; }
 }
 
-function toRunRow(r) {
+function toRunRow(r, humanRateUsd = 0) {
+  const usd = usdOf(r);
+  // Money saved (design §9.2) per run: null when the record carries no `human` (pre-v33 pushes),
+  // so the row prints "—" rather than claiming "−$cost" was saved. Same gate as the KPI tile.
+  const humanHours = isNum(r.human?.hours) ? r.human.hours : null;
   return {
     id: r.id, title: r.title ?? '(untitled)', startedAt: r.startedAt,
     workflow: r.workflow?.name ?? r.workflow?.id ?? null, result: r.result,
-    usd: usdOf(r), wallMs: isNum(r.wallMs) ? r.wallMs : null, activeMs: isNum(r.activeMs) ? r.activeMs : null,
+    usd, wallMs: isNum(r.wallMs) ? r.wallMs : null, activeMs: isNum(r.activeMs) ? r.activeMs : null,
+    pausedMs: isNum(r.pausedMs) ? r.pausedMs : null,
+    humanHours, savedUsd: humanHours == null ? null : round2(humanHours * humanRateUsd - usd),
     reviewCycles: isNum(r.cycles?.review) ? r.cycles.review : null,
     pr: r.pr && (r.pr.url || r.pr.number != null) ? { number: Number.isInteger(r.pr.number) ? r.pr.number : null, url: safeHttpUrl(r.pr.url) } : null,
     actor: r.actor ?? null,
@@ -313,15 +330,15 @@ function toRunRow(r) {
  * @param {object[]} records  v1 records (already parsed; unknown v / malformed already dropped)
  * @param {{range?:string, from?:string|null, to?:string|null, groupBy?:string, filter?:object, now?:number}} [opts]
  */
-export function aggregate(records, { range = 'this-month', from = null, to = null, groupBy = 'workflow', filter = {}, now = Date.now() } = {}) {
+export function aggregate(records, { range = 'this-month', from = null, to = null, groupBy = 'workflow', filter = {}, now = Date.now(), humanRateUsd = 0 } = {}) {
   if (!GROUP_BYS.includes(groupBy)) throw new RangeError(`unknown groupBy "${groupBy}" (expected ${GROUP_BYS.join(' | ')})`);
   const win = resolveRange(range, { now, from, to });
   const usable = (records || []).filter((r) => r && Number.isFinite(startOf(r)));
   const filtered = applyFilter(usable, filter);
   const inWin = (s, e) => (r) => (s == null || startOf(r) >= s) && (e == null || startOf(r) < e);
   const inRange = filtered.filter(inWin(win.startMs, win.endMs));
-  const kpis = computeKpis(inRange, now);
-  const prevKpis = win.prevStartMs == null ? null : computeKpis(filtered.filter(inWin(win.prevStartMs, win.prevEndMs)), now);
+  const kpis = computeKpis(inRange, now, humanRateUsd);
+  const prevKpis = win.prevStartMs == null ? null : computeKpis(filtered.filter(inWin(win.prevStartMs, win.prevEndMs)), now, humanRateUsd);
   const hasActor = inRange.some((r) => r.actor);
   const hasWorkspace = inRange.some((r) => r.target?.kind === 'workspace');
   return {
@@ -335,12 +352,12 @@ export function aggregate(records, { range = 'this-month', from = null, to = nul
       project: hasWorkspace ? breakdown(inRange, 'project') : null,
       models: breakdown(inRange, 'models'),
     },
-    runs: [...inRange].sort((a, b) => startOf(b) - startOf(a)).map(toRunRow),
+    runs: [...inRange].sort((a, b) => startOf(b) - startOf(a)).map((r) => toRunRow(r, humanRateUsd)),
     totalRecords: usable.length,
   };
 }
 
-export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'wallMs', 'activeMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
+export const CSV_COLUMNS = Object.freeze(['startedAt', 'title', 'workflow', 'result', 'costUsd', 'humanHours', 'savedUsd', 'wallMs', 'activeMs', 'pausedMs', 'reviewCycles', 'prNumber', 'prUrl', 'actor', 'source', 'projects', 'id']);
 
 function csvCell(v) {
   if (v == null) return '';
@@ -354,7 +371,7 @@ export function toCsv(runRows) {
   const lines = [CSV_COLUMNS.join(',')];
   for (const r of runRows) {
     lines.push([
-      r.startedAt, r.title, r.workflow, r.result, r.usd, r.wallMs, r.activeMs, r.reviewCycles,
+      r.startedAt, r.title, r.workflow, r.result, r.usd, r.humanHours, r.savedUsd, r.wallMs, r.activeMs, r.pausedMs, r.reviewCycles,
       r.pr?.number, r.pr?.url, r.actor, r.source, (r.projects || []).join(' '), r.id,
     ].map(csvCell).join(','));
   }

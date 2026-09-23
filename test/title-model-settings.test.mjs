@@ -103,17 +103,17 @@ test('catalogHasModel: built-in, global, plugin-less; case-insensitive; hidden b
 
 test('askCatalog: the D8 default skips hidden built-ins → first owned model; a hidden id still validates', async () => {
   const fake = [
-    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hasEnv: false, hidden: true },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], custom: false, hasEnv: false, hidden: true },
     { id: 'claude-haiku-4-5', label: 'Haiku', efforts: ['medium', 'high'], custom: false, hasEnv: false, hidden: true },
     { id: 'corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true },
   ];
   const { askCatalog, validateModelEffort } = createAskModels({ listModels: async () => fake, pluginModels: () => [] });
   const cat = await askCatalog();
   assert.deepEqual(cat.default, { model: 'corp-model', effort: 'high' });
-  assert.equal(cat.models.find((m) => m.id === 'claude-opus-5').hidden, true, 'flag shipped to the picker');
+  assert.equal(cat.models.find((m) => m.id === 'claude-opus-5-5').hidden, true, 'flag shipped to the picker');
   assert.equal(cat.models.find((m) => m.id === 'corp-model').hidden, undefined);
-  assert.deepEqual(await validateModelEffort('claude-opus-5', 'high'), { ok: true, model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(await validateModelEffort('claude-opus-5-5', 'high'), { ok: true, model: 'claude-opus-5-5', effort: 'high' });
   // With every entry hidden the default is still SOMETHING (never null on a non-empty catalog).
   const { askCatalog: allHidden } = createAskModels({ listModels: async () => fake.slice(0, 2), pluginModels: () => [] });
-  assert.equal((await allHidden()).default.model, 'claude-opus-5');
+  assert.equal((await allHidden()).default.model, 'claude-opus-5-5');
 });

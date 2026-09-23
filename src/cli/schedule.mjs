@@ -15,7 +15,9 @@ import {
   heartbeatTicket, releaseTicket, markTicketFired, setTicketPipeline, recordOutcome,
   createSchedule, listSchedules, pauseSchedule, resumeSchedule, skipNext, runScheduleNow,
   deleteSchedule, scheduleStageDir,
+  resolveAfterRef, afterRefOf, predecessorState, previousBranchesOf,
 } from '../core/scheduler.mjs';
+import { getDb } from '../core/db.mjs';
 import { listNotifications, markAllRead, unreadCount, addNotification } from '../core/notifications.mjs';
 import { scheduleDefaults } from '../core/settings.mjs';
 import { readUiInstance, probeUi } from '../core/ui-instance.mjs';
@@ -28,6 +30,7 @@ import {
 export const SCHEDULE_VALUE_FLAGS = {
   '--at': 'at', '--every': 'every', '--cron': 'cron', '--until': 'until', '--count': 'count',
   '--overlap': 'overlap', '--max-failures': 'maxFailures', '--if-missed': 'ifMissed', '--grace': 'grace', '--tz': 'tz',
+  '--after': 'after',
 };
 
 export const SCHEDULE_HELP = `worca schedule — manage scheduled runs
@@ -37,6 +40,7 @@ Create one by adding a time to any run command:
   worca --prompt "<task>" --at 02:00 --wait               …and hold this terminal until then
   worca --prompt "<task>" --every "weekdays 02:00"        Repeat
   worca --prompt "<task>" --cron "0 2 * * 1-5"            Repeat (cron subset)
+  worca --prompt "<task>" --after <id> --source-from-previous   Start when another run ends, on its branch
 
   --at <when>          "02:00" (next), "today 22:00", "tomorrow 02:00", "+90m", "+2h",
                        "2026-09-19 02:00", or ISO 8601 with an offset. Local time unless an offset is given.
@@ -50,6 +54,9 @@ Create one by adding a time to any run command:
   --grace <dur>        How late a missed run may still start: 90m, 6h, 1d (default 6h)
   --tz <zone>          IANA timezone for local times (default: this machine's)
   --wait               With --at: keep this terminal open and start the run here
+  --after <id>         Start when another run ends: a run id or a scheduled run id (any unique prefix)
+  --after-any          …even if that run fails or is stopped
+  --source-from-previous   Start on that run's feature branch (with --after)
 
 A scheduled run starts only while a Worca process is up (\`worca ui\`, or --wait) and the
 machine is awake.
@@ -59,6 +66,7 @@ Commands:
   worca schedule show <id>                One item in detail
   worca schedule run-now <id>             Start it now (a repeating schedule gets one extra run)
   worca schedule move <id> --at <when>    Change the time of a one-off run
+  worca schedule move <id> --after <id>   Wait for another run instead of a time
   worca schedule cancel <id>              Cancel a one-off run, or delete a repeating schedule
   worca schedule skip <id>                Skip the next run of a repeating schedule
   worca schedule pause|resume <id>        Pause or resume a repeating schedule
@@ -80,19 +88,63 @@ export function parseGrace(text) {
 
 /** True when the flags ask for a schedule rather than an immediate run. */
 export function wantsSchedule(flags) {
-  return !!(flags.at || flags.every || flags.cron);
+  // `after !== undefined`, not truthiness: `--after ""` (an unset shell variable) must refuse, not start a run now.
+  return !!(flags.at || flags.every || flags.cron) || flags.after !== undefined;
+}
+
+/** `--after <prefix>` -> the one ticket or pipeline whose id starts with it. */
+export function resolveAfterId(prefix, fail) {
+  const q = String(prefix || '').trim();
+  if (!q) fail('--after needs a run id (see: worca schedule list, or the History view)');
+  // A series id (what `worca schedule list` prints under Repeating) is refused with the pinned sentence
+  // here; an OCCURRENCE's ticket id is found below (every scheduled_runs row, occurrences included) so
+  // resolveAfterRef can refuse it with the same sentence — hidden, it would read "no run matches".
+  if (q.startsWith('sch_')) fail('a repeating schedule is not supported — give the id of one of its runs');
+  // Both tables by prefix, straight from the DB: listTickets() is ORDER BY run_at (500 rows by default,
+  // 2000 at most), and an after-ticket sits at the 9999 sentinel — on a busy home it is the first row dropped.
+  const like = `${q.replace(/[\\%_]/g, '\\$&')}%`;
+  const tickets = getDb().prepare("SELECT id FROM scheduled_runs WHERE id LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 21").all(like).map((t) => ({ kind: 'ticket', id: t.id }));
+  const seen = new Set(tickets.map((h) => h.id));
+  const hits = [
+    ...tickets,
+    // A ticket's UUID is the RUN id of the run it becomes (ui/server.mjs: `runId = internal.ticket.id`);
+    // the pipeline row's id is a different, shorter 8-hex id (artifacts.mjs shortId). The two spaces
+    // never overlap today; the Set is a belt so one run can never be offered twice.
+    ...getDb().prepare("SELECT id FROM pipelines WHERE id LIKE ? ESCAPE '\\' ORDER BY started_at DESC LIMIT 21")
+      .all(like).filter((p) => !seen.has(p.id)).map((p) => ({ kind: 'pipeline', id: p.id })),
+  ];
+  if (!hits.length) fail(`no run or scheduled run matches "${q}"`);
+  if (hits.length > 1) fail(`"${q}" matches ${hits.length > 20 ? 'more than 20' : hits.length} runs — use a longer id`);   // both queries are capped at 21: the count is exact below 21
+  return hits[0];
 }
 
 /**
  * Validate the schedule flags. Returns { runAtMs | rule, overlap, maxFailures, ifMissed,
  * graceMin, tz }; calls `fail` (which exits) on the first problem.
  */
-export function readScheduleFlags(flags, { fail, now = Date.now() }) {
+export function readScheduleFlags(flags, { fail, now = Date.now(), projectDir = null }) {
   const tz = flags.tz || systemTz();
   if (!isValidTimeZone(tz)) fail(`--tz: "${tz}" is not a known timezone`);
-  const given = ['at', 'every', 'cron'].filter((k) => flags[k]);
-  if (given.length > 1) fail(`use one of --at, --every, --cron (got: ${given.map((k) => `--${k}`).join(', ')})`);
+  const given = ['at', 'every', 'cron', 'after'].filter((k) => flags[k]);
+  if (given.length > 1) fail(`use one of --at, --every, --cron, --after (got: ${given.map((k) => `--${k}`).join(', ')})`);
+  if (flags.after !== undefined && !String(flags.after).trim()) fail('--after needs a run id (see: worca schedule list, or the History view)');
+  if (flags.sourceFromPrevious && !flags.after) fail('--source-from-previous needs --after');
+  if (flags.afterAny && !flags.after) fail('--after-any needs --after');
   const defaults = scheduleDefaults();
+  if (flags.after) {
+    if (flags.wait) fail('--wait needs --at: a run after another run is started by the Worca server (worca ui)');
+    for (const [k, name] of [['ifMissed', '--if-missed'], ['grace', '--grace'], ['until', '--until'], ['count', '--count'], ['overlap', '--overlap'], ['maxFailures', '--max-failures']]) {
+      if (flags[k] !== undefined) fail(`${name} only applies to a timed schedule (--at / --every / --cron)`);
+    }
+    if (flags.sourceFromPrevious && flags.sourceBranch) fail('--source-from-previous and --source-branch cannot both be given');
+    const ref = resolveAfterId(flags.after, fail);
+    const policy = flags.afterAny ? 'any' : 'done';
+    const r = resolveAfterRef({ kind: ref.kind, id: ref.id }, { projectDir, policy });
+    if (!r.ok) fail(r.error);
+    // ifMissed / graceMin: the Settings defaults ride along, exactly as on a timed ticket — a chained
+    // ticket later moved to a time (`schedule move --at`) must not surface createTicket's hardcoded 360.
+    return { tz, after: r.after, afterPolicy: policy, sourceFromPrevious: !!flags.sourceFromPrevious, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  }
   const out = { tz, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin, overlap: 'skip', maxFailures: defaults.maxFailures };
   if (flags.ifMissed !== undefined) {
     if (!MISSED_POLICIES.includes(flags.ifMissed)) fail(`--if-missed must be one of ${MISSED_POLICIES.join(', ')}, got: ${flags.ifMissed}`);
@@ -205,16 +257,21 @@ export async function createFromFlags(flags, { projectDir, extras, promptText, s
   } else {
     const id = randomUUID();
     const request = await requestFromFlags(flags, { projectDir, extras, promptText, stageId: id });
-    ticket = createTicket({
-      id, title, projectDir, runAtMs: spec.runAtMs, request, ifMissed: spec.ifMissed, graceMin: spec.graceMin,
-      ...(flags.wait ? { ownerPid: process.pid, ownerHost: hostname() } : {}),
-    });
-    out(`${c('green', 'Scheduled')} ${c('bold', ticket.id.slice(0, 8))} for ${formatInstant(spec.runAtMs, spec.tz, { withYear: true })} (in ${formatCountdown(spec.runAtMs - Date.now())})`);
+    if (spec.after) {
+      ticket = createTicket({ id, title, projectDir, request, after: { kind: spec.after.kind, id: spec.after.id }, afterPolicy: spec.afterPolicy, sourceFromPrevious: spec.sourceFromPrevious, ifMissed: spec.ifMissed, graceMin: spec.graceMin });
+      out(`${c('green', 'Scheduled')} ${c('bold', ticket.id.slice(0, 8))} after ‘${spec.after.title || spec.after.id.slice(0, 8)}’ (${spec.after.status})`);
+    } else {
+      ticket = createTicket({
+        id, title, projectDir, runAtMs: spec.runAtMs, request, ifMissed: spec.ifMissed, graceMin: spec.graceMin,
+        ...(flags.wait ? { ownerPid: process.pid, ownerHost: hostname() } : {}),
+      });
+      out(`${c('green', 'Scheduled')} ${c('bold', ticket.id.slice(0, 8))} for ${formatInstant(spec.runAtMs, spec.tz, { withYear: true })} (in ${formatCountdown(spec.runAtMs - Date.now())})`);
+    }
   }
   out(`  ${title}`);
   if (!flags.wait && !(await serverIsUp())) {
     out(c('yellow', 'Note: no Worca server is up. Start `worca ui` before then'
-      + (spec.rule ? '.' : ', or add --wait to hold this terminal.')));
+      + (spec.rule || spec.after ? '.' : ', or add --wait to hold this terminal.')));
   }
   out(c('gray', `  Manage it: worca schedule list | show | run-now | cancel ${(schedule ? schedule.id : ticket.id.slice(0, 8))}`));
   return { ticket, schedule };
@@ -291,7 +348,12 @@ function resolveItem(ref, fail) {
   if (!q) fail('an id is required (see: worca schedule list)');
   const hits = [
     ...listSchedules().filter((s) => s.id.startsWith(q) || s.id.slice(4).startsWith(q)).map((s) => ({ kind: 'recurring', item: s })),
-    ...listTickets({ all: true, limit: 2000 }).filter((t) => t.id.startsWith(q)).map((t) => ({ kind: 'once', item: t })),
+    // Tickets by prefix straight from the DB, the resolveAfterId idiom: listTickets() is ORDER BY run_at
+    // (2000 rows at most) and an after-ticket sits at the 9999 sentinel — on a busy home it is the first
+    // row dropped, and `show` / `move` / `cancel` would answer "no scheduled run … matches" for a ticket
+    // that `--after` still finds. LIKE metacharacters in the prefix are literal.
+    ...getDb().prepare("SELECT id FROM scheduled_runs WHERE id LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT 21")
+      .all(`${q.replace(/[\\%_]/g, '\\$&')}%`).map((r) => ({ kind: 'once', item: getTicket(r.id) })),
   ];
   if (!hits.length) fail(`no scheduled run or schedule matches "${q}" (see: worca schedule list)`);
   if (hits.length > 1) fail(`"${q}" matches ${hits.length} items — use a longer id`);
@@ -299,6 +361,9 @@ function resolveItem(ref, fail) {
 }
 
 const where = (x) => (x.workspaceId ? `workspace ${x.workspaceId}` : (x.projectDir ? basename(x.projectDir) : '—'));
+
+// `list` drops the status: a regex strip of ` (…)` would also eat a title's own parentheses.
+const afterLabel = (t, { withStatus = true } = {}) => { const r = afterRefOf(t.after.id); return `‘${(r && r.title) || t.after.id.slice(0, 8)}’${withStatus && r ? ` (${r.status})` : ''}`; };
 
 export async function cmdSchedule(argv, { out, c, fail }) {
   const verb = argv[0];
@@ -322,9 +387,9 @@ export async function cmdSchedule(argv, { out, c, fail }) {
     if (tickets.length) {
       out(c('bold', 'Once'));
       for (const t of tickets) {
-        const st = t.status === 'scheduled' ? `in ${formatCountdown(Date.parse(t.runAt) - Date.now()) || 'a moment'}` : t.status === 'missed' ? c('yellow', 'missed') : t.status;
+        const st = t.after && t.status === 'scheduled' ? 'waiting' : t.status === 'scheduled' ? `in ${formatCountdown(Date.parse(t.runAt) - Date.now()) || 'a moment'}` : t.status === 'missed' ? c('yellow', 'missed') : t.status;
         const held = t.ownerPid != null && t.status === 'scheduled' ? '  ·  held by a waiting terminal' : '';
-        out(`  ${t.id.slice(0, 8)}  ${when(t.runAt)}  ·  ${st}  ·  ${where(t)}  ·  ${t.title || ''}${held}`);
+        out(`  ${t.id.slice(0, 8)}  ${t.after ? `after ${afterLabel(t, { withStatus: false })}` : when(t.runAt)}  ·  ${st}  ·  ${where(t)}  ·  ${t.title || ''}${held}`);
       }
     }
     const unread = unreadCount('schedule');
@@ -345,7 +410,10 @@ export async function cmdSchedule(argv, { out, c, fail }) {
 
   const known = new Set(['show', 'run-now', 'move', 'cancel', 'skip', 'pause', 'resume']);
   if (!known.has(verb)) fail(`unknown schedule command "${verb}" — see: worca schedule help`);
-  const found = resolveItem(rest.find((a) => !a.startsWith('-')), fail);
+  // The item is the first bare argument that is not a value flag's VALUE: `move --after <id> <ticket>`
+  // must move <ticket>, not resolve <id> as the item and then refuse it as "this run".
+  const VALUE_FLAGS = new Set(['--at', '--after']);
+  const found = resolveItem(rest.find((a, i) => !a.startsWith('-') && !(i > 0 && VALUE_FLAGS.has(rest[i - 1]))), fail);
   const { kind, item } = found;
   const label = kind === 'recurring' ? item.id : item.id.slice(0, 8);
 
@@ -360,17 +428,24 @@ export async function cmdSchedule(argv, { out, c, fail }) {
       out(`  runs       ${item.runsCount}${item.lastResult ? `, last: ${item.lastResult}` : ''}`);
       out(`  overlap    ${item.overlap}   pause after ${item.maxFailures || 'no'} failures (streak ${item.failureStreak})`);
     } else {
-      out(`  when       ${when(item.runAt)}`);
+      if (item.after) out(`  after      ${afterLabel(item)}`);
+      else out(`  when       ${when(item.runAt)}`);
       out(`  status     ${item.status}${item.failReason ? ` — ${item.failReason}` : ''}`);
+      if (item.after) out(`  on error   ${item.after.policy === 'any' ? 'start anyway' : 'do not start'}`);
+      if (item.sourceFromPrevious) out(`  source     the run before it`);
       if (item.pipelineId) out(`  pipeline   ${item.pipelineId}`);
     }
-    out(`  if missed  ${item.ifMissed === 'skip' ? 'skip' : `start late, within ${item.graceMin} min`}`);
+    if (!(kind === 'once' && item.after)) out(`  if missed  ${item.ifMissed === 'skip' ? 'skip' : `start late, within ${item.graceMin} min`}`);
     out(`  workflow   ${item.summary.workflowId}${item.summary.mock ? '  (mock)' : ''}`);
     if (item.summary.prompt) out(`  task       ${item.summary.prompt.split('\n')[0].slice(0, 100)}`);
     return 0;
   }
 
   if (verb === 'run-now') {
+    if (kind === 'once' && item.after && item.sourceFromPrevious) {
+      const p = predecessorState(item.after, { policy: item.after.policy });
+      if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) fail(`Start ‘${p.title || 'the run before it'}’ first, or change its source branch`);
+    }
     const t = kind === 'recurring' ? runScheduleNow(item.id) : requestRunNow(item.id);
     if (!t) fail(`${label} is ${item.status} and cannot be started`);
     out(`Asked ${c('bold', label)} to start now.`);
@@ -390,7 +465,20 @@ export async function cmdSchedule(argv, { out, c, fail }) {
     const i = rest.indexOf('--at');
     const inline = rest.find((a) => a.startsWith('--at='));
     const value = inline ? inline.slice(5) : (i !== -1 ? rest[i + 1] : undefined);
-    if (!value) fail('move needs --at "<when>"');
+    const ai = rest.indexOf('--after');
+    const aInline = rest.find((a) => a.startsWith('--after='));
+    const afterVal = aInline ? aInline.slice(8) : (ai !== -1 ? rest[ai + 1] : undefined);
+    if (afterVal && value) fail('use --at or --after, not both');
+    if (afterVal) {
+      const ref = resolveAfterId(afterVal, fail);
+      const policy = rest.includes('--after-any') ? 'any' : (item.after ? item.after.policy : 'done');
+      const r = resolveAfterRef({ kind: ref.kind, id: ref.id }, { projectDir: item.projectDir, workspaceId: item.workspaceId, policy, selfId: item.id });
+      if (!r.ok) fail(r.error);
+      if (!updateTicket(item.id, { after: { kind: r.after.kind, id: r.after.id }, afterPolicy: policy, ...(rest.includes('--source-from-previous') ? { sourceFromPrevious: true } : {}) })) fail(`${label} is ${item.status} and can no longer be moved`);
+      out(`Moved ${c('bold', label)} after ‘${r.after.title || r.after.id.slice(0, 8)}’.`);
+      return 0;
+    }
+    if (!value) fail('move needs --at "<when>" or --after <id>');
     const at = parseAt(value, { nowMs: Date.now(), tz });
     if (!at.ok) fail(at.error);
     if (at.ms <= Date.now()) fail('--at: that time is in the past');

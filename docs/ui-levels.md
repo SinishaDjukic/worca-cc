@@ -155,7 +155,7 @@ be skipped by forgetting it.
 | Workflow graph with status colours, gate pip, End result; Overview tab | S |
 | Density toggle, live log pane, log search / copy / auto-scroll | A |
 | Branch chip, progress n/m, model · effort pill, graph zoom cluster | A |
-| Auto proposal Revise; Artifacts tab; Report this run | A |
+| Auto proposal Revise; Artifacts tab | A |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, loop badges | E |
 | Agents tab, WORKTREE card, Auto proposal tunables table | E |
@@ -210,7 +210,7 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 | General: Appearance, Interface mode, Budget & cost limits, Getting started, About | S |
 | General: root folders, Ask Worca limits, chat notifications, Scheduled runs defaults | A |
 | Guardrails tab (list, details); Plugins tab (installed, available, install); Memory tab (files) | A |
-| General: title model, Auto workflow model, spawn diagnostics | E |
+| General: title model, Auto workflow model, spawn diagnostics; Memory tab: Defragment model | E — the Defragment model card stays visible while a model is set |
 | Guardrails create / delete; Models tab; Providers tab; marketplaces, Doctor, leftover data | E |
 | Models tab: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers tab: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |

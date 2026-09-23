@@ -17,8 +17,8 @@ const SAMPLE = {
     'cost.resetPeriod': { kind: 'default', value: 'monthly' },
     'cost.pooledBudgetUsd': { kind: 'soft', value: 1200, window: 'monthly' },
     'guardrails.minimum': { kind: 'soft', value: 'normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5', 'claude-sonnet-5'] },
-    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5', effort: 'high' } } },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5', 'claude-sonnet-5'] },
+    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5-5', effort: 'high' } } },
     'plugins.required': { kind: 'soft', value: [{ name: 'github-source', marketplace: 'worca-cc' }, { name: 'acme-jira', marketplace: 'acme/worca-plugins', minVersion: '1.2.0', config: { baseUrl: 'https://acme.atlassian.net', projectKey: 'GW' } }] },
     'workflows.default': { kind: 'default', value: 'wfp_acme-jira_ticket-to-pr' },
     'worca.minVersion': { kind: 'soft', value: '1.4.0' },
@@ -59,7 +59,7 @@ test('malformed pieces are dropped one warning each; the rest survives (the read
     fields: {
       'cost.pipelineLimitUsd': { kind: 'soft', value: -3 },              // bad value
       'cost.resetPeriod': { kind: 'soft', value: 'monthly' },            // kind not accepted
-      'models.allowed': { kind: 'soft', value: 'claude-opus-5' },        // not a list
+      'models.allowed': { kind: 'soft', value: 'claude-opus-5-5' },        // not a list
       'guardrails.minimum': { kind: 'soft', value: 'normal', onBreach: 'x' }, // attr not on this field: ignored silently
       'bogus.key': { kind: 'default', value: 1 },
       'run.humanInLoop': 'yes',
@@ -139,4 +139,14 @@ test('helpers: tierRank, semverAtLeast, looksLikeSecret', () => {
   assert.equal(semverAtLeast('1.4.0', '1.3.9'), true); assert.equal(semverAtLeast('1.3.0', '1.4.0'), false); assert.equal(semverAtLeast('1.4.0-rc.1', '1.4.0'), true);
   assert.equal(looksLikeSecret('${TOKEN}'), false); assert.equal(looksLikeSecret('https://x'), false);
   assert.equal(looksLikeSecret('sk-ant-' + 'a'.repeat(30)), true); assert.equal(looksLikeSecret('a'.repeat(48)), true);
+});
+
+test('cost.humanRateUsd is a default-kind usd field governing humanRateUsdPerHour', () => {
+  const f = fieldMeta('cost.humanRateUsd');
+  assert.equal(f.group, 'cost');
+  assert.equal(f.type, 'usd');
+  assert.deepEqual(f.kinds, ['default']);
+  assert.equal(f.local, 'humanRateUsdPerHour');
+  assert.equal(validateValue(f, 95), null);
+  assert.match(validateValue(f, -1), /positive/);
 });

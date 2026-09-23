@@ -9,7 +9,7 @@ const TID = 'ask_00000001';
 
 const CATALOG = {
   models: [
-    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
     { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'], custom: false },
@@ -59,12 +59,12 @@ test('ask-panel-pickers: primary list = one per family + globals; More models ho
   const pop = ctx.doc.querySelector('.ask-pop-model');
   assert.ok(pop);
   const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
-  assert.deepEqual(names, ['Opus 5', 'Fable 5.1 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
+  assert.deepEqual(names, ['Opus 5.5', 'Fable 5.1 (1M)', 'Sonnet 4.6', 'Haiku 4.5', 'Corp']);
   assert.match(pop.textContent, /More models/);
   assert.match(pop.textContent, /Effort/);
   // the selected model carries the check mark
   const checked = pop.querySelector('.ask-model-check');
-  assert.ok(checked && checked.closest('[role="menuitem"]').textContent.includes('Opus 5'));
+  assert.ok(checked && checked.closest('[role="menuitem"]').textContent.includes('Opus 5.5'));
   // More pane
   ctx.doc.querySelector('[data-ask-more-models]').click();
   const moreNames = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
@@ -92,7 +92,7 @@ test('ask-panel-pickers: effort pane lists the current model efforts; picking pe
 
 test('ask-panel-pickers: picking a model with fewer efforts coerces the effort', async () => {
   const ctx = makePanel({ fetchHandler: handler() });
-  ctx.storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5', effort: 'max' }));
+  ctx.storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5-5', effort: 'max' }));
   const ctx2 = makePanel({ fetchHandler: handler(), storage: ctx.storage });
   ctx2.panel.open();
   await ctx2.tick(); await ctx2.tick();
@@ -110,13 +110,13 @@ test('ask-panel-pickers: an unknown stored model resets to the initial default o
   const ctx2 = makePanel({ fetchHandler: handler(), storage: ctx.storage });
   ctx2.panel.open();
   await ctx2.tick(); await ctx2.tick();
-  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: 'claude-opus-5-5', effort: 'high' });
 });
 
 // A catalog with plugin entries + a backend default (the widened /api/ask/models).
 const CATALOG_WIDE = {
   models: [
-    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
     { id: 'claude-opus-4-8', label: 'Opus 4.8', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
     { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
     { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true },
@@ -125,7 +125,7 @@ const CATALOG_WIDE = {
     { id: 'bolt-x', label: 'Bolt X', efforts: ['high'], custom: 'plugin', plugin: 'bolt', hasEnv: true, secretsMissing: ['BOLT_KEY'] },
   ],
   efforts: ['medium', 'high', 'xhigh', 'max'],
-  default: { model: 'claude-opus-5', effort: 'high' },
+  default: { model: 'claude-opus-5-5', effort: 'high' },
 };
 
 function wideHandler(catalog = CATALOG_WIDE) {
@@ -175,7 +175,7 @@ test('ask-panel-pickers: a payload without `default` still falls back to the col
   const ctx = makePanel({ fetchHandler: handler() }); // CATALOG has no `default`
   ctx.panel.open();
   await ctx.tick(); await ctx.tick();
-  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5');
+  assert.equal(ctx.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5.5');
   assert.equal(ctx.doc.querySelector('.ask-model-btn-effort').textContent, 'high');
 });
 
@@ -195,12 +195,12 @@ test('ask-panel-pickers: an effort-only change does not pin the model (D11)', as
   // Same browser, same storage, an operator who has since moved ASK_LIMITS.defaultModel:
   // the new default reaches it, and the effort the user DID choose survives.
   const later = makePanel({
-    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'claude-opus-5', effort: 'high' } }),
+    fetchHandler: wideHandler({ ...CATALOG_WIDE, default: { model: 'claude-opus-5-5', effort: 'high' } }),
     storage: ctx.storage,
   });
   later.panel.open();
   await later.tick(); await later.tick();
-  assert.equal(later.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5');
+  assert.equal(later.doc.querySelector('.ask-model-btn-label').textContent, 'Opus 5.5');
   assert.equal(later.doc.querySelector('.ask-model-btn-effort').textContent, 'medium');
   assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.model')), { model: null, effort: 'medium' },
     'adopting the backend default still writes nothing');
@@ -362,7 +362,7 @@ test('ask-panel-pickers: plugin models group by plugin — one per plugin up fro
   const pop = await openPicker(ctx);
   const names = [...pop.querySelectorAll('.ask-model-name')].map((n) => n.textContent);
   // one per claude family + every global + one per plugin
-  assert.deepEqual(names, ['Opus 5', 'Haiku 4.5', 'Corp', 'Acme Fast', 'Bolt X']);
+  assert.deepEqual(names, ['Opus 5.5', 'Haiku 4.5', 'Corp', 'Acme Fast', 'Bolt X']);
   // renderPane() calls panel.replaceChildren() (:769), so the More pane holds ONLY the rest.
   ctx.doc.querySelector('[data-ask-more-models]').click();
   const more = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
@@ -390,8 +390,8 @@ test('ask-panel-pickers: a row shows the name and the warnings — never where t
   assert.equal(acme.firstChild.className, 'ask-model-name', 'the name leads the row');
   assert.equal(acme.childNodes.length, 1, 'and it is the whole row');
   assert.equal(row('Corp').childNodes.length, 1, 'a global model is just as plain');
-  // Opus 5 is the picked model, so its row is name + ✓ — and still nothing else.
-  assert.deepEqual([...row('Opus 5').childNodes].map((n) => n.className), ['ask-model-name', 'ask-model-check']);
+  // Opus 5.5 is the picked model, so its row is name + ✓ — and still nothing else.
+  assert.deepEqual([...row('Opus 5.5').childNodes].map((n) => n.className), ['ask-model-name', 'ask-model-check']);
 
   // The two STATUS badges are warnings, not provenance — they stay.
   const bolt = [...row('Bolt X').querySelectorAll('.ask-model-tag')].map((t) => t.textContent);
@@ -497,7 +497,7 @@ test('ask-panel-pickers: ask-history-cleared closes the popover and resets the a
 test('ask-panel-pickers (#422): hidden built-ins leave the list; the default falls to the first visible model', async () => {
   const hiddenCatalog = {
     models: [
-      { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hidden: true },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], custom: false, hidden: true },
       { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hidden: true },
       { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global' },
     ],
@@ -518,7 +518,7 @@ test('ask-panel-pickers (#422): hidden built-ins leave the list; the default fal
 test('ask-panel-pickers (#422): a STORED pick on a hidden built-in stays visible and selected (it still resolves)', async () => {
   const hiddenCatalog = {
     models: [
-      { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false, hidden: true },
+      { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], custom: false, hidden: true },
       { id: 'my-corp-model', label: 'Corp', efforts: ['high'], custom: 'global' },
     ],
     efforts: ['medium', 'high', 'xhigh', 'max'],
@@ -528,13 +528,13 @@ test('ask-panel-pickers (#422): a STORED pick on a hidden built-in stays visible
   // The stored pick is read when the panel is BUILT — seed storage first.
   const storage = new Map();
   const storageApi = { getItem: (k) => (storage.has(k) ? storage.get(k) : null), setItem: (k, v) => storage.set(k, String(v)), removeItem: (k) => storage.delete(k) };
-  storageApi.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5', effort: 'high' }));
+  storageApi.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5-5', effort: 'high' }));
   const ctx = makePanel({ storage: storageApi, fetchHandler: (url, opts) => (url === '/api/ask/models' ? { ok: true, status: 200, json: async () => hiddenCatalog } : base(url, opts)) });
   ctx.panel.open();
   await ctx.tick(); await ctx.tick();
-  assert.match(ctx.doc.querySelector('[data-ask-model-btn]').textContent, /Opus 5/);
+  assert.match(ctx.doc.querySelector('[data-ask-model-btn]').textContent, /Opus 5.5/);
   ctx.doc.querySelector('[data-ask-model-btn]').click();
   await ctx.tick();
   const names = [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-name')].map((n) => n.textContent);
-  assert.deepEqual(names, ['Opus 5', 'Corp']);
+  assert.deepEqual(names, ['Opus 5.5', 'Corp']);
 });

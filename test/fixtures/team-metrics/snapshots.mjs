@@ -2,11 +2,11 @@ export const NOW = '2026-09-15T14:41:03.120Z';
 
 const agentSteps = [
   { key: 'x:preflight:1', agentKey: null, phase: null, cycle: 0, costUsd: 0 },
-  { key: 'plan:1', agentKey: 'planner', phase: 'plan', cycle: 1, costUsd: 0.61, modelUsed: 'claude-opus-5' },
+  { key: 'plan:1', agentKey: 'planner', phase: 'plan', cycle: 1, costUsd: 0.61, modelUsed: 'claude-opus-5-5' },
   { key: 'impl:1', agentKey: 'implementer', phase: 'implement', cycle: 1, costUsd: 1.2, modelUsed: 'claude-sonnet-5' },
-  { key: 'rev:1', agentKey: 'reviewer', phase: 'review', cycle: 1, costUsd: 0.3, modelUsed: 'claude-opus-5' },
+  { key: 'rev:1', agentKey: 'reviewer', phase: 'review', cycle: 1, costUsd: 0.3, modelUsed: 'claude-opus-5-5' },
   { key: 'impl:2', agentKey: 'implementer', phase: 'implement', cycle: 2, costUsd: 0.95, modelUsed: 'claude-sonnet-5' },
-  { key: 'rev:2', agentKey: 'reviewer', phase: 'review', cycle: 2, costUsd: 0.36, modelUsed: 'claude-opus-5' },
+  { key: 'rev:2', agentKey: 'reviewer', phase: 'review', cycle: 2, costUsd: 0.36, modelUsed: 'claude-opus-5-5' },
   { key: 'x:done:1', agentKey: null, phase: null, cycle: 0, costUsd: 0 },
 ];
 

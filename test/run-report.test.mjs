@@ -40,7 +40,7 @@ const STEPPER_V2 = {
         uiPhase: 'plan', color: 'red', icon: '<circle/>',
         // The authored config: a custom agent can put ANYTHING here (manifest.mjs:133).
         config: { secretNote: 'ping me at ddprinov@gmail.com', apiBase: 'https://internal.acme' },
-        model: 'claude-opus-5', effort: 'high', fanOut: true, askQuestions: false,
+        model: 'claude-opus-5-5', effort: 'high', fanOut: true, askQuestions: false,
         awaitAll: false, subagentModel: '' },
     ],
     wires: [{ id: 'w1', from: { node: 'n_plan', port: 'plan' },
@@ -119,7 +119,7 @@ before(async () => {
     cycle: 1, stepKey: 'x:n_plan:1', status: 'finished',
     startedAt: STARTED, finishedAt: '2026-06-01T00:05:01.000Z',
     durationMs: 300000, tokens: 171728, costUsd: 0.94, subagentType: 'general-purpose',
-    runModel: 'claude-opus-5', skills: ['acme-internal-skill'],
+    runModel: 'claude-opus-5-5', skills: ['acme-internal-skill'],
   });
 
   // ── a WORKSPACE run: different results.json top level (run-harness.mjs:2810) ──
@@ -204,7 +204,7 @@ test('the workflow shape is whitelisted, and keys + labels ship verbatim', async
 
   assert.deepEqual(p.workflow.nodes[0], {
     id: 'n_plan', kind: 'agent', key: 'planner', label: 'Planner',
-    model: 'claude-opus-5', effort: 'high',
+    model: 'claude-opus-5-5', effort: 'high',
     fanOut: true, askQuestions: false, awaitAll: false, cyclesUsed: 2,
   }, 'exactly the whitelisted fields — no config, no icon, no colour, no coordinates');
 
@@ -481,7 +481,7 @@ test('workflowShape reads a LEGACY v1 stepper without a graph key', () => {
     steps: [{ kind: 'preflight', nodes: [{ id: 'preflight', label: 'Preflight', sub: 'checks' }] },
             { kind: 'agent', nodes: [{ id: 's1_0', key: 'planner', uiPhase: 'plan', label: 'Planner',
                                        color: 'red', sub: 'writes the plan', cycles: true,
-                                       model: 'claude-opus-5', effort: 'high' }] }],
+                                       model: 'claude-opus-5-5', effort: 'high' }] }],
     feedbacks: [{ id: 'fb_0', from: 's1_0', to: 's1_0', maxCycles: 3 }],
   };
   const shape = workflowShape(v1, { s1_0: 4 });
@@ -489,7 +489,7 @@ test('workflowShape reads a LEGACY v1 stepper without a graph key', () => {
   assert.equal(shape.template, null, 'a v1 manifest has no template block');
   const planner = shape.nodes.find((n) => n.id === 's1_0');
   assert.deepEqual(planner, { id: 's1_0', kind: 'agent', key: 'planner', label: 'Planner',
-                              model: 'claude-opus-5', effort: 'high', cyclesUsed: 4 },
+                              model: 'claude-opus-5-5', effort: 'high', cyclesUsed: 4 },
     'v1 cells are whitelisted too — no colour, no "sub" description');
   assert.equal(shape.wires[0].loop, true, 'v1 feedbacks become loop wires');
   assert.equal(shape.wires[0].maxCycles, 3);

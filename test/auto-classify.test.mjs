@@ -9,9 +9,9 @@ import { normalizeShape, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
-const MODELS = [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }];
+const MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }];
 const reply = (shape) => `Here you go:\n\`\`\`json\n${JSON.stringify(shape)}\n\`\`\`\n`;
-const GOOD = { name: 'Plan and build', taskKind: 'prompt', reasoning: 'r', stages: [{ agent: 'planner', model: 'Claude-Opus-5', effort: 'high' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
+const GOOD = { name: 'Plan and build', taskKind: 'prompt', reasoning: 'r', stages: [{ agent: 'planner', model: 'Claude-Opus-5-5', effort: 'high' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
 /** A scripted runClaude: one reply per call, records prompts, reports a cost + usage. */
 function fakeRun(replies, { costUsd = 0.01 } = {}) {
   const calls = [];
@@ -78,7 +78,7 @@ test('agentVocabulary: derived/identical blurbs do not repeat, a missing .md lea
 
 test('the prompts carry the cards, the recipes, the models, the HITL rule, the fingerprint, extras, feedback and the capped task', () => {
   const sys = buildClassifierSystemPrompt({ agents: agentVocabulary(REG), models: [...MODELS, { id: 'claude-hidden-9', efforts: ['medium'], hidden: true }], humanInLoop: false });
-  for (const s of ['```json', 'manualWebUiTesting', 'Recipes', 'claude-opus-5', 'medium/high/max', 'NO human is in the loop',
+  for (const s of ['```json', 'manualWebUiTesting', 'Recipes', 'claude-opus-5-5', 'medium/high/max', 'NO human is in the loop',
     '"size": "small" | "medium" | "large"', '"signals"',
     'purpose: ', 'role (agent file): ', 'hints: ', 'tools: ', 'Drives the RUNNING web UI', 'plugin_playwright_playwright MCP (14 tools',
     'flags are the engine', 'builtin · coding']) assert.ok(sys.includes(s), s);
@@ -108,7 +108,7 @@ test('the prompts carry the cards, the recipes, the models, the HITL rule, the f
   assert.ok(user.includes('- brief.md\n`````\nBRIEF\n`````') && user.includes('- logo.png'), 'attachments ride a 5-backtick fence');
   assert.ok(user.includes('## User feedback (newest last)') && user.includes('1. drop the refiner'));
   assert.ok(user.includes('## Previous shape') && user.includes('"name": "Plan and build"'));
-  assert.ok(user.includes('"model": "Claude-Opus-5"') && !user.includes('"tunables"'), 'the previous shape is shown in the schema the prompt teaches (tunables spread onto the stage)');
+  assert.ok(user.includes('"model": "Claude-Opus-5-5"') && !user.includes('"tunables"'), 'the previous shape is shown in the schema the prompt teaches (tunables spread onto the stage)');
   assert.ok(user.includes('[… truncated: 500 more characters]'));
   assert.ok(user.indexOf('## Task') > user.indexOf('## User feedback'), 'the task comes last');
   const capped = buildClassifierUserPrompt({ taskText: 't', extras: [{ name: 'big.md', text: `${'z'.repeat(EXTRA_TEXT_CAP + 100)}\n\`\`\`\nnot a fence` }] });
@@ -126,9 +126,9 @@ test('parseShapeReply reads a fenced or bare JSON object and rejects the rest', 
 });
 
 test('checkShapeModels canonicalises ids and flags unknown models / bad efforts', () => {
-  const shape = normalizeShape({ stages: [{ agent: 'planner', model: 'CLAUDE-OPUS-5', effort: 'max' }, { agent: 'implementer', model: 'gpt-9' }, { agent: 'reviewer', model: 'claude-sonnet-5', effort: 'max' }, { agent: 'decomposer', effort: 'high' }] });
+  const shape = normalizeShape({ stages: [{ agent: 'planner', model: 'CLAUDE-OPUS-5-5', effort: 'max' }, { agent: 'implementer', model: 'gpt-9' }, { agent: 'reviewer', model: 'claude-sonnet-5', effort: 'max' }, { agent: 'decomposer', effort: 'high' }] });
   const issues = checkShapeModels(shape, MODELS);
-  assert.equal(shape.stages[0].tunables.model, 'claude-opus-5');
+  assert.equal(shape.stages[0].tunables.model, 'claude-opus-5-5');
   assert.deepEqual(issues.map((i) => i.code), ['UNKNOWN_MODEL', 'BAD_EFFORT', 'EFFORT_WITHOUT_MODEL']);
 });
 
@@ -139,7 +139,7 @@ test('a good reply classifies on the first attempt; cost, usage, the raw reply a
   assert.equal(r.costUsd, 0.01);
   assert.deepEqual(r.usage, { input_tokens: 10, output_tokens: 5 });
   assert.equal(r.raw, reply(GOOD));
-  assert.equal(r.shape.stages[0].tunables.model, 'claude-opus-5');
+  assert.equal(r.shape.stages[0].tunables.model, 'claude-opus-5-5');
   assert.deepEqual(r.shape.stages.map((s) => s.id), ['s1', 's2', 's3']);
   assert.equal(r.shape.size, 'medium', 'a reply without size normalizes to the default');
   assert.deepEqual(r.warnings, []);

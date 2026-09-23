@@ -111,7 +111,7 @@ test('ASK_LIMITS is frozen and carries the spec figures', () => {
   assert.equal(ASK_LIMITS.listRunsMaxLimit, 100);
   assert.equal(ASK_LIMITS.diffMaxBytes, 200_000);
   assert.equal(ASK_LIMITS.briefMaxChars, 8000);
-  assert.equal(ASK_LIMITS.defaultModel, 'claude-opus-5');
+  assert.equal(ASK_LIMITS.defaultModel, 'claude-opus-5-5');
   assert.equal(ASK_LIMITS.defaultEffort, 'high');
 });
 

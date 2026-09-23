@@ -29,8 +29,13 @@ import { mockEnabled } from './claude-runner.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } from './graph/executor.mjs';
+import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
+import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
+import { diffNumstat } from './git-info.mjs';
+import { humanEstimateOverrides, memoryDefragModel } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
+import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { fingerprintProject } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -79,6 +84,9 @@ export class GraphOrchestrator extends RunHarness {
     this._resumeSessions = null; // Map executionId -> sessionId (one-shot)
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
+    this._humanCursor = null;          // cumulative worktree numstat at the last agent/script terminal (money-saved §3.1)
+    this._humanCursorReady = false;    // baseline measured at the first agent/script start, or restored from the resume point
+    this._humanRun = serialQueue();    // measure-then-credit is atomic per execution: slices that end together split, never double
     this._taskArtifact = null;   // the pre-rendered task document
     this.extrasFiles = [];
     // Auto workflow (spec §5): the decision loop's state. `feedback`/`round`/`prior`
@@ -119,10 +127,23 @@ export class GraphOrchestrator extends RunHarness {
   async _resolveTopology(registry) {
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
     if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
+    // Settings › Memory: a defragment run (memoryScope ⇔ wf_memory_defrag, checked in the
+    // constructor) resolves its model/effort pair HERE — the one place every entry point reaches
+    // (the Memory view's button, New pipeline, an Ask card, a schedule and the CLI all construct
+    // this class). resume() never calls this hook: the manifest froze the pair on the node.
+    const defrag = this.memoryScope ? await this._defragAgentPair() : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry,
+      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
     });
     this._adoptResolvedGraph(resolved);
+    // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
+    // off the resolved graph (a project's own pick, a team default or the template's model): a run
+    // log line, and an audit line queued until the pipeline dir exists (RunHarness._pendingAudits).
+    if (defrag && defrag.warning) {
+      const text = `${defrag.warning} — the run uses ${agentPairText(this.resolved.nodeCtx)}`;
+      this._log('orchestrator', 'warn', text);
+      this._pendingAudits.push(`${text}.`);
+    }
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
     // The manifest is built from the RESOLVED template, the resolver's registry
@@ -136,6 +157,27 @@ export class GraphOrchestrator extends RunHarness {
       agentKeys: new Set(this.resolved.agentKeys),
       workflow: { id: this.workflowId, name: this.resolved.template.name || this.workflowId },
     };
+  }
+
+  /**
+   * Settings › Memory: the pair every agent node of this Memory defragment run uses
+   * (memory-defrag-model.mjs) — the one named at start (`claude.model` / `claude.effort`: the
+   * CLI's --model, a CLI-made schedule) wins, else the stored setting, validated against THIS
+   * project's catalog. A setting that fails the check comes back as `warning` (the caller logs it
+   * once the graph says what the run uses instead) — never a refused run. `pair: null` ⇒ the node
+   * layers resolve exactly as before.
+   * @returns {Promise<{pair: ({model:string, effort:(string|null)}|null), warning: (string|null)}>}
+   */
+  async _defragAgentPair() {
+    const explicit = { model: this.claude.model, effort: this.opts.claude?.effort };
+    const stored = memoryDefragModel();
+    // The catalog read only when the setting is the one that decides.
+    const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
+      ? await listModels(this.projectDir) : [];
+    const r = resolveDefragModel({ explicit, stored, models });
+    if (!r.model) return { pair: null, warning: r.warning };
+    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : 'Settings › Memory'})`);
+    return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
   }
 
   /** The Auto entry before the decision: an EMPTY graph tagged `deciding`, so
@@ -705,6 +747,9 @@ export class GraphOrchestrator extends RunHarness {
         completed: s.status === 'done',
       })),
       planVersion: this._planVersion,
+      // money-saved §3.1: the cursor at the last completed terminal (paused executions never
+      // advance it), so a resume credits the paused execution's pre-pause work at its terminal.
+      humanCursor: this._humanCursorReady ? (this._humanCursor ?? { files: 0, insertions: 0, deletions: 0 }) : null,
       stepModels: this.stepModels,
       workflowId: this.workflowId,
       // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
@@ -896,6 +941,7 @@ export class GraphOrchestrator extends RunHarness {
     } catch (err) {
       return this._settleUnstarted(nc, node, args, err);   // allocation failed: no row to mark
     }
+    await this._humanCursorInit(ctx);
     this._execStep(ctx, 'start');
     let endMark = 'done';
     try {
@@ -978,6 +1024,7 @@ export class GraphOrchestrator extends RunHarness {
       }
       throw err;
     } finally {
+      if (endMark !== 'paused') await this._humanEstimate(ctx);
       this._execStep(ctx, endMark);
       // A PAUSED slice stays 'running': the resume re-runs the whole composite,
       // and a task that never finished must not read as done.
@@ -1211,6 +1258,11 @@ export class GraphOrchestrator extends RunHarness {
       if (status === 'start') step.endedAt = null;
     }
     if (terminal) step.endedAt = now;
+    if (terminal && ctx.human) {
+      step.humanHours = ctx.human.hours;
+      step.humanSignals = ctx.human.signals;
+    }
+    if (terminal) this.state.humanHours = sumStepHours(this.state.steps);
     if (status === 'start') this._clockResume(key);
     else this._clockPause(key);
     this.state.totalActiveMs = sumStepActive(this.state.steps);
@@ -1235,6 +1287,49 @@ export class GraphOrchestrator extends RunHarness {
     }
     this._emit('state', this.getState());
     this._persist().catch(() => {});
+  }
+
+  /** Intent-to-add every member worktree, then measure. A NEW file is invisible to
+   *  `git diff <checkpoint>` until `git add -N` has seen it (the harness stages the same
+   *  way before a review); ignoreAbort so the stopped path still measures. Never throws. */
+  async _humanMeasure() {
+    try {
+      return await measureCodeCursor({
+        workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
+        excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
+        stage: () => this._stageWorkingTree({ ignoreAbort: true }),
+      });
+    } catch { return null; }
+  }
+
+  /** The baseline at the FIRST agent/script start of a run: under legacy run-root mode the
+   *  checkout may already be dirty, and that dirt is not the run's work. A resume restores
+   *  the cursor from the resume point instead, so the paused execution's pre-pause work
+   *  is credited at its real terminal. Queued, so it lands before any estimate. */
+  _humanCursorInit(ctx) {
+    const kind = ctx?.node?.kind;
+    if (this._humanCursorReady || (kind !== 'agent' && kind !== 'script')) return Promise.resolve();
+    this._humanCursorReady = true;
+    return this._humanRun(async () => { this._humanCursor = await this._humanMeasure(); }).catch(() => {});
+  }
+
+  /** Evidence → hours for ONE terminal execution, serialized with every other measurement of
+   *  this run. Never rejects. Flow cards and scripts leave ctx.human null (their row stays
+   *  NULL: "not estimated" is not 0); a script still advances the baseline so its own file
+   *  changes are never credited to the next agent. */
+  _humanEstimate(ctx) {
+    ctx.human = null;
+    const kind = ctx?.node?.kind;
+    if (kind !== 'agent' && kind !== 'script') return Promise.resolve();
+    return this._humanRun(async () => {
+      const cursorPrev = this._humanCursor;
+      const measured = await this._humanMeasure();
+      if (measured) this._humanCursor = measured;
+      if (kind !== 'agent') return;
+      const evidence = await collectStepEvidence({ ctx, cursorPrev, cursorNow: measured || cursorPrev });
+      const est = estimateStepHours(evidence, resolveConstants(humanEstimateOverrides()));
+      ctx.human = { hours: est.hours, signals: { ...est.signals, method: est.method } };
+    }).catch(() => { ctx.human = null; });
   }
 
   /** The retry loop around ONE execution — the NODE site of failure-policy.mjs.
@@ -1674,6 +1769,7 @@ export class GraphOrchestrator extends RunHarness {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
     this._planVersion = Number.isFinite(rp.planVersion) ? rp.planVersion : 0;
+    if (rp.humanCursor && typeof rp.humanCursor === 'object') { this._humanCursor = rp.humanCursor; this._humanCursorReady = true; }
     this._clearPauseReason();
     const manifest = rp.manifest || this.state.stepper;
     this.state.stepper = manifest;

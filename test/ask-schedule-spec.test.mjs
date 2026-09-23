@@ -162,3 +162,104 @@ test('context: the browser\'s zone is a validated IANA name; the header shows th
   assert.match(h, /schedule card_00000002 proposed "Delete the schedule "Nightly""/);
   assert.match(buildContextHeader({ now: '2026-09-18T10:00:00.000Z' }), /^now: 2026-09-18T10:00Z$/m, 'no zone, the old line byte for byte');
 });
+
+const AFTER_ROWS = {
+  p1: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running', pipelineId: 'p1', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  p9: { kind: 'pipeline', id: 'p9', title: 'Old', status: 'done', pipelineId: 'p9', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  t1: { kind: 'ticket', id: 't1', title: 'Nightly', status: 'scheduled', pipelineId: null, projectKey: 'proj-1', workspaceId: null, scheduleId: 'sch_1' },
+  w1: { kind: 'pipeline', id: 'w1', title: 'Ws', status: 'done', pipelineId: 'w1', projectKey: null, workspaceId: 'ws_1', scheduleId: null },
+  aaaa: { kind: 'ticket', id: 'aaaa', title: 'Tests', status: 'scheduled', pipelineId: null, projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  e1: { kind: 'pipeline', id: 'e1', title: 'Broken', status: 'error', pipelineId: 'e1', projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+  c1: { kind: 'ticket', id: 'c1', title: 'Gone', status: 'canceled', pipelineId: null, projectKey: 'proj-1', workspaceId: null, scheduleId: null },
+};
+const afterRef = (id) => AFTER_ROWS[id] || null;
+
+test('after: the user gives a run id; the spec names it, refuses a series, the wrong target, and when/every alongside', () => {
+  const ok = resolveScheduleSpec({ after: 'p1', afterPolicy: 'any', sourceFromPrevious: true, projectKey: 'proj-1' }, { nowMs: NOW, timeZone: 'UTC', afterRef });
+  assert.deepEqual(ok, { ok: true, schedule: { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' } });
+  assert.deepEqual(scheduleRequestFields(ok.schedule), { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'any', sourceFromPrevious: true });
+  assert.deepEqual(scheduleRequestFields(resolveScheduleSpec({ after: 'p1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).schedule), { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done' });
+  assert.deepEqual(resolveScheduleSpec({ after: 'zz' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: no run or scheduled run has id zz']);
+  assert.deepEqual(resolveScheduleSpec({ after: 't1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: a repeating schedule is not supported — give the id of one of its runs']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'w1', projectKey: 'proj-1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Ws’ targets a workspace; this run targets a project']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', workspaceId: 'ws_1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Refactor’ targets a project; this run targets a workspace']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', when: 'tomorrow 02:00' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['give when (run once), every (repeat) OR after (another run), not both']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', afterPolicy: 'maybe' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['afterPolicy must be one of done | any']);
+  // Each refusal in the after arm, one by one (a mutation sweep found every line below unbound).
+  assert.deepEqual(resolveScheduleSpec({ after: 'sch_1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: a repeating schedule is not supported — give the id of one of its runs'], 'the sch_ prefix, before any lookup');
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', projectKey: 'proj-2' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Refactor’ targets another project']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'w1', workspaceId: 'ws_2' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Ws’ targets another workspace; this run targets ws_2']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', sourceFromPrevious: 'yes' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['sourceFromPrevious must be true or false']);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1', count: 3 }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['count only apply with every']);
+  assert.deepEqual(resolveScheduleSpec({ sourceFromPrevious: true }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['sourceFromPrevious only applies with after']);
+  // …but an explicit `false` is not "given": a plain timed proposal may carry it.
+  // (killer-covered) the ONLY assertion on afterOnly's `sourceFromPrevious === true` special case — do not drop it.
+  assert.equal(resolveScheduleSpec({ when: 'tomorrow 02:00', sourceFromPrevious: false }, { nowMs: NOW, timeZone: 'UTC', afterRef }).ok, true);
+  assert.deepEqual(resolveScheduleSpec({ after: 'p1' }, { nowMs: NOW, timeZone: 'UTC' }).errors, ['after: scheduled runs are unavailable here']);
+  // The outcome, from the row's status: the pinned sentence is reachable from Ask, not only at Start.
+  assert.deepEqual(resolveScheduleSpec({ after: 'e1' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Broken’ ended with an error — nothing to wait for']);
+  assert.equal(resolveScheduleSpec({ after: 'e1', afterPolicy: 'any' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).ok, true, 'any: an ended run is fine');
+  assert.deepEqual(resolveScheduleSpec({ after: 'c1', afterPolicy: 'any' }, { nowMs: NOW, timeZone: 'UTC', afterRef }).errors, ['after: ‘Gone’ was canceled — nothing to wait for'], 'a ticket that ended is refused under either policy');
+});
+
+test('propose_run refuses sourceFromPrevious together with a branch; the card carries the after schedule', async () => {
+  const v = createProposalValidator({
+    listProjects: async () => [{ name: 'shop', path: '/p/shop', key: 'proj-1' }],
+    readWorkflow: async () => ({ id: 'wf_default', name: 'Default' }),
+    assertRunnableWorkflow: async () => ({ id: 'wf_default', name: 'Default' }),
+    readGuardrailSet: async () => ({ id: 'normal' }),
+    isGitRepo: () => true, pathExists: () => true, listTaskSources: () => [], afterRef,
+  });
+  const bad = await v.validateProposal({ projectKey: 'proj-1', brief: 'Add tests', after: 'p1', sourceFromPrevious: true, sourceBranch: 'main' }, { nowMs: NOW, timeZone: 'UTC' });
+  assert.deepEqual(bad, { ok: false, errors: ['sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given'] });
+  const ok = await v.validateProposal({ projectKey: 'proj-1', brief: 'Add tests', after: 'p1', sourceFromPrevious: true }, { nowMs: NOW, timeZone: 'UTC' });
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.card.schedule.kind, 'after');
+  assert.equal(ok.card.schedule.text, 'After ‘Refactor’ finishes');
+  assert.equal(ok.card.schedule.sourceFromPrevious, true);
+});
+
+test('propose_schedule_change move can point a one-off run at another run', async () => {
+  const rows = {
+    aaaa: { kind: 'once', item: { id: 'aaaa', title: 'Tests', status: 'scheduled', runAt: '2026-09-19T00:00:00.000Z', scheduleId: null, projectDir: '/p/shop', projectKey: 'proj-1', workspaceId: null, after: null } },
+    // A run that has already gone: the status guard must still win over the new after-branch.
+    ffff: { kind: 'once', item: { id: 'ffff', title: 'Gone', status: 'fired', runAt: '2026-09-19T00:00:00.000Z', scheduleId: null, projectDir: '/p/shop', projectKey: 'proj-1', workspaceId: null, after: null } },
+    // Already chained, on the predecessor's branch — the row's `after` has no title (rowToTicket's shape).
+    bbbb: { kind: 'once', item: { id: 'bbbb', title: 'Docs', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', scheduleId: null, projectDir: '/p/shop', projectKey: 'proj-1', workspaceId: null, after: { kind: 'pipeline', id: 'p9', policy: 'done' }, sourceFromPrevious: true } },
+  };
+  const validate = createScheduleChangeValidator({ getItem: (id) => rows[id] || null, afterRef, now: () => NOW });
+  const r = await validate({ action: 'move', id: 'aaaa', after: 'p1', afterPolicy: 'any' }, { timeZone: 'UTC' });
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.deepEqual(r.card.patch, { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'any' });
+  assert.deepEqual(r.card.after.afterRun, { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' });
+  assert.match(r.card.summary, /after ‘Refactor’/);
+  assert.deepEqual((await validate({ action: 'move', id: 'aaaa', after: 'p1', when: 'tomorrow 02:00' }, { timeZone: 'UTC' })).errors, ['move: give when OR after, not both']);
+  assert.deepEqual((await validate({ action: 'move', id: 'aaaa', after: 'aaaa' }, { timeZone: 'UTC' })).errors, ['move: a run cannot wait for itself']);
+  assert.deepEqual((await validate({ action: 'move', id: 'aaaa', after: 'zz' }, { timeZone: 'UTC' })).errors, ['move: no run or scheduled run has id zz'], 'one prefix, never `move: after: …`');
+  // The after-branch sits BELOW the kind / occurrence / status guards.
+  assert.deepEqual((await validate({ action: 'move', id: 'ffff', after: 'p1' }, { timeZone: 'UTC' })).errors, ['this run is fired and can no longer be moved']);
+  assert.deepEqual((await validate({ action: 'move', id: 'aaaa', after: 'e1' }, { timeZone: 'UTC' })).errors, ['move: ‘Broken’ ended with an error — nothing to wait for']);
+  // Re-chaining an after-ticket: `before` names the current predecessor by TITLE (looked up through
+  // afterRef — the row carries only its id), the branch choice is inherited when unsaid, and turning
+  // it OFF must reach the PATCH explicitly (an omitted key means "keep" there).
+  const keep = await validate({ action: 'move', id: 'bbbb', after: 'p1' }, { timeZone: 'UTC' });
+  assert.equal(keep.ok, true, JSON.stringify(keep));
+  assert.deepEqual(keep.card.before, { when: 'after ‘Old’', at: null });
+  assert.equal(keep.card.after.sourceFromPrevious, true, 'inherited');
+  assert.deepEqual(keep.card.patch, { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done', sourceFromPrevious: true }, 'unchanged → the POST form (truthy key) is fine');
+  const off = await validate({ action: 'move', id: 'bbbb', after: 'p1', sourceFromPrevious: false }, { timeZone: 'UTC' });
+  assert.equal(off.ok, true, JSON.stringify(off));
+  assert.equal(off.card.after.sourceFromPrevious, false);
+  assert.deepEqual(off.card.patch, { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done', sourceFromPrevious: false }, 'the flip rides the patch');
+  // Every arm that names the CURRENT state of an after-ticket says the predecessor — cancel, run_now and a
+  // move back to a time read beforeOnce() at HEAD, which prints the year 9999 for a chained ticket.
+  const cancel = await validate({ action: 'cancel', id: 'bbbb' }, { timeZone: 'UTC' });
+  assert.deepEqual(cancel.card.before, { when: 'after ‘Old’', at: null });
+  assert.equal(cancel.card.summary, 'Cancel "Docs", waiting for ‘Old’');
+  assert.equal((await validate({ action: 'run_now', id: 'bbbb' }, { timeZone: 'UTC' })).card.summary, 'Start "Docs" now instead of after ‘Old’');
+  const toTime = await validate({ action: 'move', id: 'bbbb', when: 'tomorrow 02:00' }, { timeZone: 'UTC' });
+  assert.equal(toTime.ok, true, JSON.stringify(toTime));
+  assert.deepEqual(toTime.card.before, { when: 'after ‘Old’', at: null });
+  assert.match(toTime.card.summary, /^Move "Docs" from after ‘Old’ to /);
+  assert.deepEqual(toTime.card.patch, { scheduledFor: toTime.card.after.at });
+});

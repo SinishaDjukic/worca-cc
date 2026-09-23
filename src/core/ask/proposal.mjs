@@ -15,6 +15,7 @@ import { ASK_LIMITS } from './limits.mjs';
 import { resolveScheduleSpec } from './schedule-spec.mjs';
 import { validateRunSource, checkTask } from './source-spec.mjs';
 import { listTaskSources as realListTaskSources } from '../sources.mjs';
+import { afterRefOf as realAfterRefOf } from '../scheduler.mjs';
 import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
 import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 
@@ -104,6 +105,9 @@ export function createProposalValidator({
   // Plugin task sources (source-spec.mjs): the installed sources with each one's profile roster.
   listTaskSources = () => realListTaskSources().map((s) => (s.type === 'plugin' && s.multiProfile ? { ...s, profiles: safeIds(s.plugin) } : s)),
   resolveProfile = realResolveProfile,
+  // Run chains: the predecessor reader (core afterRefOf; tests inject a stub). The MCP child gets
+  // the same default — tool-deps.mjs re-exports this module's default-bound validateProposal.
+  afterRef = realAfterRefOf,
 } = {}) {
   /**
    * @param {object} input  the propose_run tool input
@@ -237,8 +241,11 @@ export function createProposalValidator({
     }
 
     // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
-    const spec = resolveScheduleSpec(inp, { nowMs, timeZone, defaults: scheduleDefaults });
+    const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
     if (!spec.ok) errors.push(...spec.errors);
+    if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {
+      errors.push('sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given');
+    }
 
     if (errors.length) return fail();
     return {

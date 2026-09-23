@@ -5,7 +5,7 @@ import { mockShapeFor } from '../../src/core/auto/recipes.mjs';
 import { buildProposal } from '../../src/core/auto/proposal.mjs';
 
 export const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
-export const MODELS = [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['low', 'medium', 'high'] }];
+export const MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['low', 'medium', 'high'] }];
 export const WEB_TASK = 'Add a settings page with a toggle button in the React UI so users can switch themes in the browser.';
 
 /** A proposal for `text` (default: the web task ⇒ clarify · planner · refiner⟳ · implementer ⇄ reviewer + checklist → web testing, OR valve). */

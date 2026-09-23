@@ -122,8 +122,8 @@ test('proposalSummary uses the CLI vocabulary; applyTunables bakes accepted tuna
   const s = proposalSummary(p);
   assert.match(s, /^stages: /); assert.ok(s.includes('(claude-sonnet-5 · medium)'), s); assert.ok(s.includes('loops: '), s);
   const id = p.order[1];
-  const tpl = applyTunables({ nodes: [{ id, kind: 'agent', key: 'k', config: { model: 'a', effort: 'high' } }, { id: 'n_task', kind: 'task', config: {} }] }, { [id]: { model: 'claude-opus-5', effort: '' }, n_task: { model: 'x' } });
-  assert.deepEqual(tpl.nodes[0].config, { model: 'claude-opus-5' });
+  const tpl = applyTunables({ nodes: [{ id, kind: 'agent', key: 'k', config: { model: 'a', effort: 'high' } }, { id: 'n_task', kind: 'task', config: {} }] }, { [id]: { model: 'claude-opus-5-5', effort: '' }, n_task: { model: 'x' } });
+  assert.deepEqual(tpl.nodes[0].config, { model: 'claude-opus-5-5' });
   assert.deepEqual(tpl.nodes[1].config, {}, 'non-agent nodes are never touched');
 });
 

@@ -80,7 +80,9 @@ test('enable (here) → scopes lists the project → GET /api/team-metrics shape
   const r = await get(`/api/team-metrics?scope=project:${gwKey}&range=this-month`);
   assert.equal(r.status, 200);
   const j = await r.json();
-  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'fetchError', 'records', 'refresh', 'scope', 'stats', 'sync']);
+  assert.deepEqual(Object.keys(j).sort(), ['aggregate', 'fetchError', 'humanRateUsd', 'records', 'refresh', 'scope', 'stats', 'sync']);
+  assert.equal(j.humanRateUsd, 35);
+  assert.equal(typeof j.aggregate.kpis.savedUsd, 'number');
   assert.equal(j.scope.slug, 'gateway');
   assert.equal(j.records.length, 1);
   assert.equal(j.aggregate.kpis.runs, 1); assert.equal(j.aggregate.kpis.spendUsd, 2.5);

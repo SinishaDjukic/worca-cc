@@ -39,8 +39,8 @@ const SAMPLE_DOC = {
   fields: {
     'cost.pipelineLimitUsd': { kind: 'soft', value: 10, onBreach: 'pause', requireReason: true },
     'cost.resetPeriod': { kind: 'default', value: 'monthly' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5', 'claude-sonnet-5'] },
-    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5', effort: 'high' } } },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5', 'claude-sonnet-5'] },
+    'models.steps': { kind: 'default', value: { planner: { model: 'claude-opus-5-5', effort: 'high' } } },
     'plugins.required': { kind: 'soft', value: [{ name: 'acme-jira', marketplace: 'acme/worca-plugins', minVersion: '1.2.0' }] },
     'run.humanInLoop': { kind: 'default', value: true },
   },
@@ -189,7 +189,7 @@ test('editor (board 5): registry-driven rows, kind segments, docFromEditor round
   // Pick or type: the machine's models, plugins, marketplaces, guardrail sets and workflows arrive as
   // datalists on the inputs that name such things; without a list the input is plain text.
   const known = renderPolicyEditor(SAMPLE_DOC, { registry: REGISTRY, doc, known: {
-    models: [{ id: 'claude-opus-5', label: 'Opus 5' }, { id: 'acme-proxy-opus', label: 'Opus via Acme' }],
+    models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }, { id: 'acme-proxy-opus', label: 'Opus via Acme' }],
     plugins: [{ name: 'acme-jira', marketplace: 'acme/worca-plugins' }, { name: 'github-source', marketplace: 'worca-cc' }],
     marketplaces: ['acme/worca-plugins', 'worca-cc'],
     guardrails: [{ id: 'normal', name: 'Normal' }, { id: 'gp:gateway-normal', name: 'Gateway normal' }],
@@ -197,7 +197,7 @@ test('editor (board 5): registry-driven rows, kind segments, docFromEditor round
   } });
   doc.body.append(known);
   const dl = (id) => [...known.querySelector(`#tp-known-${id}`).options].map((o) => [o.value, o.label]);
-  assert.deepEqual(dl('models'), [['claude-opus-5', 'Opus 5'], ['acme-proxy-opus', 'Opus via Acme']]);
+  assert.deepEqual(dl('models'), [['claude-opus-5-5', 'Opus 5.5'], ['acme-proxy-opus', 'Opus via Acme']]);
   assert.deepEqual(dl('plugins'), [['acme-jira', 'from acme/worca-plugins'], ['github-source', 'from worca-cc']]);
   assert.equal(known.querySelector('.tp-edit-row[data-key="models.allowed"] .tp-add').getAttribute('list'), 'tp-known-models');
   assert.equal(known.querySelector('.tp-edit-row[data-key="models.steps"] .tp-step-model').getAttribute('list'), 'tp-known-models');

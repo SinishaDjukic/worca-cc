@@ -915,3 +915,8 @@ test('#397: a missing or failing pinnedScope dep means "nothing pinned", never a
   assert.equal((await throwing.call('propose_run', { brief: 'x' })).card.echoed.projectKey, undefined);
   assert.equal((await throwing.call('get_run', { id: '4e1f2a9b' })).id, '4e1f2a9b');
 });
+
+test('propose_schedule_change accepts after / afterPolicy / sourceFromPrevious (run chains)', () => {
+  const ps = tools.list().find((d) => d.name === 'propose_schedule_change');
+  for (const k of ['after', 'afterPolicy', 'sourceFromPrevious']) assert.ok(k in ps.inputSchema.properties, k);
+});

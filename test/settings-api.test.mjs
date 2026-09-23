@@ -57,6 +57,14 @@ const postJson = (body) => fetch(`${base}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
+test('humanRateUsdPerHour: GET null by default, POST stores a positive number, empty clears, junk → 400', async () => {
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).humanRateUsdPerHour, null);
+  assert.equal((await (await postJson({ humanRateUsdPerHour: 95 })).json()).humanRateUsdPerHour, 95);
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).humanRateUsdPerHour, 95);
+  assert.equal((await postJson({ humanRateUsdPerHour: -1 })).status, 400);
+  assert.equal((await (await postJson({ humanRateUsdPerHour: '' })).json()).humanRateUsdPerHour, null);
+});
+
 test('GET /api/settings: debugSpawnEnabled defaults to false, with the effective state and its source', async () => {
   const j = await (await fetch(`${base}/api/settings`)).json();
   assert.equal(j.debugSpawnEnabled, false);
@@ -130,10 +138,11 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // A body carrying only a non-root known key must not clear root — one probe per
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
-      projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
+      projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
       askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
+      memoryDefrag: null,
       schedule: {},
     };
     for (const k of SETTINGS_POST_KEYS) {

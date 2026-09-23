@@ -262,6 +262,27 @@ Team metrics keeps its own working state under `~/.worca-cc/metrics/` (see
 - `ledger/` — one small per-run status file used by the History header to show whether a run's
   record made it to the branch.
 
+## Human hours and "Saved"
+
+Every execution of a run earns an estimate of the hours a developer would have needed to
+produce what it produced — code lines and files changed in the worktree, plan and review
+markdown written (prose only, code fences excluded), verdict and decomposition JSON, and for
+verifiers the diff and documents they read. The estimate is a fixed heuristic: no model call,
+no network, the same answer every time. It never looks at which agent ran; custom agents from
+plugins are credited the same way, and a plugin can tune its agents with `humanEffort` in the
+agent's `meta.json` (`{ "factor": 1.5 }` scales the estimate, `{ "hours": 0.25 }` fixes it,
+`{ "factor": 0 }` opts out).
+
+Runs are credited whatever their outcome: a run stopped after three plan refinements keeps
+those hours, and a paused run credits what it had done when it finishes after the resume.
+Records carry hours only (`human.hours`, `human.byPhase`); the dollar figure is computed when
+the page renders, with the developer rate from Settings → Cost (default $35/h) or the team
+policy's `cost.humanRateUsd` default. **Saved** is `hours × rate − spend`, so a failed run
+that produced nothing shows up as a negative contribution.
+
+Runs recorded before this feature were credited once, at run level, from their results and
+indexed markdown; their steps carry no per-step figure.
+
 ## Record schema
 
 The full field-by-field reference for the JSON written to the branch — including the v1 field

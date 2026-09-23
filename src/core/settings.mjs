@@ -346,6 +346,102 @@ export function memoryCaps() {
   };
 }
 
+// ── Memory defragment model (Settings › Memory) ─────────────────────────────
+// `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
+// (memory-defrag-model.mjs resolves it at run start; the setting is GLOBAL, there is no
+// per-project variant). They share the `memory.defrag` block with the numeric health
+// thresholds, but readDefragThreshold reads only its own four keys and memoryCaps() —
+// which feeds every memory sync — never carries them.
+const DEFRAG_MODEL_MAX_LEN = 200;
+const UNSET_DEFRAG_MODEL = Object.freeze({ model: null, effort: null });
+// The reader runs on every GET /api/settings, every memory report and every defragment run: a
+// hand-edited bad value is one mistake — warn once per key + value, not once per request.
+const warnedDefragModel = new Set();
+function warnDefragModelOnce(key, value, tail) {
+  const id = `${key}:${JSON.stringify(value)}`;
+  if (warnedDefragModel.has(id)) return;
+  warnedDefragModel.add(id);
+  console.warn(`[worca] invalid memory.defrag.${key} ${JSON.stringify(value)} — ${tail}`);
+}
+
+/** The STORED pair: `{ model, effort }`, both null when unset (= the workflow default). Sync and
+ *  never throws. An effort without a model means nothing and reads as unset; a bad value warns
+ *  (once) and reads as unset. Under the node:test runner it reads unset unless the test sandboxes
+ *  HOME and sets WORCA_TEST_ALLOW_HOME_FALLBACK (the listGlobalModels guard): settings.json lives
+ *  under HOME, not WORCA_HOME, so a developer's own pick must never leak into a mock run. */
+export function memoryDefragModel() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return { ...UNSET_DEFRAG_MODEL };
+  const d = memoryBlock().defrag;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return { ...UNSET_DEFRAG_MODEL }; // readDefragThreshold warns about the block
+  const m = d.model;
+  if (m === undefined) return { ...UNSET_DEFRAG_MODEL };
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnDefragModelOnce('model', m, 'defragment runs use the workflow default');
+    return { ...UNSET_DEFRAG_MODEL };
+  }
+  const e = d.effort;
+  const effort = typeof e === 'string' && EFFORTS.includes(e) ? e : null;
+  if (e !== undefined && effort === null) warnDefragModelOnce('effort', e, 'defragment runs use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/**
+ * Validate a POST value: `{ model, effort }`, or null / '' to clear (a blank model clears the
+ * effort with it). With `models` (the effective catalog) the model must name an entry — it comes
+ * back in the catalog's casing — and the effort must be one that entry offers; without it the ids
+ * pass as given (tests, callers that validated already).
+ * @returns {{model:string, effort:(string|null)}|null} the pair to store, null to clear
+ * @throws {Error} on a malformed value, an effort without a model, an unknown model or an effort
+ *   the model does not offer
+ */
+export function assertMemoryDefragModelInput(input, models = null) {
+  if (input === '' || input === null || input === undefined) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('memoryDefrag must be { model, effort } or null');
+  const blank = (v) => v === null || v === undefined || (typeof v === 'string' && !v.trim());
+  if (blank(input.model)) {
+    if (!blank(input.effort)) throw new Error('memoryDefrag.effort needs a model — an effort without a model means nothing');
+    return null;
+  }
+  if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > DEFRAG_MODEL_MAX_LEN) {
+    throw new Error('memoryDefrag.model must be a catalog model id');
+  }
+  const effortIn = typeof input.effort === 'string' ? input.effort.trim() : input.effort;   // trimmed like setNodeModel / checkStartPair
+  if (!blank(effortIn) && !EFFORTS.includes(effortIn)) {
+    throw new Error(`memoryDefrag.effort must be one of ${EFFORTS.join(' | ')}`);
+  }
+  let model = input.model.trim();
+  const effort = blank(effortIn) ? null : effortIn;
+  if (Array.isArray(models)) {
+    const hit = models.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === model.toLowerCase());
+    if (!hit) throw new Error(`unknown model "${model}" — add it to the catalog first`);
+    model = hit.id;
+    if (effort && !(Array.isArray(hit.efforts) && hit.efforts.includes(effort))) {
+      throw new Error(`${model} does not offer effort "${effort}"`);
+    }
+  }
+  return { model, effort };
+}
+
+/** Store (or, on null / a blank model, clear) the pair — read-modify-write of the `memory` block,
+ *  so the health thresholds and every other memory key survive. A block left empty is removed. */
+export async function setMemoryDefragModel(input, { models = null } = {}) {
+  const pair = assertMemoryDefragModelInput(input, models);
+  const settings = readSettings();
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const memory = isObj(settings.memory) ? { ...settings.memory } : {};
+  const defrag = isObj(memory.defrag) ? { ...memory.defrag } : {};
+  delete defrag.model;
+  delete defrag.effort;
+  if (pair) {
+    defrag.model = pair.model;
+    if (pair.effort) defrag.effort = pair.effort;
+  }
+  if (Object.keys(defrag).length) memory.defrag = defrag; else delete memory.defrag;
+  if (Object.keys(memory).length) settings.memory = memory; else delete settings.memory;
+  await persistSettings(settings);
+  return { memoryDefrag: memoryDefragModel() };
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount() {
   const v = readSettings().skillMount;
@@ -414,6 +510,13 @@ function readUsdCap(key) {
 export function pipelineCostLimitUsd() { return readUsdCap('pipelineCostLimitUsd'); }
 /** Windowed all-pipelines spend cap in USD, or null (no limit). */
 export function totalCostLimitUsd() { return readUsdCap('totalCostLimitUsd'); }
+
+/** Estimator constant overrides (money-saved design §4): `humanEstimate: { codeDiv: 40, … }`,
+ *  or {}. Validation is the estimator's resolveConstants (unknown keys ignored). */
+export function humanEstimateOverrides() {
+  const v = readSettings().humanEstimate;
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
 
 /** Reset period for the total budget window: 'weekly' (Mon 00:00) | 'monthly' (1st 00:00). */
 export function costLimitResetPeriod() {
@@ -543,6 +646,20 @@ export const setPipelineCostLimitUsd = (input) => setUsdCap('pipelineCostLimitUs
 /** @throws {Error} unless `input` is a positive number (or empty, which clears). */
 export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', input);
 
+// ── Developer rate (money-saved design §8) ───────────────────────────────────
+// Prices the estimated human hours in Statistics and Team metrics. Stored value or
+// null; the EFFECTIVE rate (team policy default, then 35) is human-rate.mjs.
+export const DEFAULT_HUMAN_RATE_USD = 35;
+
+/** Stored developer rate in USD per hour, or null when unset (→ policy → 35). */
+export function humanRateUsdPerHour() { return readUsdCap('humanRateUsdPerHour'); }
+
+/** @throws {Error} unless a positive finite number, or '' / null / undefined (clear). */
+export function assertHumanRateInput(input) { assertUsdCapInput('humanRateUsdPerHour', input); }
+
+/** Write (or clear) the developer rate. */
+export const setHumanRateUsdPerHour = (input) => setUsdCap('humanRateUsdPerHour', input);
+
 // ── chat notification preferences (chat-connectivity-design.md §4.5) ─────────
 
 const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
@@ -651,13 +768,14 @@ export async function setPythonPath(input) {
 // its first save.
 export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
-  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
+  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
+  'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
 

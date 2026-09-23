@@ -20,7 +20,7 @@ const DOC = {
   fields: {
     'cost.pipelineLimitUsd': { kind: 'soft', value: 10, onBreach: 'pause', requireReason: true },
     'guardrails.default': { kind: 'default', value: 'gp:gateway-normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5'] },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5'] },
     'plugins.required': { kind: 'soft', value: [{ name: 'jira', marketplace: 'acme', minVersion: '1.2.0' }] },
   },
   workspaceRuns: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 25 }, 'guardrails.default': { kind: 'default', value: 'secure' } },

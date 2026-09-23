@@ -17,7 +17,7 @@ import {
   resolveRunConfig, readConfig, globalModelRefs, removeGlobalModelAndRefs,
   PREDEFINED_MODELS,
 } from '../src/core/config.mjs';
-import { addGlobalModel, listGlobalModels } from '../src/core/settings.mjs';
+import { addGlobalModel, listGlobalModels, memoryDefragModel, setMemoryDefragModel } from '../src/core/settings.mjs';
 import { EFFORTS, TIER_MODEL_ENV_KEYS } from '../src/core/model-env.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -84,7 +84,7 @@ test('catalog: a global entry SHADOWS its predefined twin (id casing kept); lega
   assert.equal(models.filter((m) => m.id.toLowerCase() === 'glm-4.7').length, 1);
   assert.equal(models.find((m) => m.id.toLowerCase() === 'glm-4.7').custom, 'global');
   // Un-shadowed predefined entries are unchanged.
-  const opus = models.find((m) => m.id === 'claude-opus-5');
+  const opus = models.find((m) => m.id === 'claude-opus-5-5');
   assert.deepEqual(opus, { ...PREDEFINED_MODELS[0], custom: false, hasEnv: false, routed: false });
 });
 
@@ -113,7 +113,7 @@ test('resolveModelEnv: global env only, ${VAR} expanded, case-insensitive id, un
   assert.deepEqual(resolveModelEnv('glm-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ...Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7'])) });
   assert.equal(resolveModelEnv('plain-model'), undefined);   // global, no env
   assert.equal(resolveModelEnv('proj-model'), undefined);    // legacy: never env
-  assert.equal(resolveModelEnv('claude-opus-5'), undefined); // predefined, unshadowed
+  assert.equal(resolveModelEnv('claude-opus-5-5'), undefined); // predefined, unshadowed
   assert.equal(resolveModelEnv(''), undefined);
 });
 
@@ -210,4 +210,31 @@ test('the built-in catalog offers Fable 5.1 and no longer Fable 5', () => {
   assert.deepEqual(fable, { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'] });
   assert.equal(PREDEFINED_MODELS.some((m) => m.id === 'claude-fable-5'), false,
     'the retired id is gone from the catalog (db.mjs V26 moves the stored pins)');
+});
+
+test('the built-in catalog offers Opus 5.5 and no longer Opus 5', () => {
+  const opus = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5-5');
+  assert.deepEqual(opus, { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  assert.equal(PREDEFINED_MODELS.some((m) => m.id === 'claude-opus-5'), false,
+    'the retired id is gone from the catalog (db.mjs V35 moves the stored pins)');
+});
+
+// Settings › Memory: the defragment model is a GLOBAL ref — listed by the refs preview and cleared
+// with the entry (its effort with it); a predefined shadow keeps resolving, so it stays.
+test('globalModelRefs / removeGlobalModelAndRefs: the Memory defragment model is listed and cleared with the entry', async () => {
+  await addGlobalModel({ id: 'glm-4.7', efforts: ['medium', 'high'] });
+  await setMemoryDefragModel({ model: 'glm-4.7', effort: 'high' });
+  assert.deepEqual(globalModelRefs('GLM-4.7'), { predefinedShadow: false, steps: [], nodes: [], memoryDefrag: true });
+  assert.equal('memoryDefrag' in globalModelRefs('other-model'), false, 'another id: no key at all');
+  const result = await removeGlobalModelAndRefs('glm-4.7');
+  assert.deepEqual(result, { clearedSteps: 0, clearedNodes: 0, predefinedShadow: false, clearedMemoryDefrag: true });
+  assert.deepEqual(memoryDefragModel(), { model: null, effort: null }, 'the setting is gone with its effort');
+});
+
+test('removing a predefined SHADOW keeps the Memory defragment model (it still resolves to the built-in)', async () => {
+  await addGlobalModel({ id: 'claude-sonnet-4-6', label: 'Proxied', env: { ANTHROPIC_BASE_URL: 'https://p' } });
+  await setMemoryDefragModel({ model: 'claude-sonnet-4-6', effort: 'high' });
+  assert.deepEqual(globalModelRefs('claude-sonnet-4-6'), { predefinedShadow: true, steps: [], nodes: [] });
+  assert.deepEqual(await removeGlobalModelAndRefs('claude-sonnet-4-6'), { clearedSteps: 0, clearedNodes: 0, predefinedShadow: true });
+  assert.deepEqual(memoryDefragModel(), { model: 'claude-sonnet-4-6', effort: 'high' });
 });

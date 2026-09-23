@@ -42,6 +42,7 @@ import {
   rawProjectsRoot, defaultProjectsRoot, runRootMode,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
+  humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
@@ -50,9 +51,12 @@ import {
   theme as storedTheme, setTheme, assertThemeInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
+  memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
+import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
+import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
@@ -154,7 +158,7 @@ import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedul
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
-import { sweepV1Runs, V1_RUN_RETIRED } from '../src/core/db.mjs';
+import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import {
   saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
@@ -224,6 +228,7 @@ import {
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
   runScheduleNow, deleteSchedule, cancelForTarget, dependentsOfWorkflow, runDueTickets, recordOutcome,
   recoverScheduler, purgeScheduler, scheduleCounts, scheduleStageDir, scheduleSignature,
+  resolveAfterRef, predecessorState, previousBranchesOf, dependentsOfRun, AFTER_POLICIES, afterRefOf,
 } from '../src/core/scheduler.mjs';
 import {
   onNotification, listNotifications, unreadCount, latestNotificationId, markRead, markAllRead, purgeNotifications,
@@ -799,6 +804,14 @@ function wireRun(entry) {
           });
           emitChanged('schedules-changed', 'outcome');
         } catch (err) { console.error(`[worca-ui] schedule outcome failed: ${err && err.message ? err.message : err}`); }
+      }
+      if ((name === 'done' || name === 'error') && !entry._chainNudged) {
+        // Run chains: a dependent waits on this run — open its gate now rather than at the next 30 s tick.
+        entry._chainNudged = true;
+        try {
+          const waiting = [...(entry.ticketId ? dependentsOfRun({ ticketId: entry.ticketId }) : []), ...(entry.pipelineId ? dependentsOfRun({ pipelineId: entry.pipelineId }) : [])];
+          if (waiting.length) setTimeout(() => { void schedulerTick(); }, 0);
+        } catch (err) { console.error(`[worca-ui] chain nudge failed: ${err && err.message ? err.message : err}`); }
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
         // Keep the in-memory run fresh so a late-joining client's hello
@@ -1455,7 +1468,7 @@ const startRunHandler = async (req, res) => {
     // before anything else; everything below still validates the request, so a schedule
     // fails fast now and is validated AGAIN when it starts.
     let sched = null;
-    if (!internal && (body.scheduledFor != null || body.repeat != null)) {
+    if (!internal && (body.scheduledFor != null || body.repeat != null || body.after != null || (body.sourceFromPrevious != null && body.sourceFromPrevious !== false))) {
       const parsed = parseScheduleRequest(body);
       if (!parsed.ok) return badRequest(res, parsed.error);
       sched = parsed;
@@ -1537,6 +1550,16 @@ const startRunHandler = async (req, res) => {
     const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
     if (scopeReason) return badRequest(res, scopeReason);
+    // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
+    // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
+    // models per node, and a body model there stays ignored exactly as before. The shape here; the
+    // catalog check needs the target project (below).
+    let startPair = null;
+    if (memoryScope) {
+      const shape = checkStartPair(body, null);
+      if (shape.error) return badRequest(res, shape.error);
+      startPair = shape.pair;
+    }
     // Human in the loop (spec D15): the body wins, else the project's stored
     // switch, else on. Resolved per target below (it needs the project dir).
     const bodyHumanInLoop = typeof body.humanInLoop === 'boolean' ? body.humanInLoop : null;
@@ -1640,6 +1663,11 @@ const startRunHandler = async (req, res) => {
       const wsFileProblem = await promptFileProblem(effectiveSource, projects[0].projectDir);
       if (wsFileProblem) return badRequest(res, wsFileProblem);
 
+      if (sched && sched.after) {
+        const r = resolveAfterRef(sched.after, { workspaceId: ws.id, policy: sched.afterPolicy, isLive: liveProbe });
+        if (!r.ok) return badRequest(res, r.error);
+        sched.afterRef = r.after;
+      }
       if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir }));
 
       orch = await createOrchestratorFor({
@@ -1700,6 +1728,13 @@ const startRunHandler = async (req, res) => {
 
       const fileProblem = await promptFileProblem(effectiveSource, projectDir);
       if (fileProblem) return badRequest(res, fileProblem);
+      // The pair against THIS project's catalog (a schedule is checked here too, before it is
+      // stored). A ticket firing takes its already-checked pair verbatim, like a CLI --model.
+      if (startPair && !internal) {
+        const checked = checkStartPair(body, await listModels(projectDir));
+        if (checked.error) return badRequest(res, checked.error);
+        startPair = checked.pair;
+      }
       // One live defragment run per scope (§7.3, amendment B20: this server process only).
       if (memoryScope) {
         const live = liveDefragRun(memoryScopeKey(memoryScope, projectDir));
@@ -1713,7 +1748,14 @@ const startRunHandler = async (req, res) => {
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
 
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, projectDir }));
+      if (sched && sched.after) {
+        const r = resolveAfterRef(sched.after, { projectDir, policy: sched.afterPolicy, isLive: liveProbe });
+        if (!r.ok) return badRequest(res, r.error);
+        sched.afterRef = r.after;
+      }
+      // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
+      const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
+      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir }));
 
       orch = await createOrchestratorFor({
         projectDir,
@@ -1728,7 +1770,11 @@ const startRunHandler = async (req, res) => {
         branch,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
-        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        claude: {
+          permissionMode: stored.permissionMode || 'acceptEdits',
+          ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : (stored.model ? { model: stored.model } : {})),
+          mock,
+        },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
       });
@@ -1829,7 +1875,24 @@ const SCHEDULER_STAGGER_MS = 3_000;
 /** Validate `scheduledFor` / `repeat` / `ifMissed` / `graceMin` on a run body. */
 function parseScheduleRequest(body, { now = Date.now() } = {}) {
   const defaults = scheduleDefaults();
-  const out = { ok: true, runAtMs: null, repeat: null, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  const out = { ok: true, runAtMs: null, repeat: null, after: null, afterPolicy: 'done', sourceFromPrevious: false, ifMissed: defaults.ifMissed, graceMin: defaults.graceMin };
+  const given = ['scheduledFor', 'repeat', 'after'].filter((k) => body[k] != null);
+  if (given.length > 1) return { ok: false, error: 'provide scheduledFor, repeat OR after, not both' };
+  if (body.sourceFromPrevious != null && typeof body.sourceFromPrevious !== 'boolean') return { ok: false, error: 'sourceFromPrevious must be true or false' };
+  if (body.sourceFromPrevious === true && body.after == null) return { ok: false, error: 'sourceFromPrevious needs after' };
+  if (body.after != null) {
+    const a = body.after;
+    if (!a || typeof a !== 'object' || Array.isArray(a) || !['ticket', 'pipeline'].includes(a.kind) || typeof a.id !== 'string' || !a.id.trim()) {
+      return { ok: false, error: 'after must be { kind: ticket | pipeline, id }' };
+    }
+    if (body.ifMissed != null || body.graceMin != null) return { ok: false, error: 'ifMissed and graceMin do not apply to a run after another run' };
+    if (body.afterPolicy != null && !AFTER_POLICIES.includes(body.afterPolicy)) return { ok: false, error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` };
+    if (body.sourceFromPrevious === true && (body.sourceBranch != null || body.sourceBranchByKey != null)) return { ok: false, error: 'sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given' };
+    out.after = { kind: a.kind, id: a.id.trim() };
+    out.afterPolicy = body.afterPolicy || 'done';
+    out.sourceFromPrevious = body.sourceFromPrevious === true;
+    return out;
+  }
   if (body.ifMissed != null) {
     if (!MISSED_POLICIES.includes(body.ifMissed)) return { ok: false, error: `ifMissed must be one of ${MISSED_POLICIES.join(' | ')}` };
     out.ifMissed = body.ifMissed;
@@ -1863,7 +1926,7 @@ function parseScheduleRequest(body, { now = Date.now() } = {}) {
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
 async function storedRequestOf(body, stageId, projectDir) {
   const request = { ...body };
-  for (const k of ['scheduledFor', 'repeat', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
+  for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
   // file deleted or half-edited overnight cannot fail an unattended run.
   if (request.source && request.source.type === 'markdown' && request.source.promptFile && !request.source.promptText) {
@@ -1895,12 +1958,14 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
   } else {
     const id = randomUUID();
     const request = await storedRequestOf(body, id, projectDir);
-    ticket = createTicket({
-      id, title, ...target, runAtMs: sched.runAtMs, request, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
-      askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
-    });
+    // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
+    // (an after body may not name them), and a chained ticket later moved to a time shows them.
+    const chain = sched.after ? {
+      after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
+    } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null });
     if (askLink) {
-      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: ticket.runAt }); }
+      try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
     }
   }
@@ -1908,7 +1973,8 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
   return {
     runId: ticket ? ticket.id : null,
     status: 'scheduled',
-    scheduledFor: ticket ? ticket.runAt : null,
+    scheduledFor: ticket && !ticket.after ? ticket.runAt : null,
+    ...(ticket && ticket.after ? { after: { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title }, sourceFromPrevious: ticket.sourceFromPrevious } : {}),
     ...(schedule ? { scheduleId: schedule.id, sentence: schedule.sentence } : {}),
     ...(budget && budget.blocked ? { budgetWarning: 'The total cost limit is reached right now. The run will only start if the budget allows it at that time.' } : {}),
   };
@@ -1948,6 +2014,28 @@ async function fireTicket(ticket) {
       return { ok: false, error: err && err.message ? err.message : String(err), transient: TRANSIENT_SOURCE_KINDS.has(err && err.kind) };
     }
   }
+  if (ticket.after) {
+    const p = predecessorState(ticket.after, { policy: ticket.after.policy, isLive: liveProbe });
+    if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
+    if (ticket.sourceFromPrevious) {
+      const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      if (!prev) return { ok: false, error: 'the run before it left no branch to start from', transient: false };
+      if (prev.sourceBranch) {
+        if (!(await isValidSourceRef(ticket.projectDir, prev.sourceBranch))) return { ok: false, error: `branch ${prev.sourceBranch} no longer exists`, transient: false };
+      } else {
+        const ws = ticket.workspaceId ? await readWorkspace(ticket.workspaceId) : null;
+        if (!ws) return { ok: false, error: 'workspace not found', transient: false };
+        for (const dir of ws.projectPaths) {
+          const key = projectKey(dir);
+          const br = prev.sourceBranchByKey[key];
+          if (!br) return { ok: false, error: `the run before it has no branch for ${path.basename(dir)}`, transient: false };
+          if (!(await isValidSourceRef(dir, br))) return { ok: false, error: `branch ${br} no longer exists in ${path.basename(dir)}`, transient: false };
+        }
+      }
+      delete body.sourceBranch; delete body.sourceBranchByKey;
+      Object.assign(body, prev);
+    }
+  }
   // Every occurrence of a series needs its own feature branch.
   if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
@@ -1958,6 +2046,14 @@ async function fireTicket(ticket) {
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
   return { ok: false, error, transient: out.status >= 500 };
+}
+
+/** The host's in-memory view of a run: by run id, or by the pipeline id it became. liveRunEntry is the
+ *  house lookup: it skips scans / agentgens / benches and, on a resumed lineage (D23), prefers the entry
+ *  still driving the pipeline over a settled same-pipeline entry that sits earlier in Map order. */
+function liveProbe({ id, pipelineId }) {
+  const e = liveRunEntry(id) || (pipelineId ? liveRunEntry(pipelineId) : null);
+  return !!e && !SETTLED_RUN.has(String(e.status || ''));
 }
 
 let _schedulerBusy = false;
@@ -1972,7 +2068,7 @@ export async function schedulerTick({ now = Date.now() } = {}) {
     const out = await runDueTickets({
       now,
       start: fireTicket,
-      isLive: ({ id }) => { const e = runs.get(id); return !!e && !SETTLED_RUN.has(String(e.status || '')); },
+      isLive: liveProbe,
       staggerMs: SCHEDULER_STAGGER_MS,
     });
     for (const id of [...out.failed, ...out.missed]) releaseAskCard(getTicket(id));
@@ -2027,6 +2123,13 @@ function findScheduleItem(id) {
   return t ? { kind: 'once', item: t } : null;
 }
 
+/** A ticket for the wire: its predecessor resolved for display (title, live status, pipeline). */
+function withAfter(t) {
+  if (!t || !t.after) return t;
+  const p = predecessorState(t.after, { policy: t.after.policy, isLive: liveProbe });
+  return { ...t, after: { ...t.after, title: p.title || null, status: p.status || null, pipelineId: p.pipelineId || null } };
+}
+
 // GET /api/schedules[?projectDir=|workspaceId=][&all=1] -> { schedules, tickets, counts, defaults }
 app.get('/api/schedules', (req, res) => {
   try {
@@ -2035,7 +2138,7 @@ app.get('/api/schedules', (req, res) => {
     const all = req.query.all === '1' || req.query.all === 'true';
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
-      tickets: listTickets({ projectDir, workspaceId, all }),
+      tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
       defaults: scheduleDefaults(),
     });
@@ -2060,6 +2163,8 @@ app.get('/api/schedules/dependents', (req, res) => {
   const q = req.query;
   const label = (x) => ({ id: x.id, kind: x.kind, title: x.title });
   if (typeof q.workflowId === 'string' && q.workflowId) return res.json({ dependents: dependentsOfWorkflow(q.workflowId) });
+  if (typeof q.pipelineId === 'string' && q.pipelineId) return res.json({ dependents: dependentsOfRun({ pipelineId: q.pipelineId }) });
+  if (typeof q.ticketId === 'string' && q.ticketId) return res.json({ dependents: dependentsOfRun({ ticketId: q.ticketId }) });
   const projectDir = resolveProjectDir(q.projectDir) || null;
   const workspaceId = typeof q.workspaceId === 'string' && q.workspaceId.trim() ? q.workspaceId.trim() : null;
   if (!projectDir && !workspaceId) return badRequest(res, 'workflowId, projectDir or workspaceId is required');
@@ -2071,11 +2176,66 @@ app.get('/api/schedules/dependents', (req, res) => {
   });
 });
 
+// GET /api/schedules/after-candidates?projectDir=|workspaceId= -> what a new run may wait for:
+// live runs of that target and its one-off tickets that have not ended.
+app.get('/api/schedules/after-candidates', (req, res) => {
+  try {
+    const projectDir = resolveProjectDir(req.query.projectDir) || null;
+    const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
+    if (!projectDir && !workspaceId) return badRequest(res, 'projectDir or workspaceId is required');
+    // The ROWS are the source of truth (spec §5): SETTLED_RUN contains 'paused', and another
+    // process's run is not in this host's runs Map at all. The Map only adds live runIds.
+    const where = workspaceId ? 'workspace_key = ?' : "project_key = ? AND target = 'project'";
+    const rows = getDb().prepare(`SELECT id, title, status FROM pipelines WHERE ${where}
+      AND status IN ('created', 'starting', 'running', 'pausing', 'paused') AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`)
+      .all(workspaceId || projectKey(projectDir));
+    const byPipeline = new Map(rows.map((r) => [r.id, { pipelineId: r.id, runId: null, title: r.title || null, status: r.status }]));
+    for (const r of runs.values()) {
+      if (!r.pipelineId || (r.kind && r.kind !== 'run' && r.kind !== 'workspace-run')) continue;
+      if (workspaceId ? r.workspaceId !== workspaceId : (r.projectDir !== projectDir || r.workspaceId)) continue;
+      const stillGoing = !SETTLED_RUN.has(String(r.status || '')) || r.status === 'paused';
+      if (!stillGoing) continue;
+      const cur = byPipeline.get(r.pipelineId) || { pipelineId: r.pipelineId, title: r.title || null, status: r.status };
+      byPipeline.set(r.pipelineId, { ...cur, runId: r.id, status: r.status });
+    }
+    // listTickets({ oneShotOnly: true }) returns scheduled | firing | missed. A MISSED ticket is left
+    // out: resolveAfterRef refuses it under either policy ("‘X’ was missed — nothing to wait for"),
+    // so offering it would be a dead pick (spec §5 lists it; this is the one deliberate narrowing).
+    const tickets = listTickets({ projectDir, workspaceId, oneShotOnly: true })
+      .filter((t) => t.status !== 'missed')
+      .map((t) => ({ id: t.id, title: t.title, status: t.status, after: t.after ? { kind: t.after.kind, id: t.after.id } : null }));
+    res.json({ runs: [...byPipeline.values()], tickets });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/schedules/after/:id -> one predecessor and its target (the #new/after/<id> deep link).
+// async (listProjects is async) — and therefore wrapped: Express 4 does not catch a rejected
+// handler, and the deep link's fetch would hang instead of showing an error line.
+app.get('/api/schedules/after/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (id.startsWith('sch_')) return badRequest(res, 'after a repeating schedule is not supported — give the id of one of its runs');
+    const ref = afterRefOf(id);
+    if (!ref || ref.scheduleId) return res.status(404).json({ error: 'run not found' });
+    let projectDir = null;
+    if (ref.kind === 'ticket') projectDir = (getTicket(ref.id) || {}).projectDir || null;   // a purge between the two reads is a null, not a throw
+    else if (!ref.workspaceId) {
+      const projects = await listProjects();
+      projectDir = (projects.find((p) => projectKey(p.path) === ref.projectKey) || {}).path || null;
+    }
+    res.json({ kind: ref.kind, id: ref.id, title: ref.title, status: ref.status, projectDir, workspaceId: ref.workspaceId || null });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
@@ -2104,15 +2264,40 @@ async function scheduleVerb(verb, id, body = {}) {
           patch.ifMissed = body.ifMissed;
         }
         if (body.graceMin != null) patch.graceMin = body.graceMin;
-        if (found.item.scheduleId && patch.runAtMs != null) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
+        if (body.after != null) {
+          if (body.scheduledFor != null) return out(400, { error: 'provide scheduledFor OR after, not both' });
+          if (body.ifMissed != null || body.graceMin != null) return out(400, { error: 'ifMissed and graceMin do not apply to a run after another run' });
+          const policy = body.afterPolicy != null ? body.afterPolicy : (found.item.after ? found.item.after.policy : 'done');
+          if (!AFTER_POLICIES.includes(policy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
+          const r = resolveAfterRef(body.after, { projectDir: found.item.projectDir, workspaceId: found.item.workspaceId, policy, selfId: found.item.id, isLive: liveProbe });
+          if (!r.ok) return out(400, { error: r.error });
+          patch.after = { kind: r.after.kind, id: r.after.id };
+          patch.afterPolicy = policy;
+        } else if (body.afterPolicy != null) {
+          if (!AFTER_POLICIES.includes(body.afterPolicy)) return out(400, { error: `afterPolicy must be one of ${AFTER_POLICIES.join(' | ')}` });
+          // A timed ticket has no policy (updateTicket drops one sent with runAtMs); say so rather than accept and
+          // ignore — for a policy sent WITH a time, and for one sent ALONE to a ticket that has no predecessor
+          // (that wrote after_policy onto a row with after_id NULL: harmless, but a lie in the row).
+          if (patch.runAtMs != null || !found.item.after) return out(400, { error: 'afterPolicy does not apply to a run at a time' });
+          patch.afterPolicy = body.afterPolicy;
+        }
+        if (body.sourceFromPrevious != null) {
+          if (typeof body.sourceFromPrevious !== 'boolean') return out(400, { error: 'sourceFromPrevious must be true or false' });
+          // Needs a predecessor AFTER this patch: none on the row and none coming, or a move back to a time
+          // (which clears after_* — `source_from_previous = 1` with `after_id = NULL` must never be written).
+          if (body.sourceFromPrevious && (patch.runAtMs != null || (!patch.after && !found.item.after))) return out(400, { error: 'sourceFromPrevious needs after' });
+          patch.sourceFromPrevious = body.sourceFromPrevious;
+        }
+        if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
         const t = updateTicket(found.item.id, patch);
         if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
-        if (t.askThreadId && t.askCardId && patch.runAtMs != null) {
-          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.runAt }); } catch { /* display only */ }
+        const item = withAfter(t);
+        if (t.askThreadId && t.askCardId && (patch.runAtMs != null || patch.after)) {
+          try { flipCard(t.askThreadId, t.askCardId, { scheduledFor: t.after ? null : t.runAt, after: t.after ? { kind: t.after.kind, id: t.after.id, title: item.after.title } : null }); } catch { /* display only */ }
         }
         emitChanged('schedules-changed', 'updated');
         emitChanged('notifications-changed');
-        return out(200, { kind: 'once', item: t });
+        return out(200, { kind: 'once', item });
       }
       const patch = {};
       for (const k of ['title', 'rule', 'overlap', 'maxFailures', 'ifMissed', 'graceMin']) if (body[k] !== undefined) patch[k] = body[k];
@@ -2148,6 +2333,10 @@ async function scheduleVerb(verb, id, body = {}) {
     return out(200, { ok: true });
   }
   if (verb === 'run-now') {
+    if (found.kind === 'once' && found.item.after && found.item.sourceFromPrevious) {
+      const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
+      if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+    }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
     emitChanged('schedules-changed', 'run-now');
@@ -2181,7 +2370,7 @@ async function applyScheduleCard(card) {
     detail = b.status === 'failed' ? `could not start: ${b.failReason || 'unknown error'}`
       : b.status === 'fired' ? `started${b.pipelineId ? ` as run ${b.pipelineId}` : ''}` : 'starting within seconds';
     if (b.status === 'failed') return { ok: false, error: `could not start: ${b.failReason || 'unknown error'}`, runId: b.runId };
-  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : 'moved';
+  } else if (card.action === 'move') detail = card.after && card.after.when ? `now at ${card.after.when}` : card.after && card.after.afterRun ? `now after ‘${card.after.afterRun.title || card.after.afterRun.id}’` : 'moved';
   else if (card.action === 'edit') {
     const it = b.item;
     detail = !it ? 'changed'
@@ -3014,16 +3203,18 @@ app.get('/api/team-metrics', async (req, res) => {
     // `changed` event tells the page to reload. Other clients (Ask tools, CLI, tests) keep the
     // inline fetch and get fresh data in one round trip.
     const read = await readScope(scope, { refresh: req.query.refresh === '1', defer: req.query.defer === '1' });
+    const humanRateUsd = effectiveHumanRateUsd(read.rateProjectDir);
     // Flush trigger: page open (§4.5). reason:'page-open' backs off for 60 s after a failed flush,
     // so a failing push cannot loop through flush-failed → WS → page reload → GET → flush.
     for (const s of read.sync) if (s.pending > 0) scheduleFlush(s.slug, { reason: 'page-open' });
     res.json({
       scope: read.scope,
       records: read.records,
+      humanRateUsd,                                     // the client re-aggregates with it (money-saved §9.2)
       // The page re-aggregates client-side (§4.9 "one fetch serves the session") and asks with
       // aggregate=0: at 12k records the unused aggregate added ~3.9 MB to a ~9.9 MB response.
       // Other clients (and the API tests) still get it by default.
-      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy }),
+      aggregate: req.query.aggregate === '0' ? null : aggregate(read.records, { range, from, to, groupBy, humanRateUsd }),
       stats: read.stats,
       sync: read.sync,
       refresh: read.refresh,
@@ -3823,7 +4014,23 @@ app.get('/api/branches', async (req, res) => {
       listLocalBranches(projectDir),
       currentBranch(projectDir),
     ]);
-    res.json({ branches, current });
+    // Run branches: this project's pipelines whose feature branch still exists (spec D7).
+    // Throw-safe on purpose: test/branches-api.test.mjs calls this route for a temp directory
+    // that is not a registered project (and has no temp home) — the DB read must never turn the
+    // plain branch list into a 500.
+    const have = new Set(branches);
+    const runsOut = [];
+    try {
+      const rows = getDb().prepare(`SELECT id, title, status, updated_at, branch FROM pipelines
+        WHERE project_key = ? AND target = 'project' AND archived_at IS NULL ORDER BY started_at DESC LIMIT 50`).all(projectKey(projectDir));
+      for (const r of rows) {
+        let b = null; try { b = JSON.parse(r.branch || 'null'); } catch { b = null; }
+        if (b && typeof b.feature === 'string' && have.has(b.feature)) runsOut.push({ branch: b.feature, pipelineId: r.id, title: r.title || null, status: r.status, endedAt: r.updated_at || null });
+      }
+    } catch (err) {
+      console.error(`[worca-ui] run branches lookup failed: ${err && err.message ? err.message : err}`);
+    }
+    res.json({ branches, current, runs: runsOut });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3934,6 +4141,20 @@ async function defragRequest(req, res, { memoryScope, projectKey: key }) {
   return startRunHandler(req, res);
 }
 
+/** Settings › Memory as the health card names it: `{ model, effort, label, stale }`, or null when
+ *  unset. Checked the way a run checks it (memory-defrag-model.mjs), against this scope's catalog —
+ *  the project's own for a project scope, the project-less one for global. `stale`: the model left
+ *  the catalog, so a run degrades to the workflow default. */
+async function defragModelState(catalogDir) {
+  const stored = memoryDefragModel();
+  if (!stored.model) return null;
+  const models = await listModels(catalogDir);
+  const r = resolveDefragModel({ stored, models });
+  if (!r.model) return { model: stored.model, effort: stored.effort, label: stored.model, stale: true };
+  const hit = models.find((m) => m.id === r.model);
+  return { model: r.model, effort: r.effort, label: (hit && hit.label) || r.model, stale: false };
+}
+
 function registerMemoryRoutes(prefix, { family }) {
   const scoped = (handler) => async (req, res) => {
     try {
@@ -3959,7 +4180,10 @@ function registerMemoryRoutes(prefix, { family }) {
 
   app.get(prefix, scoped(async (_req, res, { scope, key, project }) => {
     const report = await memoryScopeReport(memoryRoot(), scope, memoryCaps(), { onError });
-    res.json({ scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null });
+    res.json({
+      scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null,
+      defragModel: await defragModelState(project ? project.path : ''),
+    });
   }));
   app.get(`${prefix}/files/:name`, scoped(async (req, res, { scope }) => {
     const name = named(req, res); if (name === null) return;
@@ -4380,6 +4604,7 @@ const settingsState = () => ({
   pipelineCostLimitUsd: pipelineCostLimitUsd(),
   totalCostLimitUsd: totalCostLimitUsd(),
   costLimitResetPeriod: costLimitResetPeriod(),
+  humanRateUsdPerHour: humanRateUsdPerHour(),
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
@@ -4390,6 +4615,8 @@ const settingsState = () => ({
   theme: storedTheme(),                                   // system | light | dark (dark-mode design §6)
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
+  memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
@@ -4459,6 +4686,7 @@ app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
+  const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasTitleModelKey = has('titleModel');
@@ -4467,6 +4695,10 @@ app.post('/api/settings', async (req, res) => {
   const hasUiLevelKey = has('uiLevel');
   const hasAutoKey = has('autoWorkflowModel');
   const autoModels = hasAutoKey ? await listModels('') : null;
+  // Settings › Memory: the defragment { model, effort } pair, checked against the same
+  // project-less catalog the Settings pickers offer (a run re-checks it against its own).
+  const hasMemoryDefragKey = has('memoryDefrag');
+  const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -4490,6 +4722,7 @@ app.post('/api/settings', async (req, res) => {
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     assertCostLimitInputs(budget);
+    if (hasHumanRateKey) assertHumanRateInput(body.humanRateUsdPerHour ?? '');
     assertAskLimitInputs(ask);
     if (hasDebugSpawnKey) assertDebugSpawnInput(body.debugSpawnEnabled);
     if (hasTitleModelKey) {
@@ -4502,6 +4735,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasThemeKey) assertThemeInput(body.theme);
     if (hasUiLevelKey) assertUiLevelInput(body.uiLevel);
     if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
+    if (hasMemoryDefragKey) assertMemoryDefragModelInput(body.memoryDefrag, defragModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -4517,6 +4751,7 @@ app.post('/api/settings', async (req, res) => {
     if (has('pipelineCostLimitUsd')) await setPipelineCostLimitUsd(budget.pipelineCostLimitUsd);
     if (has('totalCostLimitUsd')) await setTotalCostLimitUsd(budget.totalCostLimitUsd);
     if (has('costLimitResetPeriod')) await setCostLimitResetPeriod(budget.costLimitResetPeriod);
+    if (hasHumanRateKey) await setHumanRateUsdPerHour(body.humanRateUsdPerHour ?? '');
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
@@ -4525,11 +4760,12 @@ app.post('/api/settings', async (req, res) => {
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
+    if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (has('schedule')) await setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {});
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || has('schedule')) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || hasMemoryDefragKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -5099,6 +5335,9 @@ app.get('/api/models/:id/env-value', (req, res) => {
 app.delete('/api/models/:id', async (req, res) => {
   try {
     const result = await removeGlobalModelAndRefs(req.params.id);
+    // Settings › Memory's defragment model went with the entry: open tabs repaint that card (as
+    // the Ask remove_model path's settings-changed does).
+    if (result.clearedMemoryDefrag) emitChanged('settings-changed');
     res.json({ ...result, models: maskedGlobalModels() });
   } catch (err) {
     // Throws only on an unknown id -> client error.
@@ -5199,7 +5438,15 @@ app.get('/api/workflows/:id', async (req, res) => {
     // this is a READ (the Composer's Open): a template stranded by an agent-port
     // edit must still load, or the user could never repair it. The RUN path keeps
     // the graph check.
-    res.json(await assertRunnableWorkflow(req.params.id, { checkGraph: false }));
+    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false });
+    // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
+    // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
+    if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
+      const stored = memoryDefragModel();
+      const pair = stored.model ? resolveDefragModel({ stored, models: await listModels('') }) : null;
+      return res.json(defragWorkflowView(wf, pair));
+    }
+    res.json(wf);
   } catch (err) {
     if (err && (err.code === 'NOT_FOUND' || err.code === 'ARCHIVED')) {
       return res.status(404).json({ error: err.message });
@@ -5950,13 +6197,14 @@ async function askSystemPromptFor(catalog) {
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
 function askCardScheduleLine(b, tz = null) {
   if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
+  if (b.state === 'scheduled' && b.after) return `after ‘${b.after.title || b.after.id}’ (run ${b.runId})`;
   if (b.state === 'scheduled' && b.runId) {
     const ms = Date.parse(b.scheduledFor || '');
     const when = Number.isFinite(ms) ? formatInstant(ms, isValidTimeZone(tz) ? tz : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC') : '?';
     return `scheduled for ${when} (run ${b.runId})`;
   }
   const s = b.card && b.card.schedule;
-  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : `proposes: once at ${s.when}`;
+  if (b.state === 'proposed' && s) return s.kind === 'repeat' ? `proposes: ${s.sentence}` : s.kind === 'after' ? `proposes: ${s.text}` : `proposes: once at ${s.when}`;
   return '';
 }
 

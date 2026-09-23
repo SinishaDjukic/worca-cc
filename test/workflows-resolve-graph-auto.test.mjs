@@ -43,10 +43,10 @@ const GRAPH = {
 
 test('ignoreProjectOverrides skips the per-project layers; overlay is the only overlay', async () => {
   await writeGraphWorkflow(GRAPH);
-  await setNodeModel(projectDir, 'wf_rga', 'n_plan', { model: 'claude-opus-5', effort: 'high' });
+  await setNodeModel(projectDir, 'wf_rga', 'n_plan', { model: 'claude-opus-5-5', effort: 'high' });
   await setWireCycles(projectDir, 'wf_rga', 'w5', 7);
   const plain = await resolveGraph(projectDir, 'wf_rga', REG());
-  assert.equal(plain.nodes.n_plan.model, 'claude-opus-5');
+  assert.equal(plain.nodes.n_plan.model, 'claude-opus-5-5');
   assert.deepEqual(plain.wires, { w5: { maxCycles: 7 } });
 
   const auto = await resolveGraph(projectDir, 'wf_rga', REG(), undefined, {
@@ -65,7 +65,7 @@ test('without ignoreProjectOverrides an overlay merges PER NODE over the project
   const merged = await resolveGraph(projectDir, 'wf_rga', REG(), undefined, {
     overlay: { nodes: { n_plan: { effort: 'max' } }, wires: { w5: { maxCycles: 2 } } },
   });
-  assert.equal(merged.nodes.n_plan.model, 'claude-opus-5', 'the project model survives a partial overlay');
+  assert.equal(merged.nodes.n_plan.model, 'claude-opus-5-5', 'the project model survives a partial overlay');
   assert.equal(merged.nodes.n_plan.effort, 'max');
   assert.deepEqual(merged.wires, { w5: { maxCycles: 2 } });
 });

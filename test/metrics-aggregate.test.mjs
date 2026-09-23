@@ -145,6 +145,44 @@ test('parseRecordLine: unknown v and malformed lines are flagged, not thrown', (
   assert.ok(parseRecordLine(JSON.stringify(makeRecord({ id: 'ok' }))).record);
 });
 
+test('run rows: humanHours and savedUsd priced at the aggregate rate; null without `human`; both in the CSV', () => {
+  const recs = [
+    { ...makeRecord({ id: 'h', startedAt: '2026-09-10T10:00:00Z', usd: 13.12 }), human: { hours: 12.5, byPhase: {} } },
+    makeRecord({ id: 'n', startedAt: '2026-09-09T10:00:00Z', usd: 2 }),
+  ];
+  const agg = aggregate(recs, { range: 'all', now: NOW, humanRateUsd: 35 });
+  const [withHuman, without] = agg.runs;
+  assert.equal(withHuman.id, 'h');
+  assert.equal(withHuman.humanHours, 12.5);
+  assert.equal(withHuman.savedUsd, 424.38);                                   // 12.5×35 − 13.12
+  assert.equal(without.humanHours, null); assert.equal(without.savedUsd, null);
+  const tiny = aggregate([{ ...recs[0], human: { hours: 0.1, byPhase: {} } }], { range: 'all', now: NOW, humanRateUsd: 35 });
+  assert.equal(tiny.runs[0].savedUsd, -9.62, 'a run that cost more than it saved is a negative, not a null');
+  const noRate = aggregate(recs, { range: 'all', now: NOW });
+  assert.equal(noRate.runs[0].savedUsd, -13.12, 'rate 0 (default) prices nothing: −cost');
+  const lines = toCsv(agg.runs).split('\r\n');
+  assert.equal(lines[0], '\uFEFFstartedAt,title,workflow,result,costUsd,humanHours,savedUsd,wallMs,activeMs,pausedMs,reviewCycles,prNumber,prUrl,actor,source,projects,id');
+  assert.match(lines[1], /,13\.12,12\.5,424\.38,/);
+  assert.match(lines[2], /,2,,,/, 'no human → empty cells, not 0');
+});
+
+test('autonomy divides active by wall-clock minus paused; a record without pausedMs parks nothing; pausedMs rides the run row and the CSV', () => {
+  const recs = [
+    makeRecord({ id: 'p', startedAt: '2026-09-10T10:00:00Z', wallMs: 1000, activeMs: 800, pausedMs: 200 }),   // parked 200 → 800 ÷ 800
+    makeRecord({ id: 'n', startedAt: '2026-09-09T10:00:00Z', wallMs: 300, activeMs: 150 }),                    // pre-field record → 150 ÷ 300
+  ];
+  const agg = aggregate(recs, { range: 'all', now: NOW });
+  assert.equal(agg.kpis.autonomy, 950 / 1100);
+  assert.equal(agg.runs[0].pausedMs, 200);
+  assert.equal(agg.runs[1].pausedMs, null);
+  const over = aggregate([makeRecord({ id: 'o', wallMs: 100, activeMs: 50, pausedMs: 500 })], { range: 'all', now: NOW });
+  assert.equal(over.kpis.autonomy, null, 'parked past the wall-clock leaves nothing to divide by');
+  const lines = toCsv(agg.runs).split('\r\n');
+  assert.match(lines[0], /,wallMs,activeMs,pausedMs,reviewCycles,/);
+  assert.match(lines[1], /,1000,800,200,/);
+  assert.match(lines[2], /,300,150,,/, 'no field → empty cell, not 0');
+});
+
 test('CSV escapes quotes/commas/newlines and guards formulas', () => {
   const agg = aggregate([makeRecord({ id: 'c', title: '=SUM(A1), "quoted"' })], { range: 'all', now: NOW });
   const csv = toCsv(agg.runs);

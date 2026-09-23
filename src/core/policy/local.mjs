@@ -6,7 +6,7 @@
 
 import { createRequire } from 'node:module';
 import {
-  readSettings, pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod, askMaxTurns, askMaxBudgetUsd, hideBuiltinModels,
+  readSettings, pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod, humanRateUsdPerHour, askMaxTurns, askMaxBudgetUsd, hideBuiltinModels,
 } from '../settings.mjs';
 import { readConfigRow, readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
@@ -31,6 +31,7 @@ export function localSnapshot(projectDir = null) {
     'cost.pipelineLimitUsd': { value: pipelineCostLimitUsd(), set: pipelineCostLimitUsd() != null },
     'cost.totalLimitUsd': { value: totalCostLimitUsd(), set: totalCostLimitUsd() != null },
     'cost.resetPeriod': { value: costLimitResetPeriod(), set: has('costLimitResetPeriod') },
+    'cost.humanRateUsd': { value: humanRateUsdPerHour(), set: humanRateUsdPerHour() != null },
     'ask.maxTurns': { value: askMaxTurns(), set: has('askMaxTurns') },
     'ask.maxBudgetUsd': { value: askMaxBudgetUsd(), set: raw.askMaxBudgetUsd !== undefined },   // literal null = "no cap", a choice
     'models.hideBuiltins': { value: hideBuiltinModels(), set: has('hideBuiltinModels') || raw.hideBuiltinModelsChosen === true },

@@ -24,7 +24,7 @@ const origCwd = process.cwd();
 let root, homeDir, srv, base, wsBase, mod, prevHome;
 let gwBare, gw, gwKey;
 const JSONH = { 'Content-Type': 'application/json' };
-const MODEL = { model: 'claude-opus-5', effort: 'high' };
+const MODEL = { model: 'claude-opus-5-5', effort: 'high' };
 const POLICY = (bare) => JSON.parse(git(bare, 'show', 'worca-policy:.worca-policy/policy.json'));
 const commits = (bare) => Number(git(bare, 'rev-list', '--count', 'worca-policy'));
 

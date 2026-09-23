@@ -33,7 +33,7 @@ test('guardrails: a policy set carries a blue policy badge and no Delete; built-
 
 test('models: a "From team policy" section with read-only policy rows', () => {
   const root = renderModelsList({
-    globals: [], plugins: [], predefined: [{ id: 'claude-opus-5', label: 'Opus 5' }], efforts: ['medium', 'high', 'xhigh', 'max'],
+    globals: [], plugins: [], predefined: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }], efforts: ['medium', 'high', 'xhigh', 'max'],
     policy: [{ id: 'acme-proxy-opus', label: 'Opus via Acme gateway', efforts: ['medium', 'high'], env: { ANTHROPIC_BASE_URL: 'https://llm', ANTHROPIC_AUTH_TOKEN: '${T}' }, home: 'acme/gateway' }],
   }, { doc });
   const titles = [...root.querySelectorAll('.mv-section-title')].map((x) => x.textContent);

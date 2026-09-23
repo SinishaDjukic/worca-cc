@@ -15,7 +15,7 @@ const DOC = {
   fields: {
     'cost.pipelineLimitUsd': { kind: 'soft', value: 25, onBreach: 'pause', requireReason: true },
     'guardrails.default': { kind: 'default', value: 'normal' },
-    'models.allowed': { kind: 'soft', value: ['claude-opus-5', 'claude-sonnet-5'] },
+    'models.allowed': { kind: 'soft', value: ['claude-opus-5-5', 'claude-sonnet-5'] },
   },
   workspaceRuns: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 40 } },
   catalogs: { guardrailSets: [], models: [] },
@@ -127,7 +127,7 @@ test('edit: a new field needs its kind; hard is refused; the workspaceRuns block
   assert.equal(r.card.summary, "Edit acme/gateway's team policy — 4 changes");
   assert.deepEqual(r.card.changes.map((c) => [c.label, c.before, c.after]), [
     ['Minimum tier', null, 'soft Normal'],
-    ['Allowed models', 'soft claude-opus-5, claude-sonnet-5', null],
+    ['Allowed models', 'soft claude-opus-5-5, claude-sonnet-5', null],
     ['Per-pipeline cap (USD) (workspace runs)', 'soft $40.00', 'soft $50.00'],
     ['Title', 'Gateway team policy', 'Gateway policy (Q4)'],
   ]);

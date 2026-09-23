@@ -1014,3 +1014,23 @@ test('a failed /api/scripts fetch degrades to agent-only loop rows instead of br
   assert.deepEqual([...fb.querySelectorAll('input[data-fb-id]')].map((i) => i.dataset.fbId), ['w5'], 'the agent loop still paints');
   assert.doesNotMatch(window.document.querySelector('#agents-rows').textContent, /Could not load this workflow/);
 });
+
+// Settings › Memory: a pinned row (node-tunables.mjs `pinned`) shows the pair and locks model +
+// effort — through setAgentRowsEnabled(true) too, which re-enables every other control.
+test('a pinned agent row keeps its model and effort locked through a re-enable; the other tunables stay live', async () => {
+  const { window } = await boot();
+  window.__np._setModels([{ id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] }]);
+  const def = { model: 'claude-haiku-4-5', effort: 'high', fanOut: false, askQuestions: false, subagentModel: '' };
+  window.__np.renderAgentRows([{ nodeId: 'n_defrag', key: 'memoryDefragmenter', label: 'Memory defragmenter', color: '', stepIndex: 1, parallel: false,
+    model: 'claude-haiku-4-5', effort: 'high', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false, pinned: 'settings' }]);
+  window.__np.setAgentRowsEnabled(false);
+  window.__np.setAgentRowsEnabled(true);
+  const doc = window.document;
+  const model = doc.querySelector('#agents-rows .step-model');
+  const effort = doc.querySelector('#agents-rows .step-effort');
+  assert.deepEqual([model.value, effort.value], ['claude-haiku-4-5', 'high']);
+  assert.equal(model.disabled, true, 'model locked after the re-enable');
+  assert.equal(effort.disabled, true, 'effort locked after the re-enable');
+  assert.equal(doc.querySelector('#agents-rows .step-fanout').disabled, false, 'fan-out stays editable');
+  assert.match(doc.querySelector('#agents-rows .agent-origin').textContent, /^Set in Settings › Memory/);
+});

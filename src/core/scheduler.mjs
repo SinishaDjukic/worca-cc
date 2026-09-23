@@ -34,6 +34,10 @@ import {
 } from '../shared/schedule/recurrence.mjs';
 
 export const TICKET_STATUSES = ['scheduled', 'firing', 'fired', 'canceled', 'skipped', 'missed', 'failed'];
+/** An after-ticket's run_at until its gate opens: an older build's dueTickets never sees it (spec D11). */
+export const AFTER_RUN_AT = '9999-12-31T00:00:00.000Z';
+export const AFTER_POLICIES = ['done', 'any'];
+const AFTER_KINDS = ['ticket', 'pipeline'];
 /** Ticket states that still occupy their schedule's single "next occurrence" slot. */
 const OPEN_TICKET = ['scheduled', 'firing'];
 /** Minutes to wait before attempt n+1 after a transient start error. */
@@ -111,6 +115,8 @@ function rowToTicket(r, { withRequest = false } = {}) {
     retryAt: r.retry_at || null,
     queued: !!r.queued,
     forced: !!r.forced,
+    after: r.after_kind ? { kind: r.after_kind, id: r.after_id, policy: r.after_policy || 'done' } : null,
+    sourceFromPrevious: !!r.source_from_previous,
     ownerPid: r.owner_pid ?? null,
     ownerHost: r.owner_host || null,
     pipelineId: r.pipeline_id || null,
@@ -170,6 +176,15 @@ function targetCols({ projectDir = null, workspaceId = null }) {
 function normPolicy(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
+
+/** `{ kind:'ticket'|'pipeline', id }` or null. */
+function normAfter(after) {
+  if (!after || typeof after !== 'object') return null;
+  const kind = String(after.kind || '');
+  const id = typeof after.id === 'string' ? after.id.trim() : '';
+  return AFTER_KINDS.includes(kind) && id ? { kind, id } : null;
+}
+
 function normGrace(v, fallback = 360) {
   const n = Number(v);
   return Number.isSafeInteger(n) && n >= 0 && n <= 10080 ? n : fallback;
@@ -186,24 +201,33 @@ function normMaxFailures(v, fallback = 3) {
  * @param {object} o
  * @param {string} [o.id] the runId UUID (minted when absent)
  * @param {number} o.runAtMs UTC instant
+ * @param {{kind:'ticket'|'pipeline', id:string}|null} [o.after] a predecessor instead of a time: run_at becomes AFTER_RUN_AT and runAtMs is ignored (run chains)
+ * @param {'done'|'any'} [o.afterPolicy] with `after`: start only when it finishes `done` (default), or `any` way it ends
+ * @param {boolean} [o.sourceFromPrevious] with `after`: start on the predecessor's feature branch, resolved when the ticket fires
  * @param {object} o.request POST /api/run body shape (+ `internal`)
  * @returns {object} the ticket
  */
 export function createTicket({
   id = randomUUID(), scheduleId = null, title = null, projectDir = null, workspaceId = null,
   runAtMs, request, ifMissed = 'run', graceMin = 360, ownerPid = null, ownerHost = null,
-  askThreadId = null, askCardId = null, forced = false, now = Date.now(),
+  askThreadId = null, askCardId = null, forced = false,
+  after = null, afterPolicy = 'done', sourceFromPrevious = false,
+  now = Date.now(),
 }) {
-  if (!Number.isFinite(runAtMs)) throw new Error('createTicket: runAtMs is required');
+  const chained = normAfter(after);
+  if (after && !chained) throw new Error('createTicket: after.kind must be ticket | pipeline and after.id a string');
+  if (!chained && !Number.isFinite(runAtMs)) throw new Error('createTicket: runAtMs is required');
   const tc = targetCols({ projectDir, workspaceId });
   const ts = iso(now);
   getDb().prepare(`
     INSERT INTO scheduled_runs (id, schedule_id, title, project_key, project_dir, workspace_id, run_at, request,
-      status, if_missed, grace_min, owner_pid, owner_host, ask_thread_id, ask_card_id, forced, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, scheduleId, title, tc.project_key, tc.project_dir, tc.workspace_id, iso(runAtMs), JSON.stringify(request || {}),
+      status, if_missed, grace_min, owner_pid, owner_host, ask_thread_id, ask_card_id, forced,
+      after_kind, after_id, after_policy, source_from_previous, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, scheduleId, title, tc.project_key, tc.project_dir, tc.workspace_id, chained ? AFTER_RUN_AT : iso(runAtMs), JSON.stringify(request || {}),
     normPolicy(ifMissed, MISSED_POLICIES, 'run'), normGrace(graceMin), ownerPid, ownerPid != null ? (ownerHost || hostname()) : null,
-    askThreadId, askCardId, forced ? 1 : 0, ts, ts);
+    askThreadId, askCardId, forced ? 1 : 0,
+    chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious ? 1 : 0, ts, ts);
   return getTicket(id);
 }
 
@@ -236,17 +260,37 @@ function touchTicket(id, sets, args, now) {
  * A missed ticket becomes `scheduled` again and its alarm resolves.
  * @returns {object|null} the ticket, or null when it is not editable
  */
-export function updateTicket(id, { runAtMs, ifMissed, graceMin } = {}, { now = Date.now() } = {}) {
+export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPolicy, sourceFromPrevious } = {}, { now = Date.now() } = {}) {
   const t = getTicket(id);
   if (!t || !['scheduled', 'missed'].includes(t.status)) return null;
   const sets = [];
   const args = [];
-  if (Number.isFinite(runAtMs)) { sets.push('run_at = ?', "status = 'scheduled'", 'attempts = 0', 'retry_at = NULL', 'queued = 0', 'forced = 0', 'fail_reason = NULL'); args.push(iso(runAtMs)); }
+  if (Number.isFinite(runAtMs) && after) throw new Error('updateTicket: give runAtMs OR after, not both');
+  if (Number.isFinite(runAtMs)) {
+    // Back to a time: every after_* column goes, the policy included — a later re-chaining that
+    // says nothing about the policy must start from `done`, never from a stale `any`.
+    sets.push('run_at = ?', "status = 'scheduled'", 'attempts = 0', 'retry_at = NULL', 'queued = 0', 'forced = 0', 'fail_reason = NULL',
+      'after_kind = NULL', 'after_id = NULL', "after_policy = 'done'", 'source_from_previous = 0');
+    args.push(iso(runAtMs));
+  }
+  const chained = after === undefined ? undefined : normAfter(after);
+  // `after: null` is "not given"; anything else that does not normalise is a caller bug — refuse it
+  // like createTicket does, never answer "no change".
+  if (after !== undefined && after !== null && !chained) throw new Error('updateTicket: after.kind must be ticket | pipeline and after.id a string');
+  if (chained) {
+    sets.push('run_at = ?', 'after_kind = ?', 'after_id = ?', "status = 'scheduled'", 'attempts = 0', 'retry_at = NULL', 'queued = 0', 'forced = 0', 'fail_reason = NULL');
+    args.push(AFTER_RUN_AT, chained.kind, chained.id);
+  }
+  // A policy only rides with (or on) a predecessor. On a move to a time it is dropped, never pushed:
+  // a second `after_policy = ?` in the same SET would win over the reset above (SQLite keeps the LAST
+  // assignment of a repeated column), and the stale `any` the reset exists to clear would survive.
+  if (afterPolicy !== undefined && !Number.isFinite(runAtMs) && AFTER_POLICIES.includes(afterPolicy)) { sets.push('after_policy = ?'); args.push(afterPolicy); }
+  if (sourceFromPrevious !== undefined && (chained || (t.after && !Number.isFinite(runAtMs)))) { sets.push('source_from_previous = ?'); args.push(sourceFromPrevious ? 1 : 0); }
   if (ifMissed !== undefined) { sets.push('if_missed = ?'); args.push(normPolicy(ifMissed, MISSED_POLICIES, t.ifMissed)); }
   if (graceMin !== undefined) { sets.push('grace_min = ?'); args.push(normGrace(graceMin, t.graceMin)); }
   if (!sets.length) return t;
   touchTicket(id, sets.join(', '), args, now);
-  if (Number.isFinite(runAtMs)) resolveNotifications({ ticketId: id, kinds: ['missed', 'failed'] });
+  if (Number.isFinite(runAtMs) || chained) resolveNotifications({ ticketId: id, kinds: ['missed', 'failed'] });
   return getTicket(id);
 }
 
@@ -316,6 +360,142 @@ export function setTicketPipeline(id, pipelineId, { now = Date.now() } = {}) {
     getDb().prepare('UPDATE pipelines SET scheduled_for = ?, schedule_id = ? WHERE id = ? AND scheduled_for IS NULL')
       .run(t.runAt, t.scheduleId || null, pipelineId);
   } catch { /* a hand-seeded schema without the columns: provenance is decoration */ }
+}
+
+// ── run chains (spec 2026-09-21-run-chains-design.md) ────────────────────────
+
+/** Pipeline statuses that mean "still going" for a predecessor (LIVE_PIPELINE + a parked run). */
+const OPEN_PIPELINE = [...LIVE_PIPELINE, 'paused'];
+const PIPELINE_REF_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, workspace_meta, updated_at, archived_at FROM pipelines WHERE id = ?';
+const BAD_TICKET_REASON = { canceled: 'was canceled', missed: 'was missed', failed: 'could not start', skipped: 'was skipped' };
+const BAD_PIPELINE_REASON = { error: 'ended with an error', stopped: 'was stopped', interrupted: 'was interrupted' };
+
+function pipelineRefRow(id) {
+  return getDb().prepare(PIPELINE_REF_SQL).get(String(id)) || null;
+}
+
+/** A predecessor by id — a ticket first, else a pipeline — as one shape for validators and cards. */
+export function afterRefOf(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const t = getTicket(id);
+  if (t) return { kind: 'ticket', id: t.id, title: t.title, status: t.status, pipelineId: t.pipelineId, projectKey: t.projectKey, workspaceId: t.workspaceId, scheduleId: t.scheduleId };
+  const p = pipelineRefRow(id);
+  if (!p) return null;
+  return { kind: 'pipeline', id: p.id, title: p.title, status: p.status, pipelineId: p.id,
+    projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null };
+}
+
+function pipelineGate(row, { policy, isLive }) {
+  const base = { pipelineId: row.id, title: row.title, status: row.status };
+  // Archive (DELETE /api/runs/:id -> pipeline-delete.mjs) never DELETEs the row: it stamps archived_at and
+  // removes the branch, the worktree and the artifacts. For a chain that IS spec D9's removed predecessor:
+  // a `done` row whose branch is gone must strand its dependents as missed (the pinned Archive note), not
+  // start them — or fail them on a vanished ref. Archive refuses a live run, so this sits above isLive.
+  if (row.archived_at) return { state: 'gone', reason: 'was archived', ...base };
+  if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) return { state: 'waiting', ...base };
+  if (row.status === 'done') return { state: 'ok', ...base };
+  if (BAD_PIPELINE_REASON[row.status]) return policy === 'any' ? { state: 'ok', ...base } : { state: 'bad', reason: BAD_PIPELINE_REASON[row.status], ...base };
+  return { state: 'waiting', ...base };   // an unknown status: keep waiting rather than guess
+}
+
+/**
+ * Where a predecessor stands (spec §3.2): waiting (still going), ok (the gate is open),
+ * bad (it ended in a way the policy refuses), gone (no such row any more).
+ * @param {{kind:'ticket'|'pipeline', id:string}} after
+ */
+export function predecessorState(after, { policy = 'done', now = Date.now(), isLive = null } = {}) {
+  if (!after || !after.kind || !after.id) return { state: 'gone', reason: 'was removed', pipelineId: null, title: null, status: null };
+  if (after.kind === 'ticket') {
+    const t = getTicket(after.id);
+    if (!t) return { state: 'gone', reason: 'was removed', pipelineId: null, title: null, status: null };
+    const base = { pipelineId: t.pipelineId, title: t.title, status: t.status };
+    if (t.status === 'scheduled' || t.status === 'firing') return { state: 'waiting', ...base };
+    if (BAD_TICKET_REASON[t.status]) return { state: 'bad', reason: BAD_TICKET_REASON[t.status], ...base };
+    // fired
+    if (!t.pipelineId) {
+      if (isLive && isLive({ id: t.id, pipelineId: null })) return { state: 'waiting', ...base };
+      return now - Date.parse(t.updatedAt) < FIRED_UNKNOWN_LIVE_MS ? { state: 'waiting', ...base } : { state: 'bad', reason: 'could not start', ...base };
+    }
+    const row = pipelineRefRow(t.pipelineId);
+    if (!row) return { state: 'gone', reason: 'was removed', ...base };
+    return { ...pipelineGate(row, { policy, isLive: isLive ? (q) => isLive({ id: t.id, pipelineId: q.pipelineId }) : null }), title: t.title || row.title };
+  }
+  const row = pipelineRefRow(after.id);
+  if (!row) return { state: 'gone', reason: 'was removed', pipelineId: null, title: null, status: null };
+  return pipelineGate(row, { policy, isLive });
+}
+
+/** The feature branch(es) a finished pipeline left, in POST /api/run's own field names. */
+export function previousBranchesOf(pipelineId) {
+  const row = pipelineRefRow(pipelineId);
+  if (!row) return null;
+  if (row.target === 'workspace') {
+    const meta = parseJson(row.workspace_meta, null);
+    const branches = meta && meta.branches && typeof meta.branches === 'object' ? meta.branches : null;
+    if (!branches) return null;
+    const byKey = {};
+    for (const [key, b] of Object.entries(branches)) if (b && typeof b.feature === 'string' && b.feature) byKey[key] = b.feature;
+    return Object.keys(byKey).length ? { sourceBranchByKey: byKey } : null;
+  }
+  const b = parseJson(row.branch, null);
+  return b && typeof b.feature === 'string' && b.feature ? { sourceBranch: b.feature } : null;
+}
+
+/** Open tickets that wait for the given run — what a cancel or an archive would strand. */
+export function dependentsOfRun({ ticketId = null, pipelineId = null } = {}) {
+  const ids = [];
+  if (ticketId) ids.push(String(ticketId));
+  if (pipelineId) {
+    ids.push(String(pipelineId));
+    // A dependent may name the TICKET that became this pipeline (kind 'ticket'): predecessorState follows
+    // it into the same row, so an archive strands it all the same — the Archive note must name it too.
+    for (const r of getDb().prepare('SELECT id FROM scheduled_runs WHERE pipeline_id = ?').all(String(pipelineId))) ids.push(r.id);
+  }
+  if (!ids.length) return [];
+  return getDb().prepare(`SELECT id, title FROM scheduled_runs WHERE after_id IN (${ids.map(() => '?').join(', ')}) AND status IN ('scheduled', 'firing', 'missed') ORDER BY created_at ASC`)
+    .all(...ids).map((r) => ({ id: r.id, kind: 'once', title: r.title || null }));
+}
+
+const CHAIN_DEPTH_CAP = 100;
+
+/** True when following `after` upward reaches `selfId` (spec D8). */
+function chainReaches(after, selfId) {
+  let cur = after;
+  for (let depth = 0; cur && cur.kind === 'ticket' && depth < CHAIN_DEPTH_CAP; depth++) {
+    if (cur.id === selfId) return true;
+    const t = getTicket(cur.id);
+    cur = t ? t.after : null;
+  }
+  return false;
+}
+
+/**
+ * The ONE validator for a predecessor reference (server, CLI, Ask parent — spec §3.4).
+ * `after.kind` is advisory: the row decides. Accepts a predecessor that is waiting or done.
+ */
+export function resolveAfterRef(after, { projectDir = null, workspaceId = null, policy = 'done', selfId = null, isLive = null } = {}) {
+  const id = after && typeof after === 'object' && typeof after.id === 'string' ? after.id.trim() : '';
+  if (!id || !after || !AFTER_KINDS.includes(String(after.kind))) return { ok: false, error: 'after must be { kind: ticket | pipeline, id }' };
+  if (id.startsWith('sch_')) return { ok: false, error: 'after a repeating schedule is not supported — give the id of one of its runs' };
+  const ref = afterRefOf(id);
+  if (!ref) return { ok: false, error: `no run or scheduled run has id ${id}` };
+  if (ref.scheduleId) return { ok: false, error: 'after a repeating schedule is not supported — give the id of one of its runs' };
+  const name = `‘${ref.title || id.slice(0, 8)}’`;
+  const wantKey = projectDir ? projectKey(projectDir) : null;
+  if (workspaceId) {
+    if (!ref.workspaceId) return { ok: false, error: `${name} targets a project; this run targets a workspace` };
+    if (ref.workspaceId !== workspaceId) return { ok: false, error: `${name} targets another workspace; this run targets ${workspaceId}` };
+  } else {
+    if (ref.workspaceId) return { ok: false, error: `${name} targets a workspace; this run targets a project` };
+    if (wantKey && ref.projectKey !== wantKey) return { ok: false, error: `${name} targets another project; this run targets ${projectDir}` };
+  }
+  if (selfId && ref.kind === 'ticket') {
+    if (ref.id === selfId) return { ok: false, error: `${name} is this run` };
+    if (chainReaches({ kind: 'ticket', id: ref.id }, selfId)) return { ok: false, error: `${name} already waits for this run` };
+  }
+  const p = predecessorState({ kind: ref.kind, id: ref.id }, { policy, isLive });
+  if (p.state === 'bad' || p.state === 'gone') return { ok: false, error: `${name} ${p.reason} — nothing to wait for` };
+  return { ok: true, after: { kind: ref.kind, id: ref.id, title: ref.title || null, status: ref.status, pipelineId: ref.pipelineId || null } };
 }
 
 // ── schedules (recurring parents) ────────────────────────────────────────────
@@ -556,13 +736,22 @@ function miss(t, schedule, now, why) {
   if (schedule) { setLastResult(schedule.id, 'missed', now); bumpFailure(schedule.id, now); materializeNext(schedule.id, { now }); }
 }
 
+/** An after-ticket whose predecessor ended in a way its policy refuses, or vanished (spec §3.3). */
+function missAfter(t, now, p) {
+  touchTicket(t.id, "status = 'missed', fail_reason = ?", [`The run before it ${p.reason}.`], now);
+  addNotification({
+    kind: 'missed', ticketId: t.id, projectDir: t.projectDir, title: t.title,
+    message: `was waiting for ‘${p.title || 'the run before it'}’, which ${p.reason}.`, now: new Date(now),
+  });
+}
+
 /** Tickets whose time has come (and whose retry delay, if any, has passed). */
 export function dueTickets({ now = Date.now() } = {}) {
   const ts = iso(now);
   // A retry delay holds EVERY ticket, a forced one (Run now) included — otherwise a
   // Run now that hit a transient error would be re-tried on every tick.
   return getDb().prepare(`SELECT * FROM scheduled_runs WHERE status = 'scheduled'
-    AND (forced = 1 OR run_at <= ?) AND (retry_at IS NULL OR retry_at <= ?) ORDER BY run_at ASC`)
+    AND (forced = 1 OR run_at <= ? OR after_id IS NOT NULL) AND (retry_at IS NULL OR retry_at <= ?) ORDER BY run_at ASC`)
     .all(ts, ts).map((r) => rowToTicket(r, { withRequest: true }));
 }
 
@@ -590,6 +779,16 @@ export async function runDueTickets({
     if (t.scheduleId && !t.forced && (!schedule || schedule.status !== 'active')) {
       touchTicket(t.id, "status = 'canceled', fail_reason = 'schedule is not active'", [], now);
       continue;
+    }
+
+    if (t.after) {
+      const p = predecessorState(t.after, { policy: t.after.policy, now, isLive });
+      if (!t.forced) {
+        if (p.state === 'waiting') { out.waiting.push(t.id); continue; }
+        if (p.state !== 'ok') { missAfter(t, now, p); out.missed.push(t.id); continue; }
+      }
+      // D11: due from now — the late / retry maths below start here, never at the sentinel.
+      if (t.attempts === 0) { touchTicket(t.id, 'run_at = ?', [iso(now)], now); t.runAt = iso(now); }
     }
 
     const late = now - Date.parse(t.runAt);

@@ -80,7 +80,8 @@ export async function applyModelChange(card, io = {}) {
     case 'remove_model': {
       const r = await (io.removeModel ?? removeGlobalModelAndRefs)(c.id);
       const n = (r?.clearedSteps || 0) + (r?.clearedNodes || 0);
-      return { ok: true, detail: `${c.id} removed${n ? ` · ${n} workflow selection${n === 1 ? '' : 's'} cleared` : ''}` };
+      // The event turn quotes this detail: it names the Settings › Memory ref it cleared too.
+      return { ok: true, detail: `${c.id} removed${n ? ` · ${n} workflow selection${n === 1 ? '' : 's'} cleared` : ''}${r?.clearedMemoryDefrag ? ' · Settings › Memory defragment model cleared' : ''}` };
     }
     case 'provider': {
       await (io.patchProvider ?? patchProvider)(c.provider, c.set || {});

@@ -1,5 +1,6 @@
-// test/ui-report-run.test.mjs — "Report this run": the preview modal that History
-// detail and Running detail share. The modal renders the EXACT payload
+// test/ui-report-run.test.mjs — "Report this run": the preview modal History detail's
+// per-run ⋯ menu opens. Running detail does not offer it; a finished run there links
+// to History instead. The modal renders the EXACT payload
 // POST /api/pipelines/:id/report returns, and nothing leaves the machine until the
 // user presses Copy, Download, or the issue link — worca itself never calls GitHub.
 //
@@ -292,31 +293,56 @@ test('the issue link is inert while a rebuild is in flight', async () => {
   assert.equal(link.getAttribute('href'), REPORT.issue.url, 'and it arrives with the payload');
 });
 
-test('Running detail hides the button until the run is terminal', async () => {
-  const ctx = await boot({ fetchHandler: arms() });
-  // `hello` is what populates `runs` and sets helloSeeded; without it routeRunDetail
-  // mounts a title-only screen, repaintRunDetail never runs, and paintRdTerminal —
-  // the thing under test — is never called at all.
-  await armRunning(ctx, { status: 'running' });
-  const mid = ctx.window.document.querySelector('#run-detail .rd-report');
-  assert.ok(mid, 'the button is in the run-detail template');
-  assert.equal(mid.hidden, true, 'a mid-flight run cannot be reported');
+// The report flow is reached from ONE place: History's per-run ⋯ menu. A finished run
+// on Running detail offers "View in History" instead, and the link follows the
+// (hidden) Stop directly — no hidden button or empty slot is left in the row.
+for (const status of ['done', 'stopped', 'error']) {
+  test(`a ${status} run's Running header has no report button, only View in History`, async () => {
+    const ctx = await boot({ fetchHandler: arms() });
+    // `hello` is what populates `runs` and sets helloSeeded; without it routeRunDetail
+    // mounts a title-only screen, repaintRunDetail never runs, and paintRdTerminal —
+    // the thing that paints the terminal header — is never called at all.
+    await armRunning(ctx, { status: 'running' });
+    const doc = ctx.window.document;
+    assert.equal(doc.querySelector('#run-detail .rd-report'), null,
+      'the run-detail template carries no report button at all');
 
-  ctx.dispatch({ type: 'state', runId: RUN_ID, status: 'done' });
-  await settle(ctx.window, 8);
-  assert.equal(ctx.window.document.querySelector('#run-detail .rd-report').hidden, false,
-    'once terminal, the button appears');
-});
+    ctx.dispatch({ type: 'state', runId: RUN_ID, status });
+    await settle(ctx.window, 8);
+    const header = doc.querySelector('#run-detail .rd-header');
+    assert.equal(header.querySelector('.rd-report'), null, 'a finished run has no report button');
+    assert.equal([...header.querySelectorAll('button, a')].some((b) => /Report this run/.test(b.textContent)),
+      false, 'nothing in the header offers to report the run');
+    const link = header.querySelector('.rd-history-link');
+    assert.equal(link.hidden, false, 'View in History stays');
+    assert.equal(link.previousElementSibling, header.querySelector('.rd-stop'),
+      'the link sits right after Stop — no leftover control between them');
+  });
+}
 
-test('the Running button opens the modal for the run pipeline id', async () => {
+test('the History ⋯ menu carries "Report this run" and it opens the report modal', async () => {
   const ctx = await boot({ fetchHandler: arms() });
-  await armRunning(ctx, { status: 'done' });
-  click(ctx.window, ctx.window.document.querySelector('#run-detail .rd-report'));
+  await openHistoryDetail(ctx);
+  const doc = ctx.window.document;
+  const more = doc.querySelector('#hist-detail .hd-more');
+  assert.equal(more.hidden, false, 'a finished run shows the ⋯ trigger');
+  click(ctx.window, more);
+  await settle(ctx.window);
+
+  const item = doc.querySelector('#hist-detail .hd-menu .hd-report');
+  assert.ok(item, 'the report item lives inside the ⋯ menu');
+  assert.equal(item.hidden, false);
+  assert.equal(item.getAttribute('role'), 'menuitem');
+  assert.equal(item.textContent.trim(), 'Report this run');
+  assert.equal(reportPosts(ctx).length, 0, 'opening the menu builds nothing');
+
+  click(ctx.window, item);
   await settle(ctx.window, 8);
-  assert.equal(ctx.window.document.getElementById('report-modal').classList.contains('hidden'),
-    false, 'the same modal serves both screens');
+  assert.equal(doc.getElementById('report-modal').classList.contains('hidden'), false,
+    'the item opens the report modal');
+  assert.equal(reportPosts(ctx).length, 1, 'exactly one call, to build the preview');
   assert.match(reportPosts(ctx).at(-1).url, new RegExp(`/api/pipelines/${PID}/report$`),
-    'it reports the run PIPELINE id, not the runId');
+    'it reports the run PIPELINE id');
 });
 
 test('Escape closes the report modal WITHOUT navigating the detail screen away', async () => {
@@ -329,26 +355,6 @@ test('Escape closes the report modal WITHOUT navigating the detail screen away',
     'the modal closes');
   assert.equal(ctx.window.location.hash, before,
     'the capture-phase guard must bail while the report modal is open');
-});
-
-// The green step patches BOTH guards, and they are separate listeners with separate
-// modal lists — the Running arm does not inherit the History arm's checks (it has
-// four, the History arm six). One test per arm, or half the fix is unproven: without
-// the Running line this passes `hidden === true` and silently fails the hash assertion.
-test('Escape on RUNNING detail closes the modal without bouncing to the list', async () => {
-  const ctx = await boot({ fetchHandler: arms() });
-  await armRunning(ctx, { status: 'done' });
-  click(ctx.window, ctx.window.document.querySelector('#run-detail .rd-report'));
-  await settle(ctx.window, 8);
-  const before = ctx.window.location.hash;
-  assert.match(before, /running\//, 'the Running DETAIL screen is open, not the list');
-
-  esc(ctx.window);
-  await settle(ctx.window, 4);
-  assert.equal(ctx.window.document.getElementById('report-modal').classList.contains('hidden'), true,
-    'the modal closes');
-  assert.equal(ctx.window.location.hash, before,
-    'the Running guard must bail while the report modal is open');
 });
 
 // #report-modal is a top-level `position:fixed;inset:0` overlay with a live document
@@ -369,17 +375,12 @@ test('going back to the History list tears the report modal down', async () => {
     'detail -> list stays inside the History view, so closeHistDetail is what must close it');
 });
 
-// Deliberately driven from RUNNING detail: closeRunDetail must NOT grow the call
-// (its teardown sits below a `detail-open` early return that routeRunDetail('') hits
-// on every plain #running route), so nothing but showView can close this one. Assert
-// it from the screen that proves the showView line rather than the History one.
+// History detail -> another view: the modal must not outlive the screen it opened on.
 test('switching views tears the report modal down', async () => {
   const ctx = await boot({ fetchHandler: arms() });
-  await armRunning(ctx, { status: 'done' });
-  click(ctx.window, ctx.window.document.querySelector('#run-detail .rd-report'));
-  await settle(ctx.window, 8);
+  await openHistoryReport(ctx);
   const modal = ctx.window.document.getElementById('report-modal');
-  assert.equal(modal.classList.contains('hidden'), false, 'the modal is up on Running detail');
+  assert.equal(modal.classList.contains('hidden'), false, 'the modal is up on History detail');
 
   go(ctx.window, 'new');
   await settle(ctx.window, 8);

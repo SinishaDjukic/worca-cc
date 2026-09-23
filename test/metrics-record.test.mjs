@@ -21,6 +21,7 @@ test('single-project done → exact RunRecord v1', () => {
     endedAt: '2026-09-15T14:40:58Z',
     wallMs: 646986,
     activeMs: 512340,
+    pausedMs: 0,
     result: 'done',
     failure: null,
     workflow: { id: 'wf_auto', name: 'Auto', version: 2, rev: '1a2b3c4d' },
@@ -28,7 +29,7 @@ test('single-project done → exact RunRecord v1', () => {
     title: 'Add idempotency keys to POST /invoices',
     source: { type: 'github-issues', ref: '#412', url: 'https://github.com/acme/billing-api/issues/412', title: 'Idempotency keys for invoices' },
     cost: { usd: 3.42, byPhase: { plan: 0.61, implement: 2.15, review: 0.66 } },
-    agents: { count: 4, keys: ['planner', 'implementer', 'reviewer', 'refiner'], models: ['claude-opus-5', 'claude-sonnet-5'] },
+    agents: { count: 4, keys: ['planner', 'implementer', 'reviewer', 'refiner'], models: ['claude-opus-5-5', 'claude-sonnet-5'] },
     steps: 5,
     cycles: { plan: 1, implement: 2, review: 2 },
     interventions: { questions: 1, pauses: 0, resumes: 0 },
@@ -36,6 +37,11 @@ test('single-project done → exact RunRecord v1', () => {
     git: { branch: 'worca/idempotency-keys', head: '8067ff25', base: 'dev', filesChanged: 12, insertions: 340, deletions: 25 },
     actor: 'Siniša Đukić',
   });
+});
+
+test('a resumed run records its parked time; absent or non-finite → 0', () => {
+  assert.equal(buildRunRecord({ ...resumedRun, pausedMs: 30_093_429 }, { now: new Date(NOW) }).pausedMs, 30_093_429);
+  assert.equal(buildRunRecord({ ...projectDone, pausedMs: Number.NaN }, { now: new Date(NOW) }).pausedMs, 0);
 });
 
 test('field order is fixed (serialised key order == RECORD_FIELDS)', () => {
@@ -85,7 +91,7 @@ test('failed after a cost-cap pause → failure.kind budget; plain error → err
 
 test('agents.models holds full model ids from agent steps only (sub-agent aliases ignored)', () => {
   const rec = buildRunRecord({ ...projectDone, subAgents: [{ runModel: 'haiku' }] }, { now: new Date(NOW) });
-  assert.deepEqual(rec.agents.models, ['claude-opus-5', 'claude-sonnet-5']);
+  assert.deepEqual(rec.agents.models, ['claude-opus-5-5', 'claude-sonnet-5']);
 });
 
 test('stopped → result stopped, failure null, git counts null when no results.json', () => {

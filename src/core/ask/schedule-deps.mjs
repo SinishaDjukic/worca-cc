@@ -11,7 +11,7 @@
 // edits or removes a run is a card, applied by ui/server.mjs behind the user's click.
 import { getThread } from './store.mjs';
 import {
-  listSchedules, listTickets, getSchedule, getTicket, pauseSchedule, resumeSchedule, skipNext, scheduleCounts,
+  listSchedules, listTickets, getSchedule, getTicket, pauseSchedule, resumeSchedule, skipNext, scheduleCounts, afterRefOf,
 } from '../scheduler.mjs';
 import { listNotifications, markRead, markAllRead, unreadCount } from '../notifications.mjs';
 import { scheduleDefaults } from '../settings.mjs';
@@ -27,7 +27,7 @@ export function getScheduleItem(id) {
 }
 
 /** The authoritative validator over the real rows (the turn's default; the child's too). */
-export const validateScheduleChange = createScheduleChangeValidator({ getItem: getScheduleItem });
+export const validateScheduleChange = createScheduleChangeValidator({ getItem: getScheduleItem, afterRef: afterRefOf });
 
 /** The timezone the user's browser reported for this thread, else this machine's. */
 export function threadTimeZone(threadId) {
@@ -68,7 +68,7 @@ export function defaultScheduleDeps({ threadId = null } = {}) {
         unread: unreadCount('schedule'),
       }),
       preview: (input, { nowMs = Date.now() } = {}) => resolveScheduleSpec(input, {
-        nowMs, timeZone: threadTimeZone(threadId), defaults: scheduleDefaults(),
+        nowMs, timeZone: threadTimeZone(threadId), defaults: scheduleDefaults(), afterRef: afterRefOf,
       }),
       validateChange: (input) => validateScheduleChange(input, { timeZone: threadTimeZone(threadId) }),
       getItem: getScheduleItem,
