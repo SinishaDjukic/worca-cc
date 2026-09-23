@@ -440,6 +440,7 @@ const el = {
   mimpBaseField: null,          // set below: the label wrapping #mimp-base
   mimpList: $('#mimp-list'),
   mimpMsg: $('#mimp-msg'),
+  mimpFilter: $('#mimp-filter'),
   mimpBody: $('#mimp-body'),
   mimpGo: $('#mimp-go'),
   mimpCancel: $('#mimp-cancel'),
@@ -12619,6 +12620,28 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   if (mimp.source === 'copilot' || baseUrl) listImportModels();
 }
 
+/** Narrow the LISTED rows (model, id, vendor, detail) — a view filter, never a change to the pick. */
+function applyImportFilter() {
+  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
+  if (!sheet) return;
+  const q = (el.mimpFilter?.value || '').trim().toLowerCase();
+  let shown = 0;
+  for (const tr of sheet.querySelectorAll('tbody tr')) {
+    const hit = !q || tr.textContent.toLowerCase().includes(q) || String(tr.dataset.id || '').toLowerCase().includes(q);
+    tr.classList.toggle('is-filtered', !hit);
+    if (hit) shown += 1;
+  }
+  const none = sheet.querySelector('.mimp-nohits');
+  if (!shown && q) {
+    if (!none) {
+      const d = document.createElement('div');
+      d.className = 'hist-empty mimp-nohits';
+      d.textContent = `Nothing here matches “${el.mimpFilter.value.trim()}”.`;
+      sheet.appendChild(d);
+    }
+  } else if (none) none.remove();
+}
+
 function closeImportDialog() {
   el.modelImportModal?.classList.add('hidden');
   mimp.payload = null;
@@ -12646,6 +12669,12 @@ async function listImportModels() {
     sheet.querySelector('.mvi-msg')?.remove();
     el.mimpBody?.replaceChildren(sheet);
     const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
+    // Worth a filter only once the list is long enough to hunt through (Copilot lists dozens).
+    if (el.mimpFilter) {
+      el.mimpFilter.classList.toggle('hidden', sheet.querySelectorAll('tbody tr').length < 8);
+      el.mimpFilter.value = '';
+    }
+    applyImportFilter();
     if (el.mimpGo) el.mimpGo.disabled = !rows;
     setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
     if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
@@ -13038,6 +13067,7 @@ if (el.modelImportModal) {
   });
   el.mimpList?.addEventListener('click', () => listImportModels());
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
+  el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
   el.mimpCancel?.addEventListener('click', () => closeImportDialog());
   // The select-all box lives inside the sheet the dialog hosts.
@@ -13045,7 +13075,8 @@ if (el.modelImportModal) {
     const t = ev.target;
     if (t && t.classList && t.classList.contains('mvi-all')) {
       const sheet = t.closest('.mvi');
-      if (sheet) applyImportSelectAll(sheet, t.checked);
+      // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
+      if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
     }
   });
   // Backdrop click and Escape close it, like every other overlay in this file.

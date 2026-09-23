@@ -127,6 +127,21 @@ test('worca models import openai lists the endpoint, then imports a pick', async
   await assert.rejects(() => cmdModels(['import', 'openai', '--base-url', 'http://127.0.0.1:9/v1', '--all', '--yes'], { out: () => {}, c, fail: (m) => { throw new Error(m); } }), /no OpenAI-compatible model list/);
 });
 
+// The dialog hosts the sheet (§8.4): its shell owns the scrolling and the filter, so the sheet must
+// keep the hooks both rely on — one row per model, each carrying its id.
+test('the sheet gives every row its model id, so the dialog can filter what it lists', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const sheet = renderEndpointSheet({ server: 'vllm', serverLabel: 'vLLM', baseUrl: 'http://gpu.lan:8000/v1', warnings: [], models: [
+    { id: 'Qwen/Qwen3-32B', name: 'Qwen/Qwen3-32B', catalogId: 'vllm-qwen3-32b', servedContext: 131072, toolCalls: true, importable: true },
+    { id: 'meta/Llama-3.3-70B', name: 'meta/Llama-3.3-70B', catalogId: 'vllm-llama-3-3-70b', servedContext: 131072, toolCalls: true, importable: true },
+  ] }, { doc });
+  const rows = [...sheet.querySelectorAll('tbody tr')];
+  assert.deepEqual(rows.map((r) => r.dataset.id), ['Qwen/Qwen3-32B', 'meta/Llama-3.3-70B']);
+  // The filter matches on the row's visible text as well as its id.
+  assert.match(rows[0].textContent, /Qwen3-32B/);
+  assert.ok(rows.every((r) => r.querySelector('.mvi-cb')), 'and each keeps the checkbox the dialog collects');
+});
+
 test('the import sheet: a blocked row cannot be ticked, an unknown window says what the model supports', () => {
   const dom = new JSDOM('<!doctype html><body></body>');
   const doc = dom.window.document;
