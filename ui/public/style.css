@@ -31,6 +31,7 @@
   --line-2:light-dark(#E3E3E0,#494944);
 
   --green-bg:light-dark(#E2F3DF,#1C2F1D);  --green:#5BAE5B;  --green-ink:light-dark(#2F7A38,#8FD48F);
+  --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
   --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
@@ -2441,10 +2442,12 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .spend-ind.over .spend-ind-meter{background:var(--red-bg);}
 .spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
 .spend-ind.over .spend-ind-sub{color:var(--red-ink);}
-/* No total limit: the Saved row takes the place the "no total limit" note held. Its
-   amount keeps .spend-ind-amt's --ink on purpose: --green-ink and --red-ink measure
-   4.48:1 and 4.07:1 on this card's hover fill (--line), under verify:theme's 4.5:1. */
+/* No total limit: the Saved row takes the place the "no total limit" note held. A gain
+   is green — --green-ink-strong, since --green-ink measures 4.48:1 on this card's hover
+   fill (--line), under verify:theme's 4.5:1. A loss keeps neutral ink (--red-ink is
+   4.07:1 there); its "−" carries it. */
 .spend-ind-saved{margin-top:6px;}
+.spend-ind-saved.pos .spend-ind-label,.spend-ind-saved.pos .spend-ind-amt{color:var(--green-ink-strong);}
 .topnav-amt{margin-left:7px;font-family:var(--mono);font-weight:600;}
 .topnav-amt.warn{color:var(--amber-ink);}
 .topnav-amt.over{color:var(--red-ink);}
@@ -4082,8 +4085,8 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
    pixel they do and nothing clips; border-box leaves 38px inside, and the widest
    amount railUsd() emits ("−$8.8k", six glyphs at 10px mono) is 36px.
    `.spend-ind:hover` recolours the background only, which is the hover this wants.
-   Both amounts stay --ink: the Statistics tile's --green-ink / --red-ink measure
-   4.48:1 / 4.07:1 on that hover fill, under verify:theme's 4.5:1. */
+   A non-negative Saved pair is --green-ink-strong, as in the expanded card; Spent and a
+   loss stay --ink (--red-ink is 4.07:1 on that hover fill, under verify:theme's 4.5:1). */
 .spend-stack{display:flex;flex-direction:column;align-items:center;
   width:40px;padding:7px 0;border-radius:12px;text-align:center;}
 .spend-stack-pair{display:flex;flex-direction:column;align-items:center;gap:1px;}
@@ -4093,6 +4096,7 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
   letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
 .spend-stack-val{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1.2;
   white-space:nowrap;color:var(--ink);}
+.spend-stack-pair.pos .spend-stack-lbl,.spend-stack-pair.pos .spend-stack-val{color:var(--green-ink-strong);}
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
 /* Fixed full-height dock over the content column; children restore pointer

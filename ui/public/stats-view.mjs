@@ -307,11 +307,12 @@ export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt =
     btn.appendChild(meterEl(doc, 'spend-ind-meter', b.blocked ? 100 : ratio * 100));
     if (b.blocked) btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'limit reached · new runs blocked'));
   } else if (saved != null) {
-    // Neutral ink, like Spent — NOT the Statistics tile's green/red: on this card's --field
-    // fill (--line on hover) --green-ink is 4.48:1 and --red-ink 4.07:1, under the 4.5:1
-    // verify:theme enforces. The "−" sign carries a loss.
+    // A gain is green (.pos → --green-ink-strong, which clears verify:theme's 4.5:1 on the
+    // card's hover fill). A loss stays neutral ink — --red-ink is 4.07:1 there — and its
+    // "−" sign carries it.
     const row = indRow(doc, `Saved this ${periodWord(b)}`, signedUsd(fmt, saved));
     row.classList.add('spend-ind-saved');
+    if (saved >= 0) row.classList.add('pos');
     btn.appendChild(row);
   }
   return btn;
@@ -364,7 +365,11 @@ export function renderBudgetStack(budget, { doc = globalThis.document, fmt = DEF
   btn.title = `${figures} · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side ` +
     `estimate (total_cost_usd), not authoritative billing` + (saved != null ? `. ${SAVED_NOTE}` : '');
   btn.appendChild(stackPair(doc, 'Spent', railUsd(b.windowSpendUsd)));
-  if (saved != null) btn.appendChild(stackPair(doc, 'Saved', railUsd(saved)));
+  if (saved != null) {
+    const pair = stackPair(doc, 'Saved', railUsd(saved));
+    if (saved >= 0) pair.classList.add('pos');
+    btn.appendChild(pair);
+  }
   return btn;
 }
 

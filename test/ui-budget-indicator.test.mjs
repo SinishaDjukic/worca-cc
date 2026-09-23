@@ -321,8 +321,9 @@ test('no total limit renders the Spent/Saved stack, not a ring', () => {
   const pairs = [...el.querySelectorAll('.spend-stack-pair')].map((p) =>
     [p.querySelector('.spend-stack-lbl').textContent, p.querySelector('.spend-stack-val').textContent]);
   assert.deepEqual(pairs, [['Spent', '$11k'], ['Saved', '$42k']]);
-  assert.equal(el.querySelectorAll('.spend-stack-val')[1].className, 'spend-stack-val',
-    'neutral ink: green/red text fails 4.5:1 on the stack\'s hover fill');
+  const [spentPair, savedPair] = el.querySelectorAll('.spend-stack-pair');
+  assert.ok(savedPair.classList.contains('pos'), 'a gain is green, as in the expanded card');
+  assert.equal(spentPair.classList.contains('pos'), false, 'Spent stays neutral ink');
   // The compact figures are for the eye; exact ones reach the title and the accessible name.
   assert.equal(el.getAttribute('aria-label'),
     'Spent this month: $10,604.70 · Saved this month: $42,315.30');
@@ -344,6 +345,7 @@ test('the stack signs a loss, follows a weekly window, and drops Saved when the 
     { doc: pureDoc() });
   const val = loss.querySelectorAll('.spend-stack-val')[1];
   assert.equal(val.textContent, '−$8.8k', 'the sign carries the loss');
+  assert.equal(val.parentElement.classList.contains('pos'), false, 'a loss is never green');
   assert.match(loss.getAttribute('aria-label'), /Saved this week: −\$8,800\.00$/);
   const none = renderBudgetStack(stackBudget({ windowSavedUsd: null }), { doc: pureDoc() });
   assert.equal(none.querySelectorAll('.spend-stack-pair').length, 1, 'Spent alone, never a fake $0');

@@ -177,8 +177,8 @@ test('renderBudgetIndicator: no limit -> a Saved row under Spent, no meter, no "
   assert.equal(rows[1].querySelector('.spend-ind-label').textContent, 'Saved this month');
   const amt = rows[1].querySelector('.spend-ind-amt');
   assert.equal(amt.textContent, '$42,315.30');
-  assert.equal(amt.className, 'spend-ind-amt mono',
-    'neutral ink like Spent: green/red text fails 4.5:1 on the card\'s hover fill');
+  assert.ok(rows[1].classList.contains('pos'), 'a gain is green (.pos → --green-ink-strong)');
+  assert.equal(rows[0].classList.contains('pos'), false, 'Spent stays neutral ink');
   assert.equal(el.querySelector('.spend-ind-meter'), null);
   assert.equal(el.querySelector('.spend-ind-sub'), null);
   assert.doesNotMatch(el.textContent, /no total limit/i);
@@ -192,10 +192,12 @@ test('renderBudgetIndicator: a loss prints "−$"; the period word follows reset
   assert.equal(saved.querySelector('.spend-ind-label').textContent, 'Saved this week');
   const amt = saved.querySelector('.spend-ind-amt');
   assert.equal(amt.textContent, '−$12.50', 'U+2212 before the $, never "$-12.50"');
-  assert.equal(amt.className, 'spend-ind-amt mono', 'the sign carries the loss, not a colour');
+  assert.equal(saved.classList.contains('pos'), false,
+    'a loss is neutral ink, never green: the sign carries it (--red-ink fails 4.5:1 on hover)');
   const zero = renderBudgetIndicator({ ...NO_LIMIT, windowSavedUsd: 0 }, { doc })
-    .querySelector('.spend-ind-saved .spend-ind-amt');
-  assert.equal(zero.textContent, '$0.00');
+    .querySelector('.spend-ind-saved');
+  assert.equal(zero.querySelector('.spend-ind-amt').textContent, '$0.00');
+  assert.ok(zero.classList.contains('pos'), 'zero is not a loss');
 });
 
 test('renderBudgetIndicator: no Saved figure in the payload -> Spent alone, never a fake $0', () => {

@@ -820,12 +820,18 @@ test('the stack is a 40px column that overrides the block card and never wraps a
   assert.match(ruleBody('.spend-stack-lbl'), /text-transform:\s*uppercase/);
   assert.match(ruleBody('.spend-stack-lbl'), /color:\s*var\(--ink-2\)/,
     'not --ink-3: 2.6:1 on --field is unreadable at 9px');
-  // Both amounts stay --ink: --green-ink / --red-ink measure 4.48:1 / 4.07:1 on the
-  // --line hover fill, and verify:theme fails anything under 4.5:1 (measured, v1 dry run).
+  // Base amounts are --ink (Spent, and a loss). A gain is --green-ink-strong, never
+  // --green-ink: that measures 4.48:1 on the --line hover fill, and verify:theme fails
+  // anything under 4.5:1 (measured, v1 dry run). No red variant: --red-ink is 4.07:1.
   assert.match(ruleBody('.spend-stack-val'), /color:\s*var\(--ink\)/);
   assert.match(ruleBody('.spend-ind-amt'), /color:\s*var\(--ink\)/);
-  assert.doesNotMatch(css, /\.spend-(?:stack-val|ind-amt)\.is-(?:pos|neg)\s*\{/,
-    'no green/red variant for the sidebar amounts');
+  assert.match(ruleBody('.spend-ind-saved.pos .spend-ind-label,.spend-ind-saved.pos .spend-ind-amt'),
+    /color:\s*var\(--green-ink-strong\)/);
+  assert.match(ruleBody('.spend-stack-pair.pos .spend-stack-lbl,.spend-stack-pair.pos .spend-stack-val'),
+    /color:\s*var\(--green-ink-strong\)/);
+  assert.match(css, /--green-ink-strong:\s*light-dark\(#2C7535,/, '4.79:1 on --line (light)');
+  assert.doesNotMatch(css, /\.spend-(?:stack|ind)[\w-]*\.(?:is-)?neg\b/,
+    'no red variant for the sidebar amounts');
   assert.match(ruleBody('.spend-ind-saved'), /margin-top:\s*6px/);
 });
 
