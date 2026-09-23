@@ -212,11 +212,13 @@ test('the built-in catalog offers Fable 5.1 and no longer Fable 5', () => {
     'the retired id is gone from the catalog (db.mjs V26 moves the stored pins)');
 });
 
-test('the built-in catalog offers Opus 5.5 and no longer Opus 5', () => {
-  const opus = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5-5');
-  assert.deepEqual(opus, { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] });
-  assert.equal(PREDEFINED_MODELS.some((m) => m.id === 'claude-opus-5'), false,
-    'the retired id is gone from the catalog (db.mjs V35 moves the stored pins)');
+test('the built-in catalog offers Opus 5.5 and Opus 5 side by side, Opus 5.5 first', () => {
+  const opus55 = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5-5');
+  assert.deepEqual(opus55, { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  const opus5 = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5');
+  assert.deepEqual(opus5, { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  assert.deepEqual(PREDEFINED_MODELS.slice(0, 2).map((m) => m.id), ['claude-opus-5-5', 'claude-opus-5'],
+    'Opus 5.5 stays the first (default) entry; Opus 5 sits right after it');
 });
 
 // Settings › Memory: the defragment model is a GLOBAL ref — listed by the refs preview and cleared

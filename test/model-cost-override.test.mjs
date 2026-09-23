@@ -188,6 +188,8 @@ test('orchestrator: a {perMtok} model records the recomputed cost, not the CLI f
 test('liveCostRates: built-ins price from the list table; [1m]/dated ids share the base row; unknown → null', () => {
   assert.deepEqual(liveCostRates('claude-opus-5-5'), PREDEFINED_LIST_PRICES['claude-opus-5-5']);
   assert.equal(liveCostRates('claude-opus-5-5').input, 4);
+  assert.deepEqual(liveCostRates('claude-opus-5'), { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+    'Opus 5 keeps its own row beside Opus 5.5');
   assert.equal(liveCostRates('claude-fable-5-1').cacheRead, 0.25, 'Fable 5.1 cache reads are 0.025× input');
   assert.deepEqual(liveCostRates('claude-opus-4-8[1m]'), PREDEFINED_LIST_PRICES['claude-opus-4-8'], '[1m] twin → base row');
   assert.deepEqual(liveCostRates('claude-haiku-4-5-20251001'), PREDEFINED_LIST_PRICES['claude-haiku-4-5'], 'dated id → base row');

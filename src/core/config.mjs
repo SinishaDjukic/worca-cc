@@ -70,11 +70,13 @@ export { EFFORTS };
  * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5.5
  * (`claude-opus-5-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
  * carry no `[1m]` twin. Opus 5.5 replaced Opus 5 (`claude-opus-5`) on 2026-09-22
- * (verified to resolve via `claude --model`, CLI 2.1.280); db.mjs V35 moves the
- * stored pins the same way.
+ * (verified to resolve via `claude --model`, CLI 2.1.280); db.mjs V35 moved the
+ * stored pins the same way. Opus 5 came back beside it on 2026-09-23 so both can
+ * be picked; V35 is shipped and stays, so pins it already moved stay on Opus 5.5.
  */
 export const PREDEFINED_MODELS = [
   { id: 'claude-opus-5-5',        label: 'Opus 5.5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8[1m]',    label: 'Opus 4.8 (1M)',   efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -498,6 +500,7 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 export const PREDEFINED_LIST_PRICES = Object.freeze({
   'claude-fable-5-1':  { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
   'claude-opus-5-5':   { input: 4,  output: 20, cacheRead: 0.2,  cacheWrite: 5,    cacheWrite1h: 8 },
+  'claude-opus-5':     { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-8':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-7':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
   'claude-opus-4-6':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
