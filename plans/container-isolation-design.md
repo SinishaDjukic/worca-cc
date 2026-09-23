@@ -59,9 +59,12 @@ Windows spawn quirks documented in `src/core/preflight.mjs` and `src/core/claude
 
 - Replacing the npm install. The npm path stays the default in the README; the container is
   a section below it.
-- Multi-user or remote-access Worca. The server has no auth (`ui/server.mjs`, the S1 comment)
-  and the container keeps that contract: loopback only. Remote access is an SSH tunnel or
-  Tailscale, not a Worca feature.
+- Multi-user Worca, and remote access by default. The server has no login of its own
+  (`ui/server.mjs`, the S1 comment) and the container keeps that contract: loopback only. The one
+  sanctioned exception is opt-in and fails closed: behind an identity proxy, with worca verifying
+  the proxy's token on every request (`WORCA_ALLOWED_HOSTS` + `WORCA_CF_ACCESS_*`,
+  [docs/remote-access.md](../docs/remote-access.md)). Otherwise remote access is an SSH tunnel or
+  Tailscale.
 - Windows containers, Apple's `container` CLI, docker-in-docker, Kubernetes manifests.
 - A Claude Code sandbox (bubblewrap / seatbelt) inside the container. It needs unprivileged
   user namespaces that many container runtimes disable; the container **is** the sandbox.

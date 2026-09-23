@@ -403,6 +403,7 @@ The skill starts the same deterministic orchestrator.
 - [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible) and the built-in bridge
 - [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
+- [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with worca checking the token
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Contributing](CONTRIBUTING.md) — developing Worca from source
 

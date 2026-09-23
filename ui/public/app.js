@@ -11,6 +11,9 @@ const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
 // Memory scope control for it and the run body carries `memoryScope`. Built-in, never a saved row.
 const MEMORY_DEFRAG_WORKFLOW_ID = 'wf_memory_defrag';
 
+// Before any request: turns an expired identity-proxy sign-in into a banner.
+const sessionGuard = installSessionGuard();
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -96,6 +99,7 @@ import { exportSlugPreview } from './export-slug.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
+import { installSessionGuard } from './session-guard.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
@@ -497,6 +501,7 @@ function connectWS() {
 
   ws.addEventListener('close', () => {
     state.wsReady = false;
+    sessionGuard.check(); // behind an identity proxy, a dropped socket may be an expired sign-in
     scheduleReconnect();
   });
 

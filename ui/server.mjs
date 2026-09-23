@@ -115,6 +115,9 @@ import { readPolicyState } from '../src/core/policy/state.mjs';
 import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
 import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
+import {
+  readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
+} from '../src/core/remote-access.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -336,6 +339,31 @@ const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
 // applies unless they also front it with auth.
 const HOST = process.env.WORCA_HOST || '127.0.0.1';
 
+// Remote access behind an identity proxy (src/core/remote-access.mjs): opt-in
+// via WORCA_ALLOWED_HOSTS + WORCA_CF_ACCESS_*. Unset = the localhost-only
+// contract above, unchanged. A config error stops the server at boot (isMain)
+// and, should the app be imported anyway, refuses every non-local request.
+const REMOTE_ACCESS = readRemoteAccessConfig(process.env);
+const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST });
+const REMOTE_MODE = isRemoteMode(REMOTE_ACCESS);
+const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
+const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
+const HOST_FORBIDDEN = REMOTE_MODE
+  ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
+  : 'forbidden: worca is a localhost-only tool';
+
+/**
+ * Who is asking: `{ local: true }` for an in-container caller or when no
+ * identity check applies, `{ email, sub }` for a valid proxy token, null when
+ * refused. Rejects when the identity provider cannot be reached (-> 503).
+ */
+async function requestIdentity(req) {
+  if (isInContainer(req)) return { local: true };
+  if (REMOTE_ACCESS_CHECK.errors.length) return null;
+  if (!identityCheck) return { local: true };
+  return identityCheck(req);
+}
+
 // ---------------------------------------------------------------------------
 // Run registry. Each entry holds the live orchestrator + a ring buffer of the
 // events emitted so far so that a WebSocket which connects late can replay.
@@ -398,7 +426,20 @@ const MAX_BUFFER = 5000;
 // ---------------------------------------------------------------------------
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Refuse during the upgrade (before any replay is sent): the Host/Origin guard
+// first, then the identity check when remote access is on. The 'connection'
+// handler below re-checks the host guard as a second line.
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  verifyClient: (info, done) => {
+    if (!isLocalRequest(info.req)) return done(false, 403);
+    requestIdentity(info.req).then(
+      (who) => (who ? done(true) : done(false, 401)),
+      () => done(false, 503),
+    );
+  },
+});
 // ws re-emits the http server's 'error' on the WebSocketServer. With no listener
 // here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
 // stack trace; the http server's own handler (isMain below) is the one that
@@ -996,6 +1037,9 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
 // drive the API. Override WORCA_HOST only if you understand the exposure.
+// The one sanctioned exception is a deployment behind an identity proxy:
+// WORCA_ALLOWED_HOSTS adds its hostname here, and the identity middleware
+// right below then demands the proxy's token (src/core/remote-access.mjs).
 //
 // FIRST, ahead of the body parser (MIN-108): a refused request must be refused
 // before a single byte of its body is parsed or buffered, and a malformed body
@@ -1004,9 +1048,29 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // stays exempt — it carries its own token check and 256 KB cap.
 app.use((req, res, next) => {
   if (!isLocalRequest(req)) {
-    return res.status(403).json({ error: 'forbidden: worca is a localhost-only tool' });
+    return res.status(403).json({ error: HOST_FORBIDDEN });
   }
   next();
+});
+
+// Remote access (src/core/remote-access.mjs): when an identity proxy fronts the
+// server, every request must carry a valid token for it — the proxy stays the
+// network layer, this is the identity layer, so a misconfigured proxy or an
+// accidental public domain still exposes nothing. Also ahead of the body
+// parser (MIN-108). /api/health stays open for the platform healthcheck and
+// answers only name + version to a remote caller.
+app.use((req, res, next) => {
+  if (!identityCheck && !REMOTE_ACCESS_CHECK.errors.length) return next(); // local mode: no await
+  if (req.method === 'GET' && req.path === '/api/health') return next();
+  requestIdentity(req).then((who) => {
+    if (!who) {
+      return res.status(401).json({ error: 'unauthorized: sign in through the identity proxy (Cloudflare Access)' });
+    }
+    req.worcaUser = who;
+    next();
+  }, () => {
+    res.status(503).json({ error: 'cannot verify the sign-in token right now' });
+  });
 });
 
 // Ask attachments ride base64 inside the message JSON (§7.3), and a binary
@@ -1135,28 +1199,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
-
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-/** Hostname (no port) from a Host header value or full Origin URL, or null. */
-function hostnameOf(value) {
-  if (!value) return null;
-  try {
-    return new URL(value.includes('://') ? value : `http://${value}`).hostname;
-  } catch {
-    return null;
-  }
-}
-/** True when both Host and (if present) Origin are loopback. */
-function isLocalRequest(req) {
-  const host = hostnameOf(req.headers.host);
-  if (!host || !LOCAL_HOSTNAMES.has(host)) return false;
-  const origin = req.headers.origin;
-  if (origin) {
-    const oh = hostnameOf(origin);
-    if (!oh || !LOCAL_HOSTNAMES.has(oh)) return false;
-  }
-  return true;
-}
 
 function badRequest(res, message) {
   res.status(400).json({ error: message });
@@ -4669,6 +4711,9 @@ const uiControl = { token: null, onShutdown: null, startedAt: null };
 const startedAtIso = () => uiControl.startedAt || null;
 
 app.get('/api/health', (req, res) => {
+  // Remote mode: it is the one unauthenticated route, so a caller from outside
+  // the box learns only what it is, not the pid/bind/port/boot time.
+  if (REMOTE_MODE && !isInContainer(req)) return res.json({ name: UI_HEALTH_NAME, version: PKG_VERSION });
   const addr = req.socket && req.socket.localPort;
   res.json({
     name: UI_HEALTH_NAME,
@@ -8383,6 +8428,14 @@ export async function bootMaintenance({ log } = {}) {
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Remote access fails closed: an unsafe or broken config never starts serving.
+  if (REMOTE_ACCESS_CHECK.errors.length) {
+    for (const e of REMOTE_ACCESS_CHECK.errors) console.error(`[worca-ui] remote access: ${e}`);
+    console.error('[worca-ui] not starting. See docs/remote-access.md.');
+    process.exit(1);
+  }
+  for (const w of REMOTE_ACCESS_CHECK.warnings) console.warn(`[worca-ui] remote access: ${w}`);
+
   try {
     seedBuiltinMarketplace();
   } catch (err) {
@@ -8427,6 +8480,10 @@ if (isMain) {
     const port = server.address().port;
     const url = uiUrl({ host: HOST, port });
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
+    if (REMOTE_MODE) {
+      const who = identityCheck ? `identity: ${REMOTE_ACCESS.identity.provider} (${REMOTE_ACCESS.identity.teamDomain})` : 'identity: NOT CHECKED';
+      console.log(`[worca-ui] remote access on for ${REMOTE_ACCESS.allowedHosts.join(', ')}; ${who}`);
+    }
     uiControl.token = newUiToken();
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();
