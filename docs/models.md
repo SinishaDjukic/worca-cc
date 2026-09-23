@@ -7,8 +7,10 @@ gets into the catalog, how it reaches its endpoint, and what Worca's built-in
 first, then any OpenAI-compatible endpoint — with no LiteLLM and no second
 daemon.
 
-Settings › Models is the one place for all of it. It is an **Expert**-level tab
-(see [ui-levels.md](ui-levels.md)); anything that blocks a run shows at every
+Two Settings tabs hold all of it, both **Expert**-level (see
+[ui-levels.md](ui-levels.md)): **Settings › Models** is the catalog — the model
+rows, the editor and the import dialog — and **Settings › Providers** is the
+account-level state those rows share. Anything that blocks a run shows at every
 level.
 
 ## Three ways a model connects
@@ -19,21 +21,31 @@ level.
 | **Custom endpoint via env** | The entry's routing env (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, …) is merged into that model's spawns. | An endpoint that already speaks the Messages API: a LiteLLM you run, Bedrock / Vertex via the CLI's own env, a gateway. |
 | **Through a provider** | Worca points the CLI at its own loopback bridge, which forwards to the provider — passing Anthropic-shaped calls through, or translating them to OpenAI chat completions. | GitHub Copilot; OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway; an Anthropic-compatible gateway that needs a key Worca holds. |
 
-The choice is the **Connection** section at the top of the model editor.
+The choice is the **Connection** section at the top of the model editor, which
+opens as a dialog (*Add model*, *Edit*, *Duplicate*, *Edit a copy*) and asks
+before it closes on unsaved changes.
+
+## The catalog
+
+Settings › Models is the catalog and nothing else. Above the rows sit a search
+box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
+*Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
+Each group folds, with the count in its header; built-in models start folded.
 
 ## Providers
 
-The **Providers** card sits above the catalog on Settings › Models. A provider
-is account-level state that every model bridged through it shares.
+The **Providers** card has its own **Expert**-level tab, Settings › Providers. A
+provider is account-level state that every model bridged through it shares.
 
 **GitHub Copilot.** *Sign in…* reads you the notice below, then shows an
 8-character device code: enter it at github.com/login/device and the card
 flips to *connected as @you*. Worca stores the GitHub token in
 `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
 exchanges it for Copilot's short-lived token in memory, refreshed before it
-expires. *Import models…* lists what Copilot offers your account; *Refresh
-usage* shows the premium-request quota. The account type (Individual /
-Business / Enterprise) picks the API host when the sign-in does not name one.
+expires. *Refresh usage* shows the premium-request quota. *Import models…* is a
+shortcut: it jumps to Settings › Models and opens the import dialog there on
+the Copilot source. The account type (Individual / Business / Enterprise) picks
+the API host when the sign-in does not name one.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override
@@ -41,7 +53,8 @@ either under its Connection's *Advanced* disclosure. An OpenAI-compatible base
 URL on this machine or a private network (`localhost`, `127.x`, `10.x`,
 `192.168.x`, `172.16–31.x`, `*.local`) — llama.cpp's `llama-server`, Ollama,
 LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
-`Authorization` header.
+`Authorization` header. The OpenAI-compatible card's *Import models…* is the
+same shortcut, and carries its base URL into the dialog.
 
 **Max concurrent requests** is per provider. Requests over the cap wait; they
 never fail. For Copilot it is the one knob that lowers the abuse-detection risk
@@ -108,12 +121,24 @@ initiated instead (the cost pill reads `$0 · N requests`). A generic
 OpenAI-compatible entry is flagged *cost not verified* until you pin a
 per-million-token price on it.
 
-## Import from a server you run
+## Importing models
 
-The OpenAI-compatible provider's **Import models…** asks the endpoint in its Base
-URL what it serves and lists it, the way *Import models…* does for Copilot — so a
-local model is added without typing its id, its window or its capabilities. It
-knows four servers and falls back to the plain list for anything else:
+One dialog does both imports: **Import models…**, beside *Add model* on
+Settings › Models. It has a *From* picker with two sources — GitHub Copilot's
+catalog (offered once you are signed in) and any OpenAI-compatible server you
+run — and, for the second, a **Base URL** field. *List models* asks the source
+what it has, you tick what you want, and *Import selected* writes the rows into
+the catalog behind the dialog; the *Just imported* chip then filters to them.
+The import lives with the catalog because catalog rows are what it produces.
+Both Providers cards keep an *Import models…* shortcut that jumps here, the
+OpenAI-compatible one with its base URL already filled in.
+
+### Import from a server you run
+
+Pick *OpenAI-compatible server*, give it a base URL, and the dialog asks that
+endpoint what it serves — so a local model is added without typing its id, its
+window or its capabilities. It knows four servers and falls back to the plain
+list for anything else:
 
 | Server | What Worca reads | What it learns |
 |---|---|---|
@@ -142,10 +167,11 @@ know it.
 worca models import openai [--base-url http://127.0.0.1:11434/v1] [--all | --pick id,id] [--yes]
 ```
 
-## Import from Copilot
+### Import from Copilot
 
-*Import models…* shows Copilot's chat models with vendor, context window and
-capabilities. Anthropic models are imported with the passthrough API, every
+Pick *GitHub Copilot* and the dialog shows Copilot's chat models with vendor,
+context window and capabilities — no base URL, because the account's sign-in
+names the host. Anthropic models are imported with the passthrough API, every
 other vendor with the translated one; efforts are trimmed to *medium* for
 models without reasoning; pricing is *Free*. A second import refreshes
 capabilities and never overwrites a label, efforts or price you edited. Models
@@ -204,7 +230,7 @@ click Apply.
 - **Credentials never pass through the chat.** A key is a `${VAR}` reference to a
   variable in Worca's environment or nothing — a literal key, an env value that
   looks like a token, or an auth header is refused, and Ask Worca tells you to
-  paste it in Settings › Models instead.
+  paste it on Settings › Providers instead.
 - Signing in to Copilot and acknowledging its notice stay on the Providers card;
   built-in, plugin and team-policy models are read-only (a user entry with the
   same id overrides a built-in).

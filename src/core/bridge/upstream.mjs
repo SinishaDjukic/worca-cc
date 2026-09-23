@@ -118,7 +118,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
 
   // Concurrency cap (§7.4).
   if (semaphore.active(us.provider) >= us.maxConcurrent) {
-    warnOnce(`queue:${us.provider}:${tag}`, `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it under Settings › Models › Providers if this is slow`, log);
+    warnOnce(`queue:${us.provider}:${tag}`, `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it under Settings › Providers if this is slow`, log);
   }
   let release;
   try {

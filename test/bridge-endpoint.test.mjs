@@ -51,7 +51,7 @@ test('llama.cpp: /props identifies it, /v1/models gives the served window apart 
     id: 'qwen3.6-35b', name: 'qwen3.6-35b', kind: 'llm', servedContext: 4096, trainedContext: 262144,
     toolCalls: true, vision: false, reasoning: false, loaded: true, detail: 'Q2_K - Medium · 36B · 2 slots',
   }]);
-  assert.match(r.warnings.join('\n'), /splits its -c window across 2 slots/);
+  assert.match(r.warnings.join('\n'), /serving 2 slots in parallel; the window shown is what ONE request gets/);
   assert.match(r.warnings.join('\n'), /One model serves less than 65536 tokens/);
 });
 

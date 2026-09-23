@@ -1340,6 +1340,7 @@
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="models" data-min-level="expert" aria-pressed="false">Models</button>
+            <button type="button" data-tab="providers" data-min-level="expert" aria-pressed="false">Providers</button>
             <button type="button" data-tab="plugins" data-min-level="advanced" aria-pressed="false">Plugins</button>
             <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
           </div>
@@ -1764,10 +1765,11 @@
             <div class="topbar">
               <div>
                 <h1>Models</h1>
-                <div class="sub">Providers (GitHub Copilot, OpenAI-compatible) and the global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env</div>
+                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. Sign-ins and endpoints live on the Providers tab.</div>
               </div>
               <div style="display:flex;gap:8px;flex:0 0 auto">
                 <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Share as plugin…</button>
+                <button type="button" id="model-import-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Import models…</button>
                 <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px;white-space:nowrap">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                   Add model
@@ -1778,6 +1780,21 @@
             <div class="run-list" id="models-list"></div>
           </section>
           <!-- /pane models -->
+
+          <!-- ===== TAB: PROVIDERS (model-bridge-design.md §8.1) =====
+               Split out of Models: the card is account-level setup you touch rarely, and at
+               1000+px it buried the catalog it unlocks. Expert only, like Models. -->
+          <section class="settings-pane hidden" data-tab="providers">
+            <div class="topbar">
+              <div>
+                <h1>Providers</h1>
+                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models tab.</div>
+              </div>
+            </div>
+            <p id="providers-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="providers-list"></div>
+          </section>
+          <!-- /pane providers -->
 
           <!-- ===== TAB: PLUGINS (was the top-level Plugins view) ===== -->
           <section class="settings-pane hidden" data-tab="plugins">
@@ -1848,6 +1865,46 @@
         </section>
         <!-- /view settings -->
       </main>
+    </div>
+
+    <!-- ===== Model editor (configurable-models-design.md §4.10) =====
+         A task, not a page section: it used to render above the catalog, under a Providers card
+         taller than the viewport, so opening it looked like nothing happened. -->
+    <div id="model-editor-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mv-editor-heading">
+      <div id="mv-editor-host" class="mv-editor-host"></div>
+    </div>
+
+    <!-- ===== Import models (model-bridge-design.md §8.4) =====
+         One dialog for both sources: GitHub Copilot's catalog and any OpenAI-compatible server
+         you run. It lives with the CATALOG (Settings › Models), because what it produces is
+         catalog rows; the Providers tab only links into it with its endpoint filled in. -->
+    <div id="model-import-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mimp-title">
+      <div class="card mimp">
+        <h3 id="mimp-title" class="mv-editor-title">Import models</h3>
+        <div class="mimp-src">
+          <label class="mv-field mimp-source-field">
+            <span class="mv-field-label">From</span>
+            <select id="mimp-source" class="select"></select>
+          </label>
+          <label class="mv-field mimp-base-field">
+            <span class="mv-field-label">Base URL</span>
+            <!-- The button sits ON the field's line: below the hint it read as unrelated to the URL. -->
+            <span class="mimp-base-row">
+              <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
+              <button type="button" id="mimp-list" class="btn-ghost">List models</button>
+            </span>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway — on this machine or your network.</small>
+          </label>
+        </div>
+        <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
+        <!-- Copilot lists dozens of models; the filter narrows what is already listed, client-side. -->
+        <input id="mimp-filter" class="input mimp-filter hidden" type="search" placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
+        <div id="mimp-body"></div>
+        <div class="mv-editor-btns mimp-btns">
+          <button type="button" id="mimp-go" class="btn-go" disabled>Import selected</button>
+          <button type="button" id="mimp-cancel" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <!-- ===== Saved-markdown viewer (modal) ===== -->

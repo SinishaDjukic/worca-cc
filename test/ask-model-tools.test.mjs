@@ -78,10 +78,10 @@ test('credentials only as ${VAR}: literal env tokens, upstream keys and auth hea
 });
 
 test('warnings: no prompt limit on a translated model, a too-small local window, a provider that is not ready', async () => {
-  const { validate } = fixture({ ready: () => ({ ok: false, message: 'provider openai: no API key — open Settings › Models › Providers' }) });
+  const { validate } = fixture({ ready: () => ({ ok: false, message: 'provider openai: no API key — open Settings › Providers' }) });
   let r = await validate({ kind: 'add_model', model: { id: 'a', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5' } } });
   const w = r.card.warnings.join('\n');
-  assert.match(w, /no API key — open Settings › Models › Providers — the model shows "needs sign-in"/);
+  assert.match(w, /no API key — open Settings › Providers — the model shows "needs sign-in"/);
   assert.match(w, /no prompt limit \(capabilities\.maxPromptTokens\)/);
   r = await validate({ kind: 'add_model', model: { id: 'b', upstream: { ...LLAMA, capabilities: { maxPromptTokens: 32768 } } } });
   assert.match(r.card.warnings.join('\n'), new RegExp(`a 32768-token window is too small for pipelines — serve at least ${LOCAL_MIN_WINDOW}`));
