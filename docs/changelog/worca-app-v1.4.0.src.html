@@ -1,0 +1,590 @@
+<title>Worca — What's new in 1.4.0</title>
+<!--
+  Ship-log changelog, built with /worca-changelog from the PRs merged since 1.3.0.
+  Edit this file, then rebuild the published page:
+    node .claude/skills/worca-changelog/inline-assets.mjs docs/changelog/worca-app-v1.4.0.src.html docs/changelog/worca-app-v1.4.0.html
+-->
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  .grid2>*{min-width:0}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:minmax(0,1fr)}}
+  @media (max-width:560px){.chip{white-space:normal}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative;z-index:2}
+  .hero-grid>*{min-width:0}
+  @media (max-width:920px){.hero-grid{grid-template-columns:minmax(0,1fr)}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:3;pointer-events:none}
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px;white-space:nowrap}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .pill.wait{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill.live{background:#E3E8FA;color:var(--ocean-deep)}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: precedence rows — one row wins */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1;min-width:0}
+  .cat-row .t small{display:block;font-weight:600;font-size:11.5px;color:var(--ink-3)}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);white-space:nowrap}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: meter + flag — a run crossing a threshold */
+  .meter-run{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:16px 18px}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+  .meter-top .t{font-weight:700;font-size:14px}
+  .meter{height:12px;border-radius:999px;background:var(--line);position:relative}
+  .meter .fill{height:100%;border-radius:999px;width:0%;background:var(--info);transition:width 1.4s ease}
+  .meter .cap{position:absolute;top:-5px;bottom:-5px;left:80%;width:2px;background:var(--bad);border-radius:2px}
+  .meter-amt{display:flex;justify-content:space-between;gap:10px;margin-top:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li small{font-family:var(--mono);font-weight:600;font-size:11.5px;color:var(--ink-3);margin-left:auto;white-space:nowrap}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe: review rows — flagged items + a green guarantee */
+  .con-demo .crow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    font-size:13px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .con-demo .crow .t{flex:1;min-width:0}
+  .red-chip{background:#FCE9E4;color:#A03A31;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .con-note{border-radius:var(--r-sm);background:var(--lime-2);border:1px solid #CFE3A8;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:12.5px;font-weight:600;color:#41611F}
+
+  /* recipe: policy flip — one value changing */
+  .pol-demo .prow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .pol-demo .pkey{font-family:var(--mono);font-size:12px;color:var(--ink-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pol-demo .pmode{font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--card-2);
+    position:relative;min-width:150px;text-align:center;height:31px;overflow:hidden}
+  .pol-demo .pmode span{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .pol-demo .pmode .b{opacity:0;color:var(--ok)}
+  .pol-demo .prow.flip .pmode .a{opacity:0}
+  .pol-demo .prow.flip .pmode .b{opacity:1}
+  .pol-demo .warn-note{font-size:11.5px;color:var(--ok);font-weight:700;opacity:0;transition:opacity .4s;margin:0 2px}
+  .pol-demo .prow.flip ~ .warn-note{opacity:1}
+
+  /* recipe: chain — each run waits for the one before it */
+  .chain{display:flex;flex-direction:column;gap:0}
+  .chain .link{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .chain .link .t{font-weight:700;font-size:13.5px;flex:1;min-width:0}
+  .chain .link .t small{display:block;font-family:var(--mono);font-weight:600;font-size:11px;color:var(--ink-3)}
+  .chain .link.live{border-color:var(--ink);box-shadow:var(--shadow)}
+  .chain .wire{height:18px;width:2px;background:var(--line);margin-left:27px}
+
+  /* recipe: levels — a sidebar that grows with the mode */
+  .lvl-demo .seg{display:flex;gap:4px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:4px;margin-bottom:16px}
+  .lvl-demo .seg span{flex:1;text-align:center;font-size:12px;font-weight:700;border-radius:999px;padding:6px 0;color:var(--ink-3);transition:.3s}
+  .lvl-demo .nav{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .lvl-demo .nav i{font-style:normal;font-size:12.5px;font-weight:600;border:1px solid var(--line);background:var(--card);
+    border-radius:9px;padding:8px 12px;transition:opacity .4s}
+  .lvl-demo[data-l="1"] .seg span:nth-child(1),.lvl-demo[data-l="2"] .seg span:nth-child(2),.lvl-demo[data-l="3"] .seg span:nth-child(3){background:var(--ink);color:#fff}
+  .lvl-demo[data-l="1"] .nav i[data-l="2"],.lvl-demo[data-l="1"] .nav i[data-l="3"],.lvl-demo[data-l="2"] .nav i[data-l="3"]{opacity:.14}
+
+  /* recipe: surfaces — one question, answered anywhere */
+  .srf{display:flex;flex-direction:column;gap:10px}
+  .srf .row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:12px 16px;transition:.35s ease}
+  .srf .row b{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
+  .srf .row code{font-family:var(--mono);font-size:12px;color:var(--ink-2);word-break:break-word}
+  .srf .row.on{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+  }
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.png" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.3.0 → v1.4.0</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 690 C 300 640, 540 530, 750 400 S 1120 150, 1400 160" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">SCHEDULES · SCRIPTS · MODEL BRIDGE · TEAM POLICY · INTERFACE MODES · ASK FORMS · HOURS SAVED · SCHEDULES · SCRIPTS · MODEL BRIDGE · TEAM POLICY · INTERFACE MODES · ASK FORMS · HOURS SAVED · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.4.0</span>
+        <h1>What's new<br>in Worca.</h1>
+        <p class="sub">Since 1.3.0 — runs that start while you sleep and follow one another, your own code as workflow cards, Copilot and local models, a team policy kept in git, and a screen that starts simple.</p>
+        <div class="chips">
+          <span class="chip acc">Scheduled runs</span><span class="chip">Scripts</span><span class="chip">Model bridge</span><span class="chip">Team policy</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:560px"><img src="docs/changelog/shots/1.4.0/s0.png" alt="Schedules view, Once tab — two timed runs and a chain of two runs waiting for the one before" style="width:128%;max-width:none;margin:0 0 0 -26%"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Schedules</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Run chains</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · Schedules — chain recipe + shot ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Schedules</span>
+      <h2>Schedule runs, once or on repeat.</h2>
+      <p class="sub"><b>Want the big refactor to run overnight, not while you wait?</b><br>Now pick a time instead of pressing Start: once, every weekday, or on a rule of your own. A run can also wait for another run and start on the branch it left, so refactor, tests and docs run one after another.</p>
+      <div class="chips">
+        <span class="chip">starts at the time you pick</span><span class="chip">runs wait for the run before</span><span class="chip">pauses itself after <b>3</b> failures</span><span class="chip">Ask Worca can schedule for you</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">A chain of runs, each on the last one's branch</div>
+        <div class="chain" id="chainDemo">
+          <div class="link"><span class="t">Refactor the contacts service<small>Thu 02:00</small></span><span class="pill wait">Scheduled</span></div>
+          <div class="wire"></div>
+          <div class="link"><span class="t">Tests for the contacts service<small>after the refactor · on its branch</small></span><span class="pill wait">Waiting</span></div>
+          <div class="wire"></div>
+          <div class="link"><span class="t">Update the API docs<small>after the tests · on their branch</small></span><span class="pill wait">Waiting</span></div>
+        </div>
+        <p class="env-note">If a run fails, the next one does not start, unless you tell it to.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.4.0/s1.png" alt="New pipeline — the Schedule this run sheet with once and repeating choices, quick picks and a start-time preview" style="width:185%;max-width:none;margin:-12.5% 0 0 -52%"></div></div>
+        <p class="shot-cap">The schedule sheet: once or on repeat, quick picks, and when it will start.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · Scripts — flipped: shot + precedence recipe ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Scripts</span>
+      <h2>Workflow cards that run your code.</h2>
+      <p class="sub"><b>Does a test gate really need a model call?</b><br>Now a script card runs your own Node, Python or shell program inside a workflow. It has the same wires and pass/fail routing as an agent, costs no tokens, and gives the same answer every time. Try it on the test bench before it goes into a run.</p>
+      <div class="chips">
+        <span class="chip">Node · Python · shell</span><span class="chip"><b>$0</b> per run</span><span class="chip">inputs read from your code</span><span class="chip">test bench with saved cases</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.4.0/s2.png" alt="New script — Diff gate: name and icon, inputs and outputs read from the code, the editor and the test bench" style="width:126%;max-width:none;margin:0 0 0 -26%"></div></div>
+        <p class="shot-cap">A new script: the inputs and outputs are read from the code as you type.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">How a shell script's exit code routes the card</div>
+        <div class="cat-demo" id="exitDemo">
+          <div class="cat-row win"><span class="t">exit 0<small>the check passed</small></span><span class="badge violet">pass</span><span class="src">→ next card</span></div>
+          <div class="cat-row dim"><span class="t">exit 1<small>the output goes along</small></span><span class="badge grey">fail</span><span class="src">→ fix loop</span></div>
+          <div class="cat-row dim"><span class="t">any other code<small>something is wrong</small></span><span class="badge grey">pause</span><span class="src">→ asks you</span></div>
+        </div>
+        <p class="env-note">The same routing as an agent card, without a model call.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · Models — flip recipe + shot ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Models</span>
+      <h2>Run pipelines on Copilot or local models.</h2>
+      <p class="sub"><b>Paying for Copilot, or running Ollama on your desk, while Worca only talked to Anthropic?</b><br>Now Worca has a bridge built in. Sign in to GitHub Copilot or point it at a server on your machine, import the models it serves, and pick them anywhere you pick a model.</p>
+      <div class="chips">
+        <span class="chip">GitHub Copilot sign-in</span><span class="chip">Ollama · llama.cpp · LM Studio · vLLM</span><span class="chip">local models cost <b>$0</b></span><span class="chip">Opus 5.5 replaces Opus 5</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv pol-demo">
+        <div class="dlabel">Import uses the window the server really serves</div>
+        <div class="prow"><span class="pkey">gpt-oss:20b</span><span class="pmode"><span class="a">serves 66k</span></span></div>
+        <div class="prow" id="winFlip"><span class="pkey">qwen3-coder:30b</span><span class="pmode"><span class="a">trained for 262k</span><span class="b">serves 66k</span></span></div>
+        <p class="warn-note">Worca asks the server, so a prompt never outgrows the model.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.4.0/s3.png" alt="Import models dialog — models listed from a local Ollama server with their window, tools, vision and status" style="width:150%;max-width:none;margin:-7% 0 0 -29.5%"></div></div>
+        <p class="shot-cap">Import models: what a local Ollama serves, and which ones can run a pipeline.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · Team policy — flipped: shot + meter recipe ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Team</span>
+      <h2>One team policy, kept in git.</h2>
+      <p class="sub"><b>Does everyone on the team run with different caps, models and plugins?</b><br>Now a maintainer publishes a team policy to a branch in the project's repository, and every teammate's Worca reads it: cost caps, allowed models, required plugins and guardrails. Nothing is blocked. Go past a cap with a reason and the team sees it.</p>
+      <div class="chips">
+        <span class="chip">stored in your git remote</span><span class="chip">no server, no accounts</span><span class="chip">caps you can pass with a reason</span><span class="chip">a Getting started tour for it</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.4.0/s4.png" alt="Team policy page — the published policy, the caps on this machine, and the effective policy table" style="width:126%;max-width:none;margin:0 0 0 -26%"></div></div>
+        <p class="shot-cap">The Team policy page: what the team published and what your next run will use.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">A run reaching the team cap</div>
+        <div class="meter-run">
+          <div class="meter-top"><span class="t">Soft-delete with undo</span><span class="pill run" id="capPill">Running</span></div>
+          <div class="meter"><div class="fill" id="capFill" style="width:8%"></div><span class="cap"></span></div>
+          <div class="meter-amt"><span id="capUsd">$0.62 spent</span><span>team cap $8.00</span></div>
+        </div>
+        <div class="cost-banner" id="capBanner">
+          <span class="msg">Paused: team cost cap reached</span><span class="ghost-btn" id="capBtn">Continue past team cap</span>
+        </div>
+        <ol class="cap-steps" id="capSteps">
+          <li><span class="n">1</span>The run pauses at the cap</li>
+          <li><span class="n">2</span>You continue and say why</li>
+          <li><span class="n">3</span>The team sees it in Team metrics</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · Interface modes — levels recipe + shot ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Interface</span>
+      <h2>Simple, Advanced or Expert: you choose.</h2>
+      <p class="sub"><b>Too many buttons on your first day?</b><br>Now you pick how much of Worca is on screen. Simple shows what a run needs, Advanced adds control and review, and Expert shows everything. Nothing is switched off, only tidied away, and you can change it any time.</p>
+      <div class="chips">
+        <span class="chip">new installs start on Simple</span><span class="chip">upgrades keep everything</span><span class="chip">questions that block a run always show</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv lvl-demo" id="lvlDemo" data-l="1">
+        <div class="dlabel">What each mode puts in the sidebar</div>
+        <div class="seg"><span>Simple</span><span>Advanced</span><span>Expert</span></div>
+        <div class="nav">
+          <i data-l="1">New pipeline</i><i data-l="1">Running</i>
+          <i data-l="1">History</i><i data-l="1">Projects</i>
+          <i data-l="2">Schedules</i><i data-l="2">Statistics</i>
+          <i data-l="2">Workflow Composer</i><i data-l="2">Workspaces</i>
+          <i data-l="3">Agents</i><i data-l="3">Scripts</i>
+          <i data-l="3">Team metrics</i><i data-l="3">Team policy</i>
+        </div>
+        <p class="env-note">Links still open at any mode, with an offer to switch.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:540px"><img src="docs/changelog/shots/1.4.0/s5.png" alt="Interface mode dialog — Simple, Advanced and Expert, each described, Expert selected" style="width:200%;max-width:none;margin:-18.5% 0 0 -59.5%"></div></div>
+        <p class="shot-cap">The interface mode dialog, one click from the sidebar.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S6 · Ask forms — no screenshot: two demo cards ================= -->
+  <section class="sec" id="s6">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Agents</span>
+      <h2>Agents ask with forms, not just text.</h2>
+      <p class="sub"><b>An agent wants you to judge six findings in one free-text box?</b><br>Now an agent can bring the form its question needs: pick one, rank a list, keep or waive each finding, compare two images. Worca checks your answer before the agent sees it. The built-in code reviewer already asks this way.</p>
+      <div class="chips">
+        <span class="chip"><b>26</b> widgets to build from</span><span class="chip">answers checked before they go back</span><span class="chip">works in chat and the terminal too</span><span class="chip">plugins can ship forms</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv con-demo" id="formDemo">
+        <div class="dlabel">The code reviewer's findings, as a form</div>
+        <div class="crow"><span class="t">Missing index on contacts.email</span><span class="red-chip">keep</span></div>
+        <div class="crow"><span class="t">Magic number in the rate limiter</span><span class="red-chip" id="waive">keep</span></div>
+        <div class="crow"><span class="t">Undo window not covered by a test</span><span class="red-chip">keep</span></div>
+        <div class="con-note" id="formNote" style="opacity:.3;transition:opacity .4s"><span>Answer checked · the review resumes</span><span class="mono">2 kept · 1 waived ✓</span></div>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">One question, answered from anywhere</div>
+        <div class="srf" id="srfDemo">
+          <div class="row on"><b>Web</b><code>the form, with live checks</code></div>
+          <div class="row"><b>Chat</b><code>/answer *a1 verdict=changes | priority=nav,banner</code></div>
+          <div class="row"><b>Terminal</b><code>asks one field at a time, then re-asks what was wrong</code></div>
+        </div>
+        <p class="env-note">Every surface gets the same fields, so no answer is ever lost.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S7 · Hours saved — flipped: shot + steps recipe ================= -->
+  <section class="sec" id="s7">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--warn)"></span>Budget</span>
+      <h2>See the hours each run saved.</h2>
+      <p class="sub"><b>Is Worca worth what it costs?</b><br>Now every step of a run is credited with the hours a developer would have needed for what it produced. Statistics and the sidebar show Saved next to Spent: those hours at your hourly rate, minus what the run cost.</p>
+      <div class="chips">
+        <span class="chip">credited per step</span><span class="chip">your hourly rate, default <b>$35</b></span><span class="chip">no model call to estimate</span><span class="chip">Spent and Saved in the sidebar</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:470px"><img src="docs/changelog/shots/1.4.0/s7.png" alt="Statistics, this month — Spent, Saved with hours of human work, and spend and runs per day" style="width:126%;max-width:none;margin:0 0 0 -26%"></div></div>
+        <p class="shot-cap">Statistics: Saved beside Spent, with the hours of human work behind it.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">One run, credited step by step</div>
+        <ol class="cap-steps" id="hrsSteps" style="margin-top:0">
+          <li><span class="n">1</span>Plan and review<small>0.8 h</small></li>
+          <li><span class="n">2</span>Code and files changed<small>3.1 h</small></li>
+          <li><span class="n">3</span>Code review<small>0.6 h</small></li>
+        </ol>
+        <div class="cost-banner" id="hrsBanner" style="margin-top:18px;background:var(--lime-2);border-color:#CFE3A8">
+          <span class="msg" style="color:#41611F">4.5 h × $35 − $2.66 spent</span><span class="mono" style="font-weight:700;color:#41611F">Saved $154.84</span>
+        </div>
+        <p class="env-note">A failed run that produced nothing counts against you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS (always last) ================= -->
+  <section class="sec polish" id="s8">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">7,229</span></span><div class="tx"><b>Tests green</b><span>135 new test files · +32,522 test lines</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">+75k</span></span><div class="tx"><b>Lines landed</b><span>+75,261 · 561 files · 27 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">15</span></span><div class="tx"><b>PRs merged</b><span>Sep 17 – 23 · one release candidate, then stable</span></div></div>
+      <div class="bub rv"><span class="im"><img src="docs/changelog/shots/1.4.0/s3.png" style="width:900%;left:-413%;top:-224%" alt="Import dialog close-up — served window and tool support per model"></span><div class="tx"><b>Tried on real servers</b><span>llama-server and Ollama · a real run through the bridge</span></div></div>
+      <div class="bub rv d1"><span class="im"><img src="docs/changelog/shots/1.4.0/s6.png" style="width:900%;left:-233%;top:-479%" alt="Ask form close-up — a verdict chosen in the form"></span><div class="tx"><b>Forms checked in a browser</b><span>light and dark · on every push, in CI</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">v35</span></span><div class="tx"><b>Schema forward</b><span>v30 → v35 · schedules · run chains · policy state</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.3.0 → v1.4.0</span></span>
+    <span class="mono">Sep 17 – 23, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Schedules"></a><a href="#s2" aria-label="Scripts"></a><a href="#s3" aria-label="Models"></a><a href="#s4" aria-label="Team policy"></a><a href="#s5" aria-label="Interface modes"></a><a href="#s6" aria-label="Ask forms"></a><a href="#s7" aria-label="Hours saved"></a><a href="#s8" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+  var all = function (sel) { return [].slice.call(document.querySelectorAll(sel)); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  all('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = all('.sec');
+  var dots = all('.rail a');
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var links = all('#chainDemo .link'), pills = all('#chainDemo .pill');
+  function chainAt(k) { // k = index of the run in flight; links before it are done
+    links.forEach(function (l, i) {
+      l.classList.toggle('live', i === k);
+      pills[i].className = 'pill ' + (i < k ? 'run' : i === k ? 'live' : 'wait');
+      pills[i].textContent = i < k ? 'Done' : i === k ? 'Running' : (i === 0 ? 'Scheduled' : 'Waiting');
+    });
+  }
+  var exitRows = all('#exitDemo .cat-row');
+  function exitAt(k) { exitRows.forEach(function (r, i) { r.classList.toggle('win', i === k); r.classList.toggle('dim', i !== k); }); }
+  var waive = $('waive'), formNote = $('formNote');
+  function formDone(on) {
+    if (waive) { waive.textContent = on ? 'waive' : 'keep'; waive.style.background = on ? 'var(--lime-2)' : ''; waive.style.color = on ? '#41611F' : ''; }
+    if (formNote) formNote.style.opacity = on ? 1 : .3;
+  }
+  var srf = all('#srfDemo .row');
+  function srfAt(k) { srf.forEach(function (r, i) { r.classList.toggle('on', i === k); }); }
+  var hrs = all('#hrsSteps li'), hrsBanner = $('hrsBanner');
+  function hrsAt(k) { hrs.forEach(function (li, i) { li.classList.toggle('on', i < k); }); if (hrsBanner) hrsBanner.classList.toggle('show', k > hrs.length); }
+  var capPill = $('capPill'), capFill = $('capFill'), capUsd = $('capUsd'), capBanner = $('capBanner'), capBtn = $('capBtn');
+  var capSteps = all('#capSteps li');
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    chainAt(links.length);
+    formDone(true);
+    hrsAt(hrs.length + 1);
+    if ($('winFlip')) $('winFlip').classList.add('flip');
+    if ($('lvlDemo')) $('lvlDemo').setAttribute('data-l', '3');
+    if (capBanner) { capBanner.classList.add('show'); capFill.style.width = '80%'; capUsd.textContent = '$8.00 spent';
+      capPill.textContent = 'Paused'; capPill.className = 'pill flag'; capSteps.forEach(function (li) { li.classList.add('on'); }); }
+    return;
+  }
+
+  // chain: scheduled → running → done, one run after another
+  var ck = -1;
+  if (links.length) { chainAt(ck); setInterval(function () { ck = ck >= links.length ? -1 : ck + 1; chainAt(ck); }, 1600); }
+
+  // exit code → route
+  var ek = 0;
+  if (exitRows.length) setInterval(function () { ek = (ek + 1) % exitRows.length; exitAt(ek); }, 2200);
+
+  // served window flip
+  var wf = $('winFlip');
+  if (wf) setInterval(function () { wf.classList.toggle('flip'); }, 2400);
+
+  // team cap: run → cap → paused → continued with a reason
+  if (capPill) { var cp = 0; setInterval(function () {
+    cp = (cp + 1) % 4;
+    capSteps.forEach(function (li, i) { li.classList.toggle('on', cp > 0 && i < cp); });
+    if (cp === 0) { capPill.textContent = 'Running'; capPill.className = 'pill run'; capFill.style.width = '8%';
+      capUsd.textContent = '$0.62 spent'; capBanner.classList.remove('show'); capBtn.classList.remove('pulse'); }
+    if (cp === 1) { capFill.style.width = '80%'; capUsd.textContent = '$8.00 spent'; capPill.textContent = 'Paused'; capPill.className = 'pill flag'; capBanner.classList.add('show'); }
+    if (cp === 2) { capBtn.classList.add('pulse'); }
+    if (cp === 3) { capBtn.classList.remove('pulse'); capBanner.classList.remove('show'); capPill.textContent = 'Running'; capPill.className = 'pill run';
+      capFill.style.width = '92%'; capUsd.textContent = '$9.24 spent · reason given'; }
+  }, 2100); }
+
+  // interface levels
+  var lv = $('lvlDemo'), ln = 1;
+  if (lv) setInterval(function () { ln = ln % 3 + 1; lv.setAttribute('data-l', String(ln)); }, 2200);
+
+  // ask form: waive one finding, answer checked
+  var fd = false;
+  setInterval(function () { fd = !fd; formDone(fd); }, 2400);
+
+  // surfaces
+  var sk = 0;
+  if (srf.length) setInterval(function () { sk = (sk + 1) % srf.length; srfAt(sk); }, 2000);
+
+  // hours: steps light up, then the sum
+  var hk = 0;
+  if (hrs.length) setInterval(function () { hk = (hk + 1) % (hrs.length + 3); hrsAt(hk); }, 1100);
+})();
+</script>
