@@ -264,80 +264,136 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
   return row;
 }
 
-/** Sidebar spend indicator (whole block navigates to #stats). */
+/** The payload's "Saved this <period>" figure, or null when it has none: /api/budget
+ *  degrades it to null when the savings read fails, and a server that predates the
+ *  field sends nothing — either way the indicator shows Spent alone rather than "$0". */
+function windowSaved(b) {
+  return typeof b.windowSavedUsd === 'number' && Number.isFinite(b.windowSavedUsd)
+    ? b.windowSavedUsd : null;
+}
+
+/** Signed money in the Statistics Saved tile's own shape: "−$12.50", never "$-12.50". */
+const signedUsd = (fmt, n) => `${n < 0 ? '−' : ''}${fmt.usd(Math.abs(n))}`;
+
+/** Where "Saved" comes from, appended to both sidebar titles when the figure shows. */
+const SAVED_NOTE = 'Saved = estimated human hours × your rate − spent';
+
+function indRow(doc, label, amount) {
+  const row = h(doc, 'span', 'spend-ind-row');
+  row.appendChild(h(doc, 'span', 'spend-ind-label', label));
+  row.appendChild(h(doc, 'span', 'spend-ind-amt mono', amount));
+  return row;
+}
+
+/** Sidebar spend indicator (whole block navigates to #stats). With a total limit: Spent +
+ *  meter. Without one there is no meter to show, so the second row states what the period
+ *  saved instead — the old "no total limit" note said only what was missing. */
 export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
   const b = budget || {};
   const btn = h(doc, 'button', 'spend-ind');
   btn.type = 'button';
   btn.dataset.nav = 'stats';
-  const ratio = b.totalLimitUsd != null ? b.windowSpendUsd / b.totalLimitUsd : 0;
+  const hasLimit = b.totalLimitUsd != null;
+  const ratio = hasLimit ? b.windowSpendUsd / b.totalLimitUsd : 0;
+  const saved = hasLimit ? null : windowSaved(b);
   if (b.blocked) btn.classList.add('over');
-  else if (b.totalLimitUsd != null && ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
+  else if (hasLimit && ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
   btn.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
-    (b.totalLimitUsd != null ? ` of ${fmt.usd(b.totalLimitUsd)}` : '') +
-    ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing`;
-  const rowEl = h(doc, 'span', 'spend-ind-row');
-  rowEl.appendChild(h(doc, 'span', 'spend-ind-label', `Spent this ${periodWord(b)}`));
-  rowEl.appendChild(h(doc, 'span', 'spend-ind-amt mono', fmt.usd(b.windowSpendUsd)));
-  btn.appendChild(rowEl);
-  if (b.totalLimitUsd != null) {
+    (hasLimit ? ` of ${fmt.usd(b.totalLimitUsd)}` : '') +
+    ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
+    (saved != null ? `. Saved this ${periodWord(b)}: ${signedUsd(fmt, saved)} (${SAVED_NOTE})` : '');
+  btn.appendChild(indRow(doc, `Spent this ${periodWord(b)}`, fmt.usd(b.windowSpendUsd)));
+  if (hasLimit) {
     btn.appendChild(meterEl(doc, 'spend-ind-meter', b.blocked ? 100 : ratio * 100));
     if (b.blocked) btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'limit reached · new runs blocked'));
-  } else {
-    btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'no total limit'));
+  } else if (saved != null) {
+    // Neutral ink, like Spent — NOT the Statistics tile's green/red: on this card's --field
+    // fill (--line on hover) --green-ink is 4.48:1 and --red-ink 4.07:1, under the 4.5:1
+    // verify:theme enforces. The "−" sign carries a loss.
+    const row = indRow(doc, `Saved this ${periodWord(b)}`, signedUsd(fmt, saved));
+    row.classList.add('spend-ind-saved');
+    btn.appendChild(row);
   }
   return btn;
 }
 
-/** Compact centre label for the ring: $4 · $317 · $3k · $12k. Four glyphs is
- *  what fits inside a 29px disc at 9.5px mono, so thousands are WHOLE — "$8.8k"
- *  is five glyphs and overflows the disc.
- *  NAME: `ringAmount`, not `compactUsd` — this module ALREADY declares
- *  `compactUsd(fmt, v)` at :410 (the spend-chart y-axis formatter), and a second
- *  top-level function declaration in an ES module is a fatal SyntaxError, not a
- *  shadow: it takes down stats-view.mjs, app.js and the whole UI. */
-function ringAmount(n) {
-  const v = n || 0;
-  // The ROUNDED value decides: 999.5 would otherwise fall through and render
-  // "$1000", five glyphs in a four-glyph disc.
-  if (Math.round(v) >= 1000) return `$${Math.round(v / 1000)}k`;
-  return `$${Math.round(v)}`;
+/** Compact signed money for the collapsed rail's 40px stack:
+ *  $4 · $317 · $1.2k · $9.9k · $11k · $999k · $1.2M · $12M, with "−" before any of them.
+ *  At most five glyphs unsigned, six signed ("−$8.8k" ≈ 36px at 10px mono, inside the
+ *  stack's 38px). Every tier is decided on the ROUNDED value, so 999.5 is "$1k" (not
+ *  "$1000"), 9,950 is "$10k" (not "$10.0k") and 999,500 is "$1M" (not "$1000k").
+ *  NAME: `railUsd` — this module already declares `compactUsd(fmt, v)` (the spend-chart
+ *  y-axis formatter), and a second top-level declaration of one name in an ES module is
+ *  a fatal SyntaxError that takes down stats-view.mjs, app.js and the whole UI. */
+export function railUsd(n) {
+  const v = Number(n) || 0;
+  const a = Math.abs(v);
+  let body;
+  if (Math.round(a) < 1000) body = `$${Math.round(a)}`;
+  else if (Math.round(a / 100) / 10 < 10) body = `$${Math.round(a / 100) / 10}k`;
+  else if (Math.round(a / 1000) < 1000) body = `$${Math.round(a / 1000)}k`;
+  else if (Math.round(a / 1e5) / 10 < 10) body = `$${Math.round(a / 1e5) / 10}M`;
+  else body = `$${Math.round(a / 1e6)}M`;
+  return v < 0 && body !== '$0' ? `−${body}` : body;
 }
 
-/** Collapsed-rail budget ring — the sidebar indicator's 38px twin.
- *  Keeps the `spend-ind` class because app.js routes the sidebar spend click
- *  through `closest('.spend-ind')` (app.js:517). The arc percentage travels as the
- *  custom property `--ring-pct` and the gradient is composed in the stylesheet,
- *  so there is one definition of it and the cascade can swap the band colours by
- *  class. With no total limit there is no denominator, so the ring shows a flat
- *  neutral track and the amount rather than a fabricated percentage. */
-export function renderBudgetRing(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+function stackPair(doc, label, value) {
+  const pair = h(doc, 'span', 'spend-stack-pair');
+  pair.appendChild(h(doc, 'span', 'spend-stack-lbl', label));
+  pair.appendChild(h(doc, 'span', 'spend-stack-val', value));
+  return pair;
+}
+
+/** Collapsed-rail Spent/Saved stack — what the 76px rail shows while NO total limit is
+ *  set. A ring needs a denominator; without one it could only print a bare amount in a
+ *  disc, with nothing saying what the amount was. The stack drops the disc and states both
+ *  figures, a small caps label over a compact amount, in a 40px column: the width of every
+ *  other rail square, so it overhangs the 39px content box exactly as they do and nothing
+ *  clips. Exact figures live in the title and the accessible name. Keeps `.spend-ind` and
+ *  data-nav="stats" so app.js's closest('.spend-ind') click routing still reaches it. */
+export function renderBudgetStack(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
   const b = budget || {};
+  const word = periodWord(b);
+  const saved = windowSaved(b);
+  const btn = h(doc, 'button', 'spend-ind spend-stack');
+  btn.type = 'button';
+  btn.dataset.nav = 'stats';
+  const figures = `Spent this ${word}: ${fmt.usd(b.windowSpendUsd)}` +
+    (saved != null ? ` · Saved this ${word}: ${signedUsd(fmt, saved)}` : '');
+  btn.setAttribute('aria-label', figures);
+  btn.title = `${figures} · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side ` +
+    `estimate (total_cost_usd), not authoritative billing` + (saved != null ? `. ${SAVED_NOTE}` : '');
+  btn.appendChild(stackPair(doc, 'Spent', railUsd(b.windowSpendUsd)));
+  if (saved != null) btn.appendChild(stackPair(doc, 'Saved', railUsd(saved)));
+  return btn;
+}
+
+/** Collapsed-rail budget control — the sidebar indicator's compact twin. Under a total
+ *  limit: a 38px ring metering spend against it. Without one there is no denominator, so
+ *  it hands over to renderBudgetStack (app.js calls this one function for the rail either
+ *  way). Keeps the `spend-ind` class because app.js routes the sidebar spend click through
+ *  `closest('.spend-ind')`. The arc percentage travels as the custom property `--ring-pct`
+ *  and the gradient is composed in the stylesheet, so there is one definition of it and
+ *  the cascade can swap the band colours by class. */
+export function renderBudgetRing(budget, opts = {}) {
+  const b = budget || {};
+  if (b.totalLimitUsd == null) return renderBudgetStack(b, opts);
+  const { doc = globalThis.document, fmt = DEFAULT_FMT } = opts;
   const btn = h(doc, 'button', 'spend-ind spend-ring');
   btn.type = 'button';
   btn.dataset.nav = 'stats';
-  const hasLimit = b.totalLimitUsd != null;
-  const ratio = hasLimit ? b.windowSpendUsd / b.totalLimitUsd : 0;
+  const ratio = b.windowSpendUsd / b.totalLimitUsd;
   // Clamped both ways: over-cap spend must not sweep past a full circle, and a
   // refund must not sweep a negative arc.
   const pct = b.blocked ? 100 : Math.max(0, Math.min(100, Math.round(ratio * 100)));
-
-  // `no-limit` is tested FIRST, unlike renderBudgetIndicator, which tests
-  // `blocked` first. Not a divergence: src/core/cost-budget.mjs:90 is
-  // `blocked = totalLimitUsd != null && windowSpendUsd >= totalLimitUsd`, and
-  // budgetStatus() is the only producer the UI ever sees, so a no-limit budget
-  // can never arrive blocked. Do not "fix" the order.
-  if (!hasLimit) btn.classList.add('no-limit');
-  else if (b.blocked) btn.classList.add('over');
+  if (b.blocked) btn.classList.add('over');
   else if (ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
-
-  btn.style.setProperty('--ring-pct', String(hasLimit ? pct : 0));
+  btn.style.setProperty('--ring-pct', String(pct));
   btn.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
-    (hasLimit ? ` of ${fmt.usd(b.totalLimitUsd)}` : ' — no total limit') +
+    ` of ${fmt.usd(b.totalLimitUsd)}` +
     ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate ` +
     `(total_cost_usd), not authoritative billing`;
-  btn.appendChild(h(doc, 'span', 'spend-ring-val',
-    hasLimit ? `${pct}%` : ringAmount(b.windowSpendUsd)));
+  btn.appendChild(h(doc, 'span', 'spend-ring-val', `${pct}%`));
   return btn;
 }
 

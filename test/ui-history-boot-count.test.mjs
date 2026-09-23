@@ -1,7 +1,7 @@
 // test/ui-history-boot-count.test.mjs
-// On the first WS `hello`, history is background-loaded so #nav-history-count
-// populates even when boot lands on the default New-pipeline view (History never
-// opened). Boots the REAL app.js under jsdom.
+// On the first WS `hello`, history is background-loaded (PR states ready) even when
+// boot lands on the default New-pipeline view (History never opened). The History
+// menu item itself carries no count. Boots the REAL app.js under jsdom.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -51,21 +51,22 @@ const ROW = (over = {}) => ({
   projectName: 'Proj', projectKey: 'proj-0000abcd', projectDir: '/x/proj', ...over,
 });
 
-test('nav history count populates on first connect without opening History', async () => {
+test('first connect background-loads history without opening History or numbering its menu item', async () => {
   const ctx = await boot({
     fetchHandler: (url) => (url.endsWith('/api/history')
       ? skeleton([ROW(), ROW({ id: 'p2' }), ROW({ id: 'p3' })]) : null),
   });
-  // Default boot view is "New pipeline"; the badge starts at its HTML default.
-  assert.equal(ctx.window.document.querySelector('#nav-history-count').textContent, '0');
+  const historyFetches = () => ctx.calls.filter((c) => c.url.endsWith('/api/history')).length;
+  const before = historyFetches();
 
   ctx.hello();                 // server greets the socket -> background history load
   await ctx.tick();            // let /api/history resolve + paint
 
-  assert.equal(ctx.window.document.querySelector('#nav-history-count').textContent, '3',
-    'count reflects fetched pipelines even though History was never opened');
+  assert.ok(historyFetches() > before, 'history was loaded even though History was never opened');
   assert.ok(ctx.window.document.querySelector('[data-view="history"]').classList.contains('hidden'),
-    'History view stays hidden — only the badge updated');
+    'History view stays hidden');
+  assert.doesNotMatch(ctx.window.document.querySelector('.nav button[data-nav="history"]').textContent, /\d/,
+    'the History menu item shows no number');
 });
 
 test('the background load also triggers Phase-2 PR enrichment so PR states are ready', async () => {

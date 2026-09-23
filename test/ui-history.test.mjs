@@ -155,8 +155,6 @@ test('history renders 2 .hist-card divs (no <li>), status icon + word, nav count
 
   // Titles surface in .h-meta b (a cross-file contract).
   assert.equal(cards[0].querySelector('.h-meta b').textContent, 'Done run');
-
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '2', 'nav count reflects rendered cards');
 });
 
 test('interrupted lands in the amber paused family with the word "Interrupted"', async () => {
@@ -274,7 +272,6 @@ test('empty history renders a .hist-empty div (no <li>)', async () => {
   assert.ok(empty, '.hist-empty div present');
   assert.match(empty.textContent, /No saved pipelines/);
   assert.equal(doc.querySelectorAll('#history li').length, 0, 'no <li> in empty state');
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '0');
 });
 
 test('history load error renders a .hist-empty div (no <li>)', async () => {

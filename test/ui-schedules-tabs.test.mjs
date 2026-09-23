@@ -120,3 +120,26 @@ test('style.css: .sched-list carries no width cap, so schedule cards span the co
   for (const body of rules) assert.doesNotMatch(body, /(?:max-)?width\s*:/, `.sched-list{${body}}`);
   assert.doesNotMatch(css.match(/^\.run-list\{[^}]*\}/m)[0], /width/, 'the run card reference stays uncapped');
 });
+
+// Activity: a row's actions ("Open run", and Run now / Resume schedule / Mark read beside it) sit in
+// a third column, at the right edge and vertically centred on the row; a narrow screen puts them
+// back under the text so the message keeps its width.
+test('style.css: Activity row actions sit right and vertically centred, and drop under the text on narrow screens', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  const item = css.match(/^\.sched-feed-item\{([^}]*)\}/m);
+  assert.ok(item, 'the .sched-feed-item rule exists');
+  assert.match(item[1], /grid-template-columns:92px minmax\(0,1fr\) auto;/, 'badge | text | actions');
+  const acts = css.match(/^\.sched-feed-acts\{([^}]*)\}/m);
+  assert.ok(acts, 'the .sched-feed-acts rule exists');
+  assert.match(acts[1], /grid-column:3;/, 'actions take the third column');
+  assert.match(acts[1], /grid-row:1;/, 'on the row the badge and text share');
+  assert.match(acts[1], /align-self:center;/, 'vertically centred on the row');
+  assert.match(acts[1], /justify-self:end;/, 'at the right edge');
+  assert.doesNotMatch(acts[1], /margin-top/, 'no offset that would pull them off centre');
+  const narrow = css.match(/@media \(max-width:720px\)\{[^\n]*\.sched-feed-item\{([^}]*)\}[^\n]*\.sched-feed-acts\{([^}]*)\}/);
+  assert.ok(narrow, 'a 720px rule restacks the Activity row');
+  assert.match(narrow[1], /grid-template-columns:92px minmax\(0,1fr\);/, 'two columns on a narrow screen');
+  assert.match(narrow[2], /grid-column:2;/, 'actions go back under the text');
+  assert.match(narrow[2], /grid-row:auto;/, 'on their own row');
+  assert.match(narrow[2], /justify-self:start;/, 'left-aligned with the text');
+});

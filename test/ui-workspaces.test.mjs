@@ -77,7 +77,7 @@ async function open(window, id, tab = '') {
   await settle();
 }
 
-test('the list: one card headed "Workspaces · N", one row per workspace with name + summary + chevron, the nav count; no add/remove-project control', async () => {
+test('the list: one card headed "Workspaces · N", one row per workspace with name + summary + chevron; no add/remove-project control', async () => {
   const { window, show } = await boot();
   show();
   await settle(3);
@@ -94,7 +94,6 @@ test('the list: one card headed "Workspaces · N", one row per workspace with na
   assert.equal(rows[0].querySelector('.ws-projects').textContent, '2 projects · no metrics home', 'a summary, not the member list');
   assert.ok(rows[0].querySelector('.proj-open.ws-open'), 'the chevron');
   assert.equal(rows[0].querySelectorAll('button').length, 1, 'the chevron is the only button on a row: nothing on the list edits');
-  assert.equal(doc.querySelector('#nav-workspaces-count').textContent, '2');
   assert.equal(doc.querySelector('#ws-list .ws-card'), null, 'no expandable cards any more');
   // Invariant (a): NO add/remove-project control anywhere on the view.
   assert.equal(doc.querySelector('.view[data-view="workspaces"] [class*="add-project"]'), null);
@@ -107,7 +106,6 @@ test('empty state renders the histEmpty placeholder', async () => {
   const doc = window.document;
   assert.equal(doc.querySelectorAll('#ws-list .ws-item').length, 0);
   assert.equal(doc.querySelectorAll('#ws-list .hist-empty').length, 1);
-  assert.equal(doc.querySelector('#nav-workspaces-count').textContent, '0');
 });
 
 test('the stale badge shows on the row and on the page header when any member is missing', async () => {
@@ -291,7 +289,7 @@ test('delete 200 from the page: confirm → DELETE → back on the list without 
   await settle();
   assert.equal(window.location.hash, '#workspaces');
   assert.equal(doc.querySelectorAll('#ws-list .ws-item').length, 1, 'Beta removed');
-  assert.equal(doc.querySelector('#nav-workspaces-count').textContent, '1');
+  assert.equal(doc.querySelector('#ws-list .saved-head .cnt').textContent, '1');
   assert.match(doc.querySelector('#ws-msg').textContent, /Workspace deleted/);
 });
 
