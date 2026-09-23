@@ -79,15 +79,54 @@ export function suggestDuplicateId(id, takenIds = []) {
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
  * built-ins currently overridden by a global entry.
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '' } = {}, { doc = globalThis.document } = {}) {
+/**
+ * The catalog. `query` / `filter` narrow it and `collapsed` folds a group away: with the built-ins,
+ * a plugin's models and a team policy's all listed at once the page ran to several screens, and the
+ * entry you came for was never the one on top.
+ * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
+ */
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
+  const q = String(query || '').trim().toLowerCase();
+  const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
+  const searching = !!q || filter !== 'all';
 
-  const section = (title, hint) => {
+  /** Does this entry survive the search box and the chip? */
+  const keep = (m, source) => {
+    if (filter === 'imported' && !hi.has(String(m.id).toLowerCase())) return false;
+    if (filter === 'needs-setup' && !m.needsSignIn) return false;
+    if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
+    if (!q) return true;
+    return [m.id, m.label, m.plugin, m.home, m.upstream && m.upstream.model].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+  };
+
+  // Each group can fold: the header is the control, and its count is the answer to "is my model
+  // in there?" without opening it.
+  const sections = [];
+  const section = (title, hint, key = '') => {
     const s = h(doc, 'div', 'mv-section');
-    s.appendChild(h(doc, 'h3', 'mv-section-title', title));
-    if (hint) s.appendChild(h(doc, 'small', 'hint', hint));
+    s.dataset.section = key;
+    const head = h(doc, 'div', 'mv-section-head');
+    const btn = h(doc, 'button', 'mv-sec-toggle');
+    btn.type = 'button';
+    btn.dataset.section = key;
+    btn.appendChild(h(doc, 'span', 'mv-sec-caret', '▾'));
+    btn.appendChild(h(doc, 'h3', 'mv-section-title', title));
+    btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
+    head.appendChild(btn);
+    s.appendChild(head);
+    if (hint) s.appendChild(h(doc, 'small', 'hint mv-sec-hint', hint));
+    const body = h(doc, 'div', 'mv-sec-body');
+    s.appendChild(body);
+    // Searching opens every group that still has a hit — a match hidden inside a fold is a bug.
+    const folded = !searching && !!collapsed[key];
+    s.classList.toggle('is-folded', folded);
+    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    sections.push({ el: s, body, btn, key });
+    // The rows go into the body; every caller appends to the section, so proxy it.
+    s.appendChild = (node) => body.appendChild(node);
     return s;
   };
 
@@ -101,6 +140,26 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     b.title = "worca points Claude Code's internal haiku/sonnet/opus/fable lookups at this model, so it never falls back to the Anthropic API.";
     return b;
   };
+
+  // ── Toolbar: search + the chip that says which layer you are looking at ──
+  const bar = h(doc, 'div', 'mv-toolbar');
+  const search = h(doc, 'input', 'input mv-search');
+  search.type = 'search';
+  search.placeholder = 'Search models by id, label or upstream…';
+  search.value = query || '';
+  search.setAttribute('aria-label', 'Search models');
+  bar.appendChild(search);
+  const chips = h(doc, 'div', 'mv-filters');
+  const CHIPS = [['all', 'All'], ['global', 'Yours'], ['builtin', 'Built-in'], ['plugin', 'Plugin'], ['policy', 'Team'], ['needs-setup', 'Needs setup']];
+  if (highlight.length) CHIPS.push(['imported', 'Just imported']);
+  for (const [id, label] of CHIPS) {
+    const c = h(doc, 'button', `mv-filter${filter === id ? ' on' : ''}`, label);
+    c.type = 'button'; c.dataset.filter = id;
+    c.setAttribute('aria-pressed', filter === id ? 'true' : 'false');
+    chips.appendChild(c);
+  }
+  bar.appendChild(chips);
+  root.appendChild(bar);
 
   // ── Hide built-in models (#422) — one checkbox, top of the pane ──
   const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
@@ -116,11 +175,11 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   root.appendChild(hideRow);
 
   // ── Your models (global) ──
-  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.');
+  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.', 'global');
   if (!globals.length) {
     yours.appendChild(h(doc, 'div', 'hist-empty', 'No global models yet — Add model to define one.'));
   }
-  for (const m of globals) {
+  for (const m of globals.filter((x) => keep(x, 'global'))) {
     const card = h(doc, 'section', 'card mv-card');
     card.dataset.id = m.id;
     const body = h(doc, 'div', 'mv-body');
@@ -195,8 +254,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   const globalLc = new Set(globals.map((m) => m.id.toLowerCase()));
   if (plugins.length) {
     const plug = section('From plugins',
-      'Installed by plugins — read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.');
-    for (const m of plugins) {
+      'Installed by plugins — read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.', 'plugin');
+    for (const m of plugins.filter((x) => keep(x, 'plugin'))) {
       const card = h(doc, 'section', 'card mv-card mv-plugin');
       card.dataset.id = m.id;
       card.dataset.plugin = m.plugin;
@@ -245,8 +304,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   // ── From team policy (read-only; team-policy design §8) ──
   if (policy.length) {
     const pol = section('From team policy',
-      'Shipped by a team policy — read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.');
-    for (const m of policy) {
+      'Shipped by a team policy — read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.', 'policy');
+    for (const m of policy.filter((x) => keep(x, 'policy'))) {
       const card = h(doc, 'section', 'card mv-card mv-policy');
       card.dataset.id = m.id;
       const body = h(doc, 'div', 'mv-body');
@@ -274,9 +333,9 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   // ── Built-ins (read-only) ──
   const builtins = section('Built-in models', hideBuiltin
     ? `Hidden from every picker (${predefined.length} built-in${predefined.length === 1 ? '' : 's'}) — untick the box above to show them.`
-    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.');
+    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.', 'builtin');
   builtins.classList.add(hideBuiltin ? 'mv-builtins-hidden' : 'mv-builtins-shown');
-  for (const m of hideBuiltin ? [] : predefined) {
+  for (const m of (hideBuiltin ? [] : predefined).filter((x) => keep(x, 'builtin'))) {
     const row = h(doc, 'div', 'mv-builtin');
     row.dataset.id = m.id;
     row.appendChild(h(doc, 'b', 'mv-name', m.label));
@@ -287,6 +346,18 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     builtins.appendChild(row);
   }
   root.appendChild(builtins);
+
+  // Counts on every header, and a group with nothing left drops out while a search is on.
+  let shown = 0;
+  for (const sec of sections) {
+    const n = sec.body.querySelectorAll('.mv-card, .mv-builtin').length;
+    shown += n;
+    sec.btn.querySelector('.mv-sec-count').textContent = String(n);
+    if (searching && !n) sec.el.classList.add('hidden');
+  }
+  if (searching && !shown) {
+    root.appendChild(h(doc, 'div', 'hist-empty mv-no-hits', q ? `No model matches “${query}”.` : 'No model in this group.'));
+  }
   return root;
 }
 

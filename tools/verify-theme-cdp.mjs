@@ -293,6 +293,10 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
     if (withStyles) styles.push([sig, chain, cs.color, cs.backgroundColor, cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor, cs.outlineColor, cs.boxShadow, cs.fill, cs.stroke, cs.backgroundImage, cs.maskImage || '']);
     const text = [...el.childNodes].filter((c) => c.nodeType === 3).map((c) => c.textContent).join('').trim();
     const tag = el.tagName; const isInput = /^(INPUT|TEXTAREA|SELECT)$/.test(tag);
+    // A radio or checkbox paints no glyphs: its color property is inert and the box is drawn from
+    // accent-color, so a "text" sample of white-on-accent judges a contrast that is never on
+    // screen. Their label's contrast is the LABEL's own sample, which is taken normally.
+    const boxControl = tag === 'INPUT' && /^(radio|checkbox)$/i.test(el.type || '');
     const control = /^(BUTTON|A)$/.test(tag) || el.getAttribute('role') === 'button';
     const iconOnly = !text && control && el.querySelector('svg') && !el.textContent.trim();
     const { bg, unknown } = effectiveBg(el); const op = chainOpacity(el);
@@ -305,7 +309,7 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
       const eff = over([fg[0], fg[1], fg[2], fg[3] * op], bg);
       samples.push({ sig, chain, kind, text: (text || el.getAttribute('aria-label') || el.placeholder || '').slice(0, 40), fg: fgStr, bg: 'rgb(' + bg.slice(0,3).map(Math.round).join(',') + ')', ratio: +ratio(eff, bg).toFixed(2), need, unknown, disabled, size, weight, ...(extra || {}) }); };
     if (isSvg && text) push('text', cs.fill, large ? 3 : 4.5);
-    else if (text || isInput) push('text', cs.color, large ? 3 : 4.5);
+    else if (text || (isInput && !boxControl)) push('text', cs.color, large ? 3 : 4.5);
     if (iconOnly) push('icon', cs.color, 3);
     // SVG-namespace tagNames keep their case ('svg', 'path', 'g'): skip the ROOT svg only, sample its paths.
     if (isSvg && !text && tag.toLowerCase() !== 'svg') { const paint = cs.stroke !== 'none' && parse(cs.stroke) ? cs.stroke : (cs.fill !== 'none' ? cs.fill : null); if (paint) push('graphic', paint, 3, { advisory: true }); }
@@ -438,6 +442,12 @@ const states = [
   ['settings-tooltip', async () => { await ev(`(()=>{const t=document.querySelector('.settings-pane[data-tab="general"] .info-tip[aria-label="About Worca root folder"]');if(!t)throw new Error('no info-tip');t.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return 1;})()`); await until(`document.querySelector('#info-bubble:not(.hidden)')`, 'a live tooltip'); await freeze('tooltip'); }, async () => { await ev(`(()=>{const t=document.querySelector('.settings-pane[data-tab="general"] .info-tip[aria-label="About Worca root folder"]');if(t)t.dispatchEvent(new MouseEvent('mouseout',{bubbles:true}));document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));return 1;})()`); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
   ['settings-models', async () => { await go('settings/models'); }],
+  // The catalog's two dialogs (§4.10, §8.4). They render their own content, so the audit would
+  // never see the editor's fields or the import table from 'settings-models' alone — the same gap
+  // that let a chip's contrast regress unnoticed.
+  ['settings-model-editor', async () => { await go('settings/models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
+  ['settings-model-import', async () => { await go('settings/models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
+  ['settings-providers', async () => { await go('settings/providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
   ['settings-plugins', async () => { await go('settings/plugins'); }],
   // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
   // row, the editor, its status line and a History row — an empty scope would paint the fresh badge

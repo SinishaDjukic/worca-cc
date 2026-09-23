@@ -20,19 +20,19 @@ test('the three nav entries are gone from BOTH menus', () => {
     assert.equal(html.includes(`data-nav="${v}"`), false, `data-nav=${v} still present`);
 });
 
-test('settings holds a .seg tab strip with the five tabs, General preselected', () => {
+test('settings holds a .seg tab strip with the six tabs, General preselected', () => {
   const seg = settingsView().querySelector('#settings-tabs');
   assert.ok(seg, '#settings-tabs missing');
   assert.ok(seg.classList.contains('seg'), 'reuses the .seg segmented control');
   const btns = [...seg.querySelectorAll('button[data-tab]')];
-  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'guardrails', 'models', 'plugins', 'memory']);
-  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false, false]);
+  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'guardrails', 'models', 'providers', 'plugins', 'memory']);
+  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false, false, false]);
 });
 
-test('five panes live inside settings; only General starts visible', () => {
+test('six panes live inside settings; only General starts visible', () => {
   const panes = [...settingsView().querySelectorAll('.settings-pane')];
-  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'guardrails', 'models', 'plugins', 'memory']);
-  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true, true]);
+  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'guardrails', 'models', 'providers', 'plugins', 'memory']);
+  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true, true, true]);
   // A pane must NOT be a routed view: showView's views.forEach would force
   // .hidden back on it at every navigation.
   for (const p of panes) {

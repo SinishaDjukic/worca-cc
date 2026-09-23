@@ -44,11 +44,11 @@ export function providerReadiness(upstream) {
   const p = upstream.provider;
   if (p === 'copilot') {
     if (!copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Models › Providers' };
+      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Providers' };
     }
     const cfg = providerConfig('copilot');
     if (!resolveProviderSecret(cfg.githubToken)) {
-      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Settings › Models › Providers' };
+      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Settings › Providers' };
     }
     return { ok: true };
   }
@@ -63,7 +63,7 @@ export function providerReadiness(upstream) {
       ok: false, reason: 'no_key',
       message: has
         ? `provider ${p}: the API key's \${VAR} is not set in worca's environment`
-        : `provider ${p}: no API key — open Settings › Models › Providers`,
+        : `provider ${p}: no API key — open Settings › Providers`,
     };
   }
   return { ok: true };

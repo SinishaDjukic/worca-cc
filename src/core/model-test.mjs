@@ -32,9 +32,9 @@ export function hintFor(errorClass) {
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
-    case 'not_signed_in': return `sign in to ${provider} under Settings › Models › Providers (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice under Settings › Models › Providers first';
-    case 'no_key': return `set an API key for ${provider} under Settings › Models › Providers, or on this model's Connection`;
+    case 'not_signed_in': return `sign in to ${provider} under Settings › Providers (or \`worca models login ${provider}\`)`;
+    case 'terms': return 'acknowledge the GitHub Copilot notice under Settings › Providers first';
+    case 'no_key': return `set an API key for ${provider} under Settings › Providers, or on this model's Connection`;
     default: return '';
   }
 }

@@ -427,6 +427,20 @@ const el = {
   // Models view
   modelsList: $('#models-list'),
   modelsMsg: $('#models-msg'),
+  providersList: $('#providers-list'),
+  providersMsg: $('#providers-msg'),
+  modelImportBtn: $('#model-import-btn'),
+  modelImportModal: $('#model-import-modal'),
+  modelEditorModal: $('#model-editor-modal'),
+  modelEditorHost: $('#mv-editor-host'),
+  mimpSource: $('#mimp-source'),
+  mimpBase: $('#mimp-base'),
+  mimpBaseField: null,          // set below: the label wrapping #mimp-base
+  mimpList: $('#mimp-list'),
+  mimpMsg: $('#mimp-msg'),
+  mimpBody: $('#mimp-body'),
+  mimpGo: $('#mimp-go'),
+  mimpCancel: $('#mimp-cancel'),
   modelCreateBtn: $('#model-create-btn'),
   modelShareBtn: $('#model-share-btn'),
 
@@ -3519,8 +3533,8 @@ function goAddModel(restore) {
   mvState.openCreate = true;
   mvState.openShare = false;
   mvState.prefill = null;
-  mvState.revealPanel = true;              // survives the view switch: loadModelsView repaints
-  showView('settings', 'models'); // loadModelsView renders the open editor
+  mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
+  showView('settings', 'models');
 }
 
 // Delegated change handler for every config control inside #pipeline-config.
@@ -11763,10 +11777,13 @@ const mvState = {
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
-  // openImport is false, true (Copilot) or 'endpoint' (an OpenAI-compatible server, §8.4),
-  // whose payload — server, base URL, rows, warnings — is endpointModels.
-  providers: null, signIn: null, openImport: false, importModels: [], copilotModels: [],
-  endpointModels: null,
+  // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
+  // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
+  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
+  // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
+  // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
+  // 12 rows nobody edits — and a search opens every group that still has a hit.
+  query: '', filter: 'all', collapsed: { builtin: true, plugin: false, policy: false, global: false },
   // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
   // render under the Providers card, which is taller than the viewport on a laptop, so opening one
   // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
@@ -11785,21 +11802,16 @@ function renderModelsViewBody() {
   const pp = selectedProjectPath();
   const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
   const frag = document.createDocumentFragment();
-  // Providers card first (§8.1): sign-in state and keys sit above the catalog
-  // they unlock. Kept across repaints, including an in-flight device flow.
-  frag.appendChild(renderProvidersCard(mvState.providers, { signIn: mvState.signIn }));
-  if (mvState.openImport === 'endpoint') {
-    frag.appendChild(renderEndpointSheet(mvState.endpointModels));
-  } else if (mvState.openImport) {
-    frag.appendChild(renderImportSheet(mvState.importModels));
-  } else if (mvState.openShare) {
+  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks,
+  // and importing — the one flow that spanned both — moved here, where its rows land.
+  if (mvState.openShare) {
     frag.appendChild(renderExportWizard(d.models || []));
-  } else if (mvState.editing || mvState.openCreate) {
-    const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels });
-    if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
-    frag.appendChild(editor);
   }
   frag.appendChild(renderModelsList({
+    query: mvState.query,
+    filter: mvState.filter,
+    collapsed: mvState.collapsed,
+    highlight: mvState.justImported || [],
     globals: d.models || [],
     legacy,
     plugins: d.plugin || [],
@@ -11816,17 +11828,56 @@ function renderModelsViewBody() {
   }
 }
 
-/** Bring the open editor / import sheet into view and put the caret in its first field. */
+/** Bring an open in-page panel (the share wizard) into view. */
 function revealModelsPanel() {
   const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
   if (!panel) return;
   try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
-  // Only a fresh create starts empty enough to type into; focusing an edit or a sheet would
-  // steal the caret from whatever the user was reading.
-  if (!mvState.editing && !mvState.openImport) {
-    const first = panel.querySelector('input:not([type="checkbox"]):not([disabled]), select, textarea');
+}
+
+// ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
+// The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
+// work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
+const mvEditor = { dirty: false, lastFocus: null };
+
+/** The open editor, wherever it lives (the dialog today; the page while it is closing). */
+function modelEditorEl() {
+  return (el.modelEditorHost && el.modelEditorHost.querySelector('.mv-editor'))
+    || (el.modelsList && el.modelsList.querySelector('.mv-editor'));
+}
+
+function openModelEditorDialog() {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  const d = mvState.data || { efforts: [] };
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels });
+  if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
+  const title = editor.querySelector('.mv-editor-title');
+  if (title) title.id = 'mv-editor-heading';
+  el.modelEditorHost.replaceChildren(editor);
+  mvEditor.dirty = false;
+  mvEditor.lastFocus = document.activeElement;
+  el.modelEditorModal.classList.remove('hidden');
+  // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
+  setTimeout(() => {
+    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-go' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
     try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }, 0);
+}
+
+async function closeModelEditorDialog({ force = false } = {}) {
+  if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
+  if (!force && mvEditor.dirty) {
+    const ok = await confirmModal({
+      title: 'Discard changes?', message: 'This model has unsaved changes.',
+      confirmLabel: 'Discard', cancelLabel: 'Keep editing', danger: true,
+    });
+    if (!ok) return;
   }
+  el.modelEditorModal.classList.add('hidden');
+  el.modelEditorHost?.replaceChildren();
+  mvEditor.dirty = false;
+  mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
+  try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
 
 // "Hide built-in models" (#422): one settings key, saved on change. Every picker
@@ -11939,8 +11990,7 @@ async function duplicateModelFlow(id) {
     ...(src.cost ? { cost: src.cost } : {}),
     duplicatedFrom: src.id,
   };
-  mvState.revealPanel = true;
-  renderModelsViewBody();
+  openModelEditorDialog();
 }
 
 async function editPluginCopyFlow(plugin, id) {
@@ -11952,8 +12002,7 @@ async function editPluginCopyFlow(plugin, id) {
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = data;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+    openModelEditorDialog();
   } catch (e) {
     setModelsMsg(e.message, 'err');
   }
@@ -11995,6 +12044,8 @@ async function loadModelsView() {
     const pdata = await safeJson(pres);
     mvState.providers = pres.ok ? pdata : null;
     renderModelsViewBody();
+    // "+ Add model…" from a picker on another page: the dialog opens once the catalog is here.
+    if (mvState.openEditorOnLoad) { mvState.openEditorOnLoad = false; openModelEditorDialog(); }
     // Copilot's models feed the editor's upstream-id datalist; fetched in the
     // background when connected so the view never waits on GitHub.
     if (mvState.providers?.copilot?.connected && !mvState.copilotModels.length) {
@@ -12007,9 +12058,51 @@ async function loadModelsView() {
   }
 }
 
+/** The Providers tab: the same card, on a page of its own (§8.1). */
+async function loadProvidersView() {
+  if (!el.providersList) return;
+  setProvidersMsg('');
+  try {
+    const res = await fetch('/api/providers');
+    const data = await safeJson(res);
+    if (!res.ok) return setProvidersMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.providers = data;
+    renderProvidersViewBody();
+  } catch (e) {
+    setProvidersMsg(e.message, 'err');
+  }
+}
+
+function setProvidersMsg(text, kind) {
+  if (!el.providersMsg) return;
+  el.providersMsg.textContent = text || '';
+  el.providersMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
+}
+
+function renderProvidersViewBody() {
+  if (!el.providersList) return;
+  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
+}
+
+/** A page-level message, on whichever of the two tabs is showing. */
+function setTabMsg(text, kind) {
+  if (currentSettingsTab === 'providers') setProvidersMsg(text, kind);
+  else setModelsMsg(text, kind);
+}
+
+/** The providers card lives on its own tab now, but its flows still repaint by name. */
+function repaintProviders() {
+  if (currentSettingsTab === 'providers') renderProvidersViewBody();
+  else if (currentSettingsTab === 'models') renderModelsViewBody();
+}
+
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
+/** The providers card's home: its own tab's list. */
+function providerRoot() { return el.providersList; }
+
 function setProviderMsg(name, text, err) {
-  const row = el.modelsList && el.modelsList.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-msg`);
+  const root = providerRoot();
+  const row = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-msg`);
   if (!row) return;
   row.textContent = text || '';
   row.className = `hint mv-pv-msg${err ? ' err' : ''}`;
@@ -12043,13 +12136,13 @@ let copilotPollTimer = null;
 function stopCopilotPoll() { if (copilotPollTimer) { clearTimeout(copilotPollTimer); copilotPollTimer = null; } }
 
 async function copilotSignInFlow() {
-  if (!(await ensureCopilotTerms())) { renderModelsViewBody(); return; }
+  if (!(await ensureCopilotTerms())) { repaintProviders(); return; }
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
     if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true);
     mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
-    renderModelsViewBody();
+    repaintProviders();
     const poll = async () => {
       if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
       try {
@@ -12058,7 +12151,7 @@ async function copilotSignInFlow() {
         if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
         if (j.ok) {
           mvState.signIn = null;
-          setModelsMsg(`Connected to GitHub Copilot${j.login ? ` as @${j.login}` : ''}.`, 'ok');
+          setTabMsg(`Connected to GitHub Copilot${j.login ? ` as @${j.login}` : ''}.`, 'ok');
           await reloadProviders();
           mvState.copilotModels = [];
           await refreshModelsEverywhere();
@@ -12066,10 +12159,10 @@ async function copilotSignInFlow() {
         }
         if (j.error) {
           mvState.signIn = { ...mvState.signIn, error: j.error };
-          renderModelsViewBody();
+          repaintProviders();
           return;
         }
-        const status = el.modelsList.querySelector('.mv-cp-status');
+        const status = providerRoot()?.querySelector('.mv-cp-status');
         if (status) status.textContent = 'Waiting for approval on github.com…';
         copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
       } catch (e) {
@@ -12091,7 +12184,7 @@ async function copilotSignOutFlow() {
     if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
     mvState.providers = data;
     mvState.copilotModels = [];
-    setModelsMsg('Signed out of GitHub Copilot.');
+    setTabMsg('Signed out of GitHub Copilot.');
     await refreshModelsEverywhere();
   } catch (e) {
     setProviderMsg('copilot', e.message, true);
@@ -12104,10 +12197,11 @@ async function patchProviderFlow(name, body, { okText = 'Saved.' } = {}) {
     const data = await safeJson(res);
     if (!res.ok) return setProviderMsg(name, data.error || `HTTP ${res.status}`, true);
     mvState.providers = data;
-    renderModelsViewBody();
-    setProviderMsg(name, okText);
+    repaintProviders();
     // Readiness may have changed: the catalog's needs-sign-in state and every picker follow.
     await refreshModelsEverywhere();
+    // AFTER the refresh: it repaints this card too, and would wipe a message written before it.
+    setProviderMsg(name, okText);
   } catch (e) {
     setProviderMsg(name, e.message, true);
   }
@@ -12115,7 +12209,8 @@ async function patchProviderFlow(name, body, { okText = 'Saved.' } = {}) {
 
 /** The Test-connection verdict, in the pill beside the button (and the row's hint line with it). */
 function setProviderResult(name, state, text) {
-  const pill = el.modelsList && el.modelsList.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
+  const root = providerRoot();
+  const pill = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
   if (!pill) return;
   pill.className = `mv-pv-result${state ? ` is-on is-${state}` : ''}`;
   pill.textContent = text || '';
@@ -12125,7 +12220,7 @@ async function testProviderFlow(btn) {
   const name = btn.dataset.provider;
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
-  const typed = (name === 'copilot' ? null : collectProviderRow(el.modelsList, name)) || {};
+  const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
   btn.disabled = true;
   setProviderResult(name, 'busy', 'Testing…');
   setProviderMsg(name, '');
@@ -12176,7 +12271,7 @@ async function refreshCopilotQuotaFlow(btn) {
   try {
     const res = await fetch('/api/providers?quota=1');
     const data = await safeJson(res);
-    if (res.ok) { mvState.providers = data; renderModelsViewBody(); }
+    if (res.ok) { mvState.providers = data; repaintProviders(); }
     if (res.ok && !data.copilot?.quota) setProviderMsg('copilot', 'GitHub reported no premium-request quota for this account.');
   } catch (e) {
     setProviderMsg('copilot', e.message, true);
@@ -12185,81 +12280,146 @@ async function refreshCopilotQuotaFlow(btn) {
   }
 }
 
-async function openImportFlow(btn) {
-  btn.disabled = true;
-  setProviderMsg('copilot', 'Loading Copilot models…');
+
+// ── Import models (model-bridge-design.md §8.4) ─────────────────────────────
+// ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
+// It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
+// whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
+const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null };
+
+function setImportMsg(text, kind) {
+  if (!el.mimpMsg) return;
+  el.mimpMsg.textContent = text || '';
+  el.mimpMsg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+}
+
+/** Copilot is offered only when signed in; a local endpoint needs nothing but a URL. */
+function importSources() {
+  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
+  return [
+    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot — sign in first', disabled: !connected },
+    // The servers are named in the Base URL hint; a 60-character option truncates in the control.
+    { id: 'openai', label: 'OpenAI-compatible', disabled: false },
+  ];
+}
+
+function paintImportSource() {
+  if (!el.mimpSource) return;
+  const opts = importSources();
+  el.mimpSource.replaceChildren(...opts.map((o) => {
+    const node = document.createElement('option');
+    node.value = o.id; node.textContent = o.label; node.disabled = o.disabled;
+    if (o.id === mimp.source) node.selected = true;
+    return node;
+  }));
+  // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
+  if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
+}
+
+/**
+ * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
+ *   Providers tab's shortcut: the dialog opens over the catalog the import will fill.
+ */
+function openImportDialog({ source, baseUrl, goToModels } = {}) {
+  if (goToModels && currentSettingsTab !== 'models') showView('settings', 'models');
+  mimp.lastFocus = document.activeElement;
+  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
+  mimp.source = source || (connected ? 'copilot' : 'openai');
+  mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
+  mimp.payload = null;
+  if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
+  paintImportSource();
+  if (el.mimpBody) el.mimpBody.replaceChildren();
+  if (el.mimpGo) el.mimpGo.disabled = true;
+  setImportMsg('');
+  el.modelImportModal?.classList.remove('hidden');
+  setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
+  // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
+  // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
+  // listing api.openai.com without a key would greet the dialog with an error nobody asked for.
+  if (mimp.source === 'copilot' || baseUrl) listImportModels();
+}
+
+function closeImportDialog() {
+  el.modelImportModal?.classList.add('hidden');
+  mimp.payload = null;
+  if (el.mimpBody) el.mimpBody.replaceChildren();
+  try { mimp.lastFocus?.focus(); } catch { /* the opener may be gone */ }
+}
+
+/** Ask the chosen source what it has, and paint its sheet into the dialog. */
+async function listImportModels() {
+  const endpoint = mimp.source === 'openai';
+  mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
+  if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
+  if (el.mimpList) el.mimpList.disabled = true;
+  if (el.mimpGo) el.mimpGo.disabled = true;
+  setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
-    const res = await fetch('/api/providers/copilot/models');
+    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
+    const res = await fetch(url);
     const data = await safeJson(res);
-    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
-    mvState.importModels = data.models || [];
-    mvState.copilotModels = data.models || [];
-    mvState.openImport = true;
-    mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    mimp.payload = data;
+    const sheet = endpoint ? renderEndpointSheet(data) : renderImportSheet(data.models || []);
+    // The sheet's own footer is the dialog's footer here.
+    sheet.querySelector('.mv-editor-btns')?.remove();
+    sheet.querySelector('.mvi-msg')?.remove();
+    el.mimpBody?.replaceChildren(sheet);
+    const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
+    if (el.mimpGo) el.mimpGo.disabled = !rows;
+    setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
+    if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setImportMsg(e.message, 'err');
   } finally {
-    btn.disabled = false;
+    if (el.mimpList) el.mimpList.disabled = false;
   }
 }
 
-/** §8.4 for a server you run: list what the base URL in the row serves, then show the sheet. */
-async function openEndpointImportFlow(btn) {
-  const row = btn.closest('.mv-pv-row');
-  const input = row && row.querySelector('.mv-pv-baseurl');
-  const baseUrl = input ? input.value.trim() : '';
-  btn.disabled = true;
-  setProviderMsg('openai', 'Asking the endpoint what it serves…');
-  try {
-    const res = await fetch(`/api/providers/openai/models${baseUrl ? `?baseUrl=${encodeURIComponent(baseUrl)}` : ''}`);
-    const data = await safeJson(res);
-    if (!res.ok) return setProviderMsg('openai', data.error || `HTTP ${res.status}`, true);
-    mvState.endpointModels = data;
-    mvState.openImport = 'endpoint';
-    mvState.editing = null; mvState.openCreate = false; mvState.openShare = false; mvState.prefill = null;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
-    setProviderMsg('openai', '');
-  } catch (e) {
-    setProviderMsg('openai', e.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
+/** Import what is ticked; the rows land in the catalog behind the dialog. */
 async function importModelsFlow() {
-  const sheet = el.modelsList && el.modelsList.querySelector('.mvi');
+  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
   if (!sheet) return;
-  const msg = sheet.querySelector('.mvi-msg');
-  const say = (text, kind) => { if (msg) { msg.textContent = text; msg.className = `form-msg mvi-msg${kind ? ` ${kind}` : ''}`; } };
   const ids = collectImportSheet(sheet);
-  if (!ids.length) return say('Pick at least one model.', 'err');
-  say('Importing…');
+  if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
+  const endpoint = sheet.dataset.source === 'endpoint';
+  if (el.mimpGo) el.mimpGo.disabled = true;
+  setImportMsg('Importing…');
   try {
-    const endpoint = sheet.dataset.source === 'endpoint';
     const res = endpoint
       ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
-    if (!res.ok) return say(data.error || `HTTP ${res.status}`, 'err');
-    mvState.openImport = false;
+    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     const parts = [];
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
+    closeImportDialog();
+    if (currentSettingsTab !== 'models') showView('settings', 'models');
     setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
+    // Land ON what was imported: the list filters to the new ids until the filter is cleared.
+    const fresh = [...(data.created || []), ...(data.updated || [])];
+    if (fresh.length) mvState.justImported = fresh;
     await refreshModelsEverywhere();
   } catch (e) {
-    say(e.message, 'err');
+    setImportMsg(e.message, 'err');
+  } finally {
+    if (el.mimpGo) el.mimpGo.disabled = false;
   }
 }
 
-function scrollToProviders(provider) {
-  const card = el.modelsList && el.modelsList.querySelector('.mv-providers');
+/** A catalog row's "needs sign-in" now LEAVES for the Providers tab and lands on the row. */
+function goToProviders(provider) {
+  if (currentSettingsTab !== 'providers') showView('settings', 'providers');
+  setTimeout(() => focusProviderRow(provider), 0);
+}
+
+function focusProviderRow(provider) {
+  const card = providerRoot() && providerRoot().querySelector('.mv-providers');
   if (!card) return;
   try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
   const row = provider ? card.querySelector(`.mv-pv-row[data-provider="${provider}"]`) : null;
@@ -12271,6 +12431,9 @@ function scrollToProviders(provider) {
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
   await loadModelsView();
+  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // just changed must show on whichever of the two the user is looking at.
+  if (currentSettingsTab === 'providers') renderProvidersViewBody();
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -12342,7 +12505,7 @@ async function toggleModelEnvReveal(btn) {
 }
 
 async function saveModelEditorFlow() {
-  const rootEl = el.modelsList && el.modelsList.querySelector('.mv-editor');
+  const rootEl = modelEditorEl();
   if (!rootEl) return;
   const msg = rootEl.querySelector('.mv-editor-msg');
   const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mv-editor-msg err'; } };
@@ -12356,9 +12519,8 @@ async function saveModelEditorFlow() {
     });
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`);
-    mvState.editing = null;
-    mvState.openCreate = false;
-    mvState.prefill = null;
+    // Saved work is no longer unsaved work: the dialog closes without asking.
+    await closeModelEditorDialog({ force: true });
     setModelsMsg(id ? 'Saved.' : 'Model added.', 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
@@ -12432,21 +12594,80 @@ async function testModelFlow(btn) {
   }
 }
 
-if (el.modelsList) {
-  el.modelsList.addEventListener('change', (ev) => {
-    const t = ev.target;
-    if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
-  });
-  el.modelsList.addEventListener('click', (ev) => {
+// The Providers tab's own delegation (§8.1): the same buttons, on the page that now owns them.
+if (el.providersList) {
+  el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;
+    if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
+    else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
+    else if (t.classList.contains('mv-cp-copy')) { try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch { /* no clipboard */ } }
+    else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
+    else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
+    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
+    else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
+    else if (t.classList.contains('mv-pv-save')) {
+      const body = collectProviderRow(providerRoot(), t.dataset.provider);
+      if (body) patchProviderFlow(t.dataset.provider, body);
+    } else if (t.classList.contains('mv-pv-test')) testProviderFlow(t);
+    else if (t.classList.contains('mv-pv-browse')) {
+      // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
+      const row = t.closest('.mv-pv-row');
+      const input = row && row.querySelector('.mv-pv-baseurl');
+      openImportDialog({ source: 'openai', baseUrl: input ? input.value.trim() : '', goToModels: true });
+    }
+  });
+  el.providersList.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (!t || !t.classList) return;
+    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value }, { okText: 'Account type saved.' });
+    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) }, { okText: 'Concurrency cap saved.' });
+  });
+}
+
+// The catalog list and the editor dialog share these handlers: the editor moved into an overlay
+// (§4.10), and every branch below already finds its own root from the event target.
+function onModelsListChange(ev) {
+  const t = ev.target;
+  if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+}
+
+/** The catalog's toolbar: typing narrows, a chip picks a layer, a header folds its group. */
+function onModelsToolbar(ev) {
+  const t = ev.target;
+  if (!t || !t.classList) return;
+  if (t.classList.contains('mv-search')) {
+    mvState.query = t.value;
+    const at = t.selectionStart;
+    renderModelsViewBody();
+    const next = el.modelsList && el.modelsList.querySelector('.mv-search');
+    if (next) { next.focus(); try { next.setSelectionRange(at, at); } catch { /* search inputs vary */ } }
+  }
+}
+function onModelsToolbarClick(t) {
+  if (t.classList.contains('mv-filter')) {
+    mvState.filter = t.dataset.filter || 'all';
+    renderModelsViewBody();
+    return true;
+  }
+  if (t.classList.contains('mv-sec-toggle')) {
+    const key = t.dataset.section;
+    if (key) mvState.collapsed = { ...mvState.collapsed, [key]: !mvState.collapsed[key] };
+    renderModelsViewBody();
+    return true;
+  }
+  return false;
+}
+function onModelsClick(ev) {
+    const t = ev.target.closest('button');
+    if (!t) return;
+    if (onModelsToolbarClick(t)) return;
     if (t.classList.contains('mv-edit')) {
       mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
       mvState.openCreate = false;
       mvState.openShare = false;
       mvState.prefill = null;
-      mvState.revealPanel = true;
-      renderModelsViewBody();
+      openModelEditorDialog();
     } else if (t.classList.contains('mv-delete')) {
       deleteModelFlow(t.dataset.id);
     } else if (t.classList.contains('mv-promote')) {
@@ -12457,44 +12678,17 @@ if (el.modelsList) {
       editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
     } else if (t.classList.contains('mv-test')) {
       testModelFlow(t);
-    // ── Providers card / import sheet (model-bridge-design.md §8) ──
-    } else if (t.classList.contains('mv-cp-signin')) {
-      copilotSignInFlow();
-    } else if (t.classList.contains('mv-cp-cancel')) {
-      stopCopilotPoll(); mvState.signIn = null; renderModelsViewBody();
-    } else if (t.classList.contains('mv-cp-copy')) {
-      try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch { /* no clipboard */ }
-    } else if (t.classList.contains('mv-cp-signout')) {
-      copilotSignOutFlow();
-    } else if (t.classList.contains('mv-cp-terms')) {
-      ensureCopilotTerms({ force: true }).then(() => renderModelsViewBody());
-    } else if (t.classList.contains('mv-cp-fetch-models')) {
-      openImportFlow(t);
-    } else if (t.classList.contains('mv-cp-quota-refresh')) {
-      refreshCopilotQuotaFlow(t);
-    } else if (t.classList.contains('mv-pv-save')) {
-      const body = collectProviderRow(el.modelsList, t.dataset.provider);
-      if (body) patchProviderFlow(t.dataset.provider, body);
-    } else if (t.classList.contains('mv-pv-test')) {
-      testProviderFlow(t);
-    } else if (t.classList.contains('mv-pv-browse')) {
-      openEndpointImportFlow(t);
     } else if (t.classList.contains('mv-signin')) {
-      scrollToProviders(t.dataset.provider);
-    } else if (t.classList.contains('mvi-go')) {
-      importModelsFlow();
-    } else if (t.classList.contains('mvi-cancel')) {
-      mvState.openImport = false; renderModelsViewBody();
+      goToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
       mvState.openShare = false;
       renderModelsViewBody();
     } else if (t.classList.contains('mv-cancel')) {
-      mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
-      renderModelsViewBody();
+      closeModelEditorDialog();
     } else if (t.classList.contains('mv-env-add')) {
-      const wrap = el.modelsList.querySelector('.mv-editor .mv-env');
+      const wrap = modelEditorEl()?.querySelector('.mv-env');
       if (wrap) wrap.appendChild(makeEnvRow());
     } else if (t.classList.contains('mv-env-rm')) {
       const row = t.closest('.mv-env-row');
@@ -12506,18 +12700,18 @@ if (el.modelsList) {
     } else if (t.classList.contains('mv-save')) {
       saveModelEditorFlow();
     }
-  });
-  // Pricing mode. A `change` listener, not the click one above: arrow-key
-  // navigation within a radio group changes the selection without a click.
-  el.modelsList.addEventListener('change', (ev) => {
+}
+// Pricing mode. A `change` listener, not the click one above: arrow-key
+// navigation within a radio group changes the selection without a click.
+function onModelsCostChange(ev) {
     if (!ev.target.classList || !ev.target.classList.contains('mv-cost-mode-rb')) return;
     const editorEl = ev.target.closest('.mv-editor');
     if (editorEl) applyCostMode(editorEl);
-  });
-  // Connection (model-bridge-design.md §8.3): mode / provider / api / reasoning
-  // changes re-apply the rules; switching a Copilot entry in while pricing is
-  // still "Trust the CLI" moves it to Free (Copilot bills requests, not tokens).
-  el.modelsList.addEventListener('change', (ev) => {
+}
+// Connection (model-bridge-design.md §8.3): mode / provider / api / reasoning
+// changes re-apply the rules; switching a Copilot entry in while pricing is
+// still "Trust the CLI" moves it to Free (Copilot bills requests, not tokens).
+function onModelsConnChange(ev) {
     const t = ev.target;
     if (!t.classList || !t.closest('.mv-conn')) return;
     const editorEl = t.closest('.mv-editor');
@@ -12529,25 +12723,66 @@ if (el.modelsList) {
     if (mode === 'provider' && provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
       setModelCost(editorEl, { free: true });
     }
-  });
-  // Providers card: account type and concurrency save on change (one settings
-  // key each, like the hide-built-ins checkbox); the import sheet's select-all.
-  el.modelsList.addEventListener('change', (ev) => {
-    const t = ev.target;
-    if (!t.classList) return;
-    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value }, { okText: 'Account type saved.' });
-    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) }, { okText: 'Concurrency cap saved.' });
-    else if (t.classList.contains('mvi-all')) { const sheet = t.closest('.mvi'); if (sheet) applyImportSelectAll(sheet, t.checked); }
-  });
 }
+
+el.modelsList?.addEventListener('input', onModelsToolbar);
+for (const host of [el.modelsList, el.modelEditorModal]) {
+  if (!host) continue;
+  host.addEventListener('change', onModelsListChange);
+  host.addEventListener('click', onModelsClick);
+  host.addEventListener('change', onModelsCostChange);
+  host.addEventListener('change', onModelsConnChange);
+}
+// Unsaved work is guarded on the way out (§4.10), so every edit inside the dialog is remembered.
+if (el.modelEditorModal) {
+  el.modelEditorModal.addEventListener('input', () => { mvEditor.dirty = true; });
+  el.modelEditorModal.addEventListener('change', () => { mvEditor.dirty = true; });
+  el.modelEditorModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelEditorModal) closeModelEditorDialog(); });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || el.modelEditorModal.classList.contains('hidden')) return;
+    if (!el.confirmModal || el.confirmModal.classList.contains('hidden')) { ev.stopPropagation(); closeModelEditorDialog(); }
+  }, true);
+}
+
+// ── Import dialog wiring ────────────────────────────────────────────────────
+if (el.modelImportModal) {
+  el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
+  el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
+  el.mimpSource?.addEventListener('change', () => {
+    mimp.source = el.mimpSource.value;
+    mimp.payload = null;
+    el.mimpBody?.replaceChildren();
+    if (el.mimpGo) el.mimpGo.disabled = true;
+    setImportMsg('');
+    paintImportSource();
+    if (mimp.source === 'copilot') listImportModels();
+  });
+  el.mimpList?.addEventListener('click', () => listImportModels());
+  el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
+  el.mimpGo?.addEventListener('click', () => importModelsFlow());
+  el.mimpCancel?.addEventListener('click', () => closeImportDialog());
+  // The select-all box lives inside the sheet the dialog hosts.
+  el.modelImportModal.addEventListener('change', (ev) => {
+    const t = ev.target;
+    if (t && t.classList && t.classList.contains('mvi-all')) {
+      const sheet = t.closest('.mvi');
+      if (sheet) applyImportSelectAll(sheet, t.checked);
+    }
+  });
+  // Backdrop click and Escape close it, like every other overlay in this file.
+  el.modelImportModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelImportModal) closeImportDialog(); });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !el.modelImportModal.classList.contains('hidden')) { ev.stopPropagation(); closeImportDialog(); }
+  }, true);
+}
+
 if (el.modelCreateBtn) {
   el.modelCreateBtn.addEventListener('click', () => {
     mvState.editing = null;
     mvState.openCreate = true;
     mvState.openShare = false;
     mvState.prefill = null;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+    openModelEditorDialog();
   });
 }
 if (el.modelShareBtn) {
@@ -22316,11 +22551,11 @@ const VIEW_MIN_LEVEL = Object.freeze({
   'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
   schedules: 'advanced',
 });
-const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert' });
+const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ guardrails: 'advanced', plugins: 'advanced', memory: 'advanced', models: 'expert', providers: 'expert' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
-  guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models',
+  guardrails: 'Guardrails', plugins: 'Plugins', memory: 'Memory', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
 function pageMinLevel() {
@@ -22377,7 +22612,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'guardrails', 'models', 'plugins', 'memory'];
+const SETTINGS_TABS = ['general', 'guardrails', 'models', 'providers', 'plugins', 'memory'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old top-level hashes keep working. The hashchange listener DROPS any view it
 // does not know, so without this map a bookmark or an old in-app link would
@@ -22620,7 +22855,8 @@ function showSettingsTab(param = '') {
   paintLevelBanner();
   if (tab === 'general') loadSettings();
   if (tab === 'guardrails') loadGuardrailsView(sub);
-  if (tab === 'models') loadModelsView();
+  if (tab === 'models') loadModelsView(sub);
+  if (tab === 'providers') loadProvidersView();
   if (tab === 'plugins') loadPluginsView({ refresh: true });
   if (tab === 'memory') loadMemoryTab(sub);
 }

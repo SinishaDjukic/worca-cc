@@ -102,9 +102,9 @@ export function createAskModels({
         if (m.upstreamApi) entry.upstreamApi = m.upstreamApi;
         if (m.needsSignIn) {
           entry.needsSignIn = true;
-          entry.signInMessage = m.signInReason === 'terms' ? 'GitHub Copilot notice not acknowledged — Settings › Models › Providers.'
-            : m.signInReason === 'no_key' ? `No API key for ${m.bridged} — Settings › Models › Providers.`
-              : `Not signed in to ${m.bridged} — Settings › Models › Providers.`;
+          entry.signInMessage = m.signInReason === 'terms' ? 'GitHub Copilot notice not acknowledged — Settings › Providers.'
+            : m.signInReason === 'no_key' ? `No API key for ${m.bridged} — Settings › Providers.`
+              : `Not signed in to ${m.bridged} — Settings › Providers.`;
         }
       }
       if (custom === 'plugin' && withSecrets) {

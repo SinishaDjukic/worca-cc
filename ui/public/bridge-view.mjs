@@ -96,15 +96,31 @@ function numberField(doc, cls, labelText, value, { min = 1, max = 64, hint = '',
  * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
  * status, error} or null; app.js keeps it across repaints.
  */
-export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null } = {}) {
+export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
   const p = providers || {};
   const c = p.copilot || { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 };
-  const root = h(doc, 'section', 'card mv-providers');
-  const head = h(doc, 'div', 'mv-head');
-  head.appendChild(h(doc, 'h3', 'mv-section-title', 'Providers'));
-  root.appendChild(head);
+  // On the Providers TAB each provider is its own card: three unrelated accounts stacked in one
+  // card read as one long form, and the page has room for them now. Inside the Models view (the
+  // old home) it stays a single card. Either way the rows keep their shape, so every flow that
+  // finds .mv-pv-row[data-provider] is unaffected.
+  const root = h(doc, split ? 'div' : 'section', split ? 'mv-providers mv-providers-split' : 'card mv-providers');
+  if (!split) {
+    const head = h(doc, 'div', 'mv-head');
+    head.appendChild(h(doc, 'h3', 'mv-section-title', 'Providers'));
+    root.appendChild(head);
+  }
   root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
-    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then add or import models below and pick them anywhere a model is picked."));
+    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models tab and pick them anywhere a model is picked."));
+  /** One provider's row, in its own card when the tab hosts it. */
+  const place = (row, title) => {
+    if (!split) { root.appendChild(row); return; }
+    const card = h(doc, 'section', 'card mv-pv-card');
+    const head = h(doc, 'div', 'mv-head');
+    head.appendChild(h(doc, 'h3', 'mv-section-title', title));
+    card.appendChild(head);
+    card.appendChild(row);
+    root.appendChild(card);
+  };
 
   // ── GitHub Copilot ──
   const cp = h(doc, 'div', 'mv-pv-row');
@@ -164,7 +180,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   terms.type = 'button';
   cpBtns.appendChild(terms);
   cp.appendChild(cpBtns);
-  root.appendChild(cp);
+  place(cp, 'GitHub Copilot');
 
   // ── key-based providers ──
   for (const name of ['openai', 'anthropic']) {
@@ -224,7 +240,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     save.type = 'button'; save.dataset.provider = name;
     btns.appendChild(save);
     row.appendChild(btns);
-    root.appendChild(row);
+    place(row, PROVIDER_LABELS[name]);
   }
   return root;
 }

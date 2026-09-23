@@ -231,6 +231,17 @@ async function load(first = false) {
   await waitEvent('Page.loadEventFired');
   for (let i = 0; i < 60; i += 1) { if (await ev('!!(window.__gv && window.__gv())')) break; await sleep(100); }
   if (!await ev('!!(window.__gv && window.__gv())')) throw new Error('composer never mounted');
+  // …and wait for the AGENT REGISTRY behind it: the editor mounts before /api/agents answers, and a
+  // card seeded in that window has no ports (ports().known === false), so every anchor below is
+  // null. It used to win this race by luck; the size of the document decides it.
+  const probeAgent = JSON.stringify(process.env.PROBE_AGENT || 'planner');
+  for (let i = 0; i < 100; i += 1) {
+    if (await ev(`(()=>{const {v}=window.__gv();try{return !!v.ports({id:'probe',kind:'agent',key:${probeAgent}}).known;}catch{return false;}})()`)) break;
+    await sleep(50);
+  }
+  if (!await ev(`(()=>{const {v}=window.__gv();try{return !!v.ports({id:'probe',kind:'agent',key:${probeAgent}}).known;}catch{return false;}})()`)) {
+    throw new Error(`the composer never learned the agent ${probeAgent}`);
+  }
   // seed a deterministic 3-card graph through the public editor API
   await ev(`(()=>{const {c}=window.__gv();c.loadTemplate({id:'',name:'probe',version:2,domain:'coding',
     nodes:[{id:'n_task',kind:'task',x:60,y:143,config:{}},{id:'n_agent',kind:'agent',key:${JSON.stringify(process.env.PROBE_AGENT || 'planner')},x:400,y:80,config:{}},{id:'n_end',kind:'end',x:760,y:143,config:{}}],

@@ -150,7 +150,9 @@ function warningsFor(server, models, props) {
   }
   if (server === 'llama.cpp') {
     const slots = num(props && props.total_slots);
-    if (slots > 1) w.push(`llama-server splits its -c window across ${slots} slots, so one request gets the window shown here, not the whole -c.`);
+    // Not always a split: with a unified KV cache each slot sees the whole -c, and llama reports the
+    // per-request window either way. Say what the number IS rather than claiming arithmetic.
+    if (slots > 1) w.push(`llama-server is serving ${slots} slots in parallel; the window shown is what ONE request gets, which may be less than the -c you passed.`);
   }
   if (server === 'lmstudio' && models.some((m) => m.kind !== 'embedding' && !m.servedContext)) {
     w.push('LM Studio reports a model\'s real window only while it is loaded; for the others the number shown is what the model supports, and the prompt limit is left unset.');
