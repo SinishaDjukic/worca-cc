@@ -58,6 +58,18 @@ test('entrypoint.sh: strict shell, execs the command, never blocks on auth', () 
   assert.doesNotMatch(e, /^\s*exit 1\s*$/m, 'auth state is informational; only an unwritable volume exits (78)');
 });
 
+test('entrypoint.sh: single-volume mode prepares the volume as root, then drops to worca', () => {
+  const e = read('docker/entrypoint.sh');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.ok(block.length > 0, 'single-volume block runs before the ownership check');
+  assert.match(block, /exec setpriv --reuid=worca --regid=worca --init-groups -- "\$0" "\$@"/, 'root only re-runs the entrypoint as worca');
+  assert.match(block, /chown worca:worca "\$data" "\$data\/worca" "\$data\/projects" "\$data\/home" "\$data\/home\/\.claude"/,
+    'top-level dirs are re-owned on every boot, not only the first');
+  assert.match(block, /export HOME="\$data\/home"/, 'HOME lives on the volume (no ~/.claude.json symlink to lose)');
+  assert.doesNotMatch(block, /ln -s/, 'no symlinks into the volume');
+  assert.match(block, /exit 78/, 'non-root on an unwritable volume is a config error');
+});
+
 test('compose.yml: loopback-only publish, least privilege, named volumes, no docker socket', () => {
   const c = read('docker/compose.yml');
   assert.match(c, /"127\.0\.0\.1:\$\{WORCA_PORT:-4317\}:4317"/, 'the UI is published on the host loopback only');
