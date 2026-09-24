@@ -267,6 +267,7 @@ Subcommands:
                               Run the web UI (default http://localhost:4317). See: worca ui help
   workflow <cmd> [...]        Export a workflow (Claude Code skill, JSON, or plugin) / import JSON: list|export|import. See: worca workflow help
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
+  metrics pr-workflow [--project <path>]   Add the GitHub Action that records PR merges for the Timeline
   policy <cmd> [...]          Team policy from the worca-policy branch: show|pull|init|setup. See: worca policy help
   schedule <cmd> [...]        Manage scheduled runs: list|show|run-now|move|cancel|skip|pause|resume|log.
                               See: worca schedule help
@@ -2882,6 +2883,12 @@ const METRICS_HELP = `worca metrics — team metrics (git-backed, team-wide run 
 Usage:
   worca metrics push [--project <path>]   Flush pending run records to their worca-metrics branch.
                                           Without --project, every outbox on this machine is flushed.
+  worca metrics pr-workflow [--project <path>] [--force] [--print]
+                                          Add the GitHub Action that records pull-request events
+                                          (opened, merged, closed) on worca-metrics, so the Team
+                                          metrics Timeline knows when work shipped without gh.
+                                          Commit and push the file afterwards. --print writes it
+                                          to stdout instead.
   worca metrics help
 
 Exit codes: 0 all pushed (or nothing pending) · 1 at least one outbox could not be pushed.
@@ -2914,6 +2921,22 @@ async function cmdMetrics(argv) {
           }
         }
         return failed ? 1 : 0;
+      }
+      case 'pr-workflow': {
+        const a = pluginArgs(rest, ['--project'], ['--force', '--print']);
+        if (a._.length) fail(`unexpected argument "${a._[0]}" — see: worca metrics help`);
+        const prs = await import('../core/metrics/prs.mjs');
+        if (a.print) { process.stdout.write(await prs.prWorkflowText()); return 0; }
+        const dir = resolve(a.project || process.cwd());
+        const r = await prs.installPrWorkflow(dir, { force: !!a.force });
+        const rel = prs.PR_WORKFLOW_PATH;
+        if (r.status === 'differs') {
+          process.stderr.write(`worca metrics pr-workflow: ${rel} already exists and differs — re-run with --force to replace it\n`);
+          return 1;
+        }
+        out(r.status === 'unchanged' ? `${c('green', '✓')} ${rel} is up to date` : `${c('green', '✓')} ${r.status} ${rel}`);
+        if (r.status !== 'unchanged') out(`  Commit and push it to the default branch. Run it once from the Actions tab ("Run workflow") to backfill recent pull requests.`);
+        return 0;
       }
       default:
         fail(`unknown metrics verb "${verb}" — see: worca metrics help`);

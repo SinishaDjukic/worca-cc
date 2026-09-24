@@ -86,6 +86,69 @@ nothing it could change. A sentence appears under the table only when it matters
 yet, a stale home, or the home's "Include my runs" switch turned off on this machine (your
 workspace runs follow that switch).
 
+## Timeline
+
+The Team metrics page has two tabs: **Overview** (the KPIs, charts and tables above) and
+**Timeline** (`#team-metrics/timeline`), a calendar for the people who plan the work rather than
+run it. It reads the same records for the same scope; nothing extra is recorded.
+
+- **Work items, not runs.** Every run on one ticket (the run's task source) is one work item;
+  runs without a ticket group by their branch (a resume or a follow-up on the same branch); a run
+  with neither stands alone. A bar spans the item's first run to its last, with each run drawn
+  inside it (red when it failed). When the item has a pull request, a dashed line runs from the
+  PR's creation to its merge, which is marked with a diamond: **shipped means the PR merged**.
+- **Month → week → day.** Click a week or a day in the header to zoom in; the breadcrumb zooms
+  back out, and ‹ › step one period. Days are in the viewer's local time. The month header marks
+  each merge with a small diamond under its day.
+- **Group by** work items (under their project) or people (the git user who drove the most runs
+  of the item; "Unattributed" under `attribution: none`). The choice is remembered per browser.
+- **Summary tiles** for the period: *Shipped* (PRs merged), *In review* (a PR open at the end of
+  the period, or now), *Needs attention*, *Median lead time* (first run to merge) and *Agent
+  spend* (runs started in the period). The first three filter the rows.
+- **Needs attention** is a work item whose last attempt failed with nothing after it, or whose
+  pull request has waited for review for more than two days.
+- Clicking a bar opens its card: who drove it, attempts, review cycles, agent time, time waiting
+  for review, lead time, spend, the ticket and PR links, and the runs behind it.
+
+Runs still in progress are not shown: a record is written when a run ends.
+
+### Merge tracking
+
+A run record is written when the run ends, usually before its pull request exists, so the page
+joins PR states in at read time (`POST /api/team-metrics/prs`, `src/core/metrics/prs.mjs`),
+matching a run to its PRs by its branch (`git.branch`) in its project, or in the workspace members
+it touched. Three sources are used, most trusted first; each is optional:
+
+1. **The GitHub Action** (recommended for teams). `worca metrics pr-workflow` adds
+   `.github/workflows/worca-metrics-pr-events.yml` to the project; commit and push it to the
+   default branch. On every pull request opened, reopened or closed it writes one small file,
+   `.worca-metrics/prs/<number>.json`, to the `worca-metrics` branch (format below), so every
+   teammate's Timeline sees merges without any local tooling. Run it once by hand from the Actions
+   tab ("Run workflow") to backfill the PRs of the last 90 days (or any number of days). It uses
+   `pull_request_target` but never checks out or runs PR code, does nothing on a repository
+   without a `worca-metrics` branch, never force-pushes, and retries when a teammate's Worca
+   pushed at the same moment. Like Worca itself it needs `worca-metrics` to be exempt from branch
+   protection. A project that delegates its records to another repository keeps its PR events on
+   its own `worca-metrics` branch, which the Timeline does not read; there the GitHub CLI fills in.
+2. **The GitHub CLI.** For branches the Action has not answered, the server asks GitHub with
+   `gh api graphql`, 30 branches per query, and caches the answers in
+   `~/.worca-cc/metrics/pr-cache.json`: a merged PR is never asked about again, an open one after
+   10 minutes, and "no PR yet" on a run older than a month after a day. Only the runs the visible
+   period can show (and 60 days before it) are asked about, once per page session; Refresh asks
+   again.
+3. **This machine's own runs.** A run started here carries the PR it opened in the local database
+   (no merge date).
+
+It degrades rather than fails:
+
+- **No gh, or gh not signed in, and no Action:** a note under the tiles says so and names both
+  fixes. Without any merge data the first tile becomes **Completed** (runs finished `done` in the
+  period), lead time is hidden, and items read "Done".
+- **gh answers only partly** (rate limit, a repository the viewer cannot read): the note quotes
+  GitHub's error; those runs stay unknown and are asked again later.
+- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub repositories; the
+  note names the others, whose items show without merge data.
+
 ## Ask Worca
 
 The chat reads team metrics and can propose configuration changes, through four tools. It is
@@ -202,6 +265,17 @@ last discovery is picked up. A CLI-driven run also awaits any in-flight flush fo
 seconds before the process exits, so a run's own record isn't stranded in the outbox; anything
 still queued after that is covered by a later `worca metrics push`. Exit code `0` means every
 outbox pushed (or nothing was pending); `1` means at least one could not be pushed.
+
+## `worca metrics pr-workflow`
+
+```bash
+worca metrics pr-workflow [--project <path>] [--force] [--print]
+```
+
+Writes the merge-tracking GitHub Action (see "Merge tracking" above) to
+`.github/workflows/worca-metrics-pr-events.yml` in the project (the current directory without
+`--project`). It never replaces a file that differs unless `--force`; `--print` writes the
+workflow to stdout instead. Commit and push the file afterwards.
 
 ## Requirements
 

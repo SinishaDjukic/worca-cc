@@ -212,35 +212,7 @@ function syncFor(slug, prefs, pending) {
  *                    refresh:{requested,fetched,limited,retryInMs}, fetchError:string|null}>}
  */
 export async function readScope(scope, { refresh = false, defer = false } = {}) {
-  const sources = [];
-  let meta;
-  let rateProjectDir = null;
-  if (scope.kind === 'project') {
-    const p = (await listProjects()).find((x) => x.key === scope.id);
-    if (!p) throw Object.assign(new Error(`unknown project ${scope.id}`), { code: 'NOT_FOUND' });
-    rateProjectDir = p.path;
-    const sink = await resolveProjectSink(p.path);
-    if (!sink.ok) {
-      const code = sink.reason === 'delegate-invalid' ? 'DELEGATE_INVALID' : 'NOT_ENABLED';
-      throw Object.assign(new Error(sink.detail || `team metrics are not enabled for ${p.name}`), { code });
-    }
-    const ownSlug = sink.from;
-    sources.push({ slug: sink.slug, projectDir: sink.projectDir, keep: (r) => r.target?.kind === 'project' && r.target.project === ownSlug });
-    meta = { kind: 'project', id: p.key, name: p.name, slug: ownSlug, recordedIn: sink.delegated ? sink.slug : null };
-  } else {
-    const ws = await readWorkspace(scope.id);
-    if (!ws) throw Object.assign(new Error(`unknown workspace ${scope.id}`), { code: 'NOT_FOUND' });
-    const name = ws.name.toLowerCase();
-    for (const path of ws.projectPaths) {
-      const prefs = (await discoverProject(path).catch(() => null)) || readTeamMetricsPrefs(projectKey(path));
-      if (!recordsLocally(prefs)) continue;      // only members that record locally (config read, not a marker)
-      sources.push({ slug: prefs.slug, projectDir: path, keep: (r) => matchesWorkspace(r.target, ws) });
-    }
-    if (!sources.length) throw Object.assign(new Error(`no member of ${ws.name} records team metrics`), { code: 'NOT_ENABLED' });
-    rateProjectDir = ws.metricsProject || null;
-    const homePrefs = ws.metricsProject ? readTeamMetricsPrefs(projectKey(ws.metricsProject)) : null;
-    meta = { kind: 'workspace', id: ws.id, name: ws.name, home: homePrefs?.slug ?? null, sources: sources.map((s) => s.slug) };
-  }
+  const { sources, meta, rateProjectDir } = await scopeSources(scope);
   const seen = new Set();
   const records = [];
   const stats = { files: 0, malformed: 0, unknownV: 0 };
@@ -274,6 +246,44 @@ export async function readScope(scope, { refresh = false, defer = false } = {}) 
     sync.push({ ...syncFor(src.slug, readTeamMetricsPrefs(projectKey(src.projectDir)), (await listOutbox(src.slug)).length), fetchedAt: r.fetchedAt });
   }
   return { scope: meta, records, stats, sinks: sources.map((s) => s.slug), sync, refresh: refreshInfo, fetchError, rateProjectDir };
+}
+
+/**
+ * The metrics branches a scope reads (no git, no record parsing): a project's own sink (or the
+ * one it delegates to), or every workspace member that records locally.
+ * @returns {Promise<{sources: {slug, projectDir, keep}[], meta: object, rateProjectDir: string|null}>}
+ */
+export async function scopeSources(scope) {
+  const sources = [];
+  let meta;
+  let rateProjectDir = null;
+  if (scope.kind === 'project') {
+    const p = (await listProjects()).find((x) => x.key === scope.id);
+    if (!p) throw Object.assign(new Error(`unknown project ${scope.id}`), { code: 'NOT_FOUND' });
+    rateProjectDir = p.path;
+    const sink = await resolveProjectSink(p.path);
+    if (!sink.ok) {
+      const code = sink.reason === 'delegate-invalid' ? 'DELEGATE_INVALID' : 'NOT_ENABLED';
+      throw Object.assign(new Error(sink.detail || `team metrics are not enabled for ${p.name}`), { code });
+    }
+    const ownSlug = sink.from;
+    sources.push({ slug: sink.slug, projectDir: sink.projectDir, keep: (r) => r.target?.kind === 'project' && r.target.project === ownSlug });
+    meta = { kind: 'project', id: p.key, name: p.name, slug: ownSlug, recordedIn: sink.delegated ? sink.slug : null };
+  } else {
+    const ws = await readWorkspace(scope.id);
+    if (!ws) throw Object.assign(new Error(`unknown workspace ${scope.id}`), { code: 'NOT_FOUND' });
+    const name = ws.name.toLowerCase();
+    for (const path of ws.projectPaths) {
+      const prefs = (await discoverProject(path).catch(() => null)) || readTeamMetricsPrefs(projectKey(path));
+      if (!recordsLocally(prefs)) continue;      // only members that record locally (config read, not a marker)
+      sources.push({ slug: prefs.slug, projectDir: path, keep: (r) => matchesWorkspace(r.target, ws) });
+    }
+    if (!sources.length) throw Object.assign(new Error(`no member of ${ws.name} records team metrics`), { code: 'NOT_ENABLED' });
+    rateProjectDir = ws.metricsProject || null;
+    const homePrefs = ws.metricsProject ? readTeamMetricsPrefs(projectKey(ws.metricsProject)) : null;
+    meta = { kind: 'workspace', id: ws.id, name: ws.name, home: homePrefs?.slug ?? null, sources: sources.map((s) => s.slug) };
+  }
+  return { sources, meta, rateProjectDir };
 }
 
 /** Scope list + Projects/Workspaces status in one call (Scope select, Projects cells, ws cards, Stats hint). */
