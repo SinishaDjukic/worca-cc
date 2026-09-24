@@ -87,6 +87,12 @@ test('the PR body ends with who started the run', async () => {
   const r = await post('/api/run', { projectDir: dir, prompt: 'z', mock: true, humanInLoop: false }, { 'X-Forwarded-Email': 'grace@example.com' });
   const { runId } = await r.json();
   const done = await untilRecorded(runId);
+  // Under load the live state can lead the row: wait until the PERSISTED row has the branch /api/pr reads.
+  for (let i = 0; i < 400; i++) {
+    const st = (await readPipeline(dir, done.orch.state.id))?.state;
+    if (st?.branch?.feature) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   await stopRun(done);
   const seen = [];
   gitInfo.setRunner(async (cmd, args) => {

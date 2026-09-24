@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 36;
+export const SCHEMA_VERSION = 37;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -849,7 +849,9 @@ const INCREMENTAL_COLUMNS = {
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
-  diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
+  diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
+                            author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
+  ask_threads:            { created_by: 'TEXT' },    // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
@@ -880,6 +882,17 @@ CREATE TABLE IF NOT EXISTS config_workflow_wires (
  * several tables (ASK_DDL, DIFF_COMMENTS_DDL) is listed under EACH of them, so a
  * DB missing only one is healed; repairSchemaGaps de-duplicates at exec time.
  */
+/** v37: per-person read state of notifications, used only on a shared deployment (a real
+ *  per-person sign-in, identity.mjs#isSharedIdentity); local installs keep notifications.read_at. */
+const NOTIFICATION_READS_DDL = `
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id INTEGER NOT NULL,
+  reader          TEXT NOT NULL,
+  read_at         TEXT NOT NULL,
+  PRIMARY KEY (notification_id, reader)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -898,6 +911,7 @@ const INCREMENTAL_TABLES = {
   schedules:         SCHEDULED_RUNS_DDL,
   scheduled_runs:    SCHEDULED_RUNS_DDL,
   notifications:     SCHEDULED_RUNS_DDL,
+  notification_reads: NOTIFICATION_READS_DDL,
 };
 
 /**
@@ -1314,6 +1328,13 @@ function applySchemaV36(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v37 (attribution, step 1): diff_comments.author_name, ask_threads.created_by
+ *  (INCREMENTAL_COLUMNS) and notification_reads (INCREMENTAL_TABLES), applySchemaV30's
+ *  shape. NULL / no rows everywhere existing = before attribution. */
+function applySchemaV37(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1706,6 +1727,7 @@ export function migrate(db) {
     if (current < 34) applySchemaV34(db);            // run chains: scheduled_runs.after_* + source_from_previous
     if (current < 35) applySchemaV35(db);            // Opus 5 pins -> Opus 5.5 (catalog swap)
     if (current < 36) applySchemaV36(db);            // attribution: pipelines.started_by
+    if (current < 37) applySchemaV37(db);            // attribution: comment authors, thread owners, per-person reads
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

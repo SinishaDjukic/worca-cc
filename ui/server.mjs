@@ -119,7 +119,7 @@ import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
 } from '../src/core/remote-access.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
-import { resolveIdentity, startedByOf, prAttributionFooter } from '../src/core/identity.mjs';
+import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity } from '../src/core/identity.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -720,6 +720,8 @@ function summarizeRuns() {
     pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
+    // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
+    lastAction: r.lastAction || r.orch?.state?.lastAction || null,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
     // vs workspace runs without guessing; scanId/genId/workspaceId are the
@@ -749,6 +751,7 @@ function announceRun(entry) {
     status: entry.status,
     startedAt: entry.startedAt,
     startedBy: entry.startedBy || null,
+    lastAction: entry.lastAction || null,
   });
 }
 
@@ -1085,6 +1088,27 @@ app.use((req, res, next) => {
   }, () => {
     res.status(503).json({ error: 'cannot verify the sign-in token right now' });
   });
+});
+
+// Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
+// sign-in, identity.mjs#isSharedIdentity) a person reaches only their own threads and ownerless
+// legacy ones: every route under /api/ask/threads/:id answers 404 for someone else's. A local or
+// operator deployment is one person, so nothing changes there.
+function askViewer(req) {
+  const who = resolveIdentity(req);
+  return isSharedIdentity(who.source) ? who.name : null;
+}
+function askThreadVisible(thread, req) {
+  const viewer = askViewer(req);
+  return !viewer || !thread || !thread.createdBy || thread.createdBy === viewer;
+}
+app.use('/api/ask/threads/:id', (req, res, next) => {
+  const viewer = askViewer(req);
+  if (!viewer || typeof req.params.id !== 'string' || !ASK_ID_RE.test(req.params.id)) return next();
+  let thread = null;
+  try { thread = askGetThread(req.params.id); } catch { return next(); }
+  if (thread && !askThreadVisible(thread, req)) return res.status(404).json({ error: 'thread not found' });
+  next();
 });
 
 // Ask attachments ride base64 inside the message JSON (§7.3), and a binary
@@ -1489,7 +1513,11 @@ const startRunHandler = async (req, res) => {
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
     // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
-    const startedBy = internal ? (typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null) : startedByOf(req);
+    // "Run now" credits whoever clicked it (internal.runNowBy, never from HTTP); a timer firing credits the scheduler.
+    const startedBy = internal
+      ? (typeof internal.runNowBy === 'string' && internal.runNowBy ? internal.runNowBy
+        : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
+      : startedByOf(req);
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -1679,7 +1707,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ workspaceId: ws.id }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        const gate = await checkTeamTotalGate({ workspaceId: ws.id }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
 
@@ -1806,7 +1834,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
@@ -2069,6 +2097,9 @@ async function invokeStartRun(body, internal) {
   return out;
 }
 
+/** Ticket id -> who clicked "Run now" (identity.mjs actor), consumed by the firing it causes. */
+const RUN_NOW_BY = new Map();
+
 /** runDueTickets' `start`: probe an external task first (transient errors retry), then start. */
 async function fireTicket(ticket) {
   const body = { ...(ticket.request || {}) };
@@ -2107,7 +2138,10 @@ async function fireTicket(ticket) {
     const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
     body.featureBranch = `${body.featureBranch.trim()}-${day}`;
   }
-  const out = await invokeStartRun(body, { ticket });
+  // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
+  const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
+  RUN_NOW_BY.delete(ticket.id);
+  const out = await invokeStartRun(body, { ticket, ...(runNowBy ? { runNowBy } : {}) });
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
   return { ok: false, error, transient: out.status >= 500 };
@@ -2204,7 +2238,7 @@ app.get('/api/schedules', (req, res) => {
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
-      counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
+      counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
   } catch (err) {
@@ -2300,7 +2334,7 @@ app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
@@ -2310,7 +2344,7 @@ app.get('/api/schedules/:id', (req, res) => {
 //   verb 'delete'    cancel a one-off ticket, or delete a series
 //   verb 'run-now'   start a ticket now, or one extra occurrence of a series
 //   verb 'pause' | 'resume' | 'skip-next'   a series only
-async function scheduleVerb(verb, id, body = {}) {
+async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
   const found = findScheduleItem(id);
   const out = (status, payload) => ({ status, body: payload });
   if (!found) return out(404, { error: 'schedule not found' });
@@ -2404,6 +2438,7 @@ async function scheduleVerb(verb, id, body = {}) {
     }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
+    if (by) RUN_NOW_BY.set(ticket.id, by);
     emitChanged('schedules-changed', 'run-now');
     emitChanged('notifications-changed');
     await schedulerTick();
@@ -2423,11 +2458,11 @@ async function scheduleVerb(verb, id, body = {}) {
 }
 
 /** Apply a CONFIRMED Ask Worca schedule card (schedule-spec.mjs shape) through scheduleVerb. */
-async function applyScheduleCard(card) {
+async function applyScheduleCard(card, { by = null } = {}) {
   const map = { run_now: ['run-now', {}], move: ['patch', card.patch || {}], edit: ['patch', card.patch || {}], cancel: ['delete', {}], delete: ['delete', {}] };
   const m = map[card.action];
   if (!m) return { ok: false, error: `unknown schedule action "${card.action}"` };
-  const r = await scheduleVerb(m[0], card.id, m[1]);
+  const r = await scheduleVerb(m[0], card.id, m[1], { by });
   if (r.status !== 200) return { ok: false, error: (r.body && r.body.error) || `failed (${r.status})` };
   const b = r.body || {};
   let detail = '';
@@ -2461,7 +2496,7 @@ app.delete('/api/schedules/:id', async (req, res) => {
 
 // POST /api/schedules/:id/run-now — start a ticket now, or one extra occurrence of a series.
 app.post('/api/schedules/:id/run-now', async (req, res) => {
-  const r = await scheduleVerb('run-now', req.params.id);
+  const r = await scheduleVerb('run-now', req.params.id, {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
@@ -2472,14 +2507,20 @@ for (const verb of ['pause', 'resume', 'skip-next']) {
   });
 }
 
+/** The reader whose read state applies: a person on a shared deployment, else null (the global column). */
+function notifReader(req) {
+  const who = resolveIdentity(req);
+  return isSharedIdentity(who.source) ? who.name : null;
+}
+
 // GET /api/notifications?scope=schedule[&unread=1][&problems=1] -> { notifications, unread }
 app.get('/api/notifications', (req, res) => {
   try {
     const scope = typeof req.query.scope === 'string' && req.query.scope ? req.query.scope : 'schedule';
     const flag = (v) => v === '1' || v === 'true';
     res.json({
-      notifications: listNotifications({ scope, unread: flag(req.query.unread), problems: flag(req.query.problems) }),
-      unread: unreadCount(scope),
+      notifications: listNotifications({ scope, unread: flag(req.query.unread), problems: flag(req.query.problems), reader: notifReader(req) }),
+      unread: unreadCount(scope, { reader: notifReader(req) }),
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2488,18 +2529,18 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read-all', (req, res) => {
   const scope = req.body && typeof req.body.scope === 'string' && req.body.scope ? req.body.scope : 'schedule';
-  markAllRead(scope);
+  markAllRead(scope, { reader: notifReader(req) });
   emitChanged('notifications-changed');
-  res.json({ unread: unreadCount(scope) });
+  res.json({ unread: unreadCount(scope, { reader: notifReader(req) }) });
 });
 
 app.post('/api/notifications/:id/read', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id)) return badRequest(res, 'invalid notification id');
   const read = !(req.body && req.body.read === false);
-  if (!markRead(id, { read })) return res.status(404).json({ error: 'notification not found' });
+  if (!markRead(id, { read, reader: notifReader(req) })) return res.status(404).json({ error: 'notification not found' });
   emitChanged('notifications-changed');
-  res.json({ unread: unreadCount('schedule') });
+  res.json({ unread: unreadCount('schedule', { reader: notifReader(req) }) });
 });
 
 // ---------------------------------------------------------------------------
@@ -2645,18 +2686,21 @@ function answerRun(runId, id, payload) {
   entry.orch.answer(id, payload);
   resolvePending(entry, { id, reason: 'answered' });
 }
-function stopRun(runId) {
+/** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state. */
+function stopRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  entry.orch.stop();
+  entry.lastAction = { kind: 'stop', by: by || 'local', at: new Date().toISOString() };
+  entry.orch.stop(entry.lastAction.by);
   entry.status = 'stopped';
   resolvePending(entry, { reason: 'stopped' });
 }
-function pauseRun(runId) {
+function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
+  entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
 }
@@ -2691,7 +2735,7 @@ app.post('/api/stop', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   try {
-    stopRun(runId);
+    stopRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2707,7 +2751,7 @@ app.post('/api/pause', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   try {
-    pauseRun(runId);
+    pauseRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
@@ -2731,7 +2775,7 @@ class ResumeError extends Error {
   }
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local' } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
@@ -2804,11 +2848,11 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
   // and lets the resume through; the local gates above stay never-bypassable.
   const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
-  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason });
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by });
   if (totalGate.blocked) {
     throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
   }
-  const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId, spentSoFar, pastTeamCap, reason: policyReason });
+  const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId, spentSoFar, pastTeamCap, reason: policyReason, by });
   if (pipeGate.blocked) {
     throw new ResumeError(pipeGate.code === 'reason_required' ? 400 : 403, { error: pipeGate.error, code: pipeGate.code, policy: pipeGate.policy, needsPolicyOverride: pipeGate.code === 'team_pipeline' });
   }
@@ -2829,11 +2873,15 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     agentsDir: AGENTS_DIR,
     claude: { permissionMode: 'acceptEdits', mock: effMock },
     resume: saved,
+    resumedBy: by || 'local',
   });
   const entry = {
     id: runId,
     orch,
     projectDir,
+    // The run keeps its starter across a resume; the resume itself is the last action.
+    startedBy: saved.row.started_by || null,
+    lastAction: { kind: 'resume', by: by || 'local', at: new Date().toISOString() },
     ...(workspace
       ? {
           workspaceId: workspace.id,
@@ -2904,6 +2952,7 @@ app.post('/api/resume', async (req, res) => {
       mock: !!(req.body && req.body.mock),
       pastTeamCap: req.body?.pastTeamCap === true,
       policyReason: typeof req.body?.policyReason === 'string' ? req.body.policyReason : null,
+      by: actorOf(req),
     });
     res.json(out);
   } catch (err) {
@@ -3194,13 +3243,13 @@ app.post('/api/onboarding', async (req, res) => {
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 
-app.get('/api/counts', (_req, res) => {
+app.get('/api/counts', (req, res) => {
   try {
     res.json({
       pipelines: countPipelines(),
       projects: countProjects(),
       workspaces: countWorkspaces(),
-      schedules: { ...scheduleCounts(), unread: unreadCount('schedule') },
+      schedules: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -3345,7 +3394,7 @@ app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
     return badRequest(res, 'attribution must be "git-user" or "none"');
   }
   try {
-    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true });
+    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
     res.json({ ...result, status: await projectMetricsStatus(p) });
   } catch (err) { sendMetricsError(res, err); }
 });
@@ -3438,7 +3487,7 @@ app.put('/api/policy', async (req, res) => {
     const { r } = await policyForScope(scope);
     if (!r.ok) return res.status(404).json({ error: r.detail || 'no team policy for this scope', code: 'NOT_ENABLED' });
     if (!r.homeDir || !fs.existsSync(r.homeDir)) return res.status(409).json({ error: `the policy home ${r.home} is not checked out on this machine`, code: 'NOT_HOME' });
-    const out = await publishPolicy(r.homeDir, req.body.doc, { message: typeof req.body.message === 'string' ? req.body.message : null });
+    const out = await publishPolicy(r.homeDir, req.body.doc, { message: typeof req.body.message === 'string' ? req.body.message : null, by: actorOf(req) });
     res.json({ ok: true, slug: out.slug, sha: out.sha, unchanged: !!out.unchanged, doc: out.doc });
   } catch (err) { sendPolicyError(res, err); }
 });
@@ -3466,7 +3515,7 @@ app.post('/api/projects/:key/policy/enable', async (req, res) => {
   const mode = body.mode === 'follow' ? 'follow' : body.mode === 'here' || body.mode == null ? 'here' : null;
   if (!mode) return badRequest(res, 'mode must be "here" or "follow"');
   try {
-    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '' });
+    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
     res.json({ ...result, status: await projectPolicyStatus(p) });
   } catch (err) { sendPolicyError(res, err); }
 });
@@ -3603,7 +3652,7 @@ async function commentsCreate(req, res, storeKey, id) {
     const comment = addDiffComment({
       storeKey, pipelineId: row.id, patchText,
       project: body.project ?? null, path: body.path, side: body.side, line: body.line,
-      body: body.body, author: 'user',
+      body: body.body, author: 'user', authorName: actorOf(req),
     });
     res.status(201).json({ comment });
   } catch (err) {
@@ -3647,7 +3696,7 @@ function commentsPatch(req, res, storeKey, id, cid) {
 function commentsReply(req, res, storeKey, id, cid) {
   try {
     if (!commentOfRun(res, storeKey, id, cid)) return;
-    const comment = addDiffCommentReply({ parentId: cid, body: (req.body || {}).body, author: 'user' });
+    const comment = addDiffCommentReply({ parentId: cid, body: (req.body || {}).body, author: 'user', authorName: actorOf(req) });
     res.status(201).json({ comment });
   } catch (err) {
     if (err instanceof DiffCommentError) return badRequest(res, err.message);
@@ -6023,12 +6072,13 @@ app.get('/api/ask/threads', (req, res) => {
   try {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
-    const threads = askListThreads({ limit }).map((t) => {
+    const visibleTo = askViewer(req);
+    const threads = askListThreads({ limit, visibleTo }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
     });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads() });
+    res.json({ threads, total: askCountThreads({ visibleTo }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -6039,7 +6089,7 @@ app.get('/api/ask/threads', (req, res) => {
 app.get('/api/ask/history', (req, res) => {
   try {
     res.json({
-      threads: askCountThreads(),
+      threads: askCountThreads({ visibleTo: askViewer(req) }),
       worktrees: askCountWorktrees(),
       attachments: askCountAttachments(),
       inFlight: askRunningCount(),
@@ -6059,10 +6109,14 @@ app.delete('/api/ask/threads', async (req, res) => {
   const removed = { threads: 0, worktrees: 0 };
   const failed = [];
   try {
-    for (const id of askListThreadIds()) {
+    // A shared deployment's "delete all" deletes only the caller's own threads.
+    const viewer = askViewer(req);
+    const deleted = [];
+    for (const id of askListThreadIds(viewer ? { ownedBy: viewer } : {})) {
       try {
         const r = await deleteAskThreadFully(id);
         if (r.deleted) {
+          deleted.push(id);
           removed.threads += 1;
           removed.worktrees += r.worktrees;
         } else failed.push(id);
@@ -6071,7 +6125,8 @@ app.delete('/api/ask/threads', async (req, res) => {
       }
     }
     res.json({ ok: true, removed, failed });
-    broadcast({ type: 'ask-history-cleared' });
+    // Shared: name the deleted threads, so other people's tabs keep theirs open.
+    broadcast({ type: 'ask-history-cleared', ...(viewer ? { threadIds: deleted } : {}) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -6087,7 +6142,7 @@ app.post('/api/ask/threads', (req, res) => {
       }
       title = body.title.trim() || null;
     }
-    const thread = askCreateThread();
+    const thread = askCreateThread({ createdBy: actorOf(req) });
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -6984,7 +7039,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       let block;
       try {
         let result;
-        try { result = await applyScheduleCard(found.block.card); }
+        try { result = await applyScheduleCard(found.block.card, { by: actorOf(req) }); }
         catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }

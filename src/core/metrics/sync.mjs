@@ -539,7 +539,7 @@ async function validateDelegateTarget(delegateTo, ownSlug) {
  * mode 'delegate' → create a marker branch {delegateTo}; or join; with change:true rewrite an existing marker.
  * @returns {Promise<{action:'created'|'joined'|'changed', slug:string, config:object|null}>}
  */
-export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date() } = {}) {
+export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'delegate') throw metricsError('BAD_REQUEST', `mode must be "here" or "delegate"`);
   const { slug, hasOrigin } = await projectSlug(projectDir);
   if (!hasOrigin) throw metricsError('NO_ORIGIN', 'this project has no origin remote — team metrics push to origin, so there is nowhere to record');
@@ -550,7 +550,8 @@ export async function enableTeamMetrics(projectDir, { mode = 'here', attribution
   // every member's marker still carried the developer's real git name, and "Route all members"
   // (which passes no attribution at all) did it for the whole workspace in one click.
   const attr = mode === 'delegate' ? delegate.attribution : normAttribution(attribution);
-  const user = await gitUserName(projectDir);
+  // The person who asked (identity.mjs) when known; else the git user. attribution:'none' still drops it.
+  const user = (typeof by === 'string' && by.trim() && by !== 'local' ? by.trim() : null) ?? await gitUserName(projectDir);
   const config = mode === 'delegate'
     // enabledBy follows the same policy as the commit identity (decision 13): anonymising the
     // marker's author while leaving the developer's name in its JSON body would defeat the point.

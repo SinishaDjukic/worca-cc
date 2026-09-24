@@ -28,12 +28,21 @@ export class DiffCommentError extends Error {
   constructor(message) { super(message); this.name = 'DiffCommentError'; }
 }
 
+/** A person's name on a 'user' comment only (one line, bounded); Ask comments carry none. */
+function authorNameOf(author, name) {
+  if (author !== 'user' || typeof name !== 'string') return null;
+  const t = name.trim();
+  return t && t.length <= 200 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(t) ? t : null;
+}
+
 function rowToComment(r) {
   return {
     id: r.id, storeKey: r.store_key, pipelineId: r.pipeline_id,
     projectKey: r.project_key ?? null, path: r.path, oldPath: r.old_path ?? null,
     side: r.side, line: r.line_no, lineText: r.line_text ?? '',
     body: r.body, author: r.author,
+    // Who wrote it (identity.mjs actor) for a 'user' comment; null for Ask and pre-v37 rows.
+    authorName: r.author_name ?? null,
     resolved: !!r.resolved, resolvedAt: r.resolved_at ?? null,
     sentRunId: r.sent_run_id ?? null, createdAt: r.created_at,
     parentId: r.parent_id ?? null,
@@ -128,7 +137,7 @@ function cleanBody(body) {
  *   have one error type to map onto 400 / tool-error.
  */
 export function addDiffComment({
-  storeKey, pipelineId, patchText, project = null, path, side, line, body, author,
+  storeKey, pipelineId, patchText, project = null, path, side, line, body, author, authorName = null,
 } = {}) {
   if (patchText == null || String(patchText) === '') {
     throw new DiffCommentError('this run has no stored diff — comments cannot be created on it');
@@ -148,10 +157,10 @@ export function addDiffComment({
   getDb();
   prepare(`INSERT INTO diff_comments
     (id, store_key, pipeline_id, project_key, path, old_path, side, line_no, line_text,
-     body, author, resolved, resolved_at, sent_run_id, source, external_url, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, ?)`)
+     body, author, resolved, resolved_at, sent_run_id, source, external_url, created_at, author_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, NULL, ?, ?)`)
     .run(id, String(storeKey), String(pipelineId), anchor.project, anchor.path, anchor.oldPath,
-      anchor.side, anchor.line, anchor.lineText, text, author, ts);
+      anchor.side, anchor.line, anchor.lineText, text, author, ts, authorNameOf(author, authorName));
   notify(String(storeKey), String(pipelineId));
   return getDiffComment(id);
 }
@@ -166,7 +175,7 @@ export function addDiffComment({
  * archiving deletes a run's comments, pipeline-delete.mjs.)
  * @throws {DiffCommentError}
  */
-export function addDiffCommentReply({ parentId, body, author } = {}) {
+export function addDiffCommentReply({ parentId, body, author, authorName = null } = {}) {
   const parent = getDiffComment(parentId);
   if (!parent) throw new DiffCommentError('comment not found');
   if (parent.parentId) throw new DiffCommentError('replies cannot be nested — reply to the thread\'s first comment');
@@ -177,11 +186,11 @@ export function addDiffCommentReply({ parentId, body, author } = {}) {
   getDb();
   prepare(`INSERT INTO diff_comments
     (id, store_key, pipeline_id, project_key, path, old_path, side, line_no, line_text,
-     body, author, resolved, resolved_at, sent_run_id, source, external_url, created_at, parent_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`)
+     body, author, resolved, resolved_at, sent_run_id, source, external_url, created_at, parent_id, author_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`)
     .run(id, parent.storeKey, parent.pipelineId, parent.projectKey, parent.path, parent.oldPath,
       parent.side, parent.line, parent.lineText, text, author,
-      parent.resolved ? 1 : 0, parent.resolvedAt, ts, parent.id);
+      parent.resolved ? 1 : 0, parent.resolvedAt, ts, parent.id, authorNameOf(author, authorName));
   notify(parent.storeKey, parent.pipelineId);
   return getDiffComment(id);
 }

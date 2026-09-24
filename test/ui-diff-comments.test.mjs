@@ -1121,3 +1121,13 @@ test('the page context names the member project of the open workspace diff file'
   assert.equal(JSON.parse(post.opts.body).context.diffPath, 'src/a.js (member team-00000001)',
     'add_diff_comment needs memberProjectKey and never guesses it');
 });
+
+test('a person\'s comment names its author (attribution); "You" when unknown or local; Ask stays Worca', async () => {
+  const ctx = await bootComments({ comments: [
+    cmt({ id: 'dc_00000011', body: 'named', authorName: 'ada@example.com' }),
+    cmt({ id: 'dc_00000012', body: 'local', authorName: 'local' }),
+    cmt({ id: 'dc_00000013', body: 'ask', author: 'ask', authorName: 'ada@example.com' }),
+  ] });
+  const block = ctx.window.document.querySelector('.hd-dl-row[data-new="2"]').nextElementSibling;
+  assert.deepEqual([...block.querySelectorAll('.hd-cmt-author')].map((n) => n.textContent), ['ada@example.com', 'You', 'Worca']);
+});

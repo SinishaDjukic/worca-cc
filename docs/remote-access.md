@@ -177,6 +177,14 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
 - A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
   authored by a shared bot or GitHub App still names the person.
 - Ask Worca sees the signed-in person in its context.
+- Who paused, stopped or resumed a run shows in its banner ("Paused by …"), and diff comments name
+  their author.
+- *Run now* on a schedule credits whoever clicked it. Team metrics, team policy edits and cap
+  overrides record the person instead of the server's git user (`attribution: none` still records
+  nobody).
+- With a per-person sign-in (Access or a trusted header), each person's Ask Worca chats are their
+  own: others can't open them, and *Delete all* removes only yours. Notifications are marked read
+  per person.
 
 Worca takes the name from the first of these that applies, and never guesses:
 

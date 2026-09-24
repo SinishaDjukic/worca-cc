@@ -998,6 +998,7 @@ function handleServerMessage(msg) {
       status: msg.status || 'starting',
       startedAt: msg.startedAt,
       startedBy: msg.startedBy || undefined,
+      lastAction: msg.lastAction || undefined,
       kind: msg.kind || 'run',
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
@@ -1107,6 +1108,7 @@ function onHello(msg) {
       pauseReason: r0.pauseReason || null,
       pauseDetail: r0.pauseDetail || null,
       startedBy: r0.startedBy || undefined,
+      lastAction: r0.lastAction || undefined,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -1236,7 +1238,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, startedBy = null,
+  pauseDetail = null, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -1253,6 +1255,7 @@ function makeRun({
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
+    lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
     workspaceId,
     workspaceName,
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -1714,6 +1717,8 @@ function onState(r, msg) {
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
   // learns who started the run from the first state snapshot.
   if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
+  // Who stopped / paused / resumed it (run-harness _recordAction), on every state snapshot.
+  if (msg.lastAction === null || (msg.lastAction && typeof msg.lastAction.by === 'string')) r.lastAction = msg.lastAction;
   // Mirror the on-disk pipeline short id the orchestrator stamps onto state.id
   // after createPipeline. The server captures the same field (ui/server.mjs
   // wireRun); without this the run model only ever gets a pipelineId from the
@@ -17544,7 +17549,8 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
   }
   const who = doc.createElement('span');
   who.className = 'hd-cmt-author';
-  who.textContent = comment.author === 'ask' ? 'Worca' : 'You';
+  // A person's comment names them once attribution knows who (identity.mjs); else the old "You".
+  who.textContent = comment.author === 'ask' ? 'Worca' : (attributedName(comment.authorName) || 'You');
   const when = doc.createElement('time');
   when.className = 'hd-cmt-time';
   when.dateTime = comment.createdAt || '';
@@ -19398,7 +19404,9 @@ function rdStateCopy(r, stepName) {
     return `Paused — ${r.pauseReason}. Resume once it clears.`;
   }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
-    return 'Paused by you. Agents in flight finished their checkpoint; nothing new is dispatched.';
+    // Who paused it, when someone in particular did (never "you": the viewer may not be them).
+    const by = r.lastAction && r.lastAction.kind === 'pause' ? attributedName(r.lastAction.by) : '';
+    return `Paused${by ? ` by ${by}` : ''}. Agents in flight finished their checkpoint; nothing new is dispatched.`;
   }
   if (RD_TERMINAL.includes(r.status)) {
     // finishedAtMs is stamped by finishRun (Task 9). Absent on a run this tab
@@ -19407,7 +19415,8 @@ function rdStateCopy(r, stepName) {
     const at = r.finishedAtMs
       ? ` Finished at ${startedLabel(new Date(r.finishedAtMs).toISOString())}.`
       : '';
-    return `${runStatusMeta(r).word}.${at}`;
+    const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? attributedName(r.lastAction.by) : '';
+    return `${runStatusMeta(r).word}${by ? ` by ${by}` : ''}.${at}`;
   }
   // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
   return `${activeCopy(r).text}.`;

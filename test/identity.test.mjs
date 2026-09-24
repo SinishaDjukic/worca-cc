@@ -36,3 +36,17 @@ test('the PR footer names the person, and nobody for local or unknown', () => {
   assert.equal(prAttributionFooter('ada@example.com'), '\n\n---\nStarted by ada@example.com via worca');
   for (const none of ['local', null, undefined, '', 'a\nb']) assert.equal(prAttributionFooter(none), '');
 });
+
+test('actorOf, isSharedIdentity and chatActor', async () => {
+  const { actorOf, isSharedIdentity, chatActor } = await import('../src/core/identity.mjs');
+  assert.equal(actorOf(req({ user: { email: 'ada@example.com' } }), {}), 'ada@example.com');
+  assert.equal(actorOf(req(), {}), 'local');
+  assert.equal(isSharedIdentity('access'), true);
+  assert.equal(isSharedIdentity('header'), true);
+  assert.equal(isSharedIdentity('operator'), false);
+  assert.equal(isSharedIdentity('local'), false);
+  assert.equal(chatActor({ platform: 'slack', userName: 'ada' }), 'ada via Slack');
+  assert.equal(chatActor({ platform: 'telegram', userId: 12345 }), '12345 via Telegram');
+  assert.equal(chatActor({ platform: 'discord', userName: 'x\ny' }), 'someone via Discord');
+  assert.equal(chatActor({}), 'someone via chat');
+});

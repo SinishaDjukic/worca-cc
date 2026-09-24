@@ -3761,7 +3761,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
-    if (frame.type === 'ask-history-cleared') { onHistoryCleared(); return; }
+    if (frame.type === 'ask-history-cleared') {
+      // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
+      if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
+      onHistoryCleared();
+      return;
+    }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;

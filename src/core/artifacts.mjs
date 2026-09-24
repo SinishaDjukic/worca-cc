@@ -1962,6 +1962,8 @@ function rowToState(row) {
   // too, so a deep-linked History detail no longer waits for the LIST row.
   const rp = j(row.resume_point, null);
   state.pauseReason = typeof rp?.pauseReason === 'string' ? rp.pauseReason : null;
+  // Who paused it (run-harness _recordAction): { kind, by, at } or null.
+  state.lastAction = rp && rp.lastAction && typeof rp.lastAction.by === 'string' ? { ...rp.lastAction } : null;
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   const outcome = j(row.outcome, null);
   if (outcome) {

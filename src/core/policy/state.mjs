@@ -66,14 +66,14 @@ export function readTotalAck(projectKey, home, windowStartMs) {
 }
 
 /** Record the acknowledgement; older windows are swept so the blob never grows. */
-export function setTotalAck(projectKey, home, windowStartMs, { reason = null } = {}) {
+export function setTotalAck(projectKey, home, windowStartMs, { reason = null, by = null } = {}) {
   const prefs = readTeamPolicyPrefs(projectKey);
   const acks = {};
   for (const [k, v] of Object.entries(prefs?.acks && typeof prefs.acks === 'object' ? prefs.acks : {})) {
     const ms = Number(k.split('|')[1]);
     if (Number.isFinite(ms) && ms >= windowStartMs) acks[k] = v;
   }
-  acks[ackKey(home, windowStartMs)] = { at: new Date().toISOString(), reason: cleanReason(reason) };
+  acks[ackKey(home, windowStartMs)] = { at: new Date().toISOString(), reason: cleanReason(reason), ...(by ? { by } : {}) };
   writeTeamPolicyPrefs(projectKey, { acks });
   return acks[ackKey(home, windowStartMs)];
 }

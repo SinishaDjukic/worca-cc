@@ -38,13 +38,15 @@ export async function teamCapsForTarget({ projectDir = null, workspaceId = null 
 }
 
 const usd = (n) => Number(n).toFixed(2);
+/** A person (identity.mjs actor) worth recording: not empty, not 'local'. */
+const personOf = (by) => (typeof by === 'string' && by.trim() && by !== 'local' ? by.trim() : null);
 
 /**
  * The team TOTAL cap at a run entry. `pastTeamCap` records the once-per-window acknowledgement
  * (design §7) and lets the run through; a cap with `requireReason` refuses an empty reason.
  * @returns {Promise<{blocked:false, caps:object, ack?:object} | {blocked:true, caps:object, error:string, code:'team_total'|'reason_required', policy:object}>}
  */
-export async function checkTeamTotalGate(target, { pastTeamCap = false, reason = null, unattended = false, now = new Date() } = {}) {
+export async function checkTeamTotalGate(target, { pastTeamCap = false, reason = null, unattended = false, now = new Date(), by = null } = {}) {
   const caps = await teamCapsForTarget(target);
   const { total, policy, period } = caps;
   if (!policy || total.binding !== 'team' || total.cap == null) return { blocked: false, caps };
@@ -60,7 +62,7 @@ export async function checkTeamTotalGate(target, { pastTeamCap = false, reason =
   if (pastTeamCap) {
     const clean = cleanReason(reason);
     if (team.requireReason && !clean) return { blocked: true, caps, code: 'reason_required', error: `the team policy on ${policy.home} requires a reason to continue past its total cap`, policy: detail };
-    const ack = setTotalAck(ackKey, policy.home, windowStartMs, { reason: clean });
+    const ack = setTotalAck(ackKey, policy.home, windowStartMs, { reason: clean, ...(personOf(by) ? { by: personOf(by) } : {}) });
     return { blocked: false, caps, ack };
   }
   return { blocked: true, caps, code: 'team_total', error: `team total cap reached ($${usd(spent)} >= $${usd(total.cap)} this ${w}, ${policy.home})`, policy: detail };
@@ -71,7 +73,7 @@ export async function checkTeamTotalGate(target, { pastTeamCap = false, reason =
  * the run, design §7) and lets the resume through.
  * @returns {{blocked:false} | {blocked:true, error:string, code:'team_pipeline'|'reason_required', policy:object}}
  */
-export function checkTeamPipelineGate(caps, { pipelineId, spentSoFar = 0, pastTeamCap = false, reason = null, unattended = false } = {}) {
+export function checkTeamPipelineGate(caps, { pipelineId, spentSoFar = 0, pastTeamCap = false, reason = null, unattended = false, by = null } = {}) {
   const { pipeline, policy } = caps;
   // The team SOFT cap is checked whether or not it is the tighter number (the local override
   // never bypasses it — run-harness._checkCostLimits applies the same rule at every boundary).
@@ -84,7 +86,8 @@ export function checkTeamPipelineGate(caps, { pipelineId, spentSoFar = 0, pastTe
   if (pastTeamCap) {
     const clean = cleanReason(reason);
     if (team.requireReason && !clean) return { blocked: true, code: 'reason_required', error: `the team policy on ${policy.home} requires a reason to continue past its cost cap`, policy: detail };
-    writePolicyState(pipelineId, { home: policy.home, sha: policy.sha, overrides: ['pipeline'], ...(clean ? { reason: clean } : {}) });
+    // Who chose to continue, next to why (identity.mjs); absent for 'local' / unknown.
+    writePolicyState(pipelineId, { home: policy.home, sha: policy.sha, overrides: ['pipeline'], ...(clean ? { reason: clean } : {}), ...(personOf(by) ? { overriddenBy: personOf(by) } : {}) });
     return { blocked: false, overridden: true };
   }
   return { blocked: true, code: 'team_pipeline', error: `team cost cap reached ($${usd(spentSoFar)} >= $${usd(team.value)}, ${policy.home})`, policy: detail };

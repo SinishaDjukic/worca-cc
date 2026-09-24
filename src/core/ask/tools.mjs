@@ -681,8 +681,10 @@ export function createAskTools(deps) {
       prompt: row.prompt == null ? null : deps.redact(row.prompt),     // run prompts are untrusted text (spec §6.3/§6.6)
       totalCostUsd: deps.totalsFor(row).cost,
       archived: !!row.archived_at,
+      // The person who started it (identity.mjs; 'local' on a local install, null before attribution).
+      startedBy: row.started_by ?? null,
       // Started by a schedule (docs/scheduled-runs.md): only then, so every other run keeps its shape.
-      ...(row.scheduled_for || row.schedule_id ? { startedBy: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
+      ...(row.scheduled_for || row.schedule_id ? { scheduled: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
     };
   }
 

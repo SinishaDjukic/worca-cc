@@ -831,9 +831,11 @@ export class RunHarness extends EventEmitter {
     return true;
   }
 
-  /** Abort the run; marks state stopped and kills any child via the signal. */
-  stop() {
+  /** Abort the run; marks state stopped and kills any child via the signal. `by` = who
+   *  asked (identity.mjs actor), recorded as state.lastAction before the status event. */
+  stop(by = null) {
     if (this.state.status === 'done' || this.state.status === 'stopped') return;
+    this._recordAction('stop', by);
     this._setStatus('stopped');
     try {
       this.abort.abort();
@@ -855,8 +857,9 @@ export class RunHarness extends EventEmitter {
    * pause-only signal), unwind _dispatch, persist a resume point. The worktree is
    * kept. Returns false unless the run is currently 'running'.
    */
-  pause() {
+  pause(by = null) {
     if (this.state.status !== 'running') return false;
+    this._recordAction('pause', by);
     this.pauseRequested = true;
     this._setStatus('pausing');
     try {
@@ -871,6 +874,13 @@ export class RunHarness extends EventEmitter {
       pq.reject(pauseErr());
     }
     return true;
+  }
+
+  /** Who stopped / paused / resumed the run (identity.mjs actor): { kind, by, at } on the
+   *  state, so every `state` event, getState() and the resume point carry it. */
+  _recordAction(kind, by) {
+    if (typeof by !== 'string' || !by) return;
+    this.state.lastAction = { kind, by, at: new Date().toISOString() };
   }
 
   _checkPause() {
@@ -1392,6 +1402,8 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      this.state.lastAction = null;
+      this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
       // LATEST saved set definition (missing set -> warn + Permissive, inside
       // _resolveGuardrails). Legacy resume points without the field fall back to
@@ -4498,6 +4510,9 @@ export class RunHarness extends EventEmitter {
         rp.titleProvisional = this.state.titleProvisional === true;
       }
       rp.interventions = { ...this._metricsIv };
+      // Who paused it survives a restart (rowToState reads it back).
+      if (this.state.lastAction && this.state.lastAction.kind === 'pause') rp.lastAction = { ...this.state.lastAction };
+      else delete rp.lastAction;
     }
     this._setStatus('paused');
     await this._persist();

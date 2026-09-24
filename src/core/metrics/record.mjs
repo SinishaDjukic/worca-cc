@@ -372,12 +372,19 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     lastPause: iv.lastPauseReason
       ? { reason: iv.lastPauseReason, detail: iv.lastPauseDetail ?? null }
       : harness.pauseReason ? { reason: harness.pauseReason, detail: harness.pauseDetail ?? null } : null,
-    actor: await gitUserName(harness.projectDir),
+    // The person who started the run (identity.mjs) when one is known; else, as before, the
+    // checkout's git user (a local install, the CLI). attribution:'none' still drops both.
+    actor: actorForRecord(harness.state && harness.state.startedBy) ?? await gitUserName(harness.projectDir),
     // The run's policy state (pipelines.policy_state) as the gates and the resume flow left it;
     // `unattended` is the harness's own auto flag, which the record needs even when nothing else
     // was written (a --yes run that stayed under every cap still carries no state row).
     policy: (() => { const p = readPolicyState(runId); return p.home ? { ...p, unattended: p.unattended === true || !!harness.auto } : null; })(),
   };
+}
+
+/** A recorded person (not 'local', not empty) for the metrics actor, or null to fall back. */
+export function actorForRecord(startedBy) {
+  return typeof startedBy === 'string' && startedBy.trim() && startedBy !== 'local' ? startedBy.trim() : null;
 }
 
 let _recorder = null;

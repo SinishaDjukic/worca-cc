@@ -36,7 +36,8 @@ test('createThread / getThread / updateThread / setThreadTitle', () => {
   const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
   assert.match(t.id, /^ask_[0-9a-f]{8}$/);
   assert.deepEqual(Object.keys(t).sort(),
-    ['context', 'createdAt', 'effort', 'id', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+    ['context', 'createdAt', 'createdBy', 'effort', 'id', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+  assert.equal(t.createdBy, null, 'ownerless unless created with an owner');
   assert.equal(t.title, null);
   assert.equal(t.sessionId, null);
   assert.equal(t.context, null);

@@ -45,8 +45,14 @@ function rowToThread(r) {
     model: r.model ?? null, effort: r.effort ?? null, sessionId: r.session_id ?? null,
     context: parse(r.context, null),
     totals: { ...emptyTotals(), ...(parse(r.totals, {}) || {}) },
+    // The thread's owner (identity.mjs actor); null = ownerless (before attribution).
+    createdBy: r.created_by ?? null,
   };
 }
+
+/** On a shared deployment a person sees their own threads plus ownerless legacy ones. */
+const ownerWhere = (visibleTo, alias = '') => (visibleTo ? ` WHERE (${alias}created_by IS NULL OR ${alias}created_by = ?)` : '');
+const ownerArgs = (visibleTo) => (visibleTo ? [visibleTo] : []);
 function rowToMessage(r) {
   return {
     id: r.id, threadId: r.thread_id, seq: r.seq, role: r.role, text: r.text ?? '',
@@ -73,12 +79,12 @@ function rowToRunLink(r) {
 
 // ── threads ─────────────────────────────────────────────────────────────────
 
-export function createThread({ title = null, model = null, effort = null } = {}) {
+export function createThread({ title = null, model = null, effort = null, createdBy = null } = {}) {
   getDb();
   const id = newAskId('ask');
   const t = now();
-  prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()));
+  prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null);
   return getThread(id);
 }
 
@@ -88,27 +94,29 @@ export function getThread(id) {
   return r ? rowToThread(r) : null;
 }
 
-export function listThreads({ limit = 50 } = {}) {
+export function listThreads({ limit = 50, visibleTo = null } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
   const rows = prepare(`
     SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
            (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees
-    FROM ask_threads t ORDER BY t.updated_at DESC, t.id LIMIT ?
-  `).all(n);
+    FROM ask_threads t${ownerWhere(visibleTo, 't.')} ORDER BY t.updated_at DESC, t.id LIMIT ?
+  `).all(...ownerArgs(visibleTo), n);
   return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links, worktrees: r.worktrees }));
 }
 
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. */
-export function countThreads() {
+export function countThreads({ visibleTo = null } = {}) {
   getDb();
-  const row = prepare('SELECT count(*) AS n FROM ask_threads').get();
+  const row = prepare(`SELECT count(*) AS n FROM ask_threads${ownerWhere(visibleTo)}`).get(...ownerArgs(visibleTo));
   return row ? Number(row.n) : 0;
 }
 
 /** Every thread id, oldest-updated first, NO limit — the bulk delete walks all of them. */
-export function listThreadIds() {
+export function listThreadIds({ ownedBy = null } = {}) {
   getDb();
+  // ownedBy: only that person's threads (a shared deployment's "delete all" never touches others').
+  if (ownedBy) return prepare('SELECT id FROM ask_threads WHERE created_by = ? ORDER BY updated_at, id').all(ownedBy).map((r) => r.id);
   return prepare('SELECT id FROM ask_threads ORDER BY updated_at, id').all().map((r) => r.id);
 }
 

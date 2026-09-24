@@ -175,6 +175,26 @@ test('live run detail header: "by <name>" after "started …"; nothing for local
   assert.equal(local.doc.querySelector('.rd-meta .rd-by'), null);
 });
 
+test('run detail banner: "Paused by <name>" / "Stopped by <name>"; plain "Paused" for local or unknown, never "by you"', async () => {
+  const copyOf = async (extra) => {
+    const ctx = await boot();
+    hello(ctx, extra);
+    go(ctx.window, `running/${RUN_ID}`);
+    await settle(ctx.window, 8);
+    // The state banner lives on the Overview tab.
+    const tab = [...ctx.doc.querySelectorAll('.rd-tab')].find((b) => /overview/i.test(b.dataset.sec || b.textContent));
+    if (tab) tab.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+    await settle(ctx.window, 8);
+    return ctx.doc.querySelector('.rd-ov-copy')?.textContent || '';
+  };
+  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'grace@example.com', at: '2026-01-01T00:00:00Z' } }), /^Paused by grace@example\.com\. Agents in flight/);
+  const local = await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'local', at: '2026-01-01T00:00:00Z' } });
+  assert.match(local, /^Paused\. Agents in flight/);
+  assert.doesNotMatch(local, /by you/);
+  assert.match(await copyOf({ status: 'paused' }), /^Paused\. /);
+  assert.match(await copyOf({ status: 'stopped', lastAction: { kind: 'stop', by: 'ada@example.com', at: '2026-01-01T00:00:00Z' } }), /^Stopped by ada@example\.com\./);
+});
+
 // ── History detail meta ────────────────────────────────────────────────────────
 
 const KEY = 'proj-alpha-abcd1234';

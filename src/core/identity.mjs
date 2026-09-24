@@ -45,3 +45,26 @@ export function prAttributionFooter(startedBy) {
   const who = clean(startedBy);
   return who && who !== 'local' ? `\n\n---\nStarted by ${who} via worca` : '';
 }
+
+/** Who did this: the actor string an action records ('local' when nothing applies). */
+export function actorOf(req, env = process.env) {
+  return resolveIdentity(req, env).name;
+}
+
+/** True for a real per-person sign-in (a verified token or a named trusted header): the
+ *  deployments where "who" can have more than one answer, so ownership and per-person
+ *  state apply. 'operator' and 'local' are one person by definition. */
+export function isSharedIdentity(source) {
+  return source === 'access' || source === 'header';
+}
+
+const PLATFORM_NAMES = { slack: 'Slack', telegram: 'Telegram', discord: 'Discord', teams: 'Teams', msteams: 'Teams' };
+
+/** The actor for a chat command: "ada via Slack" (sanitised like every other value), or
+ *  "someone via Slack" when the platform gave no usable name. */
+export function chatActor({ platform, userName, userId } = {}) {
+  const p = String(platform || '').trim().toLowerCase();
+  const via = PLATFORM_NAMES[p] || clean(platform) || 'chat';
+  const who = clean(userName) || clean(userId != null ? String(userId) : '') || 'someone';
+  return clean(`${who} via ${via}`) || `someone via ${via}`;
+}
