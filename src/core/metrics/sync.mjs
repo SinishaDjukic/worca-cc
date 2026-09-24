@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
+import { credentialEnv } from '../github-credentials.mjs';
 import { readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../config.mjs';
 import { readWorkspace, listWorkspaces, isGitRepo } from '../workspaces.mjs';
 import { withLock } from './lock.mjs';
@@ -70,7 +71,8 @@ function hookFreeArgs() {
 }
 
 function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
-  const base = { ...process.env };
+  // The write credential (it reads too): metrics and policy branches are fetched and pushed.
+  const base = credentialEnv('write', process.env);
   for (const k of STRIP_ENV) delete base[k];
   return new Promise((done) => {
     execFile('git', [...hookFreeArgs(), ...args], {

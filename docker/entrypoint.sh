@@ -6,7 +6,7 @@
 # reach the server (it handles SIGTERM itself and exits 143 on the graceful path):
 #   1. detect a named volume the runtime created as root (rootful Docker Engine
 #      on first start) and print the one-line fix — it cannot chown as `worca`;
-#   2. set up git for HTTPS GitHub remotes when GH_TOKEN is present;
+#   2. report the GitHub credential mode (tokens are passed per call, never globally);
 #   3. say how Claude Code is (or is not) authenticated. Mock runs need nothing.
 set -euo pipefail
 
@@ -48,13 +48,18 @@ for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do
 done
 mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# 2. git over HTTPS to GitHub, when a token is given (PRs, metrics/policy branches, clone-in).
-if [ -n "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
-  if gh auth setup-git >/dev/null 2>&1; then
-    log "git credential helper: gh (GH_TOKEN)"
-  else
-    log "GH_TOKEN is set but 'gh auth setup-git' failed; git pushes over HTTPS will prompt"
-  fi
+# 2. GitHub over HTTPS. No global credential helper: worca passes the token for each
+# git/gh call's role in that call's env only (src/core/github-credentials.mjs), and
+# agents never get one. A helper an older image wrote to a persistent HOME is removed.
+if git config --global --get-all credential.https://github.com.helper 2>/dev/null | grep -q 'gh auth git-credential'; then
+  git config --global --unset-all credential.https://github.com.helper >/dev/null 2>&1 || true
+  git config --global --unset-all credential.https://gist.github.com.helper >/dev/null 2>&1 || true
+  log "removed the global gh credential helper (worca now passes the token per call)"
+fi
+if [ -n "${WORCA_GH_READ_TOKEN:-}${WORCA_GH_WRITE_TOKEN:-}" ]; then
+  log "GitHub: split read/write tokens, per call"
+elif [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  log "GitHub: one token for clone, push and PRs, per call"
 fi
 if [ -z "${GIT_AUTHOR_NAME:-}" ] && ! git config --global user.name >/dev/null 2>&1; then
   log "no git identity: set GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL in .env or agents cannot commit"

@@ -52,6 +52,7 @@ import { writeFile, mkdir, appendFile, readFile, access, readdir } from 'node:fs
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stripGithubCredentials } from './github-credentials.mjs';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -703,6 +704,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // WORCA_HOST_PID rides every guarded spawn (the hook reads it; scrub would
     // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
     if (guardOn) spawnEnv = { ...(spawnEnv ?? process.env), WORCA_HOST_PID: String(process.pid) };
+
+    // No GitHub credential reaches claude, in any guardrail tier, from a per-project allowlist or a
+    // model env alike (src/core/github-credentials.mjs): pushes and PRs are worca's own calls.
+    spawnEnv = stripGithubCredentials(spawnEnv ?? process.env);
 
     // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
     // path when unset). Everything here is derived from values already computed above

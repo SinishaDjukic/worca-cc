@@ -79,7 +79,7 @@ One Railway **project per deployment**. Use either the dashboard or the CLI.
    | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` |
    | `WORCA_CF_ACCESS_AUD` | the application's AUD tag |
    | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret |
-   | `GH_TOKEN` | secret (optional at first) |
+   | `GH_TOKEN` | secret (optional at first). Or two tokens, `WORCA_GH_READ_TOKEN` (clone, fetch: Contents read) and `WORCA_GH_WRITE_TOKEN` (push, PRs: Contents and Pull requests read/write). Agents never get either |
    | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | the identity agents commit with |
 
    If the Access variables are missing, worca refuses to start and logs why. It won't run
@@ -160,12 +160,18 @@ Projects live on the volume under `/data/projects`. Clone them **as the `worca` 
 ```bash
 railway ssh keys add          # once: registers a local SSH public key with Railway
 railway ssh -s worca -- su -s /bin/sh worca -c \
-  'git clone https://github.com/you/app.git /data/projects/app'
+  'gh repo clone you/app /data/projects/app'
 ```
 
-With `GH_TOKEN` set, the entrypoint configures git to use it for GitHub over HTTPS, so private repos
-clone and pushes work. Then add `/data/projects/app` as a project in the UI (the folder picker is a
+`gh repo clone` uses the service's `GH_TOKEN`, so private repos clone. With a read/write pair
+instead, prefix the command inside the quotes with `GH_TOKEN="$WORCA_GH_READ_TOKEN"`. Worca itself
+passes the token to each of its own git and gh calls (fetch, push, pull requests); agents never
+get it. Then add `/data/projects/app` as a project in the UI (the folder picker is a
 text field on a server) and start a run.
+
+Ask Worca knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
+set, and who is signed in. It points people here to add a project, never asks for a token in chat,
+and says that pull requests come from the deployment's GitHub account.
 
 ## Upgrades and restarts
 

@@ -16,6 +16,7 @@ import {
   MAX_LINE, STREAM_MAX, FRAME_MAX,
 } from '../src/core/graph/script-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
+import { stripGithubCredentials } from '../src/core/github-credentials.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../src/shared/graph/constants.mjs';
 import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
@@ -418,7 +419,16 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
     const scrubbed = await runScriptExecution(ctxFor({ meta: shellMeta(), params: { command: print }, ports,
       claudeOpts: { envScrub: true, envAllowlist: ['WORCA_TEST_KEEP'] } }));
     assert.match(readFileSync(scrubbed.outputs.log.path, 'utf8'), /^S= K=kept O=y$/m, 'scrub on: the secret is gone, the allowlisted var and the contract stay');
-    assert.equal(scriptBaseEnv({}), process.env);
+    assert.deepEqual(scriptBaseEnv({}), stripGithubCredentials(process.env), 'scrub off: the server env minus GitHub credentials');
+    process.env.GH_TOKEN_PROBE_PREV = process.env.GH_TOKEN ?? '';
+    process.env.GH_TOKEN = 'ghp_secret';
+    try {
+      assert.equal('GH_TOKEN' in scriptBaseEnv({}), false, 'a script never gets a GitHub credential');
+      assert.equal('GH_TOKEN' in scriptBaseEnv({ envScrub: true, envAllowlist: ['GH_TOKEN'] }), false, 'not even allowlisted');
+    } finally {
+      if (process.env.GH_TOKEN_PROBE_PREV) process.env.GH_TOKEN = process.env.GH_TOKEN_PROBE_PREV; else delete process.env.GH_TOKEN;
+      delete process.env.GH_TOKEN_PROBE_PREV;
+    }
     const win = scriptBaseEnv({ envScrub: true }, 'win32');
     assert.equal('WORCA_TEST_SECRET' in win, false);
     assert.equal(win.PATH, process.env.PATH);

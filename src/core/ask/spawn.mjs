@@ -59,6 +59,7 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.netrc)',
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
+  'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
 ]);
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
 // Native-rules revision: the CLI loads `<dir>/.claude/rules` from an --add-dir only under this

@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pluginsRoot, pluginDir, readPluginsLock } from './plugins-lock.mjs';
 import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
+import { credentialEnv } from './github-credentials.mjs';
 
 const execFileP = promisify(execFile);
 const defaultExec = (cmd, args, opts = {}) =>
@@ -23,7 +24,7 @@ const defaultExec = (cmd, args, opts = {}) =>
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000,
     killSignal: 'SIGKILL',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...credentialEnv('read', process.env), GIT_TERMINAL_PROMPT: '0' },
     ...opts,
   });
 

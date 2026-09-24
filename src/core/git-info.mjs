@@ -9,13 +9,14 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { credentialEnv } from './github-credentials.mjs';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd, timeout = 0 } = {}) {
+function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}) });
     } catch (err) {
       resolve({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -162,7 +163,7 @@ export async function hasGh() {
 
 /** Push the branch to `remote` (default origin) and set upstream. Idempotent; surfaces stderr. */
 export async function pushBranch(projectDir, branch, remote = 'origin') {
-  const r = await _run('git', ['push', '-u', remote || 'origin', branch], { cwd: projectDir });
+  const r = await _run('git', ['push', '-u', remote || 'origin', branch], { cwd: projectDir, env: credentialEnv('write') });
   return { ok: r.ok, stderr: (r.stderr || '').trim() };
 }
 
@@ -182,14 +183,14 @@ export async function createPr({ projectDir, base, head, title, body = '', repo 
   const repoArgs = repo ? ['--repo', repo] : [];
   const args = ['pr', 'create', ...repoArgs, '--base', base, '--head', headRef,
     '--title', title || head, '--body', body || title || head];
-  const r = await _run('gh', args, { cwd: projectDir });
+  const r = await _run('gh', args, { cwd: projectDir, env: credentialEnv('write') });
   if (r.ok) {
     // gh prints the PR URL as the last stdout line.
     const url = (r.stdout.trim().split(/\r?\n/).pop() || '').trim();
     return { ok: true, url, existed: false };
   }
   if (/already exists/i.test(r.stderr || '')) {
-    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir });
+    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: credentialEnv('read') });
     if (v.ok && v.stdout.trim()) return { ok: true, url: v.stdout.trim(), existed: true };
     // gh's message ends with the existing PR's URL ("… already exists:\n<url>");
     // use it when the view selector cannot resolve (e.g. a PR opened from another fork).
@@ -285,7 +286,7 @@ export async function prMergeable({ projectDir, head, repo = null, headOwner = n
   const selector = prUrl || (head ? prHeadRef(head, headOwner) : '');
   if (!selector) return 'UNKNOWN';
   const repoArgs = !prUrl && repo ? ['--repo', repo] : [];
-  const r = await _run('gh', ['pr', 'view', selector, ...repoArgs, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir });
+  const r = await _run('gh', ['pr', 'view', selector, ...repoArgs, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir, env: credentialEnv('read') });
   if (!r.ok) return 'UNKNOWN';
   return normalizeMergeable(r.stdout.trim());
 }
@@ -316,7 +317,7 @@ const normalizePr = (pr) => ({
 export async function findPrForBranch({ projectDir, head, prUrl = null } = {}) {
   if (!projectDir || !head) return null;
   if (prUrl) {
-    const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'number,state,url'], { cwd: projectDir });
+    const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'number,state,url'], { cwd: projectDir, env: credentialEnv('read') });
     if (v.ok) {
       let obj = null;
       try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }

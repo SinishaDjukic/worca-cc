@@ -120,6 +120,30 @@ test('pushBranch pushes to the chosen remote (origin by default)', async () => {
   assert.deepEqual(seen, [['git', 'push', '-u', 'fork', 'feat/x'], ['git', 'push', '-u', 'origin', 'feat/x']]);
 });
 
+test('push and PR creation get the write token, PR lookups the read token, per call', async () => {
+  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  delete process.env.GH_TOKEN; delete process.env.GITHUB_TOKEN;
+  process.env.WORCA_GH_READ_TOKEN = 'R'; process.env.WORCA_GH_WRITE_TOKEN = 'W';
+  const seen = [];
+  gitInfo.setRunner((cmd, args, opts = {}) => { seen.push({ call: `${cmd} ${args[0]} ${args[1] || ''}`.trim(), env: opts.env }); return fail('already exists', 1); });
+  try {
+    await pushBranch('/repo', 'feat/x');
+    await createPr({ projectDir: '/repo', base: 'main', head: 'feat/x', title: 'T', repo: 'up/repo' });
+  } finally {
+    for (const k of keys) if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+  }
+  const byCall = Object.fromEntries(seen.map((s) => [s.call, s.env]));
+  assert.equal(byCall['git push -u'].GH_TOKEN, 'W');
+  assert.equal(byCall['git push -u'].WORCA_GIT_TOKEN, 'W');
+  assert.equal(byCall['gh pr create'].GH_TOKEN, 'W');
+  assert.equal(byCall['gh pr view'].GH_TOKEN, 'R', 'the "already exists" lookup reads only');
+  for (const e of Object.values(byCall)) {
+    assert.equal(e.WORCA_GH_READ_TOKEN, undefined);
+    assert.equal(e.WORCA_GH_WRITE_TOKEN, undefined);
+  }
+});
+
 test('createPr: same-repo passes --repo with a bare head; cross-repo uses owner:branch', async () => {
   const seen = [];
   gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut('https://github.com/up/repo/pull/5\n'); });
