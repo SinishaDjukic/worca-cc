@@ -226,6 +226,55 @@ test('the diff pill shows +A −R, falls back to "no diff", and hides when merge
   assert.equal(pill(gone).hidden, true, 'a branch that did not survive has no counts to show');
 });
 
+test('frozen run counts (diffFrozen) show whether merged, branch gone or zero; a late MERGED enrichment keeps them', async () => {
+  const base = { status: 'done', startedAt: '2026-01-01T00:00:00Z', branch: 'worca-cc/f', sourceBranch: 'main' };
+  const ctx = await boot({
+    fetchHandler: armsFor([
+      row({ ...base, id: 'fmerged', title: 'Frozen merged', survived: true, added: 40, removed: 7, diffFrozen: true,
+            pr: { state: 'MERGED', url: 'https://gh/x/pull/2' } }),
+      row({ ...base, id: 'fgone', title: 'Frozen gone', survived: false, added: 3, removed: 2, diffFrozen: true }),
+      row({ ...base, id: 'fzero', title: 'Frozen zero', survived: false, added: 0, removed: 0, diffFrozen: true }),
+      row({ ...base, id: 'legacy', title: 'Legacy merged', survived: true, added: 9, removed: 1, diffFrozen: false,
+            pr: { state: 'MERGED', url: 'https://gh/x/pull/3' } }),
+      row({ ...base, id: 'flate', title: 'Frozen late PR', survived: true, added: 5, removed: 1, diffFrozen: true }),
+    ]),
+  });
+  ctx.showHistory();
+  await ctx.settle();
+  const doc = ctx.window.document;
+  const card = (id) => doc.querySelector(`#history .hist-card[data-pipeline-id="${id}"]`);
+  const pill = (id) => card(id).querySelector('.hist-diff-pill');
+
+  assert.equal(pill('fmerged').hidden, false, 'a merged PR keeps the frozen counts');
+  assert.equal(card('fmerged').querySelector('.hist-diff .diff-add').textContent, '+40');
+  assert.equal(card('fmerged').querySelector('.hist-diff .diff-del').textContent, '−7'); // U+2212
+  assert.equal(card('fmerged').querySelector('.hist-nodiff').hidden, true);
+  assert.equal(pill('fmerged').title, '40 added, 7 removed by this run');
+
+  assert.equal(pill('fgone').hidden, false, 'a deleted branch keeps the frozen counts');
+  assert.equal(card('fgone').querySelector('.hist-diff .diff-add').textContent, '+3');
+  assert.equal(card('fgone').querySelector('.hist-diff .diff-del').textContent, '−2');
+
+  assert.equal(pill('fzero').hidden, false);
+  assert.equal(card('fzero').querySelector('.hist-diff').hidden, true);
+  assert.equal(card('fzero').querySelector('.hist-nodiff').hidden, false, 'a frozen 0/0 reads "no diff"');
+
+  assert.equal(pill('legacy').hidden, true, 'without frozen counts a merged PR still retires the pill');
+
+  // The PR enrichment lands after the paint and patches the card in place.
+  const prCall = ctx.calls.filter((c) => c.url.endsWith('/api/history/pr') && c.opts.body).at(-1);
+  const { token } = JSON.parse(prCall.opts.body);
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({
+    type: 'history-pr', token, done: true,
+    items: [{ projectKey: KEY, id: 'flate', pr: { state: 'MERGED', url: 'https://gh/x/pull/4' } }],
+  }) });
+  await ctx.settle();
+  assert.equal(pill('flate').hidden, false, 'a late MERGED enrichment does not hide a frozen pill');
+  assert.equal(card('flate').querySelector('.hist-diff .diff-add').textContent, '+5');
+  assert.equal(card('flate').querySelector('.hist-diff .diff-del').textContent, '−1');
+  assert.equal(pill('fmerged').hidden, false, 'the terminal batch keeps the other frozen pills');
+});
+
 // ---------------------------------------------------------------------------
 // Navigation (the card is a link to #history/<projectKey>/<id>)
 // ---------------------------------------------------------------------------
