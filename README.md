@@ -291,7 +291,9 @@ the Windows/WSL2 notes.
 The same image runs as an always-on service: on Railway (or any host), reachable only through a
 Cloudflare Tunnel with Cloudflare Access in front, and worca verifying the Access token itself.
 Step by step: [`docs/deploy-railway.md`](docs/deploy-railway.md); the Cloudflare side and the
-security model: [`docs/remote-access.md`](docs/remote-access.md).
+security model: [`docs/remote-access.md`](docs/remote-access.md). Upgrades, configuration and checks of a running
+deployment: [Operate your deployment](docs/deploy-railway.md#operate-your-deployment), with the
+`tools/railway/worca-railway.mjs` tool and the `/worca-railway` skill for Claude Code.
 
 ## Quick start
 
