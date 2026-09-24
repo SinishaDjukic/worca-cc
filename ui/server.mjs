@@ -101,7 +101,8 @@ import {
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
   metricsEvents, slugDirName, autoMetricsHome,
 } from '../src/core/metrics/sync.mjs';
-import { readScope, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
+import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
+import { resolveRunPrs, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
 // Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
 import {
   policyEvents, discoverPolicy, discoverAllPolicies, resolveProjectPolicy, resolveWorkspacePolicy, enableTeamPolicy, publishPolicy,
@@ -3373,6 +3374,21 @@ app.get('/api/team-metrics', async (req, res) => {
       refresh: read.refresh,
       fetchError: read.fetchError,
     });
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Timeline (docs/team-metrics.md "Timeline"): the pull requests behind the runs on screen.
+// Body { scope, runs: [{ id, repos, branch, pr, endedAt }] } (prLookupFor() rows). Answers from
+// the Action's PR events, the gh cache and gh itself; `status` says which of them was missing.
+app.post('/api/team-metrics/prs', async (req, res) => {
+  const body = req.body || {};
+  const scope = parseScopeParam(body.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  if (!Array.isArray(body.runs)) return badRequest(res, 'runs must be an array');
+  if (body.runs.length > TM_MAX_PR_LOOKUPS) return badRequest(res, `at most ${TM_MAX_PR_LOOKUPS} runs per request`);
+  try {
+    const { sources } = await scopeSources(scope);
+    res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => s.slug) }));
   } catch (err) { sendMetricsError(res, err); }
 });
 

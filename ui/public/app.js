@@ -149,6 +149,8 @@ import {
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel,
 } from './team-policy-view.mjs';
 import { aggregate, toCsv } from '../../src/shared/team-metrics/aggregate.mjs';
+import { buildWorkItems, prLookupFor } from '../../src/shared/team-metrics/timeline.mjs';
+import { renderTimeline, renderTimelinePopover, timelineWindow, shiftAnchor, TL_MODES, TL_ZOOMS } from './team-metrics-timeline.mjs';
 import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { paintAboutInto } from './about-links.mjs';
@@ -14636,6 +14638,10 @@ const tmState = {
   filter: {}, sort: {}, data: null, loading: false, loadSeq: 0,
   runLimit: TM_RUN_PAGE,            // raised by "Show all N runs" (§4.9 "every record in range")
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
+  tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
+  // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
+  tl: { zoom: 'month', anchor: Date.now(), mode: TL_MODES.includes(localStorage.getItem('worca.teamMetrics.tlMode')) ? localStorage.getItem('worca.teamMetrics.tlMode') : 'items', filter: null },
+  prs: new Map(),                   // scopeId → { map: runId → PRs|null, asked:Set, status, inflight, loading }
 };
 
 // The chip while a load is out: hold Refresh and spin, keep the words. Cleared by the next
@@ -14679,6 +14685,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
     body.classList.remove('is-loading');
     body.removeAttribute('aria-busy');
     body.replaceChildren(renderTmEmptyState({ doc: document }));
+    applyTmTab();
     return;
   }
   // Instant paint (docs/team-metrics.md "Loading"): this scope's last payload of the session when
@@ -14693,6 +14700,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   } else if (!tmState.data) {
     body.replaceChildren(renderTmSkeleton({ doc: document, scopeKind: tmState.scopeId.startsWith('workspace:') ? 'workspace' : 'project' }));
   }
+  applyTmTab();
   // aggregate=0: this page always re-aggregates the records itself (range/group/filter are local).
   // defer=1: the worktree answers now; a due fetch runs after the response and its `changed`
   // event reloads the page — the chip says "Checking origin…" meanwhile.
@@ -14714,14 +14722,174 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
     body.classList.remove('is-loading');
     body.removeAttribute('aria-busy');
     body.replaceChildren(Object.assign(document.createElement('small'), { className: 'hint err', textContent: `Could not load team metrics: ${err.message}` }));
+    applyTmTab();
     return;
   }
   tmState.data = data;
   tmState.cache.set(tmState.scopeId, data);
   chip.hidden = false;
   chip.replaceChildren(renderSyncChip(data, { doc: document, now: Date.now() }));
+  if (refresh) tmPrsFor(tmState.scopeId).asked.clear();   // Refresh re-asks for the PRs on screen too
   renderTeamMetrics();
   body.removeAttribute('aria-busy');
+  applyTmTab();
+}
+
+// ---- Team metrics → Timeline (docs/team-metrics.md "Timeline") -----------------------------
+const TL_DAY = 86_400_000;
+const TL_PR_LOOKBACK = 60 * TL_DAY;   // runs this far before the window can still have bars in it
+const TL_PR_CHUNK = 500;
+
+function tmPrsFor(scopeId) {
+  if (!tmState.prs.has(scopeId)) tmState.prs.set(scopeId, { map: new Map(), asked: new Set(), status: null, inflight: false, loading: false });
+  return tmState.prs.get(scopeId);
+}
+
+/** Tabs: Overview keeps the range/filter controls; the Timeline has its own calendar. */
+function applyTmTab() {
+  const tl = tmState.tab === 'timeline';
+  $$('#tm-tabs [data-tm-tab]').forEach((b) => {
+    const on = b.dataset.tmTab === tmState.tab;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  const range = document.getElementById('tm-range');
+  if (range) range.hidden = tl;
+  const custom = document.getElementById('tm-custom');
+  if (custom) custom.hidden = tl || tmState.range !== 'custom';
+  const chips = document.getElementById('tm-filters');
+  if (chips && tl) chips.hidden = true;
+  // No data yet (skeleton, empty state, an error): #tm-body says so on either tab.
+  const showTl = tl && !!tmState.data;
+  const body = document.getElementById('tm-body');
+  const host = document.getElementById('tm-timeline');
+  if (body) body.hidden = showTl;
+  if (host) host.hidden = !showTl;
+  if (showTl) { renderTmTimeline(); tlScrollToNow(); }
+}
+
+/** px the calendar can fill: the card's width minus the sticky label column (style.css --tl-lab). */
+function tlFit(host) {
+  const lab = window.matchMedia && window.matchMedia('(max-width:720px)').matches ? 176 : 300;
+  return Math.max(0, (host.clientWidth || 0) - lab - 2);
+}
+
+function renderTmTimeline() {
+  const host = document.getElementById('tm-timeline');
+  const data = tmState.data;
+  if (!host || !data) return;
+  const pr = tmPrsFor(tmState.scopeId);
+  const now = Date.now();
+  tmState.tlItems = buildWorkItems(data.records || [], { prs: Object.fromEntries(pr.map), now });
+  const scroll = host.querySelector('.tl-scroll');
+  const keepScroll = scroll ? scroll.scrollLeft : 0;
+  tmState.tlFit = tlFit(host);
+  host.replaceChildren(renderTimeline({ ...tmState.tl, items: tmState.tlItems, now, prStatus: pr.status, prLoading: pr.loading, fit: tmState.tlFit }, { doc: document }));
+  const next = host.querySelector('.tl-scroll');
+  if (next && tmState.tlKeepScroll) next.scrollLeft = keepScroll;
+  tmState.tlKeepScroll = false;
+  void ensureTmPrs();
+}
+
+function mergePrStatus(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    ...b,
+    gh: b.gh !== 'unused' ? b.gh : a.gh,
+    ghDetail: b.ghDetail ?? a.ghDetail,
+    ghError: b.ghError ?? a.ghError,
+    actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
+    unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
+  };
+}
+
+/**
+ * Asks the server for the pull requests behind the runs the window can show (and a lookback
+ * for work that started earlier), once per run per session. The page paints without them first;
+ * "Checking pull requests…" shows meanwhile, and the answer repaints the timeline.
+ */
+async function ensureTmPrs() {
+  const scopeId = tmState.scopeId;
+  const pr = tmPrsFor(scopeId);
+  if (pr.inflight || !tmState.data || tmState.tab !== 'timeline') return;
+  const win = timelineWindow(tmState.tl.zoom, tmState.tl.anchor);
+  const lo = win.s - TL_PR_LOOKBACK;
+  const need = (tmState.data.records || []).filter((r) => {
+    const t = Date.parse(r.startedAt);
+    return t >= lo && t < win.e && !pr.asked.has(r.id);
+  });
+  if (!need.length) return;
+  pr.inflight = true; pr.loading = true;
+  // Asked once per session, answer or not: a failing lookup must not loop (render → ask → fail →
+  // render). Refresh clears the set and tries again.
+  for (const r of need) pr.asked.add(r.id);
+  renderTmTimeline();
+  try {
+    for (let i = 0; i < need.length; i += TL_PR_CHUNK) {
+      const chunk = need.slice(i, i + TL_PR_CHUNK);
+      const res = await fetch('/api/team-metrics/prs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: scopeId, runs: chunk.map(prLookupFor) }) });
+      const d = await safeJson(res);
+      if (!res.ok) { pr.status = mergePrStatus(pr.status, { gh: 'unused', ghError: (d && d.error) || `HTTP ${res.status}` }); break; }
+      for (const [id, v] of Object.entries(d.prs || {})) pr.map.set(id, v);
+      pr.status = mergePrStatus(pr.status, d.status);
+    }
+  } catch (err) {
+    pr.status = mergePrStatus(pr.status, { gh: 'unused', ghError: err.message });
+  } finally {
+    pr.inflight = false; pr.loading = false;
+  }
+  if (tmState.scopeId === scopeId && tmState.tab === 'timeline' && currentView() === 'team-metrics') { tmState.tlKeepScroll = true; renderTmTimeline(); }
+}
+
+function closeTlPopover() { document.querySelectorAll('.tl-pop').forEach((p) => p.remove()); }
+
+function openTlPopover(hit) {
+  closeTlPopover();
+  const it = (tmState.tlItems || []).find((x) => x.key === hit.dataset.tlItem);
+  if (!it) return;
+  const pop = renderTimelinePopover(it, { doc: document, now: Date.now() });
+  document.getElementById('tm-timeline').append(pop);
+  const r = hit.getBoundingClientRect();
+  const pw = pop.offsetWidth || 340; const ph = pop.offsetHeight || 300;
+  const x = Math.min(Math.max(16, r.left + Math.min(r.width, 60)), window.innerWidth - pw - 16);
+  let y = r.bottom + 8;
+  if (y + ph > window.innerHeight - 16) y = Math.max(16, r.top - ph - 8);
+  pop.style.left = `${x}px`; pop.style.top = `${y}px`;
+  pop.querySelector('.tl-pop-x')?.focus();
+}
+
+function tlScrollToNow() {
+  const sc = document.querySelector('#tm-timeline .tl-scroll');
+  const win = timelineWindow(tmState.tl.zoom, tmState.tl.anchor, { fit: tmState.tlFit });
+  const now = Date.now();
+  if (!sc || now < win.s || now >= win.e) return;
+  sc.scrollLeft = Math.max(0, ((now - win.s) / (win.e - win.s)) * win.W - sc.clientWidth / 2);
+}
+
+/** Delegated clicks inside #tm-timeline. Returns true when the click was the timeline's. */
+function onTimelineClick(e) {
+  const t = e.target;
+  if (t.closest('[data-tl-close]')) { closeTlPopover(); return true; }
+  if (t.closest('.tl-pop')) return true;
+  const hit = t.closest('[data-tl-item]');
+  if (hit) { openTlPopover(hit); return true; }
+  const tl = tmState.tl;
+  const ctl = t.closest('[data-tl-filter],[data-tl-mode],[data-tl-shift],[data-tl-today],[data-tl-zoom],[data-tl-day],[data-tl-week]');
+  closeTlPopover();
+  if (!ctl) return false;
+  const d = ctl.dataset;
+  if (d.tlFilter) tl.filter = tl.filter === d.tlFilter ? null : d.tlFilter;
+  else if (d.tlMode) { tl.mode = d.tlMode; try { localStorage.setItem('worca.teamMetrics.tlMode', tl.mode); } catch { /* private mode */ } }
+  else if (d.tlShift) tl.anchor = shiftAnchor(tl.zoom, tl.anchor, Number(d.tlShift));
+  else if (d.tlToday) tl.anchor = Date.now();
+  else if (d.tlZoom && TL_ZOOMS.includes(d.tlZoom)) tl.zoom = d.tlZoom;
+  else if (d.tlDay) { tl.zoom = 'day'; tl.anchor = Number(d.tlDay) + 12 * 3_600_000; }
+  else if (d.tlWeek) { tl.zoom = 'week'; tl.anchor = Number(d.tlWeek) + 12 * 3_600_000; }
+  tmState.tlKeepScroll = !!(d.tlFilter || d.tlMode);
+  renderTmTimeline();
+  if (d.tlToday) tlScrollToNow();
+  return true;
 }
 
 function renderTeamMetrics() {
@@ -14779,6 +14947,14 @@ if (tmSection) {
     else if (e.target.id === 'tm-from' || e.target.id === 'tm-to') { tmState[e.target.id === 'tm-from' ? 'from' : 'to'] = e.target.value; if (tmState.from && tmState.to) renderTeamMetrics(); }
   });
   tmSection.addEventListener('click', async (e) => {
+    const tabBtn = e.target.closest('[data-tm-tab]');
+    if (tabBtn) {
+      closeTlPopover();
+      location.hash = tabBtn.dataset.tmTab === 'timeline' ? 'team-metrics/timeline' : 'team-metrics';
+      return;
+    }
+    if (e.target.closest('#tm-timeline')) { onTimelineClick(e); return; }
+    closeTlPopover();
     const rangeBtn = e.target.closest('#tm-range button');
     if (rangeBtn) {
       tmState.range = rangeBtn.dataset.range;
@@ -14823,12 +14999,30 @@ if (tmSection) {
     }
   });
   tmSection.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.querySelector('.tl-pop')) { closeTlPopover(); return; }
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const t = e.target.closest('tr[data-filter-dim], table.tm-tbl th[data-sort]');
     if (t) { e.preventDefault(); t.click(); }
   });
   // Chart tooltip: reuse the Stats pattern (pointerover/focusin on .ch-hit → #tm-tip).
   bindChartTips(tmSection, document.getElementById('tm-tip'));
+  // The Timeline's calendar fills the card: repaint it at the new width (debounced). Watching the
+  // host, not the window, also catches the page's scrollbar appearing when the rows grow.
+  let tlResizeTimer = null;
+  const tlOnResize = () => {
+    clearTimeout(tlResizeTimer);
+    tlResizeTimer = setTimeout(() => {
+      const host = document.getElementById('tm-timeline');
+      if (!host || host.hidden || currentView() !== 'team-metrics' || tmState.tab !== 'timeline' || !tmState.data) return;
+      if (tlFit(host) === tmState.tlFit) return;
+      closeTlPopover();
+      tmState.tlKeepScroll = true;
+      renderTmTimeline();
+    }, 150);
+  };
+  const tlHost = document.getElementById('tm-timeline');
+  if (tlHost && typeof window.ResizeObserver === 'function') new window.ResizeObserver(tlOnResize).observe(tlHost);
+  else window.addEventListener('resize', tlOnResize);
 }
 
 // ---------------------------------------------------------------------------
@@ -23469,7 +23663,13 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
-  if (name === 'team-metrics') loadTeamMetricsView();
+  if (name === 'team-metrics') {
+    // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
+    // the records are the same, so there is nothing to fetch again.
+    tmState.tab = param === 'timeline' ? 'timeline' : 'overview';
+    if (prevView === 'team-metrics' && tmState.data) { closeTlPopover(); applyTmTab(); if (tmState.tab === 'overview') renderTeamMetrics(); }
+    else loadTeamMetricsView();
+  } else closeTlPopover();
   if (name === 'team-policy') loadTeamPolicyView(param);
   if (name === 'workspaces') {
     setWsMsg('');

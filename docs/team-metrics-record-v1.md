@@ -206,6 +206,29 @@ branch. Two variants:
 A delegation marker never carries run files; the resolver treats it as a pointer to another
 slug's sink.
 
+## PR event files (`.worca-metrics/prs/<number>.json`)
+
+Written by the optional merge-tracking GitHub Action (`worca metrics pr-workflow`, see
+[`docs/team-metrics.md`](./team-metrics.md) "Merge tracking"), never by Worca itself: one JSON
+line per pull request of the repository, rewritten with its latest state on every open, reopen
+and close.
+
+```json
+{"v":1,"kind":"pr","repo":"acme/billing-api","number":474,"url":"https://github.com/acme/billing-api/pull/474","title":"Idempotency keys for invoices","head":"worca/idempotency-keys-a1b2c3d4","base":"dev","state":"MERGED","createdAt":"2026-09-16T14:50:00Z","mergedAt":"2026-09-22T17:30:00Z","closedAt":"2026-09-22T17:30:00Z","updatedAt":"2026-09-22T17:30:00Z"}
+```
+
+| Field | Notes |
+|---|---|
+| `v`, `kind` | always `1` and `"pr"`; anything else is ignored |
+| `repo` | `owner/repo` as GitHub spells it; matched case-insensitively to record slugs |
+| `number`, `url`, `title` | the PR; `title` cleaned of control characters, ≤200 chars |
+| `head`, `base` | branch names; `head` is what a run's `git.branch` is matched against |
+| `state` | `OPEN`, `MERGED` or `CLOSED` (closed without merge) |
+| `createdAt`, `mergedAt`, `closedAt`, `updatedAt` | GitHub's timestamps, UTC; `null` when not yet |
+
+Readers apply the same guards as for run files (regular files only, no symlinks, bounded size)
+and ignore files not named `<number>.json`.
+
 ## Run file naming
 
 One run is one file: `records/YYYY/MM/<YYYYMMDDTHHMMSSZ>-<runId>.jsonl`, where the timestamp

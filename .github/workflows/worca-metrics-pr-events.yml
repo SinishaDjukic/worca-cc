@@ -1,0 +1,84 @@
+# Worca team metrics: pull-request events for the delivery timeline.
+#
+# Writes one small file per pull request, .worca-metrics/prs/<number>.json, to the
+# worca-metrics branch whenever a PR is opened, reopened or closed, so the Team metrics
+# Timeline knows when work merged without anyone needing the GitHub CLI. Run it by hand
+# ("Run workflow") to backfill the PRs updated in the last N days.
+#
+# Installed by `worca metrics pr-workflow`; see docs/team-metrics.md ("Merge tracking").
+# Safe on pull_request_target: it never checks out or runs code from the pull request,
+# it only reads the event's metadata. It does nothing when the repository has no
+# worca-metrics branch. Like Worca itself, it needs worca-metrics to be exempt from
+# branch protection.
+name: Worca metrics · PR events
+
+on:
+  pull_request_target:
+    types: [opened, reopened, closed]
+  workflow_dispatch:
+    inputs:
+      days:
+        description: Backfill the pull requests updated in the last N days
+        default: '90'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: worca-metrics-pr-events
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const BRANCH = 'worca-metrics';
+            const DIR = '.worca-metrics/prs';
+            const { owner, repo } = context.repo;
+            const headRef = async () => (await github.rest.git.getRef({ owner, repo, ref: `heads/${BRANCH}` })).data.object.sha;
+            try { await headRef(); } catch (e) {
+              if (e.status === 404) { core.notice(`No ${BRANCH} branch here: team metrics are not enabled, nothing to record.`); return; }
+              throw e;
+            }
+            const clean = (s) => String(s || '').replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ').trim().slice(0, 200);
+            const toEvent = (pr) => ({
+              v: 1, kind: 'pr', repo: `${owner}/${repo}`, number: pr.number, url: pr.html_url, title: clean(pr.title),
+              head: pr.head.ref, base: pr.base.ref,
+              state: pr.merged_at ? 'MERGED' : pr.state === 'closed' ? 'CLOSED' : 'OPEN',
+              createdAt: pr.created_at, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null, updatedAt: pr.updated_at,
+            });
+            let prs = [];
+            if (context.eventName === 'workflow_dispatch') {
+              const days = Math.max(1, Math.min(3650, Number(context.payload.inputs?.days) || 90));
+              const since = Date.now() - days * 86400000;
+              outer: for await (const page of github.paginate.iterator(github.rest.pulls.list, { owner, repo, state: 'all', sort: 'updated', direction: 'desc', per_page: 100 })) {
+                for (const pr of page.data) { if (Date.parse(pr.updated_at) < since) break outer; prs.push(pr); }
+              }
+            } else prs = [context.payload.pull_request];
+            prs = prs.filter((pr) => pr && pr.head && pr.head.ref);
+            for (let i = 0; i < prs.length; i += 200) {
+              const chunk = prs.slice(i, i + 200);
+              const tree = chunk.map((pr) => ({ path: `${DIR}/${pr.number}.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(toEvent(pr))}\n` }));
+              const message = chunk.length === 1 ? `worca-metrics: PR #${chunk[0].number} ${toEvent(chunk[0]).state.toLowerCase()}` : `worca-metrics: ${chunk.length} PR events`;
+              for (let attempt = 1; ; attempt++) {
+                const parent = await headRef();
+                const base = (await github.rest.git.getCommit({ owner, repo, commit_sha: parent })).data.tree.sha;
+                const next = (await github.rest.git.createTree({ owner, repo, base_tree: base, tree })).data.sha;
+                if (next === base) { core.info('Already up to date.'); break; }
+                const commit = (await github.rest.git.createCommit({ owner, repo, message, tree: next, parents: [parent] })).data.sha;
+                try {
+                  await github.rest.git.updateRef({ owner, repo, ref: `heads/${BRANCH}`, sha: commit, force: false });
+                  core.info(`${message} (${chunk.length} file${chunk.length === 1 ? '' : 's'})`);
+                  break;
+                } catch (e) {
+                  // 422: someone (a teammate's Worca) pushed in between. Rebuild on the new tip.
+                  if (e.status !== 422 || attempt >= 5) throw e;
+                  await new Promise((r) => setTimeout(r, 1000 * attempt));
+                }
+              }
+            }

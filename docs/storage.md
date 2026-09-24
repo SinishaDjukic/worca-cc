@@ -49,6 +49,7 @@ project's working tree, so nothing is ever committed to your repo.
     outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
     no-hooks/                            empty core.hooksPath for metrics git commands
     ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
+    pr-cache.json                        Timeline: pull requests per repo#branch asked from gh (merged = final)
     tmp/enable-*                         transient staging for the orphan root commit
   policy/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
