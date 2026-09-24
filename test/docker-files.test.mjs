@@ -71,6 +71,28 @@ test('entrypoint.sh: single-volume mode prepares the volume as root, then drops 
   assert.match(block, /exit 78/, 'non-root on an unwritable volume is a config error');
 });
 
+test('agent isolation: a worca-agent user, sudo only to it, set up on single-volume hosts', () => {
+  const d = read('docker/Dockerfile');
+  assert.match(d, /useradd -u 1001 -g worca-share .* worca-agent/);
+  assert.match(d, /usermod -aG worca-share worca/);
+  assert.match(d, /'worca ALL=\(worca-agent\) NOPASSWD:SETENV: ALL'/, 'worca may become worca-agent and nothing else');
+  assert.doesNotMatch(d, /\(root\)|\(ALL\)/, 'never root');
+  assert.match(d, /umask=0007, umask_override/, 'agent files stay group-writable, never world-readable');
+  assert.match(d, /visudo -cf \/etc\/sudoers\.d\/worca-agent/, 'a broken rule fails the build');
+
+  const e = read('docker/entrypoint.sh');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.match(block, /WORCA_AGENT_ISOLATION:-1/, 'on by default, with an explicit off switch');
+  assert.match(block, /chmod 2770 "\$wh\/store" "\$wh\/runs" "\$data\/projects"/, 'shared dirs are setgid, not world-open');
+  assert.match(block, /chmod 0711 "\$data" "\$data\/worca" "\$wh"/, 'the worca home is traverse-only');
+  assert.match(block, /chmod 0700 "\$ah"/);
+  assert.match(block, /sharedRepository = group/);
+  assert.match(block, /export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="\$ah"/);
+  assert.ok(block.indexOf('umask 0007') < block.indexOf('exec setpriv'), 'the server inherits the umask');
+  assert.match(block, /WORCA_ALLOWED_HOSTS[\s\S]*exit 78/, 'a hosted worca refuses to run agents as the server when sudo fails');
+  assert.doesNotMatch(e, /gh auth setup-git >/, 'no global credential helper');
+});
+
 test('compose.yml: loopback-only publish, least privilege, named volumes, no docker socket', () => {
   const c = read('docker/compose.yml');
   assert.match(c, /"127\.0\.0\.1:\$\{WORCA_PORT:-4317\}:4317"/, 'the UI is published on the host loopback only');

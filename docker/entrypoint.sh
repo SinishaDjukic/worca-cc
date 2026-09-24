@@ -27,6 +27,39 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     # (cheap) so a directory added by a newer image is never left root-owned.
     if [ "$(stat -c %U "$data")" != worca ]; then chown -R worca:worca "$data"; fi
     chown worca:worca "$data" "$data/worca" "$data/projects" "$data/home" "$data/home/.claude"
+    # Agents under their own uid (src/core/agent-user.mjs), unless WORCA_AGENT_ISOLATION=0.
+    # Shared with worca-agent through the worca-share group: the projects, the run checkouts
+    # (runs/) and the run store (store/). Private to worca: everything else in its home (the
+    # database, settings, plugin secrets), HOME with Claude Code's login, and its environment.
+    if [ "${WORCA_AGENT_ISOLATION:-1}" != 0 ] && id worca-agent >/dev/null 2>&1; then
+      wh="$data/worca/.worca-cc"; ah="$data/agent-home"
+      mkdir -p "$wh/store" "$wh/runs" "$ah"
+      chown worca:worca "$wh"
+      chown worca:worca-share "$wh/store" "$wh/runs" "$data/projects"
+      chown worca-agent:worca-share "$ah"
+      chmod 0711 "$data" "$data/worca" "$wh"
+      chmod 2770 "$wh/store" "$wh/runs" "$data/projects"
+      chmod 0700 "$ah"
+      # Once per volume: existing files join the boundary (new ones get it from umask + setgid).
+      if [ ! -e "$wh/.agent-isolation" ]; then
+        chmod -R o-rwx "$data/worca" "$data/projects" "$data/home"
+        chmod 0711 "$data/worca" "$wh"
+        for t in "$wh/store" "$wh/runs" "$data/projects"; do
+          chgrp -R worca-share "$t"
+          chmod -R g+rwX "$t"
+          find "$t" -type d -exec chmod g+s {} +
+        done
+        touch "$wh/.agent-isolation"
+        chown worca:worca "$wh/.agent-isolation"
+      fi
+      # The agent works in repositories worca owns, and writes objects both users share.
+      printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$ah/.gitconfig"
+      chown worca-agent:worca-share "$ah/.gitconfig"
+      export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="$ah"
+      WORCA_AGENT_GID="$(getent group worca-share | cut -d: -f3)"
+      export WORCA_AGENT_GID
+      umask 0007
+    fi
     exec setpriv --reuid=worca --regid=worca --init-groups -- "$0" "$@"
   fi
   if [ ! -w "$data" ]; then
@@ -36,6 +69,20 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
   fi
   export HOME="$data/home" WORCA_HOME="$data/worca" WORCA_PROJECTS_ROOT="$data/projects"
   cd "$WORCA_PROJECTS_ROOT"
+  if [ -n "${WORCA_AGENT_USER:-}" ]; then
+    # Objects the server writes into shared repositories stay group-writable for the agent.
+    git config --global core.sharedRepository group
+    if sudo -n -u "$WORCA_AGENT_USER" -- true 2>/dev/null; then
+      log "agents run as $WORCA_AGENT_USER; they cannot read worca's settings, database or environment"
+    elif [ -n "${WORCA_ALLOWED_HOSTS:-}" ]; then
+      log "cannot start commands as $WORCA_AGENT_USER (sudo refused). A hosted worca does not run agents"
+      log "  as the server; fix the runtime, or set WORCA_AGENT_ISOLATION=0 to accept it explicitly."
+      exit 78   # EX_CONFIG
+    else
+      log "cannot start commands as $WORCA_AGENT_USER (sudo refused); agents run as worca instead"
+      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID
+    fi
+  fi
 fi
 
 # 1. Volume ownership.
@@ -81,6 +128,10 @@ if [ "$auth" = "none" ]; then
   log "  docker compose run --rm worca claude"
 else
   log "Claude Code auth: $auth"
+fi
+if [ -n "${WORCA_AGENT_USER:-}" ] && [ "$auth" = "stored login" ]; then
+  log "agents run as $WORCA_AGENT_USER and cannot use worca's stored login;"
+  log "  set CLAUDE_CODE_OAUTH_TOKEN (from 'claude setup-token') or ANTHROPIC_API_KEY instead"
 fi
 
 # The compose secret path: point Claude Code at the file without putting the

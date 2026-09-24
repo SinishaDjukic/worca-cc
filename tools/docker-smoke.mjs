@@ -21,6 +21,9 @@
 //   4. Single-volume mode (WORCA_DATA_DIR, the Railway layout): one root-owned
 //      volume, container started as root; everything runs as worca, HOME is on
 //      the volume, a later boot re-owns top-level dirs; non-root is refused (78).
+//   5. Agent isolation there: a fake `claude` started through runClaude runs as
+//      worca-agent, without a GitHub token, cannot read the server's environment,
+//      database or HOME, and commits in a project worca owns.
 // ESM, no external dependencies.
 
 import { spawnSync } from 'node:child_process';
@@ -153,6 +156,8 @@ async function singleVolume() {
   if (homeEnv !== 'HOME=/data/home\nWORCA_HOME=/data/worca\nWORCA_PROJECTS_ROOT=/data/projects') fail(`single-volume: server env\n${homeEnv}`);
   else ok('single-volume: HOME, WORCA_HOME and WORCA_PROJECTS_ROOT are on the volume');
 
+  await agentIsolation(inBox);
+
   // Simulate a later image adding/leaving a root-owned top-level dir, then reboot.
   docker(['stop', '-t', '15', DATA_NAME]);
   docker(['run', '--rm', '--user', '0:0', '--entrypoint', 'chown', '-v', `${DATA_VOLUME}:/data`, a.image, 'root:root', '/data/projects']);
@@ -164,6 +169,48 @@ async function singleVolume() {
   const again = inBox('stat -c %U /data/projects; test -s /data/worca/.worca-cc/worca-cc.db && echo db');
   if (again !== 'worca\ndb') fail(`single-volume second boot: ${again}`);
   else ok('single-volume: second boot re-owns a root-owned top-level dir and keeps the DB');
+}
+
+/**
+ * Agents under their own uid (src/core/agent-user.mjs): the real runClaude, with asAgent, starts a
+ * fake `claude` that reports who it is and what it can reach. It must run as worca-agent, get no
+ * GitHub token, be unable to read the server's environment, database or HOME, and still commit in
+ * a project worca owns; the server must then be able to remove what the agent wrote.
+ */
+async function agentIsolation(inBox) {
+  const serverEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o node)/environ | grep -E "^WORCA_AGENT_(USER|HOME)=" | sort', 'worca');
+  if (serverEnv !== 'WORCA_AGENT_HOME=/data/agent-home\nWORCA_AGENT_USER=worca-agent') { fail(`agent isolation: server env\n${serverEnv}`); return; }
+  ok('agent isolation: the server knows its agent user');
+
+  const perms = inBox('stat -c "%a %G %n" /data/projects /data/worca/.worca-cc/runs /data/worca/.worca-cc/store /data/agent-home /data/worca/.worca-cc');
+  const want = ['2770 worca-share /data/projects', '2770 worca-share /data/worca/.worca-cc/runs', '2770 worca-share /data/worca/.worca-cc/store', '700 worca-share /data/agent-home', '711 worca /data/worca/.worca-cc'];
+  if (perms !== want.join('\n')) fail(`agent isolation: permissions\n${perms}`);
+  else ok('agent isolation: shared dirs are setgid worca-share, the worca home is traverse-only');
+
+  inBox('cd /data/projects && umask 0007 && git init -q -b main iso && cd iso && git -c user.name=s -c user.email=s@x commit -q --allow-empty -m init', 'worca');
+  writeFileSync(join(tmpdir(), `fake-claude-${stamp}`), [
+    '#!/bin/sh',
+    'p=$(pgrep -u worca -o node)',
+    'r() { if cat "$1" >/dev/null 2>&1; then echo read; else echo denied; fi; }',
+    'cd /data/projects/iso && echo agent > by-agent.txt && git add by-agent.txt && git -c user.name=a -c user.email=a@x commit -qm agent && c=committed || c=nocommit',
+    'printf \'{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s commit=%s"}\\n\' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:-none}" "$c"',
+    '',
+  ].join('\n'));
+  docker(['cp', join(tmpdir(), `fake-claude-${stamp}`), `${DATA_NAME}:/tmp/fake-claude`]);
+  inBox('chmod 755 /tmp/fake-claude');
+  const driver = "const { runClaude } = await import('/usr/local/lib/node_modules/@worca/app/src/core/claude-runner.mjs');"
+    + "const r = await runClaude({ cwd: '/data/projects/iso', prompt: 'x', bin: '/tmp/fake-claude', asAgent: true }); console.log(r.text);";
+  const run = docker(['exec', '--user', 'worca', '-e', 'WORCA_MOCK=0', '-e', 'GH_TOKEN=ghp_smoke', '-e', 'WORCA_GH_WRITE_TOKEN=ghp_smoke_w',
+    '-e', 'WORCA_AGENT_USER=worca-agent', '-e', 'WORCA_AGENT_HOME=/data/agent-home', '-e', 'WORCA_AGENT_GID=1001',
+    DATA_NAME, 'sh', '-c', `umask 0007 && cd /data/projects && node --input-type=module -e "${driver}"`], { allowFail: true });
+  const got = run.stdout.trim().split('\n').pop();
+  const expect = 'user=worca-agent environ=denied db=denied home=denied gh=none commit=committed';
+  if (got !== expect) { fail(`agent isolation: agent saw "${got}", expected "${expect}"\n${run.stderr}`); return; }
+  ok('agent isolation: the agent runs as worca-agent, has no GitHub token, cannot read the server env, DB or HOME, and commits');
+
+  const cleanup = inBox('cd /data/projects/iso && git log --format=%s -1 && rm -f by-agent.txt && git status --short | head -1', 'worca');
+  if (cleanup !== 'agent\nD  by-agent.txt' && cleanup !== 'agent\n D by-agent.txt') fail(`agent isolation: server after the agent\n${cleanup}`);
+  else ok('agent isolation: the server can read and remove what the agent wrote');
 }
 
 async function main() {

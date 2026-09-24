@@ -53,6 +53,7 @@ import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { stripGithubCredentials } from './github-credentials.mjs';
+import { agentIdentity, agentSpawn, killAgentGroup, shareWithAgent } from './agent-user.mjs';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -396,6 +397,9 @@ export async function runClaude(o = {}) {
     appendSubagentSystemPrompt,
     addDirs,
     argvInlineLimit,
+    // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
+    // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
+    asAgent,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -442,6 +446,7 @@ export async function runClaude(o = {}) {
     appendSubagentSystemPrompt,
     addDirs,
     argvInlineLimit,
+    asAgent,
   });
 }
 
@@ -596,7 +601,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit, asAgent }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -728,10 +733,20 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
     }
 
+    // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
+    // own process group so a stuck agent can still be SIGKILLed through sudo.
+    const agentId = asAgent ? agentIdentity() : null;
     let child;
     try {
-      child = spawn(resolved.bin, args, {
+      let file = resolved.bin;
+      let argv = args;
+      if (agentId) {
+        if (plan.dir) shareWithAgent(plan.dir, agentId);
+        ({ file, args: argv, env: spawnEnv } = agentSpawn(resolved.bin, args, spawnEnv, agentId));
+      }
+      child = spawn(file, argv, {
         cwd, stdio: [plan.stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}),
+        ...(agentId ? { detached: true } : {}),
       });
     } catch (err) {
       cleanupStaged();
@@ -766,11 +781,14 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       }
       // Escalate if it ignores SIGTERM.
       setTimeout(() => {
+        // Only a sudo still running holds the group: after it exits the pid may be reused.
+        const stuck = child.exitCode === null && child.signalCode === null;
         try {
           child.kill('SIGKILL');
         } catch {
           /* ignore */
         }
+        if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
     if (signal) {

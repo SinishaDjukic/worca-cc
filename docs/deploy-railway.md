@@ -26,6 +26,11 @@ your own.
 - **No public domain on worca.** `cloudflared` runs as its own service and dials out, so the
   tunnel is the only way in. As a separate service it also never counts as an in-container caller.
 - **One replica.** Worca's run registry and WebSocket replay buffers are in memory.
+- **Agents under their own user.** Agents and workflow scripts run as `worca-agent`. They share
+  the projects and run checkouts with worca, but cannot read its settings, database, `HOME` or
+  environment, and never get a GitHub token. Pushes and pull requests are worca's own calls. If
+  the runtime refuses the user switch, a hosted worca exits instead of running agents as itself
+  (`WORCA_AGENT_ISOLATION=0` accepts that explicitly).
 
 ## 1. Prepare
 
@@ -78,7 +83,7 @@ One Railway **project per deployment**. Use either the dashboard or the CLI.
    | `WORCA_ALLOWED_HOSTS` | `worca.example.com,healthcheck.railway.app`: Railway's healthcheck sends `Host: healthcheck.railway.app`, and with that host it can reach only `/api/health` |
    | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` |
    | `WORCA_CF_ACCESS_AUD` | the application's AUD tag |
-   | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret |
+   | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret. Needed as a variable: agents run as their own user and cannot use a login stored in worca's `HOME` |
    | `GH_TOKEN` | secret (optional at first). Or two tokens, `WORCA_GH_READ_TOKEN` (clone, fetch: Contents read) and `WORCA_GH_WRITE_TOKEN` (push, PRs: Contents and Pull requests read/write). Agents never get either |
    | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | the identity agents commit with |
 
