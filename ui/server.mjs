@@ -4852,9 +4852,11 @@ app.get('/api/health', (req, res) => {
 });
 
 // Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
+// `shared`: a real per-person sign-in (Access or a trusted header), the one case where the UI
+// shows people at all; a local install or a one-person WORCA_IDENTITY_NAME deployment shows none.
 app.get('/api/whoami', (req, res) => {
   const who = resolveIdentity(req);
-  res.json(who.source === 'local' ? { name: null, source: 'local' } : who);
+  res.json(who.source === 'local' ? { name: null, source: 'local', shared: false } : { ...who, shared: isSharedIdentity(who.source) });
 });
 
 /** Constant-time bearer check; `expected` is the boot-time token from ui.json. */

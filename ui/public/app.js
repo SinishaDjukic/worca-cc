@@ -43,6 +43,7 @@ const state = {
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
+  historyPerson: '', // active "Started by" filter (lower-cased name); '' === everyone. Shared deployments only.
   ghAvailable: false,// gh CLI availability, from the last /api/history load
 
   // --- Workspaces ---
@@ -771,20 +772,80 @@ function attributedName(v) {
   return s && s !== 'local' ? s : '';
 }
 
-// "Signed in as" in the rail foot: fetched once at boot. The server answers
-// { name: null } for a local install, and then the line stays hidden.
+// Who is looking (GET /api/whoami, fetched once at boot). People are shown ONLY on a shared
+// deployment — a real per-person sign-in (Cloudflare Access or a trusted header). A local
+// install, or a one-person WORCA_IDENTITY_NAME deployment, stores who started a run but
+// shows none of it: there is only ever one answer to "who".
+const viewer = { shared: false, name: null };
+
+/** The person to show for a stored name, or '' (not shared, nobody, or 'local'). */
+function personShown(v) {
+  return viewer.shared ? attributedName(v) : '';
+}
+/** True when `name` is the signed-in viewer (case-insensitive). */
+function isViewer(name) {
+  return !!(viewer.name && name && name.toLowerCase() === viewer.name.toLowerCase());
+}
+/** The short label for cards and banners: 'you' for the viewer, else the name, else ''. */
+function personLabel(v) {
+  const n = personShown(v);
+  return !n ? '' : isViewer(n) ? 'you' : n;
+}
+/** Up to two initials: an email's local part (or a display name) split on . _ - and spaces. */
+function personInitials(name) {
+  const base = String(name || '').trim().split('@')[0];
+  const parts = base.split(/[\s._-]+/).filter(Boolean);
+  const ini = parts.slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return /^[A-Z0-9]{1,2}$/.test(ini) ? ini : (ini ? ini.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?' : '?');
+}
+/** A neutral initials circle; `title` is the full sentence. Text only, never markup. */
+function personIni(name, title) {
+  const el = document.createElement('span');
+  el.className = 'person-ini';
+  el.textContent = personInitials(name);
+  el.setAttribute('aria-hidden', 'true');
+  if (title) el.title = title;
+  return el;
+}
+/** The detail-header person chip: initials circle + the full name (never "you"). */
+function personChip(name, verb = 'Started by') {
+  const chip = document.createElement('span');
+  chip.className = 'person-chip';
+  chip.title = `${verb} ${name}`;
+  chip.append(personIni(name));
+  const t = document.createElement('span');
+  t.className = 'person-chip-name';
+  t.textContent = name;
+  chip.append(t);
+  return chip;
+}
+
+// "Signed in as" in the rail foot, and the viewer every people-label compares against.
 async function loadWhoami() {
   const box = document.getElementById('side-who');
-  if (!box) return;
   try {
     const res = await fetch('/api/whoami');
     if (!res.ok) return;
     const who = await res.json();
     const name = attributedName(who && who.name);
-    box.querySelector('.side-who-name').textContent = name;
-    box.title = name ? `Signed in as ${name}` : '';
-    box.hidden = !name;
-  } catch { /* the line simply stays hidden */ }
+    viewer.shared = !!(who && who.shared === true && name);
+    viewer.name = viewer.shared ? name : null;
+    if (box) {
+      box.querySelector('.side-who-name').textContent = viewer.shared ? name : '';
+      box.title = viewer.shared ? `Signed in as ${name}` : '';
+      box.hidden = !viewer.shared;
+    }
+    if (viewer.shared) repaintPeople();
+  } catch { /* nobody is shown */ }
+}
+
+// Everything that shows a person, repainted once the viewer is known (boot races the
+// hello snapshot and the History fetch). Each painter is idempotent.
+function repaintPeople() {
+  try { for (const r of runs.values()) if (r.el) paintRunCard(r); } catch { /* not booted */ }
+  try { const tabs = $('#nav-running-children'); if (tabs) tabs.dataset.tabsSig = ''; renderPipelineTabs(); } catch { /* not booted */ }
+  try { if (runDetailState.screen && runs.get(runDetailState.runId)) repaintRunDetail(runs.get(runDetailState.runId)); } catch { /* none open */ }
+  try { if (Array.isArray(state.historyAll) && state.historyAll.length) paintHistory(); } catch { /* not loaded */ }
 }
 
 // The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
@@ -15054,10 +15115,55 @@ function renderHistoryPills() {
   host.appendChild(mkPill('', 'All Projects', state.historyAll.length));
   for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count, pr.workspace));
 
+  // "Started by" pills (shared deployments only): the distinct starters in the loaded
+  // history, the viewer first as "you". A second, independent filter.
+  const people = historyPeople();
+  if (people.length) {
+    const lab = document.createElement('span');
+    lab.className = 'hist-pill-label';
+    lab.textContent = 'Started by';
+    host.appendChild(lab);
+    for (const pp of people) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const active = state.historyPerson === pp.key;
+      b.className = 'hist-pill person' + (active ? ' active' : '');
+      b.dataset.person = pp.key;
+      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      b.title = active ? 'Show runs by everyone' : `Only runs started by ${pp.name}`;
+      b.appendChild(personIni(pp.name));
+      const txt = document.createElement('span');
+      txt.textContent = pp.label;
+      b.appendChild(txt);
+      b.appendChild(document.createTextNode(' '));
+      const c = document.createElement('span');
+      c.className = 'pill-count';
+      c.textContent = String(pp.count);
+      b.appendChild(c);
+      b.addEventListener('click', () => { state.historyPerson = active ? '' : pp.key; paintHistory(); });
+      host.appendChild(b);
+    }
+  }
+
   // Keep the sticky project header offset in sync with the toolbar's height
   // (also re-measures on resize, when pills wrap to more/fewer rows).
   ensureHistToolbarObserver();
   syncHistToolbarHeight();
+}
+
+/** The distinct people who started loaded runs: [{ key, name, label, count }], the viewer first. */
+function historyPeople() {
+  if (!viewer.shared) return [];
+  const byKey = new Map();
+  for (const p of state.historyAll || []) {
+    const n = personShown(p && p.startedBy);
+    if (!n) continue;
+    const key = n.toLowerCase();
+    const e = byKey.get(key) || { key, name: n, label: isViewer(n) ? 'you' : n, count: 0 };
+    e.count += 1;
+    byKey.set(key, e);
+  }
+  return [...byKey.values()].sort((a, b) => (isViewer(b.name) - isViewer(a.name)) || b.count - a.count || a.name.localeCompare(b.name));
 }
 
 // Switch the active project filter, persist it (so it survives reloads), repaint.
@@ -15078,6 +15184,7 @@ function paintHistory() {
     state.historyFilter = '';
     localStorage.removeItem(HISTORY_FILTER_KEY);
   }
+  if (state.historyPerson && !historyPeople().some((pp) => pp.key === state.historyPerson)) state.historyPerson = '';
   renderHistoryPills();
   renderHistory();
   // An open detail screen re-reads its (possibly late-arriving, possibly mutated)
@@ -15106,10 +15213,13 @@ function renderHistory() {
   const visible = hiddenPids.size ? all.filter((p) => !hiddenPids.has(p.id)) : all;
 
   const filter = state.historyFilter;
-  const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
+  const person = viewer.shared ? state.historyPerson : '';
+  const byProject = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
+  const records = person ? byProject.filter((p) => personShown(p && p.startedBy).toLowerCase() === person) : byProject;
 
   if (!records.length) {
-    host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
+    host.appendChild(histEmpty(person ? 'No saved pipelines started by this person here yet.'
+      : filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
     return;
   }
 
@@ -15504,9 +15614,15 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   seg('clock', clock);
   seg('time', typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '');
   seg('total', typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '');
-  const by = attributedName(p.startedBy);
+  // Who started it (shared deployments only): an initials circle + "by you" / "by <name>".
+  const by = personLabel(p.startedBy);
   seg('by', by ? `by ${by}` : '');
-  if (by) node.querySelector('.hist-by').title = `Started by ${by}`;
+  if (by) {
+    const full = personShown(p.startedBy);
+    const byEl = node.querySelector('.hist-by');
+    byEl.title = `Started by ${full}`;
+    byEl.before(personIni(full));
+  }
   if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
 
   renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
@@ -16569,15 +16685,12 @@ function paintHdHeaderMeta(screen, record, data) {
     a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
     meta.appendChild(a);
   }
-  // Who started it (attribution): the person, or for a scheduled run who scheduled it.
-  const by = attributedName(st.startedBy) || attributedName(record && record.startedBy);
-  if (by) {
-    meta.appendChild(hdDot());
-    const seg = document.createElement('span');
-    seg.className = 'hd-by';
-    seg.textContent = st.scheduledFor ? `Scheduled by ${by}` : `Started by ${by}`;
-    meta.appendChild(seg);
-  }
+  // Who started it (shared deployments only): the person chip at the end of the status row,
+  // the full name (never "you"); for a scheduled run, who scheduled it.
+  const row2 = screen.querySelector('.hd-row2');
+  row2?.querySelector('.person-chip')?.remove();
+  const by = personShown(st.startedBy) || personShown(record && record.startedBy);
+  if (by && row2) row2.appendChild(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'));
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
   if (st.endReached === true && st.result) {
@@ -17550,7 +17663,9 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
   const who = doc.createElement('span');
   who.className = 'hd-cmt-author';
   // A person's comment names them once attribution knows who (identity.mjs); else the old "You".
-  who.textContent = comment.author === 'ask' ? 'Worca' : (attributedName(comment.authorName) || 'You');
+  // Shared deployments name the author ("You" for the viewer); elsewhere every human comment is "You".
+  const author = personLabel(comment.authorName);
+  who.textContent = comment.author === 'ask' ? 'Worca' : (!author || author === 'you' ? 'You' : author);
   const when = doc.createElement('time');
   when.className = 'hd-cmt-time';
   when.dateTime = comment.createdAt || '';
@@ -19404,8 +19519,8 @@ function rdStateCopy(r, stepName) {
     return `Paused — ${r.pauseReason}. Resume once it clears.`;
   }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
-    // Who paused it, when someone in particular did (never "you": the viewer may not be them).
-    const by = r.lastAction && r.lastAction.kind === 'pause' ? attributedName(r.lastAction.by) : '';
+    // Who paused it (shared deployments only): "by you" when it was the viewer, else the name.
+    const by = r.lastAction && r.lastAction.kind === 'pause' ? personLabel(r.lastAction.by) : '';
     return `Paused${by ? ` by ${by}` : ''}. Agents in flight finished their checkpoint; nothing new is dispatched.`;
   }
   if (RD_TERMINAL.includes(r.status)) {
@@ -19415,7 +19530,7 @@ function rdStateCopy(r, stepName) {
     const at = r.finishedAtMs
       ? ` Finished at ${startedLabel(new Date(r.finishedAtMs).toISOString())}.`
       : '';
-    const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? attributedName(r.lastAction.by) : '';
+    const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? personLabel(r.lastAction.by) : '';
     return `${runStatusMeta(r).word}${by ? ` by ${by}` : ''}.${at}`;
   }
   // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
@@ -20620,10 +20735,14 @@ function renderRunMeta(r, root = r.el) {
   if (metaEl) metaEl.textContent = `started ${startedLabel(r.startedAt)}`;
   const byEl = root.querySelector('.rc-by');
   if (byEl) {
-    const by = attributedName(r.startedBy);
+    // Shared deployments only: an initials circle + "by you" / "by <name>".
+    const by = personLabel(r.startedBy);
+    const full = personShown(r.startedBy);
     byEl.hidden = !by;
     byEl.querySelector('.rc-by-text').textContent = by ? `by ${by}` : '';
-    byEl.title = by ? `Started by ${by}` : '';
+    const ini = byEl.querySelector('.person-ini');
+    if (ini) ini.textContent = full ? personInitials(full) : '';
+    byEl.title = full ? `Started by ${full}` : '';
   }
 
   // D15: progress is a NUMBER, never a bar. Hidden on every v1 run. This sits
@@ -22034,6 +22153,12 @@ function paintRdHeader(screen, r) {
   pill.className = `rd-status pill-run ${family}` + (parked ? ' parked' : '');
   pill.querySelector('.rd-status-word').textContent = text;
 
+  // Who started it (shared deployments only): the person chip beside the status pill, with
+  // the full name — the one place that never says "you".
+  screen.querySelector('.rd-row1 .person-chip')?.remove();
+  const starter = personShown(r.startedBy);
+  if (starter) pill.before(personChip(starter));
+
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
   meta.innerHTML = '';
@@ -22047,8 +22172,6 @@ function paintRdHeader(screen, r) {
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
     ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
-    // Who started it (identity.mjs): nothing for 'local' or unknown.
-    ['rd-by', attributedName(r.startedBy) ? `by ${attributedName(r.startedBy)}` : '', false],
     // `run-time` is load-bearing, not decorative: the existing 1 s interval finds
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat
@@ -22066,7 +22189,6 @@ function paintRdHeader(screen, r) {
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
-    if (cls === 'rd-by') seg.title = `Started by ${attributedName(r.startedBy)}`;
     if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
     meta.appendChild(seg);
   });
@@ -22266,6 +22388,7 @@ function renderPipelineTabs() {
     // aria-label. Costs the expanded state one extra (identical) repaint on that
     // one transition and nothing else.
     tabStatusWord(r),
+    personShown(r.startedBy),
   ])]);
   if (host.dataset.tabsSig === sig) return;
   host.dataset.tabsSig = sig;
@@ -22307,6 +22430,13 @@ function renderPipelineTabs() {
 
     body.append(title, hint);
     row.append(dot, body);
+    // Who started it (shared deployments only): just the initials; space is tight.
+    const starter = personShown(r.startedBy);
+    if (starter) {
+      const ini = personIni(starter, `Started by ${starter}`);
+      ini.classList.add('child-by');
+      row.appendChild(ini);
+    }
 
     // End-of-row marker (same slot, three mutually exclusive states):
     //  - pending input  → pulsing amber "?"   (needs your answer)

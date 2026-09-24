@@ -1,8 +1,10 @@
 // test/ui-attribution.test.mjs
-// Attribution in the UI (the server's identity.mjs): "Signed in as" in the rail foot,
-// "by <name>" on History cards and live run cards, "Started by" / "Scheduled by" in the
-// History detail meta. Nothing shows for a null or 'local' identity, and every name is
-// painted as text, never markup.
+// Attribution in the UI (the server's identity.mjs). People are shown ONLY on a shared
+// deployment (whoami.shared: a real per-person sign-in): "Signed in as" in the rail foot,
+// an initials circle + "by <name>" / "by you" on run cards, History cards and sidebar rows,
+// the person chip (full name) in both detail headers, "Paused by …" banners, and a
+// "Started by" History filter. A local install or a one-person deployment shows none of it.
+// Nothing shows for a null or 'local' identity, and every name is painted as text.
 //
 // boot() is a local copy of the jsdom harness in test/ui-running-card.test.mjs and
 // test/ui-history-detail.test.mjs — the suites do not import each other.
@@ -21,7 +23,7 @@ afterEach(() => { for (const d of _openDoms.splice(0)) { try { d.window.close();
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const fail = (status, body) => Promise.resolve({ ok: false, status, json: async () => body });
 
-async function boot({ fetchHandler } = {}) {
+async function boot({ fetchHandler, whoami = null } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   _openDoms.push(dom);
   const { window } = dom;
@@ -37,6 +39,7 @@ async function boot({ fetchHandler } = {}) {
   const calls = [];
   window.fetch = (u, opts) => {
     calls.push(String(u));
+    if (whoami && String(u).endsWith('/api/whoami')) return ok(whoami);
     if (fetchHandler) { const r = fetchHandler(String(u), opts || {}); if (r) return r; }
     if (String(u).includes('/api/projects')) return ok({ projects: [] });
     return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [] });
@@ -60,22 +63,27 @@ function go(window, hash) {
   window.dispatchEvent(new window.Event('hashchange'));
 }
 
+const ME = 'me@example.com';
+const SHARED = { name: ME, source: 'access', shared: true };
+const SOLO = { name: 'Solo Operator', source: 'operator', shared: false };
+
 // ── "Signed in as" ─────────────────────────────────────────────────────────────
 
-test('rail foot: "Signed in as <name>" from /api/whoami, fetched once at boot', async () => {
-  const { doc, calls } = await boot({ fetchHandler: (u) => (u.endsWith('/api/whoami') ? ok({ name: 'ada@example.com', source: 'access' }) : null) });
+test('rail foot: "Signed in as <name>" on a shared deployment, fetched once at boot', async () => {
+  const { doc, calls } = await boot({ whoami: SHARED });
   const box = doc.getElementById('side-who');
   assert.equal(box.hidden, false);
-  assert.equal(box.textContent.replace(/\s+/g, ' ').trim(), 'Signed in as ada@example.com');
+  assert.equal(box.textContent.replace(/\s+/g, ' ').trim(), `Signed in as ${ME}`);
   assert.equal(calls.filter((u) => u.endsWith('/api/whoami')).length, 1);
 });
 
-test('rail foot: hidden on a local install ({ name: null }), on "local", and when the call fails', async () => {
+test('rail foot: hidden locally, for a one-person deployment, on "local", and when the call fails', async () => {
   for (const handler of [
-    (u) => (u.endsWith('/api/whoami') ? ok({ name: null, source: 'local' }) : null),
-    (u) => (u.endsWith('/api/whoami') ? ok({ name: 'local', source: 'local' }) : null),
+    (u) => (u.endsWith('/api/whoami') ? ok({ name: null, source: 'local', shared: false }) : null),
+    (u) => (u.endsWith('/api/whoami') ? ok(SOLO) : null),
+    (u) => (u.endsWith('/api/whoami') ? ok({ name: 'ada@example.com', source: 'access' }) : null),   // an older server: no `shared`
     (u) => (u.endsWith('/api/whoami') ? fail(500, {}) : null),
-    null,   // an older server without the route: the default fetch stub answers config JSON
+    null,
   ]) {
     const { doc } = await boot({ fetchHandler: handler || undefined });
     assert.equal(doc.getElementById('side-who').hidden, true);
@@ -83,46 +91,85 @@ test('rail foot: hidden on a local install ({ name: null }), on "local", and whe
 });
 
 test('rail foot: a name is painted as text, never markup', async () => {
-  const { doc } = await boot({ fetchHandler: (u) => (u.endsWith('/api/whoami') ? ok({ name: '<img src=x onerror=alert(1)>', source: 'header' }) : null) });
+  const { doc } = await boot({ whoami: { name: '<img src=x onerror=alert(1)>', source: 'header', shared: true } });
   const name = doc.querySelector('#side-who .side-who-name');
   assert.equal(name.textContent, '<img src=x onerror=alert(1)>');
   assert.equal(name.querySelector('img'), null);
 });
 
-// ── History cards ──────────────────────────────────────────────────────────────
+// ── History cards + the "Started by" filter ─────────────────────────────────────
 
 const ROW = (over = {}) => ({
   id: 'a1', title: 'Alpha one', status: 'done', startedAt: '2026-06-01T00:00:00Z',
   projectName: 'Alpha', projectKey: 'alpha-00000001', projectDir: '/x/alpha', ...over,
 });
 
-async function historyCards(rows) {
-  const ctx = await boot({ fetchHandler: (u) => {
+async function history(rows, whoami = SHARED) {
+  const ctx = await boot({ whoami, fetchHandler: (u) => {
     if (u.endsWith('/api/history/pr')) return ok({ ok: true });
     if (u.endsWith('/api/history')) return ok({ pipelines: rows, ghAvailable: false });
     return null;
   } });
   go(ctx.window, 'history');
   await settle(ctx.window, 6);
-  return ctx.doc.querySelectorAll('#history .hist-card');
+  return ctx;
 }
+const cardsOf = (ctx) => [...ctx.doc.querySelectorAll('#history .hist-card')];
 
-test('History card: "by <name>" when someone started the run; nothing for null or local', async () => {
-  const cards = await historyCards([
-    ROW({ id: 'a3', startedBy: 'ada@example.com' }),
+test('History card: initials + "by <name>" / "by you" on a shared deployment; nothing for null or local', async () => {
+  const ctx = await history([
+    ROW({ id: 'a4', startedBy: 'ada.lovelace@example.com' }),
+    ROW({ id: 'a3', startedBy: ME }),
     ROW({ id: 'a2', startedBy: 'local' }),
     ROW({ id: 'a1', startedBy: null }),
   ]);
-  assert.equal(cards.length, 3);
+  const cards = cardsOf(ctx);
+  assert.equal(cards.length, 4);
   const seg = (c) => c.querySelector('.hist-by-seg');
-  assert.equal(seg(cards[0]).hidden, false);
-  assert.equal(cards[0].querySelector('.hist-by').textContent, 'by ada@example.com');
-  assert.equal(cards[0].querySelector('.hist-by').title, 'Started by ada@example.com');
-  assert.equal(seg(cards[1]).hidden, true, "'local' is nobody in particular");
-  assert.equal(seg(cards[2]).hidden, true, 'a run from before attribution');
+  assert.equal(cards[0].querySelector('.hist-by').textContent, 'by ada.lovelace@example.com');
+  assert.equal(cards[0].querySelector('.hist-by').title, 'Started by ada.lovelace@example.com');
+  assert.equal(seg(cards[0]).querySelector('.person-ini').textContent, 'AL');
+  assert.equal(cards[1].querySelector('.hist-by').textContent, 'by you');
+  assert.equal(cards[1].querySelector('.hist-by').title, `Started by ${ME}`, 'the tooltip keeps the full name');
+  assert.equal(seg(cards[2]).hidden, true, "'local' is nobody in particular");
+  assert.equal(seg(cards[3]).hidden, true, 'a run from before attribution');
 });
 
-// ── live run cards ─────────────────────────────────────────────────────────────
+test('History card: a one-person or local deployment shows no people at all', async () => {
+  for (const whoami of [SOLO, { name: null, source: 'local', shared: false }]) {
+    const ctx = await history([ROW({ id: 'a2', startedBy: 'ada@example.com' }), ROW({ id: 'a1', startedBy: 'Solo Operator' })], whoami);
+    for (const c of cardsOf(ctx)) {
+      assert.equal(c.querySelector('.hist-by-seg').hidden, true);
+      assert.equal(c.querySelector('.person-ini'), null);
+    }
+    assert.equal(ctx.doc.querySelectorAll('#historyFilter .hist-pill.person').length, 0, 'no Started by filter');
+  }
+});
+
+test('History filter: "Started by" pills, you first; one filters, again clears; combines with the project', async () => {
+  const ctx = await history([
+    ROW({ id: 'b3', startedBy: 'ada@example.com', projectKey: 'beta-00000002', projectName: 'Beta', projectDir: '/x/beta' }),
+    ROW({ id: 'a3', startedBy: 'ada@example.com' }),
+    ROW({ id: 'a2', startedBy: 'grace@example.com' }),
+    ROW({ id: 'a1', startedBy: ME }),
+  ]);
+  const pills = () => [...ctx.doc.querySelectorAll('#historyFilter .hist-pill.person')];
+  assert.deepEqual(pills().map((b) => b.textContent.replace(/\s+/g, ' ').trim()), ['Myou 1', 'Aada@example.com 2', 'Ggrace@example.com 1']);
+  pills()[1].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  await settle(ctx.window);
+  assert.deepEqual(cardsOf(ctx).map((c) => c.querySelector('.hist-by').textContent), ['by ada@example.com', 'by ada@example.com']);
+  assert.equal(pills()[1].getAttribute('aria-pressed'), 'true');
+  // + the project filter
+  ctx.doc.querySelector('#historyFilter .hist-pill[data-project-key="alpha-00000001"]').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  await settle(ctx.window);
+  assert.equal(cardsOf(ctx).length, 1);
+  // clicking the active person pill again shows everyone (on Alpha)
+  pills()[1].dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  await settle(ctx.window);
+  assert.equal(cardsOf(ctx).length, 3);
+});
+
+// ── live run cards, sidebar rows ────────────────────────────────────────────────
 
 const RUN_ID = 'run-aaa';
 function hello(ctx, extra = {}) {
@@ -132,8 +179,8 @@ function hello(ctx, extra = {}) {
 }
 const card = (ctx) => ctx.doc.querySelector(`.run-card[data-run-id="${RUN_ID}"]`);
 
-test('run card: "by <name>" from the state snapshot, hidden until then', async () => {
-  const ctx = await boot();
+test('run card: initials + "by <name>" from the state snapshot, hidden until then', async () => {
+  const ctx = await boot({ whoami: SHARED });
   hello(ctx);
   await settle(ctx.window);
   const by = card(ctx).querySelector('.rc-by');
@@ -143,59 +190,87 @@ test('run card: "by <name>" from the state snapshot, hidden until then', async (
   await settle(ctx.window);
   assert.equal(by.hidden, false);
   assert.equal(by.querySelector('.rc-by-text').textContent, 'by ada@example.com');
+  assert.equal(by.querySelector('.person-ini').textContent, 'A');
+  assert.equal(by.title, 'Started by ada@example.com');
 });
 
-test('run card: the hello snapshot may carry startedBy; local stays hidden', async () => {
-  const ctx = await boot();
-  hello(ctx, { startedBy: 'grace@example.com' });
+test('run card: "by you" for the viewer\'s own run; local and not-shared stay hidden', async () => {
+  const ctx = await boot({ whoami: SHARED });
+  hello(ctx, { startedBy: 'ME@example.com' });
   await settle(ctx.window);
-  assert.equal(card(ctx).querySelector('.rc-by-text').textContent, 'by grace@example.com');
+  assert.equal(card(ctx).querySelector('.rc-by-text').textContent, 'by you', 'case-insensitive');
 
-  const local = await boot();
+  const local = await boot({ whoami: SHARED });
   hello(local, { startedBy: 'local' });
   await settle(local.window);
   assert.equal(card(local).querySelector('.rc-by').hidden, true);
+
+  const solo = await boot({ whoami: SOLO });
+  hello(solo, { startedBy: 'grace@example.com' });
+  await settle(solo.window);
+  assert.equal(card(solo).querySelector('.rc-by').hidden, true);
 });
 
-test('live run detail header: "by <name>" after "started …"; nothing for local', async () => {
-  const ctx = await boot();
-  hello(ctx, { startedBy: 'ada@example.com' });
+test('sidebar row: just the initials with a tooltip, shared deployments only', async () => {
+  const ctx = await boot({ whoami: SHARED });
+  hello(ctx, { startedBy: 'grace.hopper@example.com' });
+  await settle(ctx.window);
+  const ini = ctx.doc.querySelector(`#nav-running-children [data-child-run-id="${RUN_ID}"] .child-by`);
+  assert.ok(ini);
+  assert.equal(ini.textContent, 'GH');
+  assert.equal(ini.title, 'Started by grace.hopper@example.com');
+
+  const solo = await boot({ whoami: SOLO });
+  hello(solo, { startedBy: 'grace.hopper@example.com' });
+  await settle(solo.window);
+  assert.equal(solo.doc.querySelector(`#nav-running-children .child-by`), null);
+});
+
+// ── live run detail: the person chip ────────────────────────────────────────────
+
+async function runDetail(extra, whoami = SHARED) {
+  const ctx = await boot({ whoami });
+  hello(ctx, extra);
   go(ctx.window, `running/${RUN_ID}`);
   await settle(ctx.window, 8);
-  const by = ctx.doc.querySelector('.rd-meta .rd-by');
-  assert.ok(by, ctx.doc.querySelector('.rd-meta')?.textContent);
-  assert.equal(by.textContent, 'by ada@example.com');
-  assert.equal(by.title, 'Started by ada@example.com');
-  assert.equal(by.previousElementSibling?.previousElementSibling?.className, 'rd-clock', 'right after "started …"');
+  return ctx;
+}
 
-  const local = await boot();
-  hello(local, { startedBy: 'local' });
-  go(local.window, `running/${RUN_ID}`);
-  await settle(local.window, 8);
-  assert.equal(local.doc.querySelector('.rd-meta .rd-by'), null);
+test('live run detail: a person chip beside the status pill with the full name, never "you"', async () => {
+  const ctx = await runDetail({ startedBy: 'ada.lovelace@example.com' });
+  const chip = ctx.doc.querySelector('.rd-row1 .person-chip');
+  assert.ok(chip);
+  assert.equal(chip.nextElementSibling.classList.contains('rd-status'), true, 'right beside the status pill');
+  assert.equal(chip.querySelector('.person-ini').textContent, 'AL');
+  assert.equal(chip.querySelector('.person-chip-name').textContent, 'ada.lovelace@example.com');
+  assert.equal(chip.title, 'Started by ada.lovelace@example.com');
+  assert.doesNotMatch(ctx.doc.querySelector('.rd-meta').textContent, /\bby\b/, 'the meta line no longer repeats it');
+
+  const own = await runDetail({ startedBy: ME });
+  assert.equal(own.doc.querySelector('.rd-row1 .person-chip-name').textContent, ME, 'the full name, even for the viewer');
+  assert.equal((await runDetail({ startedBy: 'local' })).doc.querySelector('.rd-row1 .person-chip'), null);
+  assert.equal((await runDetail({ startedBy: 'ada@example.com' }, SOLO)).doc.querySelector('.rd-row1 .person-chip'), null);
 });
 
-test('run detail banner: "Paused by <name>" / "Stopped by <name>"; plain "Paused" for local or unknown, never "by you"', async () => {
-  const copyOf = async (extra) => {
-    const ctx = await boot();
-    hello(ctx, extra);
-    go(ctx.window, `running/${RUN_ID}`);
-    await settle(ctx.window, 8);
+test('run detail banner: "Paused by <name>" / "Paused by you" / "Stopped by <name>" when shared; plain otherwise', async () => {
+  const copyOf = async (extra, whoami = SHARED) => {
+    const ctx = await runDetail(extra, whoami);
     // The state banner lives on the Overview tab.
     const tab = [...ctx.doc.querySelectorAll('.rd-tab')].find((b) => /overview/i.test(b.dataset.sec || b.textContent));
     if (tab) tab.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
     await settle(ctx.window, 8);
     return ctx.doc.querySelector('.rd-ov-copy')?.textContent || '';
   };
-  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'grace@example.com', at: '2026-01-01T00:00:00Z' } }), /^Paused by grace@example\.com\. Agents in flight/);
-  const local = await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'local', at: '2026-01-01T00:00:00Z' } });
-  assert.match(local, /^Paused\. Agents in flight/);
-  assert.doesNotMatch(local, /by you/);
+  const at = '2026-01-01T00:00:00Z';
+  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'grace@example.com', at } }), /^Paused by grace@example\.com\. Agents in flight/);
+  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: ME, at } }), /^Paused by you\. /);
+  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'local', at } }), /^Paused\. Agents in flight/);
   assert.match(await copyOf({ status: 'paused' }), /^Paused\. /);
-  assert.match(await copyOf({ status: 'stopped', lastAction: { kind: 'stop', by: 'ada@example.com', at: '2026-01-01T00:00:00Z' } }), /^Stopped by ada@example\.com\./);
+  assert.match(await copyOf({ status: 'stopped', lastAction: { kind: 'stop', by: 'ada@example.com', at } }), /^Stopped by ada@example\.com\./);
+  assert.match(await copyOf({ status: 'paused', lastAction: { kind: 'pause', by: 'grace@example.com', at } }, SOLO), /^Paused\. /, 'not shared: nobody named');
 });
 
-// ── History detail meta ────────────────────────────────────────────────────────
+// ── History detail: the person chip ─────────────────────────────────────────────
 
 const KEY = 'proj-alpha-abcd1234';
 const DETAIL_ROW = { id: 'fcec04e8', projectKey: KEY, projectName: 'Alpha', projectDir: '/tmp/proj', title: 'Fix it', status: 'done', startedAt: '2026-08-17T20:54:42Z', mtime: 1 };
@@ -204,9 +279,9 @@ const detailOf = (state) => ({
   results: null, overview: null, clarify: { questions: [], answers: [] }, reviews: [], stepQuestions: [], artifacts: [], auditMarkdown: '# saved',
 });
 
-async function detailMeta(state) {
+async function detailRow2(state, whoami = SHARED) {
   const detail = detailOf(state);
-  const ctx = await boot({ fetchHandler: (u) => {
+  const ctx = await boot({ whoami, fetchHandler: (u) => {
     if (u.endsWith('/api/history/pr')) return ok({ ok: true });
     if (u.endsWith('/diff')) return fail(404, { error: 'no diff' });
     if (u.endsWith('/log')) return fail(404, { error: 'no log' });
@@ -216,17 +291,23 @@ async function detailMeta(state) {
   } });
   go(ctx.window, `history/${KEY}/${DETAIL_ROW.id}`);
   await settle(ctx.window, 8);
-  return ctx.doc.querySelector('#hist-detail .hd-meta');
+  return ctx.doc.querySelector('#hist-detail .hd-row2');
 }
 
-test('detail meta: "Started by <name>"; nothing for local or null', async () => {
-  assert.equal((await detailMeta({ startedBy: 'ada@example.com' })).querySelector('.hd-by').textContent, 'Started by ada@example.com');
-  assert.equal((await detailMeta({ startedBy: 'local' })).querySelector('.hd-by'), null);
-  assert.equal((await detailMeta({ startedBy: null })).querySelector('.hd-by'), null);
+test('History detail: the person chip at the end of the status row; nothing for local, null or not shared', async () => {
+  const row = await detailRow2({ startedBy: 'ada@example.com' });
+  const chips = row.querySelectorAll('.person-chip');
+  assert.equal(chips.length, 1, 'painted once');
+  assert.equal(chips[0].querySelector('.person-chip-name').textContent, 'ada@example.com');
+  assert.equal(chips[0].title, 'Started by ada@example.com');
+  assert.equal(row.querySelector('.hd-by'), null, 'no meta text repeating it');
+  assert.equal((await detailRow2({ startedBy: 'local' })).querySelector('.person-chip'), null);
+  assert.equal((await detailRow2({ startedBy: null })).querySelector('.person-chip'), null);
+  assert.equal((await detailRow2({ startedBy: 'ada@example.com' }, SOLO)).querySelector('.person-chip'), null);
 });
 
-test('detail meta: a scheduled run says who scheduled it', async () => {
-  const meta = await detailMeta({ startedBy: 'ada@example.com', scheduledFor: '2026-08-18T02:00:00Z', scheduleId: null });
-  assert.equal(meta.querySelector('.hd-sched').textContent, 'Started by schedule');
-  assert.equal(meta.querySelector('.hd-by').textContent, 'Scheduled by ada@example.com');
+test('History detail: a scheduled run\'s chip says who scheduled it', async () => {
+  const row = await detailRow2({ startedBy: 'ada@example.com', scheduledFor: '2026-08-18T02:00:00Z', scheduleId: null });
+  assert.equal(row.querySelector('.hd-sched').textContent, 'Started by schedule');
+  assert.equal(row.querySelector('.person-chip').title, 'Scheduled by ada@example.com');
 });

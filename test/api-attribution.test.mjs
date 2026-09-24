@@ -61,9 +61,14 @@ after(async () => {
 });
 
 test('/api/whoami: nobody locally; the named header when a proxy sets it', async () => {
-  assert.deepEqual(await (await fetch(`${base}/api/whoami`)).json(), { name: null, source: 'local' });
+  assert.deepEqual(await (await fetch(`${base}/api/whoami`)).json(), { name: null, source: 'local', shared: false });
   const j = await (await fetch(`${base}/api/whoami`, { headers: { 'X-Forwarded-Email': 'ada@example.com' } })).json();
-  assert.deepEqual(j, { name: 'ada@example.com', source: 'header' });
+  assert.deepEqual(j, { name: 'ada@example.com', source: 'header', shared: true });
+  process.env.WORCA_IDENTITY_NAME = 'Solo Operator';
+  try {
+    const op = await (await fetch(`${base}/api/whoami`)).json();
+    assert.deepEqual(op, { name: 'Solo Operator', source: 'operator', shared: false }, 'a one-person deployment: stored, never shown');
+  } finally { delete process.env.WORCA_IDENTITY_NAME; }
 });
 
 test('a run records who started it, persisted on the pipeline row; the HTTP body cannot claim anyone', async () => {
