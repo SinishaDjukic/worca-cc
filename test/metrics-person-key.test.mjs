@@ -51,6 +51,40 @@ test('groupByPerson: one person across runs and PRs, by key, name or login; the 
     ['Unattributed', ['pr-4']],
   ]);
   // The key-carrying item may be off screen: `known` still resolves the alias.
+  const shownOld = groupByPerson([items[1]], { known: items });
+  assert.equal(shownOld.length, 1);
+});
+
+test('groupByPerson: keys with the same git name are one person (two emails); logins never join keys', () => {
+  const work = personKey('denislav@work.example');
+  const home = personKey('denislav@home.example');
+  const other = personKey('someone@else.example');
+  const items = [
+    { key: 'a', actor: 'Denislav Prinov', actorKey: work, login: 'denislavprinov' },
+    { key: 'b', actor: 'denislav  prinov ', actorKey: home, login: 'denislavprinov' },   // case + spacing
+    { key: 'c', actor: 'Gochev Iliyan', actorKey: other, login: 'IliyanGochev' },         // different name: stays apart
+    { key: 'd', actor: 'Iliyan Gochev', actorKey: personKey('iliyan@x.example'), login: 'IliyanGochev' },
+    // A PR opened by Denislav's login but written by someone else: the login must not pull it in.
+    { key: 'e', actor: 'Teodor Ivanov', actorKey: personKey('teo@x.example'), login: 'denislavprinov' },
+  ];
+  const groups = groupByPerson(items);
+  assert.deepEqual(groups.map((g) => [g.label, g.items.map((i) => i.key)]), [
+    ['Denislav Prinov', ['a', 'b']],
+    ['Gochev Iliyan', ['c']],
+    ['Iliyan Gochev', ['d']],
+    ['Teodor Ivanov', ['e']],
+  ]);
+  // Order does not matter: the same groups from the reversed list.
+  assert.deepEqual(groupByPerson([...items].reverse()).map((g) => g.items.length).sort(), [1, 1, 1, 2]);
+});
+
+test('groupByPerson: off-screen key carriers', () => {
+  const K = personKey('sini@example.com');
+  const items = [
+    { key: 'run-new', actor: 'Siniša Đukić', actorKey: K, login: null },
+    { key: 'run-old', actor: 'Siniša Đukić', actorKey: null, login: null },
+  ];
   const shown = groupByPerson([items[1]], { known: items });
-  assert.equal(shown[0].key, K);
+  assert.equal(shown[0].key, groupByPerson([items[0]], { known: items })[0].key, 'the old run joins the keyed run\'s person');
+  assert.notEqual(shown[0].key, '');
 });
