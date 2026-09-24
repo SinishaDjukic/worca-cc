@@ -26,7 +26,7 @@ browser ─► Cloudflare Access ─► Tunnel ─► cloudflared ──(Railway
 
 ## Services
 
-One Railway **project per deployment**, named `worca-NN`, with two services.
+One Railway **project per deployment**, with two services.
 
 ### `worca`
 
@@ -47,9 +47,9 @@ Variables:
 | `WORCA_DATA_DIR` | `/data` |
 | `WORCA_HOST` | `::`: listen on IPv6 and IPv4 (Railway's private network) |
 | `PORT` | `4317` |
-| `WORCA_ALLOWED_HOSTS` | `worca-NN.example.com,healthcheck.railway.app` (Railway's healthcheck sends `Host: healthcheck.railway.app`; it can reach only `/api/health` without a token) |
+| `WORCA_ALLOWED_HOSTS` | `worca.example.com,healthcheck.railway.app` (Railway's healthcheck sends `Host: healthcheck.railway.app`; it can reach only `/api/health` without a token) |
 | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `<team>.cloudflareaccess.com` |
-| `WORCA_CF_ACCESS_AUD` | the AUD tag of the `worca-NN` Access application |
+| `WORCA_CF_ACCESS_AUD` | the AUD tag of the Access application for this hostname |
 | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret: from `claude setup-token` on a subscription account, or an API key with a spend limit |
 | `GH_TOKEN` | secret: a fine-grained PAT for the repos you run, with *contents* and *pull requests* write access |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | your identity; without it agents cannot commit |
@@ -62,18 +62,19 @@ unprotected.
 | Setting | Value |
 | --- | --- |
 | Source | Docker image `cloudflare/cloudflared:<pinned tag>` |
-| Start command | `tunnel --no-autoupdate run` |
+| Start command | `cloudflared tunnel --no-autoupdate run` (Railway's start command replaces the image's entrypoint, so it must name the binary) |
 | Variable | `TUNNEL_TOKEN`: the tunnel's token (secret) |
 
-In the Cloudflare tunnel, the public hostname `worca-NN.example.com` points to
+In the Cloudflare tunnel, the public hostname `worca.example.com` points to
 `http://worca.railway.internal:4317`. The service is named `worca`, so that's its private hostname.
 
 ## First run
 
-1. Deploy both services and open `https://worca-NN.example.com`. Sign in through Access.
-2. Clone your repos into `/data/projects` from the Railway shell of the `worca` service
-   (`git clone https://github.com/you/app.git /data/projects/app`), then add
-   `/data/projects/app` as a project in the UI.
+1. Deploy both services and open `https://worca.example.com`. Sign in through Access.
+2. Clone your repos into `/data/projects` **as the `worca` user**. A `railway ssh` session is
+   root, and a root-owned clone is read-only for worca:
+   `railway ssh -s worca -- su -s /bin/sh worca -c 'git clone https://github.com/you/app.git /data/projects/app'`.
+   Then add `/data/projects/app` as a project in the UI.
 3. Turn on volume backups, and check the usage page after a week.
 
 ## Upgrades and restarts
