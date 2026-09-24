@@ -286,6 +286,13 @@ or, without npm, download `docker/compose.yml`, set `WORCA_PROJECTS` in a
 for login options, git credentials, the egress allowlist, clone-in mode and
 the Windows/WSL2 notes.
 
+### Hosted, behind Cloudflare Access
+
+The same image runs as an always-on service: on Railway (or any host), reachable only through a
+Cloudflare Tunnel with Cloudflare Access in front, and worca verifying the Access token itself.
+Step by step: [`docs/deploy-railway.md`](docs/deploy-railway.md); the Cloudflare side and the
+security model: [`docs/remote-access.md`](docs/remote-access.md).
+
 ## Quick start
 
 ### Web UI
@@ -404,6 +411,7 @@ The skill starts the same deterministic orchestrator.
 - [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
 - [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with worca checking the token
+- [Deploy on Railway](docs/deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Contributing](CONTRIBUTING.md) — developing Worca from source
 

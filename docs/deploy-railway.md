@@ -1,15 +1,18 @@
 # Worca on Railway, behind Cloudflare Access
 
 This runs worca as an always-on hosted service: the published container image on
-[Railway](https://railway.com), reachable only through a Cloudflare Tunnel with Cloudflare
-Access in front, and worca checking the Access token on every request itself. Read
-[remote-access.md](remote-access.md) first; it explains the security model and the Cloudflare
-side. This page covers only what is specific to Railway.
+[Railway](https://railway.com), reachable only through a Cloudflare Tunnel with Cloudflare Access
+in front, and worca verifying the Access token on every request itself.
+[remote-access.md](remote-access.md) explains the security model and has the Cloudflare reference;
+this page walks through a complete deployment.
 
 ```
 browser ─► Cloudflare Access ─► Tunnel ─► cloudflared ──(Railway private network)──► worca ─► /data volume
                                            service 2                                  service 1
 ```
+
+The examples use the hostname `worca.example.com` and the Zero Trust team `acme`; replace both with
+your own.
 
 ## Why this shape
 
@@ -24,69 +27,181 @@ browser ─► Cloudflare Access ─► Tunnel ─► cloudflared ──(Railway
   tunnel is the only way in. As a separate service it also never counts as an in-container caller.
 - **One replica.** Worca's run registry and WebSocket replay buffers are in memory.
 
-## Services
+## 1. Prepare
 
-One Railway **project per deployment**, with two services.
-
-### `worca`
-
-| Setting | Value |
+| You need | Notes |
 | --- | --- |
-| Source | Docker image `ghcr.io/sinishadjukic/worca:<version>` (pin an exact version) |
-| Volume | mounted at `/data` |
-| Networking | **no** public domain (delete one if Railway generated it) |
-| Replicas | 1 |
-| Healthcheck path | `/api/health` |
-| Restart policy | on failure |
+| A Railway account on **Hobby** or **Pro** | Hobby volumes stop at 5 GB, which a few repos with worktrees and `node_modules` can outgrow; Pro starts at 50 GB. |
+| A domain on Cloudflare and a Zero Trust organization | See [remote-access.md → Before you start](remote-access.md#before-you-start). |
+| Claude credentials | **Either** a subscription token from `claude setup-token` (runs count against your Claude plan) **or** an Anthropic API key (billed per token; set a spend limit). Run `claude setup-token` in your own terminal: it prints the token. |
+| A GitHub token (for pushes and PRs) | A fine-grained personal access token limited to the repos you'll run, with **Contents** and **Pull requests** read/write. Not needed for a first test on a local repo. |
+| The image version | Pick an exact tag of `ghcr.io/sinishadjukic/worca` (e.g. `1.5.0`), not `latest`. |
 
-Variables:
+Keep the secrets (Claude token, GitHub token, and the tunnel token from step 2) in a password
+manager or a local file outside any repository until you paste them into Railway.
 
-| Variable | Value |
-| --- | --- |
-| `RAILWAY_RUN_UID` | `0`: start as root so the entrypoint can prepare the volume; it drops to `worca` itself |
-| `WORCA_DATA_DIR` | `/data` |
-| `WORCA_HOST` | `::`: listen on IPv6 and IPv4 (Railway's private network) |
-| `PORT` | `4317` |
-| `WORCA_ALLOWED_HOSTS` | `worca.example.com,healthcheck.railway.app` (Railway's healthcheck sends `Host: healthcheck.railway.app`; it can reach only `/api/health` without a token) |
-| `WORCA_CF_ACCESS_TEAM_DOMAIN` | `<team>.cloudflareaccess.com` |
-| `WORCA_CF_ACCESS_AUD` | the AUD tag of the Access application for this hostname |
-| `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret: from `claude setup-token` on a subscription account, or an API key with a spend limit |
-| `GH_TOKEN` | secret: a fine-grained PAT for the repos you run, with *contents* and *pull requests* write access |
-| `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | your identity; without it agents cannot commit |
+## 2. Cloudflare: tunnel and Access application
 
-If the Access variables are missing, worca refuses to start and logs why. It won't run
-unprotected.
+Follow [remote-access.md → Cloudflare setup](remote-access.md#cloudflare-setup-dashboard) with these
+values:
 
-### `cloudflared`
+- **Tunnel** public hostname: `worca.example.com` → service **HTTP**,
+  URL `worca.railway.internal:4317`. `worca` is the Railway service name you'll use in step 3; the
+  private hostname is always `<service name>.railway.internal`.
+- **Access application** for `worca.example.com`, with an Allow policy for your email (and One-time
+  PIN as a login method).
 
-| Setting | Value |
-| --- | --- |
-| Source | Docker image `cloudflare/cloudflared:<pinned tag>` |
-| Start command | `cloudflared tunnel --no-autoupdate run` (Railway's start command replaces the image's entrypoint, so it must name the binary) |
-| Variable | `TUNNEL_TOKEN`: the tunnel's token (secret) |
+Note down the **tunnel token**, the **team domain** (`acme.cloudflareaccess.com`) and the
+application's **AUD tag**.
 
-In the Cloudflare tunnel, the public hostname `worca.example.com` points to
-`http://worca.railway.internal:4317`. The service is named `worca`, so that's its private hostname.
+## 3. Railway: the two services
 
-## First run
+One Railway **project per deployment**. Use either the dashboard or the CLI.
 
-1. Deploy both services and open `https://worca.example.com`. Sign in through Access.
-2. Clone your repos into `/data/projects` **as the `worca` user**. A `railway ssh` session is
-   root, and a root-owned clone is read-only for worca:
-   `railway ssh -s worca -- su -s /bin/sh worca -c 'git clone https://github.com/you/app.git /data/projects/app'`.
-   Then add `/data/projects/app` as a project in the UI.
-3. Turn on volume backups, and check the usage page after a week.
+### With the dashboard
+
+1. **New project → Deploy a Docker image** → `ghcr.io/sinishadjukic/worca:<version>`.
+   Rename the service to exactly **`worca`** (Settings → Service name): that name becomes its private
+   hostname `worca.railway.internal`, which the tunnel points to.
+2. `worca` → **Settings**:
+   - **Volumes → Add volume**, mount path **`/data`**.
+   - **Networking**: make sure there is **no** public domain; delete one if Railway generated it.
+   - **Deploy**: healthcheck path **`/api/health`**, restart policy *On failure*, 1 replica.
+3. `worca` → **Variables**:
+
+   | Variable | Value |
+   | --- | --- |
+   | `RAILWAY_RUN_UID` | `0`: start as root so the entrypoint can prepare the volume; it drops to `worca` itself |
+   | `WORCA_DATA_DIR` | `/data` |
+   | `WORCA_HOST` | `::`: listen on IPv6 and IPv4 (Railway's private network) |
+   | `PORT` | `4317` |
+   | `WORCA_ALLOWED_HOSTS` | `worca.example.com,healthcheck.railway.app`: Railway's healthcheck sends `Host: healthcheck.railway.app`, and with that host it can reach only `/api/health` |
+   | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` |
+   | `WORCA_CF_ACCESS_AUD` | the application's AUD tag |
+   | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret |
+   | `GH_TOKEN` | secret (optional at first) |
+   | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | the identity agents commit with |
+
+   If the Access variables are missing, worca refuses to start and logs why. It won't run
+   unprotected.
+4. **New → Docker image** → `cloudflare/cloudflared:<tag>` (pin a tag). In its settings:
+   - **Start command**: `cloudflared tunnel --no-autoupdate run`. Railway's start command
+     *replaces* the image's entrypoint, so it must name the binary; `tunnel run` alone fails
+     immediately, without any log output.
+   - **Variables**: `TUNNEL_TOKEN` = the tunnel token (secret).
+   - No volume, no public domain, restart policy *Always*.
+5. Deploy both.
+
+### With the Railway CLI
+
+The same setup from a terminal (`npm i -g @railway/cli`, then `railway login`). Run it in an empty
+folder: `railway init` links the current folder to the new project.
+
+```bash
+railway init --name worca --workspace "<workspace name or id>"
+
+railway add --service worca --image ghcr.io/sinishadjukic/worca:<version> \
+  --variables "RAILWAY_RUN_UID=0" --variables "WORCA_DATA_DIR=/data" \
+  --variables "WORCA_HOST=::" --variables "PORT=4317" \
+  --variables "WORCA_ALLOWED_HOSTS=worca.example.com,healthcheck.railway.app" \
+  --variables "WORCA_CF_ACCESS_TEAM_DOMAIN=acme.cloudflareaccess.com" \
+  --variables "WORCA_CF_ACCESS_AUD=<aud tag>" \
+  --variables "GIT_AUTHOR_NAME=<name>" --variables "GIT_AUTHOR_EMAIL=<email>" \
+  --variables "GIT_COMMITTER_NAME=<name>" --variables "GIT_COMMITTER_EMAIL=<email>"
+
+railway add --service cloudflared --image cloudflare/cloudflared:<tag>
+
+# IDs for the API calls below
+railway status --json
+```
+
+The volume and the service settings go through Railway's GraphQL API (`railway api`), with the
+project, environment and service IDs from `railway status --json`:
+
+```bash
+railway api 'mutation($i: VolumeCreateInput!){ volumeCreate(input:$i){ id } }' \
+  --variables '{"i":{"projectId":"<project>","environmentId":"<env>","serviceId":"<worca service>","mountPath":"/data"}}'
+
+railway api 'mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){ serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:$i) }' \
+  --variables '{"s":"<worca service>","e":"<env>","i":{"healthcheckPath":"/api/health","healthcheckTimeout":120,"numReplicas":1,"restartPolicyType":"ON_FAILURE","restartPolicyMaxRetries":5,"drainingSeconds":60}}'
+
+railway api 'mutation($s:String!,$e:String!,$i:ServiceInstanceUpdateInput!){ serviceInstanceUpdate(serviceId:$s, environmentId:$e, input:$i) }' \
+  --variables '{"s":"<cloudflared service>","e":"<env>","i":{"startCommand":"cloudflared tunnel --no-autoupdate run","restartPolicyType":"ALWAYS"}}'
+```
+
+Add the secrets from stdin, so they never appear on a command line or in your shell history
+(paste the value, then press Ctrl-D):
+
+```bash
+railway variable set -s worca --stdin CLAUDE_CODE_OAUTH_TOKEN   # or ANTHROPIC_API_KEY
+railway variable set -s worca --stdin GH_TOKEN
+railway variable set -s cloudflared --stdin TUNNEL_TOKEN
+```
+
+Setting a variable redeploys the service. Other settings changes apply on the next deploy
+(`railway redeploy -s <service>`, or the dashboard's *Redeploy*).
+
+## 4. Check it
+
+1. **worca logs** (`railway logs -s worca`, or the dashboard) show
+   `remote access on for worca.example.com, healthcheck.railway.app; identity: cloudflare-access (acme.cloudflareaccess.com)`
+   and `Claude Code auth: CLAUDE_CODE_OAUTH_TOKEN` (or your API key) rather than *not logged in*.
+2. **cloudflared logs** show `Registered tunnel connection` (four times) and the tunnel is *Healthy*
+   in Cloudflare.
+3. Open `https://worca.example.com`, sign in through Access, and you're in worca.
+4. For a scripted check (including worca's own token check), see
+   [remote-access.md → Check the setup](remote-access.md#check-the-setup).
+
+## 5. First project
+
+Projects live on the volume under `/data/projects`. Clone them **as the `worca` user**: a
+`railway ssh` session is root, and a root-owned clone is read-only for worca.
+
+```bash
+railway ssh keys add          # once: registers a local SSH public key with Railway
+railway ssh -s worca -- su -s /bin/sh worca -c \
+  'git clone https://github.com/you/app.git /data/projects/app'
+```
+
+With `GH_TOKEN` set, the entrypoint configures git to use it for GitHub over HTTPS, so private repos
+clone and pushes work. Then add `/data/projects/app` as a project in the UI (the folder picker is a
+text field on a server) and start a run.
 
 ## Upgrades and restarts
 
 Change the image tag and redeploy. Railway stops the old container before starting the new one,
 because a volume can't be attached to two containers. Running agents get SIGTERM and pause; resume
-them afterwards. Worca picks up the interrupted Claude sessions.
+them afterwards. Worca picks up the interrupted Claude sessions. Projects, runs, settings and the
+Claude login are on `/data` and survive every redeploy.
+
+## Backups and cost
+
+- Turn on **volume backups** for the `worca` service's volume.
+- Railway bills per second for what the containers use (memory, CPU, volume, egress). An idle worca
+  plus cloudflared is small; runs with several `claude` processes, git and your test suites are what
+  drives it. Check the project's usage page after a week and set a usage limit.
+- Claude usage is separate: a subscription token counts against your Claude plan's limits, an API
+  key is billed per token.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `cloudflared` deployment fails instantly with no logs | Start command without the binary name | `cloudflared tunnel --no-autoupdate run` |
+| `cloudflared` logs only `cloudflared version …` in a loop | No start command: the image's default just prints its version | Set the start command. |
+| Cloudflare error **1033** | `cloudflared` isn't connected | Check `TUNNEL_TOKEN` and the cloudflared logs. |
+| Cloudflare **502** | cloudflared can't reach worca | The tunnel URL must be `worca.railway.internal:4317` (service name + `PORT`); `WORCA_HOST` must be `::`. |
+| worca exits with code **78**: `/data is not writable … RAILWAY_RUN_UID=0` | Started as the image's non-root user on a root-owned volume | Set `RAILWAY_RUN_UID=0`. |
+| worca exits: `remote access: …` | Incomplete Access settings | See [remote-access.md](remote-access.md#worca-refuses-to-start-if-the-setup-is-unsafe). |
+| Deploy fails its **healthcheck** | `healthcheck.railway.app` missing from `WORCA_ALLOWED_HOSTS` (worca answers 403) | Add it. |
+| Every run is a mock run | `WORCA_MOCK=1` is set on the service | Remove it; the UI's mock toggle still works per run. |
+| *Claude Code is not logged in* in the logs | No Claude credentials | Set `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` and redeploy. |
+| `railway ssh`: *Host key verification failed* | First connection from a non-interactive shell | Run `railway ssh` once in an interactive terminal and accept Railway's host key. |
+| A clone or file can't be written by worca | Created as root in a `railway ssh` session | Create it as `worca` (`su -s /bin/sh worca -c '…'`), or `chown -R worca:worca` it. |
 
 ## Limits
 
-- Every allowed person is an administrator of this box (see
-  [remote-access.md](remote-access.md#limits)). Use one deployment per person or per set of
+- Every allowed person is an administrator of this worca (see
+  [remote-access.md → Limits](remote-access.md#limits)). Use one deployment per person or per set of
   credentials.
-- Hobby volumes stop at 5 GB, which a couple of repos with worktrees and `node_modules` can
-  outgrow. Use Pro (50 GB and up).
+- One replica only; deploys pause running agents (see [Upgrades](#upgrades-and-restarts)).
