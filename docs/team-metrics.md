@@ -116,6 +116,9 @@ run it. It reads the same records for the same scope; nothing extra is recorded.
   - both carry a **person key**, `sha256("worca:" + lower-cased git email)` cut to 16 hex (`actorKey`
     on runs, `authorKey` on PR events), so one person is one group even when their name is spelled
     differently on two machines. No email address is stored;
+  - keys that carry the **same git name** (case and spacing aside) are one person who committed
+    from two emails (work and home, an old address). A GitHub login never joins keys: the login
+    says who opened a PR, not who wrote its commits;
   - an item without a key (a record from before the key existed, a PR whose commits are all
     machine commits) joins the person whose name, or GitHub login, it carries; the label is the
     name seen most often, a login only when nothing else is known;

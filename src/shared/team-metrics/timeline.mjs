@@ -70,7 +70,8 @@ function normPr(p) {
 
 /**
  * People across runs and pull requests. A person is keyed by `actorKey` (a hash of the git email,
- * the same on every host and machine); an item without one joins the person whose name or GitHub
+ * the same on every host and machine); keys that carry the same git name (case and spacing aside)
+ * are one person with several emails. An item without a key joins the person whose name or GitHub
  * login it carries, else stands under its name. The label is the name seen most often.
  * @param {object[]} items  the items to group (e.g. the ones on screen).
  * @param {object} [opts]
@@ -79,23 +80,45 @@ function normPr(p) {
  * @returns {{ key: string, label: string, items: object[] }[]} sorted by label, "Unattributed" last.
  */
 export function groupByPerson(items, { known = items } = {}) {
-  const low = (s) => String(s || '').trim().toLowerCase();
-  const alias = new Map();   // lower(name | login) → key
+  const low = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  // Union-find over person keys and git names: a key and the git name it carries are one person,
+  // so two keys (two emails) with the same name join. Logins never join keys: a PR's login is who
+  // opened it, which need not be who wrote its commits.
+  const parent = new Map();
+  const find = (x) => {
+    if (!parent.has(x)) parent.set(x, x);
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r);
+    while (parent.get(x) !== r) { const next = parent.get(x); parent.set(x, r); x = next; }
+    return r;
+  };
+  const union = (a, b) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent.set(ra < rb ? rb : ra, ra < rb ? ra : rb); };
+  const loginKey = new Map();   // lower(login) → key, for key-less items only
   for (const it of known) {
     if (!it.actorKey) continue;
-    for (const n of [it.actor, it.login]) if (n && !alias.has(low(n))) alias.set(low(n), it.actorKey);
+    const gitName = it.actor && it.actor !== it.login ? low(it.actor) : null;
+    if (gitName) union(`k:${it.actorKey}`, `n:${gitName}`);
+    else find(`k:${it.actorKey}`);
+    if (it.login && !loginKey.has(low(it.login))) loginKey.set(low(it.login), it.actorKey);
   }
   const groups = new Map();
   for (const it of items) {
-    const key = it.actorKey || alias.get(low(it.actor)) || alias.get(low(it.login)) || (it.actor ? `name:${low(it.actor)}` : '');
+    let key = '';
+    if (it.actorKey) key = find(`k:${it.actorKey}`);
+    else if (it.actor && parent.has(`n:${low(it.actor)}`)) key = find(`n:${low(it.actor)}`);
+    else if (it.login && loginKey.has(low(it.login))) key = find(`k:${loginKey.get(low(it.login))}`);
+    else if (it.actor) key = `n:${low(it.actor)}`;
     if (!groups.has(key)) groups.set(key, { key, names: new Map(), items: [] });
     const g = groups.get(key);
     g.items.push(it);
-    if (it.actor) g.names.set(it.actor, (g.names.get(it.actor) || 0) + (it.login && it.actor === it.login ? 0.5 : 1));
+    const shown = it.actor ? String(it.actor).trim().replace(/\s+/g, ' ') : '';
+    if (shown) g.names.set(shown, (g.names.get(shown) || 0) + (it.login && it.actor === it.login ? 0.5 : 1));
   }
+  // Most frequent spelling; on a tie, a capitalised one ("Denislav Prinov" over "denislav prinov").
+  const allLower = (s) => (s === s.toLowerCase() ? 1 : 0);
   const out = [...groups.values()].map((g) => ({
     key: g.key,
-    label: [...g.names.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || 'Unattributed',
+    label: [...g.names.entries()].sort((a, b) => b[1] - a[1] || allLower(a[0]) - allLower(b[0]) || a[0].localeCompare(b[0]))[0]?.[0] || 'Unattributed',
     items: g.items,
   }));
   return out.sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.label.localeCompare(b.label)));
