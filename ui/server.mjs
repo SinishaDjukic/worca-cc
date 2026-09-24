@@ -6276,20 +6276,31 @@ app.get('/api/ask/runs/:id', (req, res) => {
   }
 });
 
-app.patch('/api/ask/threads/:id', (req, res) => {
+app.patch('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
     const body = req.body || {};
     const patch = {};
-    // Title keeps its original contract exactly: a PATCH that names neither field
-    // still earns the title error, so pre-#397 callers see identical behaviour.
-    if (body.title !== undefined || body.scope === undefined) {
+    // The Ask panel's model · effort picker, moved while this chat is open: the pair
+    // travels together, so a switch away and back finds it before any send.
+    const pick = body.model !== undefined || body.effort !== undefined;
+    // Title keeps its original contract exactly: a PATCH that names none of the
+    // fields still earns the title error, so pre-#397 callers see identical behaviour.
+    if (body.title !== undefined || (body.scope === undefined && !pick)) {
       const raw = body.title;
       if (typeof raw !== 'string' || !raw.trim() || raw.length > 120) {
         return badRequest(res, 'title must be a non-empty string of at most 120 characters');
       }
       patch.title = raw.trim();
+    }
+    if (pick) {
+      // The same check as the message POST. Awaited BEFORE the scope branch, so its
+      // read-modify-write of the stored context stays synchronous.
+      const mv = await validateModelEffort(body.model, body.effort);
+      if (!mv.ok) return badRequest(res, mv.error);
+      patch.model = mv.model;
+      patch.effort = mv.effort;
     }
     if (body.scope !== undefined) {
       // #397: the Ask panel's scope selector. Merged per field into the stored
