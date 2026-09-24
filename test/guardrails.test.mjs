@@ -108,7 +108,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     honorProjectSettings: true,
     envScrub: false,
     envAllowlist: [],
-    protectedPaths: ['.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx'],
+    protectedPaths: ['.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**'],
     deny: [
       'Bash(git push)', 'Bash(git push:*)',
       'Bash(npm publish)', 'Bash(npm publish:*)',
@@ -121,7 +121,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: true,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx',
+      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
       '.npmrc', '.netrc', '*.tfstate*', '*.keystore', '*.jks',
       '**/secrets/**', '**/.git/config', '~/.git-credentials',
       '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.kube/**', '~/.config/gh/**',

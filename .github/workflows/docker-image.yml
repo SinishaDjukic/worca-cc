@@ -1,0 +1,203 @@
+name: Container image
+
+# Reusable: builds the Worca container image (slim + full, linux/amd64 +
+# linux/arm64) from a git ref and pushes it to GHCR with provenance, SBOM and a
+# keyless cosign signature. Called by release-npm-app.yml on a release tag and
+# by docker-rebuild.yml on the weekly refresh. See plans/container-isolation-design.md §10.3.
+#
+# The tarball is produced by `npm pack` from the checked-out ref — the same
+# source and the same pack step the npm publish runs on that tag — so the image
+# holds exactly what npm ships for that version.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: git ref to build (a worca-app-v* tag)
+        required: true
+        type: string
+      channel:
+        description: latest | rc — which moving tags to update
+        required: true
+        type: string
+      date_tag:
+        description: also push a <version>-YYYYMMDD tag (weekly rebuilds)
+        required: false
+        type: boolean
+        default: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/worca
+
+jobs:
+  build:
+    name: build ${{ matrix.variant }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: true
+      matrix:
+        variant: [slim, full]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Pack @worca/app
+        id: meta
+        run: |
+          npm ci
+          mkdir -p docker/.pack
+          npm pack --silent --pack-destination docker/.pack
+          TGZ="$(ls docker/.pack/worca-app-*.tgz)"
+          echo "tarball=$TGZ" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            WORCA_TARBALL=${{ steps.meta.outputs.tarball }}
+            CLAUDE_CODE_VERSION=${{ steps.meta.outputs.claude_code }}
+            VARIANT=${{ matrix.variant }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests/${{ matrix.variant }}
+          touch "/tmp/digests/${{ matrix.variant }}/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.variant }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: manifest + sign (${{ matrix.variant }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      matrix:
+        variant: [slim, full]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.variant }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tags mirror the npm dist-tag logic (docs/RELEASING.md §5):
+      #   stable 1.3.0 -> 1.3.0, 1.3, 1, latest        (+ "-full" twins)
+      #   rc 1.3.0-rc.1 -> 1.3.0-rc.1, rc               (+ "-full" twins)
+      #   date_tag     -> 1.3.0-20260919 in addition
+      - name: Compute tags
+        id: tags
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          DATE_TAG: ${{ inputs.date_tag }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          suffix=""; [ "$VARIANT" = "full" ] && suffix="-full"
+          tags="$VERSION$suffix"
+          if [ "$CHANNEL" = "latest" ]; then
+            major="${VERSION%%.*}"; minor="${VERSION%.*}"
+            tags="$tags $minor$suffix $major$suffix latest$suffix"
+          else
+            tags="$tags rc$suffix"
+          fi
+          if [ "$DATE_TAG" = "true" ]; then tags="$tags $VERSION-$(date -u +%Y%m%d)$suffix"; fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "will tag: $tags"
+
+      - name: Create multi-arch manifest
+        id: manifest
+        working-directory: /tmp/digests/${{ matrix.variant }}
+        run: |
+          args=""
+          for t in ${{ steps.tags.outputs.tags }}; do args="$args -t $IMAGE:$t"; done
+          docker buildx imagetools create $args $(printf "$IMAGE@sha256:%s " *)
+          first="$(echo ${{ steps.tags.outputs.tags }} | cut -d' ' -f1)"
+          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$first" --format '{{json .Manifest.Digest}}' | tr -d '"')" >> "$GITHUB_OUTPUT"
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign the manifest (keyless, OIDC)
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: cosign sign --yes "$IMAGE@$DIGEST"
+
+  smoke:
+    name: smoke pushed image
+    needs: [build, manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Mock-mode smoke against the pushed manifest
+        run: node tools/docker-smoke.mjs --image "$IMAGE:${{ needs.build.outputs.version }}"

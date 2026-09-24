@@ -82,3 +82,83 @@ jobs:
         env:
           CHROME_NO_SANDBOX: "1"
         run: npm run verify:composer && npm run verify:run-monitor && npm run verify:theme && npm run verify:memory && npm run verify:scripts && npm run verify:ask-forms
+
+  # The container image (docs/docker.md): build it from this checkout's
+  # `npm pack` output — the same path the release takes — lint the Dockerfile,
+  # run the offline mock smoke inside it (tools/docker-smoke.mjs), and scan
+  # the OS layer. No real `claude`, no token, no spend. amd64 + slim only on
+  # PRs; the -full variant and arm64 are exercised by the release workflow.
+  docker:
+    name: container image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: docker/Dockerfile
+
+      - name: Pack @worca/app
+        id: pack
+        run: |
+          mkdir -p docker/.pack
+          npm pack --silent --pack-destination docker/.pack
+          echo "tarball=$(ls docker/.pack/worca-app-*.tgz)" >> "$GITHUB_OUTPUT"
+          echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (slim, amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          load: true
+          tags: ghcr.io/sinishadjukic/worca:ci
+          build-args: |
+            WORCA_TARBALL=${{ steps.pack.outputs.tarball }}
+            CLAUDE_CODE_VERSION=${{ steps.pack.outputs.claude_code }}
+            VARIANT=slim
+          cache-from: type=gha,scope=ci-slim
+          cache-to: type=gha,scope=ci-slim,mode=max
+
+      - name: Mock-mode smoke inside the image
+        run: npm run docker:smoke -- --image ghcr.io/sinishadjukic/worca:ci
+
+      # Blocking: the Debian layer we ship. Node/npm library findings inside the
+      # base image (e.g. node-tar under the bundled npm) are the node image's to
+      # fix and arrive with the weekly rebuild's newer base, so they are reported
+      # (next step) but do not fail the PR.
+      - name: Scan OS layer
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/sinishadjukic/worca:ci
+          scan-type: image
+          vuln-type: os
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: docker/.trivyignore
+
+      - name: Report library findings (non-blocking)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/sinishadjukic/worca:ci
+          scan-type: image
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          skip-setup-trivy: true

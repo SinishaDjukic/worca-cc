@@ -20,3 +20,5 @@ docs/why-worca/narration-audio.js
 # python bytecode: the script harness never writes it (sys.dont_write_bytecode), a developer's own python run may
 __pycache__/
 *.pyc
+# local image builds (tools/docker-build.mjs)
+docker/.pack/

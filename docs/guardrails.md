@@ -29,7 +29,8 @@ start the run.)
 - **Permissive** (default) — no restrictions; byte-identical behavior to a
   run with no selection.
 - **Normal** — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
-  cert stores) from agent Read/Edit and blocks publication commands
+  cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
+  and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). Never breaks a pipeline: commits,
   installs, tests, and `curl localhost` all still work.
 - **Strict** (wire id `secure`) — Normal plus: environment scrub on agent
@@ -88,7 +89,11 @@ enforces the set's latest definition.
   Env scrub is the real exfil control, but it is **not containment**: with
   `HOME` retained, credential *files* stay readable to any subprocess an agent
   spawns (`node -e` + `fetch`), so deny rules alone don't stop indirect reads —
-  for OS-level enforcement use Claude Code's sandbox (out of scope here).
+  for OS-level enforcement run Worca in a container ([docker.md](docker.md)):
+  the box holds no host credentials, mounts only the projects you name, and
+  the egress overlay makes non-allowlisted hosts unreachable at the packet
+  level. The Normal and Strict sets also deny `Read` on `/run/secrets/**`,
+  where a compose secret (an API key via `apiKeyHelper`) lands.
 - Env scrub failing a pipeline that needed an unlisted var fails visibly
   (tool errors in the transcript) — add the var to the allowlist; there is no
   silent fallback. Common cases: a corporate TLS-intercepting proxy already

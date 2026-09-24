@@ -1,0 +1,3 @@
+# CVE ids the docker CI scan may ignore, one per line, each with a reason.
+# Reviewed whenever it grows; unfixable Debian findings are already skipped
+# by ignore-unfixed in ci.yml.

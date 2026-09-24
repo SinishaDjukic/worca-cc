@@ -1,0 +1,6 @@
+# Build context for docker/Dockerfile is the repo root; the image only needs
+# the packed tarball and docker/. Everything else stays out of the context.
+*
+!docker/
+docker/.pack/*
+!docker/.pack/worca-app-*.tgz

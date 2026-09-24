@@ -1,0 +1,24 @@
+# docker/compose.clonein.yml — clone-in mode: nothing from the host is mounted
+# (docs/docker.md, "Clone-in mode").
+#
+#   docker compose -f compose.yml -f compose.clonein.yml up -d
+#   docker compose -f compose.yml -f compose.clonein.yml run --rm worca \
+#       git clone https://github.com/acme/api.git /projects/api
+#   docker compose -f compose.yml -f compose.clonein.yml run --rm worca worca add --path /projects/api
+#
+# /projects becomes a named volume. Results leave the container only as pushed
+# branches and PRs, so git credentials (GH_TOKEN or the ssh overlay) are needed.
+# `!override` REPLACES the base file's volume list (compose merges lists by
+# target otherwise, which would keep the host bind mount).
+
+services:
+  worca:
+    volumes: !override
+      - worca-home:/worca
+      - claude-config:/home/worca/.claude
+      - projects:/projects
+    environment:
+      WORCA_PROJECTS_ROOT: /projects
+
+volumes:
+  projects:

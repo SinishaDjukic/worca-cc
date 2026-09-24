@@ -270,6 +270,22 @@ Requirements:
   `postinstall` didn't run) or the layout isn't npm's, Worca says so rather than
   a bare `ENOENT`; `WORCA_CLAUDE_BIN` can always point at a `claude.exe` directly.
 
+### In a container
+
+Prefer the agents to run in a disposable Linux box instead of on your machine?
+The same Worca ships as an image (`ghcr.io/sinishadjukic/worca`) with a Compose
+file; the UI, the CLI, guardrails, plugins and your data work the same way.
+
+```bash
+worca container up        # from the npm install: writes ~/.worca-cc/container/, starts the box
+worca container login     # log Claude Code in, once; UI on http://localhost:4317
+```
+
+or, without npm, download `docker/compose.yml`, set `WORCA_PROJECTS` in a
+`.env` beside it and `docker compose up -d`. See [`docs/docker.md`](docs/docker.md)
+for login options, git credentials, the egress allowlist, clone-in mode and
+the Windows/WSL2 notes.
+
 ## Quick start
 
 ### Web UI
