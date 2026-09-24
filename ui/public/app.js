@@ -15248,8 +15248,8 @@ function patchHistoryPr({ projectKey, id, pr }) {
   if (!card) return;                                         // off-screen (filtered out) — model is enough
   resetPrCluster(card);
   setupPrButton(card, row?.projectDir || null, row || { id, projectKey, pr }, state.ghAvailable);
-  // A MERGED enrichment retires the diff pill — merged work is already in the base
-  // branch, so its line counts stop being the story.
+  // A MERGED enrichment hides only a LIVE diff pill (the merge emptied its
+  // source...feature diff); a row with frozen counts (`diffFrozen`) keeps showing them.
   renderHistDiffPill(card.querySelector('.hist-diff-pill'), row || { id, projectKey, pr });
   // No setMergePill: clarification B — merged-or-not is shown by the link swap inside
   // setupPrButton (OPEN->"View PR", MERGED->"Merged"); the pill is detail-only now.
@@ -15991,14 +15991,18 @@ function renderHistCommentPill(pill, p) {
   pill.title = `${n} unresolved diff comment${n === 1 ? '' : 's'}`;
 }
 
-// Diff pill: merged PR -> hidden ("the diff is no longer the story"); survived
-// with changes -> +A −R; survived with none -> "no diff"; branch gone -> hidden.
+// Diff pill: frozen counts (`diffFrozen`, the run's own results.json summary) always
+// show — merged PR and branch gone alike — as +A −R, or "no diff" when the run
+// really changed nothing. Without them (a live or legacy run) the counts are the
+// live source...feature diff: survived with changes -> +A −R; survived with none ->
+// "no diff"; merged PR or branch gone -> hidden (that diff is empty or unknowable).
 // NOTE: the minus glyph is U+2212 (−), not an ASCII hyphen; the jsdom test
 // asserts it byte-for-byte, so keep this exact character.
 function renderHistDiffPill(pill, p) {
   if (!pill) return;
+  const frozen = !!(p && p.diffFrozen);
   const merged = p && p.pr && typeof p.pr === 'object' && String(p.pr.state || '').toUpperCase() === 'MERGED';
-  if (!p || !p.survived || merged) { pill.hidden = true; return; }
+  if (!p || (!frozen && (!p.survived || merged))) { pill.hidden = true; return; }
   pill.hidden = false;
   const added = Number.isFinite(+p.added) ? +p.added : 0;
   const removed = Number.isFinite(+p.removed) ? +p.removed : 0;
@@ -16012,7 +16016,9 @@ function renderHistDiffPill(pill, p) {
     const add = document.createElement('span'); add.className = 'diff-add'; add.textContent = `+${added}`;
     const del = document.createElement('span'); del.className = 'diff-del'; del.textContent = `−${removed}`; // U+2212
     diffEl.append(add, ' ', del);
-    pill.title = `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
+    pill.title = frozen
+      ? `${added} added, ${removed} removed by this run`
+      : `${added} added, ${removed} removed vs ${p.sourceBranch || 'source'}`;
   }
 }
 

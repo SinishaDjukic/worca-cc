@@ -1654,32 +1654,60 @@ export function retainedWorkFor(row) {
   return { reason: members[0].code || 'unknown', members };
 }
 
+// Kept local, not imported: results.mjs (which exports RESULTS_FILE) imports this module.
+const RESULTS_FILE = 'results.json';
+
+/**
+ * A run's frozen line counts from `<dir>/results.json` — persistResults writes it when
+ * the run ends (or error-pauses), and a workspace run's summary is the rollup across
+ * its members. Null when the file is absent or unparseable, or its summary lacks
+ * numeric counts.
+ * @param {string|undefined} dir the on-disk run dir
+ * @returns {Promise<{added:number, removed:number}|null>}
+ */
+async function frozenDiffCounts(dir) {
+  if (!dir) return null;
+  try {
+    const sum = JSON.parse(await readFile(join(dir, RESULTS_FILE), 'utf8'))?.summary;
+    if (!Number.isFinite(sum?.linesAdded) || !Number.isFinite(sum?.linesRemoved)) return null;
+    return { added: sum.linesAdded, removed: sum.linesRemoved };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a history row from a pipelines DB row. Mirrors the legacy pipelineEntry
  * wire shape EXACTLY: { id, dir, title, status, startedAt, branch, sourceBranch,
- * survived, added, removed, totalCostUsd, totalActiveMs, mtime[, pr] }. Git/PR work
- * (branchExists / diffShortstat / findPrForBranch) is UNCHANGED — it still shells
- * out — and is fed the DB row's branch JSON instead of a parsed state.json.
+ * survived, added, removed, diffFrozen, totalCostUsd, totalActiveMs, mtime[, pr] }.
+ * Git/PR work (branchExists / diffShortstat / findPrForBranch) is UNCHANGED — it
+ * still shells out — and is fed the DB row's branch JSON instead of a parsed state.json.
  *  - `branch` (wire) = state.branch.feature; `sourceBranch` = state.branch.source.
  *  - `mtime` maps to updated_at parsed to ms (a SORT KEY only; never displayed).
  *  - `row.dir` is attached by the caller (the real on-disk run dir).
  *  - `guardrailsId` (additive, v14+): the run's selected guardrail set id
  *    ('permissive' = unguarded) or null for legacy rows.
  *  - `retainedWork` is non-null only while a commit-failed worktree still exists.
+ *  - `added`/`removed` come from the run dir's results.json summary when it has one
+ *    (`diffFrozen: true`), whatever became of the branch since — a merge empties the
+ *    live three-dot diff. Otherwise (a run still going, a legacy run) they are the
+ *    live source...feature counts while the branch survives. `survived` is always
+ *    the live "branch exists" fact. `lite` skips the file read like the git work.
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
- * @param {object} opts { withPr? }
+ * @param {object} opts { withPr?, lite? }
  */
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
   const source = branchObj?.source ?? null;
+  const frozen = opts.lite ? null : await frozenDiffCounts(row.dir);
   let survived = false;
-  let added = 0;
-  let removed = 0;
+  let added = frozen ? frozen.added : 0;
+  let removed = frozen ? frozen.removed : 0;
   if (repoDir && feature) {
     survived = await branchExists(repoDir, feature);
-    if (survived && source) {
+    if (!frozen && survived && source) {
       const d = await diffShortstat(repoDir, source, feature);
       added = d.added;
       removed = d.removed;
@@ -1702,6 +1730,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     survived,
     added,
     removed,
+    diffFrozen: !!frozen,
     totalCostUsd: cost,
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
