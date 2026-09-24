@@ -167,6 +167,55 @@ test('#397 PATCH scope: pin project/workspace, Auto clears the target, invalid s
   assert.equal((await patch('/api/ask/threads/ask_ffffffff', { scope: { pinned: false } })).status, 404);
 });
 
+test('PATCH model/effort: persisted and returned by GET; validated like a send; no title needed', async () => {
+  const { thread } = await (await post('/api/ask/threads', { title: 'Picked' })).json();
+  const url = `/api/ask/threads/${thread.id}`;
+  // the Ask panel's picker, moved while this chat is open: no title in the body, no title error
+  let r = await patch(url, { model: 'claude-haiku-4-5', effort: 'medium' });
+  assert.equal(r.status, 200);
+  const patched = (await r.json()).thread;
+  assert.equal(patched.model, 'claude-haiku-4-5');
+  assert.equal(patched.effort, 'medium');
+  assert.equal(patched.title, 'Picked', 'a model-only PATCH leaves the title alone');
+  const got = (await (await fetch(`${base}${url}`)).json()).thread;
+  assert.equal(got.model, 'claude-haiku-4-5');
+  assert.equal(got.effort, 'medium');
+  // the same validateModelEffort the message POST uses, with its error
+  r = await patch(url, { model: 'no-such-model', effort: 'high' });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'unknown model "no-such-model"');
+  r = await patch(url, { model: 'claude-haiku-4-5', effort: 'max' });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'effort "max" is not available for model "claude-haiku-4-5"');
+  // the pair travels together
+  r = await patch(url, { model: 'claude-opus-5-5' });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'effort is required');
+  r = await patch(url, { effort: 'high' });
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'model is required');
+  const after = (await (await fetch(`${base}${url}`)).json()).thread;
+  assert.deepEqual([after.model, after.effort], ['claude-haiku-4-5', 'medium'], 'a refused PATCH writes nothing');
+  // composes with title and scope
+  r = await patch(url, { title: 'Both', model: 'claude-opus-5-5', effort: 'max', scope: { pinned: true, projectKey: 'demo-00000001' } });
+  assert.equal(r.status, 200);
+  const both = (await r.json()).thread;
+  assert.deepEqual([both.title, both.model, both.effort, both.context.projectKey], ['Both', 'claude-opus-5-5', 'max', 'demo-00000001']);
+  // a bad model fails the whole PATCH — the valid title beside it is not written
+  r = await patch(url, { title: 'Lost', model: 'no-such-model', effort: 'high' });
+  assert.equal(r.status, 400);
+  assert.equal((await (await fetch(`${base}${url}`)).json()).thread.title, 'Both');
+  // unknown thread stays 404
+  assert.equal((await patch('/api/ask/threads/ask_ffffffff', { model: 'claude-opus-5-5', effort: 'high' })).status, 404);
+});
+
+test('PATCH naming none of title/scope/model still earns the title error', async () => {
+  const { thread } = await (await post('/api/ask/threads', {})).json();
+  const r = await patch(`/api/ask/threads/${thread.id}`, {});
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).error, 'title must be a non-empty string of at most 120 characters');
+});
+
 test('#397: a message whose context lacks `pinned` inherits the thread pin, per field', async () => {
   const { thread } = await (await post('/api/ask/threads', {})).json();
   await patch(`/api/ask/threads/${thread.id}`, { scope: { pinned: true, projectKey: 'demo-00000001' } });
