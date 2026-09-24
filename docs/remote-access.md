@@ -181,7 +181,10 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
   `WORCA_IDENTITY_NAME`, records the name but shows none of it: there is only one person.
 - A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
   authored by a shared bot or GitHub App still names the person.
-- Ask Worca sees the signed-in person in its context.
+- Ask Worca sees the signed-in person in its context and answers "who started this", "what did ada
+  run", "who paused it" and "who scheduled this" from the recorded names (`list_runs` with a
+  `startedBy` filter, `list_people`, and the actions `get_run` lists). "My runs" works only with a
+  per-person sign-in.
 - Who paused, stopped or resumed a run shows in its banner ("Paused by …"), and diff comments name
   their author.
 - *Run now* on a schedule credits whoever clicked it. Team metrics, team policy edits and cap

@@ -126,7 +126,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
   const life = new AbortController();
   const server = createRpcServer({
     tools: createAskTools({
-      ...defaultToolDeps({ threadId }),
+      ...defaultToolDeps({ threadId, viewer: process.env.WORCA_ASK_READER || null }),
       ...defaultWorktreeDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
       // The life signal (already built for propose_workflow's nested classifier): stdin closing

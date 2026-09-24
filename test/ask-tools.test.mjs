@@ -365,9 +365,9 @@ const fake = {
 };
 const tools = createAskTools(fake);
 
-test('list(): forty-three tools with JSON-Schema inputs', () => {
+test('list(): forty-four tools with JSON-Schema inputs', () => {
   const defs = tools.list();
-  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
+  assert.deepEqual(defs.map((d) => d.name), ['list_projects', 'list_workflows', 'list_runs', 'list_people', 'get_run', 'get_run_diff', 'track_run', 'propose_run', 'propose_workflow', 'read_attachment',
     'list_diff_comments', 'add_diff_comment', 'reply_to_diff_comment', 'resolve_diff_comment', 'delete_diff_comment',
     'open_worktree', 'list_worktrees', 'remove_worktree', 'git',
     'list_run_artifacts', 'read_run_artifact', 'get_run_progress',
@@ -402,9 +402,9 @@ test('list_runs: scan limit, filters, newest-first order preserved, shape per ta
   assert.deepEqual(calls[0], ['listAllPipelines', { lite: true, limit: 200 }]);
   assert.deepEqual(all.map((r) => r.id), ['8c3d12ab', '4e1f2a9b', 'bbbbbbbb']);
   assert.deepEqual(all[0], { id: '8c3d12ab', title: 'Rename', target: 'workspace', workspaceId: 'wks-team-0000abcd', workspaceName: 'Team', status: 'running',
-    startedAt: ROW_W.started_at, updatedAt: null, branch: 'worca-cc/rename-8c3d12ab', sourceBranch: null, guardrailsId: 'secure', totalCostUsd: null });
+    startedAt: ROW_W.started_at, updatedAt: null, branch: 'worca-cc/rename-8c3d12ab', sourceBranch: null, guardrailsId: 'secure', totalCostUsd: null, startedBy: null });
   assert.deepEqual(all[1], { id: '4e1f2a9b', title: 'Fix login', target: 'project', projectKey: 'demo-00000001', projectName: 'Demo', status: 'done',
-    startedAt: ROW_P.started_at, updatedAt: '2026-08-20T10:00:00.000Z', branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main', guardrailsId: 'normal', totalCostUsd: 1.25 });
+    startedAt: ROW_P.started_at, updatedAt: '2026-08-20T10:00:00.000Z', branch: 'worca-cc/fix-login-4e1f2a9b', sourceBranch: 'main', guardrailsId: 'normal', totalCostUsd: 1.25, startedBy: null });
   assert.deepEqual((await tools.call('list_runs', { projectKey: 'demo-00000001' })).map((r) => r.id), ['4e1f2a9b']);
   assert.deepEqual((await tools.call('list_runs', { workspaceId: 'wks-team-0000abcd' })).map((r) => r.id), ['8c3d12ab']);
   assert.deepEqual((await tools.call('list_runs', { status: 'ERROR' })).map((r) => r.id), ['bbbbbbbb'], 'status match is case-insensitive');

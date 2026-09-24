@@ -126,6 +126,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
   const id = typeof input?.id === 'string' ? input.id : '';
   switch (n) {
     case 'list_runs': return 'Finding runs';
+    case 'list_people': return 'Looking up who ran what';
     case 'get_run':
     case 'get_run_diff': return id ? `Reading run ${id.slice(0, 12)}` : 'Reading run';
     case 'list_workflows': return 'Looking at workflows';
