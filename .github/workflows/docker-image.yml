@@ -26,7 +26,8 @@ on:
         default: false
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/worca
+  # GHCR repository names must be lowercase; the owner login is not.
+  IMAGE: ghcr.io/sinishadjukic/worca
 
 jobs:
   build:
