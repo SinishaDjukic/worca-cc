@@ -130,7 +130,7 @@ source, the `worca-metrics` / `worca-policy` branches and clone-in mode.
 
 | Need | Do |
 | --- | --- |
-| HTTPS to GitHub | `GH_TOKEN=github_pat_…` in `.env`, or a read/write pair (`WORCA_GH_READ_TOKEN`, `WORCA_GH_WRITE_TOKEN`). Worca passes the token to its own git and gh calls one call at a time; agents never get it, in any guardrail set |
+| HTTPS to GitHub | `GH_TOKEN=github_pat_…` in `.env`, or a read/write pair (`WORCA_GH_READ_TOKEN`, `WORCA_GH_WRITE_TOKEN`), or a GitHub App (`WORCA_GH_APP_ID` + `WORCA_GH_APP_KEY_FILE` or `WORCA_GH_APP_KEY_B64`, [setup](deploy-railway.md#github-app)). Worca passes the token to its own git and gh calls one call at a time; agents never get it, in any guardrail set |
 | SSH remotes | `docker compose -f compose.yml -f compose.ssh.yml up -d` forwards your agent socket (Docker Desktop: automatic; Linux: `WORCA_SSH_SOCK=$SSH_AUTH_SOCK`). Keys never enter the box; the socket does, so pair it with the egress overlay for untrusted tasks |
 | Commit identity | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` in `.env` (agents commit in run worktrees; git refuses without one) |
 

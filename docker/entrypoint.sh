@@ -103,7 +103,9 @@ if git config --global --get-all credential.https://github.com.helper 2>/dev/nul
   git config --global --unset-all credential.https://gist.github.com.helper >/dev/null 2>&1 || true
   log "removed the global gh credential helper (worca now passes the token per call)"
 fi
-if [ -n "${WORCA_GH_READ_TOKEN:-}${WORCA_GH_WRITE_TOKEN:-}" ]; then
+if [ -n "${WORCA_GH_APP_ID:-}" ] && [ -n "${WORCA_GH_APP_KEY_FILE:-}${WORCA_GH_APP_KEY_B64:-}" ]; then
+  log "GitHub: App ${WORCA_GH_APP_ID}, a short-lived token minted per call"
+elif [ -n "${WORCA_GH_READ_TOKEN:-}${WORCA_GH_WRITE_TOKEN:-}" ]; then
   log "GitHub: split read/write tokens, per call"
 elif [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
   log "GitHub: one token for clone, push and PRs, per call"

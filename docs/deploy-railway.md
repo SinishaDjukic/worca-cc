@@ -84,7 +84,7 @@ One Railway **project per deployment**. Use either the dashboard or the CLI.
    | `WORCA_CF_ACCESS_TEAM_DOMAIN` | `acme.cloudflareaccess.com` |
    | `WORCA_CF_ACCESS_AUD` | the application's AUD tag |
    | `CLAUDE_CODE_OAUTH_TOKEN` *or* `ANTHROPIC_API_KEY` | secret. Needed as a variable: agents run as their own user and cannot use a login stored in worca's `HOME` |
-   | `GH_TOKEN` | secret (optional at first). Or two tokens, `WORCA_GH_READ_TOKEN` (clone, fetch: Contents read) and `WORCA_GH_WRITE_TOKEN` (push, PRs: Contents and Pull requests read/write). Agents never get either |
+   | GitHub | One of three, all optional at first. A **GitHub App** (recommended when several people share the deployment): `WORCA_GH_APP_ID`, `WORCA_GH_APP_KEY_B64` (secret, seal it) and optionally `WORCA_GH_APP_INSTALLATION_ID`; see [GitHub App](#github-app). Or `GH_TOKEN`. Or two tokens, `WORCA_GH_READ_TOKEN` (clone, fetch: Contents read) and `WORCA_GH_WRITE_TOKEN` (push, PRs: Contents and Pull requests read/write). Agents never get either |
    | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` | the identity agents commit with |
 
    If the Access variables are missing, worca refuses to start and logs why. It won't run
@@ -169,7 +169,9 @@ railway ssh -s worca -- su -s /bin/sh worca -c \
 ```
 
 `gh repo clone` uses the service's `GH_TOKEN`, so private repos clone. With a read/write pair
-instead, prefix the command inside the quotes with `GH_TOKEN="$WORCA_GH_READ_TOKEN"`. Worca itself
+instead, prefix the command inside the quotes with `GH_TOKEN="$WORCA_GH_READ_TOKEN"`. With only a
+GitHub App there is no token to prefix: clone a public repository with plain `git clone`, and for
+a private one use a short-lived token of your own for that one command. Worca itself
 passes the token to each of its own git and gh calls (fetch, push, pull requests); agents never
 get it. Then add `/data/projects/app` as a project in the UI (the folder picker is a
 text field on a server) and start a run.
@@ -177,6 +179,34 @@ text field on a server) and start a run.
 Ask Worca knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
 set, and who is signed in. It points people here to add a project, never asks for a token in chat,
 and says that pull requests come from the deployment's GitHub account.
+
+## GitHub App
+
+With an App, worca holds an App ID and a private key instead of a long-lived token. For each
+fetch, push or pull request it creates an installation token that lasts at most an hour, scoped
+to what that call needs (read, or read and write), and drops it afterwards. A run lasting days
+still pushes, because the token is created at push time. Pull requests show the App as their
+author.
+
+1. On GitHub, under the account that owns the repositories: **Settings → Developer settings →
+   GitHub Apps → New GitHub App**. Name it for its role (for example `worca-ci`), leave the
+   webhook off, and grant **Contents: read and write** and **Pull requests: read and write**.
+   Nothing else.
+2. **Generate a private key**; a `.pem` file downloads. It is the only long-lived secret.
+3. **Install App** on the repositories this deployment works on. The installation ID is the number
+   at the end of the installation's settings URL.
+4. On the `worca` service, set `WORCA_GH_APP_ID`, `WORCA_GH_APP_INSTALLATION_ID`, and the key as
+   base64 from stdin, so it never appears on a command line:
+
+   ```bash
+   base64 < worca-ci.private-key.pem | tr -d '\n' | railway variable set WORCA_GH_APP_KEY_B64 --stdin --service worca --skip-deploys
+   ```
+
+   Then seal `WORCA_GH_APP_KEY_B64` in the dashboard. Where the key can be mounted as a file,
+   `WORCA_GH_APP_KEY_FILE=/path/key.pem` works too.
+
+An App can only reach repositories owned by the account that owns the App. If a repository moves
+to an organisation, create and install a new App there first, then swap the variables.
 
 ## Upgrades and restarts
 
