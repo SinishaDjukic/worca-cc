@@ -6484,7 +6484,7 @@ input.gv-name:focus-visible{outline:none;}
   width:18px;height:18px;border-radius:50%;background:var(--slate-bg);color:var(--slate-ink);
   border:1px solid var(--line);font:600 9px/1 var(--sans);letter-spacing:.02em;
   vertical-align:middle;}
-.rc-meta .rc-by .person-ini,.hist-by-seg .person-ini{margin-right:5px;}
+.rc-meta .rc-by .person-ini,.hist-by-seg .person-ini,.rc-meta .sched-by .person-ini{margin-right:5px;}
 .rc-meta .rc-by .person-ini:empty{display:none;}
 .person-chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;max-width:280px;
   padding:4px 11px 4px 5px;border-radius:999px;background:var(--panel);border:1px solid var(--line);
@@ -6497,3 +6497,6 @@ input.gv-name:focus-visible{outline:none;}
 .nav-child .child-by{margin-left:6px;}
 .hist-pill-label{margin-left:8px;font-size:12px;color:var(--ink-3);}
 .hist-pill.person .person-ini{width:16px;height:16px;font-size:8px;}
+
+/* Team metrics: an actor may be a full email (attribution) — clip it to the column, full name in the tooltip. */
+.tm-person{display:inline-block;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;}

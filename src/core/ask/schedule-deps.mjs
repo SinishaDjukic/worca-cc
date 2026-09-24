@@ -76,9 +76,10 @@ export function defaultScheduleDeps({ threadId = null, reader = null } = {}) {
       }),
       validateChange: (input) => validateScheduleChange(input, { timeZone: threadTimeZone(threadId) }),
       getItem: getScheduleItem,
-      pause: (id) => pauseSchedule(id),
-      resume: (id) => resumeSchedule(id),
-      skipNext: (id) => skipNext(id),
+      // The person behind the turn (shared sign-in) is who changed the series; else unchanged.
+      pause: (id) => pauseSchedule(id, who ? { by: who } : {}),
+      resume: (id) => resumeSchedule(id, who ? { by: who } : {}),
+      skipNext: (id) => skipNext(id, who ? { by: who } : {}),
       markRead: (ids) => ids.map((id) => markRead(id, r)).filter(Boolean).length,
       markAllRead: () => markAllRead('schedule', r),
       unread: () => unreadCount('schedule', r),

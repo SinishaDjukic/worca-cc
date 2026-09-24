@@ -346,3 +346,60 @@ test('History Clarify: "answered by <name>" under the answers, "you" for yoursel
   const step = await clarifySec({ stepQuestions: [{ stepKey: 'x:n_plan:1', round: 1, nodeId: 'n_plan', agentKey: 'planner', questions: Q, answers: A, answeredBy: 'ada via Slack' }] });
   assert.equal(step.querySelector('.hd-cl-by')?.textContent, 'answered by ada via Slack');
 });
+
+// ── Schedules: created by / changed by (step 4) ──────────────────────────────────
+
+const SUMMARY = { target: 'project', workflowId: 'wf_default', guardrailsId: null, prompt: 'x', source: null, sourceBranch: null, featureBranch: null, memoryScope: null, mock: false, extras: 0 };
+const IN_AN_HOUR = new Date(Date.now() + 3600_000).toISOString();
+const SCHED = {
+  schedules: [{ id: 'sch_00000001', kind: 'recurring', title: 'Nightly', projectDir: '/x/alpha', workspaceId: null, rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'UTC' },
+    sentence: 'Every day at 02:00', tz: 'UTC', overlap: 'skip', maxFailures: 3, failureStreak: 0, ifMissed: 'run', graceMin: 360, status: 'active', pauseReason: null,
+    runsCount: 0, nextRunAt: IN_AN_HOUR, lastResult: null, createdBy: 'ada.lovelace@example.com', updatedBy: 'grace@example.com', summary: SUMMARY }],
+  tickets: [
+    { id: '11111111-2222-3333-4444-555555555555', kind: 'once', scheduleId: null, title: 'Mine', projectDir: '/x/alpha', workspaceId: null, runAt: IN_AN_HOUR, scheduledFor: IN_AN_HOUR, status: 'scheduled',
+      ifMissed: 'run', graceMin: 360, attempts: 0, retryAt: null, queued: false, forced: false, ownerPid: null, pipelineId: null, failReason: null, createdBy: ME, updatedBy: ME, summary: SUMMARY },
+    { id: '22222222-2222-3333-4444-555555555555', kind: 'once', scheduleId: null, title: 'Local', projectDir: '/x/alpha', workspaceId: null, runAt: IN_AN_HOUR, scheduledFor: IN_AN_HOUR, status: 'scheduled',
+      ifMissed: 'run', graceMin: 360, attempts: 0, retryAt: null, queued: false, forced: false, ownerPid: null, pipelineId: null, failReason: null, createdBy: 'local', updatedBy: 'local', summary: SUMMARY },
+  ],
+  counts: { scheduled: 2, missed: 0, recurring: 1, unread: 0 }, defaults: { graceMin: 360, ifMissed: 'run', maxFailures: 3 },
+};
+
+async function schedules(whoami, tab) {
+  const ctx = await boot({ whoami, fetchHandler: (u) => {
+    if (u.includes('/api/notifications')) return ok({ notifications: [], unread: 0 });
+    if (u.includes('/api/schedules')) return ok(SCHED);
+    if (u.includes('/api/workspaces')) return ok({ workspaces: [] });
+    return null;
+  } });
+  // The rows' icons parse SVG through a global DOMParser (schedules-view.mjs svgIcon).
+  Object.defineProperty(globalThis, 'DOMParser', { value: ctx.window.DOMParser, configurable: true, writable: true });
+  go(ctx.window, `schedules/${tab}`);
+  await settle(ctx.window, 8);
+  return ctx;
+}
+const cardBy = (ctx, title) => [...ctx.doc.querySelectorAll('.sched-item')].find((c) => c.querySelector('.rc-title')?.textContent === title);
+
+test('Schedules: "by <creator>" with initials, "by you", nothing for local; Details name creator and changer', async () => {
+  const rep = await schedules(SHARED, 'repeating');
+  const nightly = cardBy(rep, 'Nightly');
+  assert.ok(nightly, rep.doc.querySelector('#schedules-repeating')?.textContent);
+  assert.equal(nightly.querySelector('.sched-by-text').textContent, 'by ada.lovelace@example.com');
+  assert.equal(nightly.querySelector('.sched-by .person-ini').textContent, 'AL');
+  assert.equal(nightly.querySelector('.sched-by').title, 'Created by ada.lovelace@example.com');
+  const kv = Object.fromEntries([...nightly.querySelectorAll('.sched-kv')].map((r) => [r.querySelector('.sched-k').textContent, r.querySelector('.sched-v').textContent]));
+  assert.equal(kv['Created by'], 'ada.lovelace@example.com');
+  assert.equal(kv['Changed by'], 'grace@example.com');
+
+  const once = await schedules(SHARED, 'once');
+  assert.equal(cardBy(once, 'Mine').querySelector('.sched-by-text').textContent, 'by you');
+  assert.equal(cardBy(once, 'Local').querySelector('.sched-by'), null);
+});
+
+test('Schedules: nobody is shown on a local or one-person deployment', async () => {
+  for (const whoami of [SOLO, { name: null, source: 'local', shared: false }]) {
+    const ctx = await schedules(whoami, 'repeating');
+    const nightly = cardBy(ctx, 'Nightly');
+    assert.equal(nightly.querySelector('.sched-by'), null);
+    assert.equal([...nightly.querySelectorAll('.sched-k')].some((k) => /by$/.test(k.textContent)), false);
+  }
+});

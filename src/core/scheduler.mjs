@@ -125,6 +125,9 @@ function rowToTicket(r, { withRequest = false } = {}) {
     askCardId: r.ask_card_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    // v39: who made it / last changed it (identity.mjs actor; 'local' allowed, null = before v39).
+    createdBy: r.created_by || null,
+    updatedBy: r.updated_by || null,
     summary: summarizeRequest(request),
   };
   if (withRequest) t.request = request;
@@ -159,6 +162,8 @@ function rowToSchedule(r, { withRequest = false } = {}) {
     askCardId: r.ask_card_id || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    createdBy: r.created_by || null,
+    updatedBy: r.updated_by || null,
     summary: summarizeRequest(request),
   };
   if (withRequest) s.request = request;
@@ -212,6 +217,7 @@ export function createTicket({
   runAtMs, request, ifMissed = 'run', graceMin = 360, ownerPid = null, ownerHost = null,
   askThreadId = null, askCardId = null, forced = false,
   after = null, afterPolicy = 'done', sourceFromPrevious = false,
+  createdBy = null,
   now = Date.now(),
 }) {
   const chained = normAfter(after);
@@ -222,12 +228,12 @@ export function createTicket({
   getDb().prepare(`
     INSERT INTO scheduled_runs (id, schedule_id, title, project_key, project_dir, workspace_id, run_at, request,
       status, if_missed, grace_min, owner_pid, owner_host, ask_thread_id, ask_card_id, forced,
-      after_kind, after_id, after_policy, source_from_previous, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      after_kind, after_id, after_policy, source_from_previous, created_at, updated_at, created_by, updated_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, scheduleId, title, tc.project_key, tc.project_dir, tc.workspace_id, chained ? AFTER_RUN_AT : iso(runAtMs), JSON.stringify(request || {}),
     normPolicy(ifMissed, MISSED_POLICIES, 'run'), normGrace(graceMin), ownerPid, ownerPid != null ? (ownerHost || hostname()) : null,
     askThreadId, askCardId, forced ? 1 : 0,
-    chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious ? 1 : 0, ts, ts);
+    chained ? chained.kind : null, chained ? chained.id : null, normPolicy(afterPolicy, AFTER_POLICIES, 'done'), chained && sourceFromPrevious ? 1 : 0, ts, ts, byOf(createdBy), byOf(createdBy));
   return getTicket(id);
 }
 
@@ -251,8 +257,15 @@ export function listTickets({ projectDir = null, workspaceId = null, scheduleId 
   return getDb().prepare(sql).all(...args).map((r) => rowToTicket(r));
 }
 
-function touchTicket(id, sets, args, now) {
+function touchTicket(id, sets, args, now, by = undefined) {
+  if (by !== undefined && byOf(by)) return getDb().prepare(`UPDATE scheduled_runs SET ${sets}, updated_at = ?, updated_by = ? WHERE id = ?`).run(...args, iso(now), byOf(by), id).changes;
   return getDb().prepare(`UPDATE scheduled_runs SET ${sets}, updated_at = ? WHERE id = ?`).run(...args, iso(now), id).changes;
+}
+
+/** A stored actor: a trimmed one-line string (identity.mjs values), else null. */
+function byOf(by) {
+  const v = typeof by === 'string' ? by.trim() : '';
+  return v && v.length <= 200 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(v) ? v : null;
 }
 
 /**
@@ -260,7 +273,7 @@ function touchTicket(id, sets, args, now) {
  * A missed ticket becomes `scheduled` again and its alarm resolves.
  * @returns {object|null} the ticket, or null when it is not editable
  */
-export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPolicy, sourceFromPrevious } = {}, { now = Date.now() } = {}) {
+export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPolicy, sourceFromPrevious } = {}, { now = Date.now(), by = undefined } = {}) {
   const t = getTicket(id);
   if (!t || !['scheduled', 'missed'].includes(t.status)) return null;
   const sets = [];
@@ -289,7 +302,7 @@ export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPoli
   if (ifMissed !== undefined) { sets.push('if_missed = ?'); args.push(normPolicy(ifMissed, MISSED_POLICIES, t.ifMissed)); }
   if (graceMin !== undefined) { sets.push('grace_min = ?'); args.push(normGrace(graceMin, t.graceMin)); }
   if (!sets.length) return t;
-  touchTicket(id, sets.join(', '), args, now);
+  touchTicket(id, sets.join(', '), args, now, by);
   if (Number.isFinite(runAtMs) || chained) resolveNotifications({ ticketId: id, kinds: ['missed', 'failed'] });
   return getTicket(id);
 }
@@ -298,9 +311,9 @@ export function updateTicket(id, { runAtMs, ifMissed, graceMin, after, afterPoli
  * Cancel a one-shot ticket (scheduled or missed). For an occurrence of a series use
  * skipNext(). @returns {object|null}
  */
-export function cancelTicket(id, { now = Date.now() } = {}) {
-  const changed = getDb().prepare("UPDATE scheduled_runs SET status = 'canceled', updated_at = ? WHERE id = ? AND status IN ('scheduled', 'missed')")
-    .run(iso(now), String(id)).changes;
+export function cancelTicket(id, { now = Date.now(), by = undefined } = {}) {
+  const changed = getDb().prepare("UPDATE scheduled_runs SET status = 'canceled', updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ? AND status IN ('scheduled', 'missed')")
+    .run(iso(now), byOf(by), String(id)).changes;
   if (!changed) return null;
   const t = getTicket(id);
   resolveNotifications({ ticketId: id });
@@ -312,9 +325,10 @@ export function cancelTicket(id, { now = Date.now() } = {}) {
  * Ask for an immediate start: the ticket becomes due now and bypasses the missed and
  * overlap checks. The host's tick (or the owning `--wait` CLI) picks it up.
  */
-export function requestRunNow(id, { now = Date.now() } = {}) {
-  const changed = getDb().prepare(`UPDATE scheduled_runs SET status = 'scheduled', forced = 1, retry_at = NULL, queued = 0, fail_reason = NULL, updated_at = ?
-    WHERE id = ? AND status IN ('scheduled', 'missed')`).run(iso(now), String(id)).changes;
+export function requestRunNow(id, { now = Date.now(), by = undefined } = {}) {
+  const changed = getDb().prepare(`UPDATE scheduled_runs SET status = 'scheduled', forced = 1, retry_at = NULL, queued = 0, fail_reason = NULL, updated_at = ?,
+    updated_by = COALESCE(?, updated_by)
+    WHERE id = ? AND status IN ('scheduled', 'missed')`).run(iso(now), byOf(by), String(id)).changes;
   if (!changed) return null;
   resolveNotifications({ ticketId: id, kinds: ['missed', 'failed'] });
   return getTicket(id);
@@ -541,7 +555,7 @@ export function resolveAfterRef(after, { projectDir = null, workspaceId = null, 
 export function createSchedule({
   title = null, projectDir = null, workspaceId = null, request, rule, overlap = 'skip',
   maxFailures = 3, ifMissed = 'run', graceMin = 360, id = `sch_${randomBytes(4).toString('hex')}`,
-  askThreadId = null, askCardId = null, now = Date.now(),
+  askThreadId = null, askCardId = null, createdBy = null, now = Date.now(),
 }) {
   const norm = normalizeRule(rule, { todayLocal: rule?.anchor || null });
   if (!norm.ok) throw new Error(norm.error);
@@ -550,11 +564,11 @@ export function createSchedule({
   tx(() => {
     getDb().prepare(`
       INSERT INTO schedules (id, title, project_key, project_dir, workspace_id, request, rule, overlap, max_failures,
-        if_missed, grace_min, status, ask_thread_id, ask_card_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+        if_missed, grace_min, status, ask_thread_id, ask_card_id, created_at, updated_at, created_by, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
     `).run(id, title, tc.project_key, tc.project_dir, tc.workspace_id, JSON.stringify(request || {}), JSON.stringify(norm.rule),
       normPolicy(overlap, OVERLAP_POLICIES, 'skip'), normMaxFailures(maxFailures), normPolicy(ifMissed, MISSED_POLICIES, 'run'),
-      normGrace(graceMin), askThreadId, askCardId, ts, ts);
+      normGrace(graceMin), askThreadId, askCardId, ts, ts, byOf(createdBy), byOf(createdBy));
   });
   const ticket = materializeNext(id, { now });
   return { schedule: getSchedule(id), ticket };
@@ -599,7 +613,7 @@ export function materializeNext(scheduleId, { now = Date.now() } = {}) {
   }
   const ticket = createTicket({
     scheduleId, title: s.title, projectDir: s.projectDir, workspaceId: s.workspaceId, runAtMs: next,
-    request: s.request, ifMissed: s.ifMissed, graceMin: s.graceMin, now,
+    request: s.request, ifMissed: s.ifMissed, graceMin: s.graceMin, createdBy: s.createdBy, now,
   });
   getDb().prepare('UPDATE schedules SET next_run_at = ?, updated_at = ? WHERE id = ?').run(iso(next), iso(now), scheduleId);
   return ticket;
@@ -610,7 +624,7 @@ export function materializeNext(scheduleId, { now = Date.now() } = {}) {
  * rule; a run that already started is untouched.
  * @throws {Error} on an invalid rule
  */
-export function updateSchedule(id, patch = {}, { now = Date.now() } = {}) {
+export function updateSchedule(id, patch = {}, { now = Date.now(), by = undefined } = {}) {
   const s = getSchedule(id, { withRequest: true });
   if (!s) return null;
   const sets = [];
@@ -634,7 +648,7 @@ export function updateSchedule(id, patch = {}, { now = Date.now() } = {}) {
   if (patch.request !== undefined) { sets.push('request = ?'); args.push(JSON.stringify(patch.request || {})); }
   if (!sets.length) return s;
   tx(() => {
-    getDb().prepare(`UPDATE schedules SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...args, iso(now), id);
+    getDb().prepare(`UPDATE schedules SET ${sets.join(', ')}, updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ?`).run(...args, iso(now), byOf(by), id);
     dropPendingTickets(id);
   });
   materializeNext(id, { now });
@@ -642,18 +656,18 @@ export function updateSchedule(id, patch = {}, { now = Date.now() } = {}) {
 }
 
 /** Pause a series: its pending occurrence is dropped, nothing fires until resume. */
-export function pauseSchedule(id, { reason = 'user', now = Date.now() } = {}) {
-  const changed = getDb().prepare("UPDATE schedules SET status = 'paused', pause_reason = ?, next_run_at = NULL, updated_at = ? WHERE id = ? AND status = 'active'")
-    .run(reason, iso(now), String(id)).changes;
+export function pauseSchedule(id, { reason = 'user', now = Date.now(), by = undefined } = {}) {
+  const changed = getDb().prepare("UPDATE schedules SET status = 'paused', pause_reason = ?, next_run_at = NULL, updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ? AND status = 'active'")
+    .run(reason, iso(now), byOf(by), String(id)).changes;
   if (!changed) return null;
   dropPendingTickets(id);
   return getSchedule(id);
 }
 
 /** Resume a paused series: the streak resets, its alarms resolve, the next slot appears. */
-export function resumeSchedule(id, { now = Date.now() } = {}) {
-  const changed = getDb().prepare("UPDATE schedules SET status = 'active', pause_reason = NULL, failure_streak = 0, updated_at = ? WHERE id = ? AND status = 'paused'")
-    .run(iso(now), String(id)).changes;
+export function resumeSchedule(id, { now = Date.now(), by = undefined } = {}) {
+  const changed = getDb().prepare("UPDATE schedules SET status = 'active', pause_reason = NULL, failure_streak = 0, updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ? AND status = 'paused'")
+    .run(iso(now), byOf(by), String(id)).changes;
   if (!changed) return null;
   resolveNotifications({ scheduleId: id });
   materializeNext(id, { now });
@@ -661,23 +675,24 @@ export function resumeSchedule(id, { now = Date.now() } = {}) {
 }
 
 /** Skip the pending occurrence of a series and materialise the one after it. */
-export function skipNext(id, { now = Date.now() } = {}) {
+export function skipNext(id, { now = Date.now(), by = undefined } = {}) {
   const s = getSchedule(id);
   if (!s || s.status !== 'active') return null;
   const row = getDb().prepare("SELECT * FROM scheduled_runs WHERE schedule_id = ? AND status = 'scheduled' AND forced = 0 ORDER BY run_at ASC LIMIT 1").get(id);
   if (!row) return s;
-  touchTicket(row.id, "status = 'skipped', fail_reason = 'skipped by user'", [], now);
+  touchTicket(row.id, "status = 'skipped', fail_reason = 'skipped by user'", [], now, by);
+  if (byOf(by)) getDb().prepare('UPDATE schedules SET updated_at = ?, updated_by = ? WHERE id = ?').run(iso(now), byOf(by), id);
   materializeNext(id, { now: Math.max(now, Date.parse(row.run_at)) });
   return getSchedule(id);
 }
 
 /** Start one extra occurrence now; the series itself does not shift. */
-export function runScheduleNow(id, { now = Date.now() } = {}) {
+export function runScheduleNow(id, { now = Date.now(), by = undefined } = {}) {
   const s = getSchedule(id, { withRequest: true });
   if (!s || s.status === 'ended') return null;
   return createTicket({
     scheduleId: id, title: s.title, projectDir: s.projectDir, workspaceId: s.workspaceId, runAtMs: now,
-    request: s.request, ifMissed: 'run', graceMin: s.graceMin, forced: true, now,
+    request: s.request, ifMissed: 'run', graceMin: s.graceMin, forced: true, createdBy: byOf(by) || s.createdBy, now,
   });
 }
 
@@ -708,6 +723,21 @@ export function dependentsOfWorkflow(workflowId) {
   return out;
 }
 
+// ── who last changed it (notification text) ─────────────────────────────────
+
+/** " Last changed by X." for a ticket/series whose last actor is a person, else ''.
+ *  The series' actor wins over its occurrence ticket's (the ticket inherits it). */
+export function lastChangedSuffix(t, schedule = null) {
+  const who = byOf(schedule?.updatedBy || schedule?.createdBy || t?.updatedBy || t?.createdBy || null);
+  return who && who !== 'local' ? ` Last changed by ${who}.` : '';
+}
+
+/** The suffix after a free-text reason: nothing locally; else a closing period if needed + the suffix. */
+function withLastChanged(reason, t, schedule) {
+  const suffix = lastChangedSuffix(t, schedule);
+  return suffix ? `${/[.!?]$/.test(String(reason)) ? '' : '.'}${suffix}` : '';
+}
+
 // ── failure streak ───────────────────────────────────────────────────────────
 
 function bumpFailure(scheduleId, now) {
@@ -719,7 +749,7 @@ function bumpFailure(scheduleId, now) {
     pauseSchedule(scheduleId, { reason: 'failure_streak', now });
     addNotification({
       kind: 'paused', scheduleId, projectDir: s.projectDir, title: s.title,
-      message: `paused itself after ${streak} failure${streak === 1 ? '' : 's'} in a row.`, now: new Date(now),
+      message: `paused itself after ${streak} failure${streak === 1 ? '' : 's'} in a row.${lastChangedSuffix(null, s)}`, now: new Date(now),
     });
   }
 }
@@ -764,7 +794,7 @@ function miss(t, schedule, now, why) {
   touchTicket(t.id, "status = 'missed', fail_reason = ?", [why], now);
   addNotification({
     kind: 'missed', scheduleId: t.scheduleId, ticketId: t.id, projectDir: t.projectDir, title: t.title,
-    message: `was due at ${t.runAt}. ${why}`, now: new Date(now),
+    message: `was due at ${t.runAt}. ${why}${lastChangedSuffix(t, schedule)}`, now: new Date(now),
   });
   if (schedule) { setLastResult(schedule.id, 'missed', now); bumpFailure(schedule.id, now); materializeNext(schedule.id, { now }); }
 }
@@ -774,7 +804,7 @@ function missAfter(t, now, p) {
   touchTicket(t.id, "status = 'missed', fail_reason = ?", [`The run before it ${p.reason}.`], now);
   addNotification({
     kind: 'missed', ticketId: t.id, projectDir: t.projectDir, title: t.title,
-    message: `was waiting for ‘${p.title || 'the run before it'}’, which ${p.reason}.`, now: new Date(now),
+    message: `was waiting for ‘${p.title || 'the run before it'}’, which ${p.reason}.${lastChangedSuffix(t)}`, now: new Date(now),
   });
 }
 
@@ -890,7 +920,7 @@ export async function runDueTickets({
     touchTicket(t.id, "status = 'failed', fail_reason = ?, forced = 0", [reason], now);
     addNotification({
       kind: 'failed', scheduleId: t.scheduleId, ticketId: t.id, projectDir: t.projectDir, title: t.title,
-      message: `could not start: ${reason}`, now: new Date(now),
+      message: `could not start: ${reason}${withLastChanged(reason, t, schedule)}`, now: new Date(now),
     });
     if (schedule) { setLastResult(schedule.id, 'failed', now); bumpFailure(schedule.id, now); materializeNext(schedule.id, { now }); }
     else removeStage(t.id);

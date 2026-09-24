@@ -2072,6 +2072,7 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
       askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
+      createdBy: startedBy,
     }));
     // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
     if (askLink) {
@@ -2086,7 +2087,7 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     const chain = sched.after ? {
       after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
     } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
-    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null });
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, createdBy: startedBy });
     if (askLink) {
       try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
@@ -2418,7 +2419,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
           patch.sourceFromPrevious = body.sourceFromPrevious;
         }
         if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
-        const t = updateTicket(found.item.id, patch);
+        const t = updateTicket(found.item.id, patch, { by: by || undefined });
         if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
         const item = withAfter(t);
         if (t.askThreadId && t.askCardId && (patch.runAtMs != null || patch.after)) {
@@ -2437,7 +2438,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
       if (patch.graceMin !== undefined && (!Number.isSafeInteger(patch.graceMin) || patch.graceMin < 0 || patch.graceMin > 10080)) {
         return out(400, { error: 'graceMin must be a whole number of minutes from 0 to 10080' });
       }
-      const s = updateSchedule(found.item.id, patch);
+      const s = updateSchedule(found.item.id, patch, { by: by || undefined });
       if (s && s.askThreadId && s.askCardId && patch.rule) {
         try { flipCard(s.askThreadId, s.askCardId, { sentence: s.sentence, scheduledFor: s.nextRunAt }); } catch { /* display only */ }
       }
@@ -2453,7 +2454,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
       releaseAskCard(found.item);
     } else {
       if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule — skip it instead' });
-      const t = cancelTicket(found.item.id);
+      const t = cancelTicket(found.item.id, { by: by || undefined });
       if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be canceled` });
       releaseAskCard(t);
     }
@@ -2466,7 +2467,7 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
       const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
       if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
     }
-    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
+    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id, { by: by || undefined }) : requestRunNow(found.item.id, { by: by || undefined });
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
     if (by) RUN_NOW_BY.set(ticket.id, by);
     emitChanged('schedules-changed', 'run-now');
@@ -2478,7 +2479,8 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
   }
   if (['pause', 'resume', 'skip-next'].includes(verb)) {
     if (found.kind !== 'recurring') return out(404, { error: 'repeating schedule not found' });
-    const s = verb === 'pause' ? pauseSchedule(found.item.id) : verb === 'resume' ? resumeSchedule(found.item.id) : skipNext(found.item.id);
+    const opt = { by: by || undefined };
+    const s = verb === 'pause' ? pauseSchedule(found.item.id, opt) : verb === 'resume' ? resumeSchedule(found.item.id, opt) : skipNext(found.item.id, opt);
     if (!s) return out(409, { error: `this schedule is ${found.item.status}` });
     emitChanged('schedules-changed', verb);
     emitChanged('notifications-changed');
@@ -2514,13 +2516,13 @@ async function applyScheduleCard(card, { by = null } = {}) {
 // PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };
 // a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }.
 app.patch('/api/schedules/:id', async (req, res) => {
-  const r = await scheduleVerb('patch', req.params.id, req.body || {});
+  const r = await scheduleVerb('patch', req.params.id, req.body || {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
 // DELETE /api/schedules/:id — cancel a one-shot ticket, or delete a series.
 app.delete('/api/schedules/:id', async (req, res) => {
-  const r = await scheduleVerb('delete', req.params.id);
+  const r = await scheduleVerb('delete', req.params.id, {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
@@ -2532,7 +2534,7 @@ app.post('/api/schedules/:id/run-now', async (req, res) => {
 
 for (const verb of ['pause', 'resume', 'skip-next']) {
   app.post(`/api/schedules/:id/${verb}`, async (req, res) => {
-    const r = await scheduleVerb(verb, req.params.id);
+    const r = await scheduleVerb(verb, req.params.id, {}, { by: actorOf(req) });
     res.status(r.status).json(r.body);
   });
 }

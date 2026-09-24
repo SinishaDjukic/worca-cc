@@ -1103,7 +1103,17 @@ export function createAskTools(deps) {
     overlap: s.overlap, maxFailures: s.maxFailures, failureStreak: s.failureStreak, ifMissed: s.ifMissed, graceMin: s.graceMin,
     runsCount: s.runsCount, lastResult: s.lastResult, request: shapeRequest(s.summary),
     ...(s.askCardId ? { askCardId: s.askCardId } : {}),
+    ...peopleOf(s),
   });
+  // Who made / last changed a series or scheduled run (identity.mjs actors); absent when unknown, and
+  // 'local' is not a person, so it is left out too.
+  const peopleOf = (x) => {
+    const person = (v) => (typeof v === 'string' && v && v !== 'local' ? v : null);
+    const out = {};
+    if (person(x.createdBy)) out.createdBy = person(x.createdBy);
+    if (person(x.updatedBy)) out.updatedBy = person(x.updatedBy);
+    return out;
+  };
   const shapeTicket = (t) => {
     // Run chains (spec D11): a waiting after-ticket's run_at is the year-9999 sentinel — never a time to show.
     // The model sees what it waits for instead; `after.id` is a run id (get_run) or a scheduled run id (get_schedule).
@@ -1114,6 +1124,7 @@ export function createAskTools(deps) {
       after: t.after ? { kind: t.after.kind, id: t.after.id, policy: t.after.policy } : null, sourceFromPrevious: !!t.sourceFromPrevious,
       failReason: t.failReason ? deps.redact(t.failReason) : null, pipelineId: t.pipelineId, attempts: t.attempts,
       ifMissed: t.ifMissed, graceMin: t.graceMin, heldByTerminal: !!t.ownerPid, request: shapeRequest(t.summary),
+      ...peopleOf(t),
     };
   };
   const shapeNotice = (n) => ({

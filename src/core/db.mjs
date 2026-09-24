@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 38;
+export const SCHEMA_VERSION = 39;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -855,9 +855,11 @@ const INCREMENTAL_COLUMNS = {
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
-  schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
+  schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
+                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it (identity.mjs actor)
   scheduled_runs:         { after_kind: 'TEXT', after_id: 'TEXT', after_policy: "TEXT NOT NULL DEFAULT 'done'",
-                            source_from_previous: 'INTEGER NOT NULL DEFAULT 0' },   // v34: run chains
+                            source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
+                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1342,6 +1344,19 @@ function applySchemaV38(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v39 (attribution): schedules/scheduled_runs created_by + updated_by (INCREMENTAL_COLUMNS, the v36
+ *  shape), then a backfill: a series or ticket whose stored request carries internal.startedBy (who
+ *  scheduled it, recorded since attribution) gets that as created_by. Fenced like v33's backfill. */
+function applySchemaV39(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  for (const t of ['schedules', 'scheduled_runs']) {
+    try {
+      db.exec(`UPDATE ${t} SET created_by = json_extract(request, '$.internal.startedBy')
+        WHERE created_by IS NULL AND json_valid(request) AND json_type(request, '$.internal.startedBy') = 'text'`);
+    } catch { /* a hand-seeded table without request/JSON1: attribution is decoration */ }
+  }
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1736,6 +1751,7 @@ export function migrate(db) {
     if (current < 36) applySchemaV36(db);            // attribution: pipelines.started_by
     if (current < 37) applySchemaV37(db);            // attribution: comment authors, thread owners, per-person reads
     if (current < 38) applySchemaV38(db);            // attribution: who did each human action on a run
+    if (current < 39) applySchemaV39(db);            // attribution: schedules/tickets created_by + updated_by
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

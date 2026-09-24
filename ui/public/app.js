@@ -846,6 +846,7 @@ function repaintPeople() {
   try { const tabs = $('#nav-running-children'); if (tabs) tabs.dataset.tabsSig = ''; renderPipelineTabs(); } catch { /* not booted */ }
   try { if (runDetailState.screen && runs.get(runDetailState.runId)) repaintRunDetail(runs.get(runDetailState.runId)); } catch { /* none open */ }
   try { if (Array.isArray(state.historyAll) && state.historyAll.length) paintHistory(); } catch { /* not loaded */ }
+  try { schedulesView.repaint(); paintScheduledGroup(); } catch { /* not booted */ }
 }
 
 // The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
@@ -21734,6 +21735,10 @@ const schedulesView = createSchedulesView({
       return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
     },
     onCounts: (c) => paintScheduleCounts(c),
+    // Who made / changed a schedule, under the same display rule as runs (shared sign-ins only).
+    personLabel: (v) => personLabel(v),
+    personShown: (v) => personShown(v),
+    personIni: (name, title) => personIni(name, title),
     // A started run opens its live monitor (the ticket id IS the runId); a finished one opens History.
     openRun: ({ runId, pipelineId, projectDir }) => {
       if (runId) { location.hash = `running/${runId}`; return; }
