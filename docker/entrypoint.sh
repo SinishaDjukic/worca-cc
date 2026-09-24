@@ -1,7 +1,8 @@
 #!/bin/bash
 # docker/entrypoint.sh — container entrypoint (plans/container-isolation-design.md §5.5).
 #
-# Runs as the `worca` user under tini. Three jobs, then `exec "$@"` so signals
+# Runs as the `worca` user under tini (in single-volume mode it may start as
+# root to prepare the volume, see 0. below). Three jobs, then `exec "$@"` so signals
 # reach the server (it handles SIGTERM itself and exits 143 on the graceful path):
 #   1. detect a named volume the runtime created as root (rootful Docker Engine
 #      on first start) and print the one-line fix — it cannot chown as `worca`;
@@ -10,6 +11,32 @@
 set -euo pipefail
 
 log() { printf 'worca-entrypoint: %s\n' "$*" >&2; }
+
+# 0. Single-volume mode (WORCA_DATA_DIR, e.g. /data): for hosts that give a
+#    service ONE volume, mounted root-owned (Railway; docs/deploy-railway.md).
+#    Everything lives on it, HOME included, so Claude Code's ~/.claude.json
+#    (saved by rename, which would replace a symlink) persists too. Started as
+#    root, the entrypoint only prepares the volume, then re-runs itself as
+#    `worca`; nothing else ever runs as root.
+if [ -n "${WORCA_DATA_DIR:-}" ]; then
+  data="$WORCA_DATA_DIR"
+  if [ "$(id -u)" = 0 ]; then
+    mkdir -p "$data/worca" "$data/projects" "$data/home/.claude"
+    # First boot (a fresh root-owned volume): take the whole tree once. Later
+    # boots skip the slow recursive walk, but still re-own the top-level dirs
+    # (cheap) so a directory added by a newer image is never left root-owned.
+    if [ "$(stat -c %U "$data")" != worca ]; then chown -R worca:worca "$data"; fi
+    chown worca:worca "$data" "$data/worca" "$data/projects" "$data/home" "$data/home/.claude"
+    exec setpriv --reuid=worca --regid=worca --init-groups -- "$0" "$@"
+  fi
+  if [ ! -w "$data" ]; then
+    log "$data is not writable by uid $(id -u). Start the container as root (on Railway: RAILWAY_RUN_UID=0);"
+    log "  the entrypoint prepares the volume and drops to the worca user itself."
+    exit 78   # EX_CONFIG
+  fi
+  export HOME="$data/home" WORCA_HOME="$data/worca" WORCA_PROJECTS_ROOT="$data/projects"
+  cd "$WORCA_PROJECTS_ROOT"
+fi
 
 # 1. Volume ownership.
 for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do

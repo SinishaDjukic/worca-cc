@@ -18,6 +18,9 @@
 //      loopback guard survives port publishing; SIGTERM via `docker stop` exits
 //      143 (the server's graceful path) — the tini/entrypoint signal chain works.
 //   3. The volume holds the DB after both.
+//   4. Single-volume mode (WORCA_DATA_DIR, the Railway layout): one root-owned
+//      volume, container started as root; everything runs as worca, HOME is on
+//      the volume, a later boot re-owns top-level dirs; non-root is refused (78).
 // ESM, no external dependencies.
 
 import { spawnSync } from 'node:child_process';
@@ -49,6 +52,8 @@ const stamp = `${Date.now().toString(36)}`;
 const VOLUME = `worca-smoke-home-${stamp}`;
 const CLAUDE_VOLUME = `worca-smoke-claude-${stamp}`;
 const UI_NAME = `worca-smoke-ui-${stamp}`;
+const DATA_VOLUME = `worca-smoke-data-${stamp}`;
+const DATA_NAME = `worca-smoke-data-${stamp}`;
 let failed = false;
 const fail = (msg) => { failed = true; console.error(`docker:smoke FAILED — ${msg}`); };
 const ok = (msg) => console.log(`docker:smoke ok — ${msg}`);
@@ -91,6 +96,74 @@ function get(port, path, host) {
     req.on('error', rej);
     req.end();
   });
+}
+
+async function waitHealth(port) {
+  for (let i = 0; i < 60; i++) {
+    try {
+      const res = await get(port, '/api/health', 'localhost');
+      if (res.status === 200) return JSON.parse(res.body);
+    } catch { /* not up yet */ }
+    await sleep(500);
+  }
+  return null;
+}
+
+/**
+ * WORCA_DATA_DIR on a fresh named volume at /data (root-owned, as Railway mounts
+ * it), container started as root: the entrypoint must own the volume, drop to
+ * `worca` for everything it runs, keep HOME on the volume, re-own a top-level
+ * dir a later boot finds root-owned, and refuse (78) when it starts non-root on
+ * a volume it cannot write.
+ */
+async function singleVolume() {
+  const env = ['-e', 'WORCA_MOCK=1', '-e', 'WORCA_DATA_DIR=/data', '-v', `${DATA_VOLUME}:/data`];
+  const boot = () => {
+    docker(['rm', '-f', DATA_NAME], { allowFail: true });
+    docker(['run', '-d', '--name', DATA_NAME, '--user', '0:0', '-p', '127.0.0.1:0:4317', ...env, a.image]);
+    return Number(docker(['port', DATA_NAME, '4317/tcp']).stdout.trim().split('\n')[0].split(':').pop());
+  };
+  const inBox = (cmd, user = 'root') => docker(['exec', '--user', user, DATA_NAME, 'sh', '-c', cmd], { allowFail: true }).stdout.trim();
+
+  // Non-root on the root-owned volume: a clear refusal, not a half-working box.
+  const nonRoot = docker(['run', '--rm', ...env, a.image, 'true'], { allowFail: true });
+  if (nonRoot.status !== 78 || !/RAILWAY_RUN_UID=0/.test(nonRoot.stderr)) {
+    fail(`single-volume as non-root: exit ${nonRoot.status}, expected 78 with a RAILWAY_RUN_UID hint`);
+  } else ok('single-volume: non-root on a root-owned volume exits 78 with the fix');
+
+  const port = boot();
+  const health = await waitHealth(port);
+  if (!health) {
+    process.stderr.write(docker(['logs', DATA_NAME], { allowFail: true }).stderr);
+    fail('single-volume: /api/health never answered');
+    return;
+  }
+  ok(`single-volume: /api/health -> ${health.name} ${health.version}`);
+
+  // PID 1 (tini) stays root by design; every node process (CLI + server) must not.
+  const users = inBox('ps -C node -o user= | sort -u');
+  if (users !== 'worca') fail(`single-volume: node processes run as [${users.replace(/\n/g, ', ')}], expected only worca`);
+  else ok('single-volume: the CLI and server run as worca');
+
+  const owner = inBox('stat -c %U /data /data/worca /data/projects /data/home | sort -u');
+  if (owner !== 'worca') fail(`single-volume: /data owners = ${owner}`);
+  else ok('single-volume: the volume is owned by worca');
+
+  const homeEnv = inBox('tr "\\0" "\\n" < /proc/$(pgrep -u worca -o node)/environ | grep -E "^(HOME|WORCA_HOME|WORCA_PROJECTS_ROOT)=" | sort', 'worca');
+  if (homeEnv !== 'HOME=/data/home\nWORCA_HOME=/data/worca\nWORCA_PROJECTS_ROOT=/data/projects') fail(`single-volume: server env\n${homeEnv}`);
+  else ok('single-volume: HOME, WORCA_HOME and WORCA_PROJECTS_ROOT are on the volume');
+
+  // Simulate a later image adding/leaving a root-owned top-level dir, then reboot.
+  docker(['stop', '-t', '15', DATA_NAME]);
+  docker(['run', '--rm', '--user', '0:0', '--entrypoint', 'chown', '-v', `${DATA_VOLUME}:/data`, a.image, 'root:root', '/data/projects']);
+  boot();
+  if (!(await waitHealth(Number(docker(['port', DATA_NAME, '4317/tcp']).stdout.trim().split('\n')[0].split(':').pop())))) {
+    fail('single-volume: second boot never answered');
+    return;
+  }
+  const again = inBox('stat -c %U /data/projects; test -s /data/worca/.worca-cc/worca-cc.db && echo db');
+  if (again !== 'worca\ndb') fail(`single-volume second boot: ${again}`);
+  else ok('single-volume: second boot re-owns a root-owned top-level dir and keeps the DB');
 }
 
 async function main() {
@@ -155,10 +228,13 @@ async function main() {
     const db = docker(['run', '--rm', '-v', `${VOLUME}:/worca`, a.image, 'test', '-s', '/worca/.worca-cc/worca-cc.db'], { allowFail: true });
     if (db.status !== 0) fail('worca-cc.db missing or empty in the home volume');
     else ok('volume: /worca/.worca-cc/worca-cc.db persisted');
+
+    // 4. Single-volume mode (WORCA_DATA_DIR): one root-owned volume, like Railway.
+    await singleVolume();
   } finally {
     if (!a.keep) {
-      docker(['rm', '-f', UI_NAME], { allowFail: true });
-      docker(['volume', 'rm', '-f', VOLUME, CLAUDE_VOLUME], { allowFail: true });
+      docker(['rm', '-f', UI_NAME, DATA_NAME], { allowFail: true });
+      docker(['volume', 'rm', '-f', VOLUME, CLAUDE_VOLUME, DATA_VOLUME], { allowFail: true });
       rmSync(repo, { recursive: true, force: true, maxRetries: 5 });
     } else {
       console.log(`docker:smoke: kept volume ${VOLUME}, container ${UI_NAME}, repo ${repo}`);

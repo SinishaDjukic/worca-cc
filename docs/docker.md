@@ -231,6 +231,13 @@ with all capabilities dropped, `no-new-privileges`, a 2 GB tmpfs `/tmp` and no
 Docker socket. `worca ui stop` on the host does nothing to the box; use
 `docker compose stop`. `--open` is a no-op inside.
 
+**Single-volume hosts** (Railway and other platforms that give a service one volume,
+mounted root-owned): set `WORCA_DATA_DIR=/data`, mount the volume there and start
+the container as root. The entrypoint prepares the volume (worca home, projects and
+`HOME` all under `/data`), then drops to the `worca` user; started non-root on a
+volume it can't write, it exits 78 and names the fix. See
+[deploy-railway.md](deploy-railway.md).
+
 **Reaching the host** (a database on your laptop): `host.docker.internal` on
 Docker Desktop, `--add-host=host.docker.internal:host-gateway` on Engine. Off
 by default; unreachable under the egress overlay.
