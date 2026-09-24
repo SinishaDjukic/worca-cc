@@ -42,6 +42,9 @@ jobs:
       fail-fast: true
       matrix:
         variant: [slim, full]
+        # arch must be a dimension: include-only values get overwritten by
+        # the next include, which left every combination on arm64.
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             runner: ubuntu-latest
