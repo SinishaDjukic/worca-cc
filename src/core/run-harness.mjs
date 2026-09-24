@@ -1028,6 +1028,7 @@ export class RunHarness extends EventEmitter {
         extras: this.opts.extras,
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
+        startedBy: this.opts.startedBy || null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -1052,6 +1053,8 @@ export class RunHarness extends EventEmitter {
       // guardrails_id and the curated UPSERT excludes it (creation-immutable), so
       // mirroring it onto the live state only keeps rowToState round-trips honest.
       this.state.guardrailsId = this.guardrailsId;
+      // Who started it (identity.mjs): creation-immutable too, mirrored for the same reason.
+      this.state.startedBy = this.opts.startedBy || null;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.

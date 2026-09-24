@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 35;
+export const SCHEMA_VERSION = 36;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -834,7 +834,8 @@ const INCREMENTAL_COLUMNS = {
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
                             policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
-                            human_hours: 'REAL NOT NULL DEFAULT 0' },   // v33: Σ pipeline_steps.human_hours (money-saved design §6)
+                            human_hours: 'REAL NOT NULL DEFAULT 0',     // v33: Σ pipeline_steps.human_hours (money-saved design §6)
+                            started_by: 'TEXT' },   // v36: who started the run (identity.mjs; NULL = before attribution)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -1306,6 +1307,13 @@ function applySchemaV35(db) {
   for (const [from, to] of V35_MODEL_RENAMES) renameStoredModelPins(db, from, to);
 }
 
+/** v36 (attribution): pipelines.started_by, a plain additive column declared in
+ *  INCREMENTAL_COLUMNS, applySchemaV30's shape. NULL on every existing row = started
+ *  before attribution existed. */
+function applySchemaV36(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1697,6 +1705,7 @@ export function migrate(db) {
     if (current < 33) applySchemaV33(db);            // money saved: human_hours columns
     if (current < 34) applySchemaV34(db);            // run chains: scheduled_runs.after_* + source_from_previous
     if (current < 35) applySchemaV35(db);            // Opus 5 pins -> Opus 5.5 (catalog swap)
+    if (current < 36) applySchemaV36(db);            // attribution: pipelines.started_by
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

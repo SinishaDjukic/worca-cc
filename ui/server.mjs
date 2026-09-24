@@ -119,6 +119,7 @@ import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
 } from '../src/core/remote-access.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
+import { resolveIdentity, startedByOf, prAttributionFooter } from '../src/core/identity.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -351,6 +352,7 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+const SEEN_SIGN_INS = new Set();
 const HOST_FORBIDDEN = REMOTE_MODE
   ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
   : 'forbidden: worca is a localhost-only tool';
@@ -715,6 +717,7 @@ function summarizeRuns() {
     // reload/reconnect restores the "Paused · error" detail, not a bare card.
     pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
+    startedBy: r.startedBy || null,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
     // vs workspace runs without guessing; scanId/genId/workspaceId are the
@@ -743,6 +746,7 @@ function announceRun(entry) {
     projectNames: entry.projectNames || null,
     status: entry.status,
     startedAt: entry.startedAt,
+    startedBy: entry.startedBy || null,
   });
 }
 
@@ -1070,6 +1074,11 @@ app.use((req, res, next) => {
       return res.status(401).json({ error: 'unauthorized: sign in through the identity proxy (Cloudflare Access)' });
     }
     req.worcaUser = who;
+    // One line per person per server lifetime (attribution, not an audit log): email only.
+    if (who.email && !SEEN_SIGN_INS.has(who.email)) {
+      SEEN_SIGN_INS.add(who.email);
+      console.log(`[worca-ui] signed in: ${who.email} (first request since boot)`);
+    }
     next();
   }, () => {
     res.status(503).json({ error: 'cannot verify the sign-in token right now' });
@@ -1476,6 +1485,9 @@ const startRunHandler = async (req, res) => {
     // IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
+    // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
+    // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
+    const startedBy = internal ? (typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null) : startedByOf(req);
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -1715,7 +1727,7 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir }));
+      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
 
       orch = await createOrchestratorFor({
         workspace: {
@@ -1733,6 +1745,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         guardrailsId,
+        startedBy,
         branch,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
@@ -1749,6 +1762,7 @@ const startRunHandler = async (req, res) => {
         title,
         status: 'starting',
         startedAt: new Date().toISOString(),
+        startedBy,
         events: [],
         pendingQuestion: null,
       };
@@ -1802,7 +1816,7 @@ const startRunHandler = async (req, res) => {
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
-      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir }));
+      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
 
       orch = await createOrchestratorFor({
         projectDir,
@@ -1814,6 +1828,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         guardrailsId,
+        startedBy,
         branch,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
@@ -1834,6 +1849,7 @@ const startRunHandler = async (req, res) => {
         title,
         status: 'starting',
         startedAt: new Date().toISOString(),
+        startedBy,
         events: [],
         pendingQuestion: null,
       };
@@ -1971,7 +1987,7 @@ function parseScheduleRequest(body, { now = Date.now() } = {}) {
 }
 
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
-async function storedRequestOf(body, stageId, projectDir) {
+async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
   const request = { ...body };
   for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
@@ -1981,17 +1997,17 @@ async function storedRequestOf(body, stageId, projectDir) {
     request.source = { type: 'markdown', promptText };
   }
   const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
-  request.internal = { extrasPaths };
+  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}) };
   return request;
 }
 
 /** Turn a validated run request into a ticket (or a recurring schedule). 202 body. */
-async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null }) {
+async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null }) {
   const target = workspaceId ? { workspaceId } : { projectDir };
   let ticket, schedule = null;
   if (sched.repeat) {
     const id = `sch_${randomBytes(4).toString('hex')}`;
-    const request = await storedRequestOf(body, id, projectDir);
+    const request = await storedRequestOf(body, id, projectDir, startedBy);
     ({ schedule, ticket } = createSchedule({
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
@@ -2004,7 +2020,7 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     }
   } else {
     const id = randomUUID();
-    const request = await storedRequestOf(body, id, projectDir);
+    const request = await storedRequestOf(body, id, projectDir, startedBy);
     // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
     // (an after body may not name them), and a chained ticket later moved to a time shows them.
     const chain = sched.after ? {
@@ -3994,8 +4010,11 @@ app.post('/api/pr', async (req, res) => {
   const pushed = await pushBranch(repoDir, feature, pushRemote);
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
 
+  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
+  const footer = prAttributionFooter(state.startedBy);
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
+    ...(footer ? { body: `${state.title || feature}${footer}` } : {}),
   });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
 
@@ -4726,6 +4745,12 @@ app.get('/api/health', (req, res) => {
     port: addr || PORT,
     startedAt: startedAtIso(),
   });
+});
+
+// Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
+app.get('/api/whoami', (req, res) => {
+  const who = resolveIdentity(req);
+  res.json(who.source === 'local' ? { name: null, source: 'local' } : who);
 });
 
 /** Constant-time bearer check; `expected` is the boot-time token from ui.json. */
@@ -6452,6 +6477,12 @@ function mockAskCard(ctx = {}, text = '') {
  *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
  *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
  */
+/** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
+function askSignedIn(req) {
+  const who = resolveIdentity(req);
+  return who.source === 'local' ? null : who.name;
+}
+
 async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
@@ -6682,7 +6713,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: req.worcaUser?.email || null });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req) });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

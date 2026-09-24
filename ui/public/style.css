@@ -294,6 +294,11 @@ body{
    same card, so padding-top (above Settings), gap (above the toggle) and
    .sidebar's padding-bottom (below it) all read 10px. */
 .side-foot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-top:10px;}
+/* "Signed in as" (attribution, not an account menu): one quiet line above the spend card. */
+.side-who{padding:0 12px;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-who[hidden]{display:none;}
+.side-who-name{color:var(--ink-2);font-weight:600;}
+.sidebar.collapsed .side-who{display:none;}
 .user{display:flex;align-items:center;gap:11px;padding:6px 8px;}
 .user .ava{width:36px;height:36px;border-radius:50%;flex:0 0 auto;
   background:linear-gradient(135deg,var(--ava-a),var(--ava-b));}
@@ -3488,6 +3493,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .rc-status-word.st-green{color:var(--green-ink);}
 .rc-status-word.st-red{color:var(--red-ink);}
 .rc-meta .run-time,.rc-meta .run-cost{font-weight:700;color:var(--ink);}
+.rc-meta .rc-by[hidden]{display:none;}   /* author inline-flex beats the UA [hidden] rule */
 .rc-branch{display:flex;align-items:center;gap:6px;margin-top:6px;min-width:0;
   font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink-2);}
 .rc-branch[hidden]{display:none;}      /* author display:flex beats the UA [hidden] rule */

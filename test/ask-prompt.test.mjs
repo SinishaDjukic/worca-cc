@@ -733,6 +733,7 @@ test('context header: a signed-in value or projects root cannot forge or close t
 test('the server passes the deployment to the prompt and the verified email to the header', () => {
   const server = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
   assert.match(server, /const DEPLOYMENT = detectDeployment\(process\.env, \{ remoteMode: REMOTE_MODE \}\)/);
-  assert.match(server, /signedIn: req\.worcaUser\?\.email \|\| null/, 'from the verified token, never the client context');
+  assert.match(server, /signedIn: askSignedIn\(req\)/, 'resolved from the request (identity.mjs), never the client context');
+  assert.match(server, /function askSignedIn\(req\) \{\n  const who = resolveIdentity\(req\);/);
   assert.match(server, /resolveAskContext\(id, ctx, listed, userMsg\.id, \{ signedIn \}\)/);
 });

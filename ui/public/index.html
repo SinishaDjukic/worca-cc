@@ -110,6 +110,9 @@
         </nav>
 
         <div class="side-foot">
+          <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
+               identity proxy or an operator-set name; a local install never shows it. -->
+          <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
           <div id="side-spend"></div>
           <button type="button" class="side-toggle" id="side-toggle"
                   aria-expanded="true" aria-controls="side-rail"
@@ -509,6 +512,7 @@
                   <div class="rc-meta">
                     <span class="rc-status-word"></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
+                    <span class="rc-seg rc-by" hidden><span class="rc-dot">·</span><span class="rc-by-text"></span></span>
                     <span class="rc-seg rc-prog" hidden data-min-level="advanced"><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
@@ -665,6 +669,7 @@
                         <span class="hm-seg hist-clock-seg"><span class="hm-dot">·</span><span class="hist-clock"></span></span>
                         <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
                         <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
+                        <span class="hm-seg hist-by-seg"><span class="hm-dot">·</span><span class="hist-by"></span></span>
                         <span class="hist-diff-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
                           <span class="hist-diff mono" aria-label="lines changed"></span>

@@ -167,6 +167,26 @@ need no token. Worca recognises them by a loopback TCP peer **and** a loopback `
 must therefore run in its **own** container or service; if it shared worca's network namespace, its
 requests would look local.
 
+## Who started a run
+
+Everyone signed in acts with the deployment's GitHub identity, so worca records the person behind
+each run. This is attribution, not permissions: everyone keeps the same rights.
+
+- The signed-in email shows in the sidebar ("Signed in as …"), on the running card, in History and
+  in the run details. Scheduled runs keep the name of whoever scheduled them.
+- A pull request opened from a run ends with *Started by ada@example.com via worca*, so a PR
+  authored by a shared bot or GitHub App still names the person.
+- Ask Worca sees the signed-in person in its context.
+
+Worca takes the name from the first of these that applies, and never guesses:
+
+| Source | When |
+| --- | --- |
+| The verified Cloudflare Access token | Always, when the Access check is on |
+| `WORCA_IDENTITY_HEADER` | A header your own identity proxy sets (oauth2-proxy, Tailscale, …). Only when you name it: set it only if the proxy verifies the user and strips any copy the browser sends |
+| `WORCA_IDENTITY_NAME` | A name you declare, for a self-hosted worca with no identity layer |
+| none | Nothing is shown or added, as on a local install |
+
 ## Check the setup
 
 With the service token from above (or signed in with a browser):

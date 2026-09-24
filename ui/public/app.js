@@ -758,6 +758,29 @@ function startBudgetTick() {
   budgetState.timer.unref?.();                 // no-op in browsers/jsdom (number)
 }
 
+// Who started a run (the server's identity.mjs): the name to show, or '' when there is
+// nobody in particular — null, or 'local' on a local install / the CLI.
+function attributedName(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s && s !== 'local' ? s : '';
+}
+
+// "Signed in as" in the rail foot: fetched once at boot. The server answers
+// { name: null } for a local install, and then the line stays hidden.
+async function loadWhoami() {
+  const box = document.getElementById('side-who');
+  if (!box) return;
+  try {
+    const res = await fetch('/api/whoami');
+    if (!res.ok) return;
+    const who = await res.json();
+    const name = attributedName(who && who.name);
+    box.querySelector('.side-who-name').textContent = name;
+    box.title = name ? `Signed in as ${name}` : '';
+    box.hidden = !name;
+  } catch { /* the line simply stays hidden */ }
+}
+
 // The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
 // <nav> that navLinks snapshots at boot — so route it from a container listener
 // rather than the [data-nav] delegation.
@@ -964,6 +987,7 @@ function handleServerMessage(msg) {
       projectDir: msg.projectDir,
       status: msg.status || 'starting',
       startedAt: msg.startedAt,
+      startedBy: msg.startedBy || undefined,
       kind: msg.kind || 'run',
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
@@ -1072,6 +1096,7 @@ function onHello(msg) {
       pipelineId: r0.pipelineId || null,
       pauseReason: r0.pauseReason || null,
       pauseDetail: r0.pauseDetail || null,
+      startedBy: r0.startedBy || undefined,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -1201,7 +1226,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null,
+  pauseDetail = null, startedBy = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -1217,6 +1242,7 @@ function makeRun({
     pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
+    startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
     workspaceId,
     workspaceName,
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -1675,6 +1701,9 @@ function cycleAwareLabel(stepper, subAgents, groupKeys, steps = []) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  // The harness mirrors startedBy onto its state (creation-immutable), so a live card
+  // learns who started the run from the first state snapshot.
+  if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
   // Mirror the on-disk pipeline short id the orchestrator stamps onto state.id
   // after createPipeline. The server captures the same field (ui/server.mjs
   // wireRun); without this the run model only ever gets a pipelineId from the
@@ -15344,6 +15373,9 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   seg('clock', clock);
   seg('time', typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '');
   seg('total', typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '');
+  const by = attributedName(p.startedBy);
+  seg('by', by ? `by ${by}` : '');
+  if (by) node.querySelector('.hist-by').title = `Started by ${by}`;
   if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
 
   renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
@@ -16405,6 +16437,15 @@ function paintHdHeaderMeta(screen, record, data) {
     a.textContent = st.scheduleId ? 'Started by a repeating schedule' : 'Started by schedule';
     a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
     meta.appendChild(a);
+  }
+  // Who started it (attribution): the person, or for a scheduled run who scheduled it.
+  const by = attributedName(st.startedBy) || attributedName(record && record.startedBy);
+  if (by) {
+    meta.appendChild(hdDot());
+    const seg = document.createElement('span');
+    seg.className = 'hd-by';
+    seg.textContent = st.scheduledFor ? `Scheduled by ${by}` : `Started by ${by}`;
+    meta.appendChild(seg);
   }
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
@@ -20442,6 +20483,13 @@ function renderRunMeta(r, root = r.el) {
   if (!root) return;
   const metaEl = root.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `started ${startedLabel(r.startedAt)}`;
+  const byEl = root.querySelector('.rc-by');
+  if (byEl) {
+    const by = attributedName(r.startedBy);
+    byEl.hidden = !by;
+    byEl.querySelector('.rc-by-text').textContent = by ? `by ${by}` : '';
+    byEl.title = by ? `Started by ${by}` : '';
+  }
 
   // D15: progress is a NUMBER, never a bar. Hidden on every v1 run. This sits
   // ABOVE the `if (!branchEl) return` exit, or a branch-less card never gets it.
@@ -23522,6 +23570,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.inclu
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
+loadWhoami();
 
 // Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
 // untouched so ui-shell's routed-view census stays at 11. No network happens here;
