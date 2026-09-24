@@ -205,12 +205,96 @@ author.
 An App can only reach repositories owned by the account that owns the App. If a repository moves
 to an organisation, create and install a new App there first, then swap the variables.
 
-## Upgrades and restarts
+## Operate your deployment
 
-Change the image tag and redeploy. Railway stops the old container before starting the new one,
-because a volume can't be attached to two containers. Running agents get SIGTERM and pause; resume
-them afterwards. Worca picks up the interrupted Claude sessions. Projects, runs, settings and the
-Claude login are on `/data` and survive every redeploy.
+A deployment is a fixed image plus service variables. Pushing to the repository never changes it:
+you decide when it upgrades, and every change below is one command. Each one restarts the `worca`
+service: Railway stops the old container before starting the new one (a volume can't be attached
+to two), running agents get SIGTERM and pause, and you resume them afterwards. Projects, runs,
+settings and the database are on `/data` and survive; schema migrations run on boot.
+
+### The operations tool
+
+`tools/railway/worca-railway.mjs` (in this repository) does all of it against a **target**: a local
+file describing one deployment, never committed. Copy
+[`tools/railway/targets.example.env`](../tools/railway/targets.example.env) to
+`~/.config/worca/targets/<name>.env`, `chmod 600` it, and fill in the Railway ids (from the
+dashboard URL or `railway status --json`), the hostname, the image repositories, and the paths to
+your Access service-token file and SSH key. The target holds ids and paths only; secrets stay in
+the files it points to, which the tool uses but never prints.
+
+```bash
+node tools/railway/worca-railway.mjs status mydeploy       # image, deployment, variable NAMES, boot log
+node tools/railway/worca-railway.mjs verify mydeploy --in-container
+```
+
+Every command that changes the deployment needs `--yes`. The tool always names the service,
+environment and project explicitly, lists variables by name only, sends values only on stdin, and
+redacts tokens from anything it prints. In Claude Code, the `/worca-railway` skill drives it.
+
+### Upgrade or roll back
+
+Releases publish `ghcr.io/sinishadjukic/worca:<version>`. Pin an exact version, never `latest`:
+
+```bash
+node tools/railway/worca-railway.mjs upgrade mydeploy 1.5.0 --yes    # set the tag, deploy, wait, show the log
+node tools/railway/worca-railway.mjs verify mydeploy --in-container
+node tools/railway/worca-railway.mjs rollback mydeploy --yes         # back to the previous image
+```
+
+By hand: the service's **Settings → Source → Image**, then **Deploy**.
+
+### Test an unreleased branch
+
+Build the current checkout for Railway's platform, push it to a registry you control, and deploy
+it (`BRANCH_IMAGE_REPO` in the target; `docker login` to that registry first):
+
+```bash
+node tools/railway/worca-railway.mjs deploy-branch mydeploy --tag my-branch-1 --yes
+```
+
+The instance then runs an unreleased image until you `upgrade` it to a release again.
+
+### Change configuration
+
+| Change | Command |
+| --- | --- |
+| Claude token (real runs) | `claude setup-token` in your terminal, then `node tools/railway/worca-railway.mjs set mydeploy CLAUDE_CODE_OAUTH_TOKEN --yes` and paste it (read from stdin). Agents run as their own user and can't use a login stored in worca's `HOME`, so it must be a variable. |
+| Mock mode off / on | `mock mydeploy off --yes` / `mock mydeploy on --yes` (the UI's per-run mock switch still works) |
+| GitHub App key, new or rotated | `base64 < key.pem \| tr -d '\n' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_GH_APP_KEY_B64 --yes` |
+| Tokens instead of an App | `set … GH_TOKEN` (or the read/write pair), then `unset … WORCA_GH_APP_ID` and the other `WORCA_GH_APP_*` |
+| Limit what can be cloned | `printf %s 'github.com/acme/*' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_CLONE_ALLOW --yes` |
+| Several changes, one restart | `--skip-deploys` on each `set` / `unset`, then `redeploy mydeploy --yes` |
+
+After setting a secret, **seal** it in the Railway dashboard (the variable's menu). `status` marks a
+variable `(sealed)` when Railway no longer returns its value; if a secret you sealed is not marked,
+check it in the dashboard.
+
+Not in Railway at all:
+
+- **People** are added or removed in the Cloudflare Access application's policy. Worca needs no
+  change.
+- The **tunnel token** is a variable of the `cloudflared` service; the hostname is Cloudflare's,
+  plus `WORCA_ALLOWED_HOSTS` on worca.
+
+### What expires
+
+| Credential | Lifetime | Renew |
+| --- | --- | --- |
+| Claude token from `claude setup-token` | about a year | a new token, `set … CLAUDE_CODE_OAUTH_TOKEN` |
+| GitHub fine-grained tokens | what you chose at creation | a new token, `set` it |
+| GitHub App installation tokens | an hour, minted per call | nothing to do |
+| Access service token | what you chose at creation | Zero Trust → Service Auth, then update your local token file |
+
+### Verify
+
+`verify <target>` checks, through Access: an anonymous request is sent to sign-in, your service
+token passes, `/api/health` and `/api/whoami` answer, and a clone URL with credentials is refused.
+`--in-container` adds, over `railway ssh` (register your key once with `railway ssh keys add`):
+requests that bypass Access get 401/403, the server runs as `worca`, agents run as `worca-agent`
+and cannot read its environment, database or `HOME`, `sudo` to root is refused, and the GitHub
+credential works. `--clone https://github.com/<owner>/<repo>` also clones a real repository and
+registers it (remove it in Projects afterwards).
 
 ## Backups and cost
 
@@ -242,4 +326,4 @@ Claude login are on `/data` and survive every redeploy.
 - Every allowed person is an administrator of this worca (see
   [remote-access.md → Limits](remote-access.md#limits)). Use one deployment per person or per set of
   credentials.
-- One replica only; deploys pause running agents (see [Upgrades](#upgrades-and-restarts)).
+- One replica only; deploys pause running agents (see [Operate your deployment](#operate-your-deployment)).
