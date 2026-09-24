@@ -16,7 +16,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
+import { EFFORTS, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
@@ -585,7 +585,9 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     for (const k of dropped) {
       console.warn(`[worca] model ${JSON.stringify(bridged.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
     }
-    for (const k of BRIDGE_ROUTING_KEYS) delete extra[k];
+    // The bridge owns the CLI's transport too: an entry-level cloud switch would
+    // send the CLI past the loopback bridge, so it is dropped and forced off below.
+    for (const k of [...BRIDGE_ROUTING_KEYS, ...PROVIDER_MODE_ENV_KEYS]) delete extra[k];
     const env = {
       ...extra,
       ANTHROPIC_BASE_URL: bridgeBaseUrl(bridged.id, { tag }),
@@ -606,7 +608,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     const caps = bridged.upstream.capabilities || {};
     if (caps.maxPromptTokens && !('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in env)) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(caps.maxPromptTokens);
     if (caps.maxOutputTokens && !('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in env)) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(caps.maxOutputTokens);
-    return withTierModelEnv(env, bridged.id);
+    return withProviderModesOff(withTierModelEnv(env, bridged.id));
   }
   if (entry && entry.env) {
     rawEnv = entry.env;
@@ -642,8 +644,10 @@ export function resolveModelEnv(modelId, { tag } = {}) {
   // Endpoint-routed entries also carry the CLI's internal tier keys, pointed at
   // this entry's own wire id (#422, model-env.mjs#withTierModelEnv) — so the
   // CLI's session-title / alias / probe calls never fall back to a first-party
-  // id the endpoint has never heard of. Keys the entry sets itself win.
-  return withTierModelEnv(env, canonicalId);
+  // id the endpoint has never heard of. They also turn the CLI's cloud
+  // transports off (withProviderModesOff), which would bypass the base URL.
+  // Keys the entry sets itself win.
+  return withProviderModesOff(withTierModelEnv(env, canonicalId));
 }
 
 /**

@@ -58,6 +58,30 @@ export function withTierModelEnv(env, modelId) {
   return out;
 }
 
+// The CLI's cloud transports. Any one truthy makes the CLI ignore
+// ANTHROPIC_BASE_URL and talk to that cloud instead (Vertex: ANTHROPIC_VERTEX_BASE_URL),
+// so a shell that exports CLAUDE_CODE_USE_VERTEX=1 for its first-party Claude
+// sent every bridged or endpoint-routed model there — an id the cloud does not
+// know (`unrecognized_model`, exit 1). The model env merges over the ambient env
+// at spawn, so an explicit '0' (the CLI reads it as false) wins.
+export const PROVIDER_MODE_ENV_KEYS = Object.freeze([
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_FOUNDRY',
+]);
+
+/**
+ * An endpoint-routed env with every cloud transport the entry left unset
+ * turned off. Pure: a non-routed env (no ANTHROPIC_BASE_URL) comes back
+ * untouched and an explicit key in the env is never overwritten.
+ * @param {Record<string,string>|undefined} env  a PREPARED model env
+ * @returns {Record<string,string>|undefined}
+ */
+export function withProviderModesOff(env) {
+  if (!env || typeof env !== 'object' || !('ANTHROPIC_BASE_URL' in env)) return env;
+  const out = { ...env };
+  for (const k of PROVIDER_MODE_ENV_KEYS) if (!(k in out)) out[k] = '0';
+  return out;
+}
+
 // Env keys a model entry may NOT set (§4.4): process fundamentals and worca's
 // own runtime knobs, any of which injection could otherwise subvert (mock
 // mode, the claude binary path, the effort flag name). Everything else —

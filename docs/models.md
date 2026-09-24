@@ -105,6 +105,12 @@ copilot --accept-terms` records it non-interactively.
   them): auto-compact then works against the model's real window instead of an
   assumed 200k. Set them to what the endpoint actually serves — for llama.cpp,
   its `-c` value.
+- A bridged spawn always carries `CLAUDE_CODE_USE_VERTEX=0`,
+  `CLAUDE_CODE_USE_BEDROCK=0` and `CLAUDE_CODE_USE_FOUNDRY=0`: a shell that
+  exports one of them for first-party Claude would otherwise make the CLI skip
+  the bridge and send the model id to that cloud (`unrecognized_model`, exit 1).
+  An entry with its own `ANTHROPIC_BASE_URL` gets the same defaults unless its
+  env sets them.
 - A reply cut off by the endpoint (`finish_reason: length`) in the middle of a
   tool call is not forwarded as a broken call: the bridge replaces it with a
   note asking for smaller steps and ends the turn as `max_tokens`.

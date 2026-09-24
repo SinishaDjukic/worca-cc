@@ -85,7 +85,7 @@ before(async () => {
   await updateProvider('openai', { apiKey: '${MY_KEY}', baseUrl: `http://127.0.0.1:${chatPort}/v1`, maxConcurrent: 2 });
   await updateProvider('anthropic', { apiKey: 'ant-literal', baseUrl: `http://127.0.0.1:${antPort}` });
   await addGlobalModel({ id: 'gw-gpt', label: 'GPT (gw)', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-x', capabilities: { reasoning: true } }, env: { CLAUDE_CODE_FOO: '1' } });
-  await addGlobalModel({ id: 'gw-claude', upstream: { provider: 'anthropic', api: 'anthropic', model: 'claude-y' } });
+  await addGlobalModel({ id: 'gw-claude', upstream: { provider: 'anthropic', api: 'anthropic', model: 'claude-y' }, env: { CLAUDE_CODE_USE_VERTEX: '1' } });
   await addGlobalModel({ id: 'no-key', upstream: { provider: 'openai', api: 'openai-chat', model: 'z', apiKey: '${UNSET_VAR_FOR_TEST}' } });
   await startBridge({ log: () => {} });
 });
@@ -123,6 +123,15 @@ test('resolveModelEnv: a bridged entry gets the loopback routing keys, its own e
   assert.deepEqual(bridgedModelInfo('gw-gpt'), { id: 'gw-gpt', provider: 'openai', api: 'openai-chat', upstreamModel: 'gpt-x', excludeTools: ['WebSearch', 'WebFetch'], ready: true });
   assert.deepEqual(bridgedModelInfo('gw-claude').excludeTools, []);
   assert.equal(bridgedModelInfo('claude-opus-4-8'), null);
+});
+
+test('resolveModelEnv: a bridged entry always turns the cloud transports off — an ambient or entry-level CLAUDE_CODE_USE_VERTEX=1 would bypass the bridge', () => {
+  const env = resolveModelEnv('gw-gpt');
+  assert.equal(env.CLAUDE_CODE_USE_VERTEX, '0');
+  assert.equal(env.CLAUDE_CODE_USE_BEDROCK, '0');
+  assert.equal(env.CLAUDE_CODE_USE_FOUNDRY, '0');
+  // the entry's own '1' loses: the bridge owns the CLI's transport
+  assert.equal(resolveModelEnv('gw-claude').CLAUDE_CODE_USE_VERTEX, '0');
 });
 
 test('resolveModelEnv: an entry-level ${VAR} key falls back to the provider key; with neither it fails fast with an auth-class error naming the fix', async () => {
