@@ -72,7 +72,7 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
     'Read(//**/.worca-cc/settings.json)', 'Read(//**/.worca-cc/store/**)', 'Read(//**/.worca-cc/runs/**)',
     'Read(//**/.worca-cc/plugins/**)', 'Read(//**/.worca-cc/tmp/**)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/**)',
-    'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)',
+    'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)', 'Read(//proc/**)',
   ]);
   for (const rule of o.permissionRules.deny) {
     const m = /^\w+\((.*)\)$/.exec(rule);
@@ -212,7 +212,8 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
   const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
   assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
-  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+  assert.ok(!MCP_FORWARD_ENV.some((k) => /TOKEN|KEY|SECRET|GH_/.test(k)), 'no credential is ever forwarded to the MCP child');
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
 });

@@ -39,7 +39,7 @@ import { listProjects, addProject, removeProject, normalizeProjectPath, countPro
 import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
-  rawProjectsRoot, defaultProjectsRoot, runRootMode,
+  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
@@ -60,7 +60,7 @@ import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
-  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards,
   countThreads as askCountThreads, listThreadIds as askListThreadIds,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
@@ -115,6 +115,12 @@ import { readPolicyState } from '../src/core/policy/state.mjs';
 import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
 import { policyCatalogModels } from '../src/core/policy/cache.mjs';
 import { pickFolderNative } from '../src/core/folder-dialog.mjs';
+import {
+  readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
+} from '../src/core/remote-access.mjs';
+import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
+import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
+import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -157,6 +163,7 @@ import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-prop
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
+import { cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -176,7 +183,7 @@ import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
-import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
+import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
@@ -336,6 +343,34 @@ const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
 // applies unless they also front it with auth.
 const HOST = process.env.WORCA_HOST || '127.0.0.1';
 
+// Remote access behind an identity proxy (src/core/remote-access.mjs): opt-in
+// via WORCA_ALLOWED_HOSTS + WORCA_CF_ACCESS_*. Unset = the localhost-only
+// contract above, unchanged. A config error stops the server at boot (isMain)
+// and, should the app be imported anyway, refuses every non-local request.
+const REMOTE_ACCESS = readRemoteAccessConfig(process.env);
+const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: HOST });
+const REMOTE_MODE = isRemoteMode(REMOTE_ACCESS);
+const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
+const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
+// local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
+const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+const SEEN_SIGN_INS = new Set();
+const HOST_FORBIDDEN = REMOTE_MODE
+  ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
+  : 'forbidden: worca is a localhost-only tool';
+
+/**
+ * Who is asking: `{ local: true }` for an in-container caller or when no
+ * identity check applies, `{ email, sub }` for a valid proxy token, null when
+ * refused. Rejects when the identity provider cannot be reached (-> 503).
+ */
+async function requestIdentity(req) {
+  if (isInContainer(req)) return { local: true };
+  if (REMOTE_ACCESS_CHECK.errors.length) return null;
+  if (!identityCheck) return { local: true };
+  return identityCheck(req);
+}
+
 // ---------------------------------------------------------------------------
 // Run registry. Each entry holds the live orchestrator + a ring buffer of the
 // events emitted so far so that a WebSocket which connects late can replay.
@@ -398,7 +433,22 @@ const MAX_BUFFER = 5000;
 // ---------------------------------------------------------------------------
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+// Refuse during the upgrade (before any replay is sent): the Host/Origin guard
+// first, then the identity check when remote access is on. The 'connection'
+// handler below re-checks the host guard as a second line.
+const wss = new WebSocketServer({
+  server,
+  path: '/ws',
+  verifyClient: (info, done) => {
+    if (!isLocalRequest(info.req)) return done(false, 403);
+    requestIdentity(info.req).then(
+      // Keep who this is on the upgrade request: the connection handler reads it to scope
+      // per-thread Ask frames to their owner (askViewer).
+      (who) => { if (who) info.req.worcaUser = who; return who ? done(true) : done(false, 401); },
+      () => done(false, 503),
+    );
+  },
+});
 // ws re-emits the http server's 'error' on the WebSocketServer. With no listener
 // here, an EADDRINUSE on listen() became an unhandled 'error' event and a full
 // stack trace; the http server's own handler (isMain below) is the one that
@@ -430,6 +480,8 @@ wss.on('connection', (ws, req) => {
     return;
   }
   sockets.add(ws);
+  // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
+  ws.worcaViewer = askViewer(req);
   // Optional ?runId=... (or ?scanId=.../?genId=...) -> replay that entry's buffered
   // events so a reconnecting client immediately sees the full state. Scan + agentgen
   // entries live in the SAME runs Map keyed by scanId/genId, so a single id lookup
@@ -455,13 +507,13 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedScanId || requestedGenId || requestedBenchId;
 
-  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello() });
+  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello(ws) });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
   }
 
-  if (requestedThreadId && askJobs.has(requestedThreadId)) {
+  if (requestedThreadId && askJobs.has(requestedThreadId) && askSocketSees(ws, requestedThreadId)) {
     replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
@@ -482,7 +534,7 @@ wss.on('connection', (ws, req) => {
       replayEntry(ws, runs.get(subId));
     }
     const askThreadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
-    if (askThreadId && askJobs.has(askThreadId)) {
+    if (askThreadId && askJobs.has(askThreadId) && askSocketSees(ws, askThreadId)) {
       replayAskJob(ws, askJobs.get(askThreadId));
     }
   });
@@ -535,7 +587,9 @@ function replayEntry(ws, entry) {
 /** Broadcast an already-tagged event object to every open socket. */
 function broadcast(obj) {
   const text = JSON.stringify(obj);
+  const owner = askFrameOwner(obj);
   for (const ws of sockets) {
+    if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(text);
@@ -544,6 +598,24 @@ function broadcast(obj) {
       }
     }
   }
+}
+
+// Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
+// thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
+// in-container tool), like the HTTP guard on /api/ask/threads/:id. Owners never change, so
+// they are cached; nothing is looked up unless some socket is a shared viewer.
+const ASK_OWNER_CACHE = new Map();   // threadId -> createdBy | null
+function askFrameOwner(obj) {
+  if (!obj || typeof obj.threadId !== 'string' || typeof obj.type !== 'string' || !obj.type.startsWith('ask-')) return null;
+  let anyViewer = false;
+  for (const ws of sockets) if (ws.worcaViewer) { anyViewer = true; break; }
+  if (!anyViewer) return null;
+  if (ASK_OWNER_CACHE.has(obj.threadId)) return ASK_OWNER_CACHE.get(obj.threadId);
+  let owner = null;
+  try { owner = askGetThread(obj.threadId)?.createdBy || null; } catch { return null; }
+  if (ASK_OWNER_CACHE.size > 5000) ASK_OWNER_CACHE.clear();
+  ASK_OWNER_CACHE.set(obj.threadId, owner);
+  return owner;
 }
 
 // Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
@@ -671,6 +743,9 @@ function summarizeRuns() {
     // reload/reconnect restores the "Paused · error" detail, not a bare card.
     pauseDetail: r.pauseDetail || null,
     startedAt: r.startedAt,
+    startedBy: r.startedBy || null,
+    // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
+    lastAction: r.lastAction || r.orch?.state?.lastAction || null,
     pendingQuestion: r.pendingQuestion || null,
     // kind discriminator so the client routes runs vs scans vs agent generations
     // vs workspace runs without guessing; scanId/genId/workspaceId are the
@@ -699,6 +774,8 @@ function announceRun(entry) {
     projectNames: entry.projectNames || null,
     status: entry.status,
     startedAt: entry.startedAt,
+    startedBy: entry.startedBy || null,
+    lastAction: entry.lastAction || null,
   });
 }
 
@@ -996,6 +1073,9 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // suspenders: reject any request whose Host (or browser Origin) is not a
 // loopback name, so a malicious page resolving a name to 127.0.0.1 still can't
 // drive the API. Override WORCA_HOST only if you understand the exposure.
+// The one sanctioned exception is a deployment behind an identity proxy:
+// WORCA_ALLOWED_HOSTS adds its hostname here, and the identity middleware
+// right below then demands the proxy's token (src/core/remote-access.mjs).
 //
 // FIRST, ahead of the body parser (MIN-108): a refused request must be refused
 // before a single byte of its body is parsed or buffered, and a malformed body
@@ -1004,8 +1084,60 @@ app.post('/api/ingress/teams/:plugin/:channelId/:token',
 // stays exempt — it carries its own token check and 256 KB cap.
 app.use((req, res, next) => {
   if (!isLocalRequest(req)) {
-    return res.status(403).json({ error: 'forbidden: worca is a localhost-only tool' });
+    return res.status(403).json({ error: HOST_FORBIDDEN });
   }
+  next();
+});
+
+// Remote access (src/core/remote-access.mjs): when an identity proxy fronts the
+// server, every request must carry a valid token for it — the proxy stays the
+// network layer, this is the identity layer, so a misconfigured proxy or an
+// accidental public domain still exposes nothing. Also ahead of the body
+// parser (MIN-108). /api/health stays open for the platform healthcheck and
+// answers only name + version to a remote caller.
+app.use((req, res, next) => {
+  if (!identityCheck && !REMOTE_ACCESS_CHECK.errors.length) return next(); // local mode: no await
+  if (req.method === 'GET' && req.path === '/api/health') return next();
+  requestIdentity(req).then((who) => {
+    if (!who) {
+      return res.status(401).json({ error: 'unauthorized: sign in through the identity proxy (Cloudflare Access)' });
+    }
+    req.worcaUser = who;
+    // One line per person per server lifetime (attribution, not an audit log): email only.
+    if (who.email && !SEEN_SIGN_INS.has(who.email)) {
+      SEEN_SIGN_INS.add(who.email);
+      console.log(`[worca-ui] signed in: ${who.email} (first request since boot)`);
+    }
+    next();
+  }, () => {
+    res.status(503).json({ error: 'cannot verify the sign-in token right now' });
+  });
+});
+
+// Ask threads have an owner (ask_threads.created_by). On a shared deployment (a real per-person
+// sign-in, identity.mjs#isSharedIdentity) a person reaches only their own threads and ownerless
+// legacy ones: every route under /api/ask/threads/:id answers 404 for someone else's. A local or
+// operator deployment is one person, so nothing changes there.
+function askViewer(req) {
+  const who = resolveIdentity(req);
+  return isSharedIdentity(who.source) ? who.name : null;
+}
+/** Whether a thread's owner is a shared sign-in, for turns with no request (event turns after a
+ *  card click): the owner of a thread on a shared deployment is recorded from a verified identity,
+ *  so it is shared exactly when this deployment verifies identities. */
+function askSharedOwner(thread) {
+  return !!(thread && thread.createdBy && thread.createdBy !== 'local' && (identityCheck || process.env.WORCA_IDENTITY_HEADER));
+}
+function askThreadVisible(thread, req) {
+  const viewer = askViewer(req);
+  return !viewer || !thread || !thread.createdBy || thread.createdBy === viewer;
+}
+app.use('/api/ask/threads/:id', (req, res, next) => {
+  const viewer = askViewer(req);
+  if (!viewer || typeof req.params.id !== 'string' || !ASK_ID_RE.test(req.params.id)) return next();
+  let thread = null;
+  try { thread = askGetThread(req.params.id); } catch { return next(); }
+  if (thread && !askThreadVisible(thread, req)) return res.status(404).json({ error: 'thread not found' });
   next();
 });
 
@@ -1135,28 +1267,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
-
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
-/** Hostname (no port) from a Host header value or full Origin URL, or null. */
-function hostnameOf(value) {
-  if (!value) return null;
-  try {
-    return new URL(value.includes('://') ? value : `http://${value}`).hostname;
-  } catch {
-    return null;
-  }
-}
-/** True when both Host and (if present) Origin are loopback. */
-function isLocalRequest(req) {
-  const host = hostnameOf(req.headers.host);
-  if (!host || !LOCAL_HOSTNAMES.has(host)) return false;
-  const origin = req.headers.origin;
-  if (origin) {
-    const oh = hostnameOf(origin);
-    if (!oh || !LOCAL_HOSTNAMES.has(oh)) return false;
-  }
-  return true;
-}
 
 function badRequest(res, message) {
   res.status(400).json({ error: message });
@@ -1431,6 +1541,13 @@ const startRunHandler = async (req, res) => {
     // IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
+    // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
+    // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
+    // "Run now" credits whoever clicked it (internal.runNowBy, never from HTTP); a timer firing credits the scheduler.
+    const startedBy = internal
+      ? (typeof internal.runNowBy === 'string' && internal.runNowBy ? internal.runNowBy
+        : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
+      : startedByOf(req);
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -1620,7 +1737,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ workspaceId: ws.id }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        const gate = await checkTeamTotalGate({ workspaceId: ws.id }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
 
@@ -1670,7 +1787,7 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir }));
+      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
 
       orch = await createOrchestratorFor({
         workspace: {
@@ -1688,6 +1805,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         guardrailsId,
+        startedBy,
         branch,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
@@ -1704,6 +1822,7 @@ const startRunHandler = async (req, res) => {
         title,
         status: 'starting',
         startedAt: new Date().toISOString(),
+        startedBy,
         events: [],
         pendingQuestion: null,
       };
@@ -1745,7 +1864,7 @@ const startRunHandler = async (req, res) => {
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
       {
-        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null });
+        const gate = await checkTeamTotalGate({ projectDir }, { pastTeamCap: body.pastTeamCap === true, reason: typeof body.policyReason === 'string' ? body.policyReason : null, by: startedBy });
         if (gate.blocked) return res.status(gate.code === 'reason_required' ? 400 : 403).json({ error: gate.error, code: gate.code, policy: gate.policy, needsPolicyAck: gate.code === 'team_total' });
       }
       const humanInLoop = bodyHumanInLoop ?? ((await readRunConfig(projectDir)).humanInLoop !== false);
@@ -1757,7 +1876,7 @@ const startRunHandler = async (req, res) => {
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
-      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir }));
+      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
 
       orch = await createOrchestratorFor({
         projectDir,
@@ -1769,6 +1888,7 @@ const startRunHandler = async (req, res) => {
         workflowId,
         template: workflowRow,
         guardrailsId,
+        startedBy,
         branch,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
@@ -1789,6 +1909,7 @@ const startRunHandler = async (req, res) => {
         title,
         status: 'starting',
         startedAt: new Date().toISOString(),
+        startedBy,
         events: [],
         pendingQuestion: null,
       };
@@ -1926,7 +2047,7 @@ function parseScheduleRequest(body, { now = Date.now() } = {}) {
 }
 
 /** The request a ticket stores: the validated body minus schedule fields and uploads. */
-async function storedRequestOf(body, stageId, projectDir) {
+async function storedRequestOf(body, stageId, projectDir, startedBy = null) {
   const request = { ...body };
   for (const k of ['scheduledFor', 'repeat', 'after', 'afterPolicy', 'sourceFromPrevious', 'ifMissed', 'graceMin', 'extras', 'internal']) delete request[k];
   // Text the user authored is part of the request: a prompt FILE is frozen now, so a
@@ -1936,21 +2057,22 @@ async function storedRequestOf(body, stageId, projectDir) {
     request.source = { type: 'markdown', promptText };
   }
   const extrasPaths = await writeExtras(stageId, body.extras, path.join(scheduleStageDir(stageId), 'extras'));
-  request.internal = { extrasPaths };
+  request.internal = { extrasPaths, ...(startedBy ? { startedBy } : {}) };
   return request;
 }
 
 /** Turn a validated run request into a ticket (or a recurring schedule). 202 body. */
-async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null }) {
+async function scheduleRequest({ body, sched, title, askLink, budget, projectDir, workspaceId = null, startedBy = null }) {
   const target = workspaceId ? { workspaceId } : { projectDir };
   let ticket, schedule = null;
   if (sched.repeat) {
     const id = `sch_${randomBytes(4).toString('hex')}`;
-    const request = await storedRequestOf(body, id, projectDir);
+    const request = await storedRequestOf(body, id, projectDir, startedBy);
     ({ schedule, ticket } = createSchedule({
       id, title, ...target, request, rule: sched.repeat.rule, overlap: sched.repeat.overlap,
       maxFailures: sched.repeat.maxFailures, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
       askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null,
+      createdBy: startedBy,
     }));
     // An Ask card that became a repeating schedule follows the SERIES, not one run of it.
     if (askLink) {
@@ -1959,13 +2081,13 @@ async function scheduleRequest({ body, sched, title, askLink, budget, projectDir
     }
   } else {
     const id = randomUUID();
-    const request = await storedRequestOf(body, id, projectDir);
+    const request = await storedRequestOf(body, id, projectDir, startedBy);
     // Both arms carry ifMissed / graceMin: parseScheduleRequest filled them with the Settings defaults
     // (an after body may not name them), and a chained ticket later moved to a time shows them.
     const chain = sched.after ? {
       after: { kind: sched.afterRef.kind, id: sched.afterRef.id }, afterPolicy: sched.afterPolicy, sourceFromPrevious: sched.sourceFromPrevious, ifMissed: sched.ifMissed, graceMin: sched.graceMin,
     } : { runAtMs: sched.runAtMs, ifMissed: sched.ifMissed, graceMin: sched.graceMin };
-    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null });
+    ticket = createTicket({ id, title, ...target, request, ...chain, askThreadId: askLink ? askLink.threadId : null, askCardId: askLink ? askLink.cardId : null, createdBy: startedBy });
     if (askLink) {
       try { flipCard(askLink.threadId, askLink.cardId, { state: 'scheduled', runId: id, scheduledFor: sched.after ? null : ticket.runAt, after: sched.after ? { kind: sched.afterRef.kind, id: sched.afterRef.id, title: sched.afterRef.title } : null }); }
       catch (err) { console.error(`[worca-ui] ask card schedule flip failed: ${err && err.message ? err.message : err}`); }
@@ -2006,6 +2128,9 @@ async function invokeStartRun(body, internal) {
   return out;
 }
 
+/** Ticket id -> who clicked "Run now" (identity.mjs actor), consumed by the firing it causes. */
+const RUN_NOW_BY = new Map();
+
 /** runDueTickets' `start`: probe an external task first (transient errors retry), then start. */
 async function fireTicket(ticket) {
   const body = { ...(ticket.request || {}) };
@@ -2044,7 +2169,10 @@ async function fireTicket(ticket) {
     const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
     body.featureBranch = `${body.featureBranch.trim()}-${day}`;
   }
-  const out = await invokeStartRun(body, { ticket });
+  // A "Run now" click names its clicker for this one firing (scheduleVerb records it).
+  const runNowBy = RUN_NOW_BY.get(ticket.id) || null;
+  RUN_NOW_BY.delete(ticket.id);
+  const out = await invokeStartRun(body, { ticket, ...(runNowBy ? { runNowBy } : {}) });
   if (out.status === 200 && out.body && out.body.runId) return { ok: true };
   const error = (out.body && out.body.error) || `the run could not be started (HTTP ${out.status})`;
   return { ok: false, error, transient: out.status >= 500 };
@@ -2141,7 +2269,7 @@ app.get('/api/schedules', (req, res) => {
     res.json({
       schedules: listSchedules({ projectDir, workspaceId }),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter),
-      counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
+      counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
   } catch (err) {
@@ -2237,7 +2365,7 @@ app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? withAfter(found.item) : found.item, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // One schedule change, for the REST routes AND an applied Ask Worca schedule card — so the
@@ -2247,7 +2375,7 @@ app.get('/api/schedules/:id', (req, res) => {
 //   verb 'delete'    cancel a one-off ticket, or delete a series
 //   verb 'run-now'   start a ticket now, or one extra occurrence of a series
 //   verb 'pause' | 'resume' | 'skip-next'   a series only
-async function scheduleVerb(verb, id, body = {}) {
+async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
   const found = findScheduleItem(id);
   const out = (status, payload) => ({ status, body: payload });
   if (!found) return out(404, { error: 'schedule not found' });
@@ -2291,7 +2419,7 @@ async function scheduleVerb(verb, id, body = {}) {
           patch.sourceFromPrevious = body.sourceFromPrevious;
         }
         if (found.item.scheduleId && (patch.runAtMs != null || patch.after)) return out(400, { error: 'an occurrence of a repeating schedule cannot be moved — edit the schedule, or skip this occurrence' });
-        const t = updateTicket(found.item.id, patch);
+        const t = updateTicket(found.item.id, patch, { by: by || undefined });
         if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be changed` });
         const item = withAfter(t);
         if (t.askThreadId && t.askCardId && (patch.runAtMs != null || patch.after)) {
@@ -2310,7 +2438,7 @@ async function scheduleVerb(verb, id, body = {}) {
       if (patch.graceMin !== undefined && (!Number.isSafeInteger(patch.graceMin) || patch.graceMin < 0 || patch.graceMin > 10080)) {
         return out(400, { error: 'graceMin must be a whole number of minutes from 0 to 10080' });
       }
-      const s = updateSchedule(found.item.id, patch);
+      const s = updateSchedule(found.item.id, patch, { by: by || undefined });
       if (s && s.askThreadId && s.askCardId && patch.rule) {
         try { flipCard(s.askThreadId, s.askCardId, { sentence: s.sentence, scheduledFor: s.nextRunAt }); } catch { /* display only */ }
       }
@@ -2326,7 +2454,7 @@ async function scheduleVerb(verb, id, body = {}) {
       releaseAskCard(found.item);
     } else {
       if (found.item.scheduleId) return out(400, { error: 'this is an occurrence of a repeating schedule — skip it instead' });
-      const t = cancelTicket(found.item.id);
+      const t = cancelTicket(found.item.id, { by: by || undefined });
       if (!t) return out(409, { error: `this run is ${found.item.status} and can no longer be canceled` });
       releaseAskCard(t);
     }
@@ -2339,8 +2467,9 @@ async function scheduleVerb(verb, id, body = {}) {
       const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
       if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
     }
-    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id) : requestRunNow(found.item.id);
+    const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id, { by: by || undefined }) : requestRunNow(found.item.id, { by: by || undefined });
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
+    if (by) RUN_NOW_BY.set(ticket.id, by);
     emitChanged('schedules-changed', 'run-now');
     emitChanged('notifications-changed');
     await schedulerTick();
@@ -2350,7 +2479,8 @@ async function scheduleVerb(verb, id, body = {}) {
   }
   if (['pause', 'resume', 'skip-next'].includes(verb)) {
     if (found.kind !== 'recurring') return out(404, { error: 'repeating schedule not found' });
-    const s = verb === 'pause' ? pauseSchedule(found.item.id) : verb === 'resume' ? resumeSchedule(found.item.id) : skipNext(found.item.id);
+    const opt = { by: by || undefined };
+    const s = verb === 'pause' ? pauseSchedule(found.item.id, opt) : verb === 'resume' ? resumeSchedule(found.item.id, opt) : skipNext(found.item.id, opt);
     if (!s) return out(409, { error: `this schedule is ${found.item.status}` });
     emitChanged('schedules-changed', verb);
     emitChanged('notifications-changed');
@@ -2360,11 +2490,11 @@ async function scheduleVerb(verb, id, body = {}) {
 }
 
 /** Apply a CONFIRMED Ask Worca schedule card (schedule-spec.mjs shape) through scheduleVerb. */
-async function applyScheduleCard(card) {
+async function applyScheduleCard(card, { by = null } = {}) {
   const map = { run_now: ['run-now', {}], move: ['patch', card.patch || {}], edit: ['patch', card.patch || {}], cancel: ['delete', {}], delete: ['delete', {}] };
   const m = map[card.action];
   if (!m) return { ok: false, error: `unknown schedule action "${card.action}"` };
-  const r = await scheduleVerb(m[0], card.id, m[1]);
+  const r = await scheduleVerb(m[0], card.id, m[1], { by });
   if (r.status !== 200) return { ok: false, error: (r.body && r.body.error) || `failed (${r.status})` };
   const b = r.body || {};
   let detail = '';
@@ -2386,27 +2516,33 @@ async function applyScheduleCard(card) {
 // PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };
 // a series: { title?, rule?, overlap?, maxFailures?, ifMissed?, graceMin? }.
 app.patch('/api/schedules/:id', async (req, res) => {
-  const r = await scheduleVerb('patch', req.params.id, req.body || {});
+  const r = await scheduleVerb('patch', req.params.id, req.body || {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
 // DELETE /api/schedules/:id — cancel a one-shot ticket, or delete a series.
 app.delete('/api/schedules/:id', async (req, res) => {
-  const r = await scheduleVerb('delete', req.params.id);
+  const r = await scheduleVerb('delete', req.params.id, {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
 // POST /api/schedules/:id/run-now — start a ticket now, or one extra occurrence of a series.
 app.post('/api/schedules/:id/run-now', async (req, res) => {
-  const r = await scheduleVerb('run-now', req.params.id);
+  const r = await scheduleVerb('run-now', req.params.id, {}, { by: actorOf(req) });
   res.status(r.status).json(r.body);
 });
 
 for (const verb of ['pause', 'resume', 'skip-next']) {
   app.post(`/api/schedules/:id/${verb}`, async (req, res) => {
-    const r = await scheduleVerb(verb, req.params.id);
+    const r = await scheduleVerb(verb, req.params.id, {}, { by: actorOf(req) });
     res.status(r.status).json(r.body);
   });
+}
+
+/** The reader whose read state applies: a person on a shared deployment, else null (the global column). */
+function notifReader(req) {
+  const who = resolveIdentity(req);
+  return isSharedIdentity(who.source) ? who.name : null;
 }
 
 // GET /api/notifications?scope=schedule[&unread=1][&problems=1] -> { notifications, unread }
@@ -2415,8 +2551,8 @@ app.get('/api/notifications', (req, res) => {
     const scope = typeof req.query.scope === 'string' && req.query.scope ? req.query.scope : 'schedule';
     const flag = (v) => v === '1' || v === 'true';
     res.json({
-      notifications: listNotifications({ scope, unread: flag(req.query.unread), problems: flag(req.query.problems) }),
-      unread: unreadCount(scope),
+      notifications: listNotifications({ scope, unread: flag(req.query.unread), problems: flag(req.query.problems), reader: notifReader(req) }),
+      unread: unreadCount(scope, { reader: notifReader(req) }),
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2425,18 +2561,18 @@ app.get('/api/notifications', (req, res) => {
 
 app.post('/api/notifications/read-all', (req, res) => {
   const scope = req.body && typeof req.body.scope === 'string' && req.body.scope ? req.body.scope : 'schedule';
-  markAllRead(scope);
+  markAllRead(scope, { reader: notifReader(req) });
   emitChanged('notifications-changed');
-  res.json({ unread: unreadCount(scope) });
+  res.json({ unread: unreadCount(scope, { reader: notifReader(req) }) });
 });
 
 app.post('/api/notifications/:id/read', (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id)) return badRequest(res, 'invalid notification id');
   const read = !(req.body && req.body.read === false);
-  if (!markRead(id, { read })) return res.status(404).json({ error: 'notification not found' });
+  if (!markRead(id, { read, reader: notifReader(req) })) return res.status(404).json({ error: 'notification not found' });
   emitChanged('notifications-changed');
-  res.json({ unread: unreadCount('schedule') });
+  res.json({ unread: unreadCount('schedule', { reader: notifReader(req) }) });
 });
 
 // ---------------------------------------------------------------------------
@@ -2464,14 +2600,15 @@ const chatActions = {
   })),
   runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
   pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
-  answer: (runId, id, payload) => answerRun(runId, id, payload),
-  stop: (runId) => stopRun(runId),
-  pause: (runId) => pauseRun(runId),
+  // `by` = the chat actor ("ada via Slack", identity.mjs chatActor): attribution text only.
+  answer: (runId, id, payload, by) => answerRun(runId, id, payload, by || 'local'),
+  stop: (runId, by) => stopRun(runId, by || 'local'),
+  pause: (runId, by) => pauseRun(runId, by || 'local'),
   // The long chain of budget/worktree/double-resume guards lives in resumeRun();
   // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
   // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
-  resume: async (pipelineId) => {
-    try { return await resumeRun(pipelineId); }
+  resume: async (pipelineId, by) => {
+    try { return await resumeRun(pipelineId, { by: by || 'local' }); }
     catch (err) { return { ok: false, error: err?.body?.error || err?.message || String(err) }; }
   },
   // Chat reads only DB fields (id/title/status/cost/activeMs/pauseReason), so bound the
@@ -2576,24 +2713,28 @@ function reloadChatWorkers(name) {
  * every tab while the run is still waiting on it. Callers (`POST /api/answer` →
  * 422, and P4's CLI + chat) branch on `err.code === 'INVALID_ANSWER'`.
  */
-function answerRun(runId, id, payload) {
+/** `by` = who answered (identity.mjs actorOf / chatActor); the harness stores and audits it. */
+function answerRun(runId, id, payload, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  entry.orch.answer(id, payload);
+  entry.orch.answer(id, payload, by || 'local');
   resolvePending(entry, { id, reason: 'answered' });
 }
-function stopRun(runId) {
+/** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state. */
+function stopRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  entry.orch.stop();
+  entry.lastAction = { kind: 'stop', by: by || 'local', at: new Date().toISOString() };
+  entry.orch.stop(entry.lastAction.by);
   entry.status = 'stopped';
   resolvePending(entry, { reason: 'stopped' });
 }
-function pauseRun(runId) {
+function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause();
+  const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
+  entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
 }
@@ -2607,7 +2748,7 @@ app.post('/api/answer', (req, res) => {
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
   try {
-    answerRun(runId, id, payload);
+    answerRun(runId, id, payload, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
@@ -2628,7 +2769,7 @@ app.post('/api/stop', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   try {
-    stopRun(runId);
+    stopRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -2644,7 +2785,7 @@ app.post('/api/pause', (req, res) => {
   const { runId } = req.body || {};
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   try {
-    pauseRun(runId);
+    pauseRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
@@ -2668,7 +2809,7 @@ class ResumeError extends Error {
   }
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local' } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
@@ -2694,6 +2835,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // a total-refused request must not leave cost_cap_override armed.
   if (ignoreCostCap === true) {
     setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+    appendAuditById(pipelineId, `Pipeline cost limit override set${byActor(by)}.`, { actor: by });
   }
   const pipeCap = budget.pipelineLimitUsd;
   const spentSoFar = Number(saved.row.total_cost_usd || 0);
@@ -2741,14 +2883,18 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // per run. Both soft — `pastTeamCap` (with an optional / required reason) records the choice
   // and lets the resume through; the local gates above stay never-bypassable.
   const teamTarget = workspace ? { workspaceId: workspace.id } : { projectDir };
-  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason });
+  const totalGate = await checkTeamTotalGate(teamTarget, { pastTeamCap, reason: policyReason, by });
   if (totalGate.blocked) {
     throw new ResumeError(totalGate.code === 'reason_required' ? 400 : 403, { error: totalGate.error, code: totalGate.code, policy: totalGate.policy, needsPolicyAck: totalGate.code === 'team_total' });
   }
-  const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId, spentSoFar, pastTeamCap, reason: policyReason });
+  const pipeGate = checkTeamPipelineGate(totalGate.caps, { pipelineId, spentSoFar, pastTeamCap, reason: policyReason, by });
   if (pipeGate.blocked) {
     throw new ResumeError(pipeGate.code === 'reason_required' ? 400 : 403, { error: pipeGate.error, code: pipeGate.code, policy: pipeGate.policy, needsPolicyOverride: pipeGate.code === 'team_pipeline' });
   }
+  // Who continued past a team cap, and why (the audit timeline; policy_state keeps it too).
+  const why = (r) => (r ? ` — reason: ${String(r).replace(/[\r\n]+/g, ' ').slice(0, 300)}` : '');
+  if (totalGate.ack) appendAuditById(pipelineId, `Continued past the team total cap${byActor(by)}${why(totalGate.ack.reason)}.`, { actor: by });
+  if (pipeGate.fresh) appendAuditById(pipelineId, `Continued past the team cost cap${byActor(by)}${why(pipeGate.reason)}.`, { actor: by });
 
   // A paused defragment run is not live; another one on the same scope may have started since.
   // Resuming the first would sync its stale mount over the second's work (spec §5 concurrency).
@@ -2766,11 +2912,15 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     agentsDir: AGENTS_DIR,
     claude: { permissionMode: 'acceptEdits', mock: effMock },
     resume: saved,
+    resumedBy: by || 'local',
   });
   const entry = {
     id: runId,
     orch,
     projectDir,
+    // The run keeps its starter across a resume; the resume itself is the last action.
+    startedBy: saved.row.started_by || null,
+    lastAction: { kind: 'resume', by: by || 'local', at: new Date().toISOString() },
     ...(workspace
       ? {
           workspaceId: workspace.id,
@@ -2841,6 +2991,7 @@ app.post('/api/resume', async (req, res) => {
       mock: !!(req.body && req.body.mock),
       pastTeamCap: req.body?.pastTeamCap === true,
       policyReason: typeof req.body?.policyReason === 'string' ? req.body.policyReason : null,
+      by: actorOf(req),
     });
     res.json(out);
   } catch (err) {
@@ -3131,13 +3282,13 @@ app.post('/api/onboarding', async (req, res) => {
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 
-app.get('/api/counts', (_req, res) => {
+app.get('/api/counts', (req, res) => {
   try {
     res.json({
       pipelines: countPipelines(),
       projects: countProjects(),
       workspaces: countWorkspaces(),
-      schedules: { ...scheduleCounts(), unread: unreadCount('schedule') },
+      schedules: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
     });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -3282,7 +3433,7 @@ app.post('/api/projects/:key/team-metrics/enable', async (req, res) => {
     return badRequest(res, 'attribution must be "git-user" or "none"');
   }
   try {
-    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true });
+    const result = await enableTeamMetrics(p.path, { mode, attribution: body.attribution || 'git-user', delegateTo: body.delegateTo || null, change: body.change === true, by: actorOf(req) });
     res.json({ ...result, status: await projectMetricsStatus(p) });
   } catch (err) { sendMetricsError(res, err); }
 });
@@ -3375,7 +3526,7 @@ app.put('/api/policy', async (req, res) => {
     const { r } = await policyForScope(scope);
     if (!r.ok) return res.status(404).json({ error: r.detail || 'no team policy for this scope', code: 'NOT_ENABLED' });
     if (!r.homeDir || !fs.existsSync(r.homeDir)) return res.status(409).json({ error: `the policy home ${r.home} is not checked out on this machine`, code: 'NOT_HOME' });
-    const out = await publishPolicy(r.homeDir, req.body.doc, { message: typeof req.body.message === 'string' ? req.body.message : null });
+    const out = await publishPolicy(r.homeDir, req.body.doc, { message: typeof req.body.message === 'string' ? req.body.message : null, by: actorOf(req) });
     res.json({ ok: true, slug: out.slug, sha: out.sha, unchanged: !!out.unchanged, doc: out.doc });
   } catch (err) { sendPolicyError(res, err); }
 });
@@ -3403,7 +3554,7 @@ app.post('/api/projects/:key/policy/enable', async (req, res) => {
   const mode = body.mode === 'follow' ? 'follow' : body.mode === 'here' || body.mode == null ? 'here' : null;
   if (!mode) return badRequest(res, 'mode must be "here" or "follow"');
   try {
-    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '' });
+    const result = await enableTeamPolicy(p.path, { mode, delegateTo: body.delegateTo || null, change: body.change === true, title: typeof body.title === 'string' ? body.title : '', by: actorOf(req) });
     res.json({ ...result, status: await projectPolicyStatus(p) });
   } catch (err) { sendPolicyError(res, err); }
 });
@@ -3540,7 +3691,7 @@ async function commentsCreate(req, res, storeKey, id) {
     const comment = addDiffComment({
       storeKey, pipelineId: row.id, patchText,
       project: body.project ?? null, path: body.path, side: body.side, line: body.line,
-      body: body.body, author: 'user',
+      body: body.body, author: 'user', authorName: actorOf(req),
     });
     res.status(201).json({ comment });
   } catch (err) {
@@ -3584,7 +3735,7 @@ function commentsPatch(req, res, storeKey, id, cid) {
 function commentsReply(req, res, storeKey, id, cid) {
   try {
     if (!commentOfRun(res, storeKey, id, cid)) return;
-    const comment = addDiffCommentReply({ parentId: cid, body: (req.body || {}).body, author: 'user' });
+    const comment = addDiffCommentReply({ parentId: cid, body: (req.body || {}).body, author: 'user', authorName: actorOf(req) });
     res.status(201).json({ comment });
   } catch (err) {
     if (err instanceof DiffCommentError) return badRequest(res, err.message);
@@ -3754,6 +3905,10 @@ app.delete('/api/runs/:id', async (req, res) => {
       id,
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    if (report.archived) {
+      const archBy = actorOf(req);
+      appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
+    }
     emitChanged('pipelines-changed', 'deleted');
     res.json({ ok: true, ...report });
   } catch (e) {
@@ -3781,6 +3936,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
       key: scope.workspaceId ? null : (scope.projectKey || null),
       projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
       id,
+      by: actorOf(req),
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
     emitChanged('pipelines-changed', 'updated');
@@ -3949,8 +4105,11 @@ app.post('/api/pr', async (req, res) => {
   const pushed = await pushBranch(repoDir, feature, pushRemote);
   if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
 
+  // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
+  const footer = prAttributionFooter(state.startedBy);
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
+    ...(footer ? { body: `${state.title || feature}${footer}` } : {}),
   });
   if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
 
@@ -3959,6 +4118,9 @@ app.post('/api/pr', async (req, res) => {
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   if (pipelineIdForPr) {
     persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
+    // Who clicked Create PR (the footer names who STARTED the run; this names who shipped it).
+    const prBy = actorOf(req);
+    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : 'opened'}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
   }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
@@ -4088,6 +4250,59 @@ app.post('/api/projects', async (req, res) => {
     // would also surface as 400; acceptable for this single-user local tool.)
     return badRequest(res, err && err.message ? err.message : String(err));
   }
+});
+
+// POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the
+// projects folder and register it (src/core/clone-project.mjs). A job, because a large clone
+// outlives a proxied request (Cloudflare closes at 100 s). GET /api/projects/clone/:id polls it;
+// 'clone-changed' broadcasts each transition. Refusals known up front answer at once (4xx).
+const CLONE_JOBS = new Map();   // jobId -> { id, url, name, dir, state: running|done|error, code?, error?, project? }
+const CLONE_STATUS = { invalid: 400, 'not-allowed': 403, exists: 409, 'not-found': 404, 'auth-failed': 502, timeout: 504, failed: 500 };
+function publicCloneJob(j) {
+  const { id, url, name, dir, state, code = null, error = null, project = null, startedAt, endedAt = null } = j;
+  return { id, url, name, dir, state, code, error, project, startedAt, endedAt };
+}
+async function startCloneJob(req) {
+  const plan = planClone(req, { projectsRoot: getProjectsRoot() });   // throws CloneError at once
+  if ([...CLONE_JOBS.values()].some((j) => j.state === 'running' && j.dir === plan.dir)) {
+    throw new CloneError('exists', `${plan.dir} is being cloned already`);
+  }
+  const job = { id: `cln_${randomBytes(4).toString('hex')}`, url: plan.url, name: plan.name, dir: plan.dir, state: 'running', startedAt: new Date().toISOString() };
+  CLONE_JOBS.set(job.id, job);
+  broadcast({ type: 'clone-changed', job: publicCloneJob(job) });
+  (async () => {
+    try {
+      await pinUiLevel();
+      const { project } = await cloneProject(req, { projectsRoot: getProjectsRoot(), listProjects, addProject });
+      Object.assign(job, { state: 'done', project });
+      emitChanged('projects-changed', 'created');
+      discoverProject(project.path, { force: true })
+        .then(() => emitChanged('team-metrics-changed', 'discovered'))
+        .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
+    } catch (err) {
+      Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
+    }
+    job.endedAt = new Date().toISOString();
+    broadcast({ type: 'clone-changed', job: publicCloneJob(job) });
+    // Keep finished jobs for an hour so a reload can still read the outcome.
+    setTimeout(() => CLONE_JOBS.delete(job.id), 3600_000).unref?.();
+  })();
+  return job;
+}
+app.post('/api/projects/clone', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const job = await startCloneJob({ url: body.url, branch: body.branch ?? null, name: body.name ?? null });
+    res.status(202).json({ jobId: job.id, job: publicCloneJob(job) });
+  } catch (err) {
+    const code = err instanceof CloneError ? err.code : 'failed';
+    res.status(CLONE_STATUS[code] || 500).json({ error: err && err.message ? err.message : String(err), code });
+  }
+});
+app.get('/api/projects/clone/:id', (req, res) => {
+  const job = CLONE_JOBS.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'clone job not found' });
+  res.json({ job: publicCloneJob(job) });
 });
 
 app.delete('/api/projects', async (req, res) => {
@@ -4669,6 +4884,9 @@ const uiControl = { token: null, onShutdown: null, startedAt: null };
 const startedAtIso = () => uiControl.startedAt || null;
 
 app.get('/api/health', (req, res) => {
+  // Remote mode: it is the one unauthenticated route, so a caller from outside
+  // the box learns only what it is, not the pid/bind/port/boot time.
+  if (REMOTE_MODE && !isInContainer(req)) return res.json({ name: UI_HEALTH_NAME, version: PKG_VERSION });
   const addr = req.socket && req.socket.localPort;
   res.json({
     name: UI_HEALTH_NAME,
@@ -4678,6 +4896,14 @@ app.get('/api/health', (req, res) => {
     port: addr || PORT,
     startedAt: startedAtIso(),
   });
+});
+
+// Who this request is, for the header's "Signed in as" (identity.mjs). Attribution only.
+// `shared`: a real per-person sign-in (Access or a trusted header), the one case where the UI
+// shows people at all; a local install or a one-person WORCA_IDENTITY_NAME deployment shows none.
+app.get('/api/whoami', (req, res) => {
+  const who = resolveIdentity(req);
+  res.json(who.source === 'local' ? { name: null, source: 'local', shared: false } : { ...who, shared: isSharedIdentity(who.source) });
 });
 
 /** Constant-time bearer check; `expected` is the boot-time token from ui.json. */
@@ -5832,12 +6058,20 @@ function askRunningCount() {
 /** hello payload: running turns only (§8.2). A job whose slot was just
  *  reserved (messageId still null — the message route's atomic reservation,
  *  Task 6) is skipped: it becomes visible once its assistant row exists. */
-function askHello() {
+function askHello(ws = null) {
   const out = [];
   for (const [threadId, job] of askJobs.entries()) {
-    if (job.status === 'running' && job.messageId) out.push({ threadId, messageId: job.messageId });
+    if (job.status === 'running' && job.messageId && (!ws || askSocketSees(ws, threadId))) out.push({ threadId, messageId: job.messageId });
   }
   return out;
+}
+
+/** Whether this socket may receive thread `threadId`'s frames (its owner, or not a shared viewer). */
+function askSocketSees(ws, threadId) {
+  if (!ws || !ws.worcaViewer) return true;
+  let owner = null;
+  try { owner = askGetThread(threadId)?.createdBy || null; } catch { return true; }
+  return !owner || owner === ws.worcaViewer;
 }
 
 /** Replay a job's stamped ring buffer to one socket. No state snapshot — the
@@ -5895,12 +6129,13 @@ app.get('/api/ask/threads', (req, res) => {
   try {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
-    const threads = askListThreads({ limit }).map((t) => {
+    const visibleTo = askViewer(req);
+    const threads = askListThreads({ limit, visibleTo }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
     });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads() });
+    res.json({ threads, total: askCountThreads({ visibleTo }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5911,7 +6146,7 @@ app.get('/api/ask/threads', (req, res) => {
 app.get('/api/ask/history', (req, res) => {
   try {
     res.json({
-      threads: askCountThreads(),
+      threads: askCountThreads({ visibleTo: askViewer(req) }),
       worktrees: askCountWorktrees(),
       attachments: askCountAttachments(),
       inFlight: askRunningCount(),
@@ -5931,10 +6166,14 @@ app.delete('/api/ask/threads', async (req, res) => {
   const removed = { threads: 0, worktrees: 0 };
   const failed = [];
   try {
-    for (const id of askListThreadIds()) {
+    // A shared deployment's "delete all" deletes only the caller's own threads.
+    const viewer = askViewer(req);
+    const deleted = [];
+    for (const id of askListThreadIds(viewer ? { ownedBy: viewer } : {})) {
       try {
         const r = await deleteAskThreadFully(id);
         if (r.deleted) {
+          deleted.push(id);
           removed.threads += 1;
           removed.worktrees += r.worktrees;
         } else failed.push(id);
@@ -5943,7 +6182,8 @@ app.delete('/api/ask/threads', async (req, res) => {
       }
     }
     res.json({ ok: true, removed, failed });
-    broadcast({ type: 'ask-history-cleared' });
+    // Shared: name the deleted threads, so other people's tabs keep theirs open.
+    broadcast({ type: 'ask-history-cleared', ...(viewer ? { threadIds: deleted } : {}) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5959,7 +6199,7 @@ app.post('/api/ask/threads', (req, res) => {
       }
       title = body.title.trim() || null;
     }
-    const thread = askCreateThread();
+    const thread = askCreateThread({ createdBy: actorOf(req) });
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -6225,7 +6465,7 @@ function askValidateScope(raw) {
  *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
  *  actually has (the python probe, cached 60 s). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput() });
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -6246,8 +6486,14 @@ function askCardScheduleLine(b, tz = null) {
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
  *  a vanished row degrades to an absent header line, never a 500. */
-async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
+async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null, { signedIn = null } = {}) {
   const out = { now: new Date().toISOString() };
+  // Where worca runs (absent on a local install) and who the sign-in proxy verified for this request.
+  try {
+    const facts = deploymentFacts(process.env, { remoteMode: REMOTE_MODE, projectsRoot: getProjectsRoot() });
+    if (facts) out.deployment = facts;
+  } catch { /* absent line */ }
+  if (typeof signedIn === 'string' && signedIn) out.signedIn = signedIn;
   if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
   if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
@@ -6340,7 +6586,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -6398,7 +6644,13 @@ function mockAskCard(ctx = {}, text = '') {
  *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
  *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
  */
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null }) {
+/** The identity Ask Worca's header shows: resolved like every other attribution, absent for 'local'. */
+function askSignedIn(req) {
+  const who = resolveIdentity(req);
+  return who.source === 'local' ? null : who.name;
+}
+
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -6471,7 +6723,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const catalog = await askBuildCatalog();
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
-    const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
+    const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
     const systemPrompt = await askSystemPromptFor(catalog);
     const header = askBuildContextHeader(headerCtx);
     const prompt = askBuildTurnPrompt(header, text, inline);
@@ -6482,6 +6734,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
 
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
+      // A shared sign-in's name: the MCP child reads/marks notifications per person (step 3).
+      reader: reader || (thread.createdBy && askSharedOwner(thread) ? thread.createdBy : null),
       prompt, systemPrompt, restoredPrompt,
       model, effort,
       resumeSessionId: thread.sessionId || null,
@@ -6628,7 +6882,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req) });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
@@ -6772,9 +7026,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
@@ -6795,6 +7049,23 @@ async function startMetricsEventTurn(threadId, block) {
   const r = await start();
   if (r.ok) return { assistantMessageId: r.assistantMessageId };
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
+/** Follow a clone card's job to its end: flip the card to applied | failed and start the event turn.
+ *  Reads the job object startCloneJob returned (it is updated in place when the clone ends). */
+function followCloneCard(threadId, cardId, job, { everyMs = 500 } = {}) {
+  const timer = setInterval(async () => {
+    if (!job || job.state === 'running') return;
+    clearInterval(timer);
+    const result = job.state === 'done'
+      ? { ok: true, jobId: job.id, project: job.project ? { name: job.project.name, path: job.project.path } : null }
+      : { ok: false, jobId: job.id, code: job.code || 'failed', error: job.error || 'the clone failed' };
+    const block = flipCard(threadId, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+    if (!block) return;
+    try { await startMetricsEventTurn(threadId, block); }
+    catch (err) { console.error(`[worca-ui] clone card event turn failed: ${err && err.message ? err.message : err}`); }
+  }, everyMs);
+  timer.unref?.();
 }
 
 // D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
@@ -6827,7 +7098,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       let block;
       try {
         let result;
-        try { result = await applyScheduleCard(found.block.card); }
+        try { result = await applyScheduleCard(found.block.card, { by: actorOf(req) }); }
         catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err) }; }
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
@@ -6858,6 +7129,37 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (!block) return res.status(409).json({ error: 'card vanished' });
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'clone') {
+      // Clone card (docs/deploy-railway.md "First project"): proposed → cloning → applied | failed, or declined.
+      // The clone happens HERE, behind the click, as the same job the Projects view starts (startCloneJob);
+      // a refusal known up front fails the card at once, otherwise the card follows the job to its end.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      let job = null;
+      try {
+        const ch = found.block.card.change || {};
+        try {
+          job = await startCloneJob({ url: ch.url, branch: ch.branch ?? null, name: ch.name ?? null });
+          block = flipCard(id, cardId, { state: 'cloning', card: { result: { ok: null, jobId: job.id } } });
+        } catch (err) {
+          const result = { ok: false, code: (err && err.code) || 'failed', error: err && err.message ? err.message : String(err) };
+          block = flipCard(id, cardId, { state: 'failed', error: result.error, card: { result } });
+        }
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      if (block.state === 'failed') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      followCloneCard(id, cardId, job);
+      return res.json({ block });
     }
     if (found.block.card && (found.block.card.type === 'metrics' || found.block.card.type === 'policy')) {
       // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
@@ -8340,6 +8642,9 @@ export async function bootMaintenance({ log } = {}) {
   try {
     const interrupted = sweepStreamingMessages();
     const emptyThreads = sweepEmptyThreads();
+    // A clone job lives in this process: a clone card still `cloning` from the last one can never finish.
+    const clones = sweepCloningCards();
+    if (clones) console.log(`[worca-ui] ask sweep: ${clones} clone card(s) interrupted by the restart`);
     summary.ask = { interrupted, emptyThreads };
     if (interrupted || emptyThreads) {
       console.log(`[worca-ui] ask sweep: ${interrupted} interrupted turn(s), ${emptyThreads} empty thread(s)`);
@@ -8383,6 +8688,14 @@ export async function bootMaintenance({ log } = {}) {
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Remote access fails closed: an unsafe or broken config never starts serving.
+  if (REMOTE_ACCESS_CHECK.errors.length) {
+    for (const e of REMOTE_ACCESS_CHECK.errors) console.error(`[worca-ui] remote access: ${e}`);
+    console.error('[worca-ui] not starting. See docs/remote-access.md.');
+    process.exit(1);
+  }
+  for (const w of REMOTE_ACCESS_CHECK.warnings) console.warn(`[worca-ui] remote access: ${w}`);
+
   try {
     seedBuiltinMarketplace();
   } catch (err) {
@@ -8427,6 +8740,10 @@ if (isMain) {
     const port = server.address().port;
     const url = uiUrl({ host: HOST, port });
     console.log(`[worca-ui] listening on ${url} (bound to ${HOST})`);
+    if (REMOTE_MODE) {
+      const who = identityCheck ? `identity: ${REMOTE_ACCESS.identity.provider} (${REMOTE_ACCESS.identity.teamDomain})` : 'identity: NOT CHECKED';
+      console.log(`[worca-ui] remote access on for ${REMOTE_ACCESS.allowedHosts.join(', ')}; ${who}`);
+    }
     uiControl.token = newUiToken();
     uiControl.onShutdown = shutdown;
     uiControl.startedAt = new Date().toISOString();
@@ -8471,6 +8788,7 @@ export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
+  startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,

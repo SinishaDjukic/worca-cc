@@ -33,6 +33,7 @@ import { defaultPolicyDeps } from './policy-deps.mjs';
 import { defaultScheduleDeps } from './schedule-deps.mjs';
 import { defaultSourceDeps } from './source-deps.mjs';
 import { defaultModelDeps } from './model-deps.mjs';
+import { defaultCloneDeps } from './clone-deps.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -125,7 +126,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
   const life = new AbortController();
   const server = createRpcServer({
     tools: createAskTools({
-      ...defaultToolDeps({ threadId }),
+      ...defaultToolDeps({ threadId, viewer: process.env.WORCA_ASK_READER || null }),
       ...defaultWorktreeDeps({ threadId }),
       ...defaultMemoryDeps({ threadId }),
       // The life signal (already built for propose_workflow's nested classifier): stdin closing
@@ -135,9 +136,10 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),
       ...defaultPolicyDeps({ threadId }),
-      ...defaultScheduleDeps({ threadId }),
+      ...defaultScheduleDeps({ threadId, reader: process.env.WORCA_ASK_READER || null }),
       ...defaultSourceDeps(),
       ...defaultModelDeps({ threadId }),
+      ...defaultCloneDeps(),
     }),
     write: (s) => stdout.write(s),
   });

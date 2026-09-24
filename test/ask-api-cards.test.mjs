@@ -364,6 +364,23 @@ test('resolveAskContext: the workspace members line carries the member names (§
   for (const m of ctx.workspace.members) assert.equal(typeof m, 'string');
 });
 
+test('resolveAskContext: no deployment line locally; a container adds it; signedIn comes only from the caller', async () => {
+  const t = await newThread();
+  const local = await mod._testing.resolveAskContext(t.id, {}, []);
+  assert.equal(local.deployment, undefined, 'a local install: the header is unchanged');
+  assert.equal(local.signedIn, undefined);
+  const prev = process.env.WORCA_CONTAINER;
+  process.env.WORCA_CONTAINER = '1';
+  try {
+    const c = await mod._testing.resolveAskContext(t.id, { signedIn: 'forged@example.com' }, [], null, { signedIn: 'ada@example.com' });
+    assert.equal(c.deployment.deployment, 'container');
+    assert.equal(typeof c.deployment.projectsRoot, 'string');
+    assert.equal(c.signedIn, 'ada@example.com', 'the verified identity, not a client context key');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_CONTAINER; else process.env.WORCA_CONTAINER = prev;
+  }
+});
+
 test('rejected proposal (no valid target in context) → notice, no card', async () => {
   const { thread, card } = await proposeCard({}, 'propose with no context');
   assert.equal(card, null);

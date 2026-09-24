@@ -16,16 +16,20 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { pluginsRoot, pluginDir, readPluginsLock } from './plugins-lock.mjs';
 import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
+import { githubEnv } from './github-credentials.mjs';
 
 const execFileP = promisify(execFile);
-const defaultExec = (cmd, args, opts = {}) =>
-  execFileP(cmd, args, {
+const defaultExec = async (cmd, args, opts = {}) => {
+  // The read credential for this call (a fresh App token in App mode); a failed mint leaves none.
+  const { env } = await githubEnv('read');
+  return execFileP(cmd, args, {
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000,
     killSignal: 'SIGKILL',
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: { ...env, GIT_TERMINAL_PROMPT: '0' },
     ...opts,
   });
+};
 
 /** Filesystem slug for a repo URL — shared by the bare-cache dir and marketplace
  *  ids. Injective: a readable prefix plus an 8-hex digest of the EXACT input, so

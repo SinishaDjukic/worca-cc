@@ -130,7 +130,7 @@ source, the `worca-metrics` / `worca-policy` branches and clone-in mode.
 
 | Need | Do |
 | --- | --- |
-| HTTPS to GitHub | `GH_TOKEN=github_pat_…` in `.env`; the entrypoint runs `gh auth setup-git` |
+| HTTPS to GitHub | `GH_TOKEN=github_pat_…` in `.env`, or a read/write pair (`WORCA_GH_READ_TOKEN`, `WORCA_GH_WRITE_TOKEN`), or a GitHub App (`WORCA_GH_APP_ID` + `WORCA_GH_APP_KEY_FILE` or `WORCA_GH_APP_KEY_B64`, [setup](deploy-railway.md#github-app)). Worca passes the token to its own git and gh calls one call at a time; agents never get it, in any guardrail set |
 | SSH remotes | `docker compose -f compose.yml -f compose.ssh.yml up -d` forwards your agent socket (Docker Desktop: automatic; Linux: `WORCA_SSH_SOCK=$SSH_AUTH_SOCK`). Keys never enter the box; the socket does, so pair it with the egress overlay for untrusted tasks |
 | Commit identity | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` in `.env` (agents commit in run worktrees; git refuses without one) |
 
@@ -163,11 +163,12 @@ for a shared pipeline box or scheduled runs nobody watches:
 
 ```bash
 docker compose -f compose.yml -f compose.clonein.yml up -d
-docker compose -f compose.yml -f compose.clonein.yml run --rm worca git clone https://github.com/acme/api.git /projects/api
+docker compose -f compose.yml -f compose.clonein.yml run --rm worca gh repo clone acme/api /projects/api
 docker compose -f compose.yml -f compose.clonein.yml run --rm worca worca add --path /projects/api
 ```
 
-Needs git credentials (above).
+Needs git credentials (above). `gh repo clone` reads `GH_TOKEN`; with a read/write pair, add
+`-e GH_TOKEN="$WORCA_GH_READ_TOKEN"` to that `run`.
 
 ## Network
 
@@ -237,6 +238,13 @@ the container as root. The entrypoint prepares the volume (worca home, projects 
 `HOME` all under `/data`), then drops to the `worca` user; started non-root on a
 volume it can't write, it exits 78 and names the fix. See
 [deploy-railway.md](deploy-railway.md).
+
+In that mode agents also run as their own user, `worca-agent`. It shares the projects,
+run checkouts and run store with `worca` through the `worca-share` group, but cannot
+read worca's settings, database, `HOME` or environment. Give Claude Code a token or key
+as a variable (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`); a login stored in
+worca's `HOME` is not visible to agents. `WORCA_AGENT_ISOLATION=0` turns it off. A
+bind-mount setup keeps one user, so files agents write on your disk keep your uid.
 
 **Reaching the host** (a database on your laptop): `host.docker.internal` on
 Docker Desktop, `--add-host=host.docker.internal:host-gateway` on Engine. Off

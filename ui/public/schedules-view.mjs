@@ -100,6 +100,19 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
   }
 
   // ── rows ───────────────────────────────────────────────────────────────────
+  // Who made / last changed it (step 2's display rule lives in app.js: deps.personLabel/personShown
+  // return '' unless the deployment has per-person sign-ins; 'you' for the viewer).
+  const label = (v) => (typeof deps.personLabel === 'function' ? deps.personLabel(v) : '');
+  const shown = (v) => (typeof deps.personShown === 'function' ? deps.personShown(v) : '');
+  /** The card's meta segment: "· (AL) by ada@…" / "by you" for the creator; null when nobody is shown. */
+  function bySeg(item) {
+    const who = label(item.createdBy);
+    if (!who) return null;
+    const full = shown(item.createdBy);
+    const ini = typeof deps.personIni === 'function' ? deps.personIni(full, `Created by ${full}`) : null;
+    return h('span', { class: 'rc-seg sched-by', title: `Created by ${full}` }, h('span', { class: 'rc-dot', text: '·' }), ini, h('span', { class: 'sched-by-text', text: `by ${who}` }));
+  }
+
   function metaLine(item) {
     const bits = [deps.targetLabel(item), deps.workflowLabel(item.summary.workflowId)];
     if (item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
@@ -114,6 +127,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const src = item.summary.source && item.summary.source.type === 'plugin' ? item.summary.source : null;
     body.append(...[
       row('Task', src ? `${src.plugin} · ${src.taskId} — fetched when the run starts` : (item.summary.prompt || '—')),
+      row('Created by', shown(item.createdBy)),
+      shown(item.updatedBy) && shown(item.updatedBy) !== shown(item.createdBy) ? row('Changed by', shown(item.updatedBy)) : null,
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
@@ -206,7 +221,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
           h('div', { class: 'rc-title', text: t.title || 'Scheduled run' }),
           h('div', { class: 'rc-meta' },
             h('span', { class: `rc-status-word st-${family}`, text: statusWord }),
-            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-when', 'data-at': missed || chained ? '' : t.runAt, text: timeText }))),
+            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-when', 'data-at': missed || chained ? '' : t.runAt, text: timeText })),
+            bySeg(t)),
           h('div', { class: 'sched-target', text: `${t.scheduleId ? 'Repeating' : 'Once'} · ${metaLine(t)}` }),
           missed && t.failReason ? h('div', { class: 'sched-reason', text: t.failReason }) : null)),
       footer(t, acts, details), details);
@@ -257,7 +273,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
           h('div', { class: 'rc-title', text: s.title || 'Repeating schedule' }),
           h('div', { class: 'rc-meta' },
             h('span', { class: `rc-status-word st-${family}`, text: statusWord }),
-            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-rule', text: s.sentence }))),
+            h('span', { class: 'rc-seg' }, h('span', { class: 'rc-dot', text: '·' }), h('span', { class: 'sched-rule', text: s.sentence })),
+            bySeg(s)),
           h('div', { class: 'sched-target', text: metaLine(s) }),
           (next || last) ? h('div', { class: 'sched-sub' }, next, last) : null),
         ended ? null : sw),
@@ -416,6 +433,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
 
   return {
     load, loadFeed, tickCountdowns, showTab,
+    /** Repaint from the loaded model (the viewer arrived after the first paint). */
+    repaint() { if (model.loaded) paintList(); },
     get tab() { return model.tab; },
     get defaults() { return model.defaults; },
     get counts() { return model.counts; },

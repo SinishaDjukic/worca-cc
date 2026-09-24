@@ -6,7 +6,7 @@
 # reach the server (it handles SIGTERM itself and exits 143 on the graceful path):
 #   1. detect a named volume the runtime created as root (rootful Docker Engine
 #      on first start) and print the one-line fix — it cannot chown as `worca`;
-#   2. set up git for HTTPS GitHub remotes when GH_TOKEN is present;
+#   2. report the GitHub credential mode (tokens are passed per call, never globally);
 #   3. say how Claude Code is (or is not) authenticated. Mock runs need nothing.
 set -euo pipefail
 
@@ -27,6 +27,39 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     # (cheap) so a directory added by a newer image is never left root-owned.
     if [ "$(stat -c %U "$data")" != worca ]; then chown -R worca:worca "$data"; fi
     chown worca:worca "$data" "$data/worca" "$data/projects" "$data/home" "$data/home/.claude"
+    # Agents under their own uid (src/core/agent-user.mjs), unless WORCA_AGENT_ISOLATION=0.
+    # Shared with worca-agent through the worca-share group: the projects, the run checkouts
+    # (runs/) and the run store (store/). Private to worca: everything else in its home (the
+    # database, settings, plugin secrets), HOME with Claude Code's login, and its environment.
+    if [ "${WORCA_AGENT_ISOLATION:-1}" != 0 ] && id worca-agent >/dev/null 2>&1; then
+      wh="$data/worca/.worca-cc"; ah="$data/agent-home"
+      mkdir -p "$wh/store" "$wh/runs" "$ah"
+      chown worca:worca "$wh"
+      chown worca:worca-share "$wh/store" "$wh/runs" "$data/projects"
+      chown worca-agent:worca-share "$ah"
+      chmod 0711 "$data" "$data/worca" "$wh"
+      chmod 2770 "$wh/store" "$wh/runs" "$data/projects"
+      chmod 0700 "$ah"
+      # Once per volume: existing files join the boundary (new ones get it from umask + setgid).
+      if [ ! -e "$wh/.agent-isolation" ]; then
+        chmod -R o-rwx "$data/worca" "$data/projects" "$data/home"
+        chmod 0711 "$data/worca" "$wh"
+        for t in "$wh/store" "$wh/runs" "$data/projects"; do
+          chgrp -R worca-share "$t"
+          chmod -R g+rwX "$t"
+          find "$t" -type d -exec chmod g+s {} +
+        done
+        touch "$wh/.agent-isolation"
+        chown worca:worca "$wh/.agent-isolation"
+      fi
+      # The agent works in repositories worca owns, and writes objects both users share.
+      printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$ah/.gitconfig"
+      chown worca-agent:worca-share "$ah/.gitconfig"
+      export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="$ah"
+      WORCA_AGENT_GID="$(getent group worca-share | cut -d: -f3)"
+      export WORCA_AGENT_GID
+      umask 0007
+    fi
     exec setpriv --reuid=worca --regid=worca --init-groups -- "$0" "$@"
   fi
   if [ ! -w "$data" ]; then
@@ -36,6 +69,20 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
   fi
   export HOME="$data/home" WORCA_HOME="$data/worca" WORCA_PROJECTS_ROOT="$data/projects"
   cd "$WORCA_PROJECTS_ROOT"
+  if [ -n "${WORCA_AGENT_USER:-}" ]; then
+    # Objects the server writes into shared repositories stay group-writable for the agent.
+    git config --global core.sharedRepository group
+    if sudo -n -u "$WORCA_AGENT_USER" -- true 2>/dev/null; then
+      log "agents run as $WORCA_AGENT_USER; they cannot read worca's settings, database or environment"
+    elif [ -n "${WORCA_ALLOWED_HOSTS:-}" ]; then
+      log "cannot start commands as $WORCA_AGENT_USER (sudo refused). A hosted worca does not run agents"
+      log "  as the server; fix the runtime, or set WORCA_AGENT_ISOLATION=0 to accept it explicitly."
+      exit 78   # EX_CONFIG
+    else
+      log "cannot start commands as $WORCA_AGENT_USER (sudo refused); agents run as worca instead"
+      unset WORCA_AGENT_USER WORCA_AGENT_HOME WORCA_AGENT_GID
+    fi
+  fi
 fi
 
 # 1. Volume ownership.
@@ -48,13 +95,20 @@ for d in "${WORCA_HOME:-/worca}" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; do
 done
 mkdir -p "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-# 2. git over HTTPS to GitHub, when a token is given (PRs, metrics/policy branches, clone-in).
-if [ -n "${GH_TOKEN:-}" ] && command -v gh >/dev/null 2>&1; then
-  if gh auth setup-git >/dev/null 2>&1; then
-    log "git credential helper: gh (GH_TOKEN)"
-  else
-    log "GH_TOKEN is set but 'gh auth setup-git' failed; git pushes over HTTPS will prompt"
-  fi
+# 2. GitHub over HTTPS. No global credential helper: worca passes the token for each
+# git/gh call's role in that call's env only (src/core/github-credentials.mjs), and
+# agents never get one. A helper an older image wrote to a persistent HOME is removed.
+if git config --global --get-all credential.https://github.com.helper 2>/dev/null | grep -q 'gh auth git-credential'; then
+  git config --global --unset-all credential.https://github.com.helper >/dev/null 2>&1 || true
+  git config --global --unset-all credential.https://gist.github.com.helper >/dev/null 2>&1 || true
+  log "removed the global gh credential helper (worca now passes the token per call)"
+fi
+if [ -n "${WORCA_GH_APP_ID:-}" ] && [ -n "${WORCA_GH_APP_KEY_FILE:-}${WORCA_GH_APP_KEY_B64:-}" ]; then
+  log "GitHub: App ${WORCA_GH_APP_ID}, a short-lived token minted per call"
+elif [ -n "${WORCA_GH_READ_TOKEN:-}${WORCA_GH_WRITE_TOKEN:-}" ]; then
+  log "GitHub: split read/write tokens, per call"
+elif [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
+  log "GitHub: one token for clone, push and PRs, per call"
 fi
 if [ -z "${GIT_AUTHOR_NAME:-}" ] && ! git config --global user.name >/dev/null 2>&1; then
   log "no git identity: set GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL in .env or agents cannot commit"
@@ -76,6 +130,10 @@ if [ "$auth" = "none" ]; then
   log "  docker compose run --rm worca claude"
 else
   log "Claude Code auth: $auth"
+fi
+if [ -n "${WORCA_AGENT_USER:-}" ] && [ "$auth" = "stored login" ]; then
+  log "agents run as $WORCA_AGENT_USER and cannot use worca's stored login;"
+  log "  set CLAUDE_CODE_OAUTH_TOKEN (from 'claude setup-token') or ANTHROPIC_API_KEY instead"
 fi
 
 # The compose secret path: point Claude Code at the file without putting the

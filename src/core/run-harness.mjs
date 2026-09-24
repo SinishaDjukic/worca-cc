@@ -79,6 +79,7 @@ import { fieldsForRun, effectiveCap, deviationsFor } from './policy/effective.mj
 import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
+import { byActor } from './identity.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -687,6 +688,7 @@ export class RunHarness extends EventEmitter {
     this.mcpServerGrants = [];      // `mcp__<server>` per merged server (V1 branch (a))
 
     this.abort = new AbortController();
+    this._answeredBy = new Map();            // question id -> who answered it (identity.mjs actor)
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
@@ -794,8 +796,14 @@ export class RunHarness extends EventEmitter {
    * @param {string} id
    * @param {object} payload clarify: {answers:[{id,choice}]} ; gate: {decision}
    */
-  answer(id, payload) {
+  answer(id, payload, by = null) {
     const pq = this.pendingQuestion;
+    // Who answered (identity.mjs actor): kept per question id for the writers that store
+    // the answer (answeredBy on the row) and audited for decisions below.
+    const settle = (value) => {
+      if (typeof by === 'string' && by) this._answeredBy.set(id, by);
+      this._auditDecision(pq, value, typeof by === 'string' && by ? by : null);
+    };
     if (!pq || pq.id !== id) {
       this._log('orchestrator', 'warn', `answer() ignored: no pending question with id ${id}`);
       return false;
@@ -815,6 +823,7 @@ export class RunHarness extends EventEmitter {
           throw err;
         }
         this.pendingQuestion = null;
+        settle(out.payload);
         pq.resolve(out.payload);
         return true;
       }
@@ -823,17 +832,21 @@ export class RunHarness extends EventEmitter {
         return false;
       }
       this.pendingQuestion = null;
+      settle(out);
       pq.resolve(out);
       return true;
     }
     this.pendingQuestion = null;
+    settle(payload);
     pq.resolve(payload);
     return true;
   }
 
-  /** Abort the run; marks state stopped and kills any child via the signal. */
-  stop() {
+  /** Abort the run; marks state stopped and kills any child via the signal. `by` = who
+   *  asked (identity.mjs actor), recorded as state.lastAction before the status event. */
+  stop(by = null) {
     if (this.state.status === 'done' || this.state.status === 'stopped') return;
+    this._recordAction('stop', by);
     this._setStatus('stopped');
     try {
       this.abort.abort();
@@ -855,8 +868,9 @@ export class RunHarness extends EventEmitter {
    * pause-only signal), unwind _dispatch, persist a resume point. The worktree is
    * kept. Returns false unless the run is currently 'running'.
    */
-  pause() {
+  pause(by = null) {
     if (this.state.status !== 'running') return false;
+    this._recordAction('pause', by);
     this.pauseRequested = true;
     this._setStatus('pausing');
     try {
@@ -871,6 +885,39 @@ export class RunHarness extends EventEmitter {
       pq.reject(pauseErr());
     }
     return true;
+  }
+
+  /** Who stopped / paused / resumed the run (identity.mjs actor): { kind, by, at } on the
+   *  state, so every `state` event, getState() and the resume point carry it. */
+  _recordAction(kind, by) {
+    if (typeof by !== 'string' || !by) return;
+    this.state.lastAction = { kind, by, at: new Date().toISOString() };
+  }
+
+  /** The audit line of a human action (`kind` = stop | pause | resume): "<text> by <name>."
+   *  when state.lastAction names who did it (actor stored always), "<text>." otherwise. */
+  async _auditAction(kind, text) {
+    const la = this.state.lastAction;
+    const actor = la && la.kind === kind && typeof la.by === 'string' ? la.by : null;
+    await appendAudit(this.pipeline.dir, `${text}${byActor(actor)}.`, { actor });
+  }
+
+  /** Who answered question `id` (identity.mjs actor), recorded by answer(). */
+  answeredBy(id) {
+    return this._answeredBy.get(id) ?? null;
+  }
+
+  /** Audit a human decision on a gate / recovery / workflow proposal (answer()). Question
+   *  and form answers are audited where they are written (with " by <name>"). */
+  _auditDecision(pq, value, by) {
+    if (!this.pipeline || !pq) return;
+    const d = value && typeof value === 'object' && typeof value.decision === 'string' ? value.decision : null;
+    let line = null;
+    if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
+    else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
+    else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    if (!line) return;
+    appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
 
   _checkPause() {
@@ -1028,6 +1075,7 @@ export class RunHarness extends EventEmitter {
         extras: this.opts.extras,
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
+        startedBy: this.opts.startedBy || null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -1052,6 +1100,8 @@ export class RunHarness extends EventEmitter {
       // guardrails_id and the curated UPSERT excludes it (creation-immutable), so
       // mirroring it onto the live state only keeps rowToState round-trips honest.
       this.state.guardrailsId = this.guardrailsId;
+      // Who started it (identity.mjs): creation-immutable too, mirrored for the same reason.
+      this.state.startedBy = this.opts.startedBy || null;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -1245,7 +1295,7 @@ export class RunHarness extends EventEmitter {
         this.state.resumePoint = null;
         if (this.pipeline) {
           await this._persist().catch(() => {});
-          await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._auditAction('stop', 'Pipeline **stopped**').catch(() => {});
           // The diff artifact must survive a non-done terminal path too: the work done
           // up to this point IS committed onto the kept feature branch by the teardown
           // in the finally below, so History has to be able to show it. Safe HERE and
@@ -1389,6 +1439,8 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      this.state.lastAction = null;
+      this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
       // LATEST saved set definition (missing set -> warn + Permissive, inside
       // _resolveGuardrails). Legacy resume points without the field fall back to
@@ -1502,7 +1554,7 @@ export class RunHarness extends EventEmitter {
       this._setStatus('running');
       await this._persist();
       this._startHeartbeat();
-      await appendAudit(this.pipeline.dir, rehydrated.audit);
+      await this._auditAction('resume', String(rehydrated.audit || '').replace(/\.\s*$/, ''));
       this._emit('state', this.getState());
       this._rehydrated = true;
       // The pause that parked this run is over; it must not colour a later failure
@@ -1596,7 +1648,7 @@ export class RunHarness extends EventEmitter {
         this.state.resumePoint = null;
         if (this.pipeline) {
           await this._persist().catch(() => {});
-          await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._auditAction('stop', 'Pipeline **stopped**').catch(() => {});
           // The diff artifact must survive a non-done terminal path too: the work done
           // up to this point IS committed onto the kept feature branch by the teardown
           // in the finally below, so History has to be able to show it. Safe HERE and
@@ -3675,6 +3727,12 @@ export class RunHarness extends EventEmitter {
     return prompts;
   }
 
+  /** The most recent answerer (single-prompt flows that do not know the question id). */
+  _lastAnsweredBy() {
+    const all = [...this._answeredBy.values()];
+    return all.length ? all[all.length - 1] : null;
+  }
+
   async _writeClarifyAnswers(questions, answers) {
     // M1: clarify answers live ONLY in the clarify DB row (the authoritative store).
     // The dead FS clarify-answers.json (never read back; the single-round loop passes
@@ -3686,7 +3744,8 @@ export class RunHarness extends EventEmitter {
       question: byId.get(a.id)?.question || '',
       choice: a.choice,
     }));
-    await writeClarify(this.pipeline.id, { answers: { answers: enriched } });
+    const by = this._lastAnsweredBy();
+    await writeClarify(this.pipeline.id, { answers: { answers: enriched, ...(by ? { answeredBy: by } : {}) } });
     return enriched;
   }
 
@@ -4495,11 +4554,14 @@ export class RunHarness extends EventEmitter {
         rp.titleProvisional = this.state.titleProvisional === true;
       }
       rp.interventions = { ...this._metricsIv };
+      // Who paused it survives a restart (rowToState reads it back).
+      if (this.state.lastAction && this.state.lastAction.kind === 'pause') rp.lastAction = { ...this.state.lastAction };
+      else delete rp.lastAction;
     }
     this._setStatus('paused');
     await this._persist();
     // A plain manual pause has no reason; every reasoned pause audited at its site.
-    if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    if (!this.pauseReason) await this._auditAction('pause', 'Pipeline **paused**').catch(() => {});
     // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
     // auth/quota, exhausted recoverable retries, an error) parks the run with
     // nobody attached, so the task source must hear it NOW — statusToResult

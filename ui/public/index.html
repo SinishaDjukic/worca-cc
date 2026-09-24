@@ -110,6 +110,9 @@
         </nav>
 
         <div class="side-foot">
+          <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
+               identity proxy or an operator-set name; a local install never shows it. -->
+          <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
           <div id="side-spend"></div>
           <button type="button" class="side-toggle" id="side-toggle"
                   aria-expanded="true" aria-controls="side-rail"
@@ -509,6 +512,7 @@
                   <div class="rc-meta">
                     <span class="rc-status-word"></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
+                    <span class="rc-seg rc-by" hidden><span class="rc-dot">·</span><span class="person-ini" aria-hidden="true"></span><span class="rc-by-text"></span></span>
                     <span class="rc-seg rc-prog" hidden data-min-level="advanced"><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
@@ -665,6 +669,7 @@
                         <span class="hm-seg hist-clock-seg"><span class="hm-dot">·</span><span class="hist-clock"></span></span>
                         <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
                         <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
+                        <span class="hm-seg hist-by-seg"><span class="hm-dot">·</span><span class="hist-by"></span></span>
                         <span class="hist-diff-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
                           <span class="hist-diff mono" aria-label="lines changed"></span>
@@ -2269,18 +2274,41 @@
           <h2 id="proj-add-title">Add project</h2>
           <button type="button" id="proj-add-cancel" class="btn btn-mini">Close</button>
         </div>
-        <div class="field">
-          <label for="proj-add-name">Name</label>
-          <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
+        <!-- Two ways in: a folder already on this machine, or a repository cloned into the
+             projects folder by the server (POST /api/projects/clone). Clone is the default
+             where no folder picker exists (a container or hosted worca). -->
+        <div class="md-tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
-        <div class="field">
-          <label for="proj-add-path">Folder</label>
-          <div class="path-row">
-            <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-            <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
+          <div class="field">
+            <label for="proj-add-name">Name</label>
+            <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
+          </div>
+          <div class="field">
+            <label for="proj-add-path">Folder</label>
+            <div class="path-row">
+              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
+              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+            </div>
           </div>
         </div>
-        <small class="hint" id="proj-add-msg"></small>
+        <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
+          <div class="field">
+            <label for="proj-clone-url">Repository URL</label>
+            <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />
+          </div>
+          <div class="field">
+            <label for="proj-clone-branch">Branch <span class="opt">(optional)</span></label>
+            <input id="proj-clone-branch" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository's default branch" />
+          </div>
+          <div class="field">
+            <label for="proj-clone-name">Folder name <span class="opt">(optional)</span></label>
+            <input id="proj-clone-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository name" />
+          </div>
+        </div>
+        <small class="hint" id="proj-add-msg" aria-live="polite"></small>
         <div class="confirm-actions">
           <button type="button" id="proj-add-save" class="btn btn-primary btn-mini">Add project</button>
         </div>

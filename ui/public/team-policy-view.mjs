@@ -340,7 +340,12 @@ export function renderPolicyHeader(payload, { doc = globalThis.document, now = D
   }
   const ver = [];
   if (policy.sha) { const c = code(doc, String(policy.sha).slice(0, 7)); c.title = `Policy version: commit ${String(policy.sha).slice(0, 7)} on ${policy.home}'s worca-policy branch`; ver.push(c); }
-  if (policy.doc?.updatedAt) ver.push(h(doc, 'span', null, `${ver.length ? ' · ' : ''}updated ${relTime(policy.doc.updatedAt, now) || ''}${policy.doc.updatedBy ? ` by ${policy.doc.updatedBy}` : ''}`));
+  if (policy.doc?.updatedAt) {
+    // updatedBy is the publisher: the signed-in person on a shared deployment, else the git user.
+    const upd = h(doc, 'span', null, `${ver.length ? ' · ' : ''}updated ${relTime(policy.doc.updatedAt, now) || ''}${policy.doc.updatedBy ? ` by ${policy.doc.updatedBy}` : ''}`);
+    if (policy.doc.updatedBy) upd.title = `Published by ${policy.doc.updatedBy}`;
+    ver.push(upd);
+  }
   if (ver.length) fact('VERSION', ...ver);
   if (policy.doc?.notes) fact('NOTES', h(doc, 'span', 'tp-head-notes', policy.doc.notes));
   main.append(facts);

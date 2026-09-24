@@ -19,6 +19,8 @@ import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
 import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence, overlayWiredParams } from '../../shared/graph/script-meta.mjs';
 import { probePython } from './python-probe.mjs';
+import { stripGithubCredentials } from '../github-credentials.mjs';
+import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
 /** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
@@ -152,7 +154,8 @@ export function envForShell(envelope, baseEnv = process.env) {
  *  environment than the agents beside it. Scrub off: the server's env (D11). */
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
   const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);
-  return scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env;
+  // Never a GitHub credential, like the agents (src/core/github-credentials.mjs).
+  return stripGithubCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env);
 }
 
 export function parseFrame(text) {
@@ -247,8 +250,16 @@ export function killTree(child, platform = process.platform) {
     }
     return;
   }
+  // A script under the agent's uid (agent-user.mjs): the server can signal sudo but not the script, so the
+  // group goes down through sudo too. Only while sudo still runs: after it exits the pid may be reused.
+  const agent = agentOf.get(child);
+  const alive = child.exitCode === null && child.signalCode === null;
   try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+  if (agent && alive) killAgentGroupSync(child.pid, agent);
 }
+
+/** Children spawned under the agent's uid -> that identity (for killTree). */
+const agentOf = new WeakMap();
 
 /** How long a killed spawn may keep its pipes before we stop waiting for `'close'`. */
 const KILL_GRACE_MS = 2000;
@@ -271,15 +282,25 @@ process.on('exit', () => { for (const [child, platform] of live) killTree(child,
 export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, signal, onLine, stdoutMode, platform = process.platform }) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(file, args, {
+    // Scripts run the agents' code (tests, builds): under the agent's uid when the container has one.
+    const agent = platform !== 'win32' ? agentIdentity() : null;
+    let spawnFile = file;
+    let spawnArgs = args;
+    let spawnEnv = env;
+    if (agent) {
+      try { ({ file: spawnFile, args: spawnArgs, env: spawnEnv } = agentSpawn(file, args, env || process.env, agent)); }
+      catch (err) { reject(err); return; }
+    }
+    const child = spawn(spawnFile, spawnArgs, {
       cwd,
-      env,
+      env: spawnEnv,
       detached: platform !== 'win32',
       windowsHide: true,
       windowsVerbatimArguments: platform === 'win32' && stdoutMode === 'capture',
       stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
     live.set(child, platform);
+    if (agent) agentOf.set(child, agent);
     const capture = createCapture();
     const partial = { out: '', err: '' };
     let frameOut = '';

@@ -395,7 +395,11 @@ export function renderBreakdownTable(dim, rows, { doc = globalThis.document, sor
     for (const [key] of spec.cols) {
       const td = h(doc, 'td', key === 'label' ? null : 'num mono');
       if (key === 'label') {
-        td.append(h(doc, 'span', null, r.label));
+        // An actor may be a full email now (attribution: the person who started the run on a
+        // shared deployment): clipped to the column, the whole name in the tooltip.
+        const lab = h(doc, 'span', dim === 'actor' ? 'tm-person' : null, r.label);
+        if (dim === 'actor' && r.label) lab.title = String(r.label);
+        td.append(lab);
         if (r.sub) td.append(' ', h(doc, 'small', 'hint', r.sub));
         if (dim === 'project' && homeSlug && r.key === homeSlug) td.append(' ', h(doc, 'span', 'badge violet', 'metrics home'));
       } else if (key === 'share' || key === 'runShare') {
@@ -458,7 +462,11 @@ export function renderRunsTable(runs, { doc = globalThis.document, total = runs.
     if (href) { const a = h(doc, 'a', null, r.pr.number != null ? `#${r.pr.number}` : 'PR'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; pr.append(a); }
     else pr.textContent = r.pr?.number != null ? `#${r.pr.number}` : '—';
     tr.append(pr);
-    tr.append(h(doc, 'td', null, r.actor ?? '—'));
+    const who = h(doc, 'td', null);
+    const whoText = h(doc, 'span', r.actor ? 'tm-person' : null, r.actor ?? '—');
+    if (r.actor) whoText.title = String(r.actor);
+    who.append(whoText);
+    tr.append(who);
     tr.append(h(doc, 'td', 'mono', TM_FMT.day(r.startedAt)));
     tbody.append(tr);
   }

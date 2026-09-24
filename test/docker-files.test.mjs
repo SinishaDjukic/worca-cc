@@ -38,6 +38,7 @@ test('Dockerfile: non-root, pinned CLI with its updater off, tini, healthcheck, 
   assert.match(d, /^ENTRYPOINT \["tini"/m, 'tini reaps orphaned children');
   assert.match(d, /^HEALTHCHECK/m);
   assert.match(d, /WORCA_NO_NATIVE_DIALOG=1/);
+  assert.match(d, /WORCA_CONTAINER=1/, 'Ask Worca knows it runs in the image (src/core/deployment.mjs)');
   assert.match(d, /CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1/);
   assert.match(d, /dev\.worca\.claude-code\.version/, 'the pin is a label');
   assert.match(d, /chmod 0777 \/worca \/projects \/home\/worca \/home\/worca\/\.claude/, 'volume mount points are writable for any uid (Linux Engine WORCA_UID)');
@@ -68,6 +69,28 @@ test('entrypoint.sh: single-volume mode prepares the volume as root, then drops 
   assert.match(block, /export HOME="\$data\/home"/, 'HOME lives on the volume (no ~/.claude.json symlink to lose)');
   assert.doesNotMatch(block, /ln -s/, 'no symlinks into the volume');
   assert.match(block, /exit 78/, 'non-root on an unwritable volume is a config error');
+});
+
+test('agent isolation: a worca-agent user, sudo only to it, set up on single-volume hosts', () => {
+  const d = read('docker/Dockerfile');
+  assert.match(d, /useradd -u 1001 -g worca-share .* worca-agent/);
+  assert.match(d, /usermod -aG worca-share worca/);
+  assert.match(d, /'worca ALL=\(worca-agent\) NOPASSWD:SETENV: ALL'/, 'worca may become worca-agent and nothing else');
+  assert.doesNotMatch(d, /\(root\)|\(ALL\)/, 'never root');
+  assert.match(d, /umask=0007, umask_override/, 'agent files stay group-writable, never world-readable');
+  assert.match(d, /visudo -cf \/etc\/sudoers\.d\/worca-agent/, 'a broken rule fails the build');
+
+  const e = read('docker/entrypoint.sh');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.match(block, /WORCA_AGENT_ISOLATION:-1/, 'on by default, with an explicit off switch');
+  assert.match(block, /chmod 2770 "\$wh\/store" "\$wh\/runs" "\$data\/projects"/, 'shared dirs are setgid, not world-open');
+  assert.match(block, /chmod 0711 "\$data" "\$data\/worca" "\$wh"/, 'the worca home is traverse-only');
+  assert.match(block, /chmod 0700 "\$ah"/);
+  assert.match(block, /sharedRepository = group/);
+  assert.match(block, /export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="\$ah"/);
+  assert.ok(block.indexOf('umask 0007') < block.indexOf('exec setpriv'), 'the server inherits the umask');
+  assert.match(block, /WORCA_ALLOWED_HOSTS[\s\S]*exit 78/, 'a hosted worca refuses to run agents as the server when sudo fails');
+  assert.doesNotMatch(e, /gh auth setup-git >/, 'no global credential helper');
 });
 
 test('compose.yml: loopback-only publish, least privilege, named volumes, no docker socket', () => {

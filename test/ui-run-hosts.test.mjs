@@ -716,12 +716,14 @@ test('every label helper reads the graph; a run with no manifest reads plainly "
   assert.equal(np.statusPill(r).text, '2 agents running');
   assert.equal(np.rdStateCopy(r, 'Planner'), '2 agents running.');
   // An error pause names its cause; any OTHER reason is the orchestrator's own
-  // free text (a usage-limit line); a reasonless pause is still "Paused by you".
+  // free text (a usage-limit line); a reasonless pause is plain "Paused" unless the deployment is
+  // shared (then "Paused by <name>" / "by you": test/ui-attribution.test.mjs).
   assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: 'error', pauseDetail: 'claude exited with code 1: disk full' }, 'Planner'),
     /^Paused after an error: claude exited with code 1: disk full\. Fix the cause, then Resume/);
   assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: "You've hit your session limit · resets 6pm" }, 'Planner'),
     /^Paused — You've hit your session limit · resets 6pm\./);
-  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null }, 'Planner'), /^Paused by you\./);
+  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null }, 'Planner'), /^Paused\. /);
+  assert.match(np.rdStateCopy({ ...r, status: 'paused', pauseReason: null, lastAction: { kind: 'pause', by: 'ada@example.com' } }, 'Planner'), /^Paused\. /, 'no viewer yet: nobody named');
   // A run whose manifest has not arrived yet: no active agent to name, and the
   // v1 phaseKey switch that used to name a phase is gone.
   const bare = np.makeRun({ runId: 'r2', title: 't', projectDir: '/p', status: 'running' });

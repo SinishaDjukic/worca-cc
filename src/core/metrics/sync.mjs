@@ -9,6 +9,19 @@ import { randomBytes } from 'node:crypto';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
+import { githubEnv, readGithubCredentials, stripGithubCredentials } from '../github-credentials.mjs';
+
+const NETWORK_GIT = new Set(['fetch', 'push', 'ls-remote', 'clone', 'pull']);
+
+/** "owner/name" of origin on github.com, only in App mode (the one mode that needs it). */
+async function originRepo(cwd) {
+  if (readGithubCredentials().mode !== 'app' || !cwd) return null;
+  try {
+    const url = await new Promise((ok) => execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 10_000 }, (e, out) => ok(e ? '' : String(out).trim())));
+    const p = parseRemoteUrl(url);
+    return p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null;
+  } catch { return null; }
+}
 import { readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../config.mjs';
 import { readWorkspace, listWorkspaces, isGitRepo } from '../workspaces.mjs';
 import { withLock } from './lock.mjs';
@@ -69,8 +82,19 @@ function hookFreeArgs() {
   return ['-c', `core.hooksPath=${dir}`, '-c', 'commit.gpgsign=false', '-c', 'push.gpgSign=false'];
 }
 
-function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
-  const base = { ...process.env };
+async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
+  // The write credential (it reads too): metrics and policy branches are fetched and pushed.
+  // In App mode a fresh token per call; a failed mint degrades to no credential (git then
+  // reports the auth failure the sync already handles) and is logged once per call.
+  // Local commands (commit, worktree, read-tree…) get no credential at all.
+  let base;
+  if (NETWORK_GIT.has(args[0])) {
+    const cred = await githubEnv('write', { repo: await originRepo(cwd) });
+    if (cred.error) console.warn(`[worca] metrics/policy git ${args[0]}: ${cred.error}`);
+    base = cred.env;
+  } else {
+    base = stripGithubCredentials(process.env);
+  }
   for (const k of STRIP_ENV) delete base[k];
   return new Promise((done) => {
     execFile('git', [...hookFreeArgs(), ...args], {
@@ -515,7 +539,7 @@ async function validateDelegateTarget(delegateTo, ownSlug) {
  * mode 'delegate' → create a marker branch {delegateTo}; or join; with change:true rewrite an existing marker.
  * @returns {Promise<{action:'created'|'joined'|'changed', slug:string, config:object|null}>}
  */
-export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date() } = {}) {
+export async function enableTeamMetrics(projectDir, { mode = 'here', attribution = 'git-user', delegateTo = null, change = false, now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'delegate') throw metricsError('BAD_REQUEST', `mode must be "here" or "delegate"`);
   const { slug, hasOrigin } = await projectSlug(projectDir);
   if (!hasOrigin) throw metricsError('NO_ORIGIN', 'this project has no origin remote — team metrics push to origin, so there is nowhere to record');
@@ -526,7 +550,8 @@ export async function enableTeamMetrics(projectDir, { mode = 'here', attribution
   // every member's marker still carried the developer's real git name, and "Route all members"
   // (which passes no attribution at all) did it for the whole workspace in one click.
   const attr = mode === 'delegate' ? delegate.attribution : normAttribution(attribution);
-  const user = await gitUserName(projectDir);
+  // The person who asked (identity.mjs) when known; else the git user. attribution:'none' still drops it.
+  const user = (typeof by === 'string' && by.trim() && by !== 'local' ? by.trim() : null) ?? await gitUserName(projectDir);
   const config = mode === 'delegate'
     // enabledBy follows the same policy as the commit identity (decision 13): anonymising the
     // marker's author while leaving the developer's name in its JSON body would defeat the point.

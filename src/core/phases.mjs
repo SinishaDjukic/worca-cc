@@ -625,6 +625,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     permissionRules: c.permissionRules,
     envScrub: c.envScrub,
     envAllowlist: c.envAllowlist,
+    // Every role and node is a pipeline agent: under WORCA_AGENT_USER when the container has one.
+    asAgent: true,
     bin: c.bin,
     mock: c.mock,
     signal: ctx.signal,

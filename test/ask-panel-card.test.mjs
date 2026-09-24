@@ -919,3 +919,49 @@ test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and S
   assert.equal('prompt' in body, false);
   assert.deepEqual(body.source, { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', profile: 'acme', inputs: { writeBack: 'yes' } });
 });
+
+test('clone card: repository, branch, folder and GitHub rows; Clone / Decline post the verbs; cloning, applied and failed read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'clone', kind: 'clone', summary: 'Clone acme/api as project api', url: 'https://github.com/acme/api.git', branch: null,
+    name: 'api', dir: '/data/projects/api', github: 'GitHub App 123 (a read-only token for this clone)', note: '<b>why</b>',
+    change: { url: 'https://github.com/acme/api.git', branch: null, name: 'api' } };
+  const CC = 'card_0000000d';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-clonecard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed project');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'GitHub']);
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-after')].map((x) => x.textContent),
+    ['https://github.com/acme/api.git', 'default branch', '/data/projects/api', 'GitHub App 123 (a read-only token for this clone)']);
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<b>why</b>', 'text, never markup');
+  assert.equal(el.querySelector('.ask-mcard-note b'), null);
+  el.querySelector('[data-ask-clone-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [CC, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'cloning', card: { ...card, result: { ok: null, jobId: 'cln_1' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const cloning = ctx.doc.querySelector('[data-ask-clonecard="cloning"]');
+  assert.equal(cloning.querySelector('.ask-mcard-title').textContent, 'Cloning…');
+  assert.equal(cloning.querySelector('[data-ask-clone-apply]'), null, 'no second click while it runs');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'applied', card: { ...card, result: { ok: true, project: { name: 'api', path: '/data/projects/api' } } } }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-clonecard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Project cloned');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Registered as api at /data/projects/api');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000e', state: 'failed', error: 'GitHub refused the credential', card }, threadId: TID, messageId: MID, seq: 6 });
+  ctx.flush();
+  const failed = ctx.doc.querySelector('[data-ask-clonecard="failed"]');
+  assert.equal(failed.querySelector('.ask-mcard-failed').textContent, 'Could not clone: GitHub refused the credential');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000f', state: 'proposed', card }, threadId: TID, messageId: MID, seq: 7 });
+  ctx.flush();
+  ctx.doc.querySelector('[data-ask-clonecard="proposed"] [data-ask-clone-decline]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_0000000f', { state: 'declined' }]);
+});

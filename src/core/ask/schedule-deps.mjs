@@ -39,7 +39,11 @@ export function threadTimeZone(threadId) {
 /**
  * @param {{threadId?:string|null}} [o]
  */
-export function defaultScheduleDeps({ threadId = null } = {}) {
+export function defaultScheduleDeps({ threadId = null, reader = null } = {}) {
+  // Per-person notification read state on a shared sign-in (notifications.mjs `reader`);
+  // null = the global read state, exactly as before.
+  const who = typeof reader === 'string' && reader ? reader : null;
+  const r = who ? { reader: who } : {};
   return {
     schedules: {
       timeZone: () => threadTimeZone(threadId),
@@ -53,31 +57,32 @@ export function defaultScheduleDeps({ threadId = null } = {}) {
       list: ({ includeEnded = false } = {}) => ({
         schedules: listSchedules({ includeEnded }),
         runs: listTickets({ all: includeEnded, oneShotOnly: false, limit: 500 }),
-        counts: { ...scheduleCounts(), unread: unreadCount('schedule') },
+        counts: { ...scheduleCounts(), unread: unreadCount('schedule', r) },
       }),
       get: (id) => {
         const found = getScheduleItem(id);
         if (!found) return null;
         const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50 }).reverse() : [];
-        const notifications = listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50 })
+        const notifications = listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, ...r })
           .filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id);
         return { ...found, history, notifications };
       },
       activity: ({ unread = false, problems = false, limit = 30 } = {}) => ({
-        notifications: listNotifications({ scope: 'schedule', unread, problems, limit }),
-        unread: unreadCount('schedule'),
+        notifications: listNotifications({ scope: 'schedule', unread, problems, limit, ...r }),
+        unread: unreadCount('schedule', r),
       }),
       preview: (input, { nowMs = Date.now() } = {}) => resolveScheduleSpec(input, {
         nowMs, timeZone: threadTimeZone(threadId), defaults: scheduleDefaults(), afterRef: afterRefOf,
       }),
       validateChange: (input) => validateScheduleChange(input, { timeZone: threadTimeZone(threadId) }),
       getItem: getScheduleItem,
-      pause: (id) => pauseSchedule(id),
-      resume: (id) => resumeSchedule(id),
-      skipNext: (id) => skipNext(id),
-      markRead: (ids) => ids.map((id) => markRead(id)).filter(Boolean).length,
-      markAllRead: () => markAllRead('schedule'),
-      unread: () => unreadCount('schedule'),
+      // The person behind the turn (shared sign-in) is who changed the series; else unchanged.
+      pause: (id) => pauseSchedule(id, who ? { by: who } : {}),
+      resume: (id) => resumeSchedule(id, who ? { by: who } : {}),
+      skipNext: (id) => skipNext(id, who ? { by: who } : {}),
+      markRead: (ids) => ids.map((id) => markRead(id, r)).filter(Boolean).length,
+      markAllRead: () => markAllRead('schedule', r),
+      unread: () => unreadCount('schedule', r),
     },
   };
 }

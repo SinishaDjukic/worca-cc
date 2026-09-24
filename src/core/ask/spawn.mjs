@@ -59,6 +59,7 @@ export const ASK_DENY_RULES = Object.freeze([
   'Read(~/.netrc)',
   'Read(~/.npmrc)',
   'Read(~/.config/gh/**)',
+  'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
 ]);
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
 // Native-rules revision: the CLI loads `<dir>/.claude/rules` from an --add-dir only under this
@@ -147,14 +148,16 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
 
 /** Server-side knobs the MCP child's NESTED classifier spawn needs (P3 propose_workflow, task mode). The chat's claude is
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
+// WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
+// folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
 
 /**
  * The per-turn --mcp-config document (spec §6.4). `homeBase` is the RAW base
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -167,7 +170,9 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
         type: 'stdio',
         command: execPath,
         args: ['--disable-warning=ExperimentalWarning', serverPath, '--home', base, '--thread', thread],
-        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded },
+        // WORCA_ASK_READER: the shared sign-in behind this turn (identity.mjs), so the child's
+        // notification reads/marks are per person; absent on local/operator deployments.
+        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}) },
       },
     },
   };

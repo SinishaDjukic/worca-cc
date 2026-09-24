@@ -276,12 +276,13 @@ function sameContent(a, b) {
  * mode 'follow' → create a marker { delegateTo }; or join; with change:true rewrite an existing marker.
  * @returns {Promise<{action:'created'|'joined'|'changed', slug:string}>}
  */
-export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo = null, change = false, title = '', now = new Date() } = {}) {
+export async function enableTeamPolicy(projectDir, { mode = 'here', delegateTo = null, change = false, title = '', now = new Date(), by = null } = {}) {
   if (mode !== 'here' && mode !== 'follow') throw policyError('BAD_REQUEST', 'mode must be "here" or "follow"');
   const { slug, hasOrigin } = await projectSlug(projectDir);
   if (!hasOrigin) throw policyError('NO_ORIGIN', 'this project has no origin remote — a team policy lives on origin, so there is nowhere to put it');
   const target = mode === 'follow' ? (await validateFollowTarget(delegateTo, slug)).slug : null;
-  const user = await gitUserName(projectDir);
+  // The person who asked (identity.mjs) when known; else, as before, the checkout's git user.
+  const user = (typeof by === 'string' && by.trim() && by !== 'local' ? by.trim() : null) ?? await gitUserName(projectDir);
   const doc = mode === 'follow'
     ? { schema: POLICY_SCHEMA, enabledAt: stampNow(now), enabledBy: user, delegateTo: target }
     : emptyPolicyDoc({ updatedBy: user, title: title || `${slug} team policy`, now });
@@ -337,7 +338,7 @@ async function rewriteMarker(slug, projectDir, doc) {
  * is a caller bug and answers BAD_REQUEST with the list. A rejection is thrown VERBATIM.
  * @returns {Promise<{ok:true, slug:string, sha:string|null, doc:object}>}
  */
-export async function publishPolicy(projectDir, rawDoc, { message = null, now = new Date() } = {}) {
+export async function publishPolicy(projectDir, rawDoc, { message = null, now = new Date(), by = null } = {}) {
   const prefs = (await discoverPolicy(projectDir, { force: true }).catch(() => null)) || readTeamPolicyPrefs(projectKey(projectDir)) || {};
   if (!prefs.present) throw policyError('NOT_HOME', `this project has no ${POLICY_BRANCH} branch`);
   if (!prefs.docKnown) throw policyError('FETCH_FAILED', `could not read the ${POLICY_BRANCH} branch; try again`);
@@ -347,7 +348,7 @@ export async function publishPolicy(projectDir, rawDoc, { message = null, now = 
   if (warnings.length) throw policyError('BAD_REQUEST', `the document has ${warnings.length} problem(s): ${warnings[0]}`, { warnings });
   const slug = prefs.slug;
   doc.updatedAt = stampNow(now);
-  doc.updatedBy = await gitUserName(projectDir);
+  doc.updatedBy = (typeof by === 'string' && by.trim() && by !== 'local' ? by.trim() : null) ?? await gitUserName(projectDir);
   delete doc.delegateTo;
   const body = serializePolicyDoc(doc);
   const commitMsg = message && String(message).trim() ? `policy: ${String(message).trim().slice(0, 120)}` : 'policy: update team policy';

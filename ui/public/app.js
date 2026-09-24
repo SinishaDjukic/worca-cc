@@ -11,6 +11,9 @@ const AUTO_WORKFLOW_ID = AUTO_WORKFLOW.id;
 // Memory scope control for it and the run body carries `memoryScope`. Built-in, never a saved row.
 const MEMORY_DEFRAG_WORKFLOW_ID = 'wf_memory_defrag';
 
+// Before any request: turns an expired identity-proxy sign-in into a banner.
+const sessionGuard = installSessionGuard();
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -40,6 +43,7 @@ const state = {
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
+  historyPerson: '', // active "Started by" filter (lower-cased name); '' === everyone. Shared deployments only.
   ghAvailable: false,// gh CLI availability, from the last /api/history load
 
   // --- Workspaces ---
@@ -96,6 +100,7 @@ import { exportSlugPreview } from './export-slug.mjs';
 import { createCodeEditor } from './code-editor.mjs';
 import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
+import { installSessionGuard } from './session-guard.mjs';
 import {
   renderPluginList, renderInstallConsent, renderUpdatePreview,
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
@@ -370,6 +375,12 @@ const el = {
   projAddSave: $('#proj-add-save'),
   projAddCancel: $('#proj-add-cancel'),
   projAddMsg: $('#proj-add-msg'),
+  projAddTabs: $('#proj-add-tabs'),
+  projAddFolderPane: $('#proj-add-folder-pane'),
+  projAddClonePane: $('#proj-add-clone-pane'),
+  projCloneUrl: $('#proj-clone-url'),
+  projCloneBranch: $('#proj-clone-branch'),
+  projCloneName: $('#proj-clone-name'),
 
   // Agent creation wizard
   agwName: $('#agw-name'),
@@ -497,6 +508,7 @@ function connectWS() {
 
   ws.addEventListener('close', () => {
     state.wsReady = false;
+    sessionGuard.check(); // behind an identity proxy, a dropped socket may be an expired sign-in
     scheduleReconnect();
   });
 
@@ -753,6 +765,90 @@ function startBudgetTick() {
   budgetState.timer.unref?.();                 // no-op in browsers/jsdom (number)
 }
 
+// Who started a run (the server's identity.mjs): the name to show, or '' when there is
+// nobody in particular — null, or 'local' on a local install / the CLI.
+function attributedName(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s && s !== 'local' ? s : '';
+}
+
+// Who is looking (GET /api/whoami, fetched once at boot). People are shown ONLY on a shared
+// deployment — a real per-person sign-in (Cloudflare Access or a trusted header). A local
+// install, or a one-person WORCA_IDENTITY_NAME deployment, stores who started a run but
+// shows none of it: there is only ever one answer to "who".
+const viewer = { shared: false, name: null };
+
+/** The person to show for a stored name, or '' (not shared, nobody, or 'local'). */
+function personShown(v) {
+  return viewer.shared ? attributedName(v) : '';
+}
+/** True when `name` is the signed-in viewer (case-insensitive). */
+function isViewer(name) {
+  return !!(viewer.name && name && name.toLowerCase() === viewer.name.toLowerCase());
+}
+/** The short label for cards and banners: 'you' for the viewer, else the name, else ''. */
+function personLabel(v) {
+  const n = personShown(v);
+  return !n ? '' : isViewer(n) ? 'you' : n;
+}
+/** Up to two initials: an email's local part (or a display name) split on . _ - and spaces. */
+function personInitials(name) {
+  const base = String(name || '').trim().split('@')[0];
+  const parts = base.split(/[\s._-]+/).filter(Boolean);
+  const ini = parts.slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return /^[A-Z0-9]{1,2}$/.test(ini) ? ini : (ini ? ini.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?' : '?');
+}
+/** A neutral initials circle; `title` is the full sentence. Text only, never markup. */
+function personIni(name, title) {
+  const el = document.createElement('span');
+  el.className = 'person-ini';
+  el.textContent = personInitials(name);
+  el.setAttribute('aria-hidden', 'true');
+  if (title) el.title = title;
+  return el;
+}
+/** The detail-header person chip: initials circle + the full name (never "you"). */
+function personChip(name, verb = 'Started by') {
+  const chip = document.createElement('span');
+  chip.className = 'person-chip';
+  chip.title = `${verb} ${name}`;
+  chip.append(personIni(name));
+  const t = document.createElement('span');
+  t.className = 'person-chip-name';
+  t.textContent = name;
+  chip.append(t);
+  return chip;
+}
+
+// "Signed in as" in the rail foot, and the viewer every people-label compares against.
+async function loadWhoami() {
+  const box = document.getElementById('side-who');
+  try {
+    const res = await fetch('/api/whoami');
+    if (!res.ok) return;
+    const who = await res.json();
+    const name = attributedName(who && who.name);
+    viewer.shared = !!(who && who.shared === true && name);
+    viewer.name = viewer.shared ? name : null;
+    if (box) {
+      box.querySelector('.side-who-name').textContent = viewer.shared ? name : '';
+      box.title = viewer.shared ? `Signed in as ${name}` : '';
+      box.hidden = !viewer.shared;
+    }
+    if (viewer.shared) repaintPeople();
+  } catch { /* nobody is shown */ }
+}
+
+// Everything that shows a person, repainted once the viewer is known (boot races the
+// hello snapshot and the History fetch). Each painter is idempotent.
+function repaintPeople() {
+  try { for (const r of runs.values()) if (r.el) paintRunCard(r); } catch { /* not booted */ }
+  try { const tabs = $('#nav-running-children'); if (tabs) tabs.dataset.tabsSig = ''; renderPipelineTabs(); } catch { /* not booted */ }
+  try { if (runDetailState.screen && runs.get(runDetailState.runId)) repaintRunDetail(runs.get(runDetailState.runId)); } catch { /* none open */ }
+  try { if (Array.isArray(state.historyAll) && state.historyAll.length) paintHistory(); } catch { /* not loaded */ }
+  try { schedulesView.repaint(); paintScheduledGroup(); } catch { /* not booted */ }
+}
+
 // The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
 // <nav> that navLinks snapshots at boot — so route it from a container listener
 // rather than the [data-nav] delegation.
@@ -864,6 +960,10 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     return;
   }
+  if (msg.type === 'clone-changed') {
+    onCloneJob(msg.job);
+    return;
+  }
   if (msg.type === 'projects-changed') {
     scheduleOnboardingRefresh();
     refreshAllCounts();
@@ -959,6 +1059,8 @@ function handleServerMessage(msg) {
       projectDir: msg.projectDir,
       status: msg.status || 'starting',
       startedAt: msg.startedAt,
+      startedBy: msg.startedBy || undefined,
+      lastAction: msg.lastAction || undefined,
       kind: msg.kind || 'run',
       workspaceId: msg.workspaceId || undefined,
       projectNames: Array.isArray(msg.projectNames) && msg.projectNames.length ? msg.projectNames : undefined,
@@ -1067,6 +1169,8 @@ function onHello(msg) {
       pipelineId: r0.pipelineId || null,
       pauseReason: r0.pauseReason || null,
       pauseDetail: r0.pauseDetail || null,
+      startedBy: r0.startedBy || undefined,
+      lastAction: r0.lastAction || undefined,
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
     });
@@ -1196,7 +1300,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null,
+  pauseDetail = null, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null,
 }) {
   return {
@@ -1212,6 +1316,8 @@ function makeRun({
     pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
+    startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
+    lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
     workspaceId,
     workspaceName,
     // Stable ordering key: assigned once per runId, never bumped by activity
@@ -1670,6 +1776,11 @@ function cycleAwareLabel(stepper, subAgents, groupKeys, steps = []) {
 function onState(r, msg) {
   if (msg.status) r.status = msg.status;
   if (msg.startedAt) r.startedAt = msg.startedAt;
+  // The harness mirrors startedBy onto its state (creation-immutable), so a live card
+  // learns who started the run from the first state snapshot.
+  if (typeof msg.startedBy === 'string' && msg.startedBy) r.startedBy = msg.startedBy;
+  // Who stopped / paused / resumed it (run-harness _recordAction), on every state snapshot.
+  if (msg.lastAction === null || (msg.lastAction && typeof msg.lastAction.by === 'string')) r.lastAction = msg.lastAction;
   // Mirror the on-disk pipeline short id the orchestrator stamps onto state.id
   // after createPipeline. The server captures the same field (ui/server.mjs
   // wireRun); without this the run model only ever gets a pipelineId from the
@@ -9395,15 +9506,118 @@ function setProjAddMsg(text, kind) {
   el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
 }
 
-function openProjectAddModal(path) {
+function openProjectAddModal(path, { mode = 'folder' } = {}) {
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
+  if (el.projCloneUrl) {
+    el.projCloneUrl.value = '';
+    el.projCloneBranch.value = '';
+    el.projCloneName.value = '';
+    el.projCloneName.placeholder = 'the repository name';
+  }
+  el.projectAddModal.classList.remove('hidden');
+  setProjAddMode(mode);
+  // A clone still in flight from an earlier open keeps its progress line.
+  if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
   // Informational hint only when there is no path (manual-entry fallback);
   // neutral default .hint styling (no .hint.warn class exists).
-  setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
-  el.projectAddModal.classList.remove('hidden');
-  el.projAddName.focus();
-  el.projAddName.select();
+  if (mode === 'folder') {
+    setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
+    el.projAddName.focus();
+    el.projAddName.select();
+  }
+}
+
+// ---- Add project: the Folder / Clone from URL tabs ------------------------------
+let projAddMode = 'folder';
+
+function setProjAddMode(mode) {
+  projAddMode = mode === 'clone' && el.projAddClonePane ? 'clone' : 'folder';
+  if (!el.projAddTabs) return;
+  for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
+  el.projAddFolderPane.hidden = projAddMode !== 'folder';
+  el.projAddClonePane.hidden = projAddMode !== 'clone';
+  el.projAddSave.textContent = projAddMode === 'clone' ? 'Clone and add' : 'Add project';
+  setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s GitHub credential.' : '');
+  if (projAddMode === 'clone') el.projCloneUrl.focus();
+}
+
+/** "https://github.com/acme/api(.git)" -> "api", or '' when the URL does not name one repository. */
+function repoNameFromUrl(url) {
+  const m = /^https:\/\/[^/\s]+\/[^/\s]+\/([^/\s?#]+?)(?:\.git)?\/?$/i.exec(String(url || '').trim());
+  return m ? m[1] : '';
+}
+
+// The clone being followed: { id, url } while a job runs. WS 'clone-changed' is the fast path,
+// a GET every 2 s the fallback (a dropped socket must not strand the dialog).
+let cloneFollow = null;
+let clonePoll = null;
+
+function lockCloneForm(locked) {
+  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName, el.projAddSave]) if (n) n.disabled = locked;
+  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = locked;
+}
+
+async function saveProjectClone() {
+  const url = el.projCloneUrl.value.trim();
+  if (!url) return setProjAddMsg('Repository URL is required.', 'err');
+  const body = { url };
+  const branch = el.projCloneBranch.value.trim();
+  const name = el.projCloneName.value.trim();
+  if (branch) body.branch = branch;
+  if (name) body.name = name;
+  lockCloneForm(true);
+  setProjAddMsg(`Cloning ${url} …`);
+  try {
+    const res = await fetch('/api/projects/clone', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.jobId) { lockCloneForm(false); setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    cloneFollow = { id: data.jobId, url };
+    if (data.job && data.job.state !== 'running') { onCloneJob(data.job); return; }
+    clonePoll = setInterval(pollCloneJob, 2000);
+  } catch (e) {
+    lockCloneForm(false);
+    setProjAddMsg(e.message, 'err');
+  }
+}
+
+async function pollCloneJob() {
+  if (!cloneFollow) return;
+  try {
+    const res = await fetch(`/api/projects/clone/${encodeURIComponent(cloneFollow.id)}`);
+    const data = await safeJson(res);
+    if (res.ok && data.job) onCloneJob(data.job);
+    else if (res.status === 404) onCloneJob({ id: cloneFollow.id, state: 'error', error: 'the clone job is gone (the server restarted?)' });
+  } catch { /* the next tick retries */ }
+}
+
+/** A job update from the WS or the poll: only the one this dialog started counts. */
+function onCloneJob(job) {
+  if (!job || !cloneFollow || job.id !== cloneFollow.id || job.state === 'running') return;
+  clearInterval(clonePoll);
+  clonePoll = null;
+  cloneFollow = null;
+  lockCloneForm(false);
+  const open = el.projectAddModal && !el.projectAddModal.classList.contains('hidden');
+  if (job.state === 'error') {
+    if (open) { setProjAddMode('clone'); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
+    else setProjectsMsg(`Clone failed: ${job.error || 'unknown error'}`, 'err');
+    return;
+  }
+  const name = (job.project && job.project.name) || job.name || '';
+  if (open) closeProjectAddModal();
+  void (async () => {
+    try {
+      const res = await fetch('/api/projects');
+      const data = await safeJson(res);
+      if (res.ok && Array.isArray(data.projects)) state.projects = data.projects;
+    } catch { /* the projects-changed frame refreshes it too */ }
+    renderProjectsList();
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+    setProjectsMsg(name ? `Cloned and added “${name}”.` : 'Cloned and added the project.');
+  })();
 }
 
 function closeProjectAddModal() {
@@ -9416,10 +9630,13 @@ async function addProjectFlow() {
   if (data && data.status === 'picked' && data.path) { openProjectAddModal(data.path); return; }
   if (data && data.status === 'canceled') return;                 // respect the cancel
   if (data && data.status === 'busy') { setProjectsMsg('A folder dialog is already open — finish or cancel it first.', 'err'); return; }
-  openProjectAddModal('');                                        // unsupported / error -> manual entry
+  // No folder picker at all (a container or hosted worca): the repository is the way in.
+  if (data && data.status === 'unsupported') { openProjectAddModal('', { mode: 'clone' }); return; }
+  openProjectAddModal('');                                        // error -> manual entry
 }
 
 async function saveProjectAdd() {
+  if (projAddMode === 'clone') return saveProjectClone();
   const name = el.projAddName.value.trim();
   const path = el.projAddPath.value.trim();
   if (!name) return setProjAddMsg('Name is required.', 'err');
@@ -9526,6 +9743,16 @@ if (el.projAddSave) {
       el.projAddBrowse.disabled = false;
     }
   });
+  if (el.projAddTabs) {
+    el.projAddTabs.addEventListener('click', (e) => {
+      const tab = e.target.closest && e.target.closest('.md-tab');
+      if (tab && !tab.disabled) setProjAddMode(tab.dataset.mode);
+    });
+    el.projCloneUrl.addEventListener('input', () => {
+      el.projCloneName.placeholder = repoNameFromUrl(el.projCloneUrl.value) || 'the repository name';
+    });
+    el.projCloneUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectAdd(); } });
+  }
   el.projectAddModal.addEventListener('click', (e) => { if (e.target === el.projectAddModal) closeProjectAddModal(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) closeProjectAddModal();
@@ -14889,10 +15116,55 @@ function renderHistoryPills() {
   host.appendChild(mkPill('', 'All Projects', state.historyAll.length));
   for (const pr of historyProjects()) host.appendChild(mkPill(pr.key, pr.name, pr.count, pr.workspace));
 
+  // "Started by" pills (shared deployments only): the distinct starters in the loaded
+  // history, the viewer first as "you". A second, independent filter.
+  const people = historyPeople();
+  if (people.length) {
+    const lab = document.createElement('span');
+    lab.className = 'hist-pill-label';
+    lab.textContent = 'Started by';
+    host.appendChild(lab);
+    for (const pp of people) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const active = state.historyPerson === pp.key;
+      b.className = 'hist-pill person' + (active ? ' active' : '');
+      b.dataset.person = pp.key;
+      b.setAttribute('aria-pressed', active ? 'true' : 'false');
+      b.title = active ? 'Show runs by everyone' : `Only runs started by ${pp.name}`;
+      b.appendChild(personIni(pp.name));
+      const txt = document.createElement('span');
+      txt.textContent = pp.label;
+      b.appendChild(txt);
+      b.appendChild(document.createTextNode(' '));
+      const c = document.createElement('span');
+      c.className = 'pill-count';
+      c.textContent = String(pp.count);
+      b.appendChild(c);
+      b.addEventListener('click', () => { state.historyPerson = active ? '' : pp.key; paintHistory(); });
+      host.appendChild(b);
+    }
+  }
+
   // Keep the sticky project header offset in sync with the toolbar's height
   // (also re-measures on resize, when pills wrap to more/fewer rows).
   ensureHistToolbarObserver();
   syncHistToolbarHeight();
+}
+
+/** The distinct people who started loaded runs: [{ key, name, label, count }], the viewer first. */
+function historyPeople() {
+  if (!viewer.shared) return [];
+  const byKey = new Map();
+  for (const p of state.historyAll || []) {
+    const n = personShown(p && p.startedBy);
+    if (!n) continue;
+    const key = n.toLowerCase();
+    const e = byKey.get(key) || { key, name: n, label: isViewer(n) ? 'you' : n, count: 0 };
+    e.count += 1;
+    byKey.set(key, e);
+  }
+  return [...byKey.values()].sort((a, b) => (isViewer(b.name) - isViewer(a.name)) || b.count - a.count || a.name.localeCompare(b.name));
 }
 
 // Switch the active project filter, persist it (so it survives reloads), repaint.
@@ -14913,6 +15185,7 @@ function paintHistory() {
     state.historyFilter = '';
     localStorage.removeItem(HISTORY_FILTER_KEY);
   }
+  if (state.historyPerson && !historyPeople().some((pp) => pp.key === state.historyPerson)) state.historyPerson = '';
   renderHistoryPills();
   renderHistory();
   // An open detail screen re-reads its (possibly late-arriving, possibly mutated)
@@ -14941,10 +15214,13 @@ function renderHistory() {
   const visible = hiddenPids.size ? all.filter((p) => !hiddenPids.has(p.id)) : all;
 
   const filter = state.historyFilter;
-  const records = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
+  const person = viewer.shared ? state.historyPerson : '';
+  const byProject = filter ? visible.filter((p) => p && p.projectKey === filter) : visible;
+  const records = person ? byProject.filter((p) => personShown(p && p.startedBy).toLowerCase() === person) : byProject;
 
   if (!records.length) {
-    host.appendChild(histEmpty(filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
+    host.appendChild(histEmpty(person ? 'No saved pipelines started by this person here yet.'
+      : filter ? 'No saved pipelines for this project yet.' : 'No saved pipelines yet.'));
     return;
   }
 
@@ -15339,6 +15615,15 @@ function buildHistCard(projectDir, p, ghAvailable = false) {
   seg('clock', clock);
   seg('time', typeof p.totalActiveMs === 'number' ? fmtDuration(p.totalActiveMs) : '');
   seg('total', typeof p.totalCostUsd === 'number' ? fmtUsd(p.totalCostUsd) : '');
+  // Who started it (shared deployments only): an initials circle + "by you" / "by <name>".
+  const by = personLabel(p.startedBy);
+  seg('by', by ? `by ${by}` : '');
+  if (by) {
+    const full = personShown(p.startedBy);
+    const byEl = node.querySelector('.hist-by');
+    byEl.title = `Started by ${full}`;
+    byEl.before(personIni(full));
+  }
   if (typeof p.totalCostUsd === 'number') node.querySelector('.hist-total').title = estTitle(p.totalCostUsd);
 
   renderHistDiffPill(node.querySelector('.hist-diff-pill'), p);
@@ -16401,6 +16686,12 @@ function paintHdHeaderMeta(screen, record, data) {
     a.title = `Scheduled for ${fmtDate(st.scheduledFor)}`;
     meta.appendChild(a);
   }
+  // Who started it (shared deployments only): the person chip at the end of the status row,
+  // the full name (never "you"); for a scheduled run, who scheduled it.
+  const row2 = screen.querySelector('.hd-row2');
+  row2?.querySelector('.person-chip')?.remove();
+  const by = personShown(st.startedBy) || personShown(record && record.startedBy);
+  if (by && row2) row2.appendChild(personChip(by, st.scheduledFor ? 'Scheduled by' : 'Started by'));
   // spec §8: the End card's result chip, repeated in the header meta (History D5
   // untouched — no model/effort). A path links through the keyed artifact route.
   if (st.endReached === true && st.result) {
@@ -17372,7 +17663,10 @@ function hdCommentCard(doc, comment, ctx, { detached = false, reply = false, las
   }
   const who = doc.createElement('span');
   who.className = 'hd-cmt-author';
-  who.textContent = comment.author === 'ask' ? 'Worca' : 'You';
+  // A person's comment names them once attribution knows who (identity.mjs); else the old "You".
+  // Shared deployments name the author ("You" for the viewer); elsewhere every human comment is "You".
+  const author = personLabel(comment.authorName);
+  who.textContent = comment.author === 'ask' ? 'Worca' : (!author || author === 'you' ? 'You' : author);
   const when = doc.createElement('time');
   when.className = 'hd-cmt-time';
   when.dateTime = comment.createdAt || '';
@@ -18879,12 +19173,27 @@ function buildHdClarify(sec, record, data) {
     card.append(qRow, aRow);
     wrap.appendChild(card);
   };
+  // Who answered (step 3): shown under step 2's rule (shared sign-ins only, "you" for the viewer).
+  const answeredByLine = (by) => {
+    const who = personLabel(by);
+    if (!who) return null;
+    const el = document.createElement('div');
+    el.className = 'hint hd-cl-by';
+    el.textContent = `answered by ${who}`;
+    el.title = `Answered by ${personShown(by)}`;
+    return el;
+  };
   for (const q of questions) addCard(q, byId.get(q.id));
+  if (questions.length && data.clarify) { const by = answeredByLine(data.clarify.answeredBy); if (by) wrap.appendChild(by); }
   if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
   for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
     const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'} — round ${r && r.round}`
       + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
-    if (r && r.ask) wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
+    if (r && r.ask) {
+      wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
+      const by = answeredByLine(r.answeredBy);
+      if (by) wrap.appendChild(by);
+    }
     if (!((r && r.questions) || []).length) continue;
     const caption = document.createElement('div');
     caption.className = 'hint hd-cl-caption';
@@ -18892,6 +19201,8 @@ function buildHdClarify(sec, record, data) {
     wrap.appendChild(caption);
     const rById = new Map((r.answers || []).map((a) => [a.id, a]));
     for (const q of r.questions) addCard(q, rById.get(q.id));
+    const by = answeredByLine(r.answeredBy);
+    if (by) wrap.appendChild(by);
   }
 }
 
@@ -19226,7 +19537,9 @@ function rdStateCopy(r, stepName) {
     return `Paused — ${r.pauseReason}. Resume once it clears.`;
   }
   if (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted') {
-    return 'Paused by you. Agents in flight finished their checkpoint; nothing new is dispatched.';
+    // Who paused it (shared deployments only): "by you" when it was the viewer, else the name.
+    const by = r.lastAction && r.lastAction.kind === 'pause' ? personLabel(r.lastAction.by) : '';
+    return `Paused${by ? ` by ${by}` : ''}. Agents in flight finished their checkpoint; nothing new is dispatched.`;
   }
   if (RD_TERMINAL.includes(r.status)) {
     // finishedAtMs is stamped by finishRun (Task 9). Absent on a run this tab
@@ -19235,7 +19548,8 @@ function rdStateCopy(r, stepName) {
     const at = r.finishedAtMs
       ? ` Finished at ${startedLabel(new Date(r.finishedAtMs).toISOString())}.`
       : '';
-    return `${runStatusMeta(r).word}.${at}`;
+    const by = r.status === 'stopped' && r.lastAction && r.lastAction.kind === 'stop' ? personLabel(r.lastAction.by) : '';
+    return `${runStatusMeta(r).word}${by ? ` by ${by}` : ''}.${at}`;
   }
   // The ACTIVE agent names the line (the v1 phase/cycle scalars are gone).
   return `${activeCopy(r).text}.`;
@@ -20437,6 +20751,17 @@ function renderRunMeta(r, root = r.el) {
   if (!root) return;
   const metaEl = root.querySelector('.rm-text');
   if (metaEl) metaEl.textContent = `started ${startedLabel(r.startedAt)}`;
+  const byEl = root.querySelector('.rc-by');
+  if (byEl) {
+    // Shared deployments only: an initials circle + "by you" / "by <name>".
+    const by = personLabel(r.startedBy);
+    const full = personShown(r.startedBy);
+    byEl.hidden = !by;
+    byEl.querySelector('.rc-by-text').textContent = by ? `by ${by}` : '';
+    const ini = byEl.querySelector('.person-ini');
+    if (ini) ini.textContent = full ? personInitials(full) : '';
+    byEl.title = full ? `Started by ${full}` : '';
+  }
 
   // D15: progress is a NUMBER, never a bar. Hidden on every v1 run. This sits
   // ABOVE the `if (!branchEl) return` exit, or a branch-less card never gets it.
@@ -21410,6 +21735,10 @@ const schedulesView = createSchedulesView({
       return { wf_default: 'Default', wf_auto: 'Auto', wf_memory_defrag: 'Memory defragment' }[id] || id;
     },
     onCounts: (c) => paintScheduleCounts(c),
+    // Who made / changed a schedule, under the same display rule as runs (shared sign-ins only).
+    personLabel: (v) => personLabel(v),
+    personShown: (v) => personShown(v),
+    personIni: (name, title) => personIni(name, title),
     // A started run opens its live monitor (the ticket id IS the runId); a finished one opens History.
     openRun: ({ runId, pipelineId, projectDir }) => {
       if (runId) { location.hash = `running/${runId}`; return; }
@@ -21846,6 +22175,12 @@ function paintRdHeader(screen, r) {
   pill.className = `rd-status pill-run ${family}` + (parked ? ' parked' : '');
   pill.querySelector('.rd-status-word').textContent = text;
 
+  // Who started it (shared deployments only): the person chip beside the status pill, with
+  // the full name — the one place that never says "you".
+  screen.querySelector('.rd-row1 .person-chip')?.remove();
+  const starter = personShown(r.startedBy);
+  if (starter) pill.before(personChip(starter));
+
   // Meta: project · started · elapsed · cost · step n/m · step name.
   const meta = screen.querySelector('.rd-meta');
   meta.innerHTML = '';
@@ -22075,6 +22410,7 @@ function renderPipelineTabs() {
     // aria-label. Costs the expanded state one extra (identical) repaint on that
     // one transition and nothing else.
     tabStatusWord(r),
+    personShown(r.startedBy),
   ])]);
   if (host.dataset.tabsSig === sig) return;
   host.dataset.tabsSig = sig;
@@ -22116,6 +22452,13 @@ function renderPipelineTabs() {
 
     body.append(title, hint);
     row.append(dot, body);
+    // Who started it (shared deployments only): just the initials; space is tight.
+    const starter = personShown(r.startedBy);
+    if (starter) {
+      const ini = personIni(starter, `Started by ${starter}`);
+      ini.classList.add('child-by');
+      row.appendChild(ini);
+    }
 
     // End-of-row marker (same slot, three mutually exclusive states):
     //  - pending input  → pulsing amber "?"   (needs your answer)
@@ -23517,6 +23860,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.inclu
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
+loadWhoami();
 
 // Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
 // untouched so ui-shell's routed-view census stays at 11. No network happens here;

@@ -780,3 +780,18 @@ test('schedule tools: a successful direct write pokes onScheduleMutation (errors
   assert.equal(labelForTool('mcp__worca__preview_schedule', {}), 'Working out the dates');
   assert.equal(labelForTool('mcp__worca__propose_schedule_change', {}), 'Proposing a schedule change');
 });
+
+test('propose_clone_project: labelled, and its RESULT reaches onCloneProposal with the full input; a sub-agent call never does', () => {
+  assert.equal(labelForTool('mcp__worca__propose_clone_project', {}), 'Proposing a project clone');
+  const seen = [];
+  const h = harness({ onCloneProposal: (e) => { seen.push(e); return Promise.resolve(); } });
+  const input = { url: 'https://github.com/acme/api', branch: 'dev' };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_cl', 'mcp__worca__propose_clone_project', input));
+  assert.deepEqual(seen, [], 'minted at RESULT, never at START');
+  h.push(uresult('toolu_cl', '{"ok":true,"card":{}}'));
+  assert.deepEqual(seen, [{ toolUseId: 'toolu_cl', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_cl2', 'mcp__worca__propose_clone_project', input, 'toolu_task'));
+  h.push(uresult('toolu_cl2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(seen.length, 1, 'child-stream calls are never intercepted');
+});

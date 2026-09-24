@@ -242,6 +242,16 @@ async function serverIsUp() {
  * `worca … --at/--every/--cron`: write the ticket or the schedule. Returns
  * { ticket, schedule, spec } — the caller decides whether to --wait.
  */
+// Schedule attribution (identity.mjs): the CLI is the machine itself, so it records 'local'.
+const CLI_ACTOR = 'local';
+/** A stored actor worth naming: a person, never 'local' or empty. */
+const person = (v) => (typeof v === 'string' && v && v !== 'local' ? v : null);
+/** The list's "by" column: only for rows a person created or changed. */
+function byCol(x) {
+  const who = person(x.updatedBy) || person(x.createdBy);
+  return who ? `  ·  by ${who}` : '';
+}
+
 export async function createFromFlags(flags, { projectDir, extras, promptText, spec, out, c }) {
   const title = fallbackTitle(flags, promptText);
   let ticket, schedule = null;
@@ -250,7 +260,7 @@ export async function createFromFlags(flags, { projectDir, extras, promptText, s
     const request = await requestFromFlags(flags, { projectDir, extras, promptText, stageId: id });
     ({ schedule, ticket } = createSchedule({
       id, title, projectDir, request, rule: spec.rule, overlap: spec.overlap, maxFailures: spec.maxFailures,
-      ifMissed: spec.ifMissed, graceMin: spec.graceMin,
+      ifMissed: spec.ifMissed, graceMin: spec.graceMin, createdBy: CLI_ACTOR,
     }));
     out(`${c('green', 'Scheduled')} ${c('bold', schedule.id)} — ${describeRule(schedule.rule)} (${spec.tz})`);
     if (ticket) out(`  Next run: ${formatInstant(Date.parse(ticket.runAt), spec.tz, { withYear: true })} (in ${formatCountdown(Date.parse(ticket.runAt) - Date.now())})`);
@@ -258,11 +268,11 @@ export async function createFromFlags(flags, { projectDir, extras, promptText, s
     const id = randomUUID();
     const request = await requestFromFlags(flags, { projectDir, extras, promptText, stageId: id });
     if (spec.after) {
-      ticket = createTicket({ id, title, projectDir, request, after: { kind: spec.after.kind, id: spec.after.id }, afterPolicy: spec.afterPolicy, sourceFromPrevious: spec.sourceFromPrevious, ifMissed: spec.ifMissed, graceMin: spec.graceMin });
+      ticket = createTicket({ id, title, projectDir, request, after: { kind: spec.after.kind, id: spec.after.id }, afterPolicy: spec.afterPolicy, sourceFromPrevious: spec.sourceFromPrevious, ifMissed: spec.ifMissed, graceMin: spec.graceMin, createdBy: CLI_ACTOR });
       out(`${c('green', 'Scheduled')} ${c('bold', ticket.id.slice(0, 8))} after ‘${spec.after.title || spec.after.id.slice(0, 8)}’ (${spec.after.status})`);
     } else {
       ticket = createTicket({
-        id, title, projectDir, runAtMs: spec.runAtMs, request, ifMissed: spec.ifMissed, graceMin: spec.graceMin,
+        id, title, projectDir, runAtMs: spec.runAtMs, request, ifMissed: spec.ifMissed, graceMin: spec.graceMin, createdBy: CLI_ACTOR,
         ...(flags.wait ? { ownerPid: process.pid, ownerHost: hostname() } : {}),
       });
       out(`${c('green', 'Scheduled')} ${c('bold', ticket.id.slice(0, 8))} for ${formatInstant(spec.runAtMs, spec.tz, { withYear: true })} (in ${formatCountdown(spec.runAtMs - Date.now())})`);
@@ -381,7 +391,7 @@ export async function cmdSchedule(argv, { out, c, fail }) {
       out(c('bold', 'Repeating'));
       for (const s of series) {
         const state = s.status === 'active' ? `next ${when(s.nextRunAt)}` : s.status === 'paused' ? c('yellow', s.pauseReason === 'failure_streak' ? `paused after ${s.failureStreak} failures` : 'paused') : 'ended';
-        out(`  ${s.id}  ${s.sentence}  ·  ${state}  ·  ${where(s)}  ·  ${s.title || ''}`);
+        out(`  ${s.id}  ${s.sentence}  ·  ${state}  ·  ${where(s)}  ·  ${s.title || ''}${byCol(s)}`);
       }
     }
     if (tickets.length) {
@@ -389,7 +399,7 @@ export async function cmdSchedule(argv, { out, c, fail }) {
       for (const t of tickets) {
         const st = t.after && t.status === 'scheduled' ? 'waiting' : t.status === 'scheduled' ? `in ${formatCountdown(Date.parse(t.runAt) - Date.now()) || 'a moment'}` : t.status === 'missed' ? c('yellow', 'missed') : t.status;
         const held = t.ownerPid != null && t.status === 'scheduled' ? '  ·  held by a waiting terminal' : '';
-        out(`  ${t.id.slice(0, 8)}  ${t.after ? `after ${afterLabel(t, { withStatus: false })}` : when(t.runAt)}  ·  ${st}  ·  ${where(t)}  ·  ${t.title || ''}${held}`);
+        out(`  ${t.id.slice(0, 8)}  ${t.after ? `after ${afterLabel(t, { withStatus: false })}` : when(t.runAt)}  ·  ${st}  ·  ${where(t)}  ·  ${t.title || ''}${byCol(t)}${held}`);
       }
     }
     const unread = unreadCount('schedule');
@@ -421,6 +431,8 @@ export async function cmdSchedule(argv, { out, c, fail }) {
     out(c('bold', item.title || label));
     out(`  id         ${item.id}`);
     out(`  target     ${where(item)}`);
+    if (person(item.createdBy)) out(`  created by ${person(item.createdBy)}`);
+    if (person(item.updatedBy) && item.updatedBy !== item.createdBy) out(`  changed by ${person(item.updatedBy)}`);
     if (kind === 'recurring') {
       out(`  repeats    ${item.sentence} (${item.tz})`);
       out(`  status     ${item.status}${item.pauseReason ? ` (${item.pauseReason.replace(/_/g, ' ')})` : ''}`);
@@ -446,7 +458,7 @@ export async function cmdSchedule(argv, { out, c, fail }) {
       const p = predecessorState(item.after, { policy: item.after.policy });
       if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) fail(`Start ‘${p.title || 'the run before it'}’ first, or change its source branch`);
     }
-    const t = kind === 'recurring' ? runScheduleNow(item.id) : requestRunNow(item.id);
+    const t = kind === 'recurring' ? runScheduleNow(item.id, { by: CLI_ACTOR }) : requestRunNow(item.id, { by: CLI_ACTOR });
     if (!t) fail(`${label} is ${item.status} and cannot be started`);
     out(`Asked ${c('bold', label)} to start now.`);
     if (!(await serverIsUp()) && t.ownerPid == null) out(c('yellow', 'Note: no Worca server is up — it starts as soon as `worca ui` runs.'));
@@ -455,7 +467,7 @@ export async function cmdSchedule(argv, { out, c, fail }) {
   if (verb === 'cancel') {
     if (kind === 'recurring') { deleteSchedule(item.id); out(`Deleted the repeating schedule ${c('bold', label)}.`); return 0; }
     if (item.scheduleId) fail(`${label} is the next run of ${item.scheduleId} — use: worca schedule skip ${item.scheduleId}`);
-    if (!cancelTicket(item.id)) fail(`${label} is ${item.status} and can no longer be canceled`);
+    if (!cancelTicket(item.id, { by: CLI_ACTOR })) fail(`${label} is ${item.status} and can no longer be canceled`);
     out(`Canceled ${c('bold', label)}.`);
     return 0;
   }
@@ -474,7 +486,7 @@ export async function cmdSchedule(argv, { out, c, fail }) {
       const policy = rest.includes('--after-any') ? 'any' : (item.after ? item.after.policy : 'done');
       const r = resolveAfterRef({ kind: ref.kind, id: ref.id }, { projectDir: item.projectDir, workspaceId: item.workspaceId, policy, selfId: item.id });
       if (!r.ok) fail(r.error);
-      if (!updateTicket(item.id, { after: { kind: r.after.kind, id: r.after.id }, afterPolicy: policy, ...(rest.includes('--source-from-previous') ? { sourceFromPrevious: true } : {}) })) fail(`${label} is ${item.status} and can no longer be moved`);
+      if (!updateTicket(item.id, { after: { kind: r.after.kind, id: r.after.id }, afterPolicy: policy, ...(rest.includes('--source-from-previous') ? { sourceFromPrevious: true } : {}) }, { by: CLI_ACTOR })) fail(`${label} is ${item.status} and can no longer be moved`);
       out(`Moved ${c('bold', label)} after ‘${r.after.title || r.after.id.slice(0, 8)}’.`);
       return 0;
     }
@@ -482,12 +494,13 @@ export async function cmdSchedule(argv, { out, c, fail }) {
     const at = parseAt(value, { nowMs: Date.now(), tz });
     if (!at.ok) fail(at.error);
     if (at.ms <= Date.now()) fail('--at: that time is in the past');
-    if (!updateTicket(item.id, { runAtMs: at.ms })) fail(`${label} is ${item.status} and can no longer be moved`);
+    if (!updateTicket(item.id, { runAtMs: at.ms }, { by: CLI_ACTOR })) fail(`${label} is ${item.status} and can no longer be moved`);
     out(`Moved ${c('bold', label)} to ${formatInstant(at.ms, tz, { withYear: true })} (in ${formatCountdown(at.ms - Date.now())}).`);
     return 0;
   }
   if (kind !== 'recurring') fail(`${verb} applies to a repeating schedule; ${label} runs once`);
-  const s = verb === 'skip' ? skipNext(item.id) : verb === 'pause' ? pauseSchedule(item.id) : resumeSchedule(item.id);
+  const opt = { by: CLI_ACTOR };
+  const s = verb === 'skip' ? skipNext(item.id, opt) : verb === 'pause' ? pauseSchedule(item.id, opt) : resumeSchedule(item.id, opt);
   if (!s) fail(`${label} is ${item.status}`);
   out(verb === 'skip' ? `Skipped. Next run: ${when(s.nextRunAt)}.` : verb === 'pause' ? `Paused ${c('bold', label)}.` : `Resumed ${c('bold', label)}. Next run: ${when(s.nextRunAt)}.`);
   return 0;

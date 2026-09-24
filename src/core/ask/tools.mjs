@@ -319,6 +319,20 @@ export function createAskTools(deps) {
     catch { return null; }
   };
 
+  // The person signed in to this chat on a shared sign-in (identity.mjs isSharedIdentity), else null.
+  const viewer = () => (typeof deps.viewer === 'string' && deps.viewer ? deps.viewer : null);
+  // A startedBy filter: lowercased; "me" resolves to the viewer, and is refused without a shared sign-in
+  // (on a local or one-person worca runs are not told apart by person).
+  const personFilter = (v, tool) => {
+    const raw = str(v);
+    if (!raw) return '';
+    if (raw.toLowerCase() === 'me') {
+      if (!viewer()) throw new AskToolError(`${tool}: "me" needs a per-person sign-in; this worca does not tell people apart — name the person, or leave startedBy out`);
+      return viewer().toLowerCase();
+    }
+    return raw.replace(/ \(this machine\)$/i, '').toLowerCase();
+  };
+
   const defs = [
     { name: 'list_projects',
       description: 'List the registered projects (key, name, path) and workspaces (id, name, member project keys). Use the key / id in the other tools.',
@@ -327,11 +341,15 @@ export function createAskTools(deps) {
       description: 'List the saved workflows with their ordered step groups (parallel agent nodes share a group) and feedback loops. Pick one by name, domain and steps.',
       inputSchema: SCHEMA.obj({}) },
     { name: 'list_runs',
-      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring). limit defaults to 20, max 100.',
+      description: 'Find past runs, newest first. Optional filters: projectKey OR workspaceId, status (e.g. done, running, error, stopped), query (title substring), startedBy (the person who started the run, exactly as list_people names them, case-insensitive; "me" = the person signed in to this chat, only on a shared sign-in). Each row carries startedBy (a person, "local" for this machine, null before attribution). limit defaults to 20, max 100.',
       inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects'),
-        status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring') }) },
+        status: SCHEMA.s('run status to match'), limit: SCHEMA.i('max results (1-100)', 1, L.listRunsMaxLimit), query: SCHEMA.s('case-insensitive title substring'),
+        startedBy: SCHEMA.s('who started the run (a name from list_people, or "me")') }) },
+    { name: 'list_people',
+      description: 'Who has started runs on this worca: one row per person (the name recorded when they started a run — a verified sign-in email, a trusted-header name, or the operator\'s declared name; "local" = runs started on this machine with no identity) with runs, lastRunAt and totalCostUsd, most active first. Optional scope: projectKey OR workspaceId. Runs from before attribution existed have no person and are not counted. Read-only; this machine\'s runs only (team-wide people are in get_team_metrics actor breakdowns).',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('project key from list_projects'), workspaceId: SCHEMA.s('workspace id from list_projects') }) },
     { name: 'get_run',
-      description: 'Read one run: its metadata and the user\'s original prompt. Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
+      description: 'Read one run: its metadata, the user\'s original prompt, startedBy (the person who started it), `scheduled` when a schedule started it, and `actions` — the people who acted on it (paused, resumed, stopped, answered its questions, continued past a cost cap, opened its PR, archived it) with when. Give projectKey or workspaceId when known; without them the user-pinned scope (when the chat has one) is tried first, then the id is searched everywhere.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex)'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'get_run_diff',
       description: 'Read the unified diff of a run, paged by byte offset (use nextOffset until truncated is false). Optional path = one file only. files[] lists every file with added/removed counts; credential files are omitted.',
@@ -600,6 +618,14 @@ export function createAskTools(deps) {
           baseUrl: SCHEMA.s('import_endpoint: the endpoint listed, when it is not the provider\'s own'),
           note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
     ] : []),
+    ...(deps.clones ? [
+      { name: 'propose_clone_project',
+        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how GitHub is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api'),
+          branch: SCHEMA.s('branch to check out (default: the repository default)'),
+          name: SCHEMA.s('folder and project name (default: the repository name)'),
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },
+    ] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -673,8 +699,10 @@ export function createAskTools(deps) {
       prompt: row.prompt == null ? null : deps.redact(row.prompt),     // run prompts are untrusted text (spec §6.3/§6.6)
       totalCostUsd: deps.totalsFor(row).cost,
       archived: !!row.archived_at,
+      // The person who started it (identity.mjs; 'local' on a local install, null before attribution).
+      startedBy: row.started_by ?? null,
       // Started by a schedule (docs/scheduled-runs.md): only then, so every other run keeps its shape.
-      ...(row.scheduled_for || row.schedule_id ? { startedBy: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
+      ...(row.scheduled_for || row.schedule_id ? { scheduled: { scheduledFor: row.scheduled_for ?? null, scheduleId: row.schedule_id ?? null } } : {}),
     };
   }
 
@@ -1093,7 +1121,17 @@ export function createAskTools(deps) {
     overlap: s.overlap, maxFailures: s.maxFailures, failureStreak: s.failureStreak, ifMissed: s.ifMissed, graceMin: s.graceMin,
     runsCount: s.runsCount, lastResult: s.lastResult, request: shapeRequest(s.summary),
     ...(s.askCardId ? { askCardId: s.askCardId } : {}),
+    ...peopleOf(s),
   });
+  // Who made / last changed a series or scheduled run (identity.mjs actors); absent when unknown, and
+  // 'local' is not a person, so it is left out too.
+  const peopleOf = (x) => {
+    const person = (v) => (typeof v === 'string' && v && v !== 'local' ? v : null);
+    const out = {};
+    if (person(x.createdBy)) out.createdBy = person(x.createdBy);
+    if (person(x.updatedBy)) out.updatedBy = person(x.updatedBy);
+    return out;
+  };
   const shapeTicket = (t) => {
     // Run chains (spec D11): a waiting after-ticket's run_at is the year-9999 sentinel — never a time to show.
     // The model sees what it waits for instead; `after.id` is a run id (get_run) or a scheduled run id (get_schedule).
@@ -1104,6 +1142,7 @@ export function createAskTools(deps) {
       after: t.after ? { kind: t.after.kind, id: t.after.id, policy: t.after.policy } : null, sourceFromPrevious: !!t.sourceFromPrevious,
       failReason: t.failReason ? deps.redact(t.failReason) : null, pipelineId: t.pipelineId, attempts: t.attempts,
       ifMissed: t.ifMissed, graceMin: t.graceMin, heldByTerminal: !!t.ownerPid, request: shapeRequest(t.summary),
+      ...peopleOf(t),
     };
   };
   const shapeNotice = (n) => ({
@@ -1252,6 +1291,7 @@ export function createAskTools(deps) {
       const status = str(input.status).toLowerCase();
       const query = str(input.query).toLowerCase();
       const limit = clampInt(input.limit, 1, L.listRunsMaxLimit, L.listRunsDefaultLimit);
+      const startedBy = personFilter(input.startedBy, 'list_runs');
       // Unkeyed: the newest runsScanLimit rows are enough. Keyed: scan everything — a
       // project's runs may all be older than the 200 globally newest (lite = one SQL
       // + one readdir per store key, no git).
@@ -1261,6 +1301,7 @@ export function createAskTools(deps) {
         if (wantKey && e.projectKey !== wantKey) continue;
         if (status && String(e.status ?? '').toLowerCase() !== status) continue;
         if (query && !String(e.title ?? '').toLowerCase().includes(query)) continue;
+        if (startedBy && String(e.startedBy ?? '').toLowerCase() !== startedBy) continue;
         const isWs = e.target === 'workspace' || String(e.projectKey).startsWith('workspaces/');
         out.push({
           id: e.id, title: deps.redact(e.title ?? e.id), target: isWs ? 'workspace' : 'project',
@@ -1271,6 +1312,7 @@ export function createAskTools(deps) {
           updatedAt: e.mtime ? new Date(e.mtime).toISOString() : null,
           branch: e.branch ?? null, sourceBranch: e.sourceBranch ?? null, guardrailsId: e.guardrailsId ?? null,
           totalCostUsd: e.totalCostUsd ?? null,
+          startedBy: e.startedBy ?? null,
         });
         if (out.length >= limit) break;
       }
@@ -1283,7 +1325,22 @@ export function createAskTools(deps) {
       // by the injected dep; a row-only bundle answers null and the shape stays byte-identical).
       const memory = typeof deps.readRunMemory === 'function' ? await deps.readRunMemory(row) : null;
       const policy = runPolicy(row);
-      return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}) };
+      // Who acted on the run (pipeline_events.actor): only when anyone did, so other runs keep their shape.
+      const actions = typeof deps.readRunActions === 'function' ? await deps.readRunActions(row) : [];
+      return { ...run, hasDiff: !run.archived && await deps.hasDiffPatch(row), ...(memory ? { memory } : {}), ...(policy ? { policy } : {}),
+        ...(actions.length ? { actions: actions.map((a) => ({ at: a.at, by: a.by, what: deps.redact(a.what) })) } : {}) };
+    },
+    async list_people(input) {
+      const projectKey = str(input.projectKey);
+      const workspaceId = str(input.workspaceId);
+      if (projectKey && workspaceId) throw new AskToolError('list_people: give projectKey OR workspaceId, not both');
+      if (typeof deps.listPeople !== 'function') return [];
+      const rows = await deps.listPeople(workspaceId ? { workspaceKey: workspaceId } : projectKey ? { projectKey } : {});
+      return rows.map((r) => ({
+        name: r.name === 'local' ? 'local (this machine)' : r.name,
+        ...(viewer() && r.name.toLowerCase() === viewer().toLowerCase() ? { you: true } : {}),
+        runs: r.runs, lastRunAt: r.lastRunAt ?? null, totalCostUsd: Number(r.totalCostUsd || 0),
+      }));
     },
     // Read-only by contract: the parent process (ui/server.mjs askTrackRun, via the turn's onTrackRun hook) does the
     // linking and the following. A live run id lives only in the server's runs Map, so the child passes it through.
@@ -1881,6 +1938,10 @@ export function createAskTools(deps) {
       catch (err) { throw new AskToolError(`list_copilot_models: ${err && err.message ? err.message : err}`); }
     },
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
+    async propose_clone_project(input) {
+      if (!deps.clones) throw new AskToolError('propose_clone_project: cloning is unavailable');
+      return deps.clones.validateChange(input);
+    },
     async save_script(input) {
       const s = scriptWriterOf('save_script');
       // The model's OWN text, on its way to disk: never redacted here (a redaction marker

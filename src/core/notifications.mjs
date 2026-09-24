@@ -4,7 +4,10 @@
 // self-paused, completed) lands here — but the table carries a `scope` column so an
 // app-wide centre can reuse it without a second system.
 //
-// Read state is GLOBAL (Worca is single-user per machine). `info` rows arrive
+// Read state is GLOBAL on a local install (one person per machine). On a shared deployment
+// (a real per-person sign-in, identity.mjs#isSharedIdentity) callers pass `reader`, and
+// "Mark read" is per person (notification_reads, v37): a row is read for a person when it
+// was read globally (an info row, or a resolved problem) or they marked it. `info` rows arrive
 // already read: only `problem` rows count towards the unread badge. A problem
 // RESOLVES itself when the user acts on it (Run now, reschedule, resume), so stale
 // alarms never pile up.
@@ -40,9 +43,9 @@ function rowToNotification(r) {
     title: r.title || null,
     message: r.message,
     createdAt: r.created_at,
-    readAt: r.read_at || null,
+    readAt: r.read_at || r.reader_read_at || null,
     resolvedAt: r.resolved_at || null,
-    unread: !r.read_at && r.severity === 'problem',
+    unread: !r.read_at && !r.reader_read_at && r.severity === 'problem',
   };
 }
 
@@ -72,19 +75,26 @@ export function addNotification({
  * List notifications, newest first.
  * @param {{scope?:string, unread?:boolean, problems?:boolean, scheduleId?:string, limit?:number}} [o]
  */
-export function listNotifications({ scope = 'schedule', unread = false, problems = false, scheduleId = null, limit = 200 } = {}) {
-  const where = ['scope = ?'];
+export function listNotifications({ scope = 'schedule', unread = false, problems = false, scheduleId = null, limit = 200, reader = null } = {}) {
+  const where = ['n.scope = ?'];
   const args = [scope];
-  if (unread) where.push("read_at IS NULL AND severity = 'problem'");
-  if (problems) where.push("severity = 'problem'");
-  if (scheduleId) { where.push('schedule_id = ?'); args.push(scheduleId); }
+  if (unread) where.push(`n.read_at IS NULL AND n.severity = 'problem'${reader ? ' AND r.read_at IS NULL' : ''}`);
+  if (problems) where.push("n.severity = 'problem'");
+  if (scheduleId) { where.push('n.schedule_id = ?'); args.push(scheduleId); }
   const lim = Math.max(1, Math.min(1000, Number(limit) || 200));
-  return getDb().prepare(`SELECT * FROM notifications WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${lim}`)
-    .all(...args).map(rowToNotification);
+  const join = reader ? 'LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.reader = ?' : '';
+  const cols = reader ? 'n.*, r.read_at AS reader_read_at' : 'n.*';
+  return getDb().prepare(`SELECT ${cols} FROM notifications n ${join} WHERE ${where.join(' AND ')} ORDER BY n.id DESC LIMIT ${lim}`)
+    .all(...(reader ? [reader] : []), ...args).map(rowToNotification);
 }
 
-/** Unread PROBLEM rows in a scope — the sidebar badge. */
-export function unreadCount(scope = 'schedule') {
+/** Unread PROBLEM rows in a scope — the sidebar badge (per person when `reader` is given). */
+export function unreadCount(scope = 'schedule', { reader = null } = {}) {
+  if (reader) {
+    return getDb().prepare(`SELECT COUNT(*) AS n FROM notifications n
+      LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.reader = ?
+      WHERE n.scope = ? AND n.read_at IS NULL AND n.severity = 'problem' AND r.read_at IS NULL`).get(reader, scope).n;
+  }
   return getDb().prepare("SELECT COUNT(*) AS n FROM notifications WHERE scope = ? AND read_at IS NULL AND severity = 'problem'").get(scope).n;
 }
 
@@ -94,13 +104,24 @@ export function latestNotificationId() {
 }
 
 /** Mark one row read (or unread with `read:false`). @returns {boolean} whether a row changed */
-export function markRead(id, { read = true, now = new Date() } = {}) {
+export function markRead(id, { read = true, now = new Date(), reader = null } = {}) {
+  if (reader) {
+    const exists = getDb().prepare('SELECT 1 FROM notifications WHERE id = ?').get(Number(id));
+    if (!exists) return false;
+    if (read) getDb().prepare('INSERT OR REPLACE INTO notification_reads (notification_id, reader, read_at) VALUES (?, ?, ?)').run(Number(id), reader, now.toISOString());
+    else getDb().prepare('DELETE FROM notification_reads WHERE notification_id = ? AND reader = ?').run(Number(id), reader);
+    return true;
+  }
   const info = getDb().prepare('UPDATE notifications SET read_at = ? WHERE id = ?').run(read ? now.toISOString() : null, Number(id));
   return info.changes > 0;
 }
 
 /** Mark every unread row of a scope read. @returns {number} rows changed */
-export function markAllRead(scope = 'schedule', { now = new Date() } = {}) {
+export function markAllRead(scope = 'schedule', { now = new Date(), reader = null } = {}) {
+  if (reader) {
+    return getDb().prepare(`INSERT OR IGNORE INTO notification_reads (notification_id, reader, read_at)
+      SELECT id, ?, ? FROM notifications WHERE scope = ? AND read_at IS NULL`).run(reader, now.toISOString(), scope).changes;
+  }
   return getDb().prepare('UPDATE notifications SET read_at = ? WHERE scope = ? AND read_at IS NULL').run(now.toISOString(), scope).changes;
 }
 
@@ -124,5 +145,6 @@ export function resolveNotifications({ ticketId = null, scheduleId = null, kinds
 /** Drop rows older than the retention window. @returns {number} rows removed */
 export function purgeNotifications({ days = NOTIFICATION_RETENTION_DAYS, now = new Date() } = {}) {
   const cutoff = new Date(now.getTime() - days * 86400000).toISOString();
+  try { getDb().prepare('DELETE FROM notification_reads WHERE notification_id IN (SELECT id FROM notifications WHERE created_at < ?)').run(cutoff); } catch { /* a hand-seeded schema without the table */ }
   return getDb().prepare('DELETE FROM notifications WHERE created_at < ?').run(cutoff).changes;
 }

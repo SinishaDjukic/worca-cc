@@ -28,7 +28,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # hadolint ignore=DL3008
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git gnupg jq less openssh-client procps ripgrep tini \
+      ca-certificates curl git gnupg jq less openssh-client procps ripgrep sudo tini \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
  && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -72,6 +72,22 @@ RUN usermod -l worca -d /home/worca -m node \
  && mkdir -p /worca /projects /home/worca/.claude \
  && chown -R worca:worca /worca /projects /home/worca \
  && chmod 0777 /worca /projects /home/worca /home/worca/.claude
+
+# Agents under their own uid (src/core/agent-user.mjs): `worca-agent` shares the
+# `worca-share` group with the server (projects, run checkouts, the run store) but
+# cannot read worca's settings, database or environment. The only sudo rule lets
+# `worca` start commands as `worca-agent`, never as root. The entrypoint turns this
+# on for single-volume hosts (WORCA_DATA_DIR); a bind-mount compose setup keeps one
+# uid, so the files agents write on the host keep your uid.
+RUN groupadd -g 1001 worca-share \
+ && useradd -u 1001 -g worca-share -M -d /nonexistent -s /bin/bash worca-agent \
+ && usermod -aG worca-share worca \
+ && printf '%s\n' \
+      'Defaults:worca !lecture, !syslog, !secure_path, umask=0007, umask_override' \
+      'worca ALL=(worca-agent) NOPASSWD:SETENV: ALL' \
+      > /etc/sudoers.d/worca-agent \
+ && chmod 0440 /etc/sudoers.d/worca-agent \
+ && visudo -cf /etc/sudoers.d/worca-agent
 # The volume mount points exist in the image and are world-writable: a fresh
 # named volume copies mode and owner on first mount (Docker and Podman alike),
 # so the box works whether it runs as the image's uid 1000 or as the host
@@ -90,6 +106,7 @@ ENV HOME=/home/worca \
     WORCA_HOME=/worca \
     WORCA_PROJECTS_ROOT=/projects \
     WORCA_NO_NATIVE_DIALOG=1 \
+    WORCA_CONTAINER=1 \
     DISABLE_AUTOUPDATER=1 \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     TZ=UTC

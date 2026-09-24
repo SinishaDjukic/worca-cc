@@ -21,6 +21,7 @@ import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
+import { actorLabel } from './identity.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -269,6 +270,12 @@ function formAskOf(qWrap, aWrap) {
 
 /** The two form fields a reader row carries — `{}` for a legacy row, so no legacy
  *  payload gains a key (test/step-questions-db.test.mjs pins the exact row shape). */
+/** `{answeredBy}` when the answer row names who answered (identity.mjs actor), else {} —
+ *  additive, so a row answered before attribution keeps its exact wire shape. */
+function answeredByOf(aWrap) {
+  return aWrap && typeof aWrap.answeredBy === 'string' && aWrap.answeredBy ? { answeredBy: aWrap.answeredBy } : {};
+}
+
 function formFieldsOf(qWrap, aWrap) {
   const ask = formAskOf(qWrap, aWrap);
   return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
@@ -305,6 +312,7 @@ export function readStepQuestions(pipelineId) {
       // gains no key at all, so its wire shape (History, get_run_progress) stays
       // byte-identical; consumers test `row.ask`, never `'ask' in row`.
       ...formFieldsOf(qWrap, aWrap),
+      ...answeredByOf(aWrap),
     };
   });
 }
@@ -384,6 +392,7 @@ export function readPipelineExtras(pipelineId) {
     questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
     answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
     ...formFieldsOf(qWrap, aWrap),   // spec §9: `ask` + `formAnswer` on a form row only
+    ...answeredByOf(aWrap),
   };
   const reviews = getDb().prepare(
     'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'
@@ -933,7 +942,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null,
+    guardrailsId = null, startedBy = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1030,6 +1039,8 @@ export async function createPipeline(projectDir, opts = {}) {
     // unguarded runs). Creation-immutable, like sourceType: written on INSERT,
     // never touched by updates. NULL = legacy/pre-entity or non-orchestrator row.
     guardrailsId: guardrailsId || null,
+    // Who started the run (identity.mjs): creation-immutable like guardrailsId. NULL = unknown.
+    startedBy: startedBy || null,
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -1095,15 +1106,30 @@ function firstMeaningfulLine(text) {
  * @param {string} markdownLine
  * @returns {Promise<void>}
  */
-export async function appendAudit(pipelineDir, markdownLine) {
-  const id = resolvePipelineId(pipelineDir);
+export async function appendAudit(pipelineDir, markdownLine, { actor = null } = {}) {
+  appendAuditById(resolvePipelineId(pipelineDir), markdownLine, { actor });
+}
+
+/**
+ * appendAudit by pipeline id (the server's human actions: PRs, archive, cap overrides).
+ * `actor` = who did it (identity.mjs; 'local' allowed), stored in its own column always;
+ * the line's text names the person only when they are not 'local' (byActor), so the
+ * History view and the markdown export read "Paused by ada@example.com." Best-effort.
+ */
+export function appendAuditById(id, markdownLine, { actor = null } = {}) {
   if (!id) return;
   const ts = new Date().toISOString();
   const text = String(markdownLine ?? '').trim();
+  const who = typeof actor === 'string' && actor ? actor.slice(0, 200) : null;
   try {
     tx(() => {
-      getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
-        .run(id, ts, text);
+      if (who) {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text, actor) VALUES (?, ?, ?, ?)')
+          .run(id, ts, text, who);
+      } else {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
+          .run(id, ts, text);
+      }
     });
   } catch { /* audit is best-effort; never break a run on a logging failure */ }
 }
@@ -1164,11 +1190,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1552,6 +1578,7 @@ function toPipelineRow(o) {
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
+    started_by: o.startedBy ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined)
@@ -1668,6 +1695,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
     retainedWork: retainedWorkFor(row),
@@ -1727,7 +1755,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id, pr_url,
+           branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1756,7 +1784,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, pr_url,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1938,6 +1966,7 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    startedBy: row.started_by ?? null,
     // v31 provenance: set when a schedule started this run (NULL = started by hand).
     scheduledFor: row.scheduled_for ?? null,
     scheduleId: row.schedule_id ?? null,
@@ -1957,6 +1986,8 @@ function rowToState(row) {
   // too, so a deep-linked History detail no longer waits for the LIST row.
   const rp = j(row.resume_point, null);
   state.pauseReason = typeof rp?.pauseReason === 'string' ? rp.pauseReason : null;
+  // Who paused it (run-harness _recordAction): { kind, by, at } or null.
+  state.lastAction = rp && rp.lastAction && typeof rp.lastAction.by === 'string' ? { ...rp.lastAction } : null;
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   const outcome = j(row.outcome, null);
   if (outcome) {
@@ -2008,6 +2039,7 @@ function buildAuditMarkdown(row) {
     `- **id**: ${row.id}\n` +
     `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
     `- **started**: ${row.started_at ?? ''}\n` +
+    (actorLabel(row.started_by) ? `- **started by**: ${actorLabel(row.started_by)}\n` : '') +
     `- **prompt file**: prompt.md\n\n` +
     `## Prompt\n\n` +
     (row.prompt && row.prompt.trim() ? row.prompt.trim() + '\n' : '_(empty prompt)_\n') +
