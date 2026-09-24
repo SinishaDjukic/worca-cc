@@ -157,6 +157,24 @@ test('run card: the hello snapshot may carry startedBy; local stays hidden', asy
   assert.equal(card(local).querySelector('.rc-by').hidden, true);
 });
 
+test('live run detail header: "by <name>" after "started …"; nothing for local', async () => {
+  const ctx = await boot();
+  hello(ctx, { startedBy: 'ada@example.com' });
+  go(ctx.window, `running/${RUN_ID}`);
+  await settle(ctx.window, 8);
+  const by = ctx.doc.querySelector('.rd-meta .rd-by');
+  assert.ok(by, ctx.doc.querySelector('.rd-meta')?.textContent);
+  assert.equal(by.textContent, 'by ada@example.com');
+  assert.equal(by.title, 'Started by ada@example.com');
+  assert.equal(by.previousElementSibling?.previousElementSibling?.className, 'rd-clock', 'right after "started …"');
+
+  const local = await boot();
+  hello(local, { startedBy: 'local' });
+  go(local.window, `running/${RUN_ID}`);
+  await settle(local.window, 8);
+  assert.equal(local.doc.querySelector('.rd-meta .rd-by'), null);
+});
+
 // ── History detail meta ────────────────────────────────────────────────────────
 
 const KEY = 'proj-alpha-abcd1234';

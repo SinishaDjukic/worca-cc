@@ -22038,6 +22038,8 @@ function paintRdHeader(screen, r) {
   const segs = [
     ['rd-project', projectName(r.projectDir), false],
     ['rd-clock', r.startedAt ? `started ${startedLabel(r.startedAt)}` : '', false],
+    // Who started it (identity.mjs): nothing for 'local' or unknown.
+    ['rd-by', attributedName(r.startedBy) ? `by ${attributedName(r.startedBy)}` : '', false],
     // `run-time` is load-bearing, not decorative: the existing 1 s interval finds
     // its tick targets with `querySelectorAll('.run-time')`. Without this class
     // the header elapsed freezes at its paint value and only the Overview stat
@@ -22055,6 +22057,7 @@ function paintRdHeader(screen, r) {
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
+    if (cls === 'rd-by') seg.title = `Started by ${attributedName(r.startedBy)}`;
     if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
     meta.appendChild(seg);
   });
