@@ -16,7 +16,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools } from './model-env.mjs';
+import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
@@ -293,7 +293,7 @@ export function modelHasBaseUrlRouting(modelId) {
  * The bridge facts for a model id (model-bridge-design.md §4.2/§8.5), or null
  * when it is not a bridged entry: `{id, provider, api, upstreamModel,
  * excludeTools, ready, reason?, message?}`. `excludeTools` are the CLI built-ins
- * the runner must withhold (web tools have no chat/completions equivalent);
+ * the runner must withhold (web tools have no chat/completions or Responses API equivalent);
  * `ready` is the provider's sign-in state — a spawn fails fast on it instead
  * of with an opaque 401 mid-run. Synchronous; never throws.
  */
@@ -598,7 +598,7 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     // fails its first call). Its ToolSearch is client-side (schemas come back
     // as tool_result text), so it works through the translation layer; the
     // entry's own env may still turn it off.
-    if (bridged.upstream.api === 'openai-chat' && !('ENABLE_TOOL_SEARCH' in env)) env.ENABLE_TOOL_SEARCH = 'true';
+    if (isTranslatedApi(bridged.upstream.api) && !('ENABLE_TOOL_SEARCH' in env)) env.ENABLE_TOOL_SEARCH = 'true';
     // A bridged id is never a model name the CLI knows, so it assumes a 200k
     // window and compacts only once the upstream rejects a request — on a 32k
     // local model that means turns whose reply is cut to a few hundred tokens

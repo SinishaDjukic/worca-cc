@@ -220,6 +220,16 @@ test('resolveModelEnv: pinned prompt/output limits become the CLI\'s context win
   }
 });
 
+test('resolveModelEnv: an openai-responses entry is translated too — tool search on, web tools withheld', async () => {
+  await addGlobalModel({ id: 'gw-resp-env', upstream: { provider: 'openai', api: 'openai-responses', model: 'r' } });
+  try {
+    assert.equal(resolveModelEnv('gw-resp-env').ENABLE_TOOL_SEARCH, 'true');
+    assert.deepEqual(bridgedModelInfo('gw-resp-env').excludeTools, ['WebSearch', 'WebFetch']);
+  } finally {
+    await removeGlobalModel('gw-resp-env');
+  }
+});
+
 test('bridge: bad bearer → 401 envelope; unknown id → 404; unknown route → 404', async () => {
   const r = await fetch(`${bridgeBaseUrl('gw-gpt')}/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer nope' }, body: '{}' });
   assert.equal(r.status, 401);

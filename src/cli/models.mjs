@@ -13,6 +13,7 @@ import {
   endpointModelsForImport, importEndpointModels,
 } from '../core/bridge/provider-ops.mjs';
 import { listModels } from '../core/config.mjs';
+import { isTranslatedApi } from '../core/model-env.mjs';
 
 export const MODELS_HELP = `worca models — the model catalog and its providers
 
@@ -76,7 +77,7 @@ export function formatModelLine(m) {
   else if (m.custom === 'policy') bits.push('policy');
   else if (m.custom === 'global') bits.push('yours');
   else if (!m.custom) bits.push('built-in');
-  if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${m.upstreamApi === 'openai-chat' ? ' (translated)' : ''}`);
+  if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${isTranslatedApi(m.upstreamApi) ? ' (translated)' : ''}`);
   else if (m.routed) bits.push('endpoint-routed');
   if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : m.signInReason === 'terms' ? 'ACKNOWLEDGEMENT' : 'SIGN-IN'}`);
   if (m.hidden) bits.push('hidden');
@@ -208,14 +209,14 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
     else if (args.all) ids = importable.map((m) => m.id);
     else {
       out('Copilot models (pass --all, or --pick id,id,…):');
-      for (const m of list) out(`  ${m.id.padEnd(28)} ${m.vendor.padEnd(10)} ${(m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k` : '-').padStart(5)}  ${m.toolCalls ? 'tools' : '     '} ${m.vision ? 'vision' : '      '} ${m.reasoning ? 'reasoning' : '         '}${m.inCatalog ? '  (in catalog)' : ''}${m.policyState && m.policyState !== 'enabled' ? '  (disabled in Copilot settings)' : ''}`);
+      for (const m of list) out(`  ${m.id.padEnd(28)} ${m.vendor.padEnd(10)} ${(m.contextWindow ? `${Math.round(m.contextWindow / 1000)}k` : '-').padStart(5)}  ${m.toolCalls ? 'tools' : '     '} ${m.vision ? 'vision' : '      '} ${m.reasoning ? 'reasoning' : '         '}  ${String(m.api || '').padEnd(16)}${m.inCatalog ? '  (in catalog)' : ''}${m.policyState && m.policyState !== 'enabled' ? '  (disabled in Copilot settings)' : ''}`);
       return 0;
     }
-    out('These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no thinking blocks, no web tools).');
+    out('These run through your Copilot subscription. Claude models keep extended thinking; other vendors run through a translation layer (no web tools; reasoning arrives as summaries on the Responses API).');
     if (!(await confirm(`Import ${ids.length} model${ids.length === 1 ? '' : 's'} into the catalog?`, args.yes, { c }))) return fail('cancelled');
     const r = await importCopilotModels(ids);
     for (const id of r.created) out(`  + ${id}`);
-    for (const id of r.updated) out(`  ~ ${id} (capabilities refreshed)`);
+    for (const id of r.updated) out(`  ~ ${id} (API and capabilities refreshed)`);
     for (const id of r.skipped) out(`  - ${id} (skipped: not offered, or not a copilot entry)`);
     return 0;
   }

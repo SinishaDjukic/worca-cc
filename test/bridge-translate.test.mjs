@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { toChatRequest, budgetToReasoningEffort } from '../src/core/bridge/translate/request.mjs';
 import { ChatStreamTranslator, SseDataParser, serializeSse, mapStopReason, mapUsage } from '../src/core/bridge/translate/stream.mjs';
 import { toMessagesResponse, estimateInputTokens } from '../src/core/bridge/translate/response.mjs';
-import { mapUpstreamError, mapNetworkError, PROMPT_TOO_LONG, bridgeErrors } from '../src/core/bridge/errors.mjs';
+import { mapUpstreamError, mapNetworkError, PROMPT_TOO_LONG, bridgeErrors, isContextOverflow, isFailedResponseOverflow } from '../src/core/bridge/errors.mjs';
+import { mapEffort, requestedEffort, encodeReasoningMarker, decodeReasoningMarker } from '../src/core/bridge/translate/common.mjs';
 
 const M = 'gpt-5';
 
@@ -324,4 +325,80 @@ test('errors: upstream status → envelope', () => {
   assert.match(mapNetworkError(new Error('ECONNREFUSED'), { provider: 'openai' }).body.error.message, /unreachable/);
   assert.equal(bridgeErrors.unauthorized().status, 401);
   assert.equal(bridgeErrors.unknownModel('z').status, 404);
+});
+
+test('mapEffort: the default table without a list; clamps to the listed levels with one (none is never chosen)', () => {
+  assert.deepEqual(['low', 'medium', 'high', 'xhigh', 'max'].map((e) => mapEffort(e, {})), ['low', 'medium', 'high', 'high', 'high']);
+  const list = { reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'] };
+  assert.deepEqual(['low', 'medium', 'high', 'xhigh', 'max'].map((e) => mapEffort(e, list)), ['low', 'medium', 'high', 'xhigh', 'xhigh']);
+  assert.equal(mapEffort('max', { reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] }), 'max');
+  assert.equal(mapEffort('medium', { reasoningEfforts: ['none', 'high'] }), 'high');   // nothing at or below: the lowest real level
+  assert.equal(mapEffort('low', { reasoningEfforts: ['medium', 'high'] }), 'medium');  // …the lowest, not the highest
+  assert.equal(mapEffort('high', { reasoningEfforts: ['none'] }), 'high');             // only none listed: the default table
+  assert.equal(mapEffort(null, list), null);
+  assert.equal(mapEffort('high'), 'high');
+});
+
+test('requestedEffort: output_config.effort wins over the thinking budget band; adaptive thinking alone asks for nothing', () => {
+  assert.equal(requestedEffort({ thinking: { type: 'enabled', budget_tokens: 2000 } }), 'low');
+  assert.equal(requestedEffort({ thinking: { type: 'enabled', budget_tokens: 2000 }, output_config: { effort: 'max' } }), 'max');
+  assert.equal(requestedEffort({ thinking: { type: 'adaptive' } }), null);
+  assert.equal(requestedEffort({ output_config: { effort: 'bogus' } }), null);
+  assert.equal(requestedEffort({}), null);
+  assert.equal(requestedEffort(null), null);
+});
+
+test('reasoning marker: round-trips the upstream model and the encrypted content; anything else is not a marker', () => {
+  const m = encodeReasoningMarker('gpt-5.6-sol', 'gAAAA+/=xyz');
+  assert.match(m, /^worca\.rsn\.v1\.[A-Za-z0-9_-]+\.gAAAA\+\/=xyz$/);
+  assert.deepEqual(decodeReasoningMarker(m), { model: 'gpt-5.6-sol', encrypted: 'gAAAA+/=xyz' });
+  for (const bad of [undefined, null, 42, '', 'EqQBCkgIARAB', 'worca.rsn.v1.', 'worca.rsn.v1.abc', 'worca.rsn.v1..enc', 'worca.rsn.v1.abc.']) {
+    assert.equal(decodeReasoningMarker(bad), null, String(bad));
+  }
+});
+
+test('request (chat): a stored effort list reaches reasoning_effort too; without one the old table applies', () => {
+  const body = { messages: [{ role: 'user', content: 'x' }], output_config: { effort: 'max' } };
+  assert.equal(toChatRequest(body, { upstreamModel: M, capabilities: { reasoning: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'] } }).body.reasoning_effort, 'xhigh');
+  assert.equal(toChatRequest(body, { upstreamModel: M, capabilities: { reasoning: true } }).body.reasoning_effort, 'high');
+});
+
+test('errors: an upstream that serves the model through the other API → 400 with the fix; non-JSON bodies still map', () => {
+  const e = mapUpstreamError(400, '{"error":{"message":"model \\"gpt-5.6-sol\\" is not accessible via the /chat/completions endpoint","code":"unsupported_api_for_model"}}', { provider: 'copilot' });
+  assert.equal(e.status, 400);
+  assert.equal(e.body.error.type, 'invalid_request_error');
+  assert.equal(e.body.error.message, 'copilot: model "gpt-5.6-sol" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Settings › Models › Import models…) or change its API in the model editor');
+  const g = mapUpstreamError(400, '{"error":{"message":"model gemini-3.8-flash does not support Responses API.","code":"unsupported_api_for_model"}}', { provider: 'copilot' });
+  assert.match(g.body.error.message, /does not support Responses API\. — this model needs a different API: re-import it/);
+  const byCode = mapUpstreamError(400, '{"error":{"message":"nope","code":"unsupported_api_for_model"}}', { provider: 'openai' });
+  assert.equal(byCode.body.error.message, 'openai: nope — this model needs a different API: change its API in the model editor');
+  const html = mapUpstreamError(400, '<html>bad gateway</html>', { provider: 'openai' });
+  assert.equal(html.body.error.message, 'openai: request rejected (400) — <html>bad gateway</html>');
+  const ctx = mapUpstreamError(400, '{"error":{"message":"maximum context length exceeded"}}', { provider: 'copilot' });
+  assert.equal(ctx.body.error.message, PROMPT_TOO_LONG);
+});
+
+test('errors: a context overflow is known by its code or its wording — OpenAI\'s Responses message and Copilot\'s limit check both become "prompt is too long"', () => {
+  const openai = mapUpstreamError(400, '{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","code":"context_length_exceeded"}}', { provider: 'openai' });
+  assert.deepEqual([openai.status, openai.body.error.type, openai.body.error.message], [400, 'invalid_request_error', PROMPT_TOO_LONG]);
+  const copilot = mapUpstreamError(400, '{"error":{"message":"prompt token count of 140000 exceeds the limit of 128000","code":"model_max_prompt_tokens_exceeded"}}', { provider: 'copilot' });
+  assert.equal(copilot.body.error.message, PROMPT_TOO_LONG);
+  assert.equal(isContextOverflow('context_length_exceeded', ''), true);
+  assert.equal(isContextOverflow('', 'Your input exceeds the context window of this model.'), true);
+  assert.equal(isContextOverflow(undefined, 'maximum context length is 128000 tokens'), true);
+  assert.equal(isContextOverflow('rate_limit_exceeded', 'slow down'), false);
+  assert.equal(isContextOverflow(undefined, undefined), false);
+  // A 5xx is never read as an overflow.
+  assert.equal(mapUpstreamError(500, '{"error":{"message":"x","code":"context_length_exceeded"}}', { provider: 'openai' }).status, 502);
+  // Inside a 200 (a stream's response.failed, a buffered status "failed") no status narrows the broad phrases:
+  // a code or wording that names another failure wins, so a rate limit or a timeout never makes the CLI compact.
+  assert.equal(isFailedResponseOverflow('context_length_exceeded', 'x'), true);
+  assert.equal(isFailedResponseOverflow('invalid_request_error', 'This model\'s maximum context length is 128000 tokens.'), true);
+  assert.equal(isFailedResponseOverflow(undefined, 'Your input exceeds the context window of this model.'), true);
+  assert.equal(isFailedResponseOverflow('rate_limit_exceeded', 'Request too large for gpt-5 on tokens per min (TPM): Limit 30000, Requested 45000.'), false);
+  assert.equal(isFailedResponseOverflow('server_error', 'the model took too long to respond'), false);
+  assert.equal(isFailedResponseOverflow(undefined, 'Upstream request timed out: the model took too long to respond'), false);
+  assert.equal(isFailedResponseOverflow(undefined, undefined), false);
+  // The HTTP 400 path keeps its wider reading (a 429 / 5xx never reaches it).
+  assert.equal(isContextOverflow(undefined, 'Upstream request timed out: the model took too long to respond'), true);
 });

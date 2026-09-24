@@ -505,7 +505,7 @@ export function buildClaudeArgs({
   if (tools.length) {
     args.push('--allowedTools', tools.join(','));
   }
-  // Model bridge (model-bridge-design.md §5.3): a translated (openai-chat)
+  // Model bridge (model-bridge-design.md §5.3): a translated (openai-chat / openai-responses)
   // model has no server-side web tools, so the runner withholds them outright —
   // a deny outranks any allow, frontmatter grant included. Absent/empty ⇒
   // nothing emitted, so every other argv stays byte-identical.

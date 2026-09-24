@@ -22,6 +22,7 @@ const prevEnv = {
 const realFetch = globalThis.fetch;
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 let pollState = 'pending';
+let modelsExtra = [];
 const github = async (url, init = {}) => {
   const u = String(url);
   if (u.startsWith(base)) return realFetch(url, init);
@@ -34,6 +35,7 @@ const github = async (url, init = {}) => {
     return jsonRes(200, { data: [
       { id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI', capabilities: { type: 'chat', supports: { tool_calls: true, reasoning_effort: true }, limits: { max_prompt_tokens: 100000, max_output_tokens: 16000 } } },
       { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', vendor: 'Anthropic', capabilities: { type: 'chat', supports: { tool_calls: true, vision: true }, limits: { max_context_window_tokens: 200000 } } },
+      ...modelsExtra,
     ] });
   }
   return jsonRes(404, { message: `no stub for ${u}` });
@@ -141,6 +143,49 @@ test('device flow: start → pending → ok stores the sign-in; state shows the 
   assert.equal(ask.body.models.find((m) => m.id === 'copilot-gpt-5').bridged, 'copilot');
 });
 
+test('import: Responses-only and list-reasoning models get the Responses API and their efforts; re-import repairs what the old importer stored', async () => {
+  modelsExtra = [
+    { id: 'gpt-6-astra', name: 'GPT-6 Astra', vendor: 'OpenAI', supported_endpoints: ['/responses', 'ws:/responses'], capabilities: { type: 'chat', supports: { tool_calls: true, vision: true, reasoning_effort: ['low', 'medium', 'high', 'xhigh', 'max'] }, limits: { max_prompt_tokens: 272000, max_output_tokens: 128000 } } },
+    { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', vendor: 'Google', supported_endpoints: ['/chat/completions'], capabilities: { type: 'chat', supports: { tool_calls: true, reasoning_effort: ['low', 'medium', 'high'] }, limits: { max_prompt_tokens: 200000 } } },
+  ];
+  try {
+    const list = await jfetch('/api/providers/copilot/models');
+    const row = Object.fromEntries(list.body.models.map((m) => [m.id, m]));
+    assert.equal(row['gpt-6-astra'].api, 'openai-responses');
+    assert.equal(row['gemini-3.8-flash'].api, 'openai-chat');
+    assert.equal(row['claude-sonnet-4.5'].api, 'anthropic');
+
+    // What the old importer stored for both: chat API, not reasoning, trimmed to medium.
+    for (const id of ['gpt-6-astra', 'gemini-3.8-flash']) {
+      const r = await post('/api/models', { id: `copilot-${id}`, label: `${id} (Copilot)`, efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: id, capabilities: { toolCalls: true, reasoning: false } }, cost: { free: true } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+    }
+    // A reasoning model the user pinned to medium on purpose keeps it — and so does a
+    // Claude entry (the old importer never trimmed those; its stub reports no reasoning).
+    const pin = await patch('/api/models/copilot-gpt-5', { efforts: ['medium'] });
+    assert.equal(pin.status, 200, JSON.stringify(pin.body));
+    const pinClaude = await patch('/api/models/copilot-claude-sonnet-4.5', { efforts: ['medium'] });
+    assert.equal(pinClaude.status, 200, JSON.stringify(pinClaude.body));
+
+    const again = await post('/api/providers/copilot/import-models', { provider: 'copilot', ids: ['gpt-6-astra', 'gemini-3.8-flash', 'gpt-5', 'claude-sonnet-4.5'] });
+    assert.equal(again.status, 200, JSON.stringify(again.body));
+    assert.deepEqual([...again.body.updated].sort(), ['copilot-claude-sonnet-4.5', 'copilot-gemini-3.8-flash', 'copilot-gpt-5', 'copilot-gpt-6-astra']);
+    const got = Object.fromEntries(again.body.models.map((m) => [m.id, m]));
+    assert.equal(got['copilot-gpt-6-astra'].upstream.api, 'openai-responses');
+    assert.deepEqual(got['copilot-gpt-6-astra'].upstream.capabilities.reasoningEfforts, ['low', 'medium', 'high', 'xhigh', 'max']);
+    assert.equal(got['copilot-gpt-6-astra'].upstream.capabilities.reasoning, true);
+    assert.deepEqual(got['copilot-gpt-6-astra'].efforts, ['medium', 'high', 'xhigh', 'max']);   // widened from the old medium-only default
+    assert.equal(got['copilot-gpt-6-astra'].label, 'gpt-6-astra (Copilot)');                    // label untouched
+    assert.equal(got['copilot-gemini-3.8-flash'].upstream.api, 'openai-chat');
+    assert.deepEqual(got['copilot-gemini-3.8-flash'].efforts, ['medium', 'high']);
+    assert.deepEqual(got['copilot-gpt-5'].efforts, ['medium']);                                  // chosen by the user: untouched
+    assert.deepEqual(got['copilot-claude-sonnet-4.5'].efforts, ['medium']);                      // ditto
+    assert.equal(got['copilot-claude-sonnet-4.5'].upstream.api, 'anthropic');
+  } finally {
+    modelsExtra = [];
+  }
+});
+
 test('PATCH /api/providers: validation, masked echo = keep, logout flips the catalog to needs-sign-in', async () => {
   assert.equal((await patch('/api/providers/copilot', { accountType: 'team' })).status, 400);
   assert.equal((await patch('/api/providers/nope', {})).status, 400);
@@ -209,6 +254,7 @@ test('provider connection test: openai against the stub', async () => {
 });
 
 test('CLI formatters + argv parser + `worca models providers/list` through injected io', async () => {
+  assert.match(formatModelLine({ id: 'copilot-gpt-6-astra', custom: 'global', bridged: 'copilot', upstreamModel: 'gpt-6-astra', upstreamApi: 'openai-responses' }), /bridged: copilot → gpt-6-astra \(translated\)/);
   assert.equal(formatModelLine({ id: 'copilot-gpt-5', label: 'My GPT', custom: 'global', bridged: 'copilot', upstreamModel: 'gpt-5', upstreamApi: 'openai-chat', needsSignIn: true, signInReason: 'not_signed_in' }),
     'copilot-gpt-5  (My GPT)  yours  bridged: copilot → gpt-5 (translated)  NEEDS SIGN-IN');
   assert.equal(formatModelLine({ id: 'claude-opus-4-8', label: 'Opus', custom: false, hidden: true }), 'claude-opus-4-8  (Opus)  built-in  hidden');

@@ -19,7 +19,7 @@ level.
 |---|---|---|
 | **Anthropic API / CLI default** | The `claude` CLI uses its own login or the `ANTHROPIC_*` env it inherits. | A first-party Anthropic account. |
 | **Custom endpoint via env** | The entry's routing env (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, …) is merged into that model's spawns. | An endpoint that already speaks the Messages API: a LiteLLM you run, Bedrock / Vertex via the CLI's own env, a gateway. |
-| **Through a provider** | Worca points the CLI at its own loopback bridge, which forwards to the provider — passing Anthropic-shaped calls through, or translating them to OpenAI chat completions. | GitHub Copilot; OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway; an Anthropic-compatible gateway that needs a key Worca holds. |
+| **Through a provider** | Worca points the CLI at its own loopback bridge, which forwards to the provider — passing Anthropic-shaped calls through, or translating them to OpenAI chat completions or the OpenAI Responses API. | GitHub Copilot; OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway; an Anthropic-compatible gateway that needs a key Worca holds. |
 
 The choice is the **Connection** section at the top of the model editor, which
 opens as a dialog (*Add model*, *Edit*, *Duplicate*, *Edit a copy*) and asks
@@ -82,13 +82,19 @@ copilot --accept-terms` records it non-interactively.
   request and the streamed reply pass through byte for byte, so extended
   thinking and cache accounting arrive intact.
 - **Other vendors on Copilot, and OpenAI-compatible endpoints** run through a
-  translation layer: system prompt, text, images, tool definitions, tool calls
-  and results map to chat completions; the streamed reply maps back to Messages
-  events; usage and stop reasons map; a context overflow becomes the
-  "prompt is too long" the CLI compacts on. Translated models have **no
-  thinking blocks** (Worca's effort maps to `reasoning_effort` where the model
-  supports it, else only *medium* is offered), **no WebSearch/WebFetch** (the
-  runner withholds them), and lower prompt limits than Anthropic's. Worca
+  translation layer to one of two OpenAI protocols — **chat completions**, or
+  the **Responses API** (Copilot serves most GPT models only through it):
+  system prompt, text, images, tool definitions, tool calls and results map
+  across; the streamed reply maps back to Messages events; usage and stop
+  reasons map; a context overflow becomes the "prompt is too long" the CLI
+  compacts on. On chat completions there are **no thinking blocks**; on the
+  Responses API the model's **reasoning summary arrives as a thinking block**
+  and its encrypted reasoning rides along, so the model keeps its reasoning
+  across tool calls. Worca's effort maps to the model's own effort levels
+  where Copilot lists them (else to `reasoning_effort` low / medium / high;
+  only *medium* is offered for a model without reasoning). Translated models
+  have **no WebSearch/WebFetch** (the runner withholds them) and lower prompt
+  limits than Anthropic's. Worca
   turns on the CLI's tool search for them (`ENABLE_TOOL_SEARCH=true`, unless
   the entry's env sets it), so MCP tool schemas load on demand instead of all
   riding every request — a few MCP servers would otherwise put a request past
@@ -171,11 +177,22 @@ worca models import openai [--base-url http://127.0.0.1:11434/v1] [--all | --pic
 
 Pick *GitHub Copilot* and the dialog shows Copilot's chat models with vendor,
 context window and capabilities — no base URL, because the account's sign-in
-names the host. Anthropic models are imported with the passthrough API, every
-other vendor with the translated one; efforts are trimmed to *medium* for
-models without reasoning; pricing is *Free*. A second import refreshes
-capabilities and never overwrites a label, efforts or price you edited. Models
+names the host. Anthropic models are imported with the passthrough API; an
+OpenAI model with the Responses API whenever Copilot serves it there, any other
+model only when Copilot serves it nowhere else, and chat completions otherwise.
+Efforts follow the effort levels Copilot lists for the model (*medium* only for
+models without reasoning); pricing is *Free*. A second import refreshes the
+API and capabilities — re-import a model whose Test says it "is not accessible
+via the /chat/completions endpoint" — widens efforts only where an older import
+had trimmed them to *medium*, and never overwrites a label, efforts or price
+you edited. Models
 disabled in your GitHub Copilot settings are listed greyed with the fix.
+
+An entry that uses the Responses API or lists its model's effort levels needs
+this Worca version or later: an older Worca drops the connection of such an
+entry and runs it as a plain model. On api.openai.com, reasoning summaries are
+only returned to verified organizations — if a Test on an OpenAI Responses
+model reports that, switch the model to chat completions in the editor.
 
 ## CLI
 

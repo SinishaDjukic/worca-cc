@@ -291,7 +291,7 @@ export function subagentModelIssue(v) {
 // catalog (settings.mjs) and a plugin manifest (plugin-manifest.mjs) validate
 // the same shape against one rule, and neither may import the other.
 //
-//   { provider: 'copilot'|'openai'|'anthropic', api: 'anthropic'|'openai-chat',
+//   { provider: 'copilot'|'openai'|'anthropic', api: 'anthropic'|'openai-chat'|'openai-responses',
 //     model: '<upstream id>', baseUrl?, apiKey?, headers?, capabilities? }
 //
 // A bridged entry is dispatched through worca's in-process loopback bridge
@@ -301,13 +301,17 @@ export function subagentModelIssue(v) {
 // not also appear in the entry's own `env` map.
 
 export const UPSTREAM_PROVIDERS = Object.freeze(['copilot', 'openai', 'anthropic']);
-export const UPSTREAM_APIS = Object.freeze(['anthropic', 'openai-chat']);
+export const UPSTREAM_APIS = Object.freeze(['anthropic', 'openai-chat', 'openai-responses']);
 /** Which wire protocols each provider can be driven through. */
 export const PROVIDER_APIS = Object.freeze({
-  copilot: Object.freeze(['anthropic', 'openai-chat']),
-  openai: Object.freeze(['openai-chat']),
+  copilot: Object.freeze(['anthropic', 'openai-chat', 'openai-responses']),
+  openai: Object.freeze(['openai-chat', 'openai-responses']),
   anthropic: Object.freeze(['anthropic']),
 });
+/** The wire protocols the bridge TRANSLATES to — everything but the Anthropic passthrough. */
+export const TRANSLATED_APIS = Object.freeze(['openai-chat', 'openai-responses']);
+/** Whether `api` is translated by the bridge (no server tools, no thinking passthrough). */
+export function isTranslatedApi(api) { return TRANSLATED_APIS.includes(api); }
 /** Env keys the bridge owns; rejected in an `env` map beside `upstream`. */
 export const BRIDGE_ROUTING_KEYS = Object.freeze([
   'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
@@ -316,6 +320,10 @@ export const BRIDGE_ROUTING_KEYS = Object.freeze([
 export const CAPABILITY_FLAGS = Object.freeze(['toolCalls', 'vision', 'reasoning']);
 /** Numeric capability limits an entry may pin. */
 export const CAPABILITY_LIMITS = Object.freeze(['maxPromptTokens', 'maxOutputTokens']);
+/** Reasoning-effort levels an upstream may list, lowest first (capabilities.reasoningEfforts). */
+export const REASONING_EFFORT_LEVELS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+/** List-valued capabilities an entry may pin. */
+export const CAPABILITY_LISTS = Object.freeze(['reasoningEfforts']);
 const FORBIDDEN_UPSTREAM_HEADERS = new Set(['authorization', 'host', 'content-length', 'content-type', 'transfer-encoding']);
 const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,80}$/;
 
@@ -334,8 +342,16 @@ export function assertModelCapabilities(caps) {
       const n = Number(v);
       if (!Number.isInteger(n) || n <= 0) throw new Error(`upstream.capabilities.${k} must be a positive integer`);
       out[k] = n;
+    } else if (CAPABILITY_LISTS.includes(k)) {
+      if (v === null || v === undefined) continue;
+      if (!Array.isArray(v)) throw new Error(`upstream.capabilities.${k} must be an array of effort levels`);
+      for (const e of v) {
+        if (!REASONING_EFFORT_LEVELS.includes(e)) throw new Error(`upstream.capabilities.${k}: unknown level ${JSON.stringify(e)} — allowed: ${REASONING_EFFORT_LEVELS.join(', ')}`);
+      }
+      const levels = REASONING_EFFORT_LEVELS.filter((e) => v.includes(e));
+      if (levels.length) out[k] = levels;
     } else {
-      throw new Error(`unknown upstream.capabilities key ${JSON.stringify(k)} — allowed: ${[...CAPABILITY_FLAGS, ...CAPABILITY_LIMITS].join(', ')}`);
+      throw new Error(`unknown upstream.capabilities key ${JSON.stringify(k)} — allowed: ${[...CAPABILITY_FLAGS, ...CAPABILITY_LIMITS, ...CAPABILITY_LISTS].join(', ')}`);
     }
   }
   return Object.keys(out).length ? out : undefined;
@@ -422,9 +438,9 @@ export function upstreamEnvConflict(env) {
   return null;
 }
 
-/** Whether an `openai-chat` upstream drops the CLI's web tools (§5.3). */
+/** The CLI's web tools a translated (openai-chat / openai-responses) upstream withholds (§5.3). */
 export function bridgeExcludedTools(upstream) {
-  return upstream && upstream.api === 'openai-chat' ? ['WebSearch', 'WebFetch'] : [];
+  return upstream && isTranslatedApi(upstream.api) ? ['WebSearch', 'WebFetch'] : [];
 }
 
 // ── providers: account-level state shared by bridged entries (§6.2) ─────────
