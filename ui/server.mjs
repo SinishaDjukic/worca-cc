@@ -39,7 +39,7 @@ import { listProjects, addProject, removeProject, normalizeProjectPath, countPro
 import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
-  rawProjectsRoot, defaultProjectsRoot, runRootMode,
+  rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   setPipelineCostLimitUsd, setTotalCostLimitUsd, setCostLimitResetPeriod, assertCostLimitInputs,
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
@@ -118,6 +118,7 @@ import { pickFolderNative } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
 } from '../src/core/remote-access.mjs';
+import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -348,6 +349,8 @@ const REMOTE_ACCESS_CHECK = checkRemoteAccessConfig(REMOTE_ACCESS, { bindHost: H
 const REMOTE_MODE = isRemoteMode(REMOTE_ACCESS);
 const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
+// local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
+const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
 const HOST_FORBIDDEN = REMOTE_MODE
   ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
   : 'forbidden: worca is a localhost-only tool';
@@ -6270,7 +6273,7 @@ function askValidateScope(raw) {
  *  "Create and run scripts" pref is on (W20) — the scripts section with the runtimes this host
  *  actually has (the python probe, cached 60 s). Memory is mounted, not rendered. */
 async function askSystemPromptFor(catalog) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput() });
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -6291,8 +6294,14 @@ function askCardScheduleLine(b, tz = null) {
  *  buildContextHeader consumes (§6.5: server-resolved rows only — never
  *  client-supplied titles or paths). Every lookup is individually guarded:
  *  a vanished row degrades to an absent header line, never a 500. */
-async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null) {
+async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], currentMessageId = null, { signedIn = null } = {}) {
   const out = { now: new Date().toISOString() };
+  // Where worca runs (absent on a local install) and who the sign-in proxy verified for this request.
+  try {
+    const facts = deploymentFacts(process.env, { remoteMode: REMOTE_MODE, projectsRoot: getProjectsRoot() });
+    if (facts) out.deployment = facts;
+  } catch { /* absent line */ }
+  if (typeof signedIn === 'string' && signedIn) out.signedIn = signedIn;
   if (ctx.pinned === true) out.pinned = true;   // #397: rendered as the [pinned by the user] marker
   if (ctx.timeZone) out.timeZone = ctx.timeZone;   // validated IANA name; the header adds the user's clock
   if (ctx.view) out.view = ctx.view;
@@ -6443,7 +6452,7 @@ function mockAskCard(ctx = {}, text = '') {
  *   text      what the MODEL gets as the user message: the typed text, or the `[worca event] …` line (synthetic)
  *   synthetic the user row renders as a notice (never a bubble) and never titles the thread (PD6)
  */
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -6516,7 +6525,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const catalog = await askBuildCatalog();
     const withText = attRows.map((a, i) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime, text: files[i].text }));
     const { inline, listed } = askSelectInlineAttachments(withText);
-    const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id);
+    const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
     const systemPrompt = await askSystemPromptFor(catalog);
     const header = askBuildContextHeader(headerCtx);
     const prompt = askBuildTurnPrompt(header, text, inline);
@@ -6673,7 +6682,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: req.worcaUser?.email || null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

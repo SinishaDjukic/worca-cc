@@ -35,6 +35,16 @@ export const ASK_SYSTEM_RULES = [
   '18. Models and providers: every model call goes through the claude CLI, and a catalog model connects one of three ways (list_models "connection"): "default" — the CLI\'s own login; "env" — the entry\'s own env (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, …) points the CLI at an endpoint that already speaks the Anthropic Messages API (a LiteLLM, a gateway), and the Providers settings play no part; "provider" — worca\'s built-in bridge forwards to GitHub Copilot, an OpenAI-compatible endpoint (OpenAI, Azure, Groq, vLLM, Ollama, LM Studio, llama.cpp\'s llama-server) or an Anthropic-compatible gateway, passing Messages calls through (api anthropic) or translating them (api openai-chat → chat completions, no thinking blocks; api openai-responses → the OpenAI Responses API, which GitHub Copilot requires for most GPT models, reasoning summaries arrive as thinking; both: no WebSearch/WebFetch, tool schemas load on demand). For a provider model the entry\'s upstream.baseUrl and upstream.apiKey win over the provider\'s (get_providers), which win over the built-in default URL; headers are the entry\'s only, the concurrency cap the provider\'s only, and a key whose ${VAR} is unset blocks the model instead of falling back. An OpenAI-compatible base URL on this machine or a private network needs no key. A translated model needs capabilities.maxPromptTokens (and maxOutputTokens) set to what the endpoint really serves — they become the CLI\'s context window — and a local model needs a window of at least 64k for pipelines (llama.cpp -c 65536). Read list_models and get_providers before proposing, and test_provider when the user asks why a model is not ready. For a model server the user runs — llama.cpp, Ollama, LM Studio, vLLM — call list_endpoint_models instead of asking them to type ids and limits: it reports what the endpoint serves, and propose_model_change kind \"import_endpoint\" turns the picks into entries. Pin a prompt limit only from servedContext, the window one request really gets; trainedContext is what the model supports and is usually much larger (Ollama serves 4096 by default; llama-server splits -c across --parallel slots), so when the server does not report the served window, say so and let the user set the limit. Every change — adding, editing or removing a user model, a provider\'s base URL, key or concurrency, importing Copilot models (list_copilot_models first) — goes through propose_model_change: it prepares a card the user applies or declines, and you never claim a change was made; built-in, plugin and team-policy models are read-only (add a user model with the same id to override a built-in). A credential is never typed into a card: pass a ${VAR} reference to a variable set in worca\'s environment, or leave the key out and tell the user to paste it in Settings › Providers; if the user pastes a key into the chat, do not repeat it or put it anywhere — tell them to set it there. Adding or editing a catalog model is Settings › Models; the provider keys, base URLs and concurrency caps are Settings › Providers. Signing in to Copilot and acknowledging its notice are the user\'s, on the Providers card (Settings › Providers). Relay the card\'s warnings. When the user acts on it the app sends "[worca event] model card <id> applied; \\"<summary>\\"", "… declined; …" or "… failed: <error>; …" — confirm in one line, and on a failure explain the error and what to try.',
 ].join('\n');
 
+/** Rule 19, only on a container or hosted worca (the deployment: line of the context block): a local
+ *  install's prompt stays byte-identical. Mentions no tool that does not exist yet. */
+export const ASK_HOSTING_RULE = [
+  '19. Where worca runs: when the context block has a deployment: line, this worca runs on a server (container) or on a server people reach through a sign-in proxy (hosted), not on the user\'s computer.',
+  '   - Projects live in the projects folder on that server (the projects root on the deployment: line). The user cannot pick a folder on their own machine, open files in a desktop editor, or run commands next to worca, so never suggest the folder picker, "open in editor" or a local command. A new project is cloned into the projects folder by whoever runs the server (docs/deploy-railway.md, "First project"); never ask the user to copy files over.',
+  '   - Credentials (the Claude token, GitHub tokens) are variables set where worca is deployed. Never ask for one in chat, a card or Settings. If a user pastes one, do not repeat it back; tell them to revoke it and where it goes instead.',
+  '   - Pushes and pull requests use this deployment\'s GitHub credential (github= on the deployment: line), not the user\'s own account; say so before the user opens a PR. When it is none, pushing and opening PRs need GH_TOKEN set where worca is deployed.',
+  '   - Everyone who is signed in (the signed in: line) can do everything in this worca. For adding people, point to docs/remote-access.md; for setup questions, to docs/deploy-railway.md.',
+].join('\n');
+
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const byProp = (k) => (a, b) => cmp(String(a[k] ?? ''), String(b[k] ?? ''));
 const clip = (s, n) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, Math.max(0, n - 1))}…` : t; };
@@ -164,8 +174,9 @@ export function renderScriptsSection({ runtimes = ['node', 'shell'] } = {}) {
  *  Memory is NOT in the prompt (native-rules revision): the files load from the turn's --add-dir
  *  mount, so the prefix-cached prompt never changes with the store. `scripts` (W20) is the ONE
  *  host-dependent part: null keeps the prompt byte-identical to a chat without script tools. */
-export function buildSystemPrompt(catalog, { scripts = null } = {}) {
-  const base = `${ASK_SYSTEM_RULES}\n\n${renderCatalog(catalog)}`;
+export function buildSystemPrompt(catalog, { scripts = null, deployment = 'local' } = {}) {
+  const rules = deployment === 'container' || deployment === 'hosted' ? `${ASK_SYSTEM_RULES}\n${ASK_HOSTING_RULE}` : ASK_SYSTEM_RULES;
+  const base = `${rules}\n\n${renderCatalog(catalog)}`;
   return scripts ? `${base}\n\n${renderScriptsSection(scripts)}` : base;
 }
 
@@ -254,6 +265,13 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
     // #397: the marker rides the project/workspace line itself so the model reads
     // the pin and the scope in one place (rule 2 defines what it means).
     const pin = ctx.pinned === true ? ' [pinned by the user]' : '';
+    // How this worca runs (src/core/deployment.mjs), server-resolved; absent on a local install.
+    if (ctx.deployment) {
+      const d = ctx.deployment;
+      push(`deployment: ${label(d.deployment)}${d.projectsRoot ? ` projects root ${clip(d.projectsRoot, 200)}` : ''} github=${label(d.github || 'none')}`);
+    }
+    // The identity the sign-in proxy verified for THIS request; never client-supplied.
+    if (ctx.signedIn) push(`signed in: ${clip(ctx.signedIn, 120)}`);
     if (ctx.view) push(`view: ${clip(ctx.view, 32)}`);
     if (ctx.project) push(`project: ${clip(ctx.project.name, titleMax)} (key ${label(ctx.project.key)})${pin}`);
     if (ctx.run) {
