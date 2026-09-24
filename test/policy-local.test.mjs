@@ -31,7 +31,8 @@ const proj = mkdtempSync(join(tmpdir(), 'worca-policy-local-proj-'));
 test('localSnapshot: `set` means the developer stored a value; project keys need a project', async () => {
   let s = localSnapshot(null);
   assert.equal(s['cost.pipelineLimitUsd'].set, false); assert.equal(s['cost.pipelineLimitUsd'].value, null);
-  assert.equal(s['ask.maxTurns'].set, false); assert.equal(s['ask.maxTurns'].value, 40);
+  assert.equal(s['ask.maxTurns'].set, false); assert.equal(s['ask.maxTurns'].value, 400);
+  assert.deepEqual(s['ask.maxBudgetUsd'], { value: null, set: false }, 'the default is no cap, and it is not a stored choice');
   assert.equal(s['workflows.default'], undefined);
   await setPipelineCostLimitUsd(7);
   await setAskMaxBudgetUsd(null);

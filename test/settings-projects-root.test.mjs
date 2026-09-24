@@ -352,8 +352,8 @@ test('REGRESSION (Ask Worca): an ask-only POST must not clear the root or the bu
     const cleared = await postApi({ askMaxTurns: '', askMaxBudgetUsd: '' });
     assert.equal(cleared.status, 200);
     const k = await getApi();
-    assert.equal(k.askMaxTurns, 40);
-    assert.equal(k.askMaxBudgetUsd, 2);
+    assert.equal(k.askMaxTurns, 400);
+    assert.equal(k.askMaxBudgetUsd, null, 'cleared = the default, no cap');
     assert.equal(k.root, home, 'still untouched');
   });
 });

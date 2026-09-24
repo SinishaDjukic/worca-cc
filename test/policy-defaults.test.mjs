@@ -116,7 +116,8 @@ test('guardrail catalog: gp:<id> reads as a virtual, sanitised set with a policy
 test('Ask Worca limits: team defaults for a pinned governed project, never over a stored value', async () => {
   assert.deepEqual(askLimits({ projectKey: projectKey(home) }), { maxTurns: 12, maxBudgetUsd: 0.5 });
   const plain = askLimits();
-  assert.equal(plain.maxTurns, 40);
+  assert.equal(plain.maxTurns, 400);
+  assert.equal(plain.maxBudgetUsd, null, 'no project pinned: the local default, no cap');
   await setAskMaxTurns(30);
   assert.equal(askLimits({ projectKey: projectKey(home) }).maxTurns, 30);
   assert.equal(askLimits({ projectKey: projectKey(bare) }).maxTurns, 30);

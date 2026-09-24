@@ -28,19 +28,19 @@ const okBudget = () => ({
   remainingUsd: 8.77, blocked: false,
 });
 
-// GET /api/settings: the ask keys at their defaults, no budget limits.
+// GET /api/settings: the ask keys at their defaults (400 turns, no cost cap), no budget limits.
 const GET_BODY = () => ({
   root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {},
   pipelineCostLimitUsd: null, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
-  askMaxTurns: 40, askMaxBudgetUsd: 2,
+  askMaxTurns: 400, askMaxBudgetUsd: null,
 });
 
-// The server's storage semantics: '' clears to the default, null stays null
-// ("no cap"), anything else is stored as posted.
+// The server's storage semantics: '' clears to the default (400 turns / no cap),
+// null stays null ("no cap"), anything else is stored as posted.
 const resolveAsk = (body) => {
   const out = {};
-  if ('askMaxTurns' in body) out.askMaxTurns = body.askMaxTurns === '' ? 40 : body.askMaxTurns;
-  if ('askMaxBudgetUsd' in body) out.askMaxBudgetUsd = body.askMaxBudgetUsd === '' ? 2 : body.askMaxBudgetUsd;
+  if ('askMaxTurns' in body) out.askMaxTurns = body.askMaxTurns === '' ? 400 : body.askMaxTurns;
+  if ('askMaxBudgetUsd' in body) out.askMaxBudgetUsd = body.askMaxBudgetUsd === '' ? null : body.askMaxBudgetUsd;
   return out;
 };
 
@@ -100,18 +100,25 @@ async function boot({ postResponse, history = { threads: 3, worktrees: 2, attach
   return { window, posts, historyGets, deletes, tick, $, openSettings };
 }
 
-test('ui-settings-ask: GET paints the card (defaults, no-cap unchecked)', async () => {
+test('ui-settings-ask: GET paints the card (defaults: 400 turns, No cap ticked)', async () => {
   const { $, openSettings } = await boot();
   await openSettings();
-  assert.equal($('#askMaxTurns').value, '40');
-  assert.equal($('#askMaxBudgetUsd').value, '2');
-  assert.equal($('#askNoCap').checked, false);
-  assert.equal($('#askMaxBudgetUsd').disabled, false);
+  assert.equal($('#askMaxTurns').value, '400');
+  assert.equal($('#askMaxBudgetUsd').value, '');
+  assert.equal($('#askNoCap').checked, true, 'no cost cap by default');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
 });
+
+const untickNoCap = ($) => {
+  $('#askNoCap').checked = false;
+  $('#askNoCap').dispatchEvent(new window.Event('change', { bubbles: true }));
+};
 
 test('ui-settings-ask: Save posts exactly the two ask keys', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  untickNoCap($);
+  assert.equal($('#askMaxBudgetUsd').disabled, false, 'unticking No cap opens the amount field');
   $('#askMaxTurns').value = '55';
   $('#askMaxBudgetUsd').value = '3.5';
   $('#askLimitsSave').click();
@@ -119,6 +126,19 @@ test('ui-settings-ask: Save posts exactly the two ask keys', async () => {
   assert.equal(posts.length, 1, 'exactly one POST');
   assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5, chat: { scriptTools: true } });
   assert.match($('#askLimitsMsg').textContent, /Saved/);
+  assert.equal($('#askNoCap').checked, false, 'an amount turns the guard on');
+  assert.equal($('#askMaxBudgetUsd').value, '3.5');
+});
+
+test('ui-settings-ask: No cap unticked with the amount left empty posts the clear value and paints No cap back', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  untickNoCap($);
+  $('#askLimitsSave').click();
+  await tick();
+  assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: '', chat: { scriptTools: true } });
+  assert.equal($('#askNoCap').checked, true, 'an empty amount is the default: no cap');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
 });
 
 test('ui-settings-ask: client validation short-circuits the POST', async () => {
@@ -129,7 +149,8 @@ test('ui-settings-ask: client validation short-circuits the POST', async () => {
   await tick();
   assert.equal(posts.length, 0, 'out-of-range turns never reaches the server');
   assert.ok($('#askLimitsMsg').classList.contains('err'));
-  $('#askMaxTurns').value = '40';
+  $('#askMaxTurns').value = '400';
+  untickNoCap($);
   $('#askMaxBudgetUsd').value = '0.05';
   $('#askLimitsSave').click();
   await tick();
@@ -150,21 +171,39 @@ test('ui-settings-ask: a server 400 lands verbatim', async () => {
 test('ui-settings-ask: the No-cap checkbox disables the field and posts null', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  untickNoCap($);
+  assert.equal($('#askMaxBudgetUsd').disabled, false);
   $('#askNoCap').checked = true;
   $('#askNoCap').dispatchEvent(new window.Event('change', { bubbles: true }));
   assert.equal($('#askMaxBudgetUsd').disabled, true);
   $('#askLimitsSave').click();
   await tick();
-  assert.deepEqual(posts[0], { askMaxTurns: 40, askMaxBudgetUsd: null, chat: { scriptTools: true } });
+  assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: null, chat: { scriptTools: true } });
 });
 
 test('ui-settings-ask: Use defaults posts empty strings (the clear-to-default wire value)', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  $('#askMaxTurns').value = '55';
+  untickNoCap($);
+  $('#askMaxBudgetUsd').value = '3';
   $('#askLimitsReset').click();
   await tick();
   assert.deepEqual(posts[0], { askMaxTurns: '', askMaxBudgetUsd: '' });
-  assert.equal($('#askMaxTurns').value, '40', 'painted back from the response defaults');
+  assert.equal($('#askMaxTurns').value, '400', 'painted back from the response defaults');
+  assert.equal($('#askNoCap').checked, true, 'the default is no cap');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
+  assert.equal($('#askMaxBudgetUsd').value, '');
+});
+
+test('ui-settings-ask: the help text and placeholders state the defaults', async () => {
+  const { $ } = await boot();
+  const tip = (id) => $(`label[for="${id}"]`).parentElement.querySelector('.tip-content').textContent.replace(/\s+/g, ' ').trim();
+  assert.equal($('#askMaxTurns').getAttribute('placeholder'), '400');
+  assert.match(tip('askMaxTurns'), /Leave empty to restore the default of 400\.$/);
+  assert.equal($('#askMaxBudgetUsd').getAttribute('placeholder'), 'No cap');
+  assert.match(tip('askMaxBudgetUsd'), /no cap by default/i);
+  assert.doesNotMatch(tip('askMaxBudgetUsd'), /\$2/);
 });
 
 // ---- Chat history block ("Delete all chat history") ------------------------

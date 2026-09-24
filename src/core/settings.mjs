@@ -568,8 +568,10 @@ export function assertCostLimitInputs(inputs = {}) {
 // dollar cap (--max-budget-usd). For the budget key the literal `null` is a
 // STORED value meaning "no cap" (the flag is omitted), while '' / undefined clear
 // the key back to the default — the two semantics the design assigns to that key.
-export const DEFAULT_ASK_MAX_TURNS = 40;
-export const DEFAULT_ASK_MAX_BUDGET_USD = 2;
+// The defaults are 400 turns and NO cost cap: the default budget is itself `null`,
+// so an absent or invalid stored budget also means "no cap".
+export const DEFAULT_ASK_MAX_TURNS = 400;
+export const DEFAULT_ASK_MAX_BUDGET_USD = null;
 
 const isAskMaxTurns = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 500;
 const isAskMaxBudget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 100;
@@ -583,13 +585,13 @@ export function askMaxTurns() {
   return DEFAULT_ASK_MAX_TURNS;
 }
 
-/** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default (loudly). */
+/** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default, no cap (loudly). */
 export function askMaxBudgetUsd() {
   const v = readSettings().askMaxBudgetUsd;
   if (v === undefined) return DEFAULT_ASK_MAX_BUDGET_USD;
   if (v === null) return null;
   if (isAskMaxBudget(v)) return v;
-  console.warn(`[worca] invalid askMaxBudgetUsd ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_BUDGET_USD})`);
+  console.warn(`[worca] invalid askMaxBudgetUsd ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_BUDGET_USD ?? 'no cap'})`);
   return DEFAULT_ASK_MAX_BUDGET_USD;
 }
 
