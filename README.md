@@ -200,7 +200,8 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 - **A Timeline for planners** — work items as bars on a calendar (month → week → day), grouped
   by work item or person: what shipped (the PR merged), what waits for review, what needs
   attention. Merge dates come from an optional GitHub Action (`worca metrics pr-workflow`) or the
-  GitHub CLI, and the page still works without either.
+  GitHub CLI, and the page still works without either. With the Action, pull requests made
+  outside Worca show too, so the calendar covers the whole team's delivery.
 - **`worca metrics push`** — flush pending run records from the CLI, e.g. on a headless machine.
 
 See [`docs/team-metrics.md`](docs/team-metrics.md).

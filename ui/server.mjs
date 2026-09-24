@@ -102,7 +102,7 @@ import {
   metricsEvents, slugDirName, autoMetricsHome,
 } from '../src/core/metrics/sync.mjs';
 import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
-import { resolveRunPrs, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
+import { resolveRunPrs, listPrEvents, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
 // Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
 import {
   policyEvents, discoverPolicy, discoverAllPolicies, resolveProjectPolicy, resolveWorkspacePolicy, enableTeamPolicy, publishPolicy,
@@ -3389,6 +3389,22 @@ app.post('/api/team-metrics/prs', async (req, res) => {
   try {
     const { sources } = await scopeSources(scope);
     res.json(await resolveRunPrs({ runs: body.runs, sinks: sources.map((s) => s.slug) }));
+  } catch (err) { sendMetricsError(res, err); }
+});
+
+// Timeline: every PR the merge-tracking Action recorded for the scope's repositories in
+// [from, to) (ms). The page shows the ones no recorded run points at as work outside Worca.
+app.get('/api/team-metrics/pr-events', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  const num = (v) => (typeof v === 'string' && /^\d{1,15}$/.test(v) ? Number(v) : null);
+  const from = num(req.query.from);
+  const to = num(req.query.to);
+  if ((req.query.from != null && from == null) || (req.query.to != null && to == null)) return badRequest(res, 'from and to must be epoch milliseconds');
+  try {
+    const { sources, meta } = await scopeSources(scope);
+    const repos = meta.kind === 'project' ? [meta.slug] : sources.map((s) => s.slug);
+    res.json(await listPrEvents({ sinks: sources.map((s) => s.slug), repos, from, to }));
   } catch (err) { sendMetricsError(res, err); }
 });
 

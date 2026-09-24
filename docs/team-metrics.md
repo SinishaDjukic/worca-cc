@@ -94,7 +94,15 @@ run it. It reads the same records for the same scope; nothing extra is recorded.
 
 - **Work items, not runs.** Every run on one ticket (the run's task source) is one work item;
   runs without a ticket group by their branch (a resume or a follow-up on the same branch); a run
-  with neither stands alone. A bar spans the item's first run to its last, with each run drawn
+  with neither stands alone.
+- **Work outside Worca.** With the merge-tracking Action installed (below), every pull request of
+  the repository is known, including the ones no Worca run opened. Those appear as work items of
+  their own, tagged *outside Worca*: the bar is the pull request itself, from opened (a hollow dot)
+  to merged, in the status colour, and People groups them by the PR author's GitHub login (git user
+  names and GitHub logins are not matched, so one person can appear under both). They count in
+  Shipped, In review, Needs attention and lead time (PR opened to merge), never in spend. The
+  **PRs outside Worca** switch hides them; the choice is remembered per browser. A PR is "outside"
+  when no recorded run's branch is its head branch and no run was matched to its number. A bar spans the item's first run to its last, with each run drawn
   inside it (red when it failed). When the item has a pull request, a dashed line runs from the
   PR's creation to its merge, which is marked with a diamond: **shipped means the PR merged**.
 - **Month → week → day.** Click a week or a day in the header to zoom in; the breadcrumb zooms
@@ -124,7 +132,10 @@ it touched. Three sources are used, most trusted first; each is optional:
    default branch. On every pull request opened, reopened or closed it writes one small file,
    `.worca-metrics/prs/<number>.json`, to the `worca-metrics` branch (format below), so every
    teammate's Timeline sees merges without any local tooling. Run it once by hand from the Actions
-   tab ("Run workflow") to backfill the PRs of the last 90 days (or any number of days). It uses
+   tab ("Run workflow") to backfill the PRs of the last 90 days (or any number of days, up to 3650
+  for a repository's whole history); re-running it is safe, as an unchanged PR rewrites the same
+  file and an unchanged tree makes no commit. Each event carries the PR author's GitHub login,
+  unless the team chose "No attribution" (`attribution: "none"` in `.worca-metrics/config.json`). It uses
    `pull_request_target` but never checks out or runs PR code, does nothing on a repository
    without a `worca-metrics` branch, never force-pushes, and retries when a teammate's Worca
    pushed at the same moment. Like Worca itself it needs `worca-metrics` to be exempt from branch

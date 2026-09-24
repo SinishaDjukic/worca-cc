@@ -2385,8 +2385,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tl-dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block;background:var(--tl-c,var(--ink-3));}
 .tl-group{min-height:38px;background:var(--canvas-2);}
 .tl-group .tl-lab{background:var(--canvas-2);flex-direction:row;align-items:center;justify-content:flex-start;gap:9px;font-size:13px;}
-.tl-group .tl-lab b{font-weight:600;}
-.tl-group .tl-lab small{color:var(--ink-3);font-size:12px;}
+.tl-group .tl-lab b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tl-group .tl-lab small{color:var(--ink-3);font-size:12px;white-space:nowrap;flex:none;}
 .tl-ava{width:22px;height:22px;border-radius:50%;background:var(--field);border:1px solid var(--line-2);display:grid;place-items:center;
   font-size:10px;font-weight:600;color:var(--ink-2);flex:none;}
 .tl-proj{width:10px;height:10px;border-radius:3px;background:var(--ink-3);flex:none;}
@@ -2402,7 +2402,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tl-week{flex-direction:row;justify-content:flex-start;padding-left:8px;font-weight:500;color:var(--ink-2);}
 .tl-pips{display:flex;gap:2px;height:6px;align-items:center;}
 .tl-pips i{width:5px;height:5px;border-radius:1.5px;background:var(--green);transform:rotate(45deg);}
-.tl-pips em{font-style:normal;font-size:9px;color:var(--green-ink);line-height:1;}
+.tl-pips em{font-style:normal;font-size:9px;font-weight:600;color:var(--green-ink);line-height:1;margin-left:1px;}
 .tl-hour{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);font-size:11px;color:var(--ink-3);padding:14px 0 0 5px;font-family:var(--mono);}
 
 .tl-body{position:relative;}
@@ -2436,6 +2436,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tl-mark.is-open{border:2.5px solid var(--blue-ink);border-radius:50%;background:var(--panel);}
 .tl-mark.is-closed::before{content:"×";position:absolute;inset:-4px 0 0;text-align:center;font-size:15px;font-weight:600;line-height:1;color:var(--slate-ink);font-style:normal;}
 .tl-empty{padding:36px 20px;text-align:center;border-top:1px solid var(--line);}
+/* A pull request with no Worca run: the PR's life is the bar (solid, in its tone), opened at a hollow dot. */
+.tl-pr-start{position:absolute;top:50%;left:0;width:9px;height:9px;margin-top:-4.5px;border-radius:50%;border:2px solid var(--tl-c);background:var(--panel);box-sizing:border-box;z-index:1;}
+.is-outside .tl-tail,.tl-lg .tl-pr-start + .tl-tail{border-top:3px solid var(--tl-c);margin-top:-1px;}
+.tl-lg .tl-pr-start{margin-top:-4.5px;}
+.tl-outside{flex:none;font-size:10px;font-weight:600;letter-spacing:.02em;color:var(--ink-3);border:1px solid var(--line-2);border-radius:999px;padding:0 6px;line-height:15px;}
+.tl-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;margin-right:6px;}
+.tl-toggle input{margin:0;accent-color:var(--ink);}
+.tl-pop-note{margin:0;color:var(--ink-2);font-size:12.5px;}
 
 .tl-legend{display:flex;flex-wrap:wrap;gap:8px 18px;padding:6px 20px 4px;font-size:12px;color:var(--ink-2);border-top:1px solid var(--line);}
 .tl-lg{display:inline-flex;align-items:center;gap:7px;padding-top:6px;}

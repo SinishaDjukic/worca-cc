@@ -14640,8 +14640,13 @@ const tmState = {
   cache: new Map(),                 // scopeId → last payload this session: switching back paints at once
   tab: 'overview',                  // 'overview' | 'timeline' — the hash param (#team-metrics/timeline)
   // Timeline: calendar position, grouping (kept per viewer) and the tile filter.
-  tl: { zoom: 'month', anchor: Date.now(), mode: TL_MODES.includes(localStorage.getItem('worca.teamMetrics.tlMode')) ? localStorage.getItem('worca.teamMetrics.tlMode') : 'items', filter: null },
-  prs: new Map(),                   // scopeId → { map: runId → PRs|null, asked:Set, status, inflight, loading }
+  tl: {
+    zoom: 'month', anchor: Date.now(), filter: null,
+    mode: TL_MODES.includes(localStorage.getItem('worca.teamMetrics.tlMode')) ? localStorage.getItem('worca.teamMetrics.tlMode') : 'items',
+    outside: localStorage.getItem('worca.teamMetrics.tlOutside') !== '0',   // PRs with no Worca run behind them
+  },
+  // scopeId → { map: runId → PRs|null, asked:Set, status, inflight, loading, events: PR events|null, eventsInflight }
+  prs: new Map(),
 };
 
 // The chip while a load is out: hold Refresh and spin, keep the words. Cleared by the next
@@ -14729,7 +14734,7 @@ async function loadTeamMetricsView({ refresh = false } = {}) {
   tmState.cache.set(tmState.scopeId, data);
   chip.hidden = false;
   chip.replaceChildren(renderSyncChip(data, { doc: document, now: Date.now() }));
-  if (refresh) tmPrsFor(tmState.scopeId).asked.clear();   // Refresh re-asks for the PRs on screen too
+  if (refresh) { const p = tmPrsFor(tmState.scopeId); p.asked.clear(); p.events = null; }   // Refresh re-asks for the PRs too
   renderTeamMetrics();
   body.removeAttribute('aria-busy');
   applyTmTab();
@@ -14741,8 +14746,27 @@ const TL_PR_LOOKBACK = 60 * TL_DAY;   // runs this far before the window can sti
 const TL_PR_CHUNK = 500;
 
 function tmPrsFor(scopeId) {
-  if (!tmState.prs.has(scopeId)) tmState.prs.set(scopeId, { map: new Map(), asked: new Set(), status: null, inflight: false, loading: false });
+  if (!tmState.prs.has(scopeId)) tmState.prs.set(scopeId, { map: new Map(), asked: new Set(), status: null, inflight: false, loading: false, events: null, eventsInflight: false });
   return tmState.prs.get(scopeId);
+}
+
+/**
+ * Every PR the merge-tracking Action recorded for the scope, once per scope per session (Refresh
+ * asks again). The ones no run points at are drawn as work outside Worca. Without the Action
+ * the list is empty and nothing changes.
+ */
+async function ensureTmPrEvents() {
+  const scopeId = tmState.scopeId;
+  const pr = tmPrsFor(scopeId);
+  if (pr.events || pr.eventsInflight || !tmState.data || tmState.tab !== 'timeline') return;
+  pr.eventsInflight = true;
+  try {
+    const res = await fetch(`/api/team-metrics/pr-events?${new URLSearchParams({ scope: scopeId })}`);
+    const d = await safeJson(res);
+    pr.events = res.ok && d && Array.isArray(d.prs) ? d.prs : [];
+  } catch { pr.events = []; }
+  finally { pr.eventsInflight = false; }
+  if (pr.events.length && tmState.scopeId === scopeId && tmState.tab === 'timeline' && currentView() === 'team-metrics') { tmState.tlKeepScroll = true; renderTmTimeline(); }
 }
 
 /** Tabs: Overview keeps the range/filter controls; the Timeline has its own calendar. */
@@ -14780,7 +14804,7 @@ function renderTmTimeline() {
   if (!host || !data) return;
   const pr = tmPrsFor(tmState.scopeId);
   const now = Date.now();
-  tmState.tlItems = buildWorkItems(data.records || [], { prs: Object.fromEntries(pr.map), now });
+  tmState.tlItems = buildWorkItems(data.records || [], { prs: Object.fromEntries(pr.map), outside: pr.events || [], now });
   const scroll = host.querySelector('.tl-scroll');
   const keepScroll = scroll ? scroll.scrollLeft : 0;
   tmState.tlFit = tlFit(host);
@@ -14789,6 +14813,7 @@ function renderTmTimeline() {
   if (next && tmState.tlKeepScroll) next.scrollLeft = keepScroll;
   tmState.tlKeepScroll = false;
   void ensureTmPrs();
+  void ensureTmPrEvents();
 }
 
 function mergePrStatus(a, b) {
@@ -14933,6 +14958,14 @@ function renderTeamMetrics() {
 const tmSection = document.querySelector('section[data-view="team-metrics"]');
 if (tmSection) {
   tmSection.addEventListener('change', (e) => {
+    if (e.target.id === 'tl-outside') {
+      tmState.tl.outside = e.target.checked;
+      try { localStorage.setItem('worca.teamMetrics.tlOutside', tmState.tl.outside ? '1' : '0'); } catch { /* private mode */ }
+      closeTlPopover();
+      tmState.tlKeepScroll = true;
+      renderTmTimeline();
+      return;
+    }
     if (e.target.id === 'tm-scope') {
       tmState.scopeId = e.target.value;
       tmState.filter = {};

@@ -35,7 +35,7 @@ function scriptBody(yml) {
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
-function fakeGithub({ branch = true, raceOnce = false, pages = [] } = {}) {
+function fakeGithub({ branch = true, raceOnce = false, pages = [], attribution = 'git-user' } = {}) {
   const state = { tip: 'c0', trees: { c0: 't0' }, files: {}, commits: [], raced: false, notices: [], infos: [] };
   const err = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
   let treeN = 0; let commitN = 0;
@@ -64,6 +64,13 @@ function fakeGithub({ branch = true, raceOnce = false, pages = [] } = {}) {
         },
       },
       pulls: { list: Symbol('pulls.list') },
+      repos: {
+        getContent: async ({ path, ref }) => {
+          assert.equal(ref, 'worca-metrics');
+          if (path !== '.worca-metrics/config.json' || attribution == null) throw err(404);
+          return { data: { content: Buffer.from(JSON.stringify({ schema: 1, attribution })).toString('base64') } };
+        },
+      },
     },
     paginate: { iterator: async function* () { for (const p of pages) yield { data: p }; } },
   };
@@ -72,7 +79,7 @@ function fakeGithub({ branch = true, raceOnce = false, pages = [] } = {}) {
 }
 
 const PR = (n, extra = {}) => ({
-  number: n, html_url: `https://github.com/acme/api/pull/${n}`, title: `PR ${n}\u2028with a line break`, state: 'closed',
+  number: n, html_url: `https://github.com/acme/api/pull/${n}`, user: { login: 'mara-k' }, title: `PR ${n}\u2028with a line break`, state: 'closed',
   head: { ref: `worca/feature-${n}` }, base: { ref: 'dev' }, created_at: '2026-09-20T10:00:00Z',
   merged_at: '2026-09-22T17:30:00Z', closed_at: '2026-09-22T17:30:00Z', updated_at: '2026-09-22T17:30:00Z', ...extra,
 });
@@ -119,6 +126,18 @@ test('a merged PR becomes one event file that Worca reads back', async () => {
   // Re-delivery of the same event changes nothing.
   await runScript(f, { eventName: 'pull_request_target', payload: { pull_request: PR(474) } });
   assert.equal(f.state.commits.length, 1);
+});
+
+test('the author is recorded unless the team chose no attribution', async () => {
+  const f = fakeGithub();
+  await runScript(f, { eventName: 'pull_request_target', payload: { pull_request: PR(20) } });
+  assert.equal(parsePrEvent(f.state.files['.worca-metrics/prs/20.json']).author, 'mara-k');
+  const none = fakeGithub({ attribution: 'none' });
+  await runScript(none, { eventName: 'pull_request_target', payload: { pull_request: PR(21) } });
+  assert.equal(JSON.parse(none.state.files['.worca-metrics/prs/21.json']).author, null);
+  const noConfig = fakeGithub({ attribution: null });
+  await runScript(noConfig, { eventName: 'pull_request_target', payload: { pull_request: PR(22) } });
+  assert.equal(parsePrEvent(noConfig.state.files['.worca-metrics/prs/22.json']).author, 'mara-k');
 });
 
 test('opened and closed-unmerged states', async () => {

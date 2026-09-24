@@ -62,6 +62,7 @@ function normPr(p) {
     mergedAt: ms(p.mergedAt),
     closedAt: ms(p.closedAt),
     via: typeof p.via === 'string' ? p.via : null,
+    author: typeof p.author === 'string' && p.author ? p.author : null,
   };
 }
 
@@ -72,9 +73,11 @@ const RUN_RESULTS = new Set(['done', 'failed', 'stopped']);
  * @param {object} [opts]
  * @param {Object<string, object[]|null>} [opts.prs]  run id → its pull requests; `[]` = looked up,
  *   none; null/absent = unknown (not looked up, or no way to look it up).
+ * @param {object[]} [opts.outside]  PR events of the scope (GET /api/team-metrics/pr-events); the
+ *   ones no run points at become work items of their own (`kind: 'pr'`, no runs).
  * @param {number} [opts.now]
  */
-export function buildWorkItems(records, { prs = {}, now = Date.now() } = {}) {
+export function buildWorkItems(records, { prs = {}, outside = [], now = Date.now() } = {}) {
   const groups = new Map();
   for (const r of records || []) {
     const s = ms(r?.startedAt);
@@ -140,31 +143,7 @@ export function buildWorkItems(records, { prs = {}, now = Date.now() } = {}) {
       prOpenAt: null, mergedAt: null, closedAt: null,
       status: 'done', reason: null, end: null,
     };
-    const open = pulls.filter((p) => p.state === 'OPEN');
-    const merged = pulls.filter((p) => p.state === 'MERGED');
-    const closed = pulls.filter((p) => p.state === 'CLOSED');
-    const opens = pulls.map((p) => p.createdAt).filter(isNum);
-    item.prOpenAt = opens.length ? Math.min(...opens) : null;
-    if (open.length) {
-      item.end = Math.max(now, item.lastEnd);
-      const since = Math.min(...open.map((p) => p.createdAt ?? item.lastEnd));
-      const waitedDays = (now - since) / DAY;
-      if (waitedDays > REVIEW_WAIT_DAYS) {
-        const d = Math.floor(waitedDays);
-        item.status = 'attention';
-        item.reason = `Pull request waiting for review for ${d} day${d === 1 ? '' : 's'}.`;
-      } else item.status = 'review';
-    } else if (merged.length) {
-      const at = merged.map((p) => p.mergedAt).filter(isNum);
-      item.mergedAt = at.length ? Math.max(...at) : null;
-      item.status = 'shipped';
-      item.end = Math.max(item.mergedAt ?? item.lastEnd, item.lastEnd);
-    } else if (closed.length) {
-      const at = closed.map((p) => p.closedAt).filter(isNum);
-      item.closedAt = at.length ? Math.max(...at) : null;
-      item.status = 'closed';
-      item.end = Math.max(item.closedAt ?? item.lastEnd, item.lastEnd);
-    } else {
+    if (!applyPrStatus(item, pulls, now)) {
       item.end = item.lastEnd;
       if (lastRun.result === 'failed') {
         item.status = 'attention';
@@ -176,7 +155,78 @@ export function buildWorkItems(records, { prs = {}, now = Date.now() } = {}) {
     }
     items.push(item);
   }
+  // Pull requests no recorded run points at (by number, or by the run's branch): work done
+  // outside Worca, shown so the Timeline covers the whole team's delivery.
+  const lower = (s) => String(s || '').toLowerCase();
+  const runBranches = new Set();
+  for (const r of records || []) {
+    const b = r?.git?.branch;
+    if (typeof b === 'string' && b) for (const repo of recordRepos(r)) runBranches.add(`${lower(repo)}#${b}`);
+  }
+  const attached = new Set(items.flatMap((it) => it.prs.map((p) => `${lower(p.repo)}#${p.number}`)));
+  for (const ev of outside || []) {
+    const p = normPr({ ...ev, via: ev?.via || 'action' });
+    if (!p || p.number == null || p.createdAt == null) continue;
+    const k = `${lower(p.repo)}#${p.number}`;
+    if (attached.has(k) || runBranches.has(`${lower(p.repo)}#${ev.head}`)) continue;
+    attached.add(k);
+    const item = {
+      key: `pr:${k}`,
+      kind: 'pr',
+      title: p.title || `Pull request #${p.number}`,
+      project: lower(p.repo),
+      ticket: null,
+      branch: typeof ev.head === 'string' ? ev.head : null,
+      actor: p.author,
+      actors: p.author ? [p.author] : [],
+      runs: [],
+      first: p.createdAt,
+      lastEnd: p.createdAt,
+      costUsd: 0, activeMs: 0, reviewCycles: 0, failed: 0,
+      prs: [p],
+      prKnown: true,
+      prOpenAt: null, mergedAt: null, closedAt: null,
+      status: 'done', reason: null, end: null,
+    };
+    applyPrStatus(item, [p], now);
+    items.push(item);
+  }
   return items.sort((a, b) => a.first - b.first);
+}
+
+/** Status from the item's pull requests; false when it has none (the runs decide then). */
+function applyPrStatus(item, pulls, now) {
+  const open = pulls.filter((p) => p.state === 'OPEN');
+  const merged = pulls.filter((p) => p.state === 'MERGED');
+  const closed = pulls.filter((p) => p.state === 'CLOSED');
+  const opens = pulls.map((p) => p.createdAt).filter(isNum);
+  item.prOpenAt = opens.length ? Math.min(...opens) : null;
+  if (open.length) {
+    item.end = Math.max(now, item.lastEnd);
+    const since = Math.min(...open.map((p) => p.createdAt ?? item.lastEnd));
+    const waitedDays = (now - since) / DAY;
+    if (waitedDays > REVIEW_WAIT_DAYS) {
+      const d = Math.floor(waitedDays);
+      item.status = 'attention';
+      item.reason = `Pull request waiting for review for ${d} day${d === 1 ? '' : 's'}.`;
+    } else item.status = 'review';
+    return true;
+  }
+  if (merged.length) {
+    const at = merged.map((p) => p.mergedAt).filter(isNum);
+    item.mergedAt = at.length ? Math.max(...at) : null;
+    item.status = 'shipped';
+    item.end = Math.max(item.mergedAt ?? item.lastEnd, item.lastEnd);
+    return true;
+  }
+  if (closed.length) {
+    const at = closed.map((p) => p.closedAt).filter(isNum);
+    item.closedAt = at.length ? Math.max(...at) : null;
+    item.status = 'closed';
+    item.end = Math.max(item.closedAt ?? item.lastEnd, item.lastEnd);
+    return true;
+  }
+  return false;
 }
 
 function median(values) {
@@ -203,7 +253,7 @@ export function summarizeWindow(items, { startMs, endMs, now = Date.now() }) {
   const openUntil = (it) => (it.prs.some((p) => p.state === 'OPEN') ? Infinity : it.mergedAt ?? it.closedAt);
   const inReview = cut < startMs ? [] : items.filter((it) => it.prOpenAt != null && it.prOpenAt <= cut && openUntil(it) != null && openUntil(it) > cut);
   const attention = visible.filter((it) => it.status === 'attention');
-  const completed = items.filter((it) => it.runs[it.runs.length - 1].result === 'done' && inWin(it.lastEnd));
+  const completed = items.filter((it) => it.runs.length && it.runs[it.runs.length - 1].result === 'done' && inWin(it.lastEnd));
   const leads = shipped.filter((it) => it.mergedAt != null).map((it) => it.mergedAt - it.first);
   const spendUsd = Math.round(items.reduce((a, it) => a + it.runs.filter((r) => inWin(r.s)).reduce((b, r) => b + r.costUsd, 0), 0) * 100) / 100;
   return {

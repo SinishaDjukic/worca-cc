@@ -214,7 +214,7 @@ line per pull request of the repository, rewritten with its latest state on ever
 and close.
 
 ```json
-{"v":1,"kind":"pr","repo":"acme/billing-api","number":474,"url":"https://github.com/acme/billing-api/pull/474","title":"Idempotency keys for invoices","head":"worca/idempotency-keys-a1b2c3d4","base":"dev","state":"MERGED","createdAt":"2026-09-16T14:50:00Z","mergedAt":"2026-09-22T17:30:00Z","closedAt":"2026-09-22T17:30:00Z","updatedAt":"2026-09-22T17:30:00Z"}
+{"v":1,"kind":"pr","repo":"acme/billing-api","number":474,"url":"https://github.com/acme/billing-api/pull/474","title":"Idempotency keys for invoices","head":"worca/idempotency-keys-a1b2c3d4","base":"dev","author":"mara-k","state":"MERGED","createdAt":"2026-09-16T14:50:00Z","mergedAt":"2026-09-22T17:30:00Z","closedAt":"2026-09-22T17:30:00Z","updatedAt":"2026-09-22T17:30:00Z"}
 ```
 
 | Field | Notes |
@@ -223,6 +223,7 @@ and close.
 | `repo` | `owner/repo` as GitHub spells it; matched case-insensitively to record slugs |
 | `number`, `url`, `title` | the PR; `title` cleaned of control characters, ≤200 chars |
 | `head`, `base` | branch names; `head` is what a run's `git.branch` is matched against |
+| `author` | the PR author's GitHub login; `null` under `attribution: "none"` (additive) |
 | `state` | `OPEN`, `MERGED` or `CLOSED` (closed without merge) |
 | `createdAt`, `mergedAt`, `closedAt`, `updatedAt` | GitHub's timestamps, UTC; `null` when not yet |
 

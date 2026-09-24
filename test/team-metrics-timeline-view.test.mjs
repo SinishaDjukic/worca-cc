@@ -117,6 +117,32 @@ test('without merge data: Completed tile, no lead time, and the notice says why'
   assert.equal(prNotice(doc, { status: { gh: 'ok', actionRepos: [] } }), null);
 });
 
+test('PRs outside Worca: own row with a tag, a PR bar, the toggle, and a card without runs', () => {
+  const OUT = [{ repo: 'acme/api', number: 490, head: 'hand-made', url: 'https://github.com/acme/api/pull/490', title: 'Fix the docs', author: 'sini', state: 'MERGED', createdAt: iso(local(2026, 9, 8, 10)), mergedAt: iso(local(2026, 9, 9, 15)) }];
+  const withOut = buildWorkItems(RECORDS, { prs: PRS, outside: OUT, now: NOW });
+  const el = renderTimeline({ items: withOut, zoom: 'month', anchor: NOW, mode: 'items', now: NOW }, { doc });
+  const row = [...el.querySelectorAll('.tl-item')].find((r) => r.textContent.includes('Fix the docs'));
+  assert.ok(row.classList.contains('is-outside'));
+  assert.equal(row.querySelector('.tl-outside').textContent, 'outside Worca');
+  assert.ok(row.querySelector('.tl-pr-start'));
+  assert.ok(row.querySelector('.tl-mark.is-merged'));
+  assert.equal(row.querySelector('.tl-run'), null);
+  assert.match(row.querySelector('.tl-meta').textContent, /#490 · sini · Shipped/);
+  assert.equal(el.querySelector('[data-tl-filter="shipped"] .stat-value').textContent, '2');
+  assert.equal(el.querySelector('#tl-outside').checked, true);
+  const hidden = renderTimeline({ items: withOut, zoom: 'month', anchor: NOW, mode: 'items', now: NOW, outside: false }, { doc });
+  assert.ok(![...hidden.querySelectorAll('.tl-item')].some((r) => r.textContent.includes('Fix the docs')));
+  assert.equal(hidden.querySelector('[data-tl-filter="shipped"] .stat-value').textContent, '1');
+  assert.equal(hidden.querySelector('#tl-outside').checked, false, 'the toggle stays to turn them back on');
+  assert.equal(renderTimeline({ items, zoom: 'month', anchor: NOW, now: NOW }, { doc }).querySelector('#tl-outside'), null, 'no toggle when there is nothing outside');
+  const pop = renderTimelinePopover(withOut.find((i) => i.kind === 'pr'), { doc, now: NOW });
+  assert.match(pop.querySelector('.tl-pop-note').textContent, /no Worca run/);
+  assert.match(pop.textContent, /AuthorsiniOpenedTue 8 Sep/);
+  assert.match(pop.textContent, /Time to merge1d 5h/);
+  assert.equal(pop.querySelector('.tl-attempts'), null);
+  assert.ok(!/Spend/.test(pop.textContent));
+});
+
 test('popover: status, reason, PR links (http only), runs', () => {
   const ship = items.find((i) => i.title === 'Responses upstream');
   const pop = renderTimelinePopover(ship, { doc, now: NOW });

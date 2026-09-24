@@ -135,7 +135,7 @@ function tiles(doc, sum, { filter }) {
     ? [failing && `${failing} failing`, waiting && `${waiting} waiting for review`].filter(Boolean).join(' · ')
     : 'Nothing is blocked';
   row.append(tile({ f: 'attention', tone: 'red', label: 'Needs attention', value: String(sum.attention.length), sub: attSub }));
-  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run to merge' }));
+  if (sum.prKnown) row.append(tile({ label: 'Median lead time', value: fmtSpan(sum.medianLeadMs), sub: 'First run (or PR opened) to merge' }));
   row.append(tile({ label: 'Agent spend', value: TM_FMT.usd(sum.spendUsd), sub: 'Runs started in this period' }));
   return row;
 }
@@ -179,13 +179,21 @@ function crumbs(doc, zoom, anchor) {
   return nav;
 }
 
-function controls(doc, { zoom, anchor, mode }) {
+function controls(doc, { zoom, anchor, mode, outside, hasOutside }) {
   const bar = h(doc, 'div', 'tl-controls');
   const left = h(doc, 'div', 'tl-nav');
   const prev = btn(doc, 'btn-ghost btn-mini tl-step', '‹', { tlShift: -1 }); prev.setAttribute('aria-label', `Previous ${zoom}`);
   const next = btn(doc, 'btn-ghost btn-mini tl-step', '›', { tlShift: 1 }); next.setAttribute('aria-label', `Next ${zoom}`);
   left.append(prev, next, btn(doc, 'btn-ghost btn-mini tl-today', 'Today', { tlToday: 1 }), crumbs(doc, zoom, anchor));
   const right = h(doc, 'div', 'tl-opts');
+  if (hasOutside) {
+    const lbl = h(doc, 'label', 'tl-toggle');
+    const cb = h(doc, 'input');
+    cb.type = 'checkbox'; cb.id = 'tl-outside'; cb.checked = !!outside; cb.dataset.tlOutside = '1';
+    lbl.append(cb, 'PRs outside Worca');
+    lbl.title = 'Show pull requests that have no Worca run behind them';
+    right.append(lbl);
+  }
   right.append(h(doc, 'span', 'hint', 'Group by'));
   const seg = h(doc, 'div', 'seg tl-mode');
   seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Group by');
@@ -200,9 +208,10 @@ function controls(doc, { zoom, anchor, mode }) {
 }
 
 function mergedPips(doc, n) {
+  // Up to two diamonds; more merges on one day read as "◆ 5" so the narrow month cell never overflows.
   const p = h(doc, 'span', 'tl-pips');
-  for (let i = 0; i < Math.min(n, 3); i++) p.append(h(doc, 'i'));
-  if (n > 3) p.append(h(doc, 'em', null, `+${n - 3}`));
+  if (n > 2) { p.append(h(doc, 'i'), h(doc, 'em', null, String(n))); p.title = `${n} merged`; return p; }
+  for (let i = 0; i < n; i++) p.append(h(doc, 'i'));
   return p;
 }
 
@@ -267,9 +276,14 @@ function bar(doc, it, { X, zoom, now }) {
   const hit = btn(doc, 'tl-hit', null, { tlItem: it.key });
   hit.style.left = px(left); hit.style.width = px(width);
   hit.setAttribute('aria-label', `${it.title}: ${st.label}`);
-  const span = h(doc, 'i', 'tl-span');
-  span.style.left = '0px'; span.style.width = px(Math.max(rel(it.lastEnd), 4));
-  hit.append(span);
+  if (it.kind === 'pr') {
+    // No runs: the bar is the pull request itself, from opened (a hollow start) to merged/closed.
+    hit.append(h(doc, 'i', 'tl-pr-start'));
+  } else {
+    const span = h(doc, 'i', 'tl-span');
+    span.style.left = '0px'; span.style.width = px(Math.max(rel(it.lastEnd), 4));
+    hit.append(span);
+  }
   it.runs.forEach((r, i) => {
     const w = Math.max(rel(r.e) - rel(r.s), 3);
     const run = h(doc, 'i', `tl-run is-${r.result}`, zoom === 'day' && w > 70 ? `${i + 1} · ${fmtSpan(r.e - r.s)}` : null);
@@ -296,10 +310,11 @@ function bar(doc, it, { X, zoom, now }) {
 
 function itemRow(doc, it, { mode, win, X, zoom, now }) {
   const st = TL_STATUS[it.status];
-  const r = h(doc, 'div', `tl-row tl-item tl-t-${it.status === 'attention' && it.prs.some((p) => p.state === 'OPEN') ? 'blue' : st.tone}`);
+  const r = h(doc, 'div', `tl-row tl-item tl-t-${it.status === 'attention' && it.prs.some((p) => p.state === 'OPEN') ? 'blue' : st.tone}${it.kind === 'pr' ? ' is-outside' : ''}`);
   const lab = h(doc, 'div', `tl-lab tl-t-${st.tone}`);
   const t = h(doc, 'div', 'tl-title');
   t.append(h(doc, 'i', 'tl-dot'), Object.assign(h(doc, 'span', 'tl-title-text', it.title), { title: it.title }));
+  if (it.kind === 'pr') { const tag = h(doc, 'span', 'tl-outside', 'outside Worca'); tag.title = 'A pull request with no Worca run behind it'; t.append(tag); }
   const who = mode === 'people' ? it.project : (it.actor || 'Unattributed');
   const ref = it.ticket?.ref || (it.prs[0]?.number != null ? `#${it.prs[0].number}` : null);
   const meta = h(doc, 'div', 'tl-meta mono');
@@ -324,6 +339,7 @@ function legend(doc) {
     entry(sw(at('tl-mark is-merged', 15)), 'Merged: shipped'),
     entry(sw(at('tl-mark is-open', 15)), 'Pull request open'),
     entry(sw(at('tl-mark is-closed', 15)), 'Closed without merge'),
+    entry(sw(at('tl-pr-start', 4), at('tl-tail', 8, 22)), 'Pull request without a Worca run'),
   );
   return l;
 }
@@ -339,7 +355,9 @@ function legend(doc) {
  * @param {number} [m.fit]  px available for the calendar (the card's width minus the labels).
  */
 export function renderTimeline(m, { doc = globalThis.document } = {}) {
-  const { items = [], zoom = 'month', anchor = Date.now(), mode = 'items', filter = null, now = Date.now(), prStatus = null, prLoading = false, fit = 0 } = m;
+  const { items: all = [], zoom = 'month', anchor = Date.now(), mode = 'items', filter = null, now = Date.now(), prStatus = null, prLoading = false, fit = 0, outside = true } = m;
+  const hasOutside = all.some((it) => it.kind === 'pr');
+  const items = outside ? all : all.filter((it) => it.kind !== 'pr');
   const win = timelineWindow(zoom, anchor, { fit });
   const X = (t) => ((t - win.s) / (win.e - win.s)) * win.W;
   const sum = summarizeWindow(items, { startMs: win.s, endMs: win.e, now });
@@ -349,7 +367,7 @@ export function renderTimeline(m, { doc = globalThis.document } = {}) {
   if (note) root.append(note);
 
   const card = h(doc, 'section', 'card tl-card');
-  card.append(controls(doc, { zoom, anchor, mode }));
+  card.append(controls(doc, { zoom, anchor, mode, outside, hasOutside }));
   const scroll = h(doc, 'div', 'tl-scroll');
   const grid = h(doc, 'div', `tl-grid tl-z-${zoom}`);
   grid.style.width = `calc(var(--tl-lab) + ${px(win.W)})`;
@@ -402,7 +420,7 @@ export function renderTimeline(m, { doc = globalThis.document } = {}) {
   scroll.append(grid);
   card.append(scroll, legend(doc));
   root.append(card);
-  root.append(h(doc, 'small', 'hint tl-foot', 'Click a week or a day in the header to zoom in, and a bar for the work item. A work item is every run on one ticket, or on one branch when there is no ticket.'));
+  root.append(h(doc, 'small', 'hint tl-foot', 'Click a week or a day in the header to zoom in, and a bar for the work item. A work item is every run on one ticket, or on one branch when there is no ticket; a pull request with no run behind it is its own item.'));
   return root;
 }
 
@@ -416,19 +434,28 @@ export function renderTimelinePopover(it, { doc = globalThis.document, now = Dat
   const close = btn(doc, 'tl-pop-x', '×', { tlClose: 1 }); close.setAttribute('aria-label', 'Close');
   top.append(h(doc, 'span', 'tl-pill', it.status === 'done' && it.prKnown && !it.prs.length ? 'Done, no PR' : st.label), close);
   pop.append(top);
-  const kicker = h(doc, 'div', 'tl-pop-kicker mono', [it.ticket?.ref, it.project].filter(Boolean).join(' · '));
+  const outside = it.kind === 'pr';
+  const kicker = h(doc, 'div', 'tl-pop-kicker mono', [it.ticket?.ref || (outside ? `#${it.prs[0].number}` : null), it.project].filter(Boolean).join(' · '));
   pop.append(kicker, h(doc, 'h3', null, it.title));
+  if (outside) pop.append(h(doc, 'p', 'hint tl-pop-note', 'A pull request with no Worca run behind it: work done outside Worca.'));
   if (it.reason) pop.append(h(doc, 'p', 'tl-reason', it.reason));
   const dl = h(doc, 'dl');
   const row = (k, v) => { if (v == null || v === '') return; dl.append(h(doc, 'dt', null, k)); const dd = h(doc, 'dd'); if (typeof v === 'string') dd.textContent = v; else dd.append(v); dl.append(dd); };
-  row('Driven by', it.actors.length ? it.actors.join(', ') : 'Unattributed');
-  row('Attempts', `${it.runs.length}${it.failed ? ` (${it.failed} failed)` : ''}`);
-  if (it.reviewCycles) row('Review cycles', String(it.reviewCycles));
-  row('Agent time', fmtSpan(it.activeMs));
   const open = it.prs.some((p) => p.state === 'OPEN');
-  if (it.prOpenAt != null) row('Waiting for review', `${fmtSpan((it.mergedAt ?? it.closedAt ?? now) - it.prOpenAt)}${open ? ' so far' : ''}`);
-  if (it.mergedAt != null) row('Lead time', `${fmtSpan(it.mergedAt - it.first)} (first run to merge)`);
-  row('Spend', TM_FMT.usd(it.costUsd));
+  if (outside) {
+    row('Author', it.actor || 'Unattributed');
+    row('Opened', fmtDay(it.first));
+    if (it.mergedAt != null) row('Time to merge', fmtSpan(it.mergedAt - it.first));
+    else if (open) row('Open for', fmtSpan(now - it.first));
+  } else {
+    row('Driven by', it.actors.length ? it.actors.join(', ') : 'Unattributed');
+    row('Attempts', `${it.runs.length}${it.failed ? ` (${it.failed} failed)` : ''}`);
+    if (it.reviewCycles) row('Review cycles', String(it.reviewCycles));
+    row('Agent time', fmtSpan(it.activeMs));
+    if (it.prOpenAt != null) row('Waiting for review', `${fmtSpan((it.mergedAt ?? it.closedAt ?? now) - it.prOpenAt)}${open ? ' so far' : ''}`);
+    if (it.mergedAt != null) row('Lead time', `${fmtSpan(it.mergedAt - it.first)} (first run to merge)`);
+    row('Spend', TM_FMT.usd(it.costUsd));
+  }
   const link = (text, url) => { const safe = safeHttpUrl(url); if (!safe) return text; const a = h(doc, 'a', null, text); a.href = safe; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
   if (it.ticket && (it.ticket.url || it.ticket.ref)) row('Ticket', link(it.ticket.ref || 'Open ticket', it.ticket.url));
   for (const p of it.prs) {
@@ -439,6 +466,7 @@ export function renderTimelinePopover(it, { doc = globalThis.document, now = Dat
   }
   if (!it.prs.length) row('Pull request', it.prKnown ? 'None opened' : 'Unknown');
   pop.append(dl);
+  if (!it.runs.length) return pop;
   const runs = h(doc, 'div', 'tl-attempts');
   runs.append(h(doc, 'span', 'tl-attempts-h', 'Runs'));
   for (const r of it.runs) {
