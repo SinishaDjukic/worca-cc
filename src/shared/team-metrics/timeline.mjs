@@ -63,7 +63,42 @@ function normPr(p) {
     closedAt: ms(p.closedAt),
     via: typeof p.via === 'string' ? p.via : null,
     author: typeof p.author === 'string' && p.author ? p.author : null,
+    authorName: typeof p.authorName === 'string' && p.authorName ? p.authorName : null,
+    authorKey: typeof p.authorKey === 'string' && p.authorKey ? p.authorKey : null,
   };
+}
+
+/**
+ * People across runs and pull requests. A person is keyed by `actorKey` (a hash of the git email,
+ * the same on every host and machine); an item without one joins the person whose name or GitHub
+ * login it carries, else stands under its name. The label is the name seen most often.
+ * @param {object[]} items  the items to group (e.g. the ones on screen).
+ * @param {object} [opts]
+ * @param {object[]} [opts.known]  items to learn name/login → key from (the whole scope), so an
+ *   item on screen joins its person even when the item that carries the key is off screen.
+ * @returns {{ key: string, label: string, items: object[] }[]} sorted by label, "Unattributed" last.
+ */
+export function groupByPerson(items, { known = items } = {}) {
+  const low = (s) => String(s || '').trim().toLowerCase();
+  const alias = new Map();   // lower(name | login) → key
+  for (const it of known) {
+    if (!it.actorKey) continue;
+    for (const n of [it.actor, it.login]) if (n && !alias.has(low(n))) alias.set(low(n), it.actorKey);
+  }
+  const groups = new Map();
+  for (const it of items) {
+    const key = it.actorKey || alias.get(low(it.actor)) || alias.get(low(it.login)) || (it.actor ? `name:${low(it.actor)}` : '');
+    if (!groups.has(key)) groups.set(key, { key, names: new Map(), items: [] });
+    const g = groups.get(key);
+    g.items.push(it);
+    if (it.actor) g.names.set(it.actor, (g.names.get(it.actor) || 0) + (it.login && it.actor === it.login ? 0.5 : 1));
+  }
+  const out = [...groups.values()].map((g) => ({
+    key: g.key,
+    label: [...g.names.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || 'Unattributed',
+    items: g.items,
+  }));
+  return out.sort((a, b) => (a.key === '' ? 1 : b.key === '' ? -1 : a.label.localeCompare(b.label)));
 }
 
 const RUN_RESULTS = new Set(['done', 'failed', 'stopped']);
@@ -98,6 +133,7 @@ export function buildWorkItems(records, { prs = {}, outside = [], now = Date.now
         costUsd: isNum(r?.cost?.usd) ? r.cost.usd : 0,
         activeMs: isNum(r.activeMs) ? r.activeMs : e - s,
         actor: r.actor || null,
+        actorKey: typeof r.actorKey === 'string' && r.actorKey ? r.actorKey : null,
         reviewCycles: isNum(r?.cycles?.review) ? r.cycles.review : 0,
       };
     });
@@ -130,6 +166,9 @@ export function buildWorkItems(records, { prs = {}, outside = [], now = Date.now
       ticket: src ? { type: src.type || null, ref: src.ref || null, url: src.url || null, title: src.title || null } : null,
       branch: last?.git?.branch || null,
       actor: actors[0] || null,
+      // The primary actor's key (their runs first); older records carry none.
+      actorKey: (runs.find((x) => x.actor === actors[0] && x.actorKey) || runs.find((x) => x.actorKey))?.actorKey || null,
+      login: null,
       actors,
       runs,
       first: runs[0].s,
@@ -177,8 +216,11 @@ export function buildWorkItems(records, { prs = {}, outside = [], now = Date.now
       project: lower(p.repo),
       ticket: null,
       branch: typeof ev.head === 'string' ? ev.head : null,
-      actor: p.author,
-      actors: p.author ? [p.author] : [],
+      // The git author of most of its commits (as for runs), else the host login.
+      actor: p.authorName || p.author,
+      actorKey: p.authorKey,
+      login: p.author,
+      actors: p.authorName || p.author ? [p.authorName || p.author] : [],
       runs: [],
       first: p.createdAt,
       lastEnd: p.createdAt,

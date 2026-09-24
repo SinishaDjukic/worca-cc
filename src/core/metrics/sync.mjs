@@ -172,6 +172,12 @@ export async function gitUserName(dir) {
   return r.ok ? r.stdout.trim() || null : null;
 }
 
+/** `git config user.email` — only ever hashed into a record (record.mjs personKey), never stored. */
+export async function gitUserEmail(dir) {
+  const r = await _git(dir, ['config', 'user.email'], { timeoutMs: 10_000 });
+  return r.ok ? r.stdout.trim() || null : null;
+}
+
 /** `-c` identity args for metrics commits (§4.5: git user, or Worca under attribution:none).
  *  A name without an email would make `git commit` fail, so both must be set to use the git user.
  *  Exported for the team-policy branch (policy/sync.mjs), which commits under the same rules. */

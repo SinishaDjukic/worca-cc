@@ -63,6 +63,8 @@ export function parsePrEvent(text) {
     title: typeof v.title === 'string' ? v.title.slice(0, 200) : null,
     head: v.head, base: typeof v.base === 'string' ? v.base : null, state,
     author: typeof v.author === 'string' && v.author ? v.author.slice(0, 100) : null,
+    authorName: typeof v.authorName === 'string' && v.authorName ? v.authorName.slice(0, 200) : null,
+    authorKey: typeof v.authorKey === 'string' && /^[0-9a-f]{16}$/.test(v.authorKey) ? v.authorKey : null,
     createdAt: isoOrNull(v.createdAt), mergedAt: isoOrNull(v.mergedAt), closedAt: isoOrNull(v.closedAt),
     updatedAt: isoOrNull(v.updatedAt), via: 'action',
   };

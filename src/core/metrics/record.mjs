@@ -11,7 +11,7 @@ import { readPrState } from '../artifacts.mjs';
 import { RESULTS_FILE } from '../results.mjs';
 import { UI_PHASE } from '../../shared/graph/manifest.mjs';
 import {
-  projectSlug, gitUserName, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
+  projectSlug, gitUserName, gitUserEmail, resolveProjectSink, resolveWorkspaceSink, writeOutbox, scheduleFlush as realScheduleFlush,
 } from './sync.mjs';
 import { writeRunLedger } from './ledger.mjs';
 import { readPolicyState } from '../policy/state.mjs';
@@ -231,6 +231,9 @@ export function buildRunRecord(snap, { attribution = 'git-user', now = new Date(
       deletions: num(g.deletions),
     },
     actor: attribution === 'none' ? null : cleanText(snap.actor),
+    // Additive: a stable, host-neutral key for the person (personKey of the git email), so the
+    // Timeline can match a run's actor to the author of a pull request made outside Worca.
+    ...(attribution !== 'none' && PERSON_KEY_RE.test(String(snap.actorKey || '')) ? { actorKey: snap.actorKey } : {}),
     // Present ONLY on runs that saw a policy: records of policy-less runs stay byte-identical to v1.
     ...((p) => (p ? { policy: p } : {}))(buildPolicy(snap.policy, attribution)),
     ...((h) => (h ? { human: h } : {}))(buildHuman(agentSteps, snap.humanHours)),
@@ -375,11 +378,29 @@ export async function snapshotFromHarness(harness, { status, error = null } = {}
     // The person who started the run (identity.mjs) when one is known; else, as before, the
     // checkout's git user (a local install, the CLI). attribution:'none' still drops both.
     actor: actorForRecord(harness.state && harness.state.startedBy) ?? await gitUserName(harness.projectDir),
+    // Only for the git user: a person named by startedBy (identity.mjs) has no email here.
+    actorKey: actorForRecord(harness.state && harness.state.startedBy) ? null : personKey(await gitUserEmail(harness.projectDir)),
     // The run's policy state (pipelines.policy_state) as the gates and the resume flow left it;
     // `unattended` is the harness's own auto flag, which the record needs even when nothing else
     // was written (a --yes run that stayed under every cap still carries no state row).
     policy: (() => { const p = readPolicyState(runId); return p.home ? { ...p, unattended: p.unattended === true || !!harness.auto } : null; })(),
   };
+}
+
+export const PERSON_KEY_RE = /^[0-9a-f]{16}$/;
+/** Emails that name a machine, not a person: Worca's own run commits (run-harness.mjs) and the
+ *  metrics fallback identity. The PR-events Action skips the same ones. */
+const MACHINE_EMAIL_RE = /@local$/i;
+
+/**
+ * A person's host-neutral key: sha256("worca:" + lower-cased email), first 16 hex. The same on
+ * every machine and every host (the PR-events Action computes it from commit authors), and no
+ * plain address is stored. null for no email or a machine identity.
+ */
+export function personKey(email) {
+  const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!e || !e.includes('@') || MACHINE_EMAIL_RE.test(e)) return null;
+  return createHash('sha256').update(`worca:${e}`).digest('hex').slice(0, 16);
 }
 
 /** A recorded person (not 'local', not empty) for the metrics actor, or null to fall back. */

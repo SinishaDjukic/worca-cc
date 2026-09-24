@@ -9,6 +9,8 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { personKey } from '../src/core/metrics/record.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { installPrWorkflow, prWorkflowText, PR_WORKFLOW_PATH, parsePrEvent } from '../src/core/metrics/prs.mjs';
 
@@ -35,7 +37,7 @@ function scriptBody(yml) {
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
-function fakeGithub({ branch = true, raceOnce = false, pages = [], attribution = 'git-user' } = {}) {
+function fakeGithub({ branch = true, raceOnce = false, pages = [], attribution = 'git-user', commits = {} } = {}) {
   const state = { tip: 'c0', trees: { c0: 't0' }, files: {}, commits: [], raced: false, notices: [], infos: [] };
   const err = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
   let treeN = 0; let commitN = 0;
@@ -73,6 +75,17 @@ function fakeGithub({ branch = true, raceOnce = false, pages = [], attribution =
       },
     },
     paginate: { iterator: async function* () { for (const p of pages) yield { data: p }; } },
+    // Commit authors per PR number (`commits`), answered for every aliased pullRequest(number: N).
+    graphql: async (query, vars) => {
+      state.graphql = (state.graphql || 0) + 1;
+      assert.deepEqual(vars, { owner: 'acme', repo: 'api' });
+      const repository = {};
+      for (const m of query.matchAll(/(p\d+): pullRequest\(number: (\d+)\)/g)) {
+        const list = commits[Number(m[2])] || [];
+        repository[m[1]] = { commits: { nodes: list.map(([name, email]) => ({ commit: { author: { name, email } } })) } };
+      }
+      return { repository };
+    },
   };
   const core = { notice: (m) => state.notices.push(m), info: (m) => state.infos.push(m) };
   return { github, core, state };
@@ -85,11 +98,11 @@ const PR = (n, extra = {}) => ({
 });
 
 async function runScript({ github, core }, context) {
-  const fn = new AsyncFunction('github', 'context', 'core', scriptBody(TEMPLATE));
+  const fn = new AsyncFunction('github', 'context', 'core', 'require', scriptBody(TEMPLATE));
   // Retries sleep 1 s × attempt; keep the test fast.
   const realSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (cb) => realSetTimeout(cb, 0);
-  try { await fn(github, { repo: { owner: 'acme', repo: 'api' }, ...context }, core); } finally { globalThis.setTimeout = realSetTimeout; }
+  try { await fn(github, { repo: { owner: 'acme', repo: 'api' }, ...context }, core, createRequire(import.meta.url)); } finally { globalThis.setTimeout = realSetTimeout; }
 }
 
 test('this repository runs the shipped template, byte for byte', () => {
@@ -138,6 +151,38 @@ test('the author is recorded unless the team chose no attribution', async () => 
   const noConfig = fakeGithub({ attribution: null });
   await runScript(noConfig, { eventName: 'pull_request_target', payload: { pull_request: PR(22) } });
   assert.equal(parsePrEvent(noConfig.state.files['.worca-metrics/prs/22.json']).author, 'mara-k');
+});
+
+test('the git author of most commits names the PR (as for runs); machines skipped; same key as Worca', async () => {
+  const f = fakeGithub({ commits: {
+    30: [['Siniša Đukić', 'Sini@Example.com'], ['orchestrator', 'orchestrator@local'], ['orchestrator', 'orchestrator@local'], ['Sinisha D', 'sini@example.com'], ['Siniša Đukić', 'sini@example.com'], ['Mara K', 'mara@example.com']],
+    31: [['orchestrator', 'orchestrator@local']],
+  } });
+  await runScript(f, { eventName: 'pull_request_target', payload: { pull_request: PR(30) } });
+  const ev = parsePrEvent(f.state.files['.worca-metrics/prs/30.json']);
+  assert.equal(ev.authorName, 'Siniša Đukić', 'the most-used name of the most frequent email');
+  assert.equal(ev.authorKey, personKey('sini@example.com'), 'the Action and Worca compute the same key');
+  assert.equal(ev.author, 'mara-k', 'the login stays as the fallback');
+  assert.ok(!f.state.files['.worca-metrics/prs/30.json'].includes('example.com'), 'no email is stored');
+  await runScript(f, { eventName: 'pull_request_target', payload: { pull_request: PR(31) } });
+  const machine = parsePrEvent(f.state.files['.worca-metrics/prs/31.json']);
+  assert.equal(machine.authorName, null, 'only machine commits: no git author');
+  assert.equal(machine.authorKey, null);
+  // attribution "none": no author of any kind, and the commits are not even read.
+  const none = fakeGithub({ attribution: 'none', commits: { 32: [['X', 'x@example.com']] } });
+  await runScript(none, { eventName: 'pull_request_target', payload: { pull_request: PR(32) } });
+  const hidden = JSON.parse(none.state.files['.worca-metrics/prs/32.json']);
+  assert.deepEqual([hidden.author, hidden.authorName, hidden.authorKey], [null, null, null]);
+  assert.equal(none.state.graphql, undefined);
+});
+
+test('backfill reads commit authors 50 PRs per GraphQL query', async () => {
+  const recent = new Date(Date.now() - 86_400_000).toISOString();
+  const page = Array.from({ length: 120 }, (_, i) => PR(i + 1, { updated_at: recent }));
+  const f = fakeGithub({ pages: [page] });
+  await runScript(f, { eventName: 'workflow_dispatch', payload: { inputs: { days: '30' } } });
+  assert.equal(f.state.graphql, 3);
+  assert.equal(Object.keys(f.state.files).length, 120);
 });
 
 test('opened and closed-unmerged states', async () => {

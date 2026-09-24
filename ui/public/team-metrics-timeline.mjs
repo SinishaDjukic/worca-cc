@@ -4,7 +4,7 @@
 // work items built by src/shared/team-metrics/timeline.mjs and returns detached elements; app.js
 // owns fetching, state and the delegated events (every control carries a data-tl-* attribute).
 // Calendar windows are in the viewer's LOCAL time — a PM reads "Thursday", not a UTC day.
-import { summarizeWindow } from '../../src/shared/team-metrics/timeline.mjs';
+import { summarizeWindow, groupByPerson } from '../../src/shared/team-metrics/timeline.mjs';
 import { safeHttpUrl } from '../../src/shared/team-metrics/aggregate.mjs';
 import { TM_FMT } from './team-metrics-view.mjs';
 
@@ -102,14 +102,15 @@ const px = (n) => `${Math.round(n * 10) / 10}px`;
 
 // ---- the page ------------------------------------------------------------------------------
 
-function groupItems(items, mode) {
+/** [label, items][]: by project, or by person (groupByPerson: one person across runs and PRs). */
+function groupItems(items, mode, known) {
+  if (mode === 'people') return groupByPerson(items, { known }).map((g) => [g.key ? g.label : '', g.items]);
   const groups = new Map();
   for (const it of items) {
-    const k = mode === 'people' ? (it.actor || '') : it.project;
-    if (!groups.has(k)) groups.set(k, []);
-    groups.get(k).push(it);
+    if (!groups.has(it.project)) groups.set(it.project, []);
+    groups.get(it.project).push(it);
   }
-  return [...groups.entries()].sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0])));
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 function tiles(doc, sum, { filter }) {
@@ -401,7 +402,7 @@ export function renderTimeline(m, { doc = globalThis.document } = {}) {
   if (filter === 'shipped') shown = sum.shipped;
   else if (filter === 'review') shown = sum.inReview;
   else if (filter === 'attention') shown = sum.attention;
-  for (const [key, list] of groupItems(shown, mode)) {
+  for (const [key, list] of groupItems(shown, mode, all)) {
     const g = h(doc, 'div', 'tl-row tl-group');
     const lab = h(doc, 'div', 'tl-lab');
     const shipped = list.filter((i) => i.status === 'shipped').length;
@@ -443,7 +444,7 @@ export function renderTimelinePopover(it, { doc = globalThis.document, now = Dat
   const row = (k, v) => { if (v == null || v === '') return; dl.append(h(doc, 'dt', null, k)); const dd = h(doc, 'dd'); if (typeof v === 'string') dd.textContent = v; else dd.append(v); dl.append(dd); };
   const open = it.prs.some((p) => p.state === 'OPEN');
   if (outside) {
-    row('Author', it.actor || 'Unattributed');
+    row('Author', !it.actor ? 'Unattributed' : it.login && it.login !== it.actor ? `${it.actor} (@${it.login})` : it.actor);
     row('Opened', fmtDay(it.first));
     if (it.mergedAt != null) row('Time to merge', fmtSpan(it.mergedAt - it.first));
     else if (open) row('Open for', fmtSpan(now - it.first));
