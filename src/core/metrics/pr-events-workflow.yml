@@ -45,10 +45,52 @@ jobs:
               if (e.status === 404) { core.notice(`No ${BRANCH} branch here: team metrics are not enabled, nothing to record.`); return; }
               throw e;
             }
+            // The team's attribution choice (set when team metrics was enabled): with "none", no
+            // author is recorded, as for the run records.
+            let attribution = 'git-user';
+            try {
+              const cfg = await github.rest.repos.getContent({ owner, repo, path: '.worca-metrics/config.json', ref: BRANCH });
+              attribution = JSON.parse(Buffer.from(cfg.data.content, 'base64').toString('utf8')).attribution || attribution;
+            } catch (e) { core.info(`No readable .worca-metrics/config.json (${e.status || e.message}); recording authors.`); }
             const clean = (s) => String(s || '').replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029]+/g, ' ').trim().slice(0, 200);
+            // Who made the PR, the way Worca names the author of a run: the git author of most of its
+            // commits (name, plus a key = sha256("worca:" + email), never the address itself). Git
+            // identities are the same on every host; the GitHub login is kept only as a fallback.
+            // Machine identities (Worca's own run commits, orchestrator@local) are skipped.
+            const who = new Map();   // PR number → { name, key }
+            const personKey = (email) => {
+              const e = String(email || '').trim().toLowerCase();
+              if (!e.includes('@') || /@local$/.test(e)) return null;
+              return require('crypto').createHash('sha256').update(`worca:${e}`).digest('hex').slice(0, 16);
+            };
+            const loadAuthors = async (numbers) => {
+              for (let i = 0; i < numbers.length; i += 50) {
+                const batch = numbers.slice(i, i + 50);
+                const q = `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${batch.map((n, j) => `p${j}: pullRequest(number: ${Number(n)}) { commits(first: 100) { nodes { commit { author { name email } } } } }`).join(' ')} } }`;
+                let data;
+                try { data = await github.graphql(q, { owner, repo }); } catch (e) { data = e.data; core.info(`Some commit authors could not be read: ${e.message}`); }
+                batch.forEach((n, j) => {
+                  const nodes = data?.repository?.[`p${j}`]?.commits?.nodes || [];
+                  const tally = new Map();   // key → { n, names: Map(name → n) }
+                  for (const c of nodes) {
+                    const a = c?.commit?.author;
+                    const key = personKey(a?.email);
+                    if (!key) continue;
+                    const t = tally.get(key) || { n: 0, names: new Map() };
+                    t.n += 1;
+                    if (a.name) t.names.set(a.name, (t.names.get(a.name) || 0) + 1);
+                    tally.set(key, t);
+                  }
+                  const top = [...tally.entries()].sort((x, y) => y[1].n - x[1].n)[0];
+                  if (top) who.set(n, { key: top[0], name: [...top[1].names.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] || null });
+                });
+              }
+            };
             const toEvent = (pr) => ({
               v: 1, kind: 'pr', repo: `${owner}/${repo}`, number: pr.number, url: pr.html_url, title: clean(pr.title),
-              head: pr.head.ref, base: pr.base.ref,
+              head: pr.head.ref, base: pr.base.ref, author: attribution === 'none' ? null : (pr.user && pr.user.login) || null,
+              authorName: attribution === 'none' ? null : clean(who.get(pr.number)?.name) || null,
+              authorKey: attribution === 'none' ? null : who.get(pr.number)?.key || null,
               state: pr.merged_at ? 'MERGED' : pr.state === 'closed' ? 'CLOSED' : 'OPEN',
               createdAt: pr.created_at, mergedAt: pr.merged_at || null, closedAt: pr.closed_at || null, updatedAt: pr.updated_at,
             });
@@ -61,6 +103,7 @@ jobs:
               }
             } else prs = [context.payload.pull_request];
             prs = prs.filter((pr) => pr && pr.head && pr.head.ref);
+            if (attribution !== 'none') await loadAuthors(prs.map((pr) => pr.number));
             for (let i = 0; i < prs.length; i += 200) {
               const chunk = prs.slice(i, i + 200);
               const tree = chunk.map((pr) => ({ path: `${DIR}/${pr.number}.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(toEvent(pr))}\n` }));

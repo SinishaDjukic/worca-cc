@@ -173,6 +173,40 @@ test('without any PR data the summary falls back to completed work', () => {
   assert.deepEqual(s.completed.map((i) => i.runs[0].id), ['a']);
 });
 
+test('PRs no run points at become work items outside Worca; attached ones do not repeat', () => {
+  const ev = (number, head, extra = {}) => ({ repo: 'Acme/Billing-API', number, head, url: `https://github.com/acme/billing-api/pull/${number}`, title: `PR ${number}`, author: 'sini', state: 'MERGED', createdAt: '2026-09-10T09:00:00Z', mergedAt: '2026-09-11T09:00:00Z', ...extra });
+  const items = buildWorkItems([
+    rec({ id: 'r1', start: at('2026-09-12T10:00:00Z'), branch: 'worca/by-branch' }),
+    rec({ id: 'r2', start: at('2026-09-13T10:00:00Z'), branch: 'worca/by-number' }),
+  ], {
+    now: NOW,
+    prs: { r2: [merged(20, '2026-09-13T12:00:00Z', '2026-09-14T10:00:00Z')] },
+    outside: [
+      ev(10, 'worca/by-branch'),                          // a run's branch → not outside
+      ev(20, 'renamed'),                                  // already attached by number → not outside
+      ev(30, 'hand-made', { title: 'Fix the docs' }),      // outside, merged
+      ev(31, 'still-open', { state: 'OPEN', mergedAt: null, createdAt: new Date(NOW - 3 * DAY).toISOString() }),
+      ev(32, 'no-date', { createdAt: null }),             // unusable: no start
+    ],
+  });
+  const outside = items.filter((i) => i.kind === 'pr');
+  assert.deepEqual(outside.map((i) => i.prs[0].number).sort(), [30, 31]);
+  const fix = outside.find((i) => i.prs[0].number === 30);
+  assert.equal(fix.title, 'Fix the docs');
+  assert.equal(fix.status, 'shipped');
+  assert.equal(fix.actor, 'sini');
+  assert.equal(fix.project, 'acme/billing-api');
+  assert.equal(fix.first, at('2026-09-10T09:00:00Z'));
+  assert.equal(fix.mergedAt, at('2026-09-11T09:00:00Z'));
+  assert.equal(fix.runs.length, 0);
+  const open = outside.find((i) => i.prs[0].number === 31);
+  assert.equal(open.status, 'attention', 'an outside PR waiting > 2 days needs attention too');
+  const s = summarizeWindow(items, { startMs: at('2026-09-01T00:00:00Z'), endMs: at('2026-10-01T00:00:00Z'), now: NOW });
+  assert.ok(s.shipped.includes(fix));
+  assert.ok(!s.completed.includes(fix), 'no runs, so not "completed"');
+  assert.equal(s.spendUsd, 2, 'outside PRs cost nothing');
+});
+
 test('records with a malformed startedAt are skipped', () => {
   const bad = rec({ id: 'z', start: NOW });
   bad.startedAt = 'nope';

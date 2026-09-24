@@ -61,11 +61,12 @@ const DATA = {
 };
 const PRS_OK = { prs: { a: [{ repo: 'acme/billing-api', number: 9, url: 'https://github.com/acme/billing-api/pull/9', state: 'MERGED', createdAt: iso(now - 2.5 * 3_600_000), mergedAt: iso(now - 3_600_000) }], b: [] }, status: { gh: 'ok', actionRepos: [], unsupportedRepos: [] } };
 
-function handler({ prs = PRS_OK, prsStatus = 200, log = [] } = {}) {
+function handler({ prs = PRS_OK, prsStatus = 200, events = [], log = [] } = {}) {
   return (u, opts) => {
     if (!u.includes('/api/team-metrics')) return null;
     log.push({ u, body: opts.body ? JSON.parse(opts.body) : null });
     if (u.includes('/api/team-metrics/scopes')) return respond(SCOPES);
+    if (u.includes('/api/team-metrics/pr-events')) return respond({ prs: events, truncated: false, actionRepos: ['acme/billing-api'] });
     if (u.includes('/api/team-metrics/prs')) return respond(prs, prsStatus);
     if (u.includes('/api/team-metrics?')) return respond(DATA);
     return null;
@@ -136,6 +137,26 @@ test('a bar opens its card and Escape closes it; header zooms to a day', async (
   doc.querySelector('#tm-timeline .tl-crumb[data-tl-zoom="month"]').click();
   await settle(tick);
   assert.ok(doc.querySelector('#tm-timeline .tl-z-month'));
+});
+
+test('PRs outside Worca are fetched once, drawn, and the toggle hides them (remembered)', async () => {
+  const log = [];
+  const events = [{ repo: 'acme/billing-api', number: 50, head: 'hand-made', url: 'https://github.com/acme/billing-api/pull/50', title: 'Hand-made fix', author: 'sini', state: 'MERGED', createdAt: iso(now - 5 * 3_600_000), mergedAt: iso(now - 4 * 3_600_000) }];
+  const { window, tick } = await boot({ url: 'http://localhost:4317/#team-metrics/timeline', fetchHandler: handler({ log, events }) });
+  await settle(tick);
+  const doc = window.document;
+  assert.equal(log.filter((c) => c.u.includes('/api/team-metrics/pr-events')).length, 1);
+  const row = () => [...doc.querySelectorAll('#tm-timeline .tl-item')].find((r) => r.textContent.includes('Hand-made fix'));
+  assert.ok(row(), 'the outside PR has its own row');
+  assert.ok(row().querySelector('.tl-outside'));
+  const cb = doc.getElementById('tl-outside');
+  cb.checked = false;
+  cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle(tick);
+  assert.equal(row(), undefined);
+  assert.equal(window.localStorage.getItem('worca.teamMetrics.tlOutside'), '0');
+  assert.equal(log.filter((c) => c.u.includes('/api/team-metrics/pr-events')).length, 1, 'not fetched again');
+  window.localStorage.removeItem('worca.teamMetrics.tlOutside');
 });
 
 test('a failing PR lookup leaves a working page that says so', async () => {

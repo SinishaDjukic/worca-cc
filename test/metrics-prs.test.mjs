@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { worktreePath } from '../src/core/metrics/sync.mjs';
 import {
-  resolveRunPrs, parsePrEvent, readPrEventsFromDir, buildBranchQuery, cacheFresh, cachePath, isGithubSlug, parsePrUrl,
+  resolveRunPrs, listPrEvents, parsePrEvent, readPrEventsFromDir, buildBranchQuery, cacheFresh, cachePath, isGithubSlug, parsePrUrl,
   GH_BATCH, OPEN_TTL_MS, _testing,
 } from '../src/core/metrics/prs.mjs';
 
@@ -169,6 +169,23 @@ test('a record that names its PR finds the Action event by number', async () => 
   writeEvent('acme/numbered', { repo: 'acme/numbered', number: 12, head: 'renamed-later', state: 'CLOSED', closedAt: '2026-09-23T10:00:00Z' });
   const { prs } = await resolveRunPrs({ runs: [{ id: 'n1', repos: ['acme/numbered'], branch: 'original', pr: { url: 'https://github.com/acme/numbered/pull/12', number: 12 } }], sinks: ['acme/numbered'] });
   assert.equal(prs.n1[0].state, 'CLOSED');
+});
+
+test('listPrEvents: the scope\'s repos only, overlapping the window, newest first, with authors', async () => {
+  _testing.setNow(() => NOW);
+  const slug = 'acme/listed';
+  writeEvent(slug, { repo: 'Acme/Listed', number: 1, head: 'a', state: 'MERGED', author: 'sini', createdAt: '2026-08-01T10:00:00Z', mergedAt: '2026-08-02T10:00:00Z' });
+  writeEvent(slug, { repo: 'Acme/Listed', number: 2, head: 'b', state: 'OPEN', createdAt: '2026-09-20T10:00:00Z' });
+  writeEvent(slug, { repo: 'Acme/Listed', number: 3, head: 'c', state: 'MERGED', createdAt: '2026-09-01T10:00:00Z', mergedAt: '2026-09-03T10:00:00Z' });
+  writeEvent(slug, { repo: 'other/repo', number: 4, head: 'd', state: 'OPEN', createdAt: '2026-09-21T10:00:00Z' });
+  const all = await listPrEvents({ sinks: [slug], repos: [slug] });
+  assert.deepEqual(all.prs.map((p) => p.number), [2, 3, 1]);
+  assert.equal(all.prs.find((p) => p.number === 1).author, 'sini');
+  assert.deepEqual(all.actionRepos, ['acme/listed']);
+  const sep = await listPrEvents({ sinks: [slug], repos: [slug], from: Date.parse('2026-09-02T00:00:00Z'), to: Date.parse('2026-10-01T00:00:00Z') });
+  assert.deepEqual(sep.prs.map((p) => p.number), [2, 3], 'open PRs reach "now"; #3 merged inside');
+  assert.equal(sep.truncated, false);
+  assert.deepEqual((await listPrEvents({ sinks: ['acme/none'], repos: ['acme/none'] })).prs, []);
 });
 
 test('bad lookup rows are dropped, not fatal', async () => {

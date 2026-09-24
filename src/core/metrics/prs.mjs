@@ -62,6 +62,9 @@ export function parsePrEvent(text) {
     repo: v.repo, number: v.number, url: typeof v.url === 'string' ? v.url : null,
     title: typeof v.title === 'string' ? v.title.slice(0, 200) : null,
     head: v.head, base: typeof v.base === 'string' ? v.base : null, state,
+    author: typeof v.author === 'string' && v.author ? v.author.slice(0, 100) : null,
+    authorName: typeof v.authorName === 'string' && v.authorName ? v.authorName.slice(0, 200) : null,
+    authorKey: typeof v.authorKey === 'string' && /^[0-9a-f]{16}$/.test(v.authorKey) ? v.authorKey : null,
     createdAt: isoOrNull(v.createdAt), mergedAt: isoOrNull(v.mergedAt), closedAt: isoOrNull(v.closedAt),
     updatedAt: isoOrNull(v.updatedAt), via: 'action',
   };
@@ -309,6 +312,45 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true } = {}
     prs[l.id] = found.size ? [...found.values()] : known ? [] : null;
   }
   return { prs, status };
+}
+
+export const MAX_LISTED_EVENTS = 5000;
+
+/**
+ * Every PR the Action recorded for the scope's repositories whose life overlaps [from, to): the
+ * Timeline shows the ones no recorded run points at as work done outside Worca. Only the
+ * Action's files can answer this — gh is asked per branch, never "list everything".
+ * @param {object} p
+ * @param {string[]} p.sinks  metrics slugs whose worktrees hold the events.
+ * @param {string[]} p.repos  the scope's repositories (slugs); events of other repos are dropped.
+ * @returns {Promise<{ prs: object[], truncated: boolean, actionRepos: string[] }>}
+ */
+export async function listPrEvents({ sinks = [], repos = [], from = null, to = null } = {}) {
+  const now = _now();
+  const want = new Set(repos.map(lower));
+  const lo = Number.isFinite(from) ? from : -Infinity;
+  const hi = Number.isFinite(to) ? to : Infinity;
+  const seen = new Set();
+  const out = [];
+  const actionRepos = new Set();
+  for (const slug of sinks) {
+    let dir;
+    try { dir = worktreePath(slug); } catch { continue; }
+    for (const ev of await readPrEventsFromDir(dir)) {
+      const repo = lower(ev.repo);
+      if (want.size && !want.has(repo)) continue;
+      actionRepos.add(repo);
+      const key = `${repo}#${ev.number}`;
+      if (seen.has(key)) continue;
+      const start = Date.parse(ev.createdAt ?? '');
+      const end = Date.parse(ev.mergedAt ?? ev.closedAt ?? '') || now;
+      if (!Number.isFinite(start) || start >= hi || end < lo) continue;
+      seen.add(key);
+      out.push(ev);
+    }
+  }
+  out.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  return { prs: out.slice(0, MAX_LISTED_EVENTS), truncated: out.length > MAX_LISTED_EVENTS, actionRepos: [...actionRepos] };
 }
 
 // ---- the GitHub Action ---------------------------------------------------------------------

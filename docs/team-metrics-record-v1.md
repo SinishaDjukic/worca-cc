@@ -70,6 +70,7 @@ alongside `RECORD_VERSION`, `TEXT_MAX`, `RECORD_FIELDS`, `redactPaths` and `clea
 | `pr` | object\|null | `{number,url,base}`, usually `null` | `readPrState(pipelineId)` |
 | `git` | object | `{branch,head,base,filesChanged,insertions,deletions}` | see "Git" below |
 | `actor` | string\|null | git user, `null` under `attribution:'none'` | `git config user.name` |
+| `actorKey` | string | optional, right after `actor`: the person key, `sha256("worca:" + lower-cased git email)` first 16 hex. Only when the actor is the checkout's git user; never under `attribution:'none'`; absent on older records | `git config user.email` → `personKey()` |
 | `human` | object | `{hours, byPhase}` — optional trailing key, only when hours > 0 | `state.humanHours`, `pipeline_steps.human_hours` |
 
 ## v1 notes
@@ -214,7 +215,7 @@ line per pull request of the repository, rewritten with its latest state on ever
 and close.
 
 ```json
-{"v":1,"kind":"pr","repo":"acme/billing-api","number":474,"url":"https://github.com/acme/billing-api/pull/474","title":"Idempotency keys for invoices","head":"worca/idempotency-keys-a1b2c3d4","base":"dev","state":"MERGED","createdAt":"2026-09-16T14:50:00Z","mergedAt":"2026-09-22T17:30:00Z","closedAt":"2026-09-22T17:30:00Z","updatedAt":"2026-09-22T17:30:00Z"}
+{"v":1,"kind":"pr","repo":"acme/billing-api","number":474,"url":"https://github.com/acme/billing-api/pull/474","title":"Idempotency keys for invoices","head":"worca/idempotency-keys-a1b2c3d4","base":"dev","author":"mara-k","authorName":"Mara Kovač","authorKey":"3f9a0c1e7b2d4a55","state":"MERGED","createdAt":"2026-09-16T14:50:00Z","mergedAt":"2026-09-22T17:30:00Z","closedAt":"2026-09-22T17:30:00Z","updatedAt":"2026-09-22T17:30:00Z"}
 ```
 
 | Field | Notes |
@@ -223,6 +224,11 @@ and close.
 | `repo` | `owner/repo` as GitHub spells it; matched case-insensitively to record slugs |
 | `number`, `url`, `title` | the PR; `title` cleaned of control characters, ≤200 chars |
 | `head`, `base` | branch names; `head` is what a run's `git.branch` is matched against |
+| `authorName` | the git author name of most of the PR's commits (machine identities `*@local` skipped); `null` when none (additive) |
+| `authorKey` | that author's person key, `sha256("worca:" + lower-cased email)` first 16 hex, as `actorKey` on runs (additive) |
+| `author` | the PR author's GitHub login, a fallback for the two above (additive) |
+
+Under `attribution: "none"` all three are `null`.
 | `state` | `OPEN`, `MERGED` or `CLOSED` (closed without merge) |
 | `createdAt`, `mergedAt`, `closedAt`, `updatedAt` | GitHub's timestamps, UTC; `null` when not yet |
 
