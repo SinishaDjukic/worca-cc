@@ -311,3 +311,38 @@ test('History detail: a scheduled run\'s chip says who scheduled it', async () =
   assert.equal(row.querySelector('.hd-sched').textContent, 'Started by schedule');
   assert.equal(row.querySelector('.person-chip').title, 'Scheduled by ada@example.com');
 });
+
+// ── History Clarify: who answered (step 3) ───────────────────────────────────────
+
+async function clarifySec(extra, whoami = SHARED) {
+  const detail = { ...detailOf({}), ...extra };
+  const ctx = await boot({ whoami, fetchHandler: (u) => {
+    if (u.endsWith('/api/history/pr')) return ok({ ok: true });
+    if (u.endsWith('/diff')) return fail(404, { error: 'no diff' });
+    if (u.endsWith('/log')) return fail(404, { error: 'no log' });
+    if (u.endsWith('/api/history')) return ok({ pipelines: [DETAIL_ROW], ghAvailable: false });
+    if (u.endsWith(`/api/history/${KEY}/${DETAIL_ROW.id}`)) return ok(detail);
+    return null;
+  } });
+  go(ctx.window, `history/${KEY}/${DETAIL_ROW.id}`);
+  await settle(ctx.window, 8);
+  const tab = ctx.doc.querySelector('#hist-detail [data-tab="clarify"], #hist-detail .hd-tab[data-sec="clarify"]');
+  if (tab) { tab.click(); await settle(ctx.window, 4); }
+  return ctx.doc.querySelector('#hist-detail .hd-sec[data-sec="clarify"]');
+}
+
+test('History Clarify: "answered by <name>" under the answers, "you" for yourself, nothing when not shared', async () => {
+  const Q = [{ id: 'q1', question: 'Which DB?', options: ['sqlite', 'pg'] }];
+  const A = [{ id: 'q1', question: 'Which DB?', choice: 'pg' }];
+  const clar = (answeredBy) => ({ clarify: { questions: Q, answers: A, ...(answeredBy ? { answeredBy } : {}) } });
+  const sec = await clarifySec(clar('grace@example.com'));
+  assert.ok(sec, 'the Clarify section');
+  assert.equal(sec.querySelector('.hd-cl-by')?.textContent, 'answered by grace@example.com');
+  assert.equal(sec.querySelector('.hd-cl-by').title, 'Answered by grace@example.com');
+  assert.equal((await clarifySec(clar(ME))).querySelector('.hd-cl-by')?.textContent, 'answered by you');
+  assert.equal((await clarifySec(clar('local'))).querySelector('.hd-cl-by'), null);
+  assert.equal((await clarifySec(clar(null))).querySelector('.hd-cl-by'), null);
+  assert.equal((await clarifySec(clar('grace@example.com'), SOLO)).querySelector('.hd-cl-by'), null, 'not shared: nobody named');
+  const step = await clarifySec({ stepQuestions: [{ stepKey: 'x:n_plan:1', round: 1, nodeId: 'n_plan', agentKey: 'planner', questions: Q, answers: A, answeredBy: 'ada via Slack' }] });
+  assert.equal(step.querySelector('.hd-cl-by')?.textContent, 'answered by ada via Slack');
+});

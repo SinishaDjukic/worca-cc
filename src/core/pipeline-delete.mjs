@@ -31,6 +31,7 @@ import {
 import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
+import { byActor } from './identity.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
@@ -275,7 +276,7 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
  * preserving the pipeline row and artifact directory. Every live checkout is
  * snapshotted first; any snapshot failure aborts before removal.
  */
-export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id, by = null } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
   const storeKey = workspaceKey
     ? `workspaces/${workspaceKey}`
@@ -427,8 +428,8 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
     else report.warnings.push(`run-root: ${removal.reason || 'removal refused'}`);
   }
   await appendAudit(runDir,
-    `Discarded ${report.worktrees.length} retained worktree(s) after saving recovery patch(es): ` +
-    patches.map((p) => `\`${p}\``).join(', ')).catch(() => {});
+    `Discarded ${report.worktrees.length} retained worktree(s)${byActor(by)} after saving recovery patch(es): ` +
+    patches.map((p) => `\`${p}\``).join(', '), { actor: by }).catch(() => {});
   return report;
 }
 

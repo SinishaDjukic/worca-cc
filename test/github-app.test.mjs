@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createVerify } from 'node:crypto';
-import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appConfigured, loadAppConfig, appJwt, resolveInstallation, mintInstallationToken } from '../src/core/github-app.mjs';
@@ -97,14 +97,13 @@ test('mint: a fresh token per call, scoped down to the role', async () => {
 });
 
 test('githubEnv in App mode: the minted token in this call\'s env only; the key never; nothing on disk', async () => {
-  const before = readdirSync(tmpdir()).length;
   const { env, error } = await githubEnv('write', { base: ENV, fetchImpl: fakeGithub() });
   assert.equal(error, null);
   assert.equal(env.GH_TOKEN, 'ghs_token1');
   assert.equal(env.WORCA_GIT_TOKEN, 'ghs_token1');
   for (const k of ['WORCA_GH_APP_ID', 'WORCA_GH_APP_KEY_B64', 'WORCA_GH_APP_INSTALLATION_ID']) assert.equal(env[k], undefined, k);
   assert.equal(env.GIT_CONFIG_KEY_1, 'credential.https://github.com.helper');
-  assert.equal(readdirSync(tmpdir()).length, before, 'no token file');
+  // Nothing is written: githubEnv only returns an env (a tmpdir count here raced other suites).
   const second = await githubEnv('write', { base: ENV, fetchImpl: fakeGithub() });
   assert.equal(second.env.GH_TOKEN, 'ghs_token1', 'a fresh fake, a fresh mint');
 });

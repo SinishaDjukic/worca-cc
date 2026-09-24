@@ -21,6 +21,7 @@ import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
+import { actorLabel } from './identity.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -269,6 +270,12 @@ function formAskOf(qWrap, aWrap) {
 
 /** The two form fields a reader row carries — `{}` for a legacy row, so no legacy
  *  payload gains a key (test/step-questions-db.test.mjs pins the exact row shape). */
+/** `{answeredBy}` when the answer row names who answered (identity.mjs actor), else {} —
+ *  additive, so a row answered before attribution keeps its exact wire shape. */
+function answeredByOf(aWrap) {
+  return aWrap && typeof aWrap.answeredBy === 'string' && aWrap.answeredBy ? { answeredBy: aWrap.answeredBy } : {};
+}
+
 function formFieldsOf(qWrap, aWrap) {
   const ask = formAskOf(qWrap, aWrap);
   return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
@@ -305,6 +312,7 @@ export function readStepQuestions(pipelineId) {
       // gains no key at all, so its wire shape (History, get_run_progress) stays
       // byte-identical; consumers test `row.ask`, never `'ask' in row`.
       ...formFieldsOf(qWrap, aWrap),
+      ...answeredByOf(aWrap),
     };
   });
 }
@@ -384,6 +392,7 @@ export function readPipelineExtras(pipelineId) {
     questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
     answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
     ...formFieldsOf(qWrap, aWrap),   // spec §9: `ask` + `formAnswer` on a form row only
+    ...answeredByOf(aWrap),
   };
   const reviews = getDb().prepare(
     'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'
@@ -1097,15 +1106,30 @@ function firstMeaningfulLine(text) {
  * @param {string} markdownLine
  * @returns {Promise<void>}
  */
-export async function appendAudit(pipelineDir, markdownLine) {
-  const id = resolvePipelineId(pipelineDir);
+export async function appendAudit(pipelineDir, markdownLine, { actor = null } = {}) {
+  appendAuditById(resolvePipelineId(pipelineDir), markdownLine, { actor });
+}
+
+/**
+ * appendAudit by pipeline id (the server's human actions: PRs, archive, cap overrides).
+ * `actor` = who did it (identity.mjs; 'local' allowed), stored in its own column always;
+ * the line's text names the person only when they are not 'local' (byActor), so the
+ * History view and the markdown export read "Paused by ada@example.com." Best-effort.
+ */
+export function appendAuditById(id, markdownLine, { actor = null } = {}) {
   if (!id) return;
   const ts = new Date().toISOString();
   const text = String(markdownLine ?? '').trim();
+  const who = typeof actor === 'string' && actor ? actor.slice(0, 200) : null;
   try {
     tx(() => {
-      getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
-        .run(id, ts, text);
+      if (who) {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text, actor) VALUES (?, ?, ?, ?)')
+          .run(id, ts, text, who);
+      } else {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
+          .run(id, ts, text);
+      }
     });
   } catch { /* audit is best-effort; never break a run on a logging failure */ }
 }
@@ -2015,6 +2039,7 @@ function buildAuditMarkdown(row) {
     `- **id**: ${row.id}\n` +
     `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
     `- **started**: ${row.started_at ?? ''}\n` +
+    (actorLabel(row.started_by) ? `- **started by**: ${actorLabel(row.started_by)}\n` : '') +
     `- **prompt file**: prompt.md\n\n` +
     `## Prompt\n\n` +
     (row.prompt && row.prompt.trim() ? row.prompt.trim() + '\n' : '_(empty prompt)_\n') +

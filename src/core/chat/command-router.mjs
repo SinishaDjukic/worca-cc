@@ -16,6 +16,7 @@ import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
 import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
 import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
+import { chatActor } from '../identity.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -227,21 +228,21 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtUsd(state?.totalCostUsd) || '$0.00'}`);
     },
 
-    pause: async ({ chatKey, args }) => {
+    pause: async ({ chatKey, args, actor }) => {
       const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
-      await actions.pause(t.run.runId);
+      await actions.pause(t.run.runId, actor);
       return reply(`⏸ Pausing \`${runRef(t.run.runId)}\` — resume from the UI or \`/resume ${runRef(t.run.runId)}\`.`, 'warning');
     },
 
-    stop: async ({ chatKey, args }) => {
+    stop: async ({ chatKey, args, actor }) => {
       const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
-      await actions.stop(t.run.runId);
+      await actions.stop(t.run.runId, actor);
       return reply(`⏹ Stopping \`${runRef(t.run.runId)}\` (${String(t.run.title || '').slice(0, 50)}).`, 'warning');
     },
 
-    resume: async ({ args }) => {
+    resume: async ({ args, actor }) => {
       // Resolve against PAUSED/INTERRUPTED history rows (resume works across
       // restarts); a live match means it's already running.
       const rows = (await actions.history({ limit: 50 })).filter((r) => r.status === 'paused' || r.status === 'interrupted');
@@ -254,7 +255,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
         if (args[0] || rows.length !== 1) return t.error;
         t = { row: rows[0] };            // exactly one paused row, bare /resume: take it
       }
-      const out = await actions.resume(t.row.id);
+      const out = await actions.resume(t.row.id, actor);
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\` — ${String(t.row.title || '').slice(0, 50)}`);
       return reply(`Could not resume \`${runRef(t.row.id)}\`: ${out?.error || 'unknown error'}`, 'error');
     },
@@ -263,7 +264,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     retry: async (env) => answerDecision(env, 'retry'),
     abort: async (env) => answerDecision(env, 'abort'),
 
-    answer: async ({ chatKey, args }) => {
+    answer: async ({ chatKey, args, actor }) => {
       const t = resolveTarget(args[0] && args[0].startsWith('*') ? args[0] : '', scopedRuns(chatKey), [], { wantLive: true });
       if (t.error) return t.error;
       const pq = actions.pendingQuestion(t.run.runId);
@@ -295,7 +296,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
             '', `Reply: \`/answer ${formRef} ${example}\``].join('\n'), 'warning');
         }
         try {
-          await actions.answer(t.run.runId, pq.id, { values: parsed.values });
+          await actions.answer(t.run.runId, pq.id, { values: parsed.values }, actor);
         } catch (err) {
           if (!err || err.code !== 'INVALID_ANSWER') throw err;   // the handler's catch owns everything else
           return reply([`\`${formRef}\` — that answer was rejected:`,
@@ -348,7 +349,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
           return reply(`Q${i + 1} takes an option number (1–${opts.length}), not text.`, 'warning');
         }
       }
-      await actions.answer(t.run.runId, pq.id, { answers });
+      await actions.answer(t.run.runId, pq.id, { answers }, actor);
       return reply(`✅ Answered ${questions.length} question${questions.length === 1 ? '' : 's'} on \`${ref}\`.`, 'success');
     },
 
@@ -367,7 +368,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     },
   };
 
-  async function answerDecision({ chatKey, args }, verb) {
+  async function answerDecision({ chatKey, args, actor }, verb) {
     const t = resolveTarget(args[0], scopedRuns(chatKey), [], { wantLive: true });
     if (t.error) return t.error;
     const pq = actions.pendingQuestion(t.run.runId);
@@ -384,7 +385,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
     } else {
       return reply(`\`${ref}\` is waiting on ${pq.kind} — use \`/answer ${ref} <n>\`.`, 'warning');
     }
-    await actions.answer(t.run.runId, pq.id, payload);
+    await actions.answer(t.run.runId, pq.id, payload, actor);
     const what = pq.kind === 'gate'
       ? (payload.decision === 'continue' ? 'approved — continuing' : 'sent back for another cycle')
       : (payload.decision === 'retry' ? 'retrying' : payload.decision === 'abort' ? 'aborting the run' : 'pausing the run');
@@ -407,8 +408,12 @@ export function createCommandRouter({ actions, chatContext, logger = () => {} })
       const handler = Object.hasOwn(handlers, parsed.command) ? handlers[parsed.command] : null;
       const chatKey = `${platform}:${msg.chatId}`;
       if (!handler) return reply(`Unknown command \`/${parsed.command}\` — \`/help\` lists commands.`, 'warning');
+      // Who sent it, as attribution TEXT ("ada via Slack"): the platform's display name or
+      // user id, never a sign-in identity. Actions that change a run record it.
+      const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+      const actor = chatActor({ platform, userName: meta.username || meta.name || meta.userName || null, userId: msg.userId });
       try {
-        return await handler({ chatKey, platform, plugin, channelId, msg, args: parsed.args });
+        return await handler({ chatKey, platform, plugin, channelId, msg, args: parsed.args, actor });
       } catch (err) {
         logger('error', `chat command /${parsed.command} failed: ${err?.message || err}`);
         return reply(`Command failed: ${String(err?.message || err).slice(0, 200)}`, 'error');

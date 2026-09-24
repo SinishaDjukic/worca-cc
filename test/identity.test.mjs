@@ -50,3 +50,13 @@ test('actorOf, isSharedIdentity and chatActor', async () => {
   assert.equal(chatActor({ platform: 'discord', userName: 'x\ny' }), 'someone via Discord');
   assert.equal(chatActor({}), 'someone via chat');
 });
+
+test('actorLabel / byActor: the name an audit line shows, nothing for local or junk', async () => {
+  const { actorLabel, byActor } = await import('../src/core/identity.mjs');
+  assert.equal(actorLabel('ada@example.com'), 'ada@example.com');
+  assert.equal(byActor('ada via Slack'), ' by ada via Slack');
+  for (const none of ['local', null, undefined, '', 'a\nb', 42]) {
+    assert.equal(actorLabel(none), '');
+    assert.equal(byActor(none), '');
+  }
+});

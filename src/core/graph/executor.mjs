@@ -39,7 +39,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import {
   runClaude, MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER,
 } from '../claude-runner.mjs';
-import { planPath, reviewPath, writeStepQuestions, writeClarify } from '../artifacts.mjs';
+import { planPath, reviewPath, writeStepQuestions, writeClarify, appendAuditById } from '../artifacts.mjs';
+import { byActor } from '../identity.mjs';
 import { readReview, classifyAskPayload } from '../protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from '../ask-forms.mjs';
 import {
@@ -771,7 +772,9 @@ export async function runClarifierExecution(ctx) {
           agentKey: node?.key, nodeId: node?.id, questions: gate.ask,
         });
         await writeClarify(ctx.pipelineId, { questions: gate.ask });
-        const answerRow = { kind: 'form', form: gate.ask.form, version: gate.ask.version, values };
+        const formBy = clarifyAnswerer(ctx, `${CLARIFY_ASK_KIND}-${node.id}-${ordinal}`);
+        const answerRow = { kind: 'form', form: gate.ask.form, version: gate.ask.version, values, ...(formBy ? { answeredBy: formBy } : {}) };
+        auditClarify(ctx, meta, node, formBy);
         await writeStepQuestions(ctx.pipelineId, ctx.executionId, ordinal, {
           agentKey: node?.key, nodeId: node?.id, answers: answerRow,
         });
@@ -804,16 +807,31 @@ export async function runClarifierExecution(ctx) {
     });
     answers = normalizeAnswers(answerPayload, questions);
     if (ctx.pipelineId) {
+      const by = clarifyAnswerer(ctx, `${CLARIFY_ASK_KIND}-${node.id}-${ordinal}`);
+      const row = { answers, ...(by ? { answeredBy: by } : {}) };
       await writeStepQuestions(ctx.pipelineId, ctx.executionId, ordinal, {
-        agentKey: node?.key, nodeId: node?.id, answers: { answers },
+        agentKey: node?.key, nodeId: node?.id, answers: row,
       });
-      await writeClarify(ctx.pipelineId, { answers: { answers } });
+      await writeClarify(ctx.pipelineId, { answers: row });
+      auditClarify(ctx, meta, node, by);
     }
   }
 
   await mkdir(dirname(answersPath), { recursive: true }).catch(() => {});
   await writeFile(answersPath, JSON.stringify({ questions, answers }, null, 2) + '\n', 'utf8');
   return { outputs: publishable(ports, outputs), questions, answers, sessionId, prompt, warnings };
+}
+
+/** Who answered a clarifier question (the orchestrator's answeredBy seam), or null. */
+function clarifyAnswerer(ctx, id) {
+  try { const by = typeof ctx.answeredBy === 'function' ? ctx.answeredBy(id) : null; return typeof by === 'string' && by ? by : null; }
+  catch { return null; }
+}
+
+/** The audit line for a human clarifier answer (actor stored always; named unless 'local'). */
+function auditClarify(ctx, meta, node, by) {
+  if (!by || !ctx.pipelineId) return;
+  appendAuditById(ctx.pipelineId, `${meta?.displayName || node?.key || 'Clarify'}: questions answered${byActor(by)}.`, { actor: by });
 }
 
 // ── flow executors (pure engine: instant, $0, no process spawn) ───────────────

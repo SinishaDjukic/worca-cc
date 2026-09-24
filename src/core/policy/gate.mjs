@@ -88,7 +88,8 @@ export function checkTeamPipelineGate(caps, { pipelineId, spentSoFar = 0, pastTe
     if (team.requireReason && !clean) return { blocked: true, code: 'reason_required', error: `the team policy on ${policy.home} requires a reason to continue past its cost cap`, policy: detail };
     // Who chose to continue, next to why (identity.mjs); absent for 'local' / unknown.
     writePolicyState(pipelineId, { home: policy.home, sha: policy.sha, overrides: ['pipeline'], ...(clean ? { reason: clean } : {}), ...(personOf(by) ? { overriddenBy: personOf(by) } : {}) });
-    return { blocked: false, overridden: true };
+    // `fresh`: this request armed the override (the caller audits who and why).
+    return { blocked: false, overridden: true, fresh: true, reason: clean || null };
   }
   return { blocked: true, code: 'team_pipeline', error: `team cost cap reached ($${usd(spentSoFar)} >= $${usd(team.value)}, ${policy.home})`, policy: detail };
 }

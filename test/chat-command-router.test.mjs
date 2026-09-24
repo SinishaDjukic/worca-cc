@@ -363,3 +363,43 @@ test('/runs lists scheduled runs after the live ones, scoped by /use', async () 
   const bare = makeRouter({ listRuns: () => [] });
   assert.match(text(await handle(bare, '/runs')), /No live runs\. `\/last`/);
 });
+
+// ── attribution (step 3): who sent the command rides every run action, as text ──
+
+test('chat actions carry the sender as attribution text: "<name> via <Platform>"', async () => {
+  const got = [];
+  const f = fixture({
+    pause: async (runId, by) => got.push(['pause', runId, by]),
+    stop: async (runId, by) => got.push(['stop', runId, by]),
+    resume: async (pipelineId, by) => { got.push(['resume', pipelineId, by]); return { ok: true }; },
+    answer: async (runId, id, payload, by) => got.push(['answer', runId, id, by]),
+  });
+  const router = createCommandRouter({ actions: {
+    ...Object.fromEntries(Object.entries({
+      listRuns: () => f.state.live, runState: () => null, history: async () => f.state.rows,
+      pendingQuestion: (id) => f.state.pending[id] ?? null, listProjects: async () => [],
+    })),
+    pause: async (runId, by) => got.push(['pause', runId, by]),
+    stop: async (runId, by) => got.push(['stop', runId, by]),
+    resume: async (pipelineId, by) => { got.push(['resume', pipelineId, by]); return { ok: true }; },
+    answer: async (runId, id, payload, by) => got.push(['answer', runId, id, by]),
+  }, chatContext: f.chatContext, logger: () => {} });
+  const send = (text, meta, platform = 'telegram', userId = '9001') => router.handleIncoming({
+    plugin: 'p', channelId: 'main', platform, channelConfig: CONFIG, msg: { chatId: '42', userId, text, meta },
+  });
+  await send('/pause *1111', { username: 'ada' });
+  await send('/stop *1111', {}, 'slack', 'U024BE7LH');
+  await send('/resume *3333', { name: 'Grace Hopper' }, 'teams');
+  f.state.pending['run-aaaa1111'] = { id: 'g1', kind: 'gate' };
+  await send('/approve', { username: 'ada' }, 'discord');
+  assert.deepEqual(got, [
+    ['pause', 'run-aaaa1111', 'ada via Telegram'],
+    ['stop', 'run-aaaa1111', 'U024BE7LH via Slack'],
+    ['resume', 'pipe-cccc3333', 'Grace Hopper via Teams'],
+    ['answer', 'run-aaaa1111', 'g1', 'ada via Discord'],
+  ]);
+  // A display name that could break a line is refused, not trusted: the id stands in.
+  got.length = 0;
+  await send('/pause *1111', { username: 'ev\nil' }, 'telegram', '77');
+  assert.equal(got[0][2], '77 via Telegram');
+});

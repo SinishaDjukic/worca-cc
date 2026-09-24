@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 37;
+export const SCHEMA_VERSION = 38;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -852,6 +852,7 @@ const INCREMENTAL_COLUMNS = {
   diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
                             author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
   ask_threads:            { created_by: 'TEXT' },    // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
+  pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT' },  // v31: the Ask Worca card a series came from
@@ -1335,6 +1336,12 @@ function applySchemaV37(db) {
   repairSchemaGaps(db, schemaGaps(db));
 }
 
+/** v38 (attribution, step 3): pipeline_events.actor — who did a human action on a run
+ *  (INCREMENTAL_COLUMNS), applySchemaV30's shape. NULL on every existing row. */
+function applySchemaV38(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1728,6 +1735,7 @@ export function migrate(db) {
     if (current < 35) applySchemaV35(db);            // Opus 5 pins -> Opus 5.5 (catalog swap)
     if (current < 36) applySchemaV36(db);            // attribution: pipelines.started_by
     if (current < 37) applySchemaV37(db);            // attribution: comment authors, thread owners, per-person reads
+    if (current < 38) applySchemaV38(db);            // attribution: who did each human action on a run
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -136,7 +136,7 @@ export async function main({ argv = process.argv.slice(2), env = process.env, st
       ...defaultWorkflowDeps({ threadId, signal: life.signal }),
       ...defaultMetricsDeps({ threadId }),
       ...defaultPolicyDeps({ threadId }),
-      ...defaultScheduleDeps({ threadId }),
+      ...defaultScheduleDeps({ threadId, reader: process.env.WORCA_ASK_READER || null }),
       ...defaultSourceDeps(),
       ...defaultModelDeps({ threadId }),
       ...defaultCloneDeps(),

@@ -54,10 +54,13 @@ class AskTurn extends EventEmitter {
     pinnedScope = null,
     memoryProject = null,
     timeZone = null,
+    reader = null,
     deps = {},
   } = {}) {
     super();
     this.threadId = threadId;
+    // A shared sign-in's name (identity.mjs): the MCP child's per-person reads (notifications).
+    this.reader = typeof reader === 'string' && reader ? reader : null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
     this.prompt = prompt;
@@ -610,7 +613,7 @@ class AskTurn extends EventEmitter {
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       await d.fs.writeFile(
         mcpConfigPath,
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}) }), null, 2),
         'utf8',
       );
       // One 30-minute budget for the whole turn, retry included. The timedOut

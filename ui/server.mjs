@@ -119,7 +119,7 @@ import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
 } from '../src/core/remote-access.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
-import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity } from '../src/core/identity.mjs';
+import { resolveIdentity, startedByOf, prAttributionFooter, actorOf, isSharedIdentity, byActor } from '../src/core/identity.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
@@ -183,7 +183,7 @@ import {
   listWorkspaces, readWorkspace, createWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
-import { listWorkspacePipelines, readWorkspacePipeline } from '../src/core/artifacts.mjs';
+import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
@@ -442,7 +442,9 @@ const wss = new WebSocketServer({
   verifyClient: (info, done) => {
     if (!isLocalRequest(info.req)) return done(false, 403);
     requestIdentity(info.req).then(
-      (who) => (who ? done(true) : done(false, 401)),
+      // Keep who this is on the upgrade request: the connection handler reads it to scope
+      // per-thread Ask frames to their owner (askViewer).
+      (who) => { if (who) info.req.worcaUser = who; return who ? done(true) : done(false, 401); },
       () => done(false, 503),
     );
   },
@@ -478,6 +480,8 @@ wss.on('connection', (ws, req) => {
     return;
   }
   sockets.add(ws);
+  // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
+  ws.worcaViewer = askViewer(req);
   // Optional ?runId=... (or ?scanId=.../?genId=...) -> replay that entry's buffered
   // events so a reconnecting client immediately sees the full state. Scan + agentgen
   // entries live in the SAME runs Map keyed by scanId/genId, so a single id lookup
@@ -503,13 +507,13 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedScanId || requestedGenId || requestedBenchId;
 
-  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello() });
+  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello(ws) });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
   }
 
-  if (requestedThreadId && askJobs.has(requestedThreadId)) {
+  if (requestedThreadId && askJobs.has(requestedThreadId) && askSocketSees(ws, requestedThreadId)) {
     replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
@@ -530,7 +534,7 @@ wss.on('connection', (ws, req) => {
       replayEntry(ws, runs.get(subId));
     }
     const askThreadId = msg && msg.type === 'subscribe' && typeof msg.threadId === 'string' ? msg.threadId : null;
-    if (askThreadId && askJobs.has(askThreadId)) {
+    if (askThreadId && askJobs.has(askThreadId) && askSocketSees(ws, askThreadId)) {
       replayAskJob(ws, askJobs.get(askThreadId));
     }
   });
@@ -583,7 +587,9 @@ function replayEntry(ws, entry) {
 /** Broadcast an already-tagged event object to every open socket. */
 function broadcast(obj) {
   const text = JSON.stringify(obj);
+  const owner = askFrameOwner(obj);
   for (const ws of sockets) {
+    if (owner && ws.worcaViewer && ws.worcaViewer !== owner) continue;   // someone else's Ask thread
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(text);
@@ -592,6 +598,24 @@ function broadcast(obj) {
       }
     }
   }
+}
+
+// Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
+// thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
+// in-container tool), like the HTTP guard on /api/ask/threads/:id. Owners never change, so
+// they are cached; nothing is looked up unless some socket is a shared viewer.
+const ASK_OWNER_CACHE = new Map();   // threadId -> createdBy | null
+function askFrameOwner(obj) {
+  if (!obj || typeof obj.threadId !== 'string' || typeof obj.type !== 'string' || !obj.type.startsWith('ask-')) return null;
+  let anyViewer = false;
+  for (const ws of sockets) if (ws.worcaViewer) { anyViewer = true; break; }
+  if (!anyViewer) return null;
+  if (ASK_OWNER_CACHE.has(obj.threadId)) return ASK_OWNER_CACHE.get(obj.threadId);
+  let owner = null;
+  try { owner = askGetThread(obj.threadId)?.createdBy || null; } catch { return null; }
+  if (ASK_OWNER_CACHE.size > 5000) ASK_OWNER_CACHE.clear();
+  ASK_OWNER_CACHE.set(obj.threadId, owner);
+  return owner;
 }
 
 // Fire-and-forget "this entity set changed — refetch your counts" signal. Bare +
@@ -1097,6 +1121,12 @@ app.use((req, res, next) => {
 function askViewer(req) {
   const who = resolveIdentity(req);
   return isSharedIdentity(who.source) ? who.name : null;
+}
+/** Whether a thread's owner is a shared sign-in, for turns with no request (event turns after a
+ *  card click): the owner of a thread on a shared deployment is recorded from a verified identity,
+ *  so it is shared exactly when this deployment verifies identities. */
+function askSharedOwner(thread) {
+  return !!(thread && thread.createdBy && thread.createdBy !== 'local' && (identityCheck || process.env.WORCA_IDENTITY_HEADER));
 }
 function askThreadVisible(thread, req) {
   const viewer = askViewer(req);
@@ -2568,14 +2598,15 @@ const chatActions = {
   })),
   runState: (runId) => { try { return runs.get(runId)?.orch?.getState() ?? null; } catch { return null; } },
   pendingQuestion: (runId) => runs.get(runId)?.pendingQuestion ?? null,
-  answer: (runId, id, payload) => answerRun(runId, id, payload),
-  stop: (runId) => stopRun(runId),
-  pause: (runId) => pauseRun(runId),
+  // `by` = the chat actor ("ada via Slack", identity.mjs chatActor): attribution text only.
+  answer: (runId, id, payload, by) => answerRun(runId, id, payload, by || 'local'),
+  stop: (runId, by) => stopRun(runId, by || 'local'),
+  pause: (runId, by) => pauseRun(runId, by || 'local'),
   // The long chain of budget/worktree/double-resume guards lives in resumeRun();
   // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
   // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
-  resume: async (pipelineId) => {
-    try { return await resumeRun(pipelineId); }
+  resume: async (pipelineId, by) => {
+    try { return await resumeRun(pipelineId, { by: by || 'local' }); }
     catch (err) { return { ok: false, error: err?.body?.error || err?.message || String(err) }; }
   },
   // Chat reads only DB fields (id/title/status/cost/activeMs/pauseReason), so bound the
@@ -2680,10 +2711,11 @@ function reloadChatWorkers(name) {
  * every tab while the run is still waiting on it. Callers (`POST /api/answer` →
  * 422, and P4's CLI + chat) branch on `err.code === 'INVALID_ANSWER'`.
  */
-function answerRun(runId, id, payload) {
+/** `by` = who answered (identity.mjs actorOf / chatActor); the harness stores and audits it. */
+function answerRun(runId, id, payload, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
-  entry.orch.answer(id, payload);
+  entry.orch.answer(id, payload, by || 'local');
   resolvePending(entry, { id, reason: 'answered' });
 }
 /** `by` = who asked (identity.mjs actorOf / chatActor); recorded on the entry and the run state. */
@@ -2714,7 +2746,7 @@ app.post('/api/answer', (req, res) => {
   if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
   if (!id) return badRequest(res, 'question id is required');
   try {
-    answerRun(runId, id, payload);
+    answerRun(runId, id, payload, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
     // Gate 3 (ask forms, spec §5): the answer was validated and refused, so the
@@ -2801,6 +2833,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   // a total-refused request must not leave cost_cap_override armed.
   if (ignoreCostCap === true) {
     setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
+    appendAuditById(pipelineId, `Pipeline cost limit override set${byActor(by)}.`, { actor: by });
   }
   const pipeCap = budget.pipelineLimitUsd;
   const spentSoFar = Number(saved.row.total_cost_usd || 0);
@@ -2856,6 +2889,10 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   if (pipeGate.blocked) {
     throw new ResumeError(pipeGate.code === 'reason_required' ? 400 : 403, { error: pipeGate.error, code: pipeGate.code, policy: pipeGate.policy, needsPolicyOverride: pipeGate.code === 'team_pipeline' });
   }
+  // Who continued past a team cap, and why (the audit timeline; policy_state keeps it too).
+  const why = (r) => (r ? ` — reason: ${String(r).replace(/[\r\n]+/g, ' ').slice(0, 300)}` : '');
+  if (totalGate.ack) appendAuditById(pipelineId, `Continued past the team total cap${byActor(by)}${why(totalGate.ack.reason)}.`, { actor: by });
+  if (pipeGate.fresh) appendAuditById(pipelineId, `Continued past the team cost cap${byActor(by)}${why(pipeGate.reason)}.`, { actor: by });
 
   // A paused defragment run is not live; another one on the same scope may have started since.
   // Resuming the first would sync its stale mount over the second's work (spec §5 concurrency).
@@ -3866,6 +3903,10 @@ app.delete('/api/runs/:id', async (req, res) => {
       id,
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
+    if (report.archived) {
+      const archBy = actorOf(req);
+      appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
+    }
     emitChanged('pipelines-changed', 'deleted');
     res.json({ ok: true, ...report });
   } catch (e) {
@@ -3893,6 +3934,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
       key: scope.workspaceId ? null : (scope.projectKey || null),
       projectDir: (scope.workspaceId || scope.projectKey) ? null : scope.projectDir,
       id,
+      by: actorOf(req),
     });
     if (!report) return res.status(404).json({ error: 'pipeline not found' });
     emitChanged('pipelines-changed', 'updated');
@@ -4074,6 +4116,9 @@ app.post('/api/pr', async (req, res) => {
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   if (pipelineIdForPr) {
     persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
+    // Who clicked Create PR (the footer names who STARTED the run; this names who shipped it).
+    const prBy = actorOf(req);
+    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : 'opened'}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
   }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
@@ -6011,12 +6056,20 @@ function askRunningCount() {
 /** hello payload: running turns only (§8.2). A job whose slot was just
  *  reserved (messageId still null — the message route's atomic reservation,
  *  Task 6) is skipped: it becomes visible once its assistant row exists. */
-function askHello() {
+function askHello(ws = null) {
   const out = [];
   for (const [threadId, job] of askJobs.entries()) {
-    if (job.status === 'running' && job.messageId) out.push({ threadId, messageId: job.messageId });
+    if (job.status === 'running' && job.messageId && (!ws || askSocketSees(ws, threadId))) out.push({ threadId, messageId: job.messageId });
   }
   return out;
+}
+
+/** Whether this socket may receive thread `threadId`'s frames (its owner, or not a shared viewer). */
+function askSocketSees(ws, threadId) {
+  if (!ws || !ws.worcaViewer) return true;
+  let owner = null;
+  try { owner = askGetThread(threadId)?.createdBy || null; } catch { return true; }
+  return !owner || owner === ws.worcaViewer;
 }
 
 /** Replay a job's stamped ring buffer to one socket. No state snapshot — the
@@ -6595,7 +6648,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -6679,6 +6732,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
 
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
+      // A shared sign-in's name: the MCP child reads/marks notifications per person (step 3).
+      reader: reader || (thread.createdBy && askSharedOwner(thread) ? thread.createdBy : null),
       prompt, systemPrompt, restoredPrompt,
       model, effort,
       resumeSessionId: thread.sessionId || null,
@@ -6825,7 +6880,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
-    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req) });
+    const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req) });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast

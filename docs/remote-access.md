@@ -190,6 +190,12 @@ each run. This is attribution, not permissions: everyone keeps the same rights.
 - With a per-person sign-in (Access or a trusted header), each person's Ask Worca chats are their
   own: others can't open them, and *Delete all* removes only yours. Notifications are marked read
   per person.
+- Each run's audit timeline (History → the saved `pipeline.md`) names who answered its questions,
+  approved a proposal or gate, paused, resumed (including past a cost cap, with the reason),
+  stopped, opened its pull request, archived it or discarded its worktree. The export header adds
+  *started by*. History's Clarify tab shows *answered by …*. A local action keeps the old wording.
+- Commands from chat (`/stop`, `/pause`, `/resume`, `/answer`, `/approve`) are credited as
+  "ada via Slack", from the platform's user name or id. That is attribution text, not a sign-in.
 
 Worca takes the name from the first of these that applies, and never guesses:
 

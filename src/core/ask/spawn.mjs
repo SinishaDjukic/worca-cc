@@ -157,7 +157,7 @@ export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_B
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -170,7 +170,9 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
         type: 'stdio',
         command: execPath,
         args: ['--disable-warning=ExperimentalWarning', serverPath, '--home', base, '--thread', thread],
-        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded },
+        // WORCA_ASK_READER: the shared sign-in behind this turn (identity.mjs), so the child's
+        // notification reads/marks are per person; absent on local/operator deployments.
+        env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}) },
       },
     },
   };

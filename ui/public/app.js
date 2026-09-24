@@ -19172,12 +19172,27 @@ function buildHdClarify(sec, record, data) {
     card.append(qRow, aRow);
     wrap.appendChild(card);
   };
+  // Who answered (step 3): shown under step 2's rule (shared sign-ins only, "you" for the viewer).
+  const answeredByLine = (by) => {
+    const who = personLabel(by);
+    if (!who) return null;
+    const el = document.createElement('div');
+    el.className = 'hint hd-cl-by';
+    el.textContent = `answered by ${who}`;
+    el.title = `Answered by ${personShown(by)}`;
+    return el;
+  };
   for (const q of questions) addCard(q, byId.get(q.id));
+  if (questions.length && data.clarify) { const by = answeredByLine(data.clarify.answeredBy); if (by) wrap.appendChild(by); }
   if (data.clarify && data.clarify.ask) wrap.appendChild(hdRenderAskForm(record, data.clarify.ask));
   for (const r of Array.isArray(data.stepQuestions) ? data.stepQuestions : []) {
     const roundLabel = `${r && (r.agentKey || r.nodeId) ? (r.agentKey || r.nodeId) : 'agent'} — round ${r && r.round}`
       + (String((r && r.stepKey) || '').split('#')[1] ? ` · cycle ${String(r.stepKey).split('#')[1]}` : '');
-    if (r && r.ask) wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
+    if (r && r.ask) {
+      wrap.appendChild(hdRenderAskForm(record, r.ask, roundLabel));
+      const by = answeredByLine(r.answeredBy);
+      if (by) wrap.appendChild(by);
+    }
     if (!((r && r.questions) || []).length) continue;
     const caption = document.createElement('div');
     caption.className = 'hint hd-cl-caption';
@@ -19185,6 +19200,8 @@ function buildHdClarify(sec, record, data) {
     wrap.appendChild(caption);
     const rById = new Map((r.answers || []).map((a) => [a.id, a]));
     for (const q of r.questions) addCard(q, rById.get(q.id));
+    const by = answeredByLine(r.answeredBy);
+    if (by) wrap.appendChild(by);
   }
 }
 

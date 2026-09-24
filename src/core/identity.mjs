@@ -51,6 +51,19 @@ export function actorOf(req, env = process.env) {
   return resolveIdentity(req, env).name;
 }
 
+/** The name an action's actor shows as in text (audit lines, exports), or '' for 'local' /
+ *  unknown / invalid values — the caller then says nothing about who. */
+export function actorLabel(actor) {
+  const who = clean(actor);
+  return who && who !== 'local' ? who : '';
+}
+
+/** " by <name>" for an audit line, or '' when nobody in particular did it. */
+export function byActor(actor) {
+  const who = actorLabel(actor);
+  return who ? ` by ${who}` : '';
+}
+
 /** True for a real per-person sign-in (a verified token or a named trusted header): the
  *  deployments where "who" can have more than one answer, so ownership and per-person
  *  state apply. 'operator' and 'local' are one person by definition. */

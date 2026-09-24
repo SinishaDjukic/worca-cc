@@ -50,6 +50,7 @@ import { readAskFile } from './protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from './ask-forms.mjs';
 import { classifyError } from './recoverable-error.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
+import { byActor } from './identity.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -1178,6 +1179,9 @@ export class GraphOrchestrator extends RunHarness {
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId: this._takeResumeSession(executionId),
       ask: (q) => this._enqueueAsk(() => this._ask(q)),
+      // Who answered question `id` (identity.mjs actor; answer() records it) — the clarifier
+      // stores it with the answer and audits it.
+      answeredBy: (id) => this.answeredBy(id),
       onEvent: (e) => this._onAgentEvent(nc.key || node.kind, e, attr),
       claudeOpts: {
         bin: this.claude.bin,
@@ -1610,11 +1614,12 @@ export class GraphOrchestrator extends RunHarness {
         }));
         this._checkAbort();
         const values = (answered && typeof answered === 'object' && answered.values) || {};
+        const formBy = this.answeredBy(`questions-${stepKey}-r${round}`);
         await writeStepQuestions(this.pipeline.id, stepKey, round, {
           agentKey: nc.key, nodeId: ctx.nodeId,
-          answers: { kind: 'form', form: formAsk.form, version: formAsk.version, values },
+          answers: { kind: 'form', form: formAsk.form, version: formAsk.version, values, ...(formBy ? { answeredBy: formBy } : {}) },
         });
-        await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered (round ${round}).`).catch(() => {});
+        await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered${byActor(formBy)} (round ${round}).`, { actor: formBy }).catch(() => {});
         await rm(qPath, { force: true }).catch(() => {});
         const step = this.state.steps.find((s) => s.key === stepKey);
         if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
@@ -1643,10 +1648,11 @@ export class GraphOrchestrator extends RunHarness {
       const answers = normalizeClarifyAnswer(payload, questions);
       const byId = new Map(questions.map((q) => [q.id, q]));
       const enriched = answers.map((a) => ({ id: a.id, question: byId.get(a.id)?.question || '', choice: a.choice }));
+      const answerBy = this.answeredBy(`questions-${stepKey}-r${round}`);
       await writeStepQuestions(this.pipeline.id, stepKey, round, {
-        agentKey: nc.key, nodeId: ctx.nodeId, answers: { answers: enriched },
+        agentKey: nc.key, nodeId: ctx.nodeId, answers: { answers: enriched, ...(answerBy ? { answeredBy: answerBy } : {}) },
       });
-      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received (round ${round}).`).catch(() => {});
+      await appendAudit(this.pipeline.dir, `${agentLabel}: ${enriched.length} answer(s) received${byActor(answerBy)} (round ${round}).`, { actor: answerBy }).catch(() => {});
       // Consume the processed round file: the DB row is authoritative, and a
       // surviving file would re-gate the user on a crash/pause-resumed re-run.
       await rm(qPath, { force: true }).catch(() => {});
