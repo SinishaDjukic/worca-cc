@@ -1506,19 +1506,19 @@
                 <div class="label-row">
                   <label for="askMaxTurns">Turn limit</label>
                   <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
-                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 40.
+                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 400.
                   </span></button>
                 </div>
-                <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="40" autocomplete="off" />
+                <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="400" autocomplete="off" />
               </div>
               <div class="field">
                 <div class="label-row">
                   <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
                   <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
-                    Stop a chat turn when its estimated cost reaches this amount (0.1&ndash;100). Leave empty to restore the default of $2, or tick No cap to disable the guard.
+                    There is no cap by default. Untick No cap and enter an amount (0.1&ndash;100) to turn the guard on: a chat turn then stops when its estimated cost reaches it. Leaving the amount empty, or pressing Use defaults, means no cap.
                   </span></button>
                 </div>
-                <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
+                <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="No cap" autocomplete="off" />
                 <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
               </div>
               <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body

@@ -32,11 +32,27 @@ beforeEach(async () => {
   await writeFile(settingsFile(), '{}\n', 'utf8');
 });
 
-test('defaults: 40 turns, $2 cap', () => {
-  assert.equal(DEFAULT_ASK_MAX_TURNS, 40);
-  assert.equal(DEFAULT_ASK_MAX_BUDGET_USD, 2);
-  assert.equal(askMaxTurns(), 40);
-  assert.equal(askMaxBudgetUsd(), 2);
+test('defaults: 400 turns, no cost cap', () => {
+  assert.equal(DEFAULT_ASK_MAX_TURNS, 400);
+  assert.equal(DEFAULT_ASK_MAX_BUDGET_USD, null);
+  assert.equal(askMaxTurns(), 400);
+  assert.equal(askMaxBudgetUsd(), null);
+});
+
+test('no stored budget, or an invalid one, means no cap', async () => {
+  assert.ok(!('askMaxBudgetUsd' in readSettings()), 'nothing stored');
+  assert.equal(askMaxBudgetUsd(), null, 'absent ⇒ no cap');
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (...a) => warnings.push(a.join(' '));
+  try {
+    for (const bad of [-3, 0.05, 101, '2', true, {}]) {
+      await writeFile(settingsFile(), JSON.stringify({ askMaxBudgetUsd: bad }), 'utf8');
+      assert.equal(askMaxBudgetUsd(), null, `invalid ${JSON.stringify(bad)} ⇒ no cap`);
+    }
+  } finally { console.warn = orig; }
+  assert.equal(warnings.length, 6);
+  for (const w of warnings) assert.match(w, /invalid askMaxBudgetUsd .* — using the default \(no cap\)$/);
 });
 
 test('set/read roundtrip; null stores "no cap"; "" clears to the default', async () => {
@@ -47,14 +63,15 @@ test('set/read roundtrip; null stores "no cap"; "" clears to the default', async
   assert.deepEqual(await setAskMaxBudgetUsd(null), { askMaxBudgetUsd: null });
   assert.equal(askMaxBudgetUsd(), null, 'null = no cap');
   assert.equal(readSettings().askMaxBudgetUsd, null, 'the literal null is persisted');
-  await setAskMaxBudgetUsd('');
-  assert.equal(askMaxBudgetUsd(), 2, '"" clears to the default');
+  await setAskMaxBudgetUsd(0.5);
+  assert.deepEqual(await setAskMaxBudgetUsd(''), { askMaxBudgetUsd: null });
+  assert.equal(askMaxBudgetUsd(), null, '"" clears to the default (no cap)');
   assert.ok(!('askMaxBudgetUsd' in readSettings()), 'cleared key is removed');
   await setAskMaxTurns('');
-  assert.equal(askMaxTurns(), 40);
+  assert.equal(askMaxTurns(), 400);
   await setAskMaxTurns(5);
   await setAskMaxTurns(null);
-  assert.equal(askMaxTurns(), 40, 'null clears askMaxTurns (it has no "no cap" meaning)');
+  assert.equal(askMaxTurns(), 400, 'null clears askMaxTurns (it has no "no cap" meaning)');
 });
 
 test('validation: ranges, integers, strings rejected, exact messages', async () => {
@@ -84,10 +101,12 @@ test('invalid persisted values fall back loudly to the defaults', async () => {
   const orig = console.warn;
   console.warn = (...a) => warnings.push(a.join(' '));
   try {
-    assert.equal(askMaxTurns(), 40);
-    assert.equal(askMaxBudgetUsd(), 2);
+    assert.equal(askMaxTurns(), 400);
+    assert.equal(askMaxBudgetUsd(), null);
   } finally { console.warn = orig; }
   assert.equal(warnings.filter((w) => /askMaxTurns|askMaxBudgetUsd/.test(w)).length, 2);
+  assert.ok(warnings.some((w) => w.endsWith('invalid askMaxTurns "lots" — using the default (400)')));
+  assert.ok(warnings.some((w) => w.endsWith('invalid askMaxBudgetUsd -3 — using the default (no cap)')));
 });
 
 test('ASK_LIMITS is frozen and carries the spec figures', () => {
@@ -116,8 +135,10 @@ test('ASK_LIMITS is frozen and carries the spec figures', () => {
 });
 
 test('askLimits() reads the settings fresh on every call (D12) and accepts injected readers', async () => {
-  assert.deepEqual(askLimits(), { maxTurns: 40, maxBudgetUsd: 2 });
+  assert.deepEqual(askLimits(), { maxTurns: 400, maxBudgetUsd: null });
   await setAskMaxTurns(3);
+  await setAskMaxBudgetUsd(0.5);
+  assert.deepEqual(askLimits(), { maxTurns: 3, maxBudgetUsd: 0.5 }, 'no caching');
   await setAskMaxBudgetUsd(null);
   assert.deepEqual(askLimits(), { maxTurns: 3, maxBudgetUsd: null }, 'no caching');
   assert.deepEqual(askLimits({ readMaxTurns: () => 9, readMaxBudgetUsd: () => 0.25 }), { maxTurns: 9, maxBudgetUsd: 0.25 });
