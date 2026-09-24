@@ -170,6 +170,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'test_provider': return input?.provider ? `Testing ${String(input.provider).slice(0, 20)}` : 'Testing a provider';
     case 'list_copilot_models': return 'Listing Copilot models';
     case 'propose_model_change': return 'Proposing a model change';
+    case 'propose_clone_project': return 'Proposing a project clone';
     default: return `Using ${n}`;
   }
 }
@@ -246,6 +247,7 @@ export function createTurnReducer({
   onPolicyProposal = null,       // propose_policy_change RESULT (team policy card; same split)
   onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
   onModelProposal = null,        // propose_model_change RESULT (model card; same split)
+  onCloneProposal = null,        // propose_clone_project RESULT (clone card; same split)
   onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onCommentMutation = null,
@@ -603,6 +605,13 @@ export function createTurnReducer({
         // Same split as the metrics card: the parent re-validates the INPUT over the real catalog (model-proposal.mjs).
         try {
           const ret = onModelProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_clone_project' && typeof onCloneProposal === 'function') {
+        // Same split as the model card: the parent re-validates the INPUT and adds how GitHub is reached (clone-proposal.mjs).
+        try {
+          const ret = onCloneProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

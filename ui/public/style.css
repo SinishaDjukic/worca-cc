@@ -3092,6 +3092,9 @@ section[data-view="team-metrics"] .topbar{align-items:flex-start;}
 .md-tab{height:22px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--ink-2);
   font:500 11.5px var(--sans);cursor:pointer;}
 .md-tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
+/* Add project: Folder / Clone from URL. */
+.proj-add-tabs{margin:0 0 12px;}
+.md-tab:disabled{cursor:default;opacity:.55;}
 .hd-cmt-input{width:100%;min-height:72px;padding:12px 14px;border:0;background:transparent;color:var(--ink);
   font:400 13px/1.5 var(--sans);resize:vertical;}
 .hd-cmt-input::placeholder{color:var(--ink-2);}

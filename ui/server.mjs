@@ -60,7 +60,7 @@ import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread,
-  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages,
+  deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards,
   countThreads as askCountThreads, listThreadIds as askListThreadIds,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
@@ -120,6 +120,7 @@ import {
 } from '../src/core/remote-access.mjs';
 import { detectDeployment, deploymentFacts } from '../src/core/deployment.mjs';
 import { resolveIdentity, startedByOf, prAttributionFooter } from '../src/core/identity.mjs';
+import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
@@ -162,6 +163,7 @@ import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-prop
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
 import { applyModelChange } from '../src/core/ask/model-deps.mjs';
 import { modelEventPrompt, modelNoticeText } from '../src/core/ask/model-proposal.mjs';
+import { cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
@@ -4154,6 +4156,59 @@ app.post('/api/projects', async (req, res) => {
   }
 });
 
+// POST /api/projects/clone {url, branch?, name?} -> 202 {jobId}: clone a repository into the
+// projects folder and register it (src/core/clone-project.mjs). A job, because a large clone
+// outlives a proxied request (Cloudflare closes at 100 s). GET /api/projects/clone/:id polls it;
+// 'clone-changed' broadcasts each transition. Refusals known up front answer at once (4xx).
+const CLONE_JOBS = new Map();   // jobId -> { id, url, name, dir, state: running|done|error, code?, error?, project? }
+const CLONE_STATUS = { invalid: 400, 'not-allowed': 403, exists: 409, 'not-found': 404, 'auth-failed': 502, timeout: 504, failed: 500 };
+function publicCloneJob(j) {
+  const { id, url, name, dir, state, code = null, error = null, project = null, startedAt, endedAt = null } = j;
+  return { id, url, name, dir, state, code, error, project, startedAt, endedAt };
+}
+async function startCloneJob(req) {
+  const plan = planClone(req, { projectsRoot: getProjectsRoot() });   // throws CloneError at once
+  if ([...CLONE_JOBS.values()].some((j) => j.state === 'running' && j.dir === plan.dir)) {
+    throw new CloneError('exists', `${plan.dir} is being cloned already`);
+  }
+  const job = { id: `cln_${randomBytes(4).toString('hex')}`, url: plan.url, name: plan.name, dir: plan.dir, state: 'running', startedAt: new Date().toISOString() };
+  CLONE_JOBS.set(job.id, job);
+  broadcast({ type: 'clone-changed', job: publicCloneJob(job) });
+  (async () => {
+    try {
+      await pinUiLevel();
+      const { project } = await cloneProject(req, { projectsRoot: getProjectsRoot(), listProjects, addProject });
+      Object.assign(job, { state: 'done', project });
+      emitChanged('projects-changed', 'created');
+      discoverProject(project.path, { force: true })
+        .then(() => emitChanged('team-metrics-changed', 'discovered'))
+        .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
+    } catch (err) {
+      Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
+    }
+    job.endedAt = new Date().toISOString();
+    broadcast({ type: 'clone-changed', job: publicCloneJob(job) });
+    // Keep finished jobs for an hour so a reload can still read the outcome.
+    setTimeout(() => CLONE_JOBS.delete(job.id), 3600_000).unref?.();
+  })();
+  return job;
+}
+app.post('/api/projects/clone', async (req, res) => {
+  const body = req.body || {};
+  try {
+    const job = await startCloneJob({ url: body.url, branch: body.branch ?? null, name: body.name ?? null });
+    res.status(202).json({ jobId: job.id, job: publicCloneJob(job) });
+  } catch (err) {
+    const code = err instanceof CloneError ? err.code : 'failed';
+    res.status(CLONE_STATUS[code] || 500).json({ error: err && err.message ? err.message : String(err), code });
+  }
+});
+app.get('/api/projects/clone/:id', (req, res) => {
+  const job = CLONE_JOBS.get(String(req.params.id));
+  if (!job) return res.status(404).json({ error: 'clone job not found' });
+  res.json({ job: publicCloneJob(job) });
+});
+
 app.delete('/api/projects', async (req, res) => {
   const name = typeof req.query.name === 'string' ? req.query.name : '';
   if (!name.trim()) return badRequest(res, 'name is required');
@@ -6419,7 +6474,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -6857,9 +6912,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   let mv = await validateModelEffort(thread.model, thread.effort);
@@ -6880,6 +6935,23 @@ async function startMetricsEventTurn(threadId, block) {
   const r = await start();
   if (r.ok) return { assistantMessageId: r.assistantMessageId };
   return failedEventTurn(threadId, { error: r.error, status: r.status, ...(r.budget ? { budget: r.budget } : {}) });
+}
+
+/** Follow a clone card's job to its end: flip the card to applied | failed and start the event turn.
+ *  Reads the job object startCloneJob returned (it is updated in place when the clone ends). */
+function followCloneCard(threadId, cardId, job, { everyMs = 500 } = {}) {
+  const timer = setInterval(async () => {
+    if (!job || job.state === 'running') return;
+    clearInterval(timer);
+    const result = job.state === 'done'
+      ? { ok: true, jobId: job.id, project: job.project ? { name: job.project.name, path: job.project.path } : null }
+      : { ok: false, jobId: job.id, code: job.code || 'failed', error: job.error || 'the clone failed' };
+    const block = flipCard(threadId, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+    if (!block) return;
+    try { await startMetricsEventTurn(threadId, block); }
+    catch (err) { console.error(`[worca-ui] clone card event turn failed: ${err && err.message ? err.message : err}`); }
+  }, everyMs);
+  timer.unref?.();
 }
 
 // D14 dismiss ("Not now" keeps a stub — the client renders state:'dismissed') for a RUN card;
@@ -6943,6 +7015,37 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (!block) return res.status(409).json({ error: 'card vanished' });
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'clone') {
+      // Clone card (docs/deploy-railway.md "First project"): proposed → cloning → applied | failed, or declined.
+      // The clone happens HERE, behind the click, as the same job the Projects view starts (startCloneJob);
+      // a refusal known up front fails the card at once, otherwise the card follows the job to its end.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      let job = null;
+      try {
+        const ch = found.block.card.change || {};
+        try {
+          job = await startCloneJob({ url: ch.url, branch: ch.branch ?? null, name: ch.name ?? null });
+          block = flipCard(id, cardId, { state: 'cloning', card: { result: { ok: null, jobId: job.id } } });
+        } catch (err) {
+          const result = { ok: false, code: (err && err.code) || 'failed', error: err && err.message ? err.message : String(err) };
+          block = flipCard(id, cardId, { state: 'failed', error: result.error, card: { result } });
+        }
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      if (block.state === 'failed') return res.json({ block, turn: await startMetricsEventTurn(id, block) });
+      followCloneCard(id, cardId, job);
+      return res.json({ block });
     }
     if (found.block.card && (found.block.card.type === 'metrics' || found.block.card.type === 'policy')) {
       // Metrics / policy card (docs/team-metrics.md, docs/team-policy.md "Ask Worca"): proposed → applied | failed |
@@ -8425,6 +8528,9 @@ export async function bootMaintenance({ log } = {}) {
   try {
     const interrupted = sweepStreamingMessages();
     const emptyThreads = sweepEmptyThreads();
+    // A clone job lives in this process: a clone card still `cloning` from the last one can never finish.
+    const clones = sweepCloningCards();
+    if (clones) console.log(`[worca-ui] ask sweep: ${clones} clone card(s) interrupted by the restart`);
     summary.ask = { interrupted, emptyThreads };
     if (interrupted || emptyThreads) {
       console.log(`[worca-ui] ask sweep: ${interrupted} interrupted turn(s), ${emptyThreads} empty thread(s)`);
@@ -8568,6 +8674,7 @@ export const _testing = {
   wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
+  startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,

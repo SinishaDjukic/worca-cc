@@ -159,22 +159,19 @@ Setting a variable redeploys the service. Other settings changes apply on the ne
 
 ## 5. First project
 
-Projects live on the volume under `/data/projects`. Clone them **as the `worca` user**: a
-`railway ssh` session is root, and a root-owned clone is read-only for worca.
+Projects live on the volume under `/data/projects`. Add one from the UI: **Projects → Add project →
+Clone from URL**, with the repository's `https://` URL and, optionally, a branch and a folder name.
+Worca clones it with the deployment's GitHub read credential (token or App), as the `worca` user,
+into a new folder, and registers it. The same works from Ask Worca ("set up github.com/acme/api"
+proposes a card you apply) and from a shell with `worca add --clone <url>`.
 
-```bash
-railway ssh keys add          # once: registers a local SSH public key with Railway
-railway ssh -s worca -- su -s /bin/sh worca -c \
-  'gh repo clone you/app /data/projects/app'
-```
-
-`gh repo clone` uses the service's `GH_TOKEN`, so private repos clone. With a read/write pair
-instead, prefix the command inside the quotes with `GH_TOKEN="$WORCA_GH_READ_TOKEN"`. With only a
-GitHub App there is no token to prefix: clone a public repository with plain `git clone`, and for
-a private one use a short-lived token of your own for that one command. Worca itself
-passes the token to each of its own git and gh calls (fetch, push, pull requests); agents never
-get it. Then add `/data/projects/app` as a project in the UI (the folder picker is a
-text field on a server) and start a run.
+- Only `https://` URLs; a URL with credentials in it is refused (the credential belongs in the
+  service variables).
+- `WORCA_CLONE_ALLOW` limits what can be cloned, for example `github.com/acme/*,github.com/you/app`.
+  Unset, anything the credential can read is allowed.
+- An existing folder is never overwritten. A clone that fails or takes longer than 10 minutes
+  removes its folder. Large repositories are cloned partially (`--filter=blob:none`) and fetch
+  file contents as they are needed.
 
 Ask Worca knows it runs hosted. Each turn tells it the projects folder, whether a GitHub credential is
 set, and who is signed in. It points people here to add a project, never asks for a token in chat,

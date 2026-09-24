@@ -278,11 +278,33 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
     const blocks = found.message.blocks.map((b) => {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
-        || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model'));
+        || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
     return blocks.find((b) => b && b.kind === 'card' && b.id === cardId);
+  });
+}
+
+/** Boot sweep for clone cards: a clone job lives in the server process, so a card still `cloning`
+ *  after a restart can never finish — it fails with `text` (the folder may hold a partial clone;
+ *  the next attempt refuses it as existing). Returns the number of cards failed. */
+export function sweepCloningCards({ text = 'interrupted by a restart; the clone did not finish' } = {}) {
+  return tx(() => {
+    let n = 0;
+    const rows = prepare("SELECT id, blocks FROM ask_messages WHERE blocks LIKE '%\"state\":\"cloning\"%'").all();
+    for (const r of rows) {
+      const prev = parse(r.blocks, []);
+      if (!Array.isArray(prev)) continue;
+      let changed = false;
+      const blocks = prev.map((b) => {
+        if (!(b && b.kind === 'card' && b.state === 'cloning' && b.card && b.card.type === 'clone')) return b;
+        changed = true; n += 1;
+        return { ...b, state: 'failed', error: text, card: { ...b.card, result: { ok: false, code: 'failed', error: text } } };
+      });
+      if (changed) prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), r.id);
+    }
+    return n;
   });
 }
 

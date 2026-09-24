@@ -374,6 +374,12 @@ const el = {
   projAddSave: $('#proj-add-save'),
   projAddCancel: $('#proj-add-cancel'),
   projAddMsg: $('#proj-add-msg'),
+  projAddTabs: $('#proj-add-tabs'),
+  projAddFolderPane: $('#proj-add-folder-pane'),
+  projAddClonePane: $('#proj-add-clone-pane'),
+  projCloneUrl: $('#proj-clone-url'),
+  projCloneBranch: $('#proj-clone-branch'),
+  projCloneName: $('#proj-clone-name'),
 
   // Agent creation wizard
   agwName: $('#agw-name'),
@@ -890,6 +896,10 @@ function handleServerMessage(msg) {
   }
   if (msg.type === 'onboarding-changed') {
     scheduleOnboardingRefresh();
+    return;
+  }
+  if (msg.type === 'clone-changed') {
+    onCloneJob(msg.job);
     return;
   }
   if (msg.type === 'projects-changed') {
@@ -9429,15 +9439,118 @@ function setProjAddMsg(text, kind) {
   el.projAddMsg.className = 'hint' + (kind ? ' ' + kind : '');
 }
 
-function openProjectAddModal(path) {
+function openProjectAddModal(path, { mode = 'folder' } = {}) {
   el.projAddPath.value = path || '';
   el.projAddName.value = path ? basenameOf(path) : '';
+  if (el.projCloneUrl) {
+    el.projCloneUrl.value = '';
+    el.projCloneBranch.value = '';
+    el.projCloneName.value = '';
+    el.projCloneName.placeholder = 'the repository name';
+  }
+  el.projectAddModal.classList.remove('hidden');
+  setProjAddMode(mode);
+  // A clone still in flight from an earlier open keeps its progress line.
+  if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
   // Informational hint only when there is no path (manual-entry fallback);
   // neutral default .hint styling (no .hint.warn class exists).
-  setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
-  el.projectAddModal.classList.remove('hidden');
-  el.projAddName.focus();
-  el.projAddName.select();
+  if (mode === 'folder') {
+    setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
+    el.projAddName.focus();
+    el.projAddName.select();
+  }
+}
+
+// ---- Add project: the Folder / Clone from URL tabs ------------------------------
+let projAddMode = 'folder';
+
+function setProjAddMode(mode) {
+  projAddMode = mode === 'clone' && el.projAddClonePane ? 'clone' : 'folder';
+  if (!el.projAddTabs) return;
+  for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.setAttribute('aria-selected', String(t.dataset.mode === projAddMode));
+  el.projAddFolderPane.hidden = projAddMode !== 'folder';
+  el.projAddClonePane.hidden = projAddMode !== 'clone';
+  el.projAddSave.textContent = projAddMode === 'clone' ? 'Clone and add' : 'Add project';
+  setProjAddMsg(projAddMode === 'clone' ? 'Worca clones the repository into its projects folder with the deployment\'s GitHub credential.' : '');
+  if (projAddMode === 'clone') el.projCloneUrl.focus();
+}
+
+/** "https://github.com/acme/api(.git)" -> "api", or '' when the URL does not name one repository. */
+function repoNameFromUrl(url) {
+  const m = /^https:\/\/[^/\s]+\/[^/\s]+\/([^/\s?#]+?)(?:\.git)?\/?$/i.exec(String(url || '').trim());
+  return m ? m[1] : '';
+}
+
+// The clone being followed: { id, url } while a job runs. WS 'clone-changed' is the fast path,
+// a GET every 2 s the fallback (a dropped socket must not strand the dialog).
+let cloneFollow = null;
+let clonePoll = null;
+
+function lockCloneForm(locked) {
+  for (const n of [el.projCloneUrl, el.projCloneBranch, el.projCloneName, el.projAddSave]) if (n) n.disabled = locked;
+  if (el.projAddTabs) for (const t of el.projAddTabs.querySelectorAll('.md-tab')) t.disabled = locked;
+}
+
+async function saveProjectClone() {
+  const url = el.projCloneUrl.value.trim();
+  if (!url) return setProjAddMsg('Repository URL is required.', 'err');
+  const body = { url };
+  const branch = el.projCloneBranch.value.trim();
+  const name = el.projCloneName.value.trim();
+  if (branch) body.branch = branch;
+  if (name) body.name = name;
+  lockCloneForm(true);
+  setProjAddMsg(`Cloning ${url} …`);
+  try {
+    const res = await fetch('/api/projects/clone', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.jobId) { lockCloneForm(false); setProjAddMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    cloneFollow = { id: data.jobId, url };
+    if (data.job && data.job.state !== 'running') { onCloneJob(data.job); return; }
+    clonePoll = setInterval(pollCloneJob, 2000);
+  } catch (e) {
+    lockCloneForm(false);
+    setProjAddMsg(e.message, 'err');
+  }
+}
+
+async function pollCloneJob() {
+  if (!cloneFollow) return;
+  try {
+    const res = await fetch(`/api/projects/clone/${encodeURIComponent(cloneFollow.id)}`);
+    const data = await safeJson(res);
+    if (res.ok && data.job) onCloneJob(data.job);
+    else if (res.status === 404) onCloneJob({ id: cloneFollow.id, state: 'error', error: 'the clone job is gone (the server restarted?)' });
+  } catch { /* the next tick retries */ }
+}
+
+/** A job update from the WS or the poll: only the one this dialog started counts. */
+function onCloneJob(job) {
+  if (!job || !cloneFollow || job.id !== cloneFollow.id || job.state === 'running') return;
+  clearInterval(clonePoll);
+  clonePoll = null;
+  cloneFollow = null;
+  lockCloneForm(false);
+  const open = el.projectAddModal && !el.projectAddModal.classList.contains('hidden');
+  if (job.state === 'error') {
+    if (open) { setProjAddMode('clone'); setProjAddMsg(job.error || 'The clone failed.', 'err'); }
+    else setProjectsMsg(`Clone failed: ${job.error || 'unknown error'}`, 'err');
+    return;
+  }
+  const name = (job.project && job.project.name) || job.name || '';
+  if (open) closeProjectAddModal();
+  void (async () => {
+    try {
+      const res = await fetch('/api/projects');
+      const data = await safeJson(res);
+      if (res.ok && Array.isArray(data.projects)) state.projects = data.projects;
+    } catch { /* the projects-changed frame refreshes it too */ }
+    renderProjectsList();
+    renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+    setProjectsMsg(name ? `Cloned and added “${name}”.` : 'Cloned and added the project.');
+  })();
 }
 
 function closeProjectAddModal() {
@@ -9450,10 +9563,13 @@ async function addProjectFlow() {
   if (data && data.status === 'picked' && data.path) { openProjectAddModal(data.path); return; }
   if (data && data.status === 'canceled') return;                 // respect the cancel
   if (data && data.status === 'busy') { setProjectsMsg('A folder dialog is already open — finish or cancel it first.', 'err'); return; }
-  openProjectAddModal('');                                        // unsupported / error -> manual entry
+  // No folder picker at all (a container or hosted worca): the repository is the way in.
+  if (data && data.status === 'unsupported') { openProjectAddModal('', { mode: 'clone' }); return; }
+  openProjectAddModal('');                                        // error -> manual entry
 }
 
 async function saveProjectAdd() {
+  if (projAddMode === 'clone') return saveProjectClone();
   const name = el.projAddName.value.trim();
   const path = el.projAddPath.value.trim();
   if (!name) return setProjAddMsg('Name is required.', 'err');
@@ -9560,6 +9676,16 @@ if (el.projAddSave) {
       el.projAddBrowse.disabled = false;
     }
   });
+  if (el.projAddTabs) {
+    el.projAddTabs.addEventListener('click', (e) => {
+      const tab = e.target.closest && e.target.closest('.md-tab');
+      if (tab && !tab.disabled) setProjAddMode(tab.dataset.mode);
+    });
+    el.projCloneUrl.addEventListener('input', () => {
+      el.projCloneName.placeholder = repoNameFromUrl(el.projCloneUrl.value) || 'the repository name';
+    });
+    el.projCloneUrl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectAdd(); } });
+  }
   el.projectAddModal.addEventListener('click', (e) => { if (e.target === el.projectAddModal) closeProjectAddModal(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && el.projectAddModal && !el.projectAddModal.classList.contains('hidden')) closeProjectAddModal();

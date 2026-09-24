@@ -148,7 +148,9 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
 
 /** Server-side knobs the MCP child's NESTED classifier spawn needs (P3 propose_workflow, task mode). The chat's claude is
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
+// WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
+// folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
 
 /**
  * The per-turn --mcp-config document (spec §6.4). `homeBase` is the RAW base

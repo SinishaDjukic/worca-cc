@@ -252,6 +252,8 @@ Usage:
 
 Subcommands:
   add [name] [--path <dir>]   Register a project. Defaults: name = basename(path), path = cwd.
+  add --clone <https-url> [--branch <b>] [--name <folder>]
+                              Clone a repository into the projects folder and register it.
   list                        List registered projects (tab-separated; missing dirs are flagged).
   remove <name>               Remove a registered project by name (case-insensitive).
   resume <pipelineId>         Continue a paused pipeline (re-attaches Claude sessions).
@@ -1052,10 +1054,12 @@ function runInstall(targetDir, passthrough) {
 
 // ── project registry subcommands ──────────────────────────────────────────────
 
-/** Parse a tiny argv slice for the `add` subcommand. Supports --path/--path=<dir>. */
+/** Parse a tiny argv slice for the `add` subcommand. Supports --path/--path=<dir> and
+ *  --clone <url> [--branch <b>] [--name <folder>]. */
 function parseAddArgs(argv) {
   const positionals = [];
   let pathArg = null;
+  const clone = { url: null, branch: null, name: null };
   for (let i = 0; i < argv.length; i++) {
     let a = argv[i];
     let inline;
@@ -1068,17 +1072,44 @@ function parseAddArgs(argv) {
       const v = inline !== undefined ? inline : argv[++i];
       if (v === undefined) fail('Flag --path requires a value.');
       pathArg = v;
+    } else if (a === '--clone' || a === '--branch' || a === '--name') {
+      const v = inline !== undefined ? inline : argv[++i];
+      if (v === undefined) fail(`Flag ${a} requires a value.`);
+      clone[a === '--clone' ? 'url' : a.slice(2)] = v;
     } else if (a.startsWith('-')) {
       fail(`Unknown flag: ${a}`);
     } else {
       positionals.push(a);
     }
   }
-  return { name: positionals[0], path: pathArg };
+  if ((clone.branch || clone.name) && !clone.url) fail('--branch and --name go with --clone.');
+  if (clone.url && pathArg) fail('--clone and --path cannot be combined: the clone goes into the projects folder.');
+  return { name: positionals[0], path: pathArg, clone: clone.url ? clone : null };
+}
+
+/** `worca add --clone`: the same path as the UI's Clone from URL (src/core/clone-project.mjs). */
+async function cmdAddClone(clone, positionalName) {
+  const { cloneProject } = await import('../core/clone-project.mjs');
+  const { getProjectsRoot } = await import('../core/settings.mjs');
+  try {
+    out(`Cloning ${clone.url} …`);
+    const { project } = await cloneProject({ url: clone.url, branch: clone.branch, name: clone.name || positionalName || null },
+      { projectsRoot: getProjectsRoot(), listProjects, addProject });
+    out(`Added project "${project.name}" -> ${project.path}`);
+    try {
+      const m = await import('../core/metrics/sync.mjs');
+      await m.discoverProject(project.path, { force: true });
+    } catch { /* metrics never block `worca add` */ }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`worca: ${err?.message || err}${err?.code ? ` (${err.code})` : ''}\n`);
+    return 1;
+  }
 }
 
 async function cmdAdd(argv) {
-  const { name: rawName, path: rawPath } = parseAddArgs(argv);
+  const { name: rawName, path: rawPath, clone } = parseAddArgs(argv);
+  if (clone) return cmdAddClone(clone, rawName);
   // Always route through normalizeProjectPath so display, storage, and
   // basename() all see exactly the same string addProject will persist.
   const target = normalizeProjectPath(rawPath) || resolve(process.cwd());

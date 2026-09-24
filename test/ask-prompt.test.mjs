@@ -697,7 +697,9 @@ test('rule 19 keeps projects on the server, credentials out of chat, and names t
     'Never ask for one in chat', 'do not repeat it back', 'revoke it', 'github=', 'GH_TOKEN', 'docs/remote-access.md', 'signed in:']) {
     assert.ok(ASK_HOSTING_RULE.includes(t), `rule 19 states "${t}"`);
   }
-  assert.equal(ASK_HOSTING_RULE.includes('propose_clone_project'), false, 'names no tool that does not exist yet');
+  assert.ok(ASK_HOSTING_RULE.includes('call propose_clone_project'), 'a new project is added with the clone card');
+  assert.equal(ASK_HOSTING_RULE.includes('cloned into the projects folder by whoever runs the server'), false, 'no longer by hand');
+  assert.ok(/list_endpoint_models, propose_model_change, propose_clone_project\)/.test(ASK_SYSTEM_RULES), 'rule 1 lists the tool');
   assert.equal(CTRL_RE.test(ASK_HOSTING_RULE.replace(/\n/g, '')), false);
 });
 

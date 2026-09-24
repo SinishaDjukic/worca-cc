@@ -2404,6 +2404,61 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  /** The clone card (propose_clone_project): proposed → cloning → applied | failed, or declined. Every value is text. */
+  function buildCloneCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || 'clone a repository';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-clonecard is-${block.state}`);
+    rootEl.setAttribute('data-ask-clonecard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    const title = block.state === 'applied' ? 'Project cloned' : block.state === 'failed' ? 'Clone failed'
+      : block.state === 'cloning' ? 'Cloning…' : 'Proposed project';
+    head.appendChild(make('span', 'ask-mcard-title', title));
+    head.appendChild(make('span', 'ask-mcard-kind', 'Clone'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    const sum = make('div', 'ask-mcard-summary');
+    if (block.state === 'applied') sum.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
+    sum.appendChild(make('span', null, summary));
+    body.appendChild(sum);
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const rows = [['Repository', card.url], ['Branch', card.branch || 'default branch'], ['Folder', card.dir], ['GitHub', card.github]];
+    const ul = make('ul', 'ask-mcard-changes');
+    for (const [label, value] of rows) {
+      if (!value) continue;
+      const li = make('li');
+      li.appendChild(make('span', 'ask-mcard-change-label', label));
+      const val = make('span', 'ask-mcard-change-val');
+      val.appendChild(make('span', 'ask-mcard-after', String(value)));
+      li.appendChild(val);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not clone: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied' && result && result.project && result.project.path) {
+      body.appendChild(make('div', 'ask-mcard-detail', `Registered as ${result.project.name || card.name} at ${result.project.path}`));
+    }
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const decline = btn('ask-card-not-now', 'Decline', 'data-ask-clone-decline');
+      decline.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, decline));
+      const apply = btn('ask-card-start', 'Clone', 'data-ask-clone-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), decline, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   /** The model · effort picker (mockup §C): the panel's popover chrome, anchored under the chip. Rows are menuitems (PD28). */
   function openChipPicker(chip, nodeId, card, wf, handle) {
     const node = card.nodes && card.nodes[nodeId];
@@ -3067,7 +3122,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model') return false;
+    if (card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -3078,13 +3133,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isMetrics = !!(block.card && (block.card.type === 'metrics' || block.card.type === 'policy'));
     const isSchedule = !!(block.card && block.card.type === 'schedule');
     const isModel = !!(block.card && block.card.type === 'model');
+    const isClone = !!(block.card && block.card.type === 'clone');
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
       : isSchedule ? buildScheduleCard(block)
       : isModel ? buildModelCard(block)
+      : isClone ? buildCloneCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });

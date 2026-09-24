@@ -600,6 +600,14 @@ export function createAskTools(deps) {
           baseUrl: SCHEMA.s('import_endpoint: the endpoint listed, when it is not the provider\'s own'),
           note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
     ] : []),
+    ...(deps.clones ? [
+      { name: 'propose_clone_project',
+        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how GitHub is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api'),
+          branch: SCHEMA.s('branch to check out (default: the repository default)'),
+          name: SCHEMA.s('folder and project name (default: the repository name)'),
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },
+    ] : []),
   ];
 
   const EMPTY_DIFF = () => ({ available: false, files: [], text: '', truncated: false, totalBytes: 0, nextOffset: 0 });
@@ -1881,6 +1889,10 @@ export function createAskTools(deps) {
       catch (err) { throw new AskToolError(`list_copilot_models: ${err && err.message ? err.message : err}`); }
     },
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
+    async propose_clone_project(input) {
+      if (!deps.clones) throw new AskToolError('propose_clone_project: cloning is unavailable');
+      return deps.clones.validateChange(input);
+    },
     async save_script(input) {
       const s = scriptWriterOf('save_script');
       // The model's OWN text, on its way to disk: never redacted here (a redaction marker
