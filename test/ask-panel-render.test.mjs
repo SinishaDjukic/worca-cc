@@ -180,6 +180,18 @@ test('ask-panel-render: error rows show the red line with a fallback text', asyn
   assert.match(ctx.doc.querySelector('.ask-error-line').textContent, /This turn ended with an error\./);
 });
 
+test('ask-panel-render: an error turn with no (or a ~0 s) duration says Stopped, not a dangling "Stopped after"', async () => {
+  for (const durationMs of [null, 0, 20]) {
+    const snap = snapBody([
+      asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], durationMs, errorMessage: 'claude exited with code 1: boom' }),
+    ]);
+    const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+    await openThread(ctx);
+    assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Stopped', `durationMs ${durationMs}`);
+    assert.equal(ctx.doc.querySelector('.ask-activity-elapsed').textContent, '');
+  }
+});
+
 test('ask-panel-render: a signed-out Claude error shows one line whose Sign in… link opens Connect Claude Code', async () => {
   const snap = snapBody([
     asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], errorMessage: 'claude exited with code 1: Not logged in · Please run /login', errorCode: 'claude-signed-out' }),

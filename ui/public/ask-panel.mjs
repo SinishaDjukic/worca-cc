@@ -3445,10 +3445,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Stopped after — and nothing more while the turn is live: the orb row at the
       // bottom of the message owns the elapsed and the meter, and printing either
       // set twice is the noise this replaced. A turn that ended badly says so
-      // instead of Done; nothing else marks a stop.
+      // instead of Done; nothing else marks a stop. A turn that ended before any
+      // result, or within a few ms (a signed-out CLI answers in ~20 ms), has no
+      // duration worth printing: plain Stopped, never a dangling "Stopped after"
+      // or "Stopped after 0.0s".
       if (!isLive) {
-        if (stopped) parts.push(make('span', 'ask-activity-label', 'Stopped after'));
-        parts.push(make('span', 'ask-activity-elapsed', fmtElapsed(r.durationMs) || ''));
+        const shown = fmtElapsed(r.durationMs);
+        const elapsed = shown && shown !== '0.0s' ? shown : '';
+        if (stopped) parts.push(make('span', 'ask-activity-label', elapsed ? 'Stopped after' : 'Stopped'));
+        parts.push(make('span', 'ask-activity-elapsed', elapsed));
         parts.push(make('span', 'ask-activity-spacer'));
         const meter = [fmtCtx(r.usage && r.usage.ctx), fmtUsd(r.costUsd)].filter(Boolean).join(' · ');
         parts.push(make('span', 'ask-activity-meter', meter));
