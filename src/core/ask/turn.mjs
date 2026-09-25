@@ -16,6 +16,7 @@ import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 
 import { runClaude } from '../claude-runner.mjs';
+import { isClaudeSignedOutError, CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
 import { generateTitle } from '../title.mjs';
@@ -555,7 +556,12 @@ class AskTurn extends EventEmitter {
       console.warn(`[worca-ask] turn ${this.assistantMessageId}: ${summary.reducerErrors} reducer error(s) absorbed`);
     }
     if (kind === 'error') {
-      this._frame({ type: 'ask-error', message: message || 'unknown error', ...(errorClass !== undefined ? { errorClass } : {}) });
+      // `code` lets the panel swap the CLI's raw "Not logged in" for a Sign in… line.
+      this._frame({
+        type: 'ask-error', message: message || 'unknown error',
+        ...(errorClass !== undefined ? { errorClass } : {}),
+        ...(isClaudeSignedOutError(message) ? { code: CLAUDE_SIGNED_OUT_CODE } : {}),
+      });
       this._emit('error', { message: message || 'unknown error' });
     } else {
       this._frame({

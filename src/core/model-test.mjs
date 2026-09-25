@@ -9,6 +9,7 @@ import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv } from './config.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { classifyError } from './recoverable-error.mjs';
+import { isClaudeSignedOutError } from './preflight.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
@@ -29,6 +30,8 @@ export function hintFor(errorClass) {
     default: return '';
   }
 }
+
+export const CLAUDE_SIGNED_OUT_HINT = "Claude Code isn't signed in — run `claude` in a terminal and type /login";
 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
@@ -106,8 +109,12 @@ export async function testModel(id, { signal, bin, run = runClaude } = {}) {
     // names the fix instead of the generic credential advice. A bridge failure
     // classed `network` ("endpoint unreachable", "upstream error (500)") is not
     // an ANTHROPIC_BASE_URL problem: no hint, so the UI shows the message.
+    // The CLI's own "Not logged in" is not this model's token: a first-party
+    // model needs the Claude Code sign-in, so say that instead of the generic advice.
     const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider)
-      : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? '' : hintFor(errorClass);
+      : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? ''
+      : !bridgeFailure && isClaudeSignedOutError(message) ? CLAUDE_SIGNED_OUT_HINT
+      : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };
   } finally {
     bridgeEvents.off('failure', onBridgeFailure);

@@ -164,7 +164,7 @@ const PILL_MORPH_IN_MS = 520;
 const PILL_MORPH_OUT_MS = 800;
 const PILL_SETTLE_FALLBACK_MS = PILL_MORPH_OUT_MS + 150;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -3574,7 +3574,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (b.kind === 'notice') parts.push(`n:${b.id ?? ''}:${b.text || ''}:${b.href || ''}`);
       else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}`);
     }
-    parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${isLiveRow(row) ? 1 : 0}`);
+    parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${row.errorCode || ''}:${isLiveRow(row) ? 1 : 0}`);
     return parts.join('|');
   }
 
@@ -3624,7 +3624,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         }
         if (cur.status === 'error') {
           const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
-          if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
+          if (cur.errorCode === 'claude-signed-out' && typeof openClaudeSetup === 'function') {
+            // The CLI's raw "Not logged in" → one line whose link opens Connect Claude Code.
+            const line = make('div', 'ask-error-line', "Claude Code isn't signed in. ");
+            const link = make('a', '', 'Sign in…');
+            link.href = '#';
+            link.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+            line.appendChild(link);
+            wrap.appendChild(line);
+          } else if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
           else if (!explained) wrap.appendChild(make('div', 'ask-error-line', 'This turn ended with an error.'));
         }
         if (isLiveRow(cur)) {

@@ -3,7 +3,7 @@
 // binary is ever spawned; hintFor is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { testModel, hintFor } from '../src/core/model-test.mjs';
+import { testModel, hintFor, CLAUDE_SIGNED_OUT_HINT } from '../src/core/model-test.mjs';
 import { bridgeEvents } from '../src/core/bridge/telemetry.mjs';
 
 test('testModel: success returns ok + first-line capped reply and forwards the minimal run shape', async () => {
@@ -38,6 +38,15 @@ test('testModel: run failure returns ok:false with the runner errorClass', async
   assert.equal(res.ok, false);
   assert.equal(res.errorClass, 'auth');
   assert.match(res.message, /authentication_error/);
+});
+
+test('testModel: the CLI\'s own "Not logged in" names the Claude Code sign-in, not the model token', async () => {
+  const run = async () => {
+    throw Object.assign(new Error('claude exited with code 1: Not logged in · Please run /login'), { errorClass: 'auth' });
+  };
+  const res = await testModel('m', { run });
+  assert.equal(res.errorClass, 'auth');
+  assert.equal(res.hint, CLAUDE_SIGNED_OUT_HINT);
 });
 
 test('testModel: errorClass falls back to classifyError on unstamped errors', async () => {

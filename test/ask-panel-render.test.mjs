@@ -180,6 +180,19 @@ test('ask-panel-render: error rows show the red line with a fallback text', asyn
   assert.match(ctx.doc.querySelector('.ask-error-line').textContent, /This turn ended with an error\./);
 });
 
+test('ask-panel-render: a signed-out Claude error shows one line whose Sign in… link opens Connect Claude Code', async () => {
+  const snap = snapBody([
+    asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], errorMessage: 'claude exited with code 1: Not logged in · Please run /login', errorCode: 'claude-signed-out' }),
+  ]);
+  let opened = 0;
+  const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openClaudeSetup: () => { opened += 1; } } });
+  await openThread(ctx);
+  const line = ctx.doc.querySelector('.ask-error-line');
+  assert.equal(line.textContent, "Claude Code isn't signed in. Sign in…");
+  line.querySelector('a').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(opened, 1);
+});
+
 test('ask-panel-render: notice with href renders an in-app link', async () => {
   const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [{ kind: 'notice', text: 'Run started — "Fix login"', href: '#running/abc-123' }] })]);
   const ctx = makePanel({ fetchHandler: handlerFor(snap) });

@@ -1,4 +1,5 @@
 // test/server-overview-route.test.mjs
+// (The signed-out 409 mapping is exercised end to end in test/scan-auth-gate.test.mjs.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -10,6 +11,6 @@ import assert from 'node:assert/strict';
 //  - the manual smoke test in the plan (Task 7 Step 5).
 test('overview route contract', () => {
   // POST /api/runs/:id/overview resolves (key|projectDir) -> generateOverview(key, id, { force })
-  // -> 200 { overview } | 404 (pipeline not found) | 500 (agent error).
+  // -> 200 { overview } | 404 (pipeline not found) | 409 claude-signed-out | 500 (agent error).
   assert.ok(true);
 });

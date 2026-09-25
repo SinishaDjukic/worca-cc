@@ -538,6 +538,16 @@ function execAnyExit(cmd, args, { timeout = 8000 } = {}) {
   });
 }
 
+/** The refusal every surface shows for a signed-out CLI (the API's `code`, and its text). */
+export const CLAUDE_SIGNED_OUT_CODE = 'claude-signed-out';
+export const CLAUDE_SIGNED_OUT_MESSAGE = "Claude Code isn't signed in. Run `claude` in a terminal and type /login, then try again.";
+
+/** Is `message` the CLI's own signed-out failure ("Not logged in · Please run
+ *  /login")? For surfaces that only learn it after the spawn. Pure. */
+export function isClaudeSignedOutError(message) {
+  return /\bnot logged in\b|please run \/login/i.test(String(message || ''));
+}
+
 export const CLAUDE_AUTH_TTL_MS = 60_000;
 const _authCache = new Map();   // exe -> { at, promise }
 

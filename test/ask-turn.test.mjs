@@ -358,6 +358,20 @@ test('retry also fails: session cleared, ask-error with the runner message + err
   assert.equal(last.type, 'ask-error');
   assert.equal(last.message, 'claude exited with code 1: auth');
   assert.equal(last.errorClass, 'auth');
+  assert.equal(last.code, undefined, 'a generic auth failure is not the CLI sign-in');
+});
+
+test('a signed-out CLI ("Not logged in") ends the turn with ask-error code claude-signed-out', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, {}, {
+    runClaudeImpl: async () => {
+      throw Object.assign(new Error('claude exited with code 1: Not logged in · Please run /login'), { errorClass: 'auth' });
+    },
+  });
+  await turn.run();
+  const last = frames.at(-1);
+  assert.equal(last.type, 'ask-error');
+  assert.equal(last.code, 'claude-signed-out');
 });
 
 test('B-4 guard: an abort rejection NEVER enters the resume fallback', async () => {

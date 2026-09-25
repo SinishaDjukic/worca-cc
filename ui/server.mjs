@@ -196,7 +196,7 @@ import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
-import { probeClaudeAuth } from '../src/core/preflight.mjs';
+import { probeClaudeAuth, isClaudeSignedOutError, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -3220,7 +3220,9 @@ app.get('/api/runs/:id/recovery-patch', async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
 // Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
-// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500.
+// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500, or
+// 409 code 'claude-signed-out' when the CLI is signed out (a cached overview
+// needs no Claude, so this maps the failure instead of probing up front).
 // ---------------------------------------------------------------------------
 app.post('/api/runs/:id/overview', async (req, res) => {
   const id = req.params.id;
@@ -3236,6 +3238,7 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
+    if (isClaudeSignedOutError(msg)) return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     const code = msg === 'pipeline not found' ? 404 : 500;
     res.status(code).json({ error: msg });
   }
@@ -4719,19 +4722,16 @@ function startScan({ projectPaths, name, workspaceId }) {
 }
 
 /**
- * Refuse a scan up front when the Claude CLI is signed out (preflight
- * probeClaudeAuth): otherwise the scan starts and its first agent dies ~30 s in
- * with "Not logged in". Only a definite 'signed-out' refuses — mock, an auth env
- * var, or an unknown answer (an older CLI) all pass. Sends the 409 and returns
- * true when it refused.
+ * Refuse a detached Claude job (workspace scan, agent generation) up front when
+ * the CLI is signed out (preflight probeClaudeAuth): otherwise it starts and its
+ * first agent dies ~30 s in with "Not logged in". Only a definite 'signed-out'
+ * refuses — mock, an auth env var, or an unknown answer (an older CLI) all pass.
+ * Sends the 409 and returns true when it refused.
  */
 async function refuseSignedOutClaude(res) {
   const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
   if (state !== 'signed-out') return false;
-  res.status(409).json({
-    code: 'claude-signed-out',
-    error: "Claude Code isn't signed in. Run `claude` in a terminal and type /login, then try again.",
-  });
+  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
   return true;
 }
 
@@ -7395,6 +7395,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const allAgents = await listAgents();
     const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
+    if (await refuseSignedOutClaude(res)) return;
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),

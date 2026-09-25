@@ -5,6 +5,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   probeClaudeAuth, parseClaudeAuthStatus, claudeAuthFromEnv, clearClaudeAuthCache, CLAUDE_AUTH_TTL_MS,
+  isClaudeSignedOutError,
 } from '../src/core/preflight.mjs';
 
 beforeEach(() => clearClaudeAuthCache());
@@ -27,6 +28,13 @@ test('parseClaudeAuthStatus: text forms, and anything unrecognised is unknown', 
   assert.equal(parseClaudeAuthStatus("error: unknown command 'auth'"), 'unknown');
   assert.equal(parseClaudeAuthStatus(''), 'unknown');
   assert.equal(parseClaudeAuthStatus(null), 'unknown');
+});
+
+test('isClaudeSignedOutError: the CLI\'s signed-out failure, not other auth errors', () => {
+  assert.equal(isClaudeSignedOutError('claude exited with code 1: Not logged in · Please run /login'), true);
+  assert.equal(isClaudeSignedOutError('Invalid API key · Please run /login'), true);
+  assert.equal(isClaudeSignedOutError('claude exited with code 1: 401 authentication_error'), false);
+  assert.equal(isClaudeSignedOutError(null), false);
 });
 
 test('probeClaudeAuth: reads `claude auth status`, whatever its exit code', async () => {
