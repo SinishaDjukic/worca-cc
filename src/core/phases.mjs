@@ -15,7 +15,7 @@
 
 import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv, bridgedModelInfo } from './config.mjs';
-import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, effectiveSubagentModel } from './model-env.mjs';
+import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, EFFORTS, effectiveSubagentModel } from './model-env.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { join } from 'node:path';
@@ -79,8 +79,8 @@ export function ctxFanOut(ctx) {
 /**
  * Whether this run's EFFECTIVE model routes to a custom endpoint (an
  * ANTHROPIC_BASE_URL-overriding catalog/plugin entry). Stamped at dispatch
- * time — orchestrator._execCtx on ctx.node, workspace-scan on the node-less
- * ctx — from modelHasBaseUrlRouting(effective model), so this stays pure.
+ * time — orchestrator._execCtx on ctx.node — from
+ * modelHasBaseUrlRouting(effective model), so this stays pure.
  * A present node wins, mirroring ctxFanOut. Pure + exported for testing.
  */
 /**
@@ -119,6 +119,35 @@ export function ctxEndpointRouted(ctx) {
 export function ctxSubagentModel(ctx) {
   if (!ctxFanOut(ctx)) return SUBAGENT_INHERIT;
   return effectiveSubagentModel(ctx && ctx.node ? ctx.node.subagentModel : undefined);
+}
+
+/** The run-scoped read-only investigator a PINNED fan-out node's children run as (D19). Claude Code
+ *  sets a sub-agent's effort only from its definition, so worca defines one per spawn (--agents). */
+export const INVESTIGATOR_AGENT = 'worca-investigator';
+
+/** The investigator effort in force: fan-out nodes only, one of EFFORTS, else '' (no definition —
+ *  children inherit the session effort, today's behaviour). Pure + exported for testing. */
+export function ctxSubagentEffort(ctx) {
+  if (!ctxFanOut(ctx)) return '';
+  const e = ctx && ctx.node ? ctx.node.subagentEffort : '';
+  return EFFORTS.includes(e) ? e : '';
+}
+
+/** The `--agents` map for a pinned node, or undefined (argv byte-identical). A routed node's
+ *  definition pins no model, so its children ride the node's own endpoint (sameEndpoint rule). */
+export function investigatorAgents(ctx) {
+  const effort = ctxSubagentEffort(ctx);
+  if (!effort) return undefined;
+  const model = ctxSubagentModel(ctx);
+  return {
+    [INVESTIGATOR_AGENT]: {
+      description: 'Read-only investigator for one project or area; reports its findings to the agent that dispatched it.',
+      prompt: 'You are a read-only investigator dispatched by a worca pipeline agent. Investigate exactly what you were asked, in the directories you were given. Never edit, write, commit, branch or spawn sub-agents. Report concrete findings with file paths, then stop.',
+      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Skill'],
+      ...(SUBAGENT_MODELS.includes(model) && !ctxEndpointRouted(ctx) ? { model } : {}),
+      effort,
+    },
+  };
 }
 
 /**
@@ -242,31 +271,37 @@ function relRepo(p) {
  * promised — it is inherited env and remains true. Single mode (both run-root modes)
  * and legacy workspace runs keep today's byte-identical sentence.
  */
-export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false } = {}) {
+export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false } = {}) {
   if (!fanOut) return '';
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
   // custom endpoint cannot serve — swap the sentence AND the model block.
-  const subagentSentence = endpointRouted
-    ? 'Use `subagent_type: "general-purpose"` for EVERY spawn unless you have verified (by reading ' +
-      'its definition file) that a purpose-built agent pins no `model:` in its frontmatter — this ' +
-      'node runs on a custom endpoint that serves only its own model (details in the sub-agent ' +
-      'model block below).' +
-      // A detached-workspace run keeps its run-root caveat: the routed steer
-      // sends the agent checking definition files, and a run-root cwd cannot
-      // discover member projects' agents by name in the first place.
-      (omitProjectAgents
-        ? ' This run starts at the worca-cc run root, so no member project\'s own agents are ' +
-          'discoverable by name.'
-        : '')
-    : omitProjectAgents
-      ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
-        'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
-        '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
-        'root, so no member project\'s own agents are discoverable by name.'
-      : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
-        'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
-        'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).';
+  const subagentSentence = investigator
+    ? `Dispatch EVERY sub-agent with \`subagent_type: "${INVESTIGATOR_AGENT}"\` — the operator defined it for this ` +
+      (endpointRouted
+        ? 'run (read-only tools and a pinned effort; it names no model, so it rides this node\'s own endpoint). '
+        : 'run (read-only tools, a pinned model and effort). ') +
+      'Use no other `subagent_type` — not `general-purpose` either.'
+    : endpointRouted
+      ? 'Use `subagent_type: "general-purpose"` for EVERY spawn unless you have verified (by reading ' +
+        'its definition file) that a purpose-built agent pins no `model:` in its frontmatter — this ' +
+        'node runs on a custom endpoint that serves only its own model (details in the sub-agent ' +
+        'model block below).' +
+        // A detached-workspace run keeps its run-root caveat: the routed steer
+        // sends the agent checking definition files, and a run-root cwd cannot
+        // discover member projects' agents by name in the first place.
+        (omitProjectAgents
+          ? ' This run starts at the worca-cc run root, so no member project\'s own agents are ' +
+            'discoverable by name.'
+          : '')
+      : omitProjectAgents
+        ? 'Pick the BEST-FIT `subagent_type`: your personal agents (`~/.claude/agents`) are available by ' +
+          'name — prefer a purpose-built one when it fits the sub-task, else fall back to ' +
+          '`"general-purpose"` (or `"Explore"` for pure code search). This run starts at the worca-cc run ' +
+          'root, so no member project\'s own agents are discoverable by name.'
+        : 'Pick the BEST-FIT `subagent_type`: this project\'s own agents (`.claude/agents`) and your personal ' +
+          'agents (`~/.claude/agents`) are available by name — prefer a purpose-built one when it fits the ' +
+          'sub-task, else fall back to `"general-purpose"` (or `"Explore"` for pure code search).';
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'The Task/Agent tool is in your tool list this run. For any non-trivial task that spans more ' +
@@ -603,11 +638,11 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
     // Per-model routing env (design §4.4), resolved HERE — the one funnel every
-    // dispatched node/role passes through — so _phaseCtx/_nodeCtx and the
-    // workspace-scan path all inherit it without per-caller edits. undefined
+    // dispatched node/role passes through — so every caller inherits it
+    // without per-caller edits. undefined
     // when the model carries no env (or no model is set), keeping the spawn
     // env byte-identical. The sub-agent model policy deliberately does NOT
-    // touch this env: its only wire is the prompt block (subagentModelDirective),
+    // touch this env: its wires are the prompt block (subagentModelDirective) and, for a pinned effort, the --agents definition (investigatorAgents),
     // and CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key.
     modelEnv: resolveDispatchModelEnv(c, ctx),
     // Model bridge (model-bridge-design.md §5.3): a translated model has no
@@ -618,6 +653,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // --append-system-prompt, so the pointer block rides the sub-agent flag. undefined when the
     // run has no mount ⇒ buildClaudeArgs emits nothing and legacy argv stays byte-identical.
     appendSubagentSystemPrompt: typeof ctx.memoryBlock === 'string' && ctx.memoryBlock.trim() ? ctx.memoryBlock : undefined,
+    // Pinned investigators (D19): the run-scoped definition a pinned fan-out node's children run
+    // as. undefined for every other node ⇒ nothing emitted ⇒ argv byte-identical.
+    agents: investigatorAgents(ctx),
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical
@@ -870,86 +908,6 @@ export function diffInstruction(ctx) {
     : 'Inspect the diff with `git diff` and `git status` in your cwd. If `git diff` looks ' +
       'empty, the changes may be newly-created files — confirm with `git status` and ' +
       '`git diff HEAD`.';
-}
-
-/**
- * Workspace Scan — off-pipeline producer (NOT a workflow node, NOT routed through
- * runners.mjs). The wizard's scan engine (M5: workspace-scan.mjs) calls this
- * directly to investigate cross-project relations and write the editable
- * interconnection description. It IS the scanner, so it gets NO `## Workspace
- * Context` block injected (4th buildSystemPrompt arg is undefined). The task prompt
- * names every member + its graph path, carries the scan fan-out directive and the
- * §5.8 description template, and emits an `INVESTIGATING <key> relations to <other>`
- * line per investigation so the server's scan-event mapper turns those into the
- * CHANGING live status (structured `phase` is owned by the engine, not the agent).
- * Writes ONE markdown string to `pipelineDir/workspace-description.md` (or
- * opts.outPath) and returns it. Mockable via MOCK_ROLE 'workspace-scan'.
- * @param {import('./phases.mjs').PhaseContext} ctx  ctx.projects = sorted members
- * @param {{ outPath?: string, name?: string }} [opts]
- * @returns {Promise<{ description: string, outPath: string }>}
- */
-export async function runWorkspaceScan(ctx, opts = {}) {
-  const role = 'workspace-scanner'; // prompt-role string (FALLBACK lookup only); MOCK_ROLE differs (C3)
-  const projects = Array.isArray(ctx.projects) ? ctx.projects : [];
-  const name = opts.name || ctx.workspaceName || 'Workspace';
-  const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
-  // The scanner IS the source of the workspace description, so it does NOT receive
-  // an injected workspace block (4th arg undefined). The body is the contract (C10).
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined, ctx.memoryBlock);
-
-  const memberLines = projects.map((p) =>
-    `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +
-    `${p.graphify ? ' (graphify-out/ available)' : ''}`,
-  ).join('\n');
-
-  const prompt =
-    `# Task: Scan workspace interconnections — ${name}\n\n` +
-    `Pipeline directory (shared artifacts): ${ctx.pipelineDir}\n\n` +
-    `## Member projects to investigate\n\n${memberLines || '(no members)'}\n\n` +
-    '## What to do\n\n' +
-    'Discover how these projects interconnect (REST APIs, shared DB/migrations, build deps, ' +
-    'message/queue, shared libs) and write ONE editable interconnection description.\n\n' +
-    // scan-fanout: one read-only investigator per project (cap 8). NO omitProjectAgents:
-    // the scanner is OFF-pipeline (it runs before any run root exists, with cwd inside a
-    // member's real dir), so its project `.claude/agents` really are discoverable (§8.21
-    // covers run-root cwds only).
-    fanOutDirective(true, { endpointRouted: ctxEndpointRouted(ctx) }) +
-    'Dispatch ONE read-only investigator per member project (cap 8); merge their reports in sorted ' +
-    '`projectKey` order and synthesize the single description yourself. Investigators MUST NOT ' +
-    're-fan-out.\n\n' +
-    'Announce each investigation with a line `INVESTIGATING <projectKey> relations to <otherKey>` ' +
-    'and the merge with `SYNTHESIZING workspace description`.\n\n' +
-    '## Description template (write EXACTLY these sections)\n\n' +
-    '```\n' +
-    `# Workspace: ${name}\n` +
-    '## Overview\n<2-4 sentences: the project set + dominant integration theme>\n' +
-    '## Projects\n- <projectName>: <one-line role>\n' +
-    '## Interconnections\n- <A> -> <B>: <REST API | shared DB / migration | build dep | message/queue | shared lib>; <detail>\n' +
-    '## Change-coordination notes\n- <coordination note>\n' +
-    '## Suggested change order\n<topological hint, else "no strict ordering">\n' +
-    '```\n\n' +
-    `Write the interconnection description markdown to: ${outPath}\n\n` +
-    mockMarkers({
-      MOCK_ROLE: 'workspace-scan', // C3: scanner MOCK marker is workspace-scan (NOT the prompt-role)
-      MOCK_OUT: outPath,
-      MOCK_BASE: name,
-    });
-
-  const { text } = await runClaude(
-    runOpts(ctx, { role, prompt, systemPrompt, allowedTools: READ_WRITE_TOOLS }),
-  );
-
-  // The written file is the authoritative description; read it back so callers
-  // (the M5 scan engine) get the produced text. Dynamic import keeps the static
-  // import surface focused (mirrors the orchestrator's dynamic protocol import).
-  let description = '';
-  try {
-    const { readFile } = await import('node:fs/promises');
-    description = await readFile(outPath, 'utf8');
-  } catch {
-    description = (text || '').trim();
-  }
-  return { description, outPath };
 }
 
 // ── generic runners (metadata-declared agents, zero bespoke core code) ──────────

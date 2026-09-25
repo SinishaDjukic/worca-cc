@@ -28,6 +28,7 @@ import { worcaHome, normalizeProjectPath } from './projects.mjs';
 import { canonicalProjectRoot, projectKey, workspaceStorePath } from './store.mjs';
 import { slugify, retainedWorkFor } from './artifacts.mjs';
 import { getDb, prepare, tx } from './db.mjs';
+import { WORKSPACE_MAX_PROJECTS } from '../shared/workspace-size.mjs';
 
 /** Object-shaped error carrying a machine code (mirrors pipeline-delete.mjs). */
 function err(message, code) { return Object.assign(new Error(message), { code }); }
@@ -219,6 +220,52 @@ function normalizeMembers(projectPaths) {
   return out;
 }
 
+/** Name + member validation shared by createWorkspace and checkNewWorkspace. */
+function prepareCreate(input) {
+  const name = (input && typeof input.name === 'string' ? input.name : '').trim();
+  if (!name) throw err('workspace name is required', 'BAD_REQUEST');
+  const members = normalizeMembers(input && input.projectPaths);
+  if (members.length < 2) {
+    throw err('a workspace needs at least 2 distinct member projects', 'BAD_REQUEST');
+  }
+  // D22: 2–40 members, counted after the canonical-root de-dupe, before any per-member git check.
+  if (members.length > WORKSPACE_MAX_PROJECTS) {
+    throw err(`a workspace holds at most ${WORKSPACE_MAX_PROJECTS} member projects (${members.length} given)`, 'BAD_REQUEST');
+  }
+  for (const p of members) {
+    if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
+    if (!isGitRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
+  }
+  return { name, members };
+}
+
+/** Case-insensitive name clash + D1 duplicate-SET guard. Call inside tx() when writing. */
+function assertNoDuplicate(name, members) {
+  if (prepare('SELECT 1 FROM workspaces WHERE name = ? COLLATE NOCASE').get(name)) {
+    throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
+  }
+  const hash = rootsHash(members);
+  for (const row of prepare('SELECT id FROM workspaces').all()) {
+    if (rootsHash(memberPaths(row.id)) === hash) {
+      throw err('a workspace over this exact project set already exists', 'DUPLICATE_SET');
+    }
+  }
+}
+
+/**
+ * Validate a NEW workspace exactly as createWorkspace will, without writing — the Workspace scan
+ * launch (POST /api/workspaces/scan) refuses up front what the run's final save would refuse.
+ * @param {{name:string, projectPaths:string[]}} input
+ * @returns {{id:string, name:string, projectPaths:string[]}}  id === the key createWorkspace mints
+ * @throws err(code: BAD_REQUEST | DUPLICATE_NAME | DUPLICATE_SET)
+ */
+export function checkNewWorkspace(input = {}) {
+  const { name, members } = prepareCreate(input);
+  getDb();
+  assertNoDuplicate(name, members);
+  return { id: workspaceKey({ name, projectPaths: members }), name, projectPaths: members };
+}
+
 /**
  * Create a workspace. Validates name (non-empty + unique case-insensitive),
  * a 2+ distinct-git-repo member set (de-duped by canonical root), and a unique
@@ -230,37 +277,17 @@ function normalizeMembers(projectPaths) {
  * @throws err(code: BAD_REQUEST | DUPLICATE_NAME | DUPLICATE_SET)
  */
 export async function createWorkspace(input = {}) {
-  const name = (input && typeof input.name === 'string' ? input.name : '').trim();
-  if (!name) throw err('workspace name is required', 'BAD_REQUEST');
+  const { name, members } = prepareCreate(input);
   const description = typeof input.description === 'string' ? input.description : '';
-
-  const members = normalizeMembers(input.projectPaths);
-  if (members.length < 2) {
-    throw err('a workspace needs at least 2 distinct member projects', 'BAD_REQUEST');
-  }
-  for (const p of members) {
-    if (!isDir(p)) throw err(`member path does not exist or is not a directory: ${p}`, 'BAD_REQUEST');
-    if (!isGitRepo(p)) throw err(`member path is not a git repository: ${p}`, 'BAD_REQUEST');
-  }
 
   const metricsProject = memberPathFor(members, input.metricsProject ?? null);
   const policyProject = memberPathFor(members, input.policyProject ?? null, 'policyProject');
   const id = workspaceKey({ name, projectPaths: members });
-  const hash = rootsHash(members);
   const now = new Date().toISOString();
 
   getDb();
   tx(() => {
-    // Case-insensitive duplicate-name guard (matches the legacy check + NOCASE index).
-    if (prepare('SELECT 1 FROM workspaces WHERE name = ? COLLATE NOCASE').get(name)) {
-      throw err(`a workspace named "${name}" already exists`, 'DUPLICATE_NAME');
-    }
-    // D1 duplicate-SET guard: compare rootsHash over existing members.
-    for (const row of prepare('SELECT id FROM workspaces').all()) {
-      if (rootsHash(memberPaths(row.id)) === hash) {
-        throw err('a workspace over this exact project set already exists', 'DUPLICATE_SET');
-      }
-    }
+    assertNoDuplicate(name, members);
     prepare(
       'INSERT INTO workspaces (id, name, description, metrics_project, policy_project, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(id, name, description, metricsProject, policyProject, now, now);

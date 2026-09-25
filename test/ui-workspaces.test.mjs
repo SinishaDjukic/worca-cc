@@ -276,6 +276,30 @@ test('edit → PATCH /api/workspaces/:id { description }; state + DOM update, JS
   assert.equal(doc.querySelector('#ws-detail .ws-desc-edit').hidden, true, 'the editor closed');
 });
 
+test('a scan replaces the description while the editor is open: the draft stays, the page says so, Cancel shows the new text', async () => {
+  let list = WS;
+  const { window, show, ws } = await boot({
+    fetchHandler: (u) => ((u.endsWith('/api/workspaces') || u.includes('/api/workspaces?')) ? Promise.resolve({ ok: true, status: 200, json: async () => ({ workspaces: list }) }) : null),
+  });
+  show('workspaces/wks-alpha-00000001');
+  await settle();
+  const doc = window.document;
+  const page = doc.querySelector('#ws-detail .pd');
+  click(window, page.querySelector('.ws-edit'));
+  const input = page.querySelector('.ws-desc-input');
+  input.value = 'my draft';
+  list = [{ ...WS[0], description: '# Workspace: Alpha\nSCANNED' }, WS[1]];
+  ws().deliver({ type: 'workspaces-changed', action: 'scan-updated' });
+  await settle();
+  assert.equal(input.value, 'my draft', 'the open draft is never overwritten');
+  assert.equal(page.querySelector('.ws-desc-edit').hidden, false, 'the editor stays open');
+  assert.match(doc.querySelector('#ws-detail .pd-error').textContent, /changed while you were editing/);
+  click(window, page.querySelector('.ws-desc-cancel'));
+  await settle();
+  assert.match(doc.querySelector('#ws-detail .ws-desc-view').textContent, /SCANNED/, 'Cancel shows the scan\'s text');
+  assert.equal(doc.querySelector('#ws-detail .pd-error').textContent, '', 'the notice is gone');
+});
+
 test('delete 200 from the page: confirm → DELETE → back on the list without the row, count decremented', async () => {
   const { window, show } = await boot({
     fetchHandler: (u, opts) => /\/api\/workspaces\/wks-beta-00000002$/.test(u) && opts.method === 'DELETE'
@@ -343,7 +367,7 @@ test('Create workspace button routes to the wizard (#workspace-create)', async (
   assert.equal(doc.querySelector('.view[data-view="workspace-create"]').classList.contains('hidden'), false);
 });
 
-test('Re-scan from the page enters the wizard at Step 2 with editingId set (Save will PATCH)', async () => {
+test('Re-scan from the page starts the scan run and follows it on Running', async () => {
   const posts = [];
   const metricsScans = [];
   const { window, show } = await boot({
@@ -354,7 +378,10 @@ test('Re-scan from the page enters the wizard at Step 2 with editingId set (Save
       }
       if (/\/api\/workspaces\/wks-alpha-00000001\/scan$/.test(u) && opts.method === 'POST') {
         posts.push(JSON.parse(opts.body || '{}'));
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_rescan' }) });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({
+          runId: 'run-rescan', workspaceId: 'wks-alpha-00000001', title: 'Workspace scan: Alpha WS',
+          projectDir: WS[0].projectPaths[0], projectNames: ['a', 'b'],
+        }) });
       }
       return null;
     },
@@ -364,14 +391,26 @@ test('Re-scan from the page enters the wizard at Step 2 with editingId set (Save
   const doc = window.document;
   click(window, doc.querySelector('#ws-detail .ws-rescan'));
   await settle();
-  assert.equal(window.location.hash, '#workspace-create', 'navigated to the wizard');
-  assert.equal(doc.querySelector('#wiz-step-2').classList.contains('hidden'), false, 'on Step 2 (scanning)');
   assert.equal(posts.length, 1, 're-scan POSTed to :id/scan');
-  assert.deepEqual(posts[0], {}, 're-scan body is empty (server reads the persisted set)');
+  assert.deepEqual(posts[0], {}, 'the server reads the persisted set');
   assert.equal(metricsScans.length, 1, 're-scan also refreshes member discovery');
   assert.deepEqual(metricsScans[0], { projectPaths: WS[0].projectPaths });
-  // Name input is disabled on re-scan (name immutable here).
-  assert.equal(doc.querySelector('#wiz-name').disabled, true);
+  assert.equal(doc.querySelector('.view[data-view="running"]').classList.contains('hidden'), false, 'on Running');
+  assert.ok(doc.querySelector('#run-list [data-run-id="run-rescan"]'), 'the scan run has a card');
+});
+
+test('Re-scan refused (409) stays on the workspace page with the error', async () => {
+  const { window, show } = await boot({
+    fetchHandler: (u, opts) => (/\/wks-alpha-00000001\/scan$/.test(u) && opts.method === 'POST'
+      ? Promise.resolve({ ok: false, status: 409, json: async () => ({ error: 'a live run exists for this workspace' }) }) : null),
+  });
+  show('workspaces/wks-alpha-00000001');
+  await settle();
+  const doc = window.document;
+  click(window, doc.querySelector('#ws-detail .ws-rescan'));
+  await settle();
+  assert.equal(doc.querySelector('.view[data-view="workspaces"]').classList.contains('hidden'), false);
+  assert.match(doc.querySelector('#ws-detail .pd-error').textContent, /live run/);
 });
 
 test('the Team tab: the metrics block shows the home and the members table; the METRICS HOME card on the Overview reads it', async () => {

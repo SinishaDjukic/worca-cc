@@ -1,25 +1,14 @@
 // test/scan-api.test.mjs
-// Milestone 5 server surface in ui/server.mjs: the scan-* WS family.
-//   - wireScan: tags scan events with scanId, maps scan-progress->running,
-//     scan-done->done, scan-error->error; leaves the 7-event run plumbing alone.
-//   - POST /api/workspaces/scan (pre-persist): {scanId}; >=2 paths + existsSync +
-//     reject non-git-repos 400.
-//   - POST /api/workspaces/:id/scan (re-scan): 404 if absent; scans a known ws.
-//   - POST /api/scan/stop: {scanId} -> entry.orch.stop(); status 'stopped'.
-//   - summarizeRuns tolerates a scan entry (kind:'scan', scanId set, no pipelineId).
-//   - WS reconnect/replay: ?scanId= AND {type:'subscribe',scanId} replay buffered
-//     scan events; broadcasts are tagged with scanId.
-//
-// Mock-driven (WORCA_MOCK=1): the scan engine's graph phase skips graphify and
-// the scanning agent uses mockWorkspaceScan, so NOTHING spawns real claude or
-// builds a real graphify graph and the engine creates ZERO worktrees/branches.
-// chdir-into-sandbox containment + useTempHome mirror workspaces-api.test.mjs so
-// no background scan pollutes the real worca-cc repo or ~/.worca-cc.
-
+// The Workspace scan as a pipeline run, server side:
+//   - POST /api/workspaces/scan validates like a create (400/409) and starts a
+//     wf_workspace_scan run on the future workspace id; on done the workspace exists,
+//     workspaces-changed{scan-created} is broadcast and no member keeps a run branch.
+//   - POST /api/workspaces/:id/scan re-scans (404 unknown, 409 live run) and updates.
+//   - POST /api/run refuses the scan workflow without the internal target.
+//   - The off-pipeline scan surface is gone (/api/scan/stop, scanId in summaries).
+// Mock-driven (WORCA_MOCK=1), chdir-sandboxed, temp WORCA_HOME.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
-import http from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,19 +16,18 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 
-import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { workspaceKey } from '../src/core/workspaces.mjs';
 
-useTempHome(after); // outlives the per-suite hooks (background scan store writes)
+useTempHome(after);
 
 const origCwd = process.cwd();
 let cwdSandbox = null;
-let homeDir, srv, base, wsBase, runs, _testing, prevHome;
+let homeDir, srv, base, wsBase, runs, summarizeRuns, scanRequest, prevHome;
 const JSONH = { 'Content-Type': 'application/json' };
 const created = [];
 
 before(async () => {
-  // A throwaway git repo to absorb anything cwd-relative (belt-and-braces).
   cwdSandbox = mkdtempSync(join(tmpdir(), 'worca-cc-scanapi-cwd-'));
   const g = (a) => spawnSync('git', a, { cwd: cwdSandbox });
   g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
@@ -53,10 +41,8 @@ before(async () => {
   process.env.WORCA_MOCK = '1';
   const mod = await import('../ui/server.mjs');
   runs = mod.runs;
-  _testing = mod._testing;
-  // Listen on the MODULE's http.Server — that is the one the WebSocketServer is
-  // attached to (path:'/ws'). A fresh http.createServer(mod.app) would not carry
-  // the WS upgrade handler, so /ws would 404.
+  summarizeRuns = mod._testing.summarizeRuns;
+  scanRequest = mod._testing.scanRequest;
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   const port = srv.address().port;
@@ -73,13 +59,15 @@ after(async () => {
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
   process.chdir(origCwd);
-  if (cwdSandbox) await rm(cwdSandbox, { recursive: true, force: true });
-  await rm(homeDir, { recursive: true, force: true });
-  await Promise.all(created.map((d) => rm(d, { recursive: true, force: true })));
+  // A run's teardown can still be removing checkouts (the known ENOTEMPTY flake): retry.
+  const RM = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
+  if (cwdSandbox) await rm(cwdSandbox, RM);
+  await rm(homeDir, RM);
+  await Promise.all(created.map((d) => rm(d, RM)));
 });
 
-async function freshRepo(prefix = 'worca-cc-scanapi-repo-') {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+async function freshRepo() {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-scanapi-repo-'));
   created.push(dir);
   const g = (a) => spawnSync('git', a, { cwd: dir });
   g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
@@ -87,293 +75,215 @@ async function freshRepo(prefix = 'worca-cc-scanapi-repo-') {
   g(['add', '-A']); g(['commit', '-qm', 'init']);
   return dir;
 }
-async function freshDir(prefix = 'worca-cc-scanapi-plain-') {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+async function freshDir() {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-scanapi-plain-'));
   created.push(dir);
   return dir;
 }
-
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
-
-/** Open a WS, optionally with a query (e.g. `?scanId=...`), collecting messages. */
-function openWs(query = '') {
-  const ws = new WebSocket(`${wsBase}${query}`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+const branches = (dir) => spawnSync('git', ['-C', dir, 'branch', '--format=%(refname:short)'])
+  .stdout.toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+function openWs() {
+  const ws = new WebSocket(wsBase, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
   const msgs = [];
   ws.on('message', (d) => { try { msgs.push(JSON.parse(String(d))); } catch { /* ignore */ } });
   const opened = new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
   return { ws, msgs, opened };
 }
-function waitFor(pred, timeoutMs = 4000) {
+function waitFor(pred, timeoutMs = 30000) {
   return new Promise((res, rej) => {
     const t0 = Date.now();
     const tick = () => {
       const v = pred();
       if (v) return res(v);
       if (Date.now() - t0 > timeoutMs) return rej(new Error('waitFor timed out'));
-      setTimeout(tick, 15);
+      setTimeout(tick, 25);
     };
     tick();
   });
 }
+const settled = (runId) => waitFor(() => ['done', 'error', 'stopped'].includes(runs.get(runId)?.status) && runs.get(runId));
+// `settled` resolves when the status flips to done, which is BEFORE run()'s `finally` tears the
+// checkouts down and deletes the scan branches — wait for that before asserting on branches.
+const branchesGone = (...dirs) => waitFor(() => dirs.every((d) => branches(d).length === 1));
+const fakeLiveScan = (id, workspaceId) => runs.set(id, {
+  id, kind: 'workspace-run', workspaceId, status: 'running', events: [], orch: { workflowId: 'wf_workspace_scan' },
+});
 
-// ── unit: wireScan ──────────────────────────────────────────────────────────
+test('POST /api/workspaces/scan: 400 for fewer than 2 members, no name, a missing dir or a non-git dir', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  assert.equal((await post('/api/workspaces/scan', { name: 'X', projectPaths: [a] })).status, 400);
+  assert.equal((await post('/api/workspaces/scan', { projectPaths: [a, b] })).status, 400);
+  assert.equal((await post('/api/workspaces/scan', { name: 'X', projectPaths: [a, join(a, 'nope')] })).status, 400);
+  assert.equal((await post('/api/workspaces/scan', { name: 'X', projectPaths: [a, await freshDir()] })).status, 400);
+});
 
-test('wireScan: tags scanId + maps scan-progress->running, scan-done->done, scan-error->error', () => {
-  const entry = {
-    id: 'scan_unit-1', scanId: 'scan_unit-1', kind: 'scan',
-    orch: new EventEmitter(), projectDir: '/tmp/x', title: 'scan',
-    status: 'starting', startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
-  };
-  runs.set(entry.id, entry);
+test('POST /api/workspaces/scan: 409 for a taken name or project set', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const c = await freshRepo();
+  const cr = await post('/api/workspaces', { name: 'Taken', projectPaths: [a, b] });
+  assert.equal(cr.status, 201);
+  assert.equal((await post('/api/workspaces/scan', { name: 'taken', projectPaths: [a, c] })).status, 409);
+  assert.equal((await post('/api/workspaces/scan', { name: 'Other', projectPaths: [b, a] })).status, 409);
+});
+
+test('POST /api/workspaces/scan: 409 while a live scan targets the same project set (any name)', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const id = workspaceKey({ name: 'First', projectPaths: [a, b] });
+  fakeLiveScan('fake-live-scan', id);
   try {
-    _testing.wireScan(entry);
-
-    entry.orch.emit('scan-progress', { phase: 'graph', projectsTotal: 2, projectsDone: 0, message: 'x' });
-    assert.equal(entry.status, 'running', 'scan-progress -> running');
-    assert.equal(entry.events.at(-1).scanId, 'scan_unit-1', 'event tagged with scanId');
-    assert.equal(entry.events.at(-1).type, 'scan-progress');
-
-    entry.orch.emit('scan-done', { description: '# WS', projects: [], graphify: { used: false } });
-    assert.equal(entry.status, 'done', 'scan-done -> done');
-    assert.equal(entry.events.at(-1).type, 'scan-done');
-
-    // A later error must still flip status (independent emitter for this assertion).
-    entry.orch.emit('scan-error', { message: 'boom' });
-    assert.equal(entry.status, 'error', 'scan-error -> error');
-  } finally {
-    runs.delete(entry.id);
-  }
+    const res = await post('/api/workspaces/scan', { name: 'Second', projectPaths: [a, b] });
+    assert.equal(res.status, 409);
+    assert.match((await res.json()).error, /already running/);
+  } finally { runs.delete('fake-live-scan'); }
 });
 
-test('wireScan: does NOT subscribe to the 7 run events (run plumbing untouched)', () => {
-  const entry = {
-    id: 'scan_unit-2', scanId: 'scan_unit-2', kind: 'scan',
-    orch: new EventEmitter(), projectDir: '/tmp/x', title: 'scan',
-    status: 'starting', startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
-  };
-  runs.set(entry.id, entry);
+test('a first scan is a recorded pipeline run that creates the workspace on done', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const sock = openWs();
+  await sock.opened;
+  const res = await post('/api/workspaces/scan', { name: 'Platform', projectPaths: [a, b] });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  const id = workspaceKey({ name: 'Platform', projectPaths: [a, b] });
+  assert.equal(data.workspaceId, id);
+  assert.equal(data.title, 'Workspace scan: Platform');
+  assert.equal(data.projectNames.length, 2);
+  const entry = runs.get(data.runId);
+  assert.equal(entry.kind, 'workspace-run');
+  assert.equal(entry.workspaceId, id);
+  assert.equal(entry.orch.workflowId, 'wf_workspace_scan');
+  const done = await settled(data.runId);
+  assert.equal(done.status, 'done');
+  const ws = await (await fetch(`${base}/api/workspaces/${id}`)).json();
+  assert.match(ws.workspace.description, /## Interconnections/);
+  await waitFor(() => sock.msgs.some((m) => m.type === 'workspaces-changed' && m.action === 'scan-created'));
+  await branchesGone(a, b);
+  assert.deepEqual(branches(a), ['main'], 'branches gone');
+  assert.deepEqual(branches(b), ['main'], 'branches gone');
+  sock.ws.close();
+});
+
+test('two first scans of the same set in the same tick: the launch reservation refuses the second', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  // A minimal Express res: status() chains, json() records. startRunHandler touches nothing else.
+  const fakeRes = () => ({
+    statusCode: 200, body: null, headersSent: false,
+    status(c) { this.statusCode = c; return this; },
+    json(v) { this.body = v; this.headersSent = true; return this; },
+  });
+  const target = (name, projectPaths) => ({ id: workspaceKey({ name, projectPaths }), name, projectPaths, rescan: false });
+  const r1 = fakeRes();
+  const r2 = fakeRes();
+  // Both calls start in ONE synchronous tick: the first is parked at its first await inside
+  // startRunHandler (no runs entry yet) when the second checks — only the reservation refuses it.
+  // Over HTTP the second request usually lands after runs.set, which proves nothing.
+  const p1 = scanRequest({ body: {}, headers: {} }, r1, target('Tick One', [a, b]));
+  const p2 = scanRequest({ body: {}, headers: {} }, r2, target('Tick Two', [b, a]));
+  await Promise.all([p1, p2]);
+  assert.deepEqual([r1.statusCode, r2.statusCode], [200, 409], JSON.stringify([r1.body, r2.body]));
+  assert.match(r2.body.error, /already running/);
+  assert.equal((await settled(r1.body.runId)).status, 'done');
+  await branchesGone(a, b);
+});
+
+test('re-scan: 404 unknown, 409 live run, else a run that replaces the description', async () => {
+  assert.equal((await post('/api/workspaces/wks-nope-00000000/scan', {})).status, 404);
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const cr = await post('/api/workspaces', { name: 'Rescan', projectPaths: [a, b], description: 'old' });
+  const { workspace } = await cr.json();
+  fakeLiveScan('fake-live-run', workspace.id);
   try {
-    _testing.wireScan(entry);
-    // A run-family 'phase' event must be ignored by a scan entry.
-    entry.orch.emit('phase', { phase: 'plan' });
-    assert.equal(entry.events.length, 0, 'wireScan ignores run-family events');
-    assert.equal(entry.status, 'starting', 'status unchanged by a run event');
-  } finally {
-    runs.delete(entry.id);
-  }
+    assert.equal((await post(`/api/workspaces/${workspace.id}/scan`, {})).status, 409);
+  } finally { runs.delete('fake-live-run'); }
+  const res = await post(`/api/workspaces/${workspace.id}/scan`, {});
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.workspaceId, workspace.id);
+  assert.equal((await settled(data.runId)).status, 'done');
+  const after_ = await (await fetch(`${base}/api/workspaces/${workspace.id}`)).json();
+  assert.notEqual(after_.workspace.description, 'old');
+  assert.match(after_.workspace.description, /## Interconnections/);
+  await branchesGone(a, b);
+  // The launch reservation is released once the run is registered: the next re-scan starts too.
+  const again = await post(`/api/workspaces/${workspace.id}/scan`, {});
+  assert.equal(again.status, 200);
+  assert.equal((await settled((await again.json()).runId)).status, 'done');
+  await branchesGone(a, b);
 });
 
-// ── POST /api/workspaces/scan (pre-persist) ─────────────────────────────────
-
-test('POST /api/workspaces/scan: 2 git repos -> {scanId}; registers a kind:scan entry', async () => {
+test('a paused scan blocks a re-scan and a delete; a paused ordinary run blocks neither', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
-  const r = await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'Scan WS' });
-  assert.equal(r.status, 200);
-  const { scanId } = await r.json();
-  assert.match(scanId, /^scan_[0-9a-f-]{36}$/);
-  const entry = runs.get(scanId);
-  assert.ok(entry, 'a runs-Map entry exists for the scanId');
-  assert.equal(entry.kind, 'scan');
-  assert.equal(entry.scanId, scanId);
-  // It eventually terminates done (mock); then it is no longer "live".
-  await waitFor(() => entry.status === 'done' || entry.status === 'error');
-  assert.equal(entry.status, 'done', 'mock scan reaches done');
-});
-
-test('POST /api/workspaces/scan: <2 paths -> 400', async () => {
-  const a = await freshRepo();
-  const r = await post('/api/workspaces/scan', { projectPaths: [a] });
-  assert.equal(r.status, 400);
-});
-
-test('POST /api/workspaces/scan: a missing path -> 400', async () => {
-  const a = await freshRepo();
-  const r = await post('/api/workspaces/scan', { projectPaths: [a, join(tmpdir(), 'does-not-exist-zzz')] });
-  assert.equal(r.status, 400);
-});
-
-test('POST /api/workspaces/scan: a non-git member -> 400', async () => {
-  const a = await freshRepo();
-  const plain = await freshDir();
-  const r = await post('/api/workspaces/scan', { projectPaths: [a, plain] });
-  assert.equal(r.status, 400);
-});
-
-// ── POST /api/workspaces/:id/scan (re-scan) ─────────────────────────────────
-
-test('POST /api/workspaces/:id/scan: unknown id -> 404', async () => {
-  const r = await post('/api/workspaces/wks-nope-deadbeef/scan', {});
-  assert.equal(r.status, 404);
-});
-
-test('POST /api/workspaces/:id/scan: bad id shape -> 404 (no disk touch)', async () => {
-  const r = await post('/api/workspaces/not-a-valid-id/scan', {});
-  assert.equal(r.status, 404);
-});
-
-test('POST /api/workspaces/:id/scan: known workspace -> {scanId}; entry carries workspaceId', async () => {
-  const a = await freshRepo();
-  const b = await freshRepo();
-  const created = await (await post('/api/workspaces', { name: 'Rescan WS', projectPaths: [a, b] })).json();
-  const id = created.workspace.id;
-  const r = await post(`/api/workspaces/${id}/scan`, {});
-  assert.equal(r.status, 200);
-  const { scanId } = await r.json();
-  assert.match(scanId, /^scan_/);
-  const entry = runs.get(scanId);
-  assert.ok(entry, 'entry registered');
-  assert.equal(entry.workspaceId, id, 'scan entry tagged with the workspaceId');
-  await waitFor(() => entry.status === 'done' || entry.status === 'error');
-});
-
-// ── POST /api/scan/stop ─────────────────────────────────────────────────────
-
-test('POST /api/scan/stop: calls entry.orch.stop(); responds ok', async () => {
-  let stopped = false;
-  const entry = {
-    id: 'scan_stop-1', scanId: 'scan_stop-1', kind: 'scan',
-    orch: Object.assign(new EventEmitter(), { stop() { stopped = true; } }),
-    projectDir: '/tmp/x', title: 'scan', status: 'running',
-    startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
-  };
-  runs.set(entry.id, entry);
+  const { workspace } = await (await post('/api/workspaces', { name: 'Paused Owner', projectPaths: [a, b] })).json();
+  const fakePaused = (id, workflowId) => runs.set(id, {
+    id, kind: 'workspace-run', workspaceId: workspace.id, status: 'paused', events: [], orch: { workflowId },
+  });
+  const del = () => fetch(`${base}/api/workspaces/${workspace.id}`, { method: 'DELETE' });
+  fakePaused('fake-paused-scan', 'wf_workspace_scan');
   try {
-    const r = await post('/api/scan/stop', { scanId: 'scan_stop-1' });
-    assert.equal(r.status, 200);
-    assert.equal((await r.json()).ok, true);
-    assert.equal(stopped, true, 'orch.stop() invoked');
-    assert.equal(entry.status, 'stopped', 'status flipped to stopped');
-  } finally {
-    runs.delete(entry.id);
-  }
-});
-
-test('POST /api/scan/stop: unknown scanId -> ok:true (idempotent, no throw)', async () => {
-  const r = await post('/api/scan/stop', { scanId: 'scan_unknown' });
-  // A stop on a finished/unknown scan must not 500; ok response either way.
-  assert.ok(r.status === 200, `expected 200, got ${r.status}`);
-});
-
-// ── summarizeRuns tolerance ─────────────────────────────────────────────────
-
-test('summarizeRuns: a scan entry surfaces kind:scan + scanId and tolerates an absent pipelineId', () => {
-  const entry = {
-    id: 'scan_sum-1', scanId: 'scan_sum-1', kind: 'scan',
-    orch: new EventEmitter(), projectDir: '/tmp/x', title: 'scan',
-    status: 'running', startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
-  };
-  runs.set(entry.id, entry);
+    assert.equal((await post(`/api/workspaces/${workspace.id}/scan`, {})).status, 409, 'a paused scan still owns the workspace');
+    assert.equal((await del()).status, 409, 'deleting would let the paused scan re-create it on resume');
+  } finally { runs.delete('fake-paused-scan'); }
+  fakePaused('fake-paused-run', 'wf_default');
   try {
-    const row = _testing.summarizeRuns().find((s) => s.runId === 'scan_sum-1');
-    assert.ok(row, 'scan entry present in the snapshot');
-    assert.equal(row.kind, 'scan');
-    assert.equal(row.scanId, 'scan_sum-1');
-    assert.equal(row.pipelineId, null, 'no pipelineId for a scan');
-  } finally {
-    runs.delete(entry.id);
-  }
+    const res = await post(`/api/workspaces/${workspace.id}/scan`, {});
+    assert.equal(res.status, 200, 'a paused ordinary run does not block a re-scan');
+    assert.equal((await settled((await res.json()).runId)).status, 'done');
+    await branchesGone(a, b);
+    assert.equal((await del()).status, 200, 'nor a delete');
+  } finally { runs.delete('fake-paused-run'); }
 });
 
-// ── WS subscribe/replay (?scanId= and {type:subscribe,scanId}) ──────────────
-
-test('WS ?scanId= replays buffered scan events; broadcasts are tagged with scanId', async () => {
+test('POST /api/run refuses the scan workflow without the internal target', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
-  const { scanId } = await (await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'WS Replay' })).json();
-  const entry = runs.get(scanId);
-  await waitFor(() => entry.status === 'done' || entry.status === 'error');
-  assert.equal(entry.status, 'done');
-
-  // Reconnect AFTER the scan finished -> replay must include progress + the
-  // terminal scan-done, all tagged with our scanId.
-  const { ws, msgs, opened } = openWs(`?scanId=${encodeURIComponent(scanId)}`);
-  await opened;
-  await waitFor(() => msgs.some((m) => m.type === 'scan-done' && m.scanId === scanId));
-  const replayed = msgs.filter((m) => m.scanId === scanId);
-  assert.ok(replayed.some((m) => m.type === 'scan-progress'), 'progress replayed');
-  assert.ok(replayed.some((m) => m.type === 'scan-done'), 'terminal scan-done replayed');
-  for (const m of replayed) assert.equal(m.scanId, scanId, 'every replayed event tagged with scanId');
-  ws.close();
+  const cr = await post('/api/workspaces', { name: 'Direct', projectPaths: [a, b] });
+  const { workspace } = await cr.json();
+  const res = await post('/api/run', { workspaceId: workspace.id, prompt: 'x', workflowId: 'wf_workspace_scan' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /Workspaces view/);
 });
 
-test('WS {type:"subscribe",scanId} replays buffered scan events identically to runId', async () => {
-  const a = await freshRepo();
-  const b = await freshRepo();
-  const { scanId } = await (await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'WS Sub' })).json();
-  const entry = runs.get(scanId);
-  await waitFor(() => entry.status === 'done' || entry.status === 'error');
-
-  const { ws, msgs, opened } = openWs();
-  await opened;
-  // hello first; then ask to subscribe by scanId.
-  await waitFor(() => msgs.some((m) => m.type === 'hello'));
-  ws.send(JSON.stringify({ type: 'subscribe', scanId }));
-  await waitFor(() => msgs.some((m) => m.type === 'scan-done' && m.scanId === scanId));
-  assert.ok(msgs.some((m) => m.type === 'scan-progress' && m.scanId === scanId), 'progress replayed via subscribe');
-  ws.close();
-});
-
-test('WS hello snapshot includes the scan entry (kind:scan)', async () => {
-  const a = await freshRepo();
-  const b = await freshRepo();
-  const { scanId } = await (await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'WS Hello' })).json();
-  const { ws, msgs, opened } = openWs();
-  await opened;
-  const hello = await waitFor(() => msgs.find((m) => m.type === 'hello'));
-  const row = hello.runs.find((s) => s.runId === scanId || s.scanId === scanId);
-  assert.ok(row, 'scan entry present in hello snapshot');
-  assert.equal(row.kind, 'scan');
-  ws.close();
-  await waitFor(() => runs.get(scanId).status === 'done' || runs.get(scanId).status === 'error');
-});
-
-// ── re-scan 409 while a live workspace run exists ───────────────────────────
-
-test('POST /api/workspaces/:id/scan: 409 while a live workspace run exists for that id', async () => {
-  const a = await freshRepo();
-  const b = await freshRepo();
-  const created = await (await post('/api/workspaces', { name: 'Live Run WS', projectPaths: [a, b] })).json();
-  const id = created.workspace.id;
-  // Register a fake live workspace-run entry for this workspace (no real orch).
-  const fake = {
-    id: 'uuid-live-run-1', kind: 'workspace-run', workspaceId: id,
-    orch: new EventEmitter(), projectDir: a, title: 'run', status: 'running',
-    startedAt: new Date().toISOString(), events: [], pendingQuestion: null,
-  };
-  runs.set(fake.id, fake);
+test('the scan workflow is never listed; the off-pipeline scan surface is gone', async () => {
+  const wf = await (await fetch(`${base}/api/workflows`)).json();
+  assert.ok(!wf.workflows.some((w) => w.id === 'wf_workspace_scan'));
+  assert.equal((await post('/api/scan/stop', { scanId: 'scan_x' })).status, 404);
+  runs.set('r-sum', { id: 'r-sum', projectDir: '/x', title: 't', status: 'running', startedAt: 'now', kind: 'run' });
   try {
-    const r = await post(`/api/workspaces/${id}/scan`, {});
-    assert.equal(r.status, 409, 'a live run for this workspace blocks a re-scan');
-    assert.ok((await r.json()).error);
-  } finally {
-    runs.delete(fake.id);
-  }
+    assert.ok(!('scanId' in summarizeRuns().find((r) => r.runId === 'r-sum')));
+  } finally { runs.delete('r-sum'); }
 });
 
-// ── route backstop: a detached engine rejection does NOT crash; it broadcasts
-//    a tagged scan-error and flips the entry to error (the .catch in startScan) ─
-
-test('startScan backstop: a rejected run() broadcasts scan-error + status error (no crash)', async () => {
+test('the scan request\'s models pin the run; a bad pick is a 400 before any run', async () => {
   const a = await freshRepo();
   const b = await freshRepo();
-  // Patch the engine prototype so run() REJECTS (it normally never throws). This
-  // exercises the route's .catch backstop deterministically.
-  const proto = Object.getPrototypeOf(createWorkspaceScan({ projectPaths: [a, b], claude: { mock: true } }));
-  const origRun = proto.run;
-  proto.run = async function rejectingRun() { throw new Error('boom in run'); };
-  const { ws, msgs, opened } = openWs();
-  try {
-    await opened;
-    await waitFor(() => msgs.some((m) => m.type === 'hello'));
-    const { scanId } = await (await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'Backstop' })).json();
-    assert.match(scanId, /^scan_/, 'route still returns {scanId} (no 500 on the sync path)');
-    await waitFor(() => msgs.some((m) => m.type === 'scan-error' && m.scanId === scanId));
-    const errEv = msgs.find((m) => m.type === 'scan-error' && m.scanId === scanId);
-    assert.equal(errEv.message, 'boom in run', 'backstop surfaces the thrown message as a tagged scan-error');
-    assert.equal(runs.get(scanId).status, 'error', 'entry flipped to error by the backstop');
-  } finally {
-    proto.run = origRun;
-    ws.close();
+  const bad = await post('/api/workspaces/scan', { name: 'Bad Models', projectPaths: [a, b], models: { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'haiku', agentEffort: 'medium' } });
+  assert.equal(bad.status, 400);
+  const res = await post('/api/workspaces/scan', { name: 'Picked Models', projectPaths: [a, b], models: { scanModel: 'claude-opus-5-5', scanEffort: 'high', agentModel: 'opus', agentEffort: 'xhigh' } });
+  assert.equal(res.status, 200);
+  const { runId } = await res.json();
+  const done = await settled(runId);
+  const n = done.orch.state.stepper.graph.nodes.find((x) => x.id === 'n_scan');
+  assert.deepEqual([n.model, n.effort, n.subagentModel, n.subagentEffort], ['claude-opus-5-5', 'high', 'opus', 'xhigh']);
+});
+
+test('41 member projects: 400 from both create routes, before any run or row exists', async () => {
+  const root = await freshDir();
+  const dirs = Array.from({ length: 41 }, (_, i) => join(root, `m${i}`));
+  for (const d of dirs) spawnSync('git', ['init', '-q', d]);
+  for (const route of ['/api/workspaces/scan', '/api/workspaces']) {
+    const res = await post(route, { name: 'Too big', projectPaths: dirs });
+    assert.equal(res.status, 400, route);
+    assert.match((await res.json()).error, /at most 40 member projects \(41 given\)/, route);
   }
+  assert.ok(![...runs.values()].some((r) => r.title === 'Workspace scan: Too big'), 'no run registered');
+  const { workspaces } = await (await fetch(`${base}/api/workspaces`)).json();
+  assert.ok(!workspaces.some((w) => w.name === 'Too big'), 'no workspace row');
 });

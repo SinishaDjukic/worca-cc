@@ -36,6 +36,7 @@ import { humanEstimateOverrides, memoryDefragModel } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
+import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { fingerprintProject } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
@@ -133,8 +134,10 @@ export class GraphOrchestrator extends RunHarness {
     // (the Memory view's button, New pipeline, an Ask card, a schedule and the CLI all construct
     // this class). resume() never calls this hook: the manifest froze the pair on the node.
     const defrag = this.memoryScope ? await this._defragAgentPair() : null;
+    const scan = this._scanModelPins();
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
     this._adoptResolvedGraph(resolved);
     // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
@@ -179,6 +182,27 @@ export class GraphOrchestrator extends RunHarness {
     if (!r.model) return { pair: null, warning: r.warning };
     this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : 'Settings › Memory'})`);
     return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
+  }
+
+  /**
+   * Workspace scan (D19): the four picks the scan started with — POST /api/workspaces/scan resolved
+   * them (the Create workspace column, else Settings › General › Workspaces, else Sonnet · medium) —
+   * become the scanner's pair and its investigators' pin. Start only: resume() rebuilds from the
+   * manifest, which froze them on the node. No picks (a hand-built run) ⇒ the template's defaults.
+   * @returns {{agentPair:{model:string, effort:(string|null)}, subagentPin:{model:string, effort:string}}|null}
+   */
+  _scanModelPins() {
+    const m = this.opts.scanModels;
+    if (!this._isWorkspaceScan() || !m || typeof m !== 'object' || !m.scanModel) return null;
+    this._log('orchestrator', 'info', `Workspace scan models: ${describeScanModels(m)} (${m.source || 'explicit'})`);
+    if (m.warning) {
+      this._log('orchestrator', 'warn', m.warning);
+      this._pendingAudits.push(`${m.warning}.`);
+    }
+    return {
+      agentPair: { model: m.scanModel, effort: m.scanEffort || null },
+      subagentPin: { model: m.agentModel, effort: m.agentEffort },
+    };
   }
 
   /** The Auto entry before the decision: an EMPTY graph tagged `deciding`, so
@@ -1145,6 +1169,7 @@ export class GraphOrchestrator extends RunHarness {
         key: nc.key,
         fanOut: !!nc.fanOut,
         subagentModel: nc.subagentModel || '',
+        subagentEffort: nc.subagentEffort || '',
         // Same fallback as claudeOpts.model below: the flag must describe the
         // model the spawn will actually use, global default included. Live
         // catalog on purpose — a resume re-resolves the env the same way. One
@@ -1812,7 +1837,7 @@ export class GraphOrchestrator extends RunHarness {
  * Rebuild a resolveGraph-shaped result from a PERSISTED manifest + the live
  * registry. The manifest is authoritative for topology, port identity (ids/
  * types/loop/expands/when), per-node model/effort/askQuestions/awaitAll/fanOut/subagentModel/
- * config and per-wire maxCycles; the registry supplies only what a manifest
+ * subagentEffort/config and per-wire maxCycles; the registry supplies only what a manifest
  * deliberately omits (runnerType, prompt body, frontmatter tools, per-port
  * as/directive/filename/store/artifactKind, the verdict filename, sideEffect,
  * mockRole, displayName).
@@ -1870,6 +1895,7 @@ export function resolvedFromManifest(manifest, registry, scripts = {}) {
       effort: mn.effort || undefined,
       fanOut: !!mn.fanOut,
       subagentModel: mn.subagentModel || '',
+      subagentEffort: mn.subagentEffort || '',
       askQuestions: !!mn.askQuestions,
       awaitAll: !!mn.awaitAll,
       duplicateKey: false,

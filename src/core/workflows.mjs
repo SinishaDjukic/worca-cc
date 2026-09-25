@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
-import { isSubagentModelValue } from './model-env.mjs';
+import { isSubagentModelValue, SUBAGENT_MODELS } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
  *  is `undefined` so firstDefined falls through to the next layer. */
@@ -32,8 +32,9 @@ import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
+  GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
-export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, isReservedWorkflowId };
+export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
@@ -369,6 +370,7 @@ export async function readWorkflow(id, opts = {}) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return GRAPH_DEFAULT_WORKFLOW;
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
+  if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -419,7 +421,9 @@ export async function listWorkflows({ includeArchived = false, includeDisabled =
 function assertValidGraph(tpl, registry, scripts) {
   const reg = registry && typeof registry === 'object' ? registry : loadAgentRegistry();
   const scr = scripts && typeof scripts === 'object' ? scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
-  const { ok, errors } = validateGraph(tpl, registryPortsFn(reg, scr));
+  // Reserved built-ins are the server's own templates: they may carry an agent that
+  // declares placeable:false (wf_workspace_scan's scanner). A saved row never has a reserved id.
+  const { ok, errors } = validateGraph(tpl, registryPortsFn(reg, scr), { allowUnplaceable: isReservedWorkflowId(tpl.id) });
   if (ok) return;
   throw Object.assign(
     new Error(`workflow "${tpl.id}" no longer matches the agents it uses: `
@@ -649,6 +653,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       effort: typeof opts.agentPair.effort === 'string' && opts.agentPair.effort ? opts.agentPair.effort : undefined,
     }
     : null;
+  // Pinned investigators (D19): a sub-agent alias + effort for every fan-out agent node — the
+  // Workspace scan's project agents. Top layer like agentPair; no per-project layer stores it.
+  const subPin = opts.subagentPin && SUBAGENT_MODELS.includes(opts.subagentPin.model)
+    ? { model: opts.subagentPin.model, effort: EFFORTS.includes(opts.subagentPin.effort) ? opts.subagentPin.effort : '' }
+    : null;
 
   const nodes = {};
   const agentsByKey = {};
@@ -679,7 +688,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     if (!Array.isArray(meta.inputs) || !Array.isArray(meta.outputs)) {
       throw new Error(`agent "${key}" has no v2 ports — port its sidecar to metaVersion 2`);
     }
-    if (meta.placeable === false) throw new Error(`agent "${key}" declares placeable: false and cannot be a graph node`);
+    if (meta.placeable === false && !isReservedWorkflowId(stored.id)) throw new Error(`agent "${key}" declares placeable: false and cannot be a graph node`);
     if (key !== authored && portSignature(meta) !== portSignature(reg[authored] || {})) {
       throw new Error(`workspace variant "${key}" does not match the port signature of "${authored}"`);
     }
@@ -719,9 +728,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       // validation (validateGraph whitelists the key; a plugin import checks
       // nothing): an off-vocabulary value must fall through to the next layer,
       // never freeze verbatim into the run manifest.
-      subagentModel: firstDefined(
+      subagentModel: subPin ? subPin.model : (firstDefined(
         validSubagentModel(sel.subagentModel), validSubagentModel(legacy.subagentModel),
-        validSubagentModel(cfg.subagentModel), '') || '',
+        validSubagentModel(cfg.subagentModel), '') || ''),
+      // The investigator effort pin: the run-level pin or the template's own config only.
+      subagentEffort: subPin ? subPin.effort : (EFFORTS.includes(cfg.subagentEffort) ? cfg.subagentEffort : ''),
       askQuestions: !meta.asksQuestions
         ? false
         : (meta.questionsLocked

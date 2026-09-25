@@ -80,6 +80,8 @@ import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/st
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
 import { byActor } from './identity.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { finalizeWorkspaceScan } from './workspace-scan-run.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -652,6 +654,11 @@ export class RunHarness extends EventEmitter {
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
+    // The Workspace scan reads, compares and saves a WORKSPACE: refuse it on any other target
+    // (the CLI's --workflow, an Ask card) before a pipeline exists.
+    if (this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !this.isWorkspace) {
+      throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
+    }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
     // there is no per-project guardrails dimension). 'permissive' = the empty
     // policy = byte-identical legacy spawn, so callers that never pass the
@@ -1254,6 +1261,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: null });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
+      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
 
       // 9) Done.
       this._setStatus('done');
@@ -1616,6 +1624,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
+      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
 
       this._setStatus('done');
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
@@ -2589,8 +2598,8 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Workspace teardown (C1, N times): per member, commit its work onto its feature
-   * branch (in its own repo), remove its checkout, and KEEP the branch — done,
-   * error, or stopped alike. Each member's SHA + survival flags are recorded on
+   * branch (in its own repo), remove its checkout, and KEEP the branch (a read-only
+   * Workspace scan deletes it, D5) — done, error, or stopped alike. Each member's SHA + survival flags are recorded on
    * state.branches[projectKey]. Idempotent (guards against a double teardown by
    * clearing branchInfos); best-effort (never throws). Iterated serially so the
    * teardown commits don't contend on interleaved git index locks across repos.
@@ -2611,10 +2620,11 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(projectKey_);
         continue;
       }
+      const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
-        branch: null, // always keep the branch
+        branch: readOnly ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
@@ -2623,12 +2633,12 @@ export class RunHarness extends EventEmitter {
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
+          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${readOnly ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = true;
+        branchRecord.branchKept = !readOnly;
       }
       this.workDirs.delete(projectKey_);
     }
@@ -2637,7 +2647,7 @@ export class RunHarness extends EventEmitter {
     // via !retainedMembers.length).
     if (this.state.branch && !anyRetained) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !this._isWorkspaceScan();
     }
     this.branchInfo = null;
     this.workDir = this.projectDir;
@@ -2659,7 +2669,7 @@ export class RunHarness extends EventEmitter {
    *      file is deliberately NOT in the exclusion pathspecs)
    *   3. _commitWork with the §8.8 exclusion set (+ status recheck, hook retry)
    *   4. remove this worktree's remaining injected paths
-   *   5. removeWorktree(force:true) — the branch is ALWAYS kept
+   *   5. removeWorktree(force:true) — the branch is kept, except on a read-only Workspace scan (deleted, D5)
    * then, at the run-root level: (6) the same rescue for run-root mounts, (7) the
    * §8.11 stray scan, (8) the run.json durability copy, (9) guarded rm -rf (§8.13).
    */
@@ -2719,11 +2729,12 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(key);
         continue;
       }
-      // (5) remove the checkout; the branch is always kept.
+      // (5) remove the checkout; the branch is kept — except on a read-only Workspace scan (D5).
+      const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
         worktreeDir: wt,
-        branch: null,
+        branch: readOnly ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
@@ -2732,19 +2743,19 @@ export class RunHarness extends EventEmitter {
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${key}\` removed at \`${wt}\` (kept branch \`${info.branch}\`).`,
+          `Worktree \`${key}\` removed at \`${wt}\` (${readOnly ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = true;
+        branchRecord.branchKept = !readOnly;
       }
       this.workDirs.delete(key);
     }
     // Keep the scalar mirror coherent for late observers.
     if (this.state.branch && !retainedMembers.length) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !this._isWorkspaceScan();
     }
     this.branchInfo = null;
     this.workDir = this.projectDir;
@@ -2884,6 +2895,37 @@ export class RunHarness extends EventEmitter {
     return true;
   }
 
+  /** A Workspace scan run (wf_workspace_scan on a workspace target) is READ-ONLY: nothing is
+   *  committed and every member's run branch is deleted at teardown. Read live, never cached:
+   *  resume() restores this.workflowId from the resume point AFTER construction. */
+  _isWorkspaceScan() {
+    return this.isWorkspace && this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+  }
+
+  /** Workspace scan: save the scanner's description as the workspace's — create it on a first
+   *  scan, replace the description on a re-scan (workspace-scan-run.mjs). The `done` path of
+   *  run() and resume() only, BEFORE the status flips, so the run log carries the outcome. A
+   *  failure is a warning on a done run (the description stays in the run folder), never an error. */
+  async _finalizeWorkspaceScan() {
+    if (!this._isWorkspaceScan() || !this.pipeline) return;
+    const res = await finalizeWorkspaceScan({
+      // The target's id (server: the future workspaceKey on a first scan, the EXISTING id on a
+      // re-scan — never recomputed, a renamed workspace keeps its id). key === id for workspaces.
+      workspaceId: this.workspace.id || this.workspaceKey,
+      name: this.workspace.name,
+      projectPaths: this.members.map((m) => resolve(m.projectDir)),
+      pipelineDir: this.pipeline.dir,
+    });
+    this.state.workspaceScan = { ...res, at: new Date().toISOString() };
+    if (res.outcome === 'failed') {
+      this._log('orchestrator', 'warn', `Workspace not saved: ${res.error}`);
+      await appendAudit(this.pipeline.dir, `Workspace **not saved**: ${res.error}`).catch(() => {});
+    } else {
+      this._log('orchestrator', 'info', `Workspace ${res.outcome}: ${this.workspace.name} (${res.workspaceId})`);
+      await appendAudit(this.pipeline.dir, `Workspace **${res.outcome}**: \`${res.workspaceId}\`.`).catch(() => {});
+    }
+  }
+
   /**
    * Commit every change in the worktree onto the feature branch so the kept
    * branch actually carries the agent's work after the worktree is removed.
@@ -2909,6 +2951,10 @@ export class RunHarness extends EventEmitter {
   async _commitWork(info, branchRecord = this.state.branch, { excludePathspecs = [] } = {}) {
     const cwd = info?.worktreeDir;
     if (!cwd) return { ok: true, committed: false, sha: null };
+    if (this._isWorkspaceScan()) {
+      this._log('git', 'info', 'Read-only workspace scan: nothing is committed.');
+      return { ok: true, committed: false, sha: null };
+    }
     // ignoreAbort on every call: teardown runs after stop/error has aborted the
     // signal, so binding it would no-op these commands and lose the partial work.
     const gitOpts = { cwd, ignoreAbort: true };

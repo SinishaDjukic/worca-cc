@@ -66,9 +66,8 @@ policy, plugin-granted tools remain subject to it). Protected paths expand to
 rule is never consulted and only produces CLI warnings, so it is not emitted).
 
 A workspace run enforces the run's ONE selected set uniformly on every member
-— nothing is unioned across member projects — and the workspace scanner is
-not subject to guardrails at all (a scan takes no guardrails selection and
-spawns permissive). Repo `.claude/settings.json` `permissions` are honored:
+— nothing is unioned across member projects — and a workspace scan runs as a pipeline under the Normal set, like a memory
+defragment run. Repo `.claude/settings.json` `permissions` are honored:
 natively on single-project runs (cwd is the project worktree — the toggle can
 only decide whether they're *lifted*, it cannot un-load what the worktree
 loads itself); on **detached workspace runs (the default)** each member's own
@@ -118,7 +117,7 @@ enforces the set's latest definition.
   per-file exceptions, so those become read-only under Normal/Strict too.
 - Exempt from scrub/deny: UI-triggered utility agents outside pipeline runs
   (overview generation, agent generation), the `graphify` graph-build
-  subprocess, **workspace scans**, and the `claude --help`/`--version`
+  subprocess, and the `claude --help`/`--version`
   capability probe. In-run title generation IS scrubbed.
 - **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
   `claude` spawned by Worca itself, never inside a project folder: its cwd is

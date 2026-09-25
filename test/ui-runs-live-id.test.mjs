@@ -99,7 +99,7 @@ test("wireRun: 'subagent' events are buffered/tagged and do NOT mutate status", 
 // is the pipeline SHORT id (e.g. 'ab12cd34'), not the run UUID. Before this fix the
 // server's `{ runId: id, ...event }` let the payload runId win, so the broadcast was
 // re-tagged with the short id and the client spawned a phantom "(untitled)" run keyed
-// by it. The server runId (the runs-Map key) must always win — matching wireScan. We
+// by it. The server runId (the runs-Map key) must always win — like every run broadcast. We
 // hand-build the payload (not via the orchestrator) so this guard survives Task 1.
 test("wireRun: a payload's own runId never overrides the authoritative run UUID", () => {
   const entry = makeEntry({ id: 'uuid-REAL', status: 'running' });

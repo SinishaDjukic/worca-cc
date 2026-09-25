@@ -1549,8 +1549,6 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .artifact-markdown p{margin:6px 0;}
 .md-preview{min-height:72px;}
 .md-preview:empty::before{content:'Nothing to preview yet';color:var(--ink-2);}
-#wiz-desc-tabs{margin-left:auto;}
-#wiz-desc-preview[hidden]{display:none;}
 .ws-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink);border:1.5px solid var(--red-ink);color:var(--on-status);font-family:inherit;font-weight:600;font-size:12px;padding:7px 12px;border-radius:8px;cursor:pointer;}
 .ws-delete:hover:not(:disabled){filter:brightness(0.95);}
 .ws-delete:disabled{opacity:.6;cursor:default;}
@@ -1566,6 +1564,19 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wiz-select-all{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 .wiz-select-all input{margin:0;cursor:pointer;}
 .wiz-select-all:has(input:disabled){opacity:.5;cursor:not-allowed;}
+/* Workspace size (D24): the project list scrolls inside the card so the size note under it stays in
+   view while a big pick is made; the note's data-level picks the tone. */
+#wiz-projects{max-height:min(52vh,480px);overflow-y:auto;}
+.wiz-size-note{margin-top:8px;font-size:12.5px;line-height:1.45;border-radius:10px;}
+.wiz-size-note[hidden]{display:none;}
+.wiz-size-note[data-level="big"]{color:var(--amber-ink);}
+.wiz-size-note[data-level="very-big"]{color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);padding:8px 11px;font-weight:600;}
+.wiz-size-note[data-level="over"]{color:var(--red-ink);background:var(--red-bg);padding:8px 11px;font-weight:600;}
+.wiz-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:28px;align-items:start;}
+.wiz-models{border-left:1px solid var(--line);padding-left:24px;}
+.wiz-models-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:2px 0 12px;}
+.wiz-model-pair{display:grid;grid-template-columns:minmax(0,1fr) 108px;gap:8px;}
+@media (max-width:760px){.wiz-grid{grid-template-columns:1fr;}.wiz-models{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:16px;}}
 
 /* Live scan loader (role=status aria-live=polite). */
 .ws-loader{display:flex;flex-direction:column;align-items:center;gap:12px;padding:36px 24px;text-align:center;}
@@ -1582,11 +1593,6 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 }
 .status-label{font-weight:600;font-size:14.5px;color:var(--ink);max-width:520px;}
 .status-sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
-
-/* Phase track: graph → investigate → synthesize. */
-.wiz-phase-track{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 0 14px;}
-.wiz-phase-track [data-phase]{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);background:var(--field);border:1px solid var(--line);border-radius:999px;padding:6px 14px;}
-.wiz-phase-track [data-phase].active{color:var(--on-ink);background:var(--ink);border-color:var(--ink);}
 
 /* History pill "WS" badge for workspace runs. */
 .hist-pill.ws::before{content:'WS';font-size:9px;font-weight:800;letter-spacing:.06em;background:var(--violet-bg);color:var(--violet-ink);border-radius:5px;padding:2px 5px;margin-right:2px;}
@@ -2517,9 +2523,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-warn{margin-top:14px;padding:10px 12px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);}
 .tm-delegate-wrap{margin-top:8px;}
 /* Wizard (board 7) */
-.wiz-track{display:flex;gap:18px;list-style:none;padding:0;margin:0 0 18px;font-size:12.5px;color:var(--ink-2);}
-.wiz-track li span{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--field);margin-right:6px;font-weight:700;}
-.wiz-track li.on{color:var(--ink);font-weight:600;} .wiz-track li.on span{background:var(--ink);color:var(--on-ink);}
 .wiz-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-ctrl);}
 .wiz-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid var(--line);}
 /* The metrics-home picker's radio + slug: the label had no rule, so the radio touched the text. */

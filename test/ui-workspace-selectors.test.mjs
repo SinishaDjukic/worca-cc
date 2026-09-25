@@ -17,10 +17,10 @@ const IDS = [
   'sourceBranchHint',
   'sourceBranchWrap', 'ws-source-branches',
   'ws-create-btn', 'ws-msg', 'ws-list', 'ws-shell', 'ws-detail', 'ws-detail-tpl',
-  'wiz-name', 'wiz-projects', 'wiz-select-all','wiz-step1-hint', 'wiz-start-scan', 'wiz-status', 'wiz-progress',
-  'wiz-phases', 'wiz-abort', 'wiz-desc', 'wiz-graphify-note', 'wiz-msg', 'wiz-rescan', 'wiz-save',
+  'wiz-name', 'wiz-projects', 'wiz-select-all', 'wiz-step1-hint', 'wiz-size-note', 'wiz-start-scan',
   'wiz-close', 'wiz-title',
-  'wiz-step-1', 'wiz-step-2', 'wiz-step-3',
+  'wiz-step-1',
+  'wiz-scan-model', 'wiz-scan-effort', 'wiz-agent-model', 'wiz-agent-effort', 'ws-scan-models-card', 'wsScanModel', 'wsScanEffort', 'wsAgentModel', 'wsAgentEffort', 'wsScanModelsSave', 'wsScanModelsReset',
 ];
 
 test('every workspace #id the JS addresses exists in index.html', () => {
@@ -34,8 +34,8 @@ test('ws-detail template carries the classes the workspace page uses (the projec
   for (const cls of ['pd-header', 'pd-back', 'pd-title', 'ws-name', 'ws-stale', 'ws-projects', 'wd-row2', 'ws-rescan', 'ws-delete', 'pd-error', 'pd-tabs', 'pd-sections'])
     assert.ok(tpl.includes(cls), `ws-detail-tpl missing .${cls}`);
   assert.ok(!tpl.includes('pd-new'), 'no New pipeline on the workspace page: it configures and tracks, runs start from New pipeline');
-  // The description editor is built by buildWdOverview, not the template; the wizard keeps its own copy.
-  assert.ok(/id="wiz-desc-tabs"/.test(html) && /id="wiz-desc-preview"/.test(html), 'wizard step 3 carries the editor tabs + preview');
+  // The description editor lives on the workspace page only (buildWdOverview): the wizard no longer edits it.
+  assert.ok(!/id="wiz-desc-tabs"/.test(html) && !/id="wiz-desc-preview"/.test(html), 'the wizard carries no description editor');
   assert.ok(!html.includes('ws-card-tpl'), 'the card template is gone: rows open a page');
 });
 
@@ -47,9 +47,9 @@ test('target segmented control uses the .seg button[data-target] + hidden-radio 
   assert.ok(/<input type="radio" name="target" value="workspace"[^>]*hidden/.test(html), 'missing hidden workspace radio');
 });
 
-test('phase track exposes graph/investigate/synthesize data-phase chips', () => {
+test('the retired scan loader carries no data-phase chips', () => {
   for (const p of ['graph', 'investigate', 'synthesize'])
-    assert.ok(html.includes(`data-phase="${p}"`), `missing phase chip ${p}`);
+    assert.ok(!html.includes(`data-phase="${p}"`), `phase chip ${p} removed`);
 });
 
 test('beginRun is positional with an opts 4th arg (C2), single legacy call site passes {} ', () => {

@@ -970,31 +970,48 @@
           <div class="topbar">
             <div>
               <h1 id="wiz-title">Create workspace</h1>
-              <div class="sub">Pick 2+ projects, scan their interconnections, then save</div>
+              <div class="sub">Pick 2+ projects and scan how they connect</div>
             </div>
             <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
           </div>
 
-          <section class="card" style="max-width:820px">
-            <ol class="wiz-track" id="wiz-track" aria-label="Create workspace steps">
-              <li data-track="1"><span>1</span> Projects</li>
-              <li data-track="2"><span>2</span> Scan</li>
-              <li data-track="3"><span>3</span> Description</li>
-            </ol>
+          <section class="card" style="max-width:1100px">
             <!-- Step 1: name + project multi-select -->
             <div class="wiz-step" id="wiz-step-1">
-              <div class="field">
-                <label for="wiz-name">Workspace name</label>
-                <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
-              </div>
-              <div class="field">
-                <div class="wiz-proj-head">
-                  <label class="label">Projects <span class="opt">(select 2 or more)</span></label>
-                  <!-- Outside #wiz-projects so every checkbox in the list stays a project. -->
-                  <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
+              <div class="wiz-grid">
+                <div class="wiz-main">
+                  <div class="field">
+                    <label for="wiz-name">Workspace name</label>
+                    <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
+                  </div>
+                  <div class="field">
+                    <div class="wiz-proj-head">
+                      <label class="label">Projects <span class="opt">(select 2 to 40)</span></label>
+                      <!-- Outside #wiz-projects so every checkbox in the list stays a project. -->
+                      <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
+                    </div>
+                    <div class="wiz-proj-list" id="wiz-projects"></div>
+                    <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+                    <div class="wiz-size-note" id="wiz-size-note" role="status" aria-live="polite" hidden></div>
+                  </div>
                 </div>
-                <div class="wiz-proj-list" id="wiz-projects"></div>
-                <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
+                <aside class="wiz-models" aria-label="Scan models">
+                  <h3 class="wiz-models-title">Models</h3>
+                  <div class="field">
+                    <div class="label-row"><label for="wiz-scan-model">Scan agent</label></div>
+                    <div class="wiz-model-pair">
+                      <select id="wiz-scan-model" class="select" aria-label="Scan agent model"></select>
+                      <select id="wiz-scan-effort" class="select" aria-label="Scan agent effort"></select>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <div class="label-row"><label for="wiz-agent-model">Project agents</label></div>
+                    <div class="wiz-model-pair">
+                      <select id="wiz-agent-model" class="select" aria-label="Project agents model"></select>
+                      <select id="wiz-agent-effort" class="select" aria-label="Project agents effort"></select>
+                    </div>
+                  </div>
+                </aside>
               </div>
               <div class="actions" style="justify-content:flex-end">
                 <button type="button" id="wiz-start-scan" class="btn-go" disabled>
@@ -1007,47 +1024,6 @@
             <!-- Team metrics is NOT a wizard step any more: the home is adopted automatically when
                  exactly one member already records (POST /api/workspaces), otherwise chosen on the
                  workspace card ("Choose…"). -->
-
-            <!-- Step 2: live scan loader -->
-            <div class="wiz-step hidden" id="wiz-step-2">
-              <div class="ws-loader" role="status" aria-live="polite">
-                <div class="spinner" aria-hidden="true"></div>
-                <div class="status-label" id="wiz-status">Starting scan&hellip;</div>
-                <div class="status-sub" id="wiz-progress"></div>
-              </div>
-              <div class="wiz-phase-track" id="wiz-phases">
-                <span data-phase="graph">Graph</span>
-                <span data-phase="investigate">Investigate</span>
-                <span data-phase="synthesize">Synthesize</span>
-              </div>
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="wiz-abort" class="btn btn-ghost btn-mini">Abort scan</button>
-              </div>
-            </div>
-
-            <!-- Step 3: editable description -->
-            <div class="wiz-step hidden" id="wiz-step-3">
-              <div class="field">
-                <div class="label-row">
-                  <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
-                  <div class="md-tabs" id="wiz-desc-tabs" role="tablist" aria-label="Description editor">
-                    <button type="button" class="md-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
-                    <button type="button" class="md-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
-                  </div>
-                </div>
-                <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
-                <div id="wiz-desc-preview" class="md-preview viewer" hidden></div>
-                <small class="hint" id="wiz-graphify-note"></small>
-              </div>
-              <p id="wiz-msg" class="form-msg" aria-live="polite"></p>
-              <div class="actions" style="justify-content:space-between">
-                <button type="button" id="wiz-rescan" class="btn btn-ghost btn-mini">Re-scan</button>
-                <button type="button" id="wiz-save" class="btn-go">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Save workspace
-                </button>
-              </div>
-            </div>
           </section>
         </section>
         <!-- /view workspace-create -->
@@ -1657,6 +1633,45 @@
                 <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
               </div>
               <small class="hint" id="autoModelMsg"></small>
+            </section>
+
+            <section class="card settings-card" id="ws-scan-models-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Workspaces</h2>
+                  <button type="button" class="info-tip" aria-label="About workspace scan models">i<span class="tip-content hidden">
+                    The models a workspace scan starts with. The <b>scan agent</b> maps how the projects connect;
+                    the <b>project agents</b> investigate one project each. Create workspace can change them for one
+                    scan; Re-scan uses these.
+                  </span></button>
+                </div>
+              </div>
+              <div class="mem-model-row">
+                <div class="field">
+                  <div class="label-row"><label for="wsScanModel">Scan agent</label></div>
+                  <select id="wsScanModel" class="select" aria-label="Scan agent model"></select>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="wsScanEffort">Effort</label></div>
+                  <select id="wsScanEffort" class="select" aria-label="Scan agent effort"></select>
+                </div>
+              </div>
+              <div class="mem-model-row" style="margin-top:12px">
+                <div class="field">
+                  <div class="label-row"><label for="wsAgentModel">Project agents</label></div>
+                  <select id="wsAgentModel" class="select" aria-label="Project agents model"></select>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="wsAgentEffort">Effort</label></div>
+                  <select id="wsAgentEffort" class="select" aria-label="Project agents effort"></select>
+                </div>
+              </div>
+              <small class="hint" id="wsScanModelsNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="wsScanModelsReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="wsScanModelsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="wsScanModelsMsg"></small>
             </section>
 
             <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.

@@ -143,7 +143,7 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 
 ### Workspaces
 
-- **Multi-project runs** — group related repos into a workspace; a scanner
+- **Multi-project runs** — group 2–40 related repos into a workspace; a scanner
   maps how they interconnect (shared APIs, schemas, build deps) into an
   editable description, and a workspace run fans the pipeline out across all
   members — one branch and worktree per member, one cross-project review

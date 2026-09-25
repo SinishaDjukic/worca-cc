@@ -6,10 +6,9 @@
 //   every system prompt -> the reviewer node resolves to `workspaceReviewer` -> its
 //   mock blocking count decays with cycle so the review -> implementer loop TERMINATES.
 //
-// SCOPE SEAM (§6.8): M4 exercises the mock PIPELINE RUN (fully achievable now). The
-// real SCAN ENGINE (workspace-scan.mjs, the `scan-*` WS family) lands in M5; here we
-// mock the scanner role directly to populate the workspace description, then run the
-// pipeline. The M5 smoke will replace the mocked scan with the real engine.
+// SCOPE SEAM (§6.8): this smoke exercises the mock workspace PIPELINE RUN. The scan itself is a
+// wf_workspace_scan pipeline run (test/orchestrator-workspace-scan.test.mjs); here we mock the
+// scanner role directly to populate the workspace description, then run the pipeline.
 //
 // ISOLATION (mirrors `npm run smoke`): runs under WORCA_HOME=.worca-cc-smoke and uses
 // THROWAWAY git repos created in an OS temp dir (never sandbox/, never this

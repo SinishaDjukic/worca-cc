@@ -23,8 +23,8 @@ test('the constant: one agent node between the task and End, the report wired to
   assert.deepEqual(wf.nodes.map((n) => [n.id, n.kind, n.key ?? null]), [['n_task', 'task', null], ['n_defrag', 'agent', 'memoryDefragmenter'], ['n_end', 'end', null]]);
   assert.deepEqual(wf.wires.map((w) => `${w.from.node}.${w.from.port}->${w.to.node}.${w.to.port}`), ['n_task.task->n_defrag.task', 'n_defrag.report->n_end.result']);
   assert.ok(Object.isFrozen(wf) && Object.isFrozen(wf.nodes[1]) && Object.isFrozen(wf.wires[0].from), 'deepFreeze, not Object.freeze');
-  assert.deepEqual([...RESERVED_WORKFLOW_IDS], ['wf_default', 'wf_auto', 'wf_memory_defrag']);
-  for (const id of ['wf_default', 'wf_auto', 'wf_memory_defrag']) assert.equal(isReservedWorkflowId(id), true, id);
+  assert.deepEqual([...RESERVED_WORKFLOW_IDS], ['wf_default', 'wf_auto', 'wf_memory_defrag', 'wf_workspace_scan']);
+  for (const id of ['wf_default', 'wf_auto', 'wf_memory_defrag', 'wf_workspace_scan']) assert.equal(isReservedWorkflowId(id), true, id);
   assert.equal(isReservedWorkflowId('wf_memory-defrag'), false);
 });
 

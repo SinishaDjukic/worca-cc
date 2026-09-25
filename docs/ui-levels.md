@@ -208,7 +208,7 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 | Element | Level |
 |---|---|
 | General: Appearance, Interface mode, Budget & cost limits, Getting started, About | S |
-| General: root folders, Ask Worca limits, chat notifications, Scheduled runs defaults | A |
+| General: root folders, Ask Worca limits, chat notifications, Scheduled runs defaults, Workspaces (scan models) | A |
 | Guardrails tab (list, details); Plugins tab (installed, available, install); Memory tab (files) | A |
 | General: title model, Auto workflow model, spawn diagnostics; Memory tab: Defragment model | E — the Defragment model card stays visible while a model is set |
 | Guardrails create / delete; Models tab; Providers tab; marketplaces, Doctor, leftover data | E |

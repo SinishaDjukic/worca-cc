@@ -42,10 +42,10 @@ When unsure between two tiers, take the lower one only if you will verify the re
 
 ### Outputs
 
-- Write **workspace** to: <PIPELINE_DIR>/workspace-description.md
+- Write **workspace** to: <PIPELINE_DIR>/workspace-scan.md
 
 MOCK_ROLE: workspace-scan
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/workspace-description.md
+MOCK_OUT: <PIPELINE_DIR>/workspace-scan.md
 MOCK_IN: /abs/task.md

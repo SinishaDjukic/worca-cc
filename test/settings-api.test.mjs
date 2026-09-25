@@ -143,6 +143,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       memoryDefrag: null,
+      workspaceScan: null,
       schedule: {},
     };
     for (const k of SETTINGS_POST_KEYS) {

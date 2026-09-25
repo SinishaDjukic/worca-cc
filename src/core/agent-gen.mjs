@@ -1,6 +1,6 @@
 // src/core/agent-gen.mjs
 // The agent-creation wizard's builder engine. An AgentGen is an EventEmitter the
-// server wires onto the WS bus exactly like wireScan wires a WorkspaceScan:
+// server wires onto the WS bus (an off-pipeline generator):
 //   agentgen-progress { genId, phase, message }                       (many)
 //   agentgen-done     { genId, draft: { meta, markdown } }            (terminal)
 //   agentgen-error    { genId, message }                              (terminal)
@@ -9,7 +9,7 @@
 // body and the meta JSON draft. Mode B (userMarkdown given): the body is the
 // user's verbatim; the LLM writes ONLY the meta JSON, inferred from the body +
 // the neighbors' typed input/output PORTS. Files are read back as authoritative
-// (phases.mjs runWorkspaceScan pattern) then normalized via normalizeMeta.
+// (the off-pipeline generator pattern) then normalized via normalizeMeta.
 
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
@@ -72,7 +72,7 @@ class AgentGen extends EventEmitter {
       await this._runClaude(metaOnly);
       this._checkAbort();
       this._setPhase('finalize', 'validating the draft…');
-      // Authoritative read-back (runWorkspaceScan pattern, phases.mjs).
+      // Authoritative read-back (the off-pipeline generator pattern).
       const markdown = metaOnly ? this.userMarkdown : await readFile(this.mdPath, 'utf8');
       const rawMeta = JSON.parse(await readFile(this.metaPath, 'utf8'));
       if (!Number.isFinite(Number(rawMeta?.order))) rawMeta.order = 99;

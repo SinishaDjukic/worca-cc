@@ -1,8 +1,7 @@
 // test/model-env-dispatch.test.mjs
 // Phase 3 dispatch wiring: runOpts (phases.mjs) resolves the model's routing
 // env at the ONE funnel every dispatched node/role passes through, so
-// _phaseCtx/_nodeCtx and the workspace-scan path inherit it with no
-// per-caller edits (design §4.4/§4.8).
+// every caller inherits it with no per-caller edits (design §4.4/§4.8).
 import { test, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';

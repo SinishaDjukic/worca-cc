@@ -784,6 +784,24 @@ test('runClaude FORWARDS addDirs to runReal (--add-dir reaches the spawn)', POSI
   assert.equal(argv.lastIndexOf('--add-dir'), i, 'one dir ⇒ one flag');
 });
 
+test('runClaude FORWARDS agents to runReal (--agents reaches the spawn)', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  const agents = { 'worca-investigator': { description: 'd', prompt: 'p', tools: ['Read'], effort: 'high' } };
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Read'], agents });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--agents');
+  assert.ok(i > -1, `--agents reached the spawn: ${JSON.stringify(argv)}`);
+  assert.deepEqual(JSON.parse(argv[i + 1]), agents);
+});
+
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
 
 test('no GitHub credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {

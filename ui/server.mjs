@@ -52,6 +52,7 @@ import {
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
+  workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
 } from '../src/core/settings.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
@@ -99,14 +100,14 @@ import { getStats, budgetWindowSavings } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
   discoverAll, scanMembers, routeWorkspaceMembers, projectMetricsStatus, startTeamMetricsBackground,
-  metricsEvents, slugDirName, autoMetricsHome,
+  metricsEvents, slugDirName,
 } from '../src/core/metrics/sync.mjs';
 import { readScope, scopeSources, listScopes, parseScopeParam, aggregate, resolveRange, GROUP_BYS, PROJECT_KEY_RE as TM_PROJECT_KEY_RE } from '../src/core/metrics/read.mjs';
 import { resolveRunPrs, listPrEvents, MAX_LOOKUPS as TM_MAX_PR_LOOKUPS } from '../src/core/metrics/prs.mjs';
 // Team policy (team-policy design §9, §11): the worca-policy branch, its gates and its pages.
 import {
   policyEvents, discoverPolicy, discoverAllPolicies, resolveProjectPolicy, resolveWorkspacePolicy, enableTeamPolicy, publishPolicy,
-  projectPolicyStatus, listPolicyScopes, routeWorkspaceMembersPolicy, autoPolicyHome, startTeamPolicyBackground,
+  projectPolicyStatus, listPolicyScopes, routeWorkspaceMembersPolicy, startTeamPolicyBackground,
 } from '../src/core/policy/sync.mjs';
 import { deviationsFor, fieldsForRun, capSummary } from '../src/core/policy/effective.mjs';
 import { installedPluginsMap, pluginRequirements, blockedPluginFindings, seedPolicyMarketplaces, WORCA_VERSION as POLICY_WORCA_VERSION } from '../src/core/policy/local.mjs';
@@ -181,9 +182,11 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
-  listWorkspaces, readWorkspace, createWorkspace,
+  listWorkspaces, readWorkspace, checkNewWorkspace,
   updateWorkspace, deleteWorkspace, isGitRepo, WORKSPACE_KEY_RE, countWorkspaces,
 } from '../src/core/workspaces.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS } from '../src/core/graph/builtin-workflows.mjs';
+import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
 import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
@@ -195,7 +198,6 @@ import {
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
-import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -413,13 +415,9 @@ function liveRunIds() {
 // `exec` and `token` are the graph engine's (§5.7). `phase` stays for the v1
 // engine AND for the v2 shim until the graph cut-over retires it.
 const EVENT_NAMES = ['exec', 'token', 'log', 'question', 'artifact', 'state', 'done', 'error', 'subagent', 'stepskills', 'stepgraphify', 'title'];
-// The scan-* WS family (Workspaces M5, §5.4). A NEW family in the SAME runs Map;
-// the 7-event run plumbing above is untouched. createWorkspaceScan emits many
-// scan-progress then exactly one terminal scan-done OR scan-error.
-const SCAN_EVENT_NAMES = ['scan-progress', 'scan-done', 'scan-error'];
-// The agentgen-* WS family (Agent Platform, Phase 2). Same pattern as scan-*:
-// a NEW family in the SAME runs Map. createAgentGen emits many agentgen-progress
-// then exactly one terminal agentgen-done OR agentgen-error.
+// The agentgen-* WS family (Agent Platform, Phase 2): a NEW family in the SAME
+// runs Map. createAgentGen emits many agentgen-progress then exactly one terminal
+// agentgen-done OR agentgen-error.
 const AGENTGEN_EVENT_NAMES = ['agentgen-progress', 'agentgen-done', 'agentgen-error'];
 // The scriptbench-* family (Scripts workbench §4.1): one more family in the same
 // runs Map. createBench emits many scriptbench-line then exactly one terminal
@@ -483,30 +481,27 @@ wss.on('connection', (ws, req) => {
   sockets.add(ws);
   // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
   ws.worcaViewer = askViewer(req);
-  // Optional ?runId=... (or ?scanId=.../?genId=...) -> replay that entry's buffered
-  // events so a reconnecting client immediately sees the full state. Scan + agentgen
-  // entries live in the SAME runs Map keyed by scanId/genId, so a single id lookup
-  // serves all families.
+  // Optional ?runId=... (or ?genId=/?benchId=) -> replay that entry's buffered
+  // events so a reconnecting client immediately sees the full state. Agentgen and
+  // bench entries live in the SAME runs Map keyed by genId/benchId, so a single id
+  // lookup serves all families.
   let requestedRunId = null;
-  let requestedScanId = null;
   let requestedGenId = null;
   let requestedBenchId = null;
   let requestedThreadId = null;
   try {
     const u = new URL(req.url, 'http://localhost');
     requestedRunId = u.searchParams.get('runId');
-    requestedScanId = u.searchParams.get('scanId');
     requestedGenId = u.searchParams.get('genId');
     requestedBenchId = u.searchParams.get('benchId');
     requestedThreadId = u.searchParams.get('threadId');
   } catch {
     requestedRunId = null;
-    requestedScanId = null;
     requestedGenId = null;
     requestedBenchId = null;
     requestedThreadId = null;
   }
-  const id = requestedRunId || requestedScanId || requestedGenId || requestedBenchId;
+  const id = requestedRunId || requestedGenId || requestedBenchId;
 
   send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello(ws) });
 
@@ -521,16 +516,16 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => sockets.delete(ws));
   ws.on('error', () => sockets.delete(ws));
   ws.on('message', (data) => {
-    // Clients may ask to (re)subscribe / replay an entry's history. A scan's
-    // {type:'subscribe', scanId} and an agent generation's {type:'subscribe',
-    // genId} are accepted identically to a run's runId.
+    // Clients may ask to (re)subscribe / replay an entry's history. An agent
+    // generation's {type:'subscribe', genId} (or a bench's benchId) is accepted
+    // identically to a run's runId.
     let msg = null;
     try {
       msg = JSON.parse(String(data));
     } catch {
       return;
     }
-    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.scanId || msg.genId || msg.benchId) : null;
+    const subId = msg && msg.type === 'subscribe' ? (msg.runId || msg.genId || msg.benchId) : null;
     if (subId && runs.has(subId)) {
       replayEntry(ws, runs.get(subId));
     }
@@ -555,9 +550,8 @@ function send(ws, obj) {
 // late-joining socket always has the latest stepper + subAgents even if the run's
 // initial 'state' frame was evicted from the ring buffer (MAX_BUFFER = 5000). For a
 // RUN this re-seeds the stepper, and is idempotent with any replayed 'state' frame
-// (onState merges). SCAN entries DO expose getState() but have no `.state` property,
-// so the `orch.state &&` guard below skips them on purpose: a scan has no stepper to
-// seed, and its scanId/phase/... state is already delivered via scan-* events.
+// (onState merges). An entry whose orch has no `.state` property has no stepper to
+// seed, so the `orch.state &&` guard below skips it on purpose.
 // getState() returns a clone with an `id` key (not `runId`) and no `type` key, so the
 // explicit { runId, type } below are not clobbered by the spread.
 function sendStateSnapshot(ws, entry) {
@@ -748,11 +742,10 @@ function summarizeRuns() {
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
     lastAction: r.lastAction || r.orch?.state?.lastAction || null,
     pendingQuestion: r.pendingQuestion || null,
-    // kind discriminator so the client routes runs vs scans vs agent generations
-    // vs workspace runs without guessing; scanId/genId/workspaceId are the
-    // matching attribution fields.
+    // kind discriminator so the client routes runs vs agent generations vs
+    // workspace runs without guessing; genId/workspaceId are the matching
+    // attribution fields.
     kind: r.kind || 'run',
-    scanId: r.scanId || null,
     genId: r.genId || null,
     workspaceId: r.workspaceId || null,
     projectNames: r.projectNames || null,
@@ -842,6 +835,10 @@ function wireRun(entry) {
         if (payload?.reason === 'cost_pipeline' || payload?.reason === 'cost_total') {
           emitChanged('budget-changed');
         }
+        // Workspace scan: the run just created or updated its workspace (run-harness
+        // _finalizeWorkspaceScan, which ran before this event) — refresh every open list (D13).
+        const scanOutcome = orch.state?.workspaceScan?.outcome;
+        if (scanOutcome === 'created' || scanOutcome === 'updated') emitChanged('workspaces-changed', `scan-${scanOutcome}`);
       }
       if (name === 'error') {
         // The launch-error channel (a failure BEFORE the pipeline row exists). A
@@ -905,41 +902,9 @@ function wireRun(entry) {
 }
 
 // ---------------------------------------------------------------------------
-// Wire a WorkspaceScan's events onto the WebSocket, tagged with scanId. A NEW
-// family in the SAME runs Map — the 7-event run plumbing (wireRun) is untouched.
-// Maps scan-progress->running, scan-done->done, scan-error->error so the hello
-// snapshot + DELETE-while-live guard see a live scan as "running" and a finished
-// one as terminal. createWorkspaceScan emits many scan-progress then exactly one
-// terminal scan-done OR scan-error (§5.4).
-// ---------------------------------------------------------------------------
-function wireScan(entry) {
-  const { scanId, orch } = entry;
-
-  const record = (event) => {
-    // scanId LAST so the runs-Map key always wins (the engine already tags its
-    // payload with the same id; this is a defensive override against any drift).
-    const tagged = { ...event, scanId };
-    entry.events.push(tagged);
-    if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
-    broadcast(tagged);
-    return tagged;
-  };
-
-  for (const name of SCAN_EVENT_NAMES) {
-    subscribe(orch, name, (payload) => {
-      const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
-      if (name === 'scan-progress') entry.status = 'running';
-      else if (name === 'scan-done') entry.status = 'done';
-      else if (name === 'scan-error') entry.status = 'error';
-      record(event);
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Wire an AgentGen's events onto the WebSocket, tagged with genId. The
-// agentgen-* family: same runs Map, same ring-buffer/replay plumbing as
-// wireScan; the 7-event run plumbing (wireRun) is untouched. createAgentGen
+// agentgen-* family: same runs Map, same ring-buffer/replay plumbing as a
+// run; the 7-event run plumbing (wireRun) is untouched. createAgentGen
 // emits many agentgen-progress then exactly one terminal agentgen-done OR
 // agentgen-error (run() never throws).
 // ---------------------------------------------------------------------------
@@ -1541,6 +1506,9 @@ const startRunHandler = async (req, res) => {
     // due ticket being started through this same gate. It carries the ticket, whose id
     // IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
+    // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
+    // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
+    const scanTarget = req._workspaceScan && typeof req._workspaceScan === 'object' ? req._workspaceScan : null;
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
     // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
@@ -1664,6 +1632,11 @@ const startRunHandler = async (req, res) => {
     if (workflowId === AUTO_WORKFLOW_ID && hasWorkspace) {
       return badRequest(res, 'Auto workflow is not available for workspace targets yet');
     }
+    // The Workspace scan workflow starts only through scanRequest: a hand-built body would run
+    // a read-only scan the launch never validated (D2).
+    if (workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !scanTarget) {
+      return badRequest(res, 'the workspace scan starts from the Workspaces view');
+    }
     // Agent memory (§7.3): the defragment run option — ONE gate for every entry point (the CLI
     // and Ask's proposal validator call the same helper). Before the target lookup, like Auto.
     if (body.memoryScope != null && typeof body.memoryScope !== 'string') return badRequest(res, 'memoryScope must be "global" or "project"');
@@ -1733,7 +1706,7 @@ const startRunHandler = async (req, res) => {
       if (!WORKSPACE_KEY_RE.test(workspaceId)) {
         return res.status(404).json({ error: 'workspace not found' });
       }
-      const ws = await readWorkspace(workspaceId);
+      const ws = scanTarget || await readWorkspace(workspaceId);
       if (!ws) return res.status(404).json({ error: 'workspace not found' });
 
       // Team total cap (design §7): soft — `pastTeamCap` acknowledges it once per window per home.
@@ -1805,6 +1778,7 @@ const startRunHandler = async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         template: workflowRow,
+        ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
         guardrailsId,
         startedBy,
         branch,
@@ -1978,7 +1952,10 @@ const startRunHandler = async (req, res) => {
         broadcast(event);
       });
 
-    res.json({ runId });
+    // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
+    res.json(scanTarget
+      ? { runId, workspaceId: entry.workspaceId, title: entry.title, projectDir: entry.projectDir, projectNames: entry.projectNames }
+      : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -3600,7 +3577,7 @@ app.post('/api/workspaces/:id/policy-route', async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/history/pr  -> enrich the skeleton with live PR state, pushed back
 // over the WS as batched `history-pr` events (reuses broadcast(), the same
-// fire-to-every-socket primitive wireRun/wireScan use). The body's `token`
+// fire-to-every-socket primitive wireRun uses). The body's `token`
 // echoes the client's load token so it can drop stale batches after a newer
 // Refresh. Responds 200 immediately; results arrive asynchronously.
 // ---------------------------------------------------------------------------
@@ -4583,20 +4560,12 @@ app.post('/api/workspaces', async (req, res) => {
     : [];
   if (projectPaths.length < 2) return badRequest(res, 'a workspace needs at least 2 member projects');
   try {
-    // No explicit home (the create wizard no longer asks): adopt the one member that already
-    // records, if there is exactly one; every other case is "Choose…" on the workspace card.
-    const explicit = typeof body.metricsProject === 'string' && body.metricsProject ? body.metricsProject : null;
-    const metricsProject = explicit ?? await autoMetricsHome(projectPaths);
-    // Team policy home (design §9): defaults to the metrics home when that member's policy
-    // resolves, else the one member (or shared home) whose policy does; else unset.
-    let policyProject = typeof body.policyProject === 'string' && body.policyProject ? body.policyProject : null;
-    if (!policyProject) {
-      const viaMetrics = metricsProject ? await resolveProjectPolicy(metricsProject, { discover: false }).catch(() => null) : null;
-      policyProject = viaMetrics?.ok ? metricsProject : await autoPolicyHome({ projectPaths }).catch(() => null);
-    }
-    const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject, policyProject });
+    const { workspace, metricsHomeAuto } = await createWorkspaceWithHomes({
+      name: body.name, projectPaths, description: body.description,
+      metricsProject: body.metricsProject, policyProject: body.policyProject,
+    });
     emitChanged('workspaces-changed', 'created');
-    res.status(201).json({ workspace, metricsHomeAuto: !explicit && !!metricsProject });
+    res.status(201).json({ workspace, metricsHomeAuto });
   } catch (err) {
     const status = workspaceErrorStatus(err && err.code);
     return res.status(status).json({ error: err && err.message ? err.message : String(err) });
@@ -4641,12 +4610,11 @@ app.patch('/api/workspaces/:id', async (req, res) => {
 app.delete('/api/workspaces/:id', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
-  // 409 while a live workspace run OR live scan for this workspace exists. The
-  // module-level deleteWorkspace has no runs map, so this guard lives here (§2.3).
-  const live = [...runs.values()].some((r) =>
-    r.workspaceId === id &&
-    ['running', 'starting', 'created', 'scanning', 'pausing'].includes(String(r.status || '').toLowerCase()));
-  if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run or scan' });
+  // 409 while a live workspace run exists — a paused Workspace scan included: it would re-create
+  // the workspace when resumed (ownsWorkspaceTarget). The module-level deleteWorkspace has no runs
+  // map, so this guard lives here (§2.3).
+  const live = [...runs.values()].some((r) => r.workspaceId === id && ownsWorkspaceTarget(r));
+  if (live) return res.status(409).json({ error: 'cannot delete a workspace with a live run' });
   try {
     const report = await deleteWorkspace(id);
     try { if (cancelForTarget({ workspaceId: id })) emitChanged('schedules-changed', 'target-removed'); }
@@ -4660,116 +4628,118 @@ app.delete('/api/workspaces/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Scan endpoints (the wizard's backend, §2.4 / §5.4). Both fire-and-forget:
-// mint scanId, register a kind:'scan' entry in the SAME runs Map, wire its
-// scan-* events, start createWorkspaceScan(...).run() detached, return {scanId}.
-// The scan NEVER persists workspaces.json — persistence is the wizard's explicit
-// follow-up CRUD call (POST create / PATCH re-scan).
+// Workspace scan (wf_workspace_scan): a regular pipeline run over a workspace target that may
+// not exist yet. The routes validate, then hand startRunHandler an in-process target; the run
+// harness creates/updates the workspace when the run ends done (workspace-scan-run.mjs).
 // ---------------------------------------------------------------------------
 
-/**
- * Shared launcher for both scan routes (DRY, §2.4). Mints scanId, registers the
- * entry, wires events, starts the engine detached with a .catch backstop that
- * converts an unexpected throw into a broadcast scan-error (status 'error') so
- * the process never crashes on a fire-and-forget scan.
- * @param {{projectPaths:string[], name?:string, workspaceId?:string}} args
- * @returns {string} scanId
- */
-function startScan({ projectPaths, name, workspaceId }) {
-  const orch = createWorkspaceScan({
-    projectPaths,
-    name,
-    agentsDir: AGENTS_DIR,
-    claude: { permissionMode: 'acceptEdits', mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) },
-  });
-  // The engine mints its own scanId (scan_<uuid>) and tags every emitted event
-  // with it; use THAT as the runs-Map key + the returned id so the entry, its
-  // buffered events, and WS reconnect/replay (?scanId=) all agree on one id.
-  const scanId = orch.getState().scanId;
-  const entry = {
-    id: scanId,
-    scanId,
-    orch,
-    kind: 'scan',
-    projectDir: (Array.isArray(projectPaths) && projectPaths[0]) || null,
-    workspaceId: workspaceId || null,
-    title: name || 'workspace scan',
-    status: 'scanning',
-    startedAt: new Date().toISOString(),
-    events: [],
-    pendingQuestion: null,
-  };
-  runs.set(scanId, entry);
-  wireScan(entry);
+/** Roots hashes of scans between their 409 check and their runs entry: startRunHandler awaits
+ *  several things (workflow + guardrail lookups, the team gate, the orchestrator build) before
+ *  `runs.set`, so a second tab's POST in that window would otherwise pass the check too
+ *  (Review Focus 3). Taken synchronously right after the check, dropped once startRunHandler
+ *  has answered — by then the runs entry exists. */
+const pendingScans = new Set();
 
-  Promise.resolve()
-    .then(() => orch.run())
-    .catch((err) => {
-      // run() should never throw (it emits scan-error), but a defensive backstop
-      // mirrors POST /api/run: surface an unexpected throw as a tagged scan-error.
-      const event = { scanId, type: 'scan-error', message: err && err.message ? err.message : String(err) };
-      entry.status = 'error';
-      entry.events.push(event);
-      broadcast(event);
-    });
+/** The 8-hex roots hash a workspace id ends in (workspaces.mjs workspaceKey) — name-independent. */
+const setHashOf = (id) => String(id).slice(-8);
 
-  return scanId;
+/** A run entry that still owns its workspace target: any ACTIVE run (no workflowId test — a
+ *  just-resumed entry reads `wf_default` until resume() restores it), or a PAUSED Workspace scan
+ *  (it resumes into the target and saves it when done; its entry kept the workflowId it was built
+ *  with). A paused ordinary run holds the target no more than it did before scans were runs: it
+ *  blocks neither a re-scan nor a delete. The DELETE guard (Step 8) uses it too. */
+function ownsWorkspaceTarget(r) {
+  const s = String(r.status || '').toLowerCase();
+  return ['created', 'starting', 'running', 'pausing'].includes(s)
+    || (s === 'paused' && r.orch?.workflowId === WORKSPACE_SCAN_WORKFLOW_ID);
 }
 
-// POST /api/workspaces/scan (pre-persist, Step 2->3). Takes projectPaths directly:
-// validate >=2 paths + fs.existsSync each + reject non-git-repos (400); the deep
-// git work happens inside the engine.
-app.post('/api/workspaces/scan', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const projectPaths = Array.isArray(body.projectPaths)
-      ? body.projectPaths.map((p) => resolveProjectDir(p)).filter(Boolean)
-      : [];
-    if (projectPaths.length < 2) return badRequest(res, 'a workspace scan needs at least 2 member projects');
-    for (const dir of projectPaths) {
-      if (!fs.existsSync(dir)) return badRequest(res, `member path is missing: ${dir}`);
-      if (!isGitRepo(dir)) return badRequest(res, `member is not a git repository: ${dir}`);
-    }
-    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
-    const scanId = startScan({ projectPaths, name });
-    res.json({ scanId });
-  } catch (err) {
-    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+/** A run over this PROJECT SET that owns it, or a scan of it still launching. For a first scan the
+ *  set has no workspace (checkNewWorkspace refused a duplicate set), so any such run IS a scan,
+ *  under any name; for a re-scan it is any active run of that workspace or a paused scan of it (D4). */
+function liveOverSet(id) {
+  const hash = setHashOf(id);
+  if (pendingScans.has(hash)) return true;
+  return [...runs.values()].some((r) => r.kind === 'workspace-run' && typeof r.workspaceId === 'string'
+    && setHashOf(r.workspaceId) === hash && ownsWorkspaceTarget(r));
+}
+
+/** The run's primary member: the lowest projectKey — startRunHandler sorts members the same way,
+ *  and the run resolves its models against THIS member's catalog. checkNewWorkspace returns the
+ *  paths in request order, so never take [0]. */
+function primaryMemberOf(paths) {
+  return [...paths].sort((x, y) => { const a = projectKey(x), b = projectKey(y); return a < b ? -1 : a > b ? 1 : 0; })[0];
+}
+
+/** The scan's models (D18): the request's pick, else Settings › General › Workspaces, else the
+ *  defaults — checked against the primary member's catalog. Throws on a bad explicit pick (400). */
+async function scanModelsFor(body, projectPaths) {
+  return resolveScanModels({ explicit: body && body.models, stored: workspaceScanModels(), models: await listModels(primaryMemberOf(projectPaths)) });
+}
+
+/** Start a scan through the ONE run handler (the defragRequest pattern). startRunHandler reads
+ *  req.body once at its top, so rewriting it here is sound. The body names no source/feature
+ *  branch: every member runs from its default branch on a run-owned `worca-cc/…` branch, which
+ *  teardown deletes (D5). The live check and the reservation are the first two statements, with
+ *  NO await between them: a second request for the same set, arriving while this one is still
+ *  inside startRunHandler's awaits, finds the reservation and gets 409 (Review Focus 3). */
+async function scanRequest(req, res, { id, name, projectPaths, rescan, models }) {
+  if (liveOverSet(id)) {
+    return res.status(409).json({ error: rescan ? 'a live run exists for this workspace' : 'a scan of this project set is already running' });
   }
+  const hash = setHashOf(id);
+  pendingScans.add(hash);
+  try {
+    const mock = !!(req.body && req.body.mock === true);
+    req._workspaceScan = { id, name, projectPaths, description: '', models };   // D9: no Workspace Context
+    req.body = {
+      workspaceId: id,
+      prompt: scanRunPrompt({ name, projectNames: projectPaths.map((p) => path.basename(p)), rescan }),
+      title: scanRunTitle(name),
+      workflowId: WORKSPACE_SCAN_WORKFLOW_ID,
+      guardrailsId: 'normal',
+      ...(mock ? { mock: true } : {}),
+    };
+    return await startRunHandler(req, res);
+  } finally {
+    pendingScans.delete(hash);
+  }
+}
+
+// POST /api/workspaces/scan (first scan): validated exactly as the save will be (D4).
+app.post('/api/workspaces/scan', async (req, res) => {
+  const body = req.body || {};
+  const projectPaths = Array.isArray(body.projectPaths)
+    ? body.projectPaths.map((p) => resolveProjectDir(p)).filter(Boolean)
+    : [];
+  if (projectPaths.length < 2) return badRequest(res, 'a workspace scan needs at least 2 member projects');
+  let target;
+  try {
+    target = checkNewWorkspace({ name: body.name, projectPaths });
+  } catch (err) {
+    return res.status(workspaceErrorStatus(err && err.code)).json({ error: err && err.message ? err.message : String(err) });
+  }
+  let models;
+  try { models = await scanModelsFor(body, target.projectPaths); }
+  catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
+  return scanRequest(req, res, { ...target, rescan: false, models });
 });
 
-// POST /api/workspaces/:id/scan (re-scan). Reads the workspace (404 if absent),
-// scans ws.projectPaths, tags the entry with workspaceId. 409 if a live run for
-// that workspace already exists (avoid graphify-build contention).
+// POST /api/workspaces/:id/scan (re-scan): the description is replaced when the run ends done.
 app.post('/api/workspaces/:id/scan', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
   try {
     const ws = await readWorkspace(id);
     if (!ws) return res.status(404).json({ error: 'workspace not found' });
-    const liveRun = [...runs.values()].some((r) =>
-      r.workspaceId === id && r.kind === 'workspace-run' &&
-      ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
-    if (liveRun) return res.status(409).json({ error: 'a live run exists for this workspace' });
-    const scanId = startScan({ projectPaths: ws.projectPaths, name: ws.name, workspaceId: ws.id });
-    res.json({ scanId });
+    // ws.id is the stored id (a renamed workspace keeps its id; never recompute workspaceKey here).
+    let models;
+    try { models = await scanModelsFor(req.body || {}, ws.projectPaths); }
+    catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
+    return await scanRequest(req, res, { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, rescan: true, models });
   } catch (err) {
-    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    if (!res.headersSent) res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
-});
-
-// POST /api/scan/stop  body:{scanId} -> entry.orch.stop() (aborts in-flight
-// investigators + best-effort scan-worktree/branch cleanup in the engine's
-// finally, D4); marks the entry 'stopped'. Idempotent: an unknown/finished scan
-// still returns ok.
-app.post('/api/scan/stop', (req, res) => {
-  const scanId = req.body && typeof req.body.scanId === 'string' ? req.body.scanId : '';
-  const entry = scanId ? runs.get(scanId) : null;
-  if (entry && entry.kind === 'scan' && entry.orch && typeof entry.orch.stop === 'function') {
-    try { entry.orch.stop(); } catch { /* best-effort */ }
-    entry.status = 'stopped';
-  }
-  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -4892,6 +4862,8 @@ const settingsState = () => ({
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
+  workspaceScan: workspaceScanModels(),                   // Settings › General › Workspaces: the STORED pick (null = the defaults)
+  workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
 });
 
 /** Settings ▸ Auto workflow model: the stored id + what the classifier will actually use
@@ -4991,6 +4963,8 @@ app.post('/api/settings', async (req, res) => {
   // project-less catalog the Settings pickers offer (a run re-checks it against its own).
   const hasMemoryDefragKey = has('memoryDefrag');
   const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
+  const hasWorkspaceScanKey = has('workspaceScan');
+  const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
   // than store an id resolveModelEnv could never route.
@@ -5028,6 +5002,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasUiLevelKey) assertUiLevelInput(body.uiLevel);
     if (hasAutoKey) assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels);
     if (hasMemoryDefragKey) assertMemoryDefragModelInput(body.memoryDefrag, defragModels);
+    if (hasWorkspaceScanKey) assertWorkspaceScanInput(body.workspaceScan, wsScanModels);
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -5053,11 +5028,12 @@ app.post('/api/settings', async (req, res) => {
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
+    if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (has('schedule')) await setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {});
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || hasMemoryDefragKey || has('schedule')) emitChanged('settings-changed');
+    if (hasAskKey || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule')) emitChanged('settings-changed');
     res.json({ ...settingsState(), ...(await autoModelState()), chat: chatPrefs() });
   } catch (err) {
     // The setters throw only on an unusable path -> client error (400).
@@ -7317,7 +7293,7 @@ function agentErrorBody(err) {
 }
 
 /**
- * Fire-and-forget agent generation (mirrors startScan). Mints genId, registers
+ * Fire-and-forget agent generation. Mints genId, registers
  * a kind:'agentgen' entry in the SAME runs Map, wires its agentgen-* events,
  * starts createAgentGen(...).run() detached with a .catch backstop, returns
  * genId. The draft is NEVER saved — persistence is the wizard's explicit
@@ -7345,7 +7321,7 @@ function startAgentGen(input) {
     .then(() => orch.run())
     .catch((err) => {
       // run() should never throw (it emits agentgen-error), but a defensive
-      // backstop mirrors startScan: surface an unexpected throw as a tagged
+      // backstop surfaces an unexpected throw as a tagged
       // agentgen-error.
       const event = { genId, type: 'agentgen-error', message: err && err.message ? err.message : String(err) };
       entry.status = 'error';
@@ -7387,8 +7363,7 @@ app.post('/api/agents/generate', async (req, res) => {
 
 // POST /api/agents/generate/stop  body:{genId} -> entry.orch.stop() (aborts the
 // in-flight runClaude; the engine's finally reaps its scratch dir); marks the
-// entry 'stopped'. Idempotent: an unknown/finished generation still returns ok
-// (mirrors POST /api/scan/stop).
+// entry 'stopped'. Idempotent: an unknown/finished generation still returns ok.
 app.post('/api/agents/generate/stop', (req, res) => {
   const genId = req.body && typeof req.body.genId === 'string' ? req.body.genId : '';
   const entry = genId ? runs.get(genId) : null;
@@ -7519,7 +7494,7 @@ function startScriptBench(request) {
   Promise.resolve()
     .then(() => orch.run())
     .catch((err) => {
-      // run() never throws (it emits scriptbench-error); this is startScan's
+      // run() never throws (it emits scriptbench-error); this is the launcher's
       // defensive backstop, surfacing an unexpected throw as a tagged error.
       // It carries the entry's next `seq` like every other frame (C17), or a
       // subscribe replay would deliver this one twice.
@@ -8828,7 +8803,7 @@ if (isMain) {
 
 export { app, server, runs };
 export const _testing = {
-  wireRun, wireScan, summarizeRuns, startScan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
+  wireRun, summarizeRuns, scanRequest, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard,
   startCloneJob, followCloneCard, CLONE_JOBS,

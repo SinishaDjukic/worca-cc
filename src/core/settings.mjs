@@ -52,7 +52,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
@@ -442,6 +442,76 @@ export async function setMemoryDefragModel(input, { models = null } = {}) {
   return { memoryDefrag: memoryDefragModel() };
 }
 
+// `workspaces.scan`: the models a Workspace scan starts with (Settings › General › Workspaces) —
+// the scan agent's catalog model + effort and its project agents' sub-agent alias + effort. Unset
+// = WORKSPACE_SCAN_DEFAULT_MODELS (builtin-workflows.mjs). Create workspace can override it for one
+// scan; Re-scan uses it (workspace-scan-run.mjs resolveScanModels).
+const warnedWorkspaceScan = new Set();
+
+/** The STORED pick, or null when unset or unreadable (a bad hand edit warns once and reads unset).
+ *  The memoryDefragModel node:test guard: settings.json lives under HOME, not WORCA_HOME. */
+export function workspaceScanModels() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return null;
+  const s = readSettings();
+  const raw = s && s.workspaces && typeof s.workspaces === 'object' && !Array.isArray(s.workspaces) ? s.workspaces.scan : undefined;
+  if (raw === undefined) return null;
+  try {
+    return assertWorkspaceScanInput(raw);
+  } catch (err) {
+    const id = JSON.stringify(raw);
+    if (!warnedWorkspaceScan.has(id)) {
+      warnedWorkspaceScan.add(id);
+      console.warn(`[worca] invalid workspaces.scan ${id} — ${err.message}; scans use the default models`);
+    }
+    return null;
+  }
+}
+
+/**
+ * Validate `{ scanModel, scanEffort, agentModel, agentEffort }`, or null / '' to clear. The scan
+ * model is a catalog id — with `models` it must name an entry (catalog casing back) that offers
+ * scanEffort; a blank scanEffort means the model's default. The project agents' model is a
+ * sub-agent alias: the Task tool takes aliases only (model-env.mjs SUBAGENT_MODELS).
+ * @returns {{scanModel:string, scanEffort:(string|null), agentModel:string, agentEffort:string}|null}
+ * @throws {Error} on any malformed field, an unknown model or an effort the model does not offer
+ */
+export function assertWorkspaceScanInput(input, models = null) {
+  if (input === '' || input === null || input === undefined) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('workspaceScan must be { scanModel, scanEffort, agentModel, agentEffort } or null');
+  }
+  const s = (v) => (typeof v === 'string' ? v.trim() : '');
+  let scanModel = s(input.scanModel);
+  const scanEffort = s(input.scanEffort) || null;
+  const agentModel = s(input.agentModel);
+  const agentEffort = s(input.agentEffort);
+  if (!scanModel || scanModel.length > DEFRAG_MODEL_MAX_LEN) throw new Error('workspaceScan.scanModel must be a catalog model id');
+  if (scanEffort && !EFFORTS.includes(scanEffort)) throw new Error(`workspaceScan.scanEffort must be one of ${EFFORTS.join(' | ')}`);
+  if (!SUBAGENT_MODELS.includes(agentModel)) throw new Error(`workspaceScan.agentModel must be one of ${SUBAGENT_MODELS.join(' | ')}`);
+  if (!EFFORTS.includes(agentEffort)) throw new Error(`workspaceScan.agentEffort must be one of ${EFFORTS.join(' | ')}`);
+  if (Array.isArray(models)) {
+    const hit = models.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === scanModel.toLowerCase());
+    if (!hit) throw new Error(`unknown model "${scanModel}" — add it to the catalog first`);
+    scanModel = hit.id;
+    if (scanEffort && !(Array.isArray(hit.efforts) && hit.efforts.includes(scanEffort))) {
+      throw new Error(`${scanModel} does not offer effort "${scanEffort}"`);
+    }
+  }
+  return { scanModel, scanEffort, agentModel, agentEffort };
+}
+
+/** Store (or, on null, clear) the pick — read-modify-write of the `workspaces` block. */
+export async function setWorkspaceScanModels(input, { models = null } = {}) {
+  const pick = assertWorkspaceScanInput(input, models);
+  const settings = readSettings();
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const ws = isObj(settings.workspaces) ? { ...settings.workspaces } : {};
+  if (pick) ws.scan = pick; else delete ws.scan;
+  if (Object.keys(ws).length) settings.workspaces = ws; else delete settings.workspaces;
+  await persistSettings(settings);
+  return { workspaceScan: workspaceScanModels() };
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount() {
   const v = readSettings().skillMount;
@@ -778,6 +848,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
+  'workspaceScan',                           // Settings › General › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
 

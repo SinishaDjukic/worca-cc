@@ -358,6 +358,7 @@ export function mockEnabled(opts) {
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @param {string[]} [o.disallowedTools]   --disallowedTools <list>: built-ins withheld from this spawn
  *   (model bridge §5.3: WebSearch/WebFetch for a translated model). Absent/empty ⇒ flag omitted.
+ * @param {Record<string, object>} [o.agents]  run-scoped sub-agent definitions (--agents; phases.mjs investigatorAgents)
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -396,6 +397,7 @@ export async function runClaude(o = {}) {
     maxBudgetUsd,
     appendSubagentSystemPrompt,
     addDirs,
+    agents,
     argvInlineLimit,
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
@@ -445,6 +447,7 @@ export async function runClaude(o = {}) {
     maxBudgetUsd,
     appendSubagentSystemPrompt,
     addDirs,
+    agents,
     argvInlineLimit,
     asAgent,
   });
@@ -479,7 +482,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -546,6 +549,13 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
+  // Run-scoped sub-agent definitions (the pinned investigator, phases.mjs investigatorAgents).
+  // ALWAYS inline JSON, on the staged branch too: Claude Code reads `--agents <file>` only from
+  // 2.1.281, and docker/CLAUDE_CODE_VERSION pins 2.1.278 (a path there fails at spawn with
+  // "Invalid --agents configuration"). The definition is ~600 chars. Before --add-dir (LAST).
+  if (agents && typeof agents === 'object' && Object.keys(agents).length) {
+    args.push('--agents', JSON.stringify(agents));
+  }
   // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
   // stays a prefix; absent / [] / non-strings ⇒ nothing (the `names` filter above).
   for (const d of names(addDirs)) args.push('--add-dir', d);
@@ -601,7 +611,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit, asAgent }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, argvInlineLimit, asAgent }) {
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -680,7 +690,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));

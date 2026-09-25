@@ -152,6 +152,7 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
       // RESUMED run rebuilds the same child-model behavior from the manifest
       // alone — the workflow row is never re-read after the run starts.
       cell.subagentModel = over.subagentModel ?? cfg.subagentModel ?? '';
+      cell.subagentEffort = over.subagentEffort ?? cfg.subagentEffort ?? '';
     }
     if (node.kind === 'script') {
       cell.color = meta?.color || '';

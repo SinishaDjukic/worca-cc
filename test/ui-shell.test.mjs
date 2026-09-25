@@ -26,7 +26,7 @@ test('shell hooks present (base + workspace surfaces)', () => {
     'hist-card-tpl', 'hist-detail-tpl', 'shipit-modal',
     'run-list', 'nav-running-count',
     'ws-detail-tpl', 'ws-shell', 'ws-detail', 'ws-list', 'target-seg', 'target-project-pane',
-    'target-workspace-pane', 'workspaceSelect', 'ws-members', 'wiz-close', 'wiz-abort', 'wiz-desc',
+    'target-workspace-pane', 'workspaceSelect', 'ws-members', 'wiz-close',
   ])
     assert.ok(html.includes(`id="${id}"`), `missing #${id}`);
 });

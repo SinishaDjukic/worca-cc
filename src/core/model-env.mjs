@@ -263,7 +263,7 @@ export function assertModelCost(cost) {
 }
 
 // ── sub-agent model policy (per-node `subagentModel`) ─────────────────────────
-// What a fan-out node's Task/Agent children run on. ONE wire — a prompt block
+// What a fan-out node's Task/Agent children run on. ONE wire for the MODEL — a prompt block
 // (phases.mjs#subagentModelDirective) that tells the agent to pass `model` on
 // every Task call — because the CLI resolves a child's model as Task-call
 // `model` > the agent definition's own `model:` frontmatter > env default >
@@ -271,6 +271,7 @@ export function assertModelCost(cost) {
 // earlier CLAUDE_CODE_SUBAGENT_MODEL env floor was removed for exactly that
 // reason — it bound only agents with no model key — and the key is reserved
 // above so a catalog entry cannot resurrect it.)
+// (A pinned EFFORT is a second wire: a run-scoped --agents definition, phases.mjs investigatorAgents.)
 //
 // The vocabulary is deliberately NOT the worca catalog: the CLI's Task tool
 // accepts an ALIAS enum, so a catalog id (or an ANTHROPIC_MODEL wire id) would

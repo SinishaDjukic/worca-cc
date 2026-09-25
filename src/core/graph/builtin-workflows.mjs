@@ -94,10 +94,49 @@ export const GRAPH_MEMORY_DEFRAG_WORKFLOW = deepFreeze({
   ],
 });
 
+/** What a Workspace scan runs on when nothing else is named (D15/D16): the scan agent on Sonnet 5
+ *  at medium effort, its per-project investigators on the `sonnet` alias at medium effort. The
+ *  scan node's template config carries the same values, so every path agrees. */
+export const WORKSPACE_SCAN_DEFAULT_MODELS = deepFreeze({
+  scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium',
+});
+
+/** The Workspace scan workflow: the one agent that maps how a workspace's member projects
+ *  interconnect. Reserved like wf_memory_defrag, but NEVER listed (GET /api/workflows, the Ask
+ *  catalog and the composer leave it out): only POST /api/workspaces/scan and
+ *  /api/workspaces/:id/scan start it. run-harness treats it as READ-ONLY (nothing committed,
+ *  every member's run branch deleted at teardown) and, on `done`, saves the scanner's output as
+ *  the workspace's description (workspace-scan-run.mjs finalizeWorkspaceScan). */
+export const WORKSPACE_SCAN_WORKFLOW_ID = 'wf_workspace_scan';
+export const WORKSPACE_SCAN_WORKFLOW_NAME = 'Workspace scan';
+export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
+  id: WORKSPACE_SCAN_WORKFLOW_ID,
+  name: WORKSPACE_SCAN_WORKFLOW_NAME,
+  version: 2,
+  domain: 'shared',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_scan', kind: 'agent', key: 'workspaceScanner', x: 320, y: 200, config: {
+      model: WORKSPACE_SCAN_DEFAULT_MODELS.scanModel,
+      effort: WORKSPACE_SCAN_DEFAULT_MODELS.scanEffort,
+      subagentModel: WORKSPACE_SCAN_DEFAULT_MODELS.agentModel,
+      subagentEffort: WORKSPACE_SCAN_DEFAULT_MODELS.agentEffort,
+    } },
+    { id: 'n_end', kind: 'end', x: 600, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_scan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_scan', port: 'workspace' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
- *  DELETE refuses them. Order is NOT significant — GET /api/workflows and the Ask catalog list
- *  the graph built-ins in their own fixed order (Default, then Memory defragment).
+ *  DELETE refuses them. wf_workspace_scan is reserved but never listed anywhere. Order is NOT
+ *  significant — GET /api/workflows and the Ask catalog list the graph built-ins in their own
+ *  fixed order (Default, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

@@ -45,7 +45,7 @@ import { readReview, classifyAskPayload } from '../protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from '../ask-forms.mjs';
 import {
   taskHeader, buildSystemPrompt, resolveAgentBody, mockMarkers, runOpts,
-  fanOutDirective, ctxFanOut, ctxSubagentModel, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
+  fanOutDirective, ctxFanOut, ctxSubagentModel, ctxSubagentEffort, ctxEndpointRouted, workspaceFanOutDirective, workspaceDiffInstruction,
   renderAnswers, siblingsBlock, diffInstruction, READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS,
   askFormsBlock,
 } from '../phases.mjs';
@@ -514,7 +514,7 @@ export function buildAgentPrompt(ctx) {
     baseInstruction(meta.runnerType, meta) + '\n\n' +
     (hints ? hints + '\n\n' : '') +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx) }) +
     workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +

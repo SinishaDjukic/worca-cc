@@ -50,11 +50,8 @@ const state = {
   workspaces: [],            // GET /api/workspaces read-model
   selectedWorkspaceId: '',   // '' === none; set ONLY in workspace target mode
   runTarget: 'project',      // 'project' | 'workspace' — New Pipeline target toggle
-  // --- Creation wizard (ephemeral; reset on wizard close) ---
-  wizard: {
-    step: 1, name: '', selectedPaths: [], scanId: '', description: '',
-    graphifyUsed: null, abort: null, editingId: '',
-  },
+  // --- Creation wizard (ephemeral; reset on wizard entry and exit) ---
+  wizard: { name: '', selectedPaths: [], starting: false },
   // --- Agent creation wizard (ephemeral; reset on wizard close) ---
   agentWizard: { step: 1, genId: '', abort: null, draft: null, ownMd: false },
   // --- Pluggable task sources (New Pipeline) ---
@@ -110,6 +107,7 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
+import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -303,18 +301,12 @@ const el = {
   wizProjects: $('#wiz-projects'),
   wizSelectAll: $('#wiz-select-all'),
   wizStep1Hint: $('#wiz-step1-hint'),
+  wizSizeNote: $('#wiz-size-note'),
   wizStartScan: $('#wiz-start-scan'),
-  wizStatus: $('#wiz-status'),
-  wizProgress: $('#wiz-progress'),
-  wizPhases: $('#wiz-phases'),
-  wizAbort: $('#wiz-abort'),
-  wizDesc: $('#wiz-desc'),
-  wizGraphifyNote: $('#wiz-graphify-note'),
-  wizMsg: $('#wiz-msg'),
-  wizRescan: $('#wiz-rescan'),
-  wizSave: $('#wiz-save'),
   wizClose: $('#wiz-close'),
   wizTitle: $('#wiz-title'),
+  wizScanModel: $('#wiz-scan-model'),
+  wizScanEffort: $('#wiz-scan-effort'),
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
@@ -877,13 +869,6 @@ function handleServerMessage(msg) {
     return;
   }
 
-  // Scan events are tagged by scanId (not runId) and ride the same broadcast
-  // socket. Handle them BEFORE the !msg.runId early-return below.
-  if (msg.type === 'scan-progress' || msg.type === 'scan-done' || msg.type === 'scan-error') {
-    onScanEvent(msg);
-    return;
-  }
-
   // Agent-generation events are tagged by genId (not runId) and ride the same
   // broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'agentgen-progress' || msg.type === 'agentgen-done' || msg.type === 'agentgen-error') {
@@ -978,7 +963,17 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'workspaces') void refreshWorkspacesPage();
+    // A scan run saves its workspace in the background (D13): refetch the list (the Workspaces
+    // page repaints itself), then rebuild the New Pipeline picker whenever the SET of workspaces
+    // changed — on ANY view: the scan hand-off parks the user on Running, and re-entering New never
+    // rebuilds the picker. keepMembers: a still-selected workspace keeps its member rows and branch
+    // picks (a half-built workspace run is not reset by another tab's scan).
+    const before = state.workspaces.map((w) => w.id).join('\n');
+    const refreshed = currentView() === 'workspaces' ? refreshWorkspacesPage() : loadWorkspaces();
+    void refreshed.then(() => {
+      const changed = state.workspaces.map((w) => w.id).join('\n') !== before;
+      if (changed && state.runTarget === 'workspace') void ensureWorkspaceOptions({ keepMembers: true });
+    });
     return;
   }
   if (msg.type === 'team-metrics-changed') {
@@ -1314,7 +1309,7 @@ function makeRun({
     status,
     startedAt: startedAt || nowHMS(),
     local,
-    kind,                 // 'run' | 'workspace-run' | 'scan' | 'agentgen' (only first two get tabs)
+    kind,                 // 'run' | 'workspace-run' | 'agentgen' (only first two get tabs)
     pipelineId,           // matches a History row id once persisted; used to hide lingerers from History
     pauseReason,          // why it paused, or null — ANY orchestrator pause code rides here
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
@@ -6572,10 +6567,11 @@ function renderWorkspaceSourceBranches() {
 // Populate #workspaceSelect from state.workspaces (loading them if empty).
 // Workspaces with any missing member are rendered disabled "+ (incomplete)".
 // Restores LAST_WORKSPACE_KEY when valid.
-async function ensureWorkspaceOptions() {
+async function ensureWorkspaceOptions({ keepMembers = false } = {}) {
   const sel = el.workspaceSelect;
   if (!sel) return;
   if (!state.workspaces.length) await loadWorkspaces();
+  const shown = state.selectedWorkspaceId;
 
   sel.innerHTML = '';
   const placeholder = document.createElement('option');
@@ -6604,6 +6600,9 @@ async function ensureWorkspaceOptions() {
     state.selectedWorkspaceId = '';
     placeholder.selected = true;
   }
+  // A background list refresh (keepMembers) leaves a still-selected workspace's member rows and
+  // branch picks alone; only a changed selection repaints them.
+  if (keepMembers && state.selectedWorkspaceId && state.selectedWorkspaceId === shown) return;
   renderWorkspaceMembers();
   renderWorkspaceSourceBranches();
 }
@@ -7095,7 +7094,15 @@ function refreshWdOverview() {
   const sec = wsDetail.screen.querySelector('.pd-sec[data-sec="overview"]');
   if (!sec || sec.dataset.loaded !== '1') return;
   const pane = sec.querySelector('.ws-desc-edit');
-  if (pane && !pane.hidden) return;
+  if (pane && !pane.hidden) {
+    // Never repaint under an open editor. When the description changed underneath the draft (a
+    // scan finished), say so — Save would replace the new text with the draft.
+    const w = workspaceById(wsDetail.id);
+    if (w && typeof wsDetail.editBase === 'string' && (w.description || '') !== wsDetail.editBase) {
+      setWdError(wsDetail.screen, 'The description changed while you were editing (a scan finished). Cancel shows it; Save replaces it with your draft.');
+    }
+    return;
+  }
   buildWdOverview(sec, wsDetail.id);
 }
 // The description is markdown; the bundle loads lazily, so the first paint may be plain. Repaint
@@ -7182,7 +7189,7 @@ if (el.wsDetail) {
     if (e.target.closest('.ws-edit')) { openWsEdit(wsDetail.screen, w); return; }
     const tab = e.target.closest('.ws-desc-tab');
     if (tab) { setMdEditMode(wsDetail.screen.querySelector('.ws-desc-edit'), tab.dataset.mode === 'preview'); return; }
-    if (e.target.closest('.ws-desc-cancel')) { closeWsEdit(wsDetail.screen); return; }
+    if (e.target.closest('.ws-desc-cancel')) { closeWsEdit(wsDetail.screen); setWdError(wsDetail.screen, ''); refreshWdOverview(); return; }
     if (e.target.closest('.ws-desc-save')) { void saveWsDescription(wsDetail.screen, w); }
   });
 }
@@ -7192,6 +7199,8 @@ function openWsEdit(screen, w) {
   const pane = screen.querySelector('.ws-desc-edit');
   const input = screen.querySelector('.ws-desc-input');
   if (input) input.value = w.description || '';
+  // What the draft started from: refreshWdOverview compares it when the list refreshes underneath.
+  if (wsDetail) wsDetail.editBase = w.description || '';
   if (pane) { pane.hidden = false; setMdEditMode(pane, false); }
   if (input) input.focus();
 }
@@ -7256,21 +7265,29 @@ function setWdError(screen, text) {
   e.hidden = !text;
 }
 
-// Re-scan: POST /api/workspaces/:id/scan and jump into the wizard at Step 2 with
-// editingId set, so Step 3 Save issues a PATCH (not a POST).
+// Re-scan: start the Workspace scan run over the saved workspace and follow it on Running; the
+// run replaces the description when it finishes (D12). 409 (a live run) stays on the page.
 async function rescanWorkspace(w) {
-  if (!w) return;
-  state.wizard.editingId = w.id;
-  state.wizard.name = w.name || '';
-  state.wizard.selectedPaths = Array.isArray(w.projectPaths) ? [...w.projectPaths] : [];
-  location.hash = 'workspace-create';
-  // Re-scan also refreshes member discovery (§4.8) — the home is changed from the page
-  // (decision 23), not the wizard, so this fires-and-continues straight into the scan.
+  if (!w || !wsDetail) return;
+  const screen = wsDetail.screen;
+  const btn = screen.querySelector('.ws-rescan');
+  if (btn) btn.disabled = true;
+  // Re-scan also refreshes member discovery (§4.8) — the home is changed from the page.
   await fetch('/api/workspaces/metrics-scan', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: state.wizard.selectedPaths }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectPaths: w.projectPaths || [] }),
   }).catch(() => {});
-  // showView('workspace-create') runs enterWizard(); kick off the scan after.
-  await startWizardScan();
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(w.id)}/scan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const data = await safeJson(res);
+    if (!res.ok || !data.runId) { setWdError(screen, data.error || `HTTP ${res.status}`); return; }
+    beginScanRun(data, w.name || w.id);
+  } catch (err) {
+    setWdError(screen, err.message);
+  } finally {
+    if (btn && btn.isConnected) btn.disabled = false;
+  }
 }
 
 // Delete, from the page: confirm, then DELETE. 200 closes the page and removes the row;
@@ -7309,56 +7326,102 @@ async function deleteWorkspaceFromPage(id) {
 
 if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.hash = 'workspace-create'; });
 
+// ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
+// agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
+const SCAN_AGENT_ALIASES = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['fable', 'Fable']];
+const SCAN_EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+const SCAN_MODELS_FALLBACK = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
+const WIZ_MODEL_IDS = { scanModel: 'wiz-scan-model', scanEffort: 'wiz-scan-effort', agentModel: 'wiz-agent-model', agentEffort: 'wiz-agent-effort' };
+const WS_SCAN_SETTINGS_IDS = { scanModel: 'wsScanModel', scanEffort: 'wsScanEffort', agentModel: 'wsAgentModel', agentEffort: 'wsAgentEffort' };
+let wizModelCatalog = [];
+// The wizard's Models column paint in flight (enterWizard): Scan awaits it, so a quick click never
+// sends the four still-empty selects (the scan route answers 400 to an empty pick).
+let wizModelsPainted = Promise.resolve();
+let wsScanCatalog = [];
+
+/** The pick a surface starts from: the stored one over the server's default (else Sonnet · medium). */
+function scanModelsFrom(data) {
+  const def = data && data.workspaceScanDefault && typeof data.workspaceScanDefault === 'object' ? data.workspaceScanDefault : SCAN_MODELS_FALLBACK;
+  const stored = data && data.workspaceScan && typeof data.workspaceScan === 'object' ? data.workspaceScan : null;
+  return { ...def, ...(stored || {}), scanEffort: (stored ? stored.scanEffort : def.scanEffort) || '' };
+}
+
+/** The scan agent's effort list is its model's own (the pair rule); a model the catalog does not
+ *  know (a failed GET) keeps the value it had. '' = the model's default. */
+function paintScanEffort(ids, keep, catalog) {
+  const sm = document.getElementById(ids.scanModel);
+  const se = document.getElementById(ids.scanEffort);
+  if (!sm || !se) return;
+  const m = catalog.find((x) => x && x.id === sm.value);
+  const efforts = m ? (Array.isArray(m.efforts) ? m.efforts : []) : (keep ? [keep] : []);
+  se.innerHTML = '';
+  if (!efforts.length) se.appendChild(option('', '(model default)'));
+  for (const e of efforts) se.appendChild(option(e, e));
+  se.value = efforts.includes(keep) ? keep : (efforts.includes('medium') ? 'medium' : (efforts[0] || ''));
+}
+
+/** Paint the four selects. The scan model list is the Auto card's (buildAutoModelOptions) without
+ *  its "(default)" row — a scan always names its model. */
+function paintScanModelPickers(ids, pick, catalog) {
+  const sm = document.getElementById(ids.scanModel);
+  const am = document.getElementById(ids.agentModel);
+  const ae = document.getElementById(ids.agentEffort);
+  if (!sm || !am || !ae) return;
+  const stale = !!pick.scanModel && catalog.length > 0 && !catalog.some((m) => m && m.id === pick.scanModel);
+  buildAutoModelOptions(sm, pick.scanModel || '', catalog, stale);
+  if (sm.options[0] && sm.options[0].value === '') sm.remove(0);
+  sm.value = pick.scanModel || '';
+  paintScanEffort(ids, pick.scanEffort || '', catalog);
+  am.innerHTML = '';
+  for (const [v, label] of SCAN_AGENT_ALIASES) am.appendChild(option(v, label));
+  am.value = pick.agentModel;
+  ae.innerHTML = '';
+  for (const e of SCAN_EFFORTS) ae.appendChild(option(e, e));
+  ae.value = pick.agentEffort;
+}
+
+/** The four selects as the POST shape. */
+function readScanModelPickers(ids) {
+  const v = (k) => document.getElementById(ids[k])?.value || '';
+  return { scanModel: v('scanModel'), scanEffort: v('scanEffort'), agentModel: v('agentModel'), agentEffort: v('agentEffort') };
+}
+
 // ---- Creation wizard -------------------------------------------------------
 
-// Reset the ephemeral wizard state to defaults, preserving a re-scan's editingId
-// + selectedPaths so Step 2/3 still know what they're scanning.
-function resetWizard(preserveEditing = false) {
-  const keepId = preserveEditing ? state.wizard.editingId : '';
-  const keepPaths = preserveEditing ? state.wizard.selectedPaths : [];
-  state.wizard = {
-    step: 1, name: preserveEditing ? state.wizard.name : '', selectedPaths: keepPaths,
-    scanId: '', description: '', graphifyUsed: null, abort: null, editingId: keepId,
-  };
+// Reset the ephemeral wizard state.
+function resetWizard() {
+  state.wizard = { name: '', selectedPaths: [], starting: false };
 }
 
-// enterWizard is idempotent: it does NOT reset if a scan is already live;
-// otherwise it resets (preserving a re-scan's editingId/selectedPaths), loads the
-// project list, and shows the current step.
+// Every entry starts clean: the wizard only collects a name and the projects.
 async function enterWizard() {
-  const liveScan = !!state.wizard.scanId || !!state.wizard.abort;
-  if (!liveScan) {
-    const editing = !!state.wizard.editingId;
-    if (!editing) resetWizard(false);
-  }
-  if (el.wizTitle) el.wizTitle.textContent = state.wizard.editingId ? 'Re-scan workspace' : 'Create workspace';
-  if (el.wizName) {
-    el.wizName.value = state.wizard.name || '';
-    el.wizName.disabled = !!state.wizard.editingId; // name immutable on re-scan
-  }
+  resetWizard();
+  if (el.wizName) el.wizName.value = '';
   if (!state.projects.length) await loadProjects();
   renderWizardProjects();
-  showWizardStep(state.wizard.step || 1);
+  wizModelsPainted = paintWizardModels();
 }
 
-const WIZ_PANES = { 1: 'wiz-step-1', 2: 'wiz-step-2', 3: 'wiz-step-3' };
-const WIZ_TRACK = { 1: 0, 2: 1, 3: 2 };
-// Toggle the three wizard step panes (+ the tracker above them).
-function showWizardStep(step) {
-  state.wizard.step = step;
-  if (String(step) === '3') setMdEditMode(document.getElementById('wiz-step-3'), false);
-  for (const [k, id] of Object.entries(WIZ_PANES)) {
-    const pane = document.getElementById(id);
-    if (pane) pane.classList.toggle('hidden', String(k) !== String(step));
+// The Models column starts from Settings › General › Workspaces every time the wizard opens.
+async function paintWizardModels() {
+  let data = {};
+  try {
+    const [catalog, res] = await Promise.all([fetchTitleModelCatalog(), fetch('/api/settings')]);
+    wizModelCatalog = catalog;
+    if (res.ok) data = await safeJson(res);
+  } catch { /* the fallback pick below */ }
+  let pick = scanModelsFrom(data);
+  // A stored scan model that left the catalog is never offered as this scan's pick: the scan
+  // route checks a SENT pick strictly (400), so it would refuse every scan. Start from the
+  // default scan model instead — what a Re-scan does with the same stale setting (D18).
+  // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing.
+  if (wizModelCatalog.length && !wizModelCatalog.some((m) => m && m.id === pick.scanModel)) {
+    const def = scanModelsFrom({ workspaceScanDefault: data.workspaceScanDefault });
+    pick = { ...pick, scanModel: def.scanModel, scanEffort: def.scanEffort };
   }
-  const items = document.querySelectorAll('#wiz-track li');
-  items.forEach((li, i) => { li.classList.toggle('on', i === WIZ_TRACK[step]); li.classList.toggle('done', i < WIZ_TRACK[step]); });
+  paintScanModelPickers(WIZ_MODEL_IDS, pick, wizModelCatalog);
 }
-
-// Step 3's Text / Preview tabs: the same editor idiom as the workspace card.
-document.querySelectorAll('#wiz-desc-tabs .md-tab').forEach((b) => {
-  b.addEventListener('click', () => setMdEditMode(document.getElementById('wiz-step-3'), b.dataset.mode === 'preview'));
-});
+if (el.wizScanModel) el.wizScanModel.addEventListener('change', () => paintScanEffort(WIZ_MODEL_IDS, el.wizScanEffort?.value || '', wizModelCatalog));
 
 // Render one checkbox per onboarded project (disabled for !exists). Pre-checks
 // anything already in selectedPaths (re-scan). Enables Start only at 2+.
@@ -7415,9 +7478,30 @@ function renderWizardProjects() {
   syncWizardStartEnabled();
 }
 
+// Workspace size (D24): one line under the list once the pick passes 10 (a bit big) or 20 (big);
+// past 40 it turns red and Scan stays off. data-level drives the tone; hidden when nothing to say.
+const WIZ_SIZE_NOTES = {
+  big: (n) => `A bit big — ${n} projects: the scan takes longer and costs more.`,
+  'very-big': (n) => `Big workspace — ${n} projects: a long, costly scan, and a long description added to every run.`,
+  over: (n) => `Too many — ${n} selected; a workspace holds up to ${WORKSPACE_MAX_PROJECTS} projects.`,
+};
+
+function paintWizardSizeNote() {
+  const note = el.wizSizeNote;
+  if (!note) return;
+  const count = state.wizard.selectedPaths.length;
+  const level = workspaceSizeLevel(count);
+  note.dataset.level = level;
+  note.textContent = level === 'ok' ? '' : WIZ_SIZE_NOTES[level](count);
+  note.hidden = level === 'ok';
+}
+
 function syncWizardStartEnabled() {
   const next = document.getElementById('wiz-start-scan');
-  if (next) next.disabled = state.wizard.selectedPaths.length < 2;
+  const count = state.wizard.selectedPaths.length;
+  // A workspace holds 2–40 projects (D22): Scan stays off outside that range.
+  if (next) next.disabled = count < 2 || count > WORKSPACE_MAX_PROJECTS;
+  paintWizardSizeNote();
   syncWizardSelectAll();
 }
 
@@ -7454,58 +7538,29 @@ if (el.wizSelectAll) el.wizSelectAll.addEventListener('change', () => {
 // workspace card — so creating a workspace never blocks on a feature most users have not
 // turned on, and a member that is not a git repository no longer fails the flow.
 
-// Start (or restart) the scan. Validates name + 2+ projects, shows Step 2,
-// creates an AbortController, POSTs (pre-persist for new / :id/scan for re-scan),
-// stores scanId, and subscribes. The scan runs BEFORE the workspace is persisted.
+// Start the Workspace scan run and follow it on Running (D12). The server creates the
+// workspace when the run finishes, so the wizard is done the moment the run starts.
 async function startWizardScan() {
-  const editing = !!state.wizard.editingId;
-  const name = el.wizName ? el.wizName.value.trim() : state.wizard.name;
-  state.wizard.name = name;
-  if (!editing && !name) { showWizardStep(1); setStatusText(''); if (el.wizName) el.wizName.focus(); return; }
-  if (state.wizard.selectedPaths.length < 2) { showWizardStep(1); return; }
-
-  // Clear any prior scanId BEFORE the POST resolves, so a buffered/duplicate
-  // scan-* for the OLD scan can never match (onScanEvent gates on scanId).
-  state.wizard.scanId = '';
-
-  // Reset Step 2 surface.
-  setStatusText('Starting scan…');
-  if (el.wizProgress) el.wizProgress.textContent = '';
-  markScanPhase('');
-  if (el.wizMsg) el.wizMsg.textContent = '';
-  showWizardStep(2);
-
-  const abort = new AbortController();
-  state.wizard.abort = abort;
-
-  const url = editing
-    ? `/api/workspaces/${encodeURIComponent(state.wizard.editingId)}/scan`
-    : '/api/workspaces/scan';
-  const body = editing ? {} : { projectPaths: state.wizard.selectedPaths, name };
-
+  const name = el.wizName ? el.wizName.value.trim() : '';
+  if (!name) { if (el.wizName) el.wizName.focus(); return; }
+  const count = state.wizard.selectedPaths.length;
+  if (count < 2 || count > WORKSPACE_MAX_PROJECTS || state.wizard.starting) return;
+  state.wizard.starting = true;
+  if (el.wizStartScan) el.wizStartScan.disabled = true;
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: abort.signal,
+    await wizModelsPainted;   // never rejects (paintWizardModels catches its own fetches)
+    const res = await fetch('/api/workspaces/scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectPaths: state.wizard.selectedPaths, name, models: readScanModelPickers(WIZ_MODEL_IDS) }),
     });
     const data = await safeJson(res);
-    if (!res.ok || !data.scanId) {
-      state.wizard.abort = null;
-      setStatusText('');
-      showWizardStep(1);
-      setWizStep1Error(data.error || `Scan failed (${res.status})`);
-      return;
-    }
-    state.wizard.scanId = data.scanId;
-    subscribeScan(data.scanId);
+    if (!res.ok || !data.runId) { setWizStep1Error(data.error || `Scan failed (${res.status})`); return; }
+    beginScanRun(data, name);
   } catch (err) {
-    if (err && err.name === 'AbortError') return; // user aborted; leave-guard handled state
-    state.wizard.abort = null;
-    setStatusText('');
-    showWizardStep(1);
     setWizStep1Error(err.message);
+  } finally {
+    state.wizard.starting = false;
+    syncWizardStartEnabled();
   }
 }
 
@@ -7513,75 +7568,19 @@ function setWizStep1Error(message) {
   if (el.wizStep1Hint) el.wizStep1Hint.textContent = `Scan error: ${message}`;
 }
 
-// Persist at Step 3 Save: new → POST /api/workspaces; re-scan → PATCH :id.
-// On 200 reset + navigate to #workspaces. On 409 (dup name OR dup set) surface
-// data.error verbatim and KEEP the user on Step 3 with their edited text intact.
-async function saveWorkspace() {
-  const description = el.wizDesc ? el.wizDesc.value : '';
-  state.wizard.description = description;
-  const editing = !!state.wizard.editingId;
-  if (el.wizMsg) el.wizMsg.textContent = '';
-  if (el.wizSave) el.wizSave.disabled = true;
-
-  const url = editing
-    ? `/api/workspaces/${encodeURIComponent(state.wizard.editingId)}`
-    : '/api/workspaces';
-  const method = editing ? 'PATCH' : 'POST';
-  const body = editing
-    ? { description }
-    : {
-        name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description,
-        // No metricsProject: the server adopts the single recording member, if any.
-      };
-
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await safeJson(res);
-    if (res.status === 409) { setWizMsg(data.error || 'Duplicate workspace.', 'err'); return; }
-    if (!res.ok) { setWizMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    const backTo = state.wizard.editingId || (data.workspace && data.workspace.id) || '';
-    resetWizard(false);
-    await loadWorkspaces();
-    location.hash = backTo && state.workspaces.some((x) => x && x.id === backTo) ? `workspaces/${backTo}` : 'workspaces';
-  } catch (err) {
-    setWizMsg(err.message, 'err');
-  } finally {
-    if (el.wizSave) el.wizSave.disabled = false;
-  }
-}
-
-function setWizMsg(text, kind) {
-  if (!el.wizMsg) return;
-  el.wizMsg.textContent = text || '';
-  el.wizMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
-}
-
-// Abort a live scan: abort the fetch, unsubscribe, clear wizard scan state.
-// Invoked by the leave-guard, #wiz-abort, and Cancel.
-function abortWizardScan() {
-  const scanId = state.wizard.scanId;
-  if (state.wizard.abort) { try { state.wizard.abort.abort(); } catch { /* ignore */ } }
-  if (scanId) {
-    const ws = state.ws;
-    if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', scanId })); } catch { /* ignore */ } }
-  }
-  state.wizard.abort = null;
-  state.wizard.scanId = '';
+// A scan run starts like any run this tab started: its card on Running.
+function beginScanRun(data, name) {
+  beginRun(data.runId, data.projectDir || '', data.title || `Workspace scan: ${name}`, {
+    workspaceId: data.workspaceId, workspaceName: name, projectNames: data.projectNames,
+  });
 }
 
 if (el.wizStartScan) el.wizStartScan.addEventListener('click', () => startWizardScan());
-if (el.wizAbort) el.wizAbort.addEventListener('click', () => { abortWizardScan(); showWizardStep(1); });
-if (el.wizRescan) el.wizRescan.addEventListener('click', () => startWizardScan());
-if (el.wizSave) el.wizSave.addEventListener('click', () => saveWorkspace());
-if (el.wizClose) el.wizClose.addEventListener('click', () => { location.hash = state.wizard.editingId ? 'workspaces' : 'new'; });
+if (el.wizClose) el.wizClose.addEventListener('click', () => { location.hash = 'new'; });
 if (el.wizName) el.wizName.addEventListener('input', () => { state.wizard.name = el.wizName.value; });
 
 // A11y: Escape in the wizard view triggers #wiz-close (which navigates away;
-// the showView leave-guard aborts any live scan). Scoped to the wizard view so
+// the showView leave-guard resets the wizard). Scoped to the wizard view so
 // it never collides with the viewer-modal Escape handler.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -7591,67 +7590,12 @@ document.addEventListener('keydown', (e) => {
   if (el.wizClose) el.wizClose.click();
 });
 
-// ---- Scan WebSocket wiring -------------------------------------------------
-
-// Bind the live, CHANGING status text. .ws-loader carries role="status"
-// aria-live="polite", so each update is announced.
-function setStatusText(text) {
-  if (el.wizStatus) el.wizStatus.textContent = text || '';
-}
-
-// Light up the phase track; phases progress graph → investigate → synthesize.
-function markScanPhase(phase) {
-  if (!el.wizPhases) return;
-  el.wizPhases.querySelectorAll('[data-phase]').forEach((n) => {
-    n.classList.toggle('active', !!phase && n.dataset.phase === phase);
-  });
-}
-
-// Subscribe to a scan's buffered events on the shared socket.
-function subscribeScan(scanId) {
-  const ws = state.ws;
-  if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'subscribe', scanId })); } catch { /* ignore */ } }
-}
-
-// Route a scan-* event. Ignores events for a different/aborted scan.
-function onScanEvent(msg) {
-  if (!msg || !msg.scanId || msg.scanId !== state.wizard.scanId) return; // stale/aborted scan
-  if (msg.type === 'scan-progress') {
-    setStatusText(msg.message || '');
-    if (el.wizProgress && (msg.projectsTotal != null)) {
-      el.wizProgress.textContent = `${msg.projectsDone || 0} / ${msg.projectsTotal} projects`;
-    }
-    markScanPhase(msg.phase || '');
-    return;
-  }
-  if (msg.type === 'scan-done') {
-    state.wizard.abort = null;
-    state.wizard.description = typeof msg.description === 'string' ? msg.description : '';
-    state.wizard.graphifyUsed = !!(msg.graphify && msg.graphify.used);
-    if (el.wizDesc) el.wizDesc.value = state.wizard.description; // .value only — never innerHTML
-    if (el.wizGraphifyNote) {
-      el.wizGraphifyNote.textContent = state.wizard.graphifyUsed
-        ? 'Generated with graphify-assisted analysis.'
-        : 'Generated from source reading (graphify not available).';
-    }
-    showWizardStep(3);
-    return;
-  }
-  if (msg.type === 'scan-error') {
-    state.wizard.abort = null;
-    state.wizard.scanId = '';
-    showWizardStep(1);
-    setWizStep1Error(msg.message || 'scan failed');
-  }
-}
-
 // Test hook: expose the wizard helpers + workspace renderers for jsdom tests.
 if (typeof window !== 'undefined') {
   window.__ws = {
     setRunTarget, ensureWorkspaceOptions, loadWorkspaces, loadWorkspacesView,
-    renderWorkspaces, buildWorkspaceRow, routeWsDetail, enterWizard, showWizardStep,
-    renderWizardProjects, startWizardScan, saveWorkspace, abortWizardScan,
-    onScanEvent, subscribeScan, setStatusText, resetWizard,
+    renderWorkspaces, buildWorkspaceRow, routeWsDetail, enterWizard,
+    renderWizardProjects, startWizardScan, resetWizard,
     renderWorkspaceSourceBranches,
   };
 }
@@ -10440,6 +10384,7 @@ async function loadSettings() {
     paintDebugSpawnSettings(data);
     await paintTitleModelSettings(data);
     await paintAutoModelSettings(data);
+    await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
     paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
     refreshBudget();
@@ -11252,6 +11197,35 @@ document.getElementById('memDefragModelSave')?.addEventListener('click', () => {
   postMemDefragModel({ memoryDefrag: { model, effort: model ? (document.getElementById('memDefragEffort').value || '') : '' } });
 });
 document.getElementById('memDefragModelReset')?.addEventListener('click', () => postMemDefragModel({ memoryDefrag: null }));
+
+// ---- Settings › General › Workspaces: the models every scan starts with (D17). Create workspace
+// can change them for one scan; Re-scan uses them.
+function setWsScanModelsMsg(text, kind) { setHintMsg('wsScanModelsMsg', text, kind); }
+async function paintWorkspaceScanModelsSettings(data) {
+  if (!document.getElementById('wsScanModel')) return;
+  wsScanCatalog = await fetchTitleModelCatalog();
+  const pick = scanModelsFrom(data);
+  paintScanModelPickers(WS_SCAN_SETTINGS_IDS, pick, wsScanCatalog);
+  // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
+  const stale = !!pick.scanModel && wsScanCatalog.length > 0 && !wsScanCatalog.some((m) => m && m.id === pick.scanModel);
+  keepVisible(document.getElementById('ws-scan-models-card'), !!(data && data.workspaceScan));
+  setHintMsg('wsScanModelsNote', stale ? `Model "${pick.scanModel}" is no longer in the catalog — scans fall back to the default.` : '', stale ? 'warn' : '');
+}
+function postWorkspaceScanModels(body) {
+  return postSettingsCard(body, { setMsg: setWsScanModelsMsg, paint: paintWorkspaceScanModelsSettings, savedText: 'Saved. Applies to the next scan.' });
+}
+document.getElementById('wsScanModel')?.addEventListener('change', () => {
+  paintScanEffort(WS_SCAN_SETTINGS_IDS, document.getElementById('wsScanEffort')?.value || '', wsScanCatalog);
+});
+document.getElementById('wsScanModelsSave')?.addEventListener('click', () => {
+  if (!wsScanCatalog.length) { setWsScanModelsMsg('the model list did not load — reload the page to change this', 'err'); return; }
+  const sel = document.getElementById('wsScanModel');
+  const opt = sel && sel.options[sel.selectedIndex];
+  if (opt && opt.disabled) { setWsScanModelsMsg('that model is no longer installed — pick another or use the default', 'err'); return; }
+  const pick = readScanModelPickers(WS_SCAN_SETTINGS_IDS);
+  postWorkspaceScanModels({ workspaceScan: { ...pick, scanEffort: pick.scanEffort || null } });
+});
+document.getElementById('wsScanModelsReset')?.addEventListener('click', () => postWorkspaceScanModels({ workspaceScan: null }));
 
 // Browse… for the projects root: native OS dialog, in-app modal fallback —
 // the same two endpoints the add-project Browse button uses (app.js:3793).
@@ -23221,7 +23195,6 @@ function gsHops(step, g) {
     }
     case 'workspace': {
       const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
-      const stepShowing = (n) => { const s = document.getElementById(`wiz-step-${n}`); return !!(s && !s.classList.contains('hidden')); };
       return [
         ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: pick its folder in the chooser that opens.') : []),
         NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
@@ -23232,12 +23205,8 @@ function gsHops(step, g) {
         { id: 'members', target: '#wiz-projects', met: () => checked() >= 2,
           text: 'Tick the projects that belong together — two or more.',
           already: 'The projects that belong together — two or more are ticked.' },
-        { id: 'scan', target: '#wiz-start-scan', met: () => !stepShowing(1),
-          text: 'Scan them: Worca maps how the projects connect and drafts the workspace description.' },
-        { id: 'scanning', target: '#wiz-step-2 .status-label', met: () => stepShowing(3),
-          text: 'Worca is reading the projects — this takes a moment. The description arrives when it is done.' },
-        { id: 'save', target: '#wiz-save', final: true,
-          text: 'Read the draft, edit what you like, then save. Every run can now target the workspace as a whole.' },
+        { id: 'scan', target: '#wiz-start-scan', final: true,
+          text: 'Scan them. Worca starts a scan run you can follow under Running; when it finishes, the workspace appears here with its description, ready to edit.' },
       ];
     }
     case 'teamMetrics': {
@@ -23600,12 +23569,8 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'composer' && name !== 'composer') composerExit();
-  // Leave-guard: navigating away from the wizard while a scan is live aborts the
-  // scan + resets wizard state (addresses orphaned-background-request risk).
-  if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
-    if (state.wizard.scanId || state.wizard.abort) abortWizardScan();
-    resetWizard();
-  }
+  // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
+  if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
   // Same guard for the agent wizard: stop a live generation on the way out.
   if (currentShownView === 'agent-create' && name !== 'agent-create') {
     if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();

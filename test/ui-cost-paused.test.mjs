@@ -288,7 +288,6 @@ test('reload parity: a hello-seeded paused run with pauseReason renders the bann
       startedAt: '00:00:00',
       pendingQuestion: null,
       kind: 'run',
-      scanId: null,
       genId: null,
       workspaceId: null,
       projectNames: null,
