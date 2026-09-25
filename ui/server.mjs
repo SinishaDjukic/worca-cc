@@ -196,7 +196,8 @@ import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
-import { probeClaudeAuth, isClaudeSignedOutError, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
+import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
+import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -3238,7 +3239,9 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    if (isClaudeSignedOutError(msg)) return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    if (msg !== 'pipeline not found' && await failedBecauseSignedOut({ message: msg })) {
+      return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    }
     const code = msg === 'pipeline not found' ? 404 : 500;
     res.status(code).json({ error: msg });
   }

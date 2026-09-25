@@ -59,6 +59,7 @@ function makeTurn({ thread, user, asst }, over = {}, deps = {}) {
       onFrame: (f) => frames.push(f),
       onOutOfTurn: (f) => outOfTurn.push(f),
       generateTitle: async () => '',
+      failedBecauseSignedOut: async () => false,   // never ask the real CLI
       ...deps,
     },
   });
@@ -361,17 +362,21 @@ test('retry also fails: session cleared, ask-error with the runner message + err
   assert.equal(last.code, undefined, 'a generic auth failure is not the CLI sign-in');
 });
 
-test('a signed-out CLI ("Not logged in") ends the turn with ask-error code claude-signed-out', async () => {
+test('a failure on a signed-out CLI ends the turn with ask-error code claude-signed-out, whatever the CLI said', async () => {
   const s = seed();
+  const asked = [];
+  // Signed out, the CLI can fail a first-party id as unrecognized_model, not "Not logged in".
+  const message = 'claude exited with code 1: [claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}';
   const { turn, frames } = makeTurn(s, {}, {
-    runClaudeImpl: async () => {
-      throw Object.assign(new Error('claude exited with code 1: Not logged in · Please run /login'), { errorClass: 'auth' });
-    },
+    runClaudeImpl: async () => { throw new Error(message); },
+    failedBecauseSignedOut: async (o) => { asked.push(o); return true; },
   });
   await turn.run();
   const last = frames.at(-1);
   assert.equal(last.type, 'ask-error');
+  assert.equal(last.message, message, 'the raw message still travels');
   assert.equal(last.code, 'claude-signed-out');
+  assert.deepEqual(asked, [{ message, model: 'claude-opus-5-5' }]);
 });
 
 test('B-4 guard: an abort rejection NEVER enters the resume fallback', async () => {

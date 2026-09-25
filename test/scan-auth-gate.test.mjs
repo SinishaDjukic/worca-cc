@@ -6,7 +6,7 @@
 //
 // Real mode (no WORCA_MOCK) with WORCA_CLAUDE_BIN pointing at a fake `claude`
 // shell script that answers `auth status` as signed out and fails everything
-// else the way a signed-out CLI does, so no real Claude is ever started.
+// else the way a signed-out CLI does (`unrecognized_model`, not "Not logged in"), so no real Claude is ever started.
 // The run overview (a cached answer needs no Claude) maps that failure to the
 // same 409 instead of probing up front. POSIX-only (a shell script as the bin).
 import { test, before, after } from 'node:test';
@@ -47,7 +47,8 @@ before(async () => {
   await writeFile(bin, [
     '#!/bin/sh',
     'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then echo \'{"loggedIn": false}\'; exit 1; fi',
-    'echo "Not logged in · Please run /login" >&2',
+    // What a signed-out CLI really prints for a first-party id — not "Not logged in".
+    'echo \'[claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}\' >&2',
     'exit 1',
   ].join('\n') + '\n');
   await chmod(bin, 0o755);
