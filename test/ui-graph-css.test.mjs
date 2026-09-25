@@ -59,6 +59,14 @@ test('v2 cards neutralise the unscoped v1 .node rule', () => {
   assert.ok(/\.gv-world\s+\.node::before\s*\{[^}]*content\s*:\s*none/.test(block), 'kills the v1 colour bar');
 });
 
+test('node corners follow the card scale in lockstep: header and footer sit 1.5px (the border) inside', () => {
+  const block = v2Block();
+  const rule = (sel) => (block.match(new RegExp(`\\.gv-world\\s+\\.${sel}\\s*\\{[^}]*\\}`)) || [''])[0];
+  assert.match(rule('node'), /border-radius:calc\(14px \* var\(--gv-scale\)\)/, 'the node matches --r-card');
+  assert.match(rule('nhead'), /border-radius:calc\(12\.5px \* var\(--gv-scale\)\) calc\(12\.5px \* var\(--gv-scale\)\) 0 0/);
+  assert.match(rule('xfoot'), /border-radius:0 0 12\.5px 12\.5px/);
+});
+
 test('the canvas nav cluster floats clear of the rail in both rail states', () => {
   const nav = css.match(/\.gv-nav\s*\{[^}]*\}/);
   assert.ok(nav, '.gv-nav rule exists');

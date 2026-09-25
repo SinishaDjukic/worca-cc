@@ -240,7 +240,7 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(chip, /width:288px/);
   assert.match(chip, /max-height:min\(420px,70%\)/, 'the whole catalog is 12+ rows and .ask-sheet clips — without a cap the Effort row is unreachable');
   assert.match(chip, /overflow-y:auto/);
-  assert.match(chip, /border-radius:14px/);
+  assert.match(chip, /border-radius:var\(--r-card\)/);
   assert.ok(css.indexOf('.ask-pop-chip{') > css.indexOf('.ask-pop{'), '.ask-pop-chip and .ask-pop are both (0,1,0) on the same element — source order decides, so the chip rule must come last');
   const title = ruleBody('.ask-title') || '';
   assert.match(title, /min-width:0/);
@@ -327,7 +327,7 @@ test('ui-ask-style: a wide sheet caps its content — the transcript column and 
   assert.match(box, /max-width:var\(--ask-col-max\)/);
   assert.match(box, /margin-inline:auto/);
   assert.match(box, /border:1px solid var\(--line-2\)/);
-  assert.match(box, /border-radius:16px/);
+  assert.match(box, /border-radius:var\(--r-card\)/);
   assert.match(box, /background:var\(--panel\)/, 'panel, not field: the textarea keeps its contrast baseline');
   assert.match(box, /display:flex;flex-direction:column;gap:4px/, 'chips → textarea → msg → row stack inside the box');
   // No focus-within override: the box keeps the same --line-2 grey while typing,
