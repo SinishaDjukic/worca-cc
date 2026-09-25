@@ -96,6 +96,55 @@ test('Step 1 gating: start-scan disabled until 2+ projects selected', async () =
   assert.equal(doc.querySelector('#wiz-start-scan').disabled, false, 'enabled at 2 selected');
 });
 
+test('Select all toggles every usable project (never a missing one) and tracks partial state', async () => {
+  const { window } = await boot();
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  const all = doc.querySelector('#wiz-select-all');
+  assert.ok(all, 'select-all checkbox rendered');
+  assert.ok(!doc.querySelector('#wiz-projects').contains(all), 'kept outside the project list');
+  const cbs = () => [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')];
+  const byVal = (v) => cbs().find((c) => c.value === v);
+  const start = doc.querySelector('#wiz-start-scan');
+  assert.equal(all.disabled, false, 'enabled with usable projects');
+  assert.equal(all.checked, false, 'unchecked with nothing selected');
+  assert.equal(all.indeterminate, false);
+
+  all.checked = true; all.dispatchEvent(new window.Event('change', { bubbles: true }));
+  for (const v of ['/a/svc-iam', '/a/svc-ui', '/a/svc-pay']) assert.equal(byVal(v).checked, true, `${v} selected`);
+  assert.equal(byVal('/a/gone').checked, false, 'missing project never selected');
+  assert.equal(start.disabled, false, 'start enabled after select all');
+
+  const cb = byVal('/a/svc-ui');
+  cb.checked = false; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(all.checked, false, 'partial selection unchecks select-all');
+  assert.equal(all.indeterminate, true, 'partial selection is indeterminate');
+
+  cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(all.checked, true, 'selecting the last one checks select-all');
+  assert.equal(all.indeterminate, false);
+
+  all.checked = false; all.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.ok(cbs().every((c) => !c.checked), 'deselect all clears every row');
+  assert.equal(start.disabled, true, 'start disabled after deselect all');
+  assert.equal(all.indeterminate, false);
+
+  all.click();
+  assert.equal(all.checked, true, 'a real click selects all');
+  assert.equal(cbs().filter((c) => c.checked).length, 3);
+});
+
+test('Select all is disabled when fewer than two projects are usable', async () => {
+  const { window } = await boot({
+    fetchHandler: (u) => u.includes('/api/projects')
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [PROJECTS[0], PROJECTS[3]] }) }) : null,
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(window.document.querySelector('#wiz-select-all').disabled, true);
+});
+
 test('startScan POSTs pre-persist {projectPaths,name}, shows Step 2, subscribes by scanId', async () => {
   const posts = [];
   const { window, ws } = await boot({

@@ -17,7 +17,7 @@ const IDS = [
   'sourceBranchHint',
   'sourceBranchWrap', 'ws-source-branches',
   'ws-create-btn', 'ws-msg', 'ws-list', 'ws-shell', 'ws-detail', 'ws-detail-tpl',
-  'wiz-name', 'wiz-projects', 'wiz-step1-hint', 'wiz-start-scan', 'wiz-status', 'wiz-progress',
+  'wiz-name', 'wiz-projects', 'wiz-select-all','wiz-step1-hint', 'wiz-start-scan', 'wiz-status', 'wiz-progress',
   'wiz-phases', 'wiz-abort', 'wiz-desc', 'wiz-graphify-note', 'wiz-msg', 'wiz-rescan', 'wiz-save',
   'wiz-close', 'wiz-title',
   'wiz-step-1', 'wiz-step-2', 'wiz-step-3',
