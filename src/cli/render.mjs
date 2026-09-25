@@ -122,6 +122,27 @@ export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0 } = {})
   return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${usd(costUsd)}`;
 }
 
+/** The count-only twin of formatRunSummary's execution rows: v2 stepper rows that
+ *  carry a real executionId (bookends excluded). null for a v1/no-stepper run —
+ *  callers omit the count rather than claim one. */
+export function executionCount(state) {
+  const st = state || {};
+  if (!(st.stepper && st.stepper.version === 2)) return null;
+  return (Array.isArray(st.steps) ? st.steps : [])
+    .filter((s) => s && s.executionId && !BOOKEND_EXECUTION_IDS.includes(s.executionId)).length;
+}
+
+/** The loop-delivery total the History Overview's DURATION sub-line renders
+ *  (ui/public/graph/run-decor.mjs): the sum over the stepper's LOOP wires of the
+ *  run's wireDeliveries count. null without a v2 stepper. */
+export function loopDeliveries(state) {
+  const st = state || {};
+  if (!(st.stepper && st.stepper.version === 2)) return null;
+  const wires = (st.stepper.graph && st.stepper.graph.wires) || [];
+  const deliveries = st.wireDeliveries && typeof st.wireDeliveries === 'object' ? st.wireDeliveries : {};
+  return wires.reduce((a, w) => a + (w.loop ? (Number(deliveries[w.id]) || 0) : 0), 0);
+}
+
 /**
  * The v2 run summary the CLI prints under `Pipeline complete.` — pure, so the
  * quiescence arm and the executions count are testable without spawning a run.

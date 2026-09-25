@@ -352,6 +352,11 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
 
+# see every run from the terminal — no browser, no Worca server needed
+worca runs
+worca runs --status paused
+worca runs <pipelineId>    # one run in detail (any unique prefix; --json for machines)
+
 # run it later: once, from this terminal, or on a repeat (needs `worca ui` up, or --wait)
 worca --project /path/to/your/project --prompt "Upgrade dependencies" --at "tomorrow 02:00"
 worca --project /path/to/your/project --prompt "Upgrade dependencies" --at 02:00 --wait --yes
