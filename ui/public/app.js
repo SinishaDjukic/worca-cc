@@ -301,6 +301,7 @@ const el = {
   // Wizard
   wizName: $('#wiz-name'),
   wizProjects: $('#wiz-projects'),
+  wizSelectAll: $('#wiz-select-all'),
   wizStep1Hint: $('#wiz-step1-hint'),
   wizStartScan: $('#wiz-start-scan'),
   wizStatus: $('#wiz-status'),
@@ -7417,7 +7418,36 @@ function renderWizardProjects() {
 function syncWizardStartEnabled() {
   const next = document.getElementById('wiz-start-scan');
   if (next) next.disabled = state.wizard.selectedPaths.length < 2;
+  syncWizardSelectAll();
 }
+
+// The enabled (existing) project checkboxes: the only rows Select all may touch.
+function wizardUsableBoxes() {
+  return el.wizProjects ? [...el.wizProjects.querySelectorAll('.wiz-proj-cb:not(:disabled)')] : [];
+}
+
+// Select all reads checked when every usable project is picked, indeterminate when some are.
+function syncWizardSelectAll() {
+  const all = el.wizSelectAll;
+  if (!all) return;
+  const boxes = wizardUsableBoxes();
+  const picked = boxes.filter((b) => b.checked).length;
+  all.disabled = boxes.length < 2;
+  all.checked = boxes.length > 0 && picked === boxes.length;
+  all.indeterminate = picked > 0 && picked < boxes.length;
+}
+
+// Check or clear every usable project at once; a missing project's selection is left as is.
+if (el.wizSelectAll) el.wizSelectAll.addEventListener('change', () => {
+  const on = el.wizSelectAll.checked;
+  const set = new Set(state.wizard.selectedPaths);
+  for (const cb of wizardUsableBoxes()) {
+    cb.checked = on;
+    if (on) set.add(cb.value); else set.delete(cb.value);
+  }
+  state.wizard.selectedPaths = [...set];
+  syncWizardStartEnabled();
+});
 
 // The team-metrics home is no longer a wizard step: POST /api/workspaces adopts the one
 // member that already records (autoMetricsHome), and every other case is "Choose…" on the

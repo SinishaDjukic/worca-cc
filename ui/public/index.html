@@ -988,7 +988,11 @@
                 <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
               </div>
               <div class="field">
-                <label>Projects <span class="opt">(select 2 or more)</span></label>
+                <div class="wiz-proj-head">
+                  <label class="label">Projects <span class="opt">(select 2 or more)</span></label>
+                  <!-- Outside #wiz-projects so every checkbox in the list stays a project. -->
+                  <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
+                </div>
                 <div class="wiz-proj-list" id="wiz-projects"></div>
                 <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
               </div>
