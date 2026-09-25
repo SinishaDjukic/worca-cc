@@ -13,7 +13,7 @@ import { countWorkspaces } from './workspaces.mjs';
 import { countThreads } from './ask/store.mjs';
 import { listScopes } from './metrics/read.mjs';
 import { listPolicyScopes } from './policy/sync.mjs';
-import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
+import { explainUnspawnableClaude, probeClaudeAuth, resolveClaudeBin } from './preflight.mjs';
 import { onboardingPrefs } from './settings.mjs';
 
 /** Step ids in shelf order. The UI (ui/public/getting-started.mjs) carries the
@@ -70,14 +70,20 @@ export function claudeReady(bin = configuredClaudeBin(), opts = {}) {
 }
 
 /**
- * The nine ticks plus the two stored flags, in one call.
+ * The nine ticks plus the two stored flags, in one call. The Claude step needs
+ * the CLI found AND not signed out (`auth` is preflight's probeClaudeAuth state;
+ * 'unknown' — mock, an older CLI — never un-ticks it). `recheck` skips the
+ * probe's remembered answer (the Connect dialog's Check again).
+ * @param {{recheck?:boolean}} [opts]
  * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
- *   claude:{bin:string, hint:string|null}, hidden:boolean, welcomeSeen:boolean}>}
+ *   claude:{bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null},
+ *   hidden:boolean, welcomeSeen:boolean}>}
  */
-export async function onboardingStatus() {
+export async function onboardingStatus({ recheck = false } = {}) {
   const db = getDb();
   const count = (sql) => { const row = db.prepare(sql).get(); return row ? Number(row.n) : 0; };
   const claude = claudeReady();
+  const auth = claude.ready ? (await probeClaudeAuth({ bin: configuredClaudeBin(), force: recheck })).state : null;
   let teamMetrics = false;
   // Cached status only (no discovery): this is read at boot and after every change
   // broadcast, and the Team metrics page owns the expensive refresh.
@@ -87,7 +93,7 @@ export async function onboardingStatus() {
   let teamPolicy = false;
   try { teamPolicy = !!(await listPolicyScopes()).anyEnabled; } catch { /* offline / no git: not enabled */ }
   const steps = {
-    claude: claude.ready,
+    claude: claude.ready && auth !== 'signed-out',
     project: countProjects() > 0,
     run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done'") > 0,
     realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0') > 0,
@@ -101,5 +107,5 @@ export async function onboardingStatus() {
     teamPolicy,
   };
   const done = ONBOARDING_STEPS.filter((id) => steps[id]).length;
-  return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint }, ...onboardingPrefs() };
+  return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint, auth }, ...onboardingPrefs() };
 }

@@ -14,7 +14,7 @@ walk from the first hop, so a replayed guide explains every stop again.
 
 | # | Tile | Done when (derived) | Guide (each row is a hop; the first that applies is lit) |
 |---|---|---|---|
-| 1 | Connect Claude Code | the configured `claude` binary resolves on the server's `PATH` (`WORCA_CLAUDE_BIN` honoured; the Windows npm-shim case uses preflight's probe) | a dialog with the install command and **Check again** |
+| 1 | Connect Claude Code | the configured `claude` binary resolves on the server's `PATH` (`WORCA_CLAUDE_BIN` honoured; the Windows npm-shim case uses preflight's probe) and `claude auth status` does not report it signed out (preflight `probeClaudeAuth`: remembered 60 s; mock mode and auth env vars skip it; an unknown answer never un-ticks) | a dialog with the install command, the `/login` step, and **Check again** (a fresh sign-in check) |
 | 2 | Add your first project | one project is registered | sidebar › **Projects** → **Add project** (the native folder chooser opens; it is ringed again if that is cancelled) → in the dialog: the **path** → the **name** → **Add project** → the new row (Done) |
 | 3 | Watch a run end to end | any pipeline reached `done` | (no project: the Add project walk of 2, then on) → sidebar › **New pipeline** → project select → prompt → **Mock mode** → **Start run** → sidebar › **Running** (skipped when the app already routed there) → the run's **card** (Done) |
 | 4 | Ask Worca about a run | one Ask thread exists | the **Ask Worca** dock pill (skipped while the sheet is open) → the input box (suggests a question) → **Send** → the transcript, where the answer lands (Done) |
@@ -112,7 +112,7 @@ for targets inside an open dialog.
 
 ## API and storage
 
-- `GET /api/onboarding` → `{ steps, done, total, claude: { bin, hint }, hidden, welcomeSeen }`
+- `GET /api/onboarding[?recheck=1]` → `{ steps, done, total, claude: { bin, hint, auth }, hidden, welcomeSeen }` (`auth`: `signed-in` | `signed-out` | `unknown` | `null` when the binary is missing; `recheck` skips the remembered sign-in answer)
   (`src/core/onboarding.mjs`). Computed on every call from the store and the
   PATH; team metrics and team policy read the cached scope status only (no
   discovery).

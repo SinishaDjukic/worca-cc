@@ -470,3 +470,105 @@ export async function probeClaudeCapabilities(bin = 'claude') {
   const version = raw ? (/(\d+\.\d+\.\d+)/.exec(raw)?.[1] ?? raw.split(/\s+/)[0] ?? null) : null;
   return { mcpConfig: !!help && help.includes('--mcp-config'), version };
 }
+
+// ── Is the Claude Code CLI signed in? ─────────────────────────────────────────
+// Finding the binary is not enough: a signed-out CLI starts, then every agent
+// exits 1 with "Not logged in" (a workspace scan got ~30 s into its first phase
+// before failing). probeClaudeAuth asks `claude auth status` up front.
+//
+// Only 'signed-out' may ever block anything. 'unknown' — an older CLI without the
+// `auth` command, a hang, unparseable output — never does, so a probe gap can
+// only fall back to today's behaviour, never refuse a working setup.
+
+/** Env vars that authenticate the CLI without a stored sign-in, which `claude
+ *  auth status` does not (reliably) report: a custom endpoint or the model bridge
+ *  (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), an API key or OAuth token, and
+ *  the cloud transports (Bedrock / Vertex / Foundry). */
+export const CLAUDE_AUTH_ENV_KEYS = Object.freeze([
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN',
+]);
+export const CLAUDE_AUTH_ENV_FLAGS = Object.freeze([
+  'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+]);
+
+const flagOn = (v) => !!v && v !== '0' && String(v).toLowerCase() !== 'false';
+
+/** The first env var that signs the CLI in on its own, or null. Pure. */
+export function claudeAuthFromEnv(env = process.env) {
+  for (const k of CLAUDE_AUTH_ENV_KEYS) if (typeof env[k] === 'string' && env[k].trim()) return k;
+  for (const k of CLAUDE_AUTH_ENV_FLAGS) if (flagOn(env[k])) return k;
+  return null;
+}
+
+/**
+ * Read `claude auth status` output (JSON by default, `--text` on some builds).
+ * @param {string} text  stdout + stderr
+ * @returns {'signed-in'|'signed-out'|'unknown'}
+ */
+export function parseClaudeAuthStatus(text) {
+  const s = String(text || '').trim();
+  if (!s) return 'unknown';
+  const json = /\{[\s\S]*\}/.exec(s);
+  if (json) {
+    try {
+      const o = JSON.parse(json[0]);
+      if (o && typeof o.loggedIn === 'boolean') return o.loggedIn ? 'signed-in' : 'signed-out';
+    } catch { /* fall through to the text forms */ }
+  }
+  if (/\bnot (logged|signed) in\b|\blogged out\b|\bsigned out\b/i.test(s)) return 'signed-out';
+  if (/\b(logged|signed) in\b/i.test(s)) return 'signed-in';
+  return 'unknown';
+}
+
+/** Run a command with any exit code: resolves {code, out} (stdout+stderr), or
+ *  null on a spawn failure / timeout. `auth status` exits non-zero when signed out. */
+function execAnyExit(cmd, args, { timeout = 8000 } = {}) {
+  return new Promise((resolveP) => {
+    let child;
+    try { child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
+    catch { resolveP(null); return; }
+    let out = '';
+    let settled = false;
+    const done = (val) => { if (settled) return; settled = true; clearTimeout(timer); resolveP(val); };
+    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* ignore */ } done(null); }, timeout);
+    child.stdout?.on('data', (d) => { out += d.toString(); });
+    child.stderr?.on('data', (d) => { out += d.toString(); });
+    child.on('error', () => done(null));
+    child.on('close', (code) => done({ code, out }));
+  });
+}
+
+export const CLAUDE_AUTH_TTL_MS = 60_000;
+const _authCache = new Map();   // exe -> { at, promise }
+
+/** Test seam: forget remembered answers. */
+export function clearClaudeAuthCache() { _authCache.clear(); }
+
+/**
+ * Is the Claude Code CLI signed in? Never throws.
+ *  - mock mode: never starts claude → {state:'unknown', source:'mock'}
+ *  - an auth env var (see CLAUDE_AUTH_ENV_KEYS / _FLAGS) → {state:'signed-in', source:'env'}
+ *  - otherwise `claude auth status`, remembered per binary for CLAUDE_AUTH_TTL_MS
+ *    (concurrent callers share one spawn); `force` skips the remembered answer.
+ * @param {{bin?:string, env?:Record<string,string|undefined>, mock?:boolean, force?:boolean,
+ *   now?:()=>number, run?:(exe:string, args:string[])=>Promise<{code:number,out:string}|null>}} [o]
+ * @returns {Promise<{state:'signed-in'|'signed-out'|'unknown', source:'mock'|'env'|'cli', detail:string|null}>}
+ */
+export async function probeClaudeAuth({
+  bin = 'claude', env = process.env, mock, force = false, now = Date.now, run = execAnyExit,
+} = {}) {
+  const isMock = mock ?? (flagOn(env.WORCA_MOCK ?? env.ORCH_MOCK));
+  if (isMock) return { state: 'unknown', source: 'mock', detail: null };
+  const envKey = claudeAuthFromEnv(env);
+  if (envKey) return { state: 'signed-in', source: 'env', detail: envKey };
+  const name = bin && String(bin).trim() ? String(bin).trim() : 'claude';
+  const exe = resolveClaudeBin(name).bin;
+  const hit = _authCache.get(exe);
+  if (!force && hit && now() - hit.at < CLAUDE_AUTH_TTL_MS) return hit.promise;
+  const promise = Promise.resolve()
+    .then(() => run(exe, ['auth', 'status']))
+    .then((r) => ({ state: r ? parseClaudeAuthStatus(r.out) : 'unknown', source: 'cli', detail: null }))
+    .catch(() => ({ state: 'unknown', source: 'cli', detail: null }));
+  _authCache.set(exe, { at: now(), promise });
+  return promise;
+}

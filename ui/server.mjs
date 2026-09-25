@@ -194,8 +194,9 @@ import {
 } from '../src/core/memory-store.mjs';
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
-import { onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
+import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
+import { probeClaudeAuth } from '../src/core/preflight.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -3268,8 +3269,9 @@ app.get('/api/history', async (_req, res) => {
 // POST writes ONLY those flags ({hidden?, welcomeSeen?}; booleans; unknown keys
 // 400) and answers with the same full payload, so one round trip repaints.
 // ---------------------------------------------------------------------------
-app.get('/api/onboarding', async (_req, res) => {
-  try { res.json(await onboardingStatus()); }
+// ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
+app.get('/api/onboarding', async (req, res) => {
+  try { res.json(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -4716,6 +4718,23 @@ function startScan({ projectPaths, name, workspaceId }) {
   return scanId;
 }
 
+/**
+ * Refuse a scan up front when the Claude CLI is signed out (preflight
+ * probeClaudeAuth): otherwise the scan starts and its first agent dies ~30 s in
+ * with "Not logged in". Only a definite 'signed-out' refuses — mock, an auth env
+ * var, or an unknown answer (an older CLI) all pass. Sends the 409 and returns
+ * true when it refused.
+ */
+async function refuseSignedOutClaude(res) {
+  const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
+  if (state !== 'signed-out') return false;
+  res.status(409).json({
+    code: 'claude-signed-out',
+    error: "Claude Code isn't signed in. Run `claude` in a terminal and type /login, then try again.",
+  });
+  return true;
+}
+
 // POST /api/workspaces/scan (pre-persist, Step 2->3). Takes projectPaths directly:
 // validate >=2 paths + fs.existsSync each + reject non-git-repos (400); the deep
 // git work happens inside the engine.
@@ -4730,6 +4749,7 @@ app.post('/api/workspaces/scan', async (req, res) => {
       if (!fs.existsSync(dir)) return badRequest(res, `member path is missing: ${dir}`);
       if (!isGitRepo(dir)) return badRequest(res, `member is not a git repository: ${dir}`);
     }
+    if (await refuseSignedOutClaude(res)) return;
     const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
     const scanId = startScan({ projectPaths, name });
     res.json({ scanId });
@@ -4751,6 +4771,7 @@ app.post('/api/workspaces/:id/scan', async (req, res) => {
       r.workspaceId === id && r.kind === 'workspace-run' &&
       ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
     if (liveRun) return res.status(409).json({ error: 'a live run exists for this workspace' });
+    if (await refuseSignedOutClaude(res)) return;
     const scanId = startScan({ projectPaths: ws.projectPaths, name: ws.name, workspaceId: ws.id });
     res.json({ scanId });
   } catch (err) {
