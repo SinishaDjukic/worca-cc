@@ -1,7 +1,7 @@
 // test/ui-workspace-wizard.test.mjs — jsdom boot tests for the 4-step creation
 // wizard: step gating, the team-metrics home step, scan POST (pre-persist),
 // live changing status text, scan-done/scan-error, save (create + 409-preserve),
-// abort + leave-guard, and the JSON-safety regression guard (.value/.textContent
+// abort/cancel, scans surviving navigation, and the JSON-safety regression guard (.value/.textContent
 // only; never innerHTML).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -290,7 +290,7 @@ test('Step 3 Save (create) POSTs {name,projectPaths,description} then navigates 
   await new Promise((r) => setTimeout(r, 0));
 
   assert.equal(posts.length, 1, 'one create POST');
-  assert.deepEqual(posts[0], { name: 'S', projectPaths: ['/a/svc-iam', '/a/svc-ui'], description: '# Workspace: S\nedited by hand' });
+  assert.deepEqual(posts[0], { name: 'S', projectPaths: ['/a/svc-iam', '/a/svc-ui'], description: '# Workspace: S\nedited by hand', scanId: 'scan_s' });
   assert.equal(window.location.hash, '#workspaces', 'navigated to workspaces on success');
 });
 
@@ -327,10 +327,138 @@ test('Step 3 Save 409 keeps the user on Step 3 with edited text intact + surface
   assert.match(doc.querySelector('#wiz-msg').textContent, /name already exists/, 'verbatim 409 error surfaced');
 });
 
-test('abort sends {unsubscribe,scanId} and the leave-guard aborts a live scan on navigation', async () => {
+test('leaving the wizard keeps a live scan running; returning resumes it and shows its result', async () => {
+  const stops = [];
+  const { window, ws } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/scan/stop')) { stops.push(JSON.parse(opts.body).scanId); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }); }
+      return u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_keep' }) }) : null;
+    },
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Keep';
+  doc.querySelector('#wiz-name').dispatchEvent(new window.Event('input', { bubbles: true }));
+  for (const v of ['/a/svc-iam', '/a/svc-ui']) {
+    const cb = [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')].find((c) => c.value === v);
+    cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 2), 'scanning');
+
+  // Visit Settings mid-scan: the paid scan must NOT be stopped or unsubscribed.
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(stops, [], 'no /api/scan/stop on navigation');
+  assert.equal(ws().sent.some((m) => m.type === 'unsubscribe'), false, 'still subscribed');
+
+  // The scan finishes while the user is away; it must not pull them back.
+  ws().deliver({ type: 'scan-done', scanId: 'scan_keep', description: 'DONE AWAY', projects: [], graphify: { used: false } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(doc.querySelector('.view[data-view="settings"]').classList.contains('hidden'), false, 'stayed on Settings');
+
+  // Coming back lands on the result, with the name intact, ready to save.
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 3), 'resumed at Step 3');
+  assert.equal(doc.querySelector('#wiz-desc').value, 'DONE AWAY');
+  assert.equal(doc.querySelector('#wiz-name').value, 'Keep');
+});
+
+test('the Workspaces list shows a live scan as a draft row that reopens the wizard', async () => {
   const { window, ws } = await boot({
     fetchHandler: (u, opts) => u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
-      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_ab' }) }) : null,
+      ? Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_draft' }) }) : null,
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'Drafty';
+  doc.querySelector('#wiz-name').dispatchEvent(new window.Event('input', { bubbles: true }));
+  for (const v of ['/a/svc-iam', '/a/svc-ui']) {
+    const cb = [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')].find((c) => c.value === v);
+    cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await new Promise((r) => setTimeout(r, 0));
+
+  window.location.hash = 'workspaces';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 10));
+  const draft = () => doc.querySelector('#ws-list .ws-draft');
+  assert.ok(draft(), 'draft row listed');
+  assert.match(draft().querySelector('.ws-name').textContent, /Drafty.*scanning/);
+
+  ws().deliver({ type: 'scan-progress', scanId: 'scan_draft', message: 'building graph for svc-iam…' });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(draft().querySelector('.ws-projects').textContent, /building graph for svc-iam/, 'progress repainted');
+
+  ws().deliver({ type: 'scan-done', scanId: 'scan_draft', description: 'D', projects: [], graphify: { used: false } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.match(draft().querySelector('.ws-name').textContent, /ready to save/);
+
+  click(window, draft().querySelector('.ws-row'));
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(window.location.hash, '#workspace-create');
+  assert.ok(stepVisible(doc, 3), 'reopened at Step 3');
+});
+
+test('after a reload, the list shows the server\'s unsaved scan; clicking reopens it and Save consumes it', async () => {
+  const posts = [];
+  const { window, ws } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/workspaces/scans')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ scans: [
+          { scanId: 'scan_srv', name: 'Reloaded', projectPaths: ['/a/svc-iam', '/a/svc-ui'], workspaceId: null, status: 'done', message: '' },
+        ] }) });
+      }
+      if (u.endsWith('/api/workspaces') && opts.method === 'POST') {
+        posts.push(JSON.parse(opts.body));
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ workspace: { id: 'wks-r' } }) });
+      }
+      return null;
+    },
+  });
+  window.location.hash = 'workspaces';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 10));
+  const doc = window.document;
+  const draft = doc.querySelector('#ws-list .ws-draft');
+  assert.ok(draft, 'server scan listed as a draft row');
+  assert.match(draft.textContent, /Reloaded.*ready to save/);
+
+  click(window, draft.querySelector('.ws-row'));
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(window.location.hash, '#workspace-create');
+  assert.ok(ws().sent.some((m) => m.type === 'subscribe' && m.scanId === 'scan_srv'), 're-subscribed for the replay');
+  // the replay re-delivers the finished description
+  ws().deliver({ type: 'scan-done', scanId: 'scan_srv', description: 'FROM REPLAY', projects: [], graphify: { used: false } });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 3));
+  assert.equal(doc.querySelector('#wiz-desc').value, 'FROM REPLAY');
+  assert.equal(doc.querySelector('#wiz-name').value, 'Reloaded');
+
+  click(window, doc.querySelector('#wiz-save'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].scanId, 'scan_srv', 'save names the scan so the server drops it from the list');
+  assert.deepEqual(posts[0].projectPaths, ['/a/svc-iam', '/a/svc-ui']);
+});
+
+test('Cancel stops a live scan on the server and unsubscribes', async () => {
+  const stops = [];
+  const { window, ws } = await boot({
+    fetchHandler: (u, opts) => {
+      if (u.endsWith('/api/scan/stop')) { stops.push(JSON.parse(opts.body).scanId); return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }); }
+      return u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
+        ? Promise.resolve({ ok: true, status: 200, json: async () => ({ scanId: 'scan_ab' }) }) : null;
+    },
   });
   goCreate(window);
   await new Promise((r) => setTimeout(r, 0));
@@ -343,19 +471,22 @@ test('abort sends {unsubscribe,scanId} and the leave-guard aborts a live scan on
   }
   click(window, doc.querySelector('#wiz-start-scan'));
   await new Promise((r) => setTimeout(r, 0));
-  assert.ok(stepVisible(doc, 2), 'scanning');
-
-  // Navigate away (e.g. to New) → leave-guard fires abortWizardScan.
-  window.location.hash = 'new';
+  click(window, doc.querySelector('#wiz-close'));
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
-  const unsub = ws().sent.find((m) => m.type === 'unsubscribe' && m.scanId === 'scan_ab');
-  assert.ok(unsub, 'leave-guard sent unsubscribe for the live scan');
+  assert.deepEqual(stops, ['scan_ab'], 'Cancel stopped the scan server-side');
+  assert.ok(ws().sent.some((m) => m.type === 'unsubscribe' && m.scanId === 'scan_ab'), 'unsubscribed');
 
-  // A late scan-done for the aborted scan must NOT jump back into the wizard.
+  // A late scan-done for the cancelled scan must NOT jump back into the wizard.
   ws().deliver({ type: 'scan-done', scanId: 'scan_ab', description: 'late', projects: [], graphify: { used: false } });
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelector('.view[data-view="new"]').classList.contains('hidden'), false, 'stayed on New');
+
+  // Returning starts fresh.
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 1), 'fresh wizard after Cancel');
+  assert.equal(doc.querySelector('#wiz-name').value, '');
 });
 
 test('a duplicate scan-done for a PRIOR scanId is ignored after a new scan starts', async () => {
