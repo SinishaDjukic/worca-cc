@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { unsupportedSchemaKeyword, dropSchemaKeywords, withToolSchemaKeywordsDropped } from '../src/core/bridge/translate/schema-keywords.mjs';
+import { unsupportedSchemaKeyword, dropSchemaKeywords, withToolSchemaKeywordsDropped, refusedToolName, withoutTools } from '../src/core/bridge/translate/schema-keywords.mjs';
 import { handleMessages, _resetBridgeWarnings, _resetSchemaKeywordDrops } from '../src/core/bridge/upstream.mjs';
 import { _resetBridgeTelemetry } from '../src/core/bridge/telemetry.mjs';
 
@@ -122,4 +122,42 @@ test('handleMessages: a keyword refusal that repeats after the drop is answered,
   assert.equal(calls, 2, 'one retry for the one keyword, then the refusal is answered');
   assert.equal(reply.statusCode, 400);
   assert.match(reply.body.error.message, /unsupported schema keyword "maxLength"/);
+});
+
+// A tool whose schema the grammar cannot represent at all (the CLI's Workflow
+// tool: `args` takes any JSON value — "more than one JSON reading of the same
+// emitted value"): no keyword to drop, so that tool is left out for the model.
+const AMBIGUOUS = 'failed to translate request: folding the request grammar: tool "Workflow" parameter schema: parameter "args": more than one JSON reading of the same emitted value';
+
+test('refusedToolName: names the tool a grammar refusal is about; null for anything else', () => {
+  assert.equal(refusedToolName(AMBIGUOUS), 'Workflow');
+  assert.equal(refusedToolName(REFUSAL), 'ListAgents');
+  assert.equal(refusedToolName('request rejected (400) — bad request'), null);
+});
+
+test('withoutTools: chat and Responses shapes; input untouched', () => {
+  const chat = { tools: [{ type: 'function', function: { name: 'Workflow', parameters: {} } }, { type: 'function', function: { name: 'Read', parameters: {} } }] };
+  const out = withoutTools(chat, new Set(['Workflow']));
+  assert.deepEqual(out.tools.map((t) => t.function.name), ['Read']);
+  assert.equal(chat.tools.length, 2);
+  const resp = withoutTools({ tools: [{ type: 'function', name: 'Workflow' }, { type: 'function', name: 'Read' }] }, new Set(['Workflow']));
+  assert.deepEqual(resp.tools.map((t) => t.name), ['Read']);
+});
+
+test('handleMessages: a tool the grammar cannot represent is left out, retried, and stays out for that model', async () => {
+  _resetBridgeTelemetry(); _resetBridgeWarnings(); _resetSchemaKeywordDrops();
+  const seen = [];
+  const ambiguous = () => new Response(JSON.stringify({ error: { message: 'Provider returned error', code: 400, metadata: { raw: JSON.stringify({ error: { code: '400', message: AMBIGUOUS } }) } } }), { status: 400, headers: { 'content-type': 'application/json' } });
+  const answers = [ambiguous(), ok(), ok()];
+  const fetch = async (_url, init) => { seen.push(JSON.parse(init.body)); return answers.shift(); };
+  const twoTools = { ...body, tools: [...body.tools, { name: 'Workflow', description: 'y', input_schema: { type: 'object', properties: { args: {} } } }] };
+  const logs = [];
+  const reply = fakeReply();
+  await handleMessages({ entry, body: twoTools, tag: 't4', fetch, log: (l) => logs.push(l) }, reply);
+  assert.equal(reply.statusCode, 200);
+  assert.deepEqual(seen[0].tools.map((t) => t.function.name), ['ListAgents', 'Workflow']);
+  assert.deepEqual(seen[1].tools.map((t) => t.function.name), ['ListAgents']);
+  assert.ok(logs.some((l) => /"Workflow"/.test(l) && /leaving it out/.test(l)), logs.join('\n'));
+  await handleMessages({ entry, body: twoTools, tag: 't5', fetch, log: () => {} }, fakeReply());
+  assert.deepEqual(seen[2].tools.map((t) => t.function.name), ['ListAgents']);
 });

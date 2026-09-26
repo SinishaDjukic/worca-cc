@@ -15,18 +15,22 @@ import { upstreamSettings, providerReadiness } from './registry.mjs';
 import { KeyedSemaphore } from './semaphore.mjs';
 import { recordBridgeCall, recordBridgeError, recordBridgeCost } from './telemetry.mjs';
 import { isOpenRouter, adaptOpenRouterChatBody, OPENROUTER_HEADERS } from './openrouter.mjs';
-import { unsupportedSchemaKeyword, withToolSchemaKeywordsDropped } from './translate/schema-keywords.mjs';
+import { unsupportedSchemaKeyword, withToolSchemaKeywordsDropped, refusedToolName, withoutTools } from './translate/schema-keywords.mjs';
 
 export const semaphore = new KeyedSemaphore();
 const PING_INTERVAL_MS = 15_000;
 const warned = new Set();
 
-// Tool-schema keywords an upstream model refused (translate/schema-keywords.mjs),
-// learned per provider + base URL + upstream model for the life of the process,
-// so only the first request after a boot pays the refusal round trip.
-const schemaKeywordDrops = new Map();
-const MAX_SCHEMA_KEYWORD_RETRIES = 4;
-export function _resetSchemaKeywordDrops() { schemaKeywordDrops.clear(); }
+// What an upstream model's tool grammar refused (translate/schema-keywords.mjs):
+// schema keywords to drop, and whole tools no drop can fix. Learned per provider
+// + base URL + upstream model for the life of the process, so only the first
+// request after a boot pays each refusal round trip.
+const schemaDrops = new Map();   // key -> { keywords:Set<string>, tools:Set<string> }
+const MAX_SCHEMA_RETRIES = 6;
+export function _resetSchemaKeywordDrops() { schemaDrops.clear(); }
+function applySchemaDrops(body, d) {
+  return d ? withoutTools(withToolSchemaKeywordsDropped(body, d.keywords), d.tools) : body;
+}
 
 /** Once-per-process warning (dropped fields, queue notices). */
 function warnOnce(key, line, log) {
@@ -128,8 +132,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     outBody = !responses && isOpenRouter(us.baseUrl) ? adaptOpenRouterChatBody(t.body, us) : t.body;
   }
   const dropKey = `${us.provider}|${us.baseUrl || ''}|${us.model}`;
-  const drops = us.api === 'anthropic' ? null : schemaKeywordDrops.get(dropKey);
-  if (drops) outBody = withToolSchemaKeywordsDropped(outBody, drops);
+  if (us.api !== 'anthropic') outBody = applySchemaDrops(outBody, schemaDrops.get(dropKey));
   let payload = JSON.stringify(outBody);
   if (Buffer.byteLength(payload) > PAYLOAD_CEILING_BYTES) {
     const e = bridgeErrors.tooLarge();
@@ -169,18 +172,25 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         const again = await prep.retryAuth();
         res = await doFetch(again);
       }
-      // A tool-schema keyword the upstream's grammar cannot take: drop it from
-      // every tool schema, remember it for this model, and retry — once per new
-      // keyword, so a refusal that survives the drop is answered, not looped.
-      for (let i = 0; i < MAX_SCHEMA_KEYWORD_RETRIES && res.status === 400 && us.api !== 'anthropic' && Array.isArray(outBody.tools); i++) {
+      // A tool schema the upstream's grammar cannot take: drop the keyword it
+      // names from every tool schema — or, when no keyword is named, leave that
+      // one tool out — remember it for this model, and retry. Once per new
+      // keyword / tool, so a refusal that survives the fix is answered, not looped.
+      for (let i = 0; i < MAX_SCHEMA_RETRIES && res.status === 400 && us.api !== 'anthropic' && Array.isArray(outBody.tools) && outBody.tools.length; i++) {
         const text = await res.clone().text().catch(() => '');
-        const kw = unsupportedSchemaKeyword(mapUpstreamError(400, text, { provider: us.provider }).body.error.message);
-        const known = schemaKeywordDrops.get(dropKey) || new Set();
-        if (!kw || known.has(kw)) break;
-        known.add(kw);
-        schemaKeywordDrops.set(dropKey, known);
-        warnOnce(`schema-kw:${dropKey}:${kw}`, `[worca] bridge: ${us.provider} model ${JSON.stringify(us.model)} refuses the tool-schema keyword "${kw}" — dropping it from tool schemas`, log);
-        outBody = withToolSchemaKeywordsDropped(outBody, known);
+        const msg = mapUpstreamError(400, text, { provider: us.provider }).body.error.message;
+        const kw = unsupportedSchemaKeyword(msg);
+        const tool = kw ? null : refusedToolName(msg);
+        const d = schemaDrops.get(dropKey) || { keywords: new Set(), tools: new Set() };
+        if (kw && !d.keywords.has(kw)) {
+          d.keywords.add(kw);
+          warnOnce(`schema-kw:${dropKey}:${kw}`, `[worca] bridge: ${us.provider} model ${JSON.stringify(us.model)} refuses the tool-schema keyword "${kw}" — dropping it from tool schemas`, log);
+        } else if (tool && !d.tools.has(tool)) {
+          d.tools.add(tool);
+          warnOnce(`schema-tool:${dropKey}:${tool}`, `[worca] bridge: ${us.provider} model ${JSON.stringify(us.model)} cannot take the schema of tool "${tool}" — leaving it out of this model's requests`, log);
+        } else break;
+        schemaDrops.set(dropKey, d);
+        outBody = applySchemaDrops(outBody, d);
         payload = JSON.stringify(outBody);
         res = await doFetch(prep);
       }

@@ -39,6 +39,23 @@ export function dropSchemaKeywords(schema, drop) {
   return out;
 }
 
+// A refusal about one tool's schema that no keyword drop can fix (the CLI's
+// Workflow tool takes `args` as any JSON value: "more than one JSON reading of
+// the same emitted value"). The bridge leaves that tool out for the model.
+const REFUSED_TOOL_RE = /\btool ["'`]([^"'`]+)["'`] parameter schema\b/i;
+/** The tool a grammar refusal names; null otherwise. */
+export function refusedToolName(message) {
+  const m = REFUSED_TOOL_RE.exec(String(message ?? ''));
+  return m ? m[1] : null;
+}
+
+/** A translated request body without the `names` tools (chat and Responses shapes). Never mutates `body`. */
+export function withoutTools(body, names) {
+  if (!body || !Array.isArray(body.tools) || !names || !names.size) return body;
+  const toolName = (t) => (t && t.function ? t.function.name : t && t.name);
+  return { ...body, tools: body.tools.filter((t) => !names.has(toolName(t))) };
+}
+
 /**
  * A translated request body with `drop` removed from every tool's parameter
  * schema: chat/completions (`tools[].function.parameters`) and the Responses API

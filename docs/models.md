@@ -262,8 +262,11 @@ whole request over one keyword (`unsupported schema keyword "maxLength"`, from a
 tool of the CLI's own). The bridge drops the named keyword from every tool schema
 and retries, and keeps dropping it for that model until Worca restarts — the run
 log says so once. Such keywords only narrow what the model may send; the CLI still
-checks each tool call against the full schema. This applies to any
-OpenAI-compatible endpoint, not only OpenRouter.
+checks each tool call against the full schema. A tool the grammar cannot represent
+at all — the CLI's `Workflow` tool takes any JSON value, which such a grammar reads
+as ambiguous — is left out of that model's requests instead, also logged once; a
+pipeline agent does not need it. This applies to any OpenAI-compatible endpoint,
+not only OpenRouter.
 
 ### Import from Copilot
 
