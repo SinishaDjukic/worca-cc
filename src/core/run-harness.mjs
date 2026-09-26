@@ -55,8 +55,8 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs } from './config.mjs';
-import { bridgeCallsFor, forgetBridgeTag } from './bridge/telemetry.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, catalogHasModel } from './config.mjs';
+import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
@@ -66,10 +66,11 @@ import {
   isValidSourceRef, snapshotWorktreePatch,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint } from './recoverable-error.mjs';
+import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
 import {
   resolveFailure, isTerminal, markTerminal, answerFromDecision,
-  REASON, pauseConsequences, describePauseReason,
+  REASON, pauseConsequences, describePauseReason, RECOVERY_MAX_AUTO_ATTEMPTS,
 } from './failure-policy.mjs';
 import { recordRunMetrics } from './metrics/record.mjs';
 // Team policy (team-policy design §6–§7): the document a run's cost gates fold in, its
@@ -626,8 +627,27 @@ export class RunHarness extends EventEmitter {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
       model: this.opts.claude?.model,
+      effort: this.opts.claude?.effort,
       mock: !!this.opts.claude?.mock,
     };
+    // A resumed run keeps the model it was started with (`worca --model`, the UI's
+    // start pair): the resume sites pass none, so it rides the resume point — which
+    // _buildResumePoint rewrites at every pause from this.claude — like memoryScope
+    // below. A resume that names its own model wins. A saved model that left the
+    // catalog is dropped (the run falls back to the default, as before) and
+    // resume() says so once the run log is bound.
+    this._staleResumeModel = null;
+    {
+      const saved = this.opts.resume?.resumePoint?.claude;
+      if (saved && !this.claude.model && typeof saved.model === 'string' && saved.model) {
+        if (catalogHasModel(saved.model)) {
+          this.claude.model = saved.model;
+          if (!this.claude.effort && typeof saved.effort === 'string' && saved.effort) this.claude.effort = saved.effort;
+        } else {
+          this._staleResumeModel = saved.model;
+        }
+      }
+    }
     // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
     // runMock, rule R-F), so a mock pipeline role under dontAsk writes no artifact and
     // the run dies at its first artifact read with no hint why. Fail at construction
@@ -967,8 +987,11 @@ export class RunHarness extends EventEmitter {
     const where = label || nc?.key || ctx?.nodeId || 'orchestrator';
     const meta = ctx ? { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal } : {};
     const line = firstLine(err?.message || (err == null ? '' : String(err))) || 'unknown error';
+    // A shared-pool 429 (OpenRouter `:free`) names its real cause and fixes —
+    // otherwise "rate limited" reads as worca's own max-concurrent setting.
+    const hint = reason === REASON.RECOVERABLE && cls === 'rate_limit' ? rateLimitHint(err) : '';
     const text = detail ?? (reason === REASON.ERROR ? errorDetail(err)
-      : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}` : line);
+      : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}${hint ? ` — ${hint}` : ''}` : line);
     if (reason === REASON.ERROR) {
       // The ONE error-level line, written BEFORE the pause sentinel the caller
       // throws next (a pause/abort is never logged as a failure).
@@ -986,9 +1009,9 @@ export class RunHarness extends EventEmitter {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
       audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset.`;
     } else if (reason === REASON.RECOVERABLE) {
-      this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}`,
+      this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}${hint ? ` — ${hint}` : ''}`,
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
-      audit = `Pipeline **paused**: recoverable ${cls || 'error'} error on ${where} — ${line}. Resume to retry.`;
+      audit = `Pipeline **paused**: recoverable ${cls || 'error'} error on ${where} — ${line}.${hint ? ` ${hint[0].toUpperCase()}${hint.slice(1)}.` : ''} Resume to retry.`;
     } else {
       this._log(where, 'warn', `${text} — pausing for manual resume`, meta);
       audit = `Pipeline **paused**: ${text}.`;
@@ -1428,6 +1451,9 @@ export class RunHarness extends EventEmitter {
       this.state.pipelineDir = rp.pipelineDir;
       this.logWriter.bind(rp.pipelineDir);
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
+      if (this._staleResumeModel) {
+        this._log('orchestrator', 'warn', `model ${JSON.stringify(this._staleResumeModel)} the run was started with is no longer in the catalog — resuming on the default model`);
+      }
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
       // Pauses are counted only in _completePaused, so a crash-resume of an `interrupted`
@@ -3154,7 +3180,9 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
     if (verdict.outcome === 'retry') {
-      await this._backoff(attempt, this.pauseAbort.signal);
+      const delayMs = recoveryDelayMs({ cls, attempt, err });
+      this._log(node.key, 'warn', `${cls}: retrying in ${Math.round(delayMs / 100) / 10}s (retry ${attempt}/${RECOVERY_MAX_AUTO_ATTEMPTS})`);
+      await this._backoff(attempt, this.pauseAbort.signal, { cls, err, delayMs });
       return verdict;
     }
 
@@ -3193,23 +3221,11 @@ export class RunHarness extends EventEmitter {
     return next;
   }
 
-  /** Abort-aware backoff: base * 2^(attempt-1) ms, resolving early (and still
-   *  'retry') if the pause-only signal fires so a pause is not delayed. */
-  _backoff(attempt, signal) {
-    const base = (() => {
-      const n = Number(process.env.WORCA_RECOVERY_BACKOFF_MS);
-      return Number.isFinite(n) && n >= 0 ? n : 1000;
-    })();
-    const ms = base * Math.pow(2, Math.max(0, attempt - 1));
-    if (!ms) return Promise.resolve();
-    return new Promise((res) => {
-      const t = setTimeout(res, ms);
-      t.unref?.();
-      if (signal) {
-        if (signal.aborted) { clearTimeout(t); res(); }
-        else signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
-      }
-    });
+  /** Abort-aware backoff (recovery-backoff.mjs: base·2^(attempt-1), longer for a
+   *  rate limit, at least a retry-after hint, capped per wait), resolving early
+   *  (and still 'retry') if the pause-only signal fires so a pause is not delayed. */
+  _backoff(attempt, signal, { cls = null, err = null, delayMs } = {}) {
+    return sleepAbortable(delayMs ?? recoveryDelayMs({ cls, attempt, err }), signal);
   }
 
   /** Monotonic id source for recovery prompts (no Date.now/random — replay-safe). */
@@ -3977,9 +3993,16 @@ export class RunHarness extends EventEmitter {
     // instead of once per node. Looked up ONCE and shared with observeModelCost
     // below: modelCostConfig re-reads settings.json on every call.
     const costCfg = isResult && attr?.model ? modelCostConfig(attr.model) : null;
-    const cost = costCfg
-      ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
-      : rawCost;
+    // A bridged node whose upstream reported what its calls cost (OpenRouter's
+    // usage.cost, booked per execution id) records that figure: the CLI prices an
+    // id it does not know at $0, and a pinned price is only an estimate of it.
+    // Read before _recordBridgeCalls forgets the tag.
+    const upstreamCost = isResult && attr?.executionId ? bridgeCostFor(attr.executionId) : null;
+    const cost = upstreamCost
+      ? upstreamCost.costUsd
+      : costCfg
+        ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
+        : rawCost;
     if (isResult) this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (isResult && !this.claude.mock) {

@@ -12,7 +12,7 @@
 
 import {
   SERVER_TOOL_RE, budgetToReasoningEffort, textOf, imageUrl, flattenToolResult,
-  referencedToolNames, requestedEffort, mapEffort,
+  referencedToolNames, requestedEffort, mapEffort, CHAT_REASONING_SIGNATURE,
 } from './common.mjs';
 
 export { SERVER_TOOL_RE, budgetToReasoningEffort };
@@ -99,6 +99,9 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
             type: 'function',
             function: { name: String(b.name || ''), arguments: JSON.stringify(b.input ?? {}) },
           });
+        } else if (b.type === 'thinking' && b.signature === CHAT_REASONING_SIGNATURE) {
+          // Our own reasoning echoed back: chat completions takes no reasoning
+          // input, and this is the expected case, not a degradation to report.
         } else if (b.type === 'thinking' || b.type === 'redacted_thinking') warn('thinking');
         else warn(b.type);
       }

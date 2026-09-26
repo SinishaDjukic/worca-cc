@@ -18,6 +18,10 @@ import {
 } from './providers/copilot.mjs';
 import { keyOptional } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
+import { isOpenRouter } from './openrouter.mjs';
+
+/** The OpenRouter API base a preset / `worca models set openrouter` points the openai provider at. */
+export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ── Copilot sign-in sessions (in memory; a device code lives ~15 min) ────────
 const sessions = new Map();   // deviceCode -> { startedAt, expiresAt, interval, lastPoll }
@@ -212,9 +216,26 @@ export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
     models: out.models.map((m) => {
       const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
       const usable = importableModel(m);
-      return { ...m, catalogId: entry.id, inCatalog: have.has(entry.id.toLowerCase()), importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
+      const existing = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl);
+      const catalogId = existing ? existing.id : entry.id;
+      return { ...m, catalogId, inCatalog: !!existing || have.has(entry.id.toLowerCase()), importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
     }),
   };
+}
+
+const trimUrl = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+
+/**
+ * The catalog entry that already imports `upstreamId` from this endpoint, whatever its id says.
+ * Ids are derived (and their prefix changed: a remote endpoint's models were `local-…`), so a
+ * re-import matches on what the entry POINTS AT — the openai provider, this upstream id, and this
+ * base URL (its own, or the provider's when it carries none) — and refreshes the entry the user
+ * already has instead of adding a twin under the new id.
+ */
+function existingEndpointEntry(upstreamId, baseUrl, providerBaseUrl) {
+  const want = trimUrl(baseUrl);
+  return listGlobalModels().find((x) => x.upstream && x.upstream.provider === 'openai'
+    && x.upstream.model === upstreamId && trimUrl(x.upstream.baseUrl || providerBaseUrl) === want) || null;
 }
 
 /**
@@ -235,7 +256,8 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
     if (!m) { skipped.push({ id, why: 'the endpoint does not serve it' }); continue; }
     if (!m.importable) { skipped.push({ id, why: m.blocked || 'not usable in a pipeline' }); continue; }
     const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
-    const current = listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
+    const current = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl)
+      || listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
     if (current) {
       if (!current.upstream || current.upstream.provider !== 'openai') { skipped.push({ id, why: `"${current.id}" already exists and is not an OpenAI-compatible entry` }); continue; }
       await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
@@ -246,6 +268,60 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
     }
   }
   return { created, updated, skipped, server: out.server, serverLabel: out.serverLabel, baseUrl: out.baseUrl, warnings: out.warnings };
+}
+
+// ── OpenRouter: the key's own limits ────────────────────────────────────────
+
+const finiteOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * What OpenRouter says about the key (GET {base}/key): credit limit and what is left, spend, the
+ * free-model daily allowance and the rate limit. The `label` is dropped — OpenRouter builds it from
+ * the key itself (`sk-or-v1-abc…xyz`). Never throws: null when there is no key or no answer.
+ * @returns {Promise<null|{limit:number|null, limitRemaining:number|null, usage:number|null, usageDaily:number|null,
+ *   isFreeTier:boolean, freeDaily:{used:number,limit:number,remaining:number}|null, rateLimit:object|null}>}
+ */
+export async function openRouterKeyInfo(baseUrl, apiKey, { fetch: f = globalThis.fetch, timeoutMs = 10_000 } = {}) {
+  if (!apiKey) return null;
+  try {
+    const r = await f(`${String(baseUrl || '').replace(/\/+$/, '')}/key`, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const d = j && j.data;
+    if (!d || typeof d !== 'object') return null;
+    const fd = d.free_model_daily_requests;
+    const rl = d.rate_limit;
+    return {
+      limit: finiteOrNull(d.limit),
+      limitRemaining: finiteOrNull(d.limit_remaining),
+      usage: finiteOrNull(d.usage),
+      usageDaily: finiteOrNull(d.usage_daily),
+      isFreeTier: d.is_free_tier === true,
+      freeDaily: fd && typeof fd === 'object' && finiteOrNull(fd.limit) !== null
+        ? { used: finiteOrNull(fd.used) ?? 0, limit: fd.limit, remaining: finiteOrNull(fd.remaining) ?? Math.max(0, fd.limit - (finiteOrNull(fd.used) ?? 0)) }
+        : null,
+      // OpenRouter answers `requests: -1` for a key with no request-rate limit of its own.
+      rateLimit: rl && typeof rl === 'object' && finiteOrNull(rl.requests) > 0 ? { requests: rl.requests, interval: String(rl.interval || '') } : null,
+    };
+  } catch { return null; }
+}
+
+/** One line for the Providers card and `worca models test`. Pure. */
+export function formatOpenRouterKeyInfo(info) {
+  if (!info) return '';
+  const usd = (n) => `$${n.toFixed(2)}`;
+  const bits = [];
+  if (info.limit !== null && info.limit !== undefined) {
+    const left = info.limitRemaining ?? (info.usage !== null && info.usage !== undefined ? Math.max(0, info.limit - info.usage) : null);
+    bits.push(left !== null ? `credit ${usd(left)} of ${usd(info.limit)} left` : `credit limit ${usd(info.limit)}`);
+  } else {
+    bits.push('no credit limit');
+    if (info.usage !== null && info.usage !== undefined) bits.push(`${usd(info.usage)} used`);
+  }
+  if (info.freeDaily) bits.push(`free-model requests today ${info.freeDaily.remaining} / ${info.freeDaily.limit}`);
+  if (info.isFreeTier) bits.push('free tier');
+  if (info.rateLimit) bits.push(`rate limit ${info.rateLimit.requests} per ${info.rateLimit.interval}`);
+  return bits.join(' · ');
 }
 
 // ── key-based providers: connection test ────────────────────────────────────
@@ -287,6 +363,14 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     if (!r.ok) return { ok: false, message: `endpoint answered ${r.status}` };
     const j = await r.json().catch(() => null);
     const n = j && Array.isArray(j.data) ? j.data.length : undefined;
+    // OpenRouter lists its models without a key, so a reachable list proves nothing about the key:
+    // its /key does, and says what the key may still spend. A key it rejects fails the test.
+    if (name === 'openai' && isOpenRouter(base)) {
+      if (!key) return { ok: false, message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
+      const info = await openRouterKeyInfo(base, key, { fetch: f });
+      if (!info) return { ok: false, message: 'authentication failed — OpenRouter did not accept the key (its /key check failed)' };
+      return { ok: true, ...(n !== undefined ? { models: n } : {}), openrouter: info, detail: formatOpenRouterKeyInfo(info) };
+    }
     return { ok: true, ...(n !== undefined ? { models: n } : {}) };
   } catch (err) {
     return { ok: false, message: `endpoint unreachable — ${err && err.message ? err.message : String(err)}` };

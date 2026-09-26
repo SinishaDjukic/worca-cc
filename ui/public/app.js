@@ -68,6 +68,7 @@ const state = {
 
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
+import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -121,6 +122,7 @@ import {
 } from './models-view.mjs';
 import {
   renderProvidersCard, collectProviderRow, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
+  applyProviderPreset, endpointRowMatches,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -1085,6 +1087,9 @@ function handleServerMessage(msg) {
   // resurrect the phantom.)
   if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
+  // A reconnect re-subscribes and the server replays the run's buffer: skip what this page
+  // already applied, or every earlier log line shows twice (ws-seq.mjs).
+  if (alreadyApplied(r, msg)) return;
 
   switch (msg.type) {
     case 'log':
@@ -1148,6 +1153,7 @@ function handleServerMessage(msg) {
 function onHello(msg) {
   const ws = state.ws;
   const list = Array.isArray(msg.runs) ? msg.runs : [];
+  noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
 
   if (!helloSeeded) {
     helloSeeded = true;
@@ -12801,7 +12807,9 @@ async function testProviderFlow(btn) {
     const unsaved = hasUnsavedProviderEdits(name, typed);
     if (data.ok) {
       setProviderResult(name, 'ok', `Reachable${data.models != null ? ` — ${data.models} model${data.models === 1 ? '' : 's'}` : ''}`);
-      setProviderMsg(name, `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${unsaved ? ' Press Save to keep these settings.' : ''}`);
+      // `detail` is what the endpoint says about the key itself — OpenRouter's credit, free-model
+      // allowance and rate limit (provider-ops formatOpenRouterKeyInfo); never the key.
+      setProviderMsg(name, `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${data.detail ? ` Key: ${data.detail}.` : ''}${unsaved ? ' Press Save to keep these settings.' : ''}`);
     } else {
       const why = data.message || data.error || `HTTP ${res.status}`;
       setProviderResult(name, 'err', 'Failed');
@@ -12912,20 +12920,21 @@ function applyImportFilter() {
   const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
   if (!sheet) return;
   const q = (el.mimpFilter?.value || '').trim().toLowerCase();
-  let shown = 0;
+  let shown = 0; let total = 0;
   for (const tr of sheet.querySelectorAll('tbody tr')) {
-    const hit = !q || tr.textContent.toLowerCase().includes(q) || String(tr.dataset.id || '').toLowerCase().includes(q);
+    const hit = endpointRowMatches(tr, sheet, q);   // text, plus a hosted sheet's Free / Tools / window
     tr.classList.toggle('is-filtered', !hit);
+    total += 1;
     if (hit) shown += 1;
   }
-  const none = sheet.querySelector('.mimp-nohits');
-  if (!shown && q) {
+  let none = sheet.querySelector('.mimp-nohits');
+  if (!shown && total) {
     if (!none) {
-      const d = document.createElement('div');
-      d.className = 'hist-empty mimp-nohits';
-      d.textContent = `Nothing here matches “${el.mimpFilter.value.trim()}”.`;
-      sheet.appendChild(d);
+      none = document.createElement('div');
+      none.className = 'hist-empty mimp-nohits';
+      sheet.appendChild(none);
     }
+    none.textContent = q ? `Nothing here matches “${el.mimpFilter.value.trim()}”.` : 'Nothing here matches these filters.';
   } else if (none) none.remove();
 }
 
@@ -13205,7 +13214,11 @@ if (el.providersList) {
       const body = collectProviderRow(providerRoot(), t.dataset.provider);
       if (body) patchProviderFlow(t.dataset.provider, body);
     } else if (t.classList.contains('mv-pv-test')) testProviderFlow(t);
-    else if (t.classList.contains('mv-pv-browse')) {
+    else if (t.classList.contains('mv-pv-preset')) {
+      // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
+      applyProviderPreset(providerRoot(), t.dataset.provider, t.dataset.preset);
+      setProviderMsg(t.dataset.provider, 'OpenRouter filled in. Set the key (or keep ${OPENROUTER_KEY} and export it where Worca starts), Test connection, then Save.');
+    } else if (t.classList.contains('mv-pv-browse')) {
       // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
       const row = t.closest('.mv-pv-row');
       const input = row && row.querySelector('.mv-pv-baseurl');
@@ -13364,7 +13377,7 @@ if (el.modelImportModal) {
       const sheet = t.closest('.mvi');
       // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
       if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
-    }
+    } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
   });
   // Backdrop click and Escape close it, like every other overlay in this file.
   el.modelImportModal.addEventListener('mousedown', (ev) => { if (ev.target === el.modelImportModal) closeImportDialog(); });
@@ -20974,6 +20987,7 @@ function paintAutoBadge(el, stepper) {
   el.hidden = false;
   el.textContent = decided ? `Auto → ${name}` : 'Auto';
   el.title = !decided ? 'Auto is deciding the workflow'
+    : auto.via === 'fallback' ? `The Auto classifier was unreachable${auto.reason ? ` (${auto.reason})` : ''} — running the default workflow "${name}"`
     : auto.via === 'reused' ? `Auto reused the saved workflow "${name}"` : `Auto created the workflow "${name}"`;
   el.classList.toggle('is-deciding', !decided);
 }

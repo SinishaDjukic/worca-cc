@@ -18,16 +18,53 @@ export function anthropicError(status, type, message) {
   return { status, body: { type: 'error', error: { type, message: String(message || type) } } };
 }
 
-/** Pull a human message out of an upstream error body (JSON or text). */
+const MESSAGE_MAX = 500;
+
+/** A provider's own error text: a JSON body's message, else the text itself. */
+function rawProviderText(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  try {
+    const j = JSON.parse(raw);
+    const e = j && (j.error || j);
+    if (e && typeof e === 'object' && typeof e.message === 'string') return e.message;
+    if (typeof e === 'string') return e;
+  } catch { /* plain text */ }
+  return raw.trim();
+}
+
+/**
+ * Pull a human message out of an upstream error body (JSON or text). A router
+ * (OpenRouter) answers with a generic `message` ("Provider returned error") and
+ * puts the provider's own explanation in `error.metadata.raw` — the line that
+ * says what to do (rate-limited upstream: retry, or bring your own key) — so
+ * the two are joined. Capped: a provider can return a whole HTML page.
+ */
 export function upstreamMessage(text) {
   if (!text) return '';
   try {
     const j = JSON.parse(text);
     const e = j && (j.error || j);
-    if (e && typeof e === 'object') return e.message || e.msg || e.code || JSON.stringify(e);
-    if (typeof e === 'string') return e;
+    if (e && typeof e === 'object') {
+      const base = e.message || e.msg || e.code || '';
+      const raw = rawProviderText(e.metadata && e.metadata.raw);
+      const joined = raw && raw !== base ? (base ? `${base} — ${raw}` : raw) : String(base);
+      return (joined || JSON.stringify(e)).slice(0, MESSAGE_MAX);
+    }
+    if (typeof e === 'string') return e.slice(0, MESSAGE_MAX);
   } catch { /* not JSON */ }
-  return String(text).slice(0, 500);
+  return String(text).slice(0, MESSAGE_MAX);
+}
+
+/** What a router (OpenRouter) says beside an error: the provider that answered, and whose limit it hit. */
+function routerMetadata(text) {
+  try {
+    const m = JSON.parse(text)?.error?.metadata;
+    if (!m || typeof m !== 'object') return {};
+    return {
+      providerName: typeof m.provider_name === 'string' ? m.provider_name : '',
+      limitSource: typeof m.limit_source === 'string' ? m.limit_source : '',
+    };
+  } catch { return {}; }
 }
 
 /** The machine-readable code in an upstream error body ('' when there is none). */
@@ -49,6 +86,9 @@ export function unsupportedApiFix(provider) {
     ? 'this model needs a different API: re-import it (Settings › Models › Import models…) or change its API in the model editor'
     : 'this model needs a different API: change its API in the model editor';
 }
+
+/** A 403 body that is about the credential itself (bad, expired or unscoped key) — still an auth failure. */
+const AUTH_403_RE = /\b(api[ _-]?key|token|credential|unauthori[sz]ed|authenticat|invalid key|expired|revoked|sign(ed)? ?in|log(ged)? ?in)/i;
 
 /** Error codes for a prompt past the model's context window: OpenAI's, and Copilot's own limit check. */
 const CONTEXT_CODES = new Set(['context_length_exceeded', 'model_max_prompt_tokens_exceeded']);
@@ -84,11 +124,29 @@ export function isFailedResponseOverflow(code, message) {
 export function mapUpstreamError(status, text, { provider = 'upstream', retryAfter } = {}) {
   const msg = upstreamMessage(text);
   const who = provider;
+  // A 403 whose body names something other than the credential is a POLICY
+  // refusal (OpenRouter gates some :free models to listed agent apps: "only
+  // available on agentic harnesses"). Calling that an auth failure sends the
+  // user to re-enter a key that works; the body is the real reason, and it is
+  // permanent, so nothing downstream classifies it as retryable. It reaches the
+  // CLI as a 400: the CLI reads ANY 403 from its endpoint as a sign-in failure
+  // ("Failed to authenticate" / "Not logged in · Please run /login") and buries
+  // the reason under it.
+  if (status === 403 && /[a-z]{3}/i.test(msg) && !AUTH_403_RE.test(msg)) {
+    return anthropicError(400, 'invalid_request_error', `${who}: refused (403) — ${msg}`);
+  }
   if (status === 401 || status === 403) {
     return anthropicError(401, 'authentication_error', `${who}: authentication failed (${status})${msg ? ` — ${msg}` : ''}`);
   }
   if (status === 429) {
-    const e = anthropicError(429, 'rate_limit_error', `${who}: rate limited (429)${msg ? ` — ${msg}` : ''}`);
+    // A router's 429 can come from a pool every one of its users shares
+    // (OpenRouter's `:free` models), not from this install's traffic: name the
+    // provider behind it and the limit's source, so the run surfaces can say
+    // that lowering Max concurrent requests will not help.
+    const { providerName, limitSource } = routerMetadata(text);
+    const via = providerName ? ` via ${providerName}` : '';
+    const source = limitSource ? ` [${limitSource}]` : '';
+    const e = anthropicError(429, 'rate_limit_error', `${who}: rate limited (429)${via}${msg ? ` — ${msg}` : ''}${source}`);
     if (retryAfter) e.headers = { 'retry-after': String(retryAfter) };
     return e;
   }

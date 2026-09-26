@@ -36,12 +36,15 @@ import { humanEstimateOverrides, memoryDefragModel } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
-import { assembleShape, ShapeError } from '../shared/graph/assemble.mjs';
+import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
+import { RECIPE_SHAPES } from './auto/recipes.mjs';
 import { fingerprintProject } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
 import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
 import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
 import { resolveAutoModel } from './auto/model.mjs';
+import { autoModelsFor } from './auto/runnable.mjs';
+import { probeClaudeAuth } from './preflight.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
@@ -49,6 +52,7 @@ import {
 import { readAskFile } from './protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion } from './ask-forms.mjs';
 import { classifyError } from './recoverable-error.mjs';
+import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 import { byActor } from './identity.mjs';
 
@@ -97,6 +101,9 @@ export class GraphOrchestrator extends RunHarness {
     // `classify` is the test seam.
     this._auto = { feedback: [], round: 0, prior: null, costUsd: 0, pending: null };
     this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
+    // Whether Claude Code is signed in decides which models Auto may design with
+    // (auto/runnable.mjs). `claudeAuth` is the test seam.
+    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth : () => probeClaudeAuth({ bin: this.claude.bin || undefined });
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -170,7 +177,7 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<{pair: ({model:string, effort:(string|null)}|null), warning: (string|null)}>}
    */
   async _defragAgentPair() {
-    const explicit = { model: this.claude.model, effort: this.opts.claude?.effort };
+    const explicit = { model: this.claude.model, effort: this.claude.effort };
     const stored = memoryDefragModel();
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
@@ -233,7 +240,14 @@ export class GraphOrchestrator extends RunHarness {
 
   async _decideTopologyInner() {
     const registry = this.registry;
-    const models = await listModels(this.projectDir);
+    // Only models this install can run (auto/runnable.mjs): signed out, a first-party pick —
+    // or the CLI default a stage without a model falls back to — dies at its first spawn.
+    let auth = 'unknown';
+    try { auth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+    const runnable = autoModelsFor(await listModels(this.projectDir), { auth, routed: modelHasBaseUrlRouting });
+    const models = runnable.models;
+    const requireModel = runnable.requireModel;
+    if (runnable.note) this._log('orchestrator', requireModel ? 'info' : 'warn', `auto: ${runnable.note}`);
     const model = resolveAutoModel(models);
     const fingerprint = await fingerprintProject(this.projectDir);
     this._log('orchestrator', 'info', `auto: fingerprint ${Buffer.byteLength(fingerprint, 'utf8')} B`);
@@ -260,11 +274,11 @@ export class GraphOrchestrator extends RunHarness {
       } else {
         this._auto.round += 1;
         round = this._auto.round;
-        classifyFor = classify;
+        classifyFor = (input) => this._classifyWithRetry(classify, input);
       }
       let outcome;
       try {
-        outcome = await this._autoRound({ registry, models, model, fingerprint, extras, taskText, classify: classifyFor, round });
+        outcome = await this._autoRound({ registry, models, requireModel, model, fingerprint, extras, taskText, classify: classifyFor, round });
       } catch (err) {
         if (isAbort(err) || isPause(err)) throw err;
         if (pending && err instanceof ShapeError) {
@@ -273,6 +287,13 @@ export class GraphOrchestrator extends RunHarness {
           this._log('orchestrator', 'warn', `auto: the saved proposal no longer assembles (${firstLine(err.message)}); classifying afresh`);
           this._auto.pending = null;
           continue;
+        }
+        if (err instanceof ClassifierError && !pending && RETRYABLE_CLASSES.includes(classifyError(err))) {
+          // A provider 429 / dropped connection that outlasted _classifyWithRetry says
+          // nothing about the task: run the default workflow rather than park a run
+          // that has not started. Only a transient cause falls back — an unusable reply
+          // or a timeout keeps the D17 pause below.
+          return await this._autoFallbackDefault({ err, registry, round, nodeModel: requireModel ? model : null });
         }
         if (err instanceof ClassifierError || err instanceof ShapeError) {
           // spec D17 / §5.6: the shell's failure policy parks the run (setup site ⇒
@@ -318,9 +339,9 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** One round: classifier call (one assembler-driven retry), match, proposal. */
-  async _autoRound({ registry, models, model, fingerprint, extras, taskText, classify, round }) {
+  async _autoRound({ registry, models, requireModel = false, model, fingerprint, extras, taskText, classify, round }) {
     const input = {
-      taskText, extras, fingerprint, models, registry,
+      taskText, extras, fingerprint, models, requireModel, registry,
       domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
       // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
@@ -408,8 +429,9 @@ export class GraphOrchestrator extends RunHarness {
     return raw && raw.decision ? raw : validate(raw);   // auto mode answers { decision: 'accept' } without the validator
   }
 
-  /** Reuse the twin or save a new row, resolve it with the accepted tunables as the ONLY overlay, re-stamp the manifest. */
-  async _autoAdopt({ template, match, tunables, shape, answer, registry, round }) {
+  /** Reuse the twin or save a new row, resolve it with the accepted tunables as the ONLY overlay, re-stamp the manifest.
+   *  `fallback` = the classifier failure a default-workflow fallback adopts in place of a proposal (_autoFallbackDefault). */
+  async _autoAdopt({ template, match, tunables, shape, answer, registry, round, fallback = null }) {
     const name = answer.name || shape.name;
     if (!match) {
       // B3: the twin search ran at proposal time; another Auto run, the composer or the chat may
@@ -450,7 +472,10 @@ export class GraphOrchestrator extends RunHarness {
     const manifest = buildGraphManifest(this.resolved.template, this.resolved.agentsByKey, {
       overlays: { nodes: this.resolved.nodeCtx, wires: this.resolved.wires }, scripts: this.resolved.scriptsByKey,
     });
-    manifest.auto = { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    // A fallback records what it saved (`saved`) and why (`reason`) beside via 'fallback'.
+    manifest.auto = fallback
+      ? { status: 'decided', via: 'fallback', saved: via, reason: fallback, rounds: round, humanInLoop: this.humanInLoop, workflowId }
+      : { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();
@@ -467,9 +492,67 @@ export class GraphOrchestrator extends RunHarness {
     this.state.resumePoint = null;                  // decided: the engine's onSnapshot owns the point from here
     this._emit('state', this.getState());
     await this._persist();
-    this._log('orchestrator', 'info', `auto: accepted → "${name}" (${workflowId}, ${via})`);
-    await appendAudit(this.pipeline.dir, `Auto workflow: **${name}** — ${via === 'reused' ? `reusing saved workflow ${workflowId}` : `saved as ${workflowId}`}.`).catch(() => {});
+    if (fallback) {
+      await appendAudit(this.pipeline.dir, `Auto workflow: the classifier was unreachable (${fallback}) — running the default workflow **${name}** (${via === 'reused' ? `saved workflow ${workflowId}` : `saved as ${workflowId}`}).`).catch(() => {});
+    } else {
+      this._log('orchestrator', 'info', `auto: accepted → "${name}" (${workflowId}, ${via})`);
+      await appendAudit(this.pipeline.dir, `Auto workflow: **${name}** — ${via === 'reused' ? `reusing saved workflow ${workflowId}` : `saved as ${workflowId}`}.`).catch(() => {});
+    }
     return { manifest, agentKeys: new Set(this.resolved.agentKeys), workflow: { id: workflowId, name: this.resolved.template.name || name } };
+  }
+
+  /**
+   * The Auto classifier call with the shared recovery backoff (recovery-backoff.mjs):
+   * a rate_limit / network failure — a provider 429 the CLI already retried, a dropped
+   * connection — is retried before the round gives up. What the failed attempts spent
+   * rides the result (or the final error), so the round books it once (D14).
+   */
+  async _classifyWithRetry(classify, input) {
+    let spent = 0;
+    try {
+      const res = await withRecoveryRetry(() => classify(input), {
+        signal: input.signal,
+        onRetry: ({ attempt, cls, delayMs, err }) => {
+          spent += Number(err?.costUsd) || 0;
+          this._log('orchestrator', 'warn',
+            `auto: classifier ${cls} — retrying in ${Math.round(delayMs / 100) / 10}s (retry ${attempt}/${HELPER_RETRY_ATTEMPTS}): ${firstLine(err?.detail || err?.message)}`);
+        },
+      });
+      if (spent) res.costUsd = (Number(res.costUsd) || 0) + spent;
+      return res;
+    } catch (err) {
+      if (spent && err && typeof err === 'object') err.costUsd = (Number(err.costUsd) || 0) + spent;
+      throw err;
+    }
+  }
+
+  /** The classifier stayed unreachable (a transient class after its retries): run the
+   *  default workflow — adopted like an accepted proposal, so it is saying why in the run
+   *  log, the audit and the manifest (auto.via 'fallback') — instead of parking a run
+   *  that has not started. With a human in the loop that is the standard recipe, whose
+   *  exact twin is the built-in Default (wf_default); with nobody in the loop it is the
+   *  same recipe without Clarify, because spec D3 forbids stopping the run to ask. */
+  async _autoFallbackDefault({ err, registry, round, nodeModel = null }) {
+    const cause = firstLine(err?.detail || err?.message);
+    const cls = classifyError(err);
+    const recipe = RECIPE_SHAPES.find((r) => r.id === (this.humanInLoop ? 'prompt' : 'plan-partial'));
+    const assembled = assembleShape(normalizeShape(jsonClone(recipe.shape)), { registry, humanInLoop: this.humanInLoop });
+    // Signed out (auto/runnable.mjs), the recipe's nodes have no model to fall back to: run
+    // every one on the model Auto itself runs on — routed by construction.
+    if (nodeModel) {
+      for (const n of assembled.template.nodes || []) {
+        if (n.kind === 'agent') assembled.tunables[n.id] = { ...(assembled.tunables[n.id] || {}), model: nodeModel, effort: '' };
+      }
+    }
+    const match = findEquivalentWorkflow(assembled.template, await autoCandidates());
+    this._log('orchestrator', 'warn',
+      `auto: the workflow classifier failed (${cls}) after ${HELPER_RETRY_ATTEMPTS} retries — running the default workflow "${match ? match.candidate.name : assembled.shape.name}" instead: ${cause}`);
+    return this._autoAdopt({
+      template: match ? match.candidate : assembled.template, match,
+      tunables: match ? remapTunables(assembled.tunables, match.nodeMap) : assembled.tunables,
+      shape: assembled.shape, answer: { decision: 'accept', name: assembled.shape.name, nodes: {} },
+      registry, round, fallback: `${cls}: ${cause}`,
+    });
   }
 
   /** Attached files as the classifier sees them: names, plus the first 2 KB of text files. */
@@ -752,6 +835,11 @@ export class GraphOrchestrator extends RunHarness {
       // advance it), so a resume credits the paused execution's pre-pause work at its terminal.
       humanCursor: this._humanCursorReady ? (this._humanCursor ?? { files: 0, insertions: 0, deletions: 0 }) : null,
       stepModels: this.stepModels,
+      // The run-level model the run was started with (restored by the harness
+      // constructor); only the fields that are set, so an older reader sees none.
+      ...(this.claude.model || this.claude.effort
+        ? { claude: { ...(this.claude.model ? { model: this.claude.model } : {}), ...(this.claude.effort ? { effort: this.claude.effort } : {}) } }
+        : {}),
       workflowId: this.workflowId,
       // Auto workflow: the decision state while UNDECIDED (spec §5.6); null once
       // the graph is adopted (workflowId is then the real id) and on saved workflows.

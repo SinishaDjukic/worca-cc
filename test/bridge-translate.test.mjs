@@ -242,12 +242,31 @@ test('stream: finish_reason length mid tool call — the unterminated call is dr
   assert.equal(r.stop_reason, 'max_tokens');
 });
 
-test('stream: a cut stream with no content is an api_error event; with content it ends end_turn', () => {
+test('stream: a cut stream with no content is a retryable overloaded_error event; with content it ends end_turn', () => {
   const cut = drive([{ choices: [{ delta: {} }] }]);
   assert.deepEqual(types(cut), ['message_start', 'error']);
-  assert.equal(cut[1].data.error.type, 'api_error');
+  assert.equal(cut[1].data.error.type, 'overloaded_error');
+  assert.match(cut[1].data.error.message, /no output/);
   const some = drive([{ choices: [{ delta: { content: 'x' } }] }]);
   assert.equal(some.find((e) => e.event === 'message_delta').data.delta.stop_reason, 'end_turn');
+});
+
+// A free endpoint (OpenRouter's Nvidia nemotron :free) intermittently ends a turn
+// with reasoning only, or nothing, and finish_reason stop: forwarded, the CLI sees
+// "no visible output", nudges twice and exits with no cause. An empty turn is an
+// upstream glitch — retryable, and named.
+test('stream: a finished turn with no text or tool call (reasoning only, or nothing) is a retryable error', () => {
+  const thinkOnly = drive([{ choices: [{ delta: { reasoning: 'We need to…' } }] }, { choices: [{ delta: {}, finish_reason: 'stop' }] }]);
+  const err = thinkOnly.at(-1);
+  assert.equal(err.event, 'error');
+  assert.equal(err.data.error.type, 'overloaded_error');
+  assert.match(err.data.error.message, /no output/);
+  assert.equal(drive([{ choices: [{ delta: { content: '' }, finish_reason: 'stop' }] }]).at(-1).data.error.type, 'overloaded_error');
+  // A tool call, or text, is output; a length cut and a content filter keep their own stop reasons.
+  const tool = drive([{ choices: [{ delta: { reasoning: 'r', tool_calls: [{ index: 0, id: 't1', function: { name: 'X', arguments: '{}' } }] }, finish_reason: 'tool_calls' }] }]);
+  assert.equal(tool.find((e) => e.event === 'message_delta').data.delta.stop_reason, 'tool_use');
+  assert.equal(drive([{ choices: [{ delta: { reasoning: 'r' }, finish_reason: 'length' }] }]).find((e) => e.event === 'message_delta').data.delta.stop_reason, 'max_tokens');
+  assert.equal(drive([{ choices: [{ delta: {}, finish_reason: 'content_filter' }] }]).find((e) => e.event === 'message_delta').data.delta.stop_reason, 'end_turn');
 });
 
 test('stream: upstream error object mid-stream and generated tool ids', () => {

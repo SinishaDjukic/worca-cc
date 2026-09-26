@@ -461,6 +461,32 @@ wss.on('error', () => {});
 /** All currently connected sockets. */
 const sockets = new Set();
 
+/** This process's id, sent in `hello`: a client that sees it change knows event seqs restarted. */
+const BOOT_ID = randomUUID();
+
+// Heartbeat. A proxy in front of worca (Cloudflare closes an idle WebSocket after ~100 s)
+// drops a socket that carries no frames — a run parked on an open Auto proposal is silent
+// for minutes — and every reconnect re-subscribes and replays. A ping every 30 s keeps the
+// socket busy; one that has not answered the previous ping is dead and is terminated.
+const HEARTBEAT_MS = 30_000;
+function trackHeartbeat(ws) {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+}
+function heartbeatTick(set = sockets) {
+  for (const ws of set) {
+    if (ws.isAlive === false) {
+      try { ws.terminate(); } catch { /* already gone */ }
+      set.delete(ws);
+      continue;
+    }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { /* closing */ }
+  }
+}
+const heartbeat = setInterval(() => heartbeatTick(), HEARTBEAT_MS);
+heartbeat.unref();
+
 // server.close() only calls back once every connection is gone, and Node's
 // closeAllConnections() skips UPGRADED sockets — a WebSocket whose close
 // handshake has not completed (a client that vanished, or a test tearing down
@@ -483,6 +509,7 @@ wss.on('connection', (ws, req) => {
     return;
   }
   sockets.add(ws);
+  trackHeartbeat(ws);
   // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
   ws.worcaViewer = askViewer(req);
   // Optional ?runId=... (or ?scanId=.../?genId=...) -> replay that entry's buffered
@@ -510,7 +537,7 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedScanId || requestedGenId || requestedBenchId;
 
-  send(ws, { type: 'hello', runs: summarizeRuns(), ask: askHello(ws) });
+  send(ws, { type: 'hello', bootId: BOOT_ID, runs: summarizeRuns(), ask: askHello(ws) });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
@@ -663,8 +690,12 @@ function emitDiffCommentsChanged(runId) {
 // Append a tagged event to an entry's ring buffer (runId LAST so the runs-Map key
 // always wins over any id the orchestrator stamped). Shared by the live wire
 // (record) and out-of-band resolutions (resolvePending) so both honor MAX_BUFFER.
+// `seq` numbers the entry's events so a client that reconnects (and is replayed the whole
+// buffer) skips what it already applied (ui/public/ws-seq.mjs); BOOT_ID in `hello` tells it
+// when a restarted server numbers from 1 again.
 function bufferEvent(entry, event) {
-  const tagged = { ...event, runId: entry.id };
+  entry.seq = (entry.seq || 0) + 1;
+  const tagged = { ...event, runId: entry.id, seq: entry.seq };
   entry.events.push(tagged);
   if (entry.events.length > MAX_BUFFER) entry.events.splice(0, entry.events.length - MAX_BUFFER);
   return tagged;
@@ -8861,4 +8892,5 @@ export const _testing = {
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
+  trackHeartbeat, heartbeatTick, BOOT_ID,
 };

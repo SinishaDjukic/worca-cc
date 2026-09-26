@@ -10,7 +10,7 @@ import { createInterface } from 'node:readline';
 import {
   providersState, beginCopilotLogin, pollCopilotLogin, copilotLogout, acknowledgeTerms,
   copilotModelsForImport, importCopilotModels, testProviderConnection, patchProvider,
-  endpointModelsForImport, importEndpointModels,
+  endpointModelsForImport, importEndpointModels, OPENROUTER_BASE_URL,
 } from '../core/bridge/provider-ops.mjs';
 import { listModels } from '../core/config.mjs';
 import { isTranslatedApi } from '../core/model-env.mjs';
@@ -26,13 +26,21 @@ Usage:
   worca models import copilot [--all | --pick <id,id,…>] [--yes]
                                           Add Copilot models to the catalog
   worca models import openai [--base-url <url>] [--all | --pick <id,id,…>] [--yes]
+                         [--search <text>] [--free] [--tools] [--min-context <n|64k>]
                                           Add what an OpenAI-compatible endpoint serves
-                                          (llama.cpp, Ollama, LM Studio, vLLM, a gateway)
-  worca models test <provider>            Reachability + auth check (copilot|openai|anthropic)
+                                          (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter, a gateway);
+                                          the filters narrow the listing and --all
+  worca models import openrouter …        The same, against https://openrouter.ai/api/v1
+  worca models test <provider>            Reachability + auth check (copilot|openai|anthropic|openrouter);
+                                          for OpenRouter also the key's credit and free-model allowance
   worca models set <provider> <key>=<value> …
                                           Patch a provider: accountType, maxConcurrent, baseUrl, apiKey
+  worca models set openrouter apiKey='\${OPENROUTER_KEY}'
+                                          The openai provider, pointed at OpenRouter
 
 Notes:
+  OpenRouter is the openai (OpenAI-compatible) provider with OpenRouter's base URL — one key and
+  one concurrency cap. A model can still point elsewhere on its own Connection.
   Copilot: GitHub allows Copilot only through supported clients and has suspended
   access for automated use. \`login\` prints the notice; --accept-terms records the
   acknowledgement non-interactively. Pipelines are automated, high-volume use.
@@ -122,8 +130,13 @@ const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.un
  * @returns {Promise<number>} exit code
  */
 export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
-  const args = modelsArgs(argv, ['--pick', '--base-url'], ['--accept-terms', '--all', '--yes', '-h', '--help'], fail);
+  const args = modelsArgs(argv, ['--pick', '--base-url', '--search', '--min-context'], ['--accept-terms', '--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
   const [verb, ...rest] = args._;
+  // `openrouter` is not a provider of its own: it is the openai provider at OpenRouter's URL, so
+  // every verb below sees `openai` and a base URL that defaults to OpenRouter's.
+  const viaOpenRouter = rest[0] === 'openrouter';
+  if (viaOpenRouter) rest[0] = 'openai';
+  const baseUrlArg = args['base-url'] || (viaOpenRouter ? OPENROUTER_BASE_URL : '');
   if (!verb || args.help || args.h || verb === 'help') { out(MODELS_HELP); return 0; }
 
   if (verb === 'list') {
@@ -174,23 +187,36 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
   if (verb === 'import' && provider === 'openai') {
     // §8.4 for a server you run: the endpoint is asked what it serves, and only a window it
     // really serves becomes a prompt limit — the rest is printed for the user to judge.
+    let minCtx = 0;
+    if (args['min-context'] !== undefined) {
+      const mm = /^(\d+(?:\.\d+)?)([km]?)$/i.exec(String(args['min-context']).trim());
+      if (!mm) return fail('--min-context takes a token count: 65536, 64k or 1m');
+      minCtx = Math.round(Number(mm[1]) * ({ k: 1000, m: 1e6 }[mm[2].toLowerCase()] || 1));
+    }
     let out0;
-    try { out0 = await endpointModelsForImport({ baseUrl: args['base-url'] || '' }); } catch (err) { return fail(err.message || String(err)); }
+    try { out0 = await endpointModelsForImport({ baseUrl: baseUrlArg }); } catch (err) { return fail(err.message || String(err)); }
     const fmtCtx = (m) => (m.servedContext ? `${Math.round(m.servedContext / 1000)}k` : m.trainedContext ? `?/${Math.round(m.trainedContext / 1000)}k` : '-');
+    // A hosted catalog is hundreds of rows: the filters narrow the listing AND what --all takes.
+    const q = String(args.search || '').trim().toLowerCase();
+    const shown = out0.models.filter((m) => (!q || m.id.toLowerCase().includes(q) || String(m.name || '').toLowerCase().includes(q))
+      && (!args.free || m.free === true) && (!args.tools || m.toolCalls === true) && (!minCtx || (m.servedContext || 0) >= minCtx));
+    const hosted = out0.server === 'openrouter';
     let ids;
     if (args.pick) ids = String(args.pick).split(',').map((x) => x.trim()).filter(Boolean);
-    else if (args.all) ids = out0.models.filter((m) => m.importable).map((m) => m.id);
+    else if (args.all) ids = shown.filter((m) => m.importable).map((m) => m.id);
     else {
-      out(`${out0.serverLabel} at ${out0.baseUrl} (pass --all, or --pick id,id,…):`);
-      for (const m of out0.models) {
-        out(`  ${m.id.padEnd(34)} ${fmtCtx(m).padStart(7)}  ${m.toolCalls ? 'tools' : m.toolCalls === null ? 'tools?' : '     '} ${m.vision ? 'vision' : '      '}${m.loaded === true ? ' loaded' : ''}${m.inCatalog ? '  (in catalog)' : ''}${m.importable ? '' : `  (${m.blocked})`}`);
+      out(`${out0.serverLabel} at ${out0.baseUrl} (pass --all, or --pick id,id,…)${shown.length < out0.models.length ? ` — ${shown.length} of ${out0.models.length} match` : ''}:`);
+      // One id column as wide as the longest shown id (OpenRouter's run past 34).
+      const idWidth = Math.max(34, ...shown.map((m) => m.id.length));
+      for (const m of shown) {
+        out(`  ${m.id.padEnd(idWidth)} ${fmtCtx(m).padStart(7)}  ${m.toolCalls ? 'tools' : m.toolCalls === null ? 'tools?' : '     '} ${m.vision ? 'vision' : '      '}${m.loaded === true ? ' loaded' : ''}${hosted && m.detail ? `  ${m.detail}` : ''}${m.inCatalog ? '  (in catalog)' : ''}${m.importable ? '' : `  (${m.blocked})`}`);
       }
       for (const w of out0.warnings) out(c('yellow', `  ! ${w}`));
       return 0;
     }
     for (const w of out0.warnings) out(c('yellow', `! ${w}`));
     if (!(await confirm(`Import ${ids.length} model${ids.length === 1 ? '' : 's'} into the catalog?`, args.yes, { c }))) return fail('cancelled');
-    const r = await importEndpointModels(ids, { baseUrl: args['base-url'] || '' });
+    const r = await importEndpointModels(ids, { baseUrl: baseUrlArg });
     for (const id of r.created) out(`  + ${id}`);
     for (const id of r.updated) out(`  ~ ${id} (upstream refreshed)`);
     for (const sk of r.skipped) out(`  - ${sk.id} (skipped: ${sk.why})`);
@@ -222,10 +248,15 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
   }
 
   if (verb === 'test') {
-    if (!provider) return fail('usage: worca models test <copilot|openai|anthropic>');
-    const r = await testProviderConnection(provider);
-    if (r.ok) { out(c('green', `✓ ${provider} reachable${r.models != null ? ` — ${r.models} models listed` : ''}`)); return 0; }
-    out(c('red', `✗ ${provider}: ${r.message}`));
+    if (!provider) return fail('usage: worca models test <copilot|openai|anthropic|openrouter>');
+    const label = viaOpenRouter ? 'openrouter' : provider;
+    const r = await testProviderConnection(provider, viaOpenRouter ? { baseUrl: baseUrlArg } : {});
+    if (r.ok) {
+      out(c('green', `✓ ${label} reachable${r.models != null ? ` — ${r.models} models listed` : ''}`));
+      if (r.detail) out(`  key: ${r.detail}`);
+      return 0;
+    }
+    out(c('red', `✗ ${label}: ${r.message}`));
     return 1;
   }
 
@@ -238,6 +269,7 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
       const k = kv.slice(0, i); const v = kv.slice(i + 1);
       patch[k] = k === 'maxConcurrent' ? Number(v) : v;
     }
+    if (viaOpenRouter && patch.baseUrl === undefined) patch.baseUrl = OPENROUTER_BASE_URL;
     if (!Object.keys(patch).length) return fail('nothing to set');
     try { await patchProvider(provider, patch); } catch (err) { return fail(err.message || String(err)); }
     for (const line of formatProviders(await providersState())) out(line);
