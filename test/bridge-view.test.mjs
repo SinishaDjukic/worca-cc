@@ -119,6 +119,10 @@ test('connection: create defaults to direct with the provider block hidden; prov
   assert.deepEqual([...api.options].map((o) => o.value), ['openai-chat', 'openai-responses']);
   assert.equal(api.disabled, false);
   assert.equal(conn.querySelector('.mv-conn-adv').hidden, false);
+  // Expandable like every other disclosure (New pipeline's Advanced): the chevron says so without a hover.
+  const sum = conn.querySelector('.mv-conn-adv > summary');
+  assert.ok(sum.querySelector('.adv-chev[aria-hidden="true"]'), 'the Advanced summary carries the disclosure chevron');
+  assert.equal(sum.textContent.trim(), 'Advanced — base URL, API key, extra headers');
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Translated/);
   conn.querySelector('.mv-conn-provider').value = 'anthropic';
   applyConnectionMode(conn);

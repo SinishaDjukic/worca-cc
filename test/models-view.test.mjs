@@ -493,6 +493,11 @@ test('list: the toolbar searches and filters, groups fold with a count, and buil
   const sec = (key) => plain.querySelector(`.mv-section[data-section="${key}"]`);
   assert.equal(sec('builtin').classList.contains('is-folded'), true, 'built-ins start folded');
   assert.equal(sec('builtin').querySelector('.mv-sec-toggle').getAttribute('aria-expanded'), 'false');
+  // The same chevron as every other disclosure (New pipeline's Advanced, the model editor's Advanced).
+  const caret = sec('builtin').querySelector('.mv-sec-toggle .mv-sec-caret');
+  assert.ok(caret.classList.contains('adv-chev'), 'group caret is the shared disclosure chevron');
+  assert.equal(caret.getAttribute('aria-hidden'), 'true');
+  assert.equal(caret.textContent, '', 'a CSS chevron, not a text glyph');
   assert.equal(sec('builtin').querySelector('.mv-sec-count').textContent, String(PREDEFINED.length), 'the count answers "is it in there?"');
   assert.equal(sec('global').classList.contains('is-folded'), false);
   assert.equal(plain.querySelectorAll('.mv-builtin').length, PREDEFINED.length, 'folded is CSS, not absent — search still finds them');

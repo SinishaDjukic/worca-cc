@@ -2789,12 +2789,12 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-section-head{display:flex;align-items:center;gap:8px;}
 .mv-sec-toggle{display:flex;align-items:center;gap:8px;padding:2px 0;border:0;background:transparent;cursor:pointer;color:inherit;font:inherit;}
 .mv-sec-toggle .mv-section-title{margin:0;}
-.mv-sec-caret{color:var(--ink-2);font-size:11px;line-height:1;transition:transform .12s ease;}
+.mv-sec-caret{flex:0 0 auto;transform:rotate(90deg);}   /* .adv-chev: points right; a group is open unless folded */
 .mv-sec-count{padding:1px 8px;border-radius:999px;background:var(--field);color:var(--ink-2);font:600 11px var(--mono);}
-.mv-section.is-folded .mv-sec-caret{transform:rotate(-90deg);}
+.mv-section.is-folded .mv-sec-caret{transform:none;}
 .mv-section.is-folded .mv-sec-body,.mv-section.is-folded .mv-sec-hint{display:none;}
 .mv-no-hits{margin-top:6px;}
-@media (prefers-reduced-motion: reduce){.mv-sec-caret{transition:none;}}
+@media (prefers-reduced-motion: reduce){.mv-sec-caret,.advanced .adv-chev{transition:none;}}
 .mv-pv-btns .btn-ghost,.mv-pv-btns .btn-go{padding:7px 12px;font-size:12px;}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12.5px;padding:9px 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}

@@ -672,7 +672,13 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
 
   // Advanced: per-entry overrides for the key-based providers.
   const adv = h(doc, 'details', 'advanced mv-conn-adv');
-  const sum = h(doc, 'summary', null, 'Advanced — base URL, API key, extra headers');
+  // Same summary as New pipeline's Advanced (index.html #advanced-config): the chevron is
+  // what says "expandable" — without it the label reads as a plain heading.
+  const sum = h(doc, 'summary');
+  const chev = h(doc, 'span', 'adv-chev');
+  chev.setAttribute('aria-hidden', 'true');
+  sum.appendChild(chev);
+  sum.appendChild(h(doc, 'span', null, 'Advanced — base URL, API key, extra headers'));
   adv.appendChild(sum);
   const advBody = h(doc, 'div', 'advanced-body mv-conn-adv-body');
   const bu = h(doc, 'input', 'input mv-conn-baseurl');

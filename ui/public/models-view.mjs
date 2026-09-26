@@ -112,7 +112,10 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     const btn = h(doc, 'button', 'mv-sec-toggle');
     btn.type = 'button';
     btn.dataset.section = key;
-    btn.appendChild(h(doc, 'span', 'mv-sec-caret', '▾'));
+    // The shared disclosure chevron (style.css .adv-chev), turned down while the group is open.
+    const caret = h(doc, 'span', 'mv-sec-caret adv-chev');
+    caret.setAttribute('aria-hidden', 'true');
+    btn.appendChild(caret);
     btn.appendChild(h(doc, 'h3', 'mv-section-title', title));
     btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
     head.appendChild(btn);
