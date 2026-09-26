@@ -227,6 +227,32 @@ test('POST /api/workspaces/:id/scan: known workspace -> {scanId}; entry carries 
   await waitFor(() => entry.status === 'done' || entry.status === 'error');
 });
 
+// ── GET /api/workspaces/scans (reopen after a reload) ───────────────────────
+
+test('GET /api/workspaces/scans lists a finished unsaved scan; saving with its scanId removes it; a stopped one is never listed', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const { scanId } = await (await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'Reopen WS' })).json();
+  const entry = runs.get(scanId);
+  await waitFor(() => entry.status === 'done' || entry.status === 'error');
+  const list = async () => (await (await fetch(`${base}/api/workspaces/scans`)).json()).scans;
+  const hit = (await list()).find((x) => x.scanId === scanId);
+  assert.ok(hit, 'finished scan is reopenable');
+  assert.equal(hit.name, 'Reopen WS');
+  assert.equal(hit.status, 'done');
+  assert.equal(hit.projectPaths.length, 2);
+
+  const r = await post('/api/workspaces', { name: 'Reopen WS', projectPaths: [a, b], description: 'd', scanId });
+  assert.equal(r.status, 201);
+  assert.equal((await list()).some((x) => x.scanId === scanId), false, 'saved scan left the list');
+
+  const c = await freshRepo();
+  const d = await freshRepo();
+  const second = (await (await post('/api/workspaces/scan', { projectPaths: [c, d], name: 'Stop WS' })).json()).scanId;
+  await post('/api/scan/stop', { scanId: second });
+  assert.equal((await list()).some((x) => x.scanId === second), false, 'stopped scan not listed');
+});
+
 // ── POST /api/scan/stop ─────────────────────────────────────────────────────
 
 test('POST /api/scan/stop: calls entry.orch.stop(); responds ok', async () => {

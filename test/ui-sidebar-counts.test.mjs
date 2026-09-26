@@ -114,3 +114,21 @@ test('Running empty-state hides when a run appears (0 -> 1), no lingering placeh
   assert.equal(doc.querySelector('#run-list .run-empty'), null, 'placeholder removed once a run is live');
   assert.ok(doc.querySelector('#run-list [data-run-id="r1"]'), 'live card rendered');
 });
+
+test('the Running badge counts pipelines only — a live workspace scan or agent generation is not a running pipeline', async () => {
+  const { window, wsBox } = await boot();
+  const doc = window.document;
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [
+    { runId: 'scan_x', scanId: 'scan_x', kind: 'scan', status: 'running', title: 'ws scan' },
+    { runId: 'agen_x', genId: 'agen_x', kind: 'agentgen', status: 'running', title: 'agent gen' },
+  ] }) });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(doc.querySelector('#nav-running-count').textContent, '0');
+
+  wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [
+    { runId: 'scan_x', scanId: 'scan_x', kind: 'scan', status: 'running', title: 'ws scan' },
+    { runId: 'r1', status: 'running', title: 'Demo' },
+  ] }) });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(doc.querySelector('#nav-running-count').textContent, '1');
+});

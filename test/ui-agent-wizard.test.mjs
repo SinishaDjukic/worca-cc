@@ -167,7 +167,7 @@ test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the err
   assert.equal(window.location.hash, '#agents', 'navigated to agents on success');
 });
 
-test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a live gen', async () => {
+test('agentgen-error returns to Step 1; leaving keeps a live gen running; Cancel POSTs stop + unsubscribes', async () => {
   const stops = [];
   const { window, ws } = await boot({
     fetchHandler: (u, opts) => {
@@ -190,12 +190,25 @@ test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a 
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelector('#agw-step-1').classList.contains('hidden'), false);
   assert.match(doc.querySelector('#agw-step1-hint').textContent, /builder exploded/);
-  // restart then navigate away -> leave-guard stop
+  // restart, then visit Settings: the paid generation keeps running
   click(window, doc.querySelector('#agw-start'));
   await new Promise((r) => setTimeout(r, 0));
-  window.location.hash = 'new';
+  window.location.hash = 'settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(stops.length, 0, 'navigation does not stop the generation');
+  assert.equal(ws().sent.some((m) => m.type === 'unsubscribe'), false, 'still subscribed');
+  // coming back resumes Step 2
+  window.location.hash = 'agent-create';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(doc.querySelector('#agw-step-2').classList.contains('hidden'), false, 'resumed at Step 2');
+  assert.equal(doc.querySelector('#agw-name').value, 'X');
+  // Cancel stops it server-side
+  click(window, doc.querySelector('#agw-close'));
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(stops.length, 1);
+  assert.equal(stops[0].genId, 'agen_3');
   assert.ok(ws().sent.some((m) => m.type === 'unsubscribe' && m.genId === 'agen_3'));
 });

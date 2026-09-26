@@ -48,6 +48,7 @@ const state = {
 
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
+  pendingScans: [],          // GET /api/workspaces/scans: live or unsaved scans (survive a reload)
   selectedWorkspaceId: '',   // '' === none; set ONLY in workspace target mode
   runTarget: 'project',      // 'project' | 'workspace' — New Pipeline target toggle
   // --- Creation wizard (ephemeral; reset on wizard close) ---
@@ -6652,6 +6653,19 @@ async function loadWorkspaces() {
   return state.workspaces;
 }
 
+// Fetch the server's reopenable scans (live, or done and unsaved). A scan is paid and
+// runs on the server, so this — not the page's memory — is what survives a reload.
+async function loadPendingScans() {
+  try {
+    const res = await fetch('/api/workspaces/scans');
+    const data = await safeJson(res);
+    state.pendingScans = res.ok && Array.isArray(data.scans) ? data.scans : [];
+  } catch {
+    state.pendingScans = [];
+  }
+  return state.pendingScans;
+}
+
 // ---- Workspaces management view --------------------------------------------
 
 function setWsMsg(text, kind) {
@@ -6668,8 +6682,10 @@ function renderWorkspaces() {
   const host = el.wsList;
   if (!host) return;
   host.innerHTML = '';
+  const drafts = wsDraftList().map(buildWsDraftRow);
   if (!state.workspaces.length) {
-    host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
+    if (drafts.length) host.append(...drafts);
+    else host.appendChild(histEmpty('No workspaces yet — create one to scan a set of projects.'));
     return;
   }
   const card = document.createElement('section');
@@ -6684,6 +6700,7 @@ function renderWorkspaces() {
   head.append(b, cnt);
   const list = document.createElement('div');
   list.className = 'saved-list';
+  list.append(...drafts);
   // What is known before /scopes answers: this session's payload or the persisted copy paints the
   // summary at once; a workspace neither knows reads "checking metrics…" rather than a summary
   // that reads as final.
@@ -6694,6 +6711,103 @@ function renderWorkspaces() {
   host.appendChild(card);
   paintWsMetricsRows();
   paintWsPolicyLines();                     // team policy (design board 6): the policy home line on the page
+}
+
+// A scan outlives a trip to another view and a page reload (it is paid), so the list shows
+// each one as a draft row on top — scanning, or done and waiting to be saved — that reopens
+// the wizard on it. The wizard's own scan first (it may not have a scanId yet), then the
+// server's other reopenable scans.
+function wsDraftList() {
+  const wz = state.wizard;
+  const drafts = [];
+  if (wz.scanId || wz.abort) {
+    drafts.push({
+      scanId: wz.scanId, name: wz.name, count: wz.selectedPaths.length, editing: !!wz.editingId,
+      scanning: !!wz.abort, message: (el.wizStatus && el.wizStatus.textContent) || '',
+    });
+  }
+  for (const p of state.pendingScans) {
+    if (!p || !p.scanId || p.scanId === wz.scanId) continue;
+    drafts.push({
+      scanId: p.scanId, name: p.name, count: (p.projectPaths || []).length, editing: !!p.workspaceId,
+      scanning: p.status !== 'done', message: p.message || '',
+    });
+  }
+  return drafts;
+}
+
+function buildWsDraftRow(d) {
+  const item = document.createElement('div');
+  item.className = 'ws-item ws-draft';
+  item.dataset.draft = d.scanId || 'local';
+  const row = document.createElement('div');
+  row.className = 'ws-row';
+  row.setAttribute('role', 'button');
+  row.tabIndex = 0;
+  const label = d.name || 'New workspace';
+  row.setAttribute('aria-label', d.scanning ? `Resume ${label} (scanning)` : `Review and save ${label}`);
+  const main = document.createElement('div');
+  main.className = 'ws-main';
+  const name = document.createElement('div');
+  name.className = 'ws-name';
+  name.textContent = d.editing ? `Re-scan: ${label}` : label;
+  const badge = document.createElement('span');
+  badge.className = d.scanning ? 'badge running' : 'badge amber';
+  badge.textContent = d.scanning ? 'scanning' : 'ready to save';
+  name.append(' ', badge);
+  const sum = document.createElement('small');
+  sum.className = 'ws-projects';
+  sum.textContent = d.scanning
+    ? `${d.count} projects · ${d.message || 'scanning…'}`
+    : `${d.count} projects · scan finished — review the description and save`;
+  main.append(name, sum);
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'proj-open ws-open';
+  open.setAttribute('aria-label', 'Open the workspace wizard');
+  open.innerHTML = CHEVRON_RIGHT_SVG;   // static markup
+  row.append(main, open);
+  item.appendChild(row);
+  return item;
+}
+
+// Repaint just the draft rows (scan progress/done/error) when the list is on screen.
+function paintWsDraftRows() {
+  if (currentView() !== 'workspaces' || !el.wsList) return;
+  const olds = [...el.wsList.querySelectorAll('.ws-draft')];
+  const next = wsDraftList().map(buildWsDraftRow);
+  if (!state.workspaces.length || !olds.length) { if (next.length || olds.length) renderWorkspaces(); return; }
+  olds[0].before(...next);
+  for (const o of olds) o.remove();
+}
+
+// Reopen a server-side scan in the wizard (the list's draft row, e.g. after a reload).
+// A different scan the wizard held is only let go — never stopped: it is paid, and it
+// stays in the list as its own draft row.
+function adoptScan(scanId) {
+  const p = state.pendingScans.find((x) => x && x.scanId === scanId);
+  if (!p) return;
+  const wz = state.wizard;
+  const prev = wz.scanId;
+  if (prev && prev !== scanId) {
+    if (!state.pendingScans.some((x) => x && x.scanId === prev)) {
+      state.pendingScans.push({
+        scanId: prev, name: wz.name, projectPaths: [...wz.selectedPaths], workspaceId: wz.editingId || null,
+        status: wz.abort ? 'scanning' : 'done', message: (el.wizStatus && el.wizStatus.textContent) || '',
+      });
+    }
+    if (state.ws && state.wsReady) { try { state.ws.send(JSON.stringify({ type: 'unsubscribe', scanId: prev })); } catch { /* ignore */ } }
+  }
+  state.wizard = {
+    step: p.status === 'done' ? 3 : 2, name: p.name || '', selectedPaths: [...(p.projectPaths || [])],
+    scanId, description: '', graphifyUsed: null, editingId: p.workspaceId || '',
+    // a live scan carries a (never-fired) cancel token, like one this page started
+    abort: p.status === 'done' ? null : new AbortController(),
+  };
+  if (el.wizStatus) el.wizStatus.textContent = p.message || '';
+  if (el.wizDesc) el.wizDesc.value = '';
+  // The replay re-delivers its buffered scan-* events: progress, then the finished description.
+  subscribeScan(scanId);
 }
 
 function buildWorkspaceRow(w, known) {
@@ -6741,7 +6855,7 @@ const wsRouteResults = new Map();
 async function paintWsMetricsRows(force = false) {
   const data = await loadTmScopes({ force });
   const byId = new Map(data.workspaces.map((w) => [w.id, w]));
-  for (const item of document.querySelectorAll('#ws-list .ws-item')) {
+  for (const item of document.querySelectorAll('#ws-list .ws-item[data-workspace-id]')) {
     const w = byId.get(item.dataset.workspaceId);
     const sum = item.querySelector('.ws-projects');
     const own = state.workspaces.find((x) => x && x.id === item.dataset.workspaceId);
@@ -6826,6 +6940,12 @@ async function patchWsHome(id, metricsProject) {
 if (el.wsList) {
   const openWsRow = (row) => {
     const item = row.closest('.ws-item');
+    if (item && item.dataset.draft) {
+      const id = item.dataset.draft;
+      if (id !== 'local' && id !== state.wizard.scanId) adoptScan(id);
+      location.hash = 'workspace-create';
+      return;
+    }
     if (!item || !item.dataset.workspaceId) return;
     wsReturnFocus = item.dataset.workspaceId;          // Back / Esc come home to this row
     location.hash = `workspaces/${item.dataset.workspaceId}`;
@@ -6868,7 +6988,7 @@ let wsReturnFocus = '';     // the id of the row that opened the page; closeWsDe
 let workspacesLoadToken = 0;
 async function loadWorkspacesView() {
   const token = ++workspacesLoadToken;
-  await loadWorkspaces();
+  await Promise.all([loadWorkspaces(), loadPendingScans()]);
   if (token !== workspacesLoadToken || currentShownView !== 'workspaces') return;
   renderWorkspaces();
   const [view, param] = parseHash();
@@ -6877,7 +6997,7 @@ async function loadWorkspacesView() {
 // A workspaces-changed frame while the page is open: rebuild the list under the user and keep the
 // open page — unless its workspace went away, which closes it with a note.
 async function refreshWorkspacesPage() {
-  await loadWorkspaces();
+  await Promise.all([loadWorkspaces(), loadPendingScans()]);
   if (currentShownView !== 'workspaces') return;
   renderWorkspaces();
   if (!wsDetail) return;
@@ -7464,9 +7584,9 @@ async function startWizardScan() {
   if (!editing && !name) { showWizardStep(1); setStatusText(''); if (el.wizName) el.wizName.focus(); return; }
   if (state.wizard.selectedPaths.length < 2) { showWizardStep(1); return; }
 
-  // Clear any prior scanId BEFORE the POST resolves, so a buffered/duplicate
+  // Stop + forget any prior scan BEFORE the POST resolves, so a buffered/duplicate
   // scan-* for the OLD scan can never match (onScanEvent gates on scanId).
-  state.wizard.scanId = '';
+  abortWizardScan();
 
   // Reset Step 2 surface.
   setStatusText('Starting scan…');
@@ -7475,6 +7595,8 @@ async function startWizardScan() {
   if (el.wizMsg) el.wizMsg.textContent = '';
   showWizardStep(2);
 
+  // A cancel token, not a fetch signal: the POST always completes so we learn the
+  // scanId, and a scan cancelled while it was in flight is stopped server-side.
   const abort = new AbortController();
   state.wizard.abort = abort;
 
@@ -7488,9 +7610,12 @@ async function startWizardScan() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: abort.signal,
     });
     const data = await safeJson(res);
+    if (abort.signal.aborted) { if (data.scanId) stopScanOnServer(data.scanId); return; }
+    // The wizard moved on to another scan (a draft row) meanwhile: this one keeps running
+    // and shows up in the list as its own draft.
+    if (state.wizard.abort !== abort) return;
     if (!res.ok || !data.scanId) {
       state.wizard.abort = null;
       setStatusText('');
@@ -7501,7 +7626,7 @@ async function startWizardScan() {
     state.wizard.scanId = data.scanId;
     subscribeScan(data.scanId);
   } catch (err) {
-    if (err && err.name === 'AbortError') return; // user aborted; leave-guard handled state
+    if (abort.signal.aborted) return; // cancelled meanwhile; abortWizardScan handled state
     state.wizard.abort = null;
     setStatusText('');
     showWizardStep(1);
@@ -7527,10 +7652,12 @@ async function saveWorkspace() {
     ? `/api/workspaces/${encodeURIComponent(state.wizard.editingId)}`
     : '/api/workspaces';
   const method = editing ? 'PATCH' : 'POST';
+  // scanId takes the scan off the server's reopen list (GET /api/workspaces/scans).
+  const scanId = state.wizard.scanId || undefined;
   const body = editing
-    ? { description }
+    ? { description, scanId }
     : {
-        name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description,
+        name: state.wizard.name, projectPaths: state.wizard.selectedPaths, description, scanId,
         // No metricsProject: the server adopts the single recording member, if any.
       };
 
@@ -7544,6 +7671,7 @@ async function saveWorkspace() {
     if (res.status === 409) { setWizMsg(data.error || 'Duplicate workspace.', 'err'); return; }
     if (!res.ok) { setWizMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     const backTo = state.wizard.editingId || (data.workspace && data.workspace.id) || '';
+    state.pendingScans = state.pendingScans.filter((p) => p && p.scanId !== scanId);
     resetWizard(false);
     await loadWorkspaces();
     location.hash = backTo && state.workspaces.some((x) => x && x.id === backTo) ? `workspaces/${backTo}` : 'workspaces';
@@ -7560,12 +7688,21 @@ function setWizMsg(text, kind) {
   el.wizMsg.className = 'form-msg' + (kind ? ' ' + kind : '');
 }
 
-// Abort a live scan: abort the fetch, unsubscribe, clear wizard scan state.
-// Invoked by the leave-guard, #wiz-abort, and Cancel.
+// Stop a scan on the server (idempotent: a finished or unknown scan is a no-op).
+function stopScanOnServer(scanId) {
+  void fetch('/api/scan/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scanId }),
+  }).catch(() => {});
+}
+
+// Cancel a scan: flag an in-flight POST, stop the scan server-side, unsubscribe,
+// clear wizard scan state. Invoked by #wiz-abort, Cancel, and a restarted scan.
 function abortWizardScan() {
   const scanId = state.wizard.scanId;
   if (state.wizard.abort) { try { state.wizard.abort.abort(); } catch { /* ignore */ } }
   if (scanId) {
+    stopScanOnServer(scanId);
+    state.pendingScans = state.pendingScans.filter((p) => p && p.scanId !== scanId);
     const ws = state.ws;
     if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', scanId })); } catch { /* ignore */ } }
   }
@@ -7577,11 +7714,16 @@ if (el.wizStartScan) el.wizStartScan.addEventListener('click', () => startWizard
 if (el.wizAbort) el.wizAbort.addEventListener('click', () => { abortWizardScan(); showWizardStep(1); });
 if (el.wizRescan) el.wizRescan.addEventListener('click', () => startWizardScan());
 if (el.wizSave) el.wizSave.addEventListener('click', () => saveWorkspace());
-if (el.wizClose) el.wizClose.addEventListener('click', () => { location.hash = state.wizard.editingId ? 'workspaces' : 'new'; });
+if (el.wizClose) el.wizClose.addEventListener('click', () => {
+  const back = state.wizard.editingId ? 'workspaces' : 'new';
+  abortWizardScan();
+  resetWizard();
+  location.hash = back;
+});
 if (el.wizName) el.wizName.addEventListener('input', () => { state.wizard.name = el.wizName.value; });
 
-// A11y: Escape in the wizard view triggers #wiz-close (which navigates away;
-// the showView leave-guard aborts any live scan). Scoped to the wizard view so
+// A11y: Escape in the wizard view triggers #wiz-close (which cancels any live
+// scan and navigates away). Scoped to the wizard view so
 // it never collides with the viewer-modal Escape handler.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -7615,7 +7757,22 @@ function subscribeScan(scanId) {
 
 // Route a scan-* event. Ignores events for a different/aborted scan.
 function onScanEvent(msg) {
-  if (!msg || !msg.scanId || msg.scanId !== state.wizard.scanId) return; // stale/aborted scan
+  if (!msg || !msg.scanId) return;
+  if (msg.scanId !== state.wizard.scanId) { onPendingScanEvent(msg); return; } // not the wizard's
+  try { routeScanEvent(msg); } finally { paintWsDraftRows(); }
+}
+
+// Another reopenable scan's event (every scan-* frame is broadcast): keep its draft row current.
+function onPendingScanEvent(msg) {
+  const i = state.pendingScans.findIndex((p) => p && p.scanId === msg.scanId);
+  if (i < 0) return;
+  if (msg.type === 'scan-error') state.pendingScans.splice(i, 1);
+  else if (msg.type === 'scan-done') state.pendingScans[i] = { ...state.pendingScans[i], status: 'done' };
+  else if (msg.message) state.pendingScans[i] = { ...state.pendingScans[i], message: msg.message };
+  paintWsDraftRows();
+}
+
+function routeScanEvent(msg) {
   if (msg.type === 'scan-progress') {
     setStatusText(msg.message || '');
     if (el.wizProgress && (msg.projectsTotal != null)) {
@@ -7642,6 +7799,8 @@ function onScanEvent(msg) {
     state.wizard.scanId = '';
     showWizardStep(1);
     setWizStep1Error(msg.message || 'scan failed');
+    // The draft row vanishes from the list; say why there.
+    if (currentView() === 'workspaces') setWsMsg(`Workspace scan failed: ${msg.message || 'scan failed'}`, 'err');
   }
 }
 
@@ -9806,11 +9965,15 @@ function resetAgentWizard() {
 }
 
 async function enterAgentWizard() {
-  if (!state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
+  // Resuming a live or finished generation keeps Step 1's picks (Regenerate reads them).
+  const resuming = !!state.agentWizard.genId || !!state.agentWizard.abort;
+  if (!resuming) resetAgentWizard();
   if (!state.agentsList.length) await loadAgentsList();
-  const keys = state.agentsList.filter((a) => a.scope !== 'workspace-only').map((a) => a.key);
-  buildChipChecks(el.agwBefore, keys, []);
-  buildChipChecks(el.agwAfter, keys, []);
+  if (!resuming) {
+    const keys = state.agentsList.filter((a) => a.scope !== 'workspace-only').map((a) => a.key);
+    buildChipChecks(el.agwBefore, keys, []);
+    buildChipChecks(el.agwAfter, keys, []);
+  }
   showAgentWizardStep(state.agentWizard.step || 1);
   syncAgwStartEnabled();
 }
@@ -9832,10 +9995,12 @@ function syncAgwStartEnabled() {
 }
 
 async function startAgentGenerate() {
-  state.agentWizard.genId = ''; // gate stale events before the POST resolves
+  abortAgentGen(); // stop + gate a prior generation before the POST resolves
   if (el.agwStatus) el.agwStatus.textContent = 'Starting…';
   if (el.agwMsg) el.agwMsg.textContent = '';
   showAgentWizardStep(2);
+  // A cancel token, not a fetch signal: the POST always completes so we learn the
+  // genId, and a generation cancelled while it was in flight is stopped server-side.
   const abort = new AbortController();
   state.agentWizard.abort = abort;
   const body = {
@@ -9849,9 +10014,10 @@ async function startAgentGenerate() {
   try {
     const res = await fetch('/api/agents/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal: abort.signal,
+      body: JSON.stringify(body),
     });
     const data = await safeJson(res);
+    if (abort.signal.aborted) { if (data.genId) stopAgentGenOnServer(data.genId); return; }
     if (!res.ok || !data.genId) {
       state.agentWizard.abort = null;
       showAgentWizardStep(1);
@@ -9862,7 +10028,7 @@ async function startAgentGenerate() {
     const ws = state.ws;
     if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'subscribe', genId: data.genId })); } catch { /* ignore */ } }
   } catch (err) {
-    if (err && err.name === 'AbortError') return;
+    if (abort.signal.aborted) return; // cancelled meanwhile; abortAgentGen handled state
     state.agentWizard.abort = null;
     showAgentWizardStep(1);
     if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${err.message}`;
@@ -9931,13 +10097,19 @@ async function saveGeneratedAgent() {
   }
 }
 
+function stopAgentGenOnServer(genId) {
+  void fetch('/api/agents/generate/stop', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ genId }),
+  }).catch(() => {});
+}
+
+// Cancel a generation: flag an in-flight POST, stop it server-side, unsubscribe,
+// clear wizard gen state. Invoked by #agw-abort, Cancel, and a restarted generation.
 function abortAgentGen() {
   const genId = state.agentWizard.genId;
   if (state.agentWizard.abort) { try { state.agentWizard.abort.abort(); } catch { /* ignore */ } }
   if (genId) {
-    fetch('/api/agents/generate/stop', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ genId }),
-    }).catch(() => {});
+    stopAgentGenOnServer(genId);
     const ws = state.ws;
     if (ws && state.wsReady) { try { ws.send(JSON.stringify({ type: 'unsubscribe', genId })); } catch { /* ignore */ } }
   }
@@ -9949,7 +10121,11 @@ if (el.agwStart) el.agwStart.addEventListener('click', () => startAgentGenerate(
 if (el.agwAbort) el.agwAbort.addEventListener('click', () => { abortAgentGen(); showAgentWizardStep(1); });
 if (el.agwRegen) el.agwRegen.addEventListener('click', () => startAgentGenerate());
 if (el.agwSave) el.agwSave.addEventListener('click', () => saveGeneratedAgent());
-if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = agentWizardReturn(); });
+if (el.agwClose) el.agwClose.addEventListener('click', () => {
+  abortAgentGen();
+  resetAgentWizard();
+  location.hash = agentWizardReturn();
+});
 // The wizard has two doors: the Agents page (expert) and the Composer palette's "Create agent…"
 // (advanced, docs/ui-levels.md). Cancel and Save go back through the door that was used.
 let agentWizardFrom = 'agents';
@@ -22751,7 +22927,9 @@ function renderPipelineTabs() {
 }
 
 function updateNavCounts() {
-  const live = liveRuns().length;
+  // Pipelines only, like the Running list: a workspace scan or agent generation is a
+  // live runs-Map entry too (status 'running'), but it has no row there to count.
+  const live = liveRuns().filter(isPipelineRun).length;
   const c = $('#nav-running-count');
   if (c) {
     c.textContent = String(live);
@@ -23600,16 +23778,15 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'composer' && name !== 'composer') composerExit();
-  // Leave-guard: navigating away from the wizard while a scan is live aborts the
-  // scan + resets wizard state (addresses orphaned-background-request risk).
+  // Leaving the wizard never cancels a scan: it is a paid operation, so a live or
+  // finished scan (and its description) survives a trip to another view, and
+  // enterWizard resumes it. Only Cancel / Abort stop it. A wizard with no scan resets.
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') {
-    if (state.wizard.scanId || state.wizard.abort) abortWizardScan();
-    resetWizard();
+    if (!state.wizard.scanId && !state.wizard.abort) resetWizard();
   }
-  // Same guard for the agent wizard: stop a live generation on the way out.
+  // Same rule for the agent wizard: a generation is paid too, so it survives the trip.
   if (currentShownView === 'agent-create' && name !== 'agent-create') {
-    if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
-    resetAgentWizard();
+    if (!state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
   }
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
   // switch as well as on a view switch: neither the guardrail wizard (#plugin-modal)

@@ -928,7 +928,10 @@ function wireScan(entry) {
   for (const name of SCAN_EVENT_NAMES) {
     subscribe(orch, name, (payload) => {
       const event = { type: name, ...(payload && typeof payload === 'object' ? payload : { value: payload }) };
-      if (name === 'scan-progress') entry.status = 'running';
+      if (name === 'scan-progress') {
+        entry.status = 'running';
+        if (payload && typeof payload.message === 'string' && payload.message) entry.lastMessage = payload.message;
+      }
       else if (name === 'scan-done') entry.status = 'done';
       else if (name === 'scan-error') entry.status = 'error';
       record(event);
@@ -4561,6 +4564,31 @@ app.get('/api/workspaces', async (_req, res) => {
   }
 });
 
+// GET /api/workspaces/scans -> the scans a wizard can still reopen: live, or done and not
+// yet saved. The scan is paid and outlives the page, so a reloaded tab lists these and
+// re-subscribes (the WS replay restores progress and the finished description).
+// Stopped/failed scans and scans already saved (POST/PATCH with scanId) are left out.
+app.get('/api/workspaces/scans', (_req, res) => {
+  const scans = [...runs.values()]
+    .filter((r) => r.kind === 'scan' && !r.saved && ['scanning', 'running', 'done'].includes(r.status))
+    .map((r) => ({
+      scanId: r.scanId,
+      name: r.name || '',
+      projectPaths: r.projectPaths || [],
+      workspaceId: r.workspaceId || null,
+      status: r.status === 'done' ? 'done' : 'scanning',
+      message: r.lastMessage || '',
+      startedAt: r.startedAt,
+    }));
+  res.json({ scans });
+});
+
+// A saved scan leaves the reopen list (the body's optional scanId names it).
+function markScanSaved(scanId) {
+  const entry = typeof scanId === 'string' && scanId ? runs.get(scanId) : null;
+  if (entry && entry.kind === 'scan') entry.saved = true;
+}
+
 app.get('/api/workspaces/:id', async (req, res) => {
   const id = req.params.id;
   if (!WORKSPACE_KEY_RE.test(id)) return res.status(404).json({ error: 'workspace not found' });
@@ -4595,6 +4623,7 @@ app.post('/api/workspaces', async (req, res) => {
       policyProject = viaMetrics?.ok ? metricsProject : await autoPolicyHome({ projectPaths }).catch(() => null);
     }
     const workspace = await createWorkspace({ name: body.name, projectPaths, description: body.description, metricsProject, policyProject });
+    markScanSaved(body.scanId);
     emitChanged('workspaces-changed', 'created');
     res.status(201).json({ workspace, metricsHomeAuto: !explicit && !!metricsProject });
   } catch (err) {
@@ -4629,6 +4658,7 @@ app.patch('/api/workspaces/:id', async (req, res) => {
   }
   try {
     const workspace = await updateWorkspace(id, patch);
+    markScanSaved(body.scanId);
     if ('metricsProject' in patch) emitChanged('workspaces-changed', 'metrics-home');
     if ('policyProject' in patch) { emitChanged('workspaces-changed', 'policy-home'); emitChanged('team-policy-changed', 'policy-home'); }
     res.json({ workspace });
@@ -4694,6 +4724,11 @@ function startScan({ projectPaths, name, workspaceId }) {
     projectDir: (Array.isArray(projectPaths) && projectPaths[0]) || null,
     workspaceId: workspaceId || null,
     title: name || 'workspace scan',
+    // What the wizard needs to reopen this scan after a page reload (GET /api/workspaces/scans).
+    name: name || '',
+    projectPaths: Array.isArray(projectPaths) ? [...projectPaths] : [],
+    lastMessage: '',
+    saved: false,
     status: 'scanning',
     startedAt: new Date().toISOString(),
     events: [],
