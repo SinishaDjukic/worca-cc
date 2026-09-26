@@ -371,6 +371,10 @@ click Apply.
 - **`[claude-code:unrecognized_model]` in a bridged run's log** — harmless: the
   CLI prints it for every model id it does not know, which is every bridged id.
   Worca never reports it as a failure's cause; the real error follows it.
+- **"Your previous response had no visible output"** — the endpoint ended a turn
+  with no text and no tool call (reasoning only, or nothing; OpenRouter's free
+  Nvidia models do it now and then). The bridge turns such a turn into a retryable
+  "upstream returned no output" error, so the CLI retries it instead of giving up.
 - **A rate-limited step** (429 / 529) retries three times, waiting 5s, 10s and
   20s (longer when the upstream sends `retry-after`, at most 40s a wait), on top
   of the CLI's own ~3 minutes of retries, then pauses as recoverable — resume it

@@ -240,14 +240,13 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     const translator = us.api === 'openai-responses'
       ? new ResponsesStreamTranslator({ model: entry.id, upstreamModel: us.model })
       : new ChatStreamTranslator({ model: entry.id });
-    // A Responses stream can fail mid-flight (response.failed / error): book it
-    // like an upstream refusal, so the Test button can name the reason. The
-    // chat stream's events pass through untouched.
+    // A stream can fail mid-flight (a Responses response.failed / error, a chat
+    // stream cut short or ending with no output): book it like an upstream
+    // refusal, so the Test button — and a run whose CLI exits without an API
+    // Error line (claude-runner's bridge-failure fallback) — can name the reason.
     const booked = (events) => {
-      if (us.api === 'openai-responses') {
-        for (const e of events) {
-          if (e.event === 'error') recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: 200, message: e.data.error.message });
-        }
+      for (const e of events) {
+        if (e.event === 'error') recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: 200, message: e.data.error.message });
       }
       return events;
     };

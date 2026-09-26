@@ -26,6 +26,9 @@ export function mapStopReason(finish, { emitted = false } = {}) {
   }
 }
 
+/** The overloaded_error a turn with no visible output becomes (ChatStreamTranslator#finish). */
+export const EMPTY_TURN_MESSAGE = 'upstream returned no output (no text or tool call) — an upstream glitch; retrying';
+
 /** chat/completions usage -> Anthropic usage (§5.8). */
 export function mapUsage(usage) {
   const u = usage && typeof usage === 'object' ? usage : {};
@@ -69,6 +72,7 @@ export class ChatStreamTranslator {
     this.usage = null;
     this.costUsd = null;            // the upstream's own USD cost (OpenRouter usage.cost), when reported
     this.emittedAny = false;
+    this.sawText = false;           // any visible text (thinking is not visible output)
     this.contentFilter = false;
   }
 
@@ -166,6 +170,7 @@ export class ChatStreamTranslator {
       }
       out.push({ event: 'content_block_delta', data: { type: 'content_block_delta', index: this.textIndex, delta: { type: 'text_delta', text: delta.content } } });
       this.emittedAny = true;
+      this.sawText = true;
     }
 
     if (Array.isArray(delta.tool_calls)) {
@@ -226,8 +231,15 @@ export class ChatStreamTranslator {
     out.push(...this._closeText());
     const hadTools = this.toolOrder.length > 0;
     let stop = mapStopReason(this.finishReason, { emitted: this.emittedAny });
-    if (stop === null) {
-      out.push({ event: 'error', data: { type: 'error', error: { type: 'api_error', message: 'upstream stream ended without content or finish_reason' } } });
+    // No text and no tool call — nothing at all, or reasoning only — on a turn
+    // that ended normally or not at all: an upstream glitch (OpenRouter's free
+    // Nvidia endpoint does it intermittently). Forwarded as an empty turn the CLI
+    // nudges "no visible output" and exits with no cause; as overloaded_error it
+    // retries with backoff, and a run that still fails names the reason. A length
+    // cut and a content filter keep their stop reasons: those are the model's.
+    const visible = hadTools || this.sawText;
+    if (stop === null || (!visible && (this.finishReason === 'stop' || this.finishReason == null))) {
+      out.push({ event: 'error', data: { type: 'error', error: { type: 'overloaded_error', message: EMPTY_TURN_MESSAGE } } });
       return out;
     }
     if (hadTools && stop === 'end_turn') stop = 'tool_use';
