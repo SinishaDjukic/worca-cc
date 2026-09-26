@@ -2239,7 +2239,8 @@
     </div>
 
     <!-- Connect Claude Code: the one checklist step with no control to ring. The
-         tick is derived (the CLI resolves on PATH); "Check again" refetches it. -->
+         tick is derived (the CLI resolves on PATH and is not signed out); "Check
+         again" refetches it with a fresh sign-in check. -->
     <div id="claude-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="claude-setup-title">
       <div class="card ob-claude">
         <div class="card-head">
@@ -2249,6 +2250,9 @@
         <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
         <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
         <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
+        <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
+        <pre class="ob-claude-cmd"><code>claude</code></pre>
+        <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over — the CLI keeps its own sign-in.</p>
         <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
         <div class="stop-actions">
           <button type="button" id="claude-setup-check" class="btn btn-primary btn-mini">Check again</button>

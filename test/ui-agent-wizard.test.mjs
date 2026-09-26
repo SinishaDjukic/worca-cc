@@ -167,6 +167,30 @@ test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the err
   assert.equal(window.location.hash, '#agents', 'navigated to agents on success');
 });
 
+test('a signed-out Claude refusal (409 claude-signed-out) shows one red line whose link opens Connect Claude Code', async () => {
+  const { window } = await boot({
+    fetchHandler: (u, opts) => u.endsWith('/api/agents/generate') && opts.method === 'POST'
+      ? Promise.resolve({ ok: false, status: 409, json: async () => ({ code: 'claude-signed-out', error: "Claude Code isn't signed in." }) }) : null,
+  });
+  window.location.hash = 'agent-create';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  doc.querySelector('#agw-name').value = 'X';
+  doc.querySelector('#agw-name').dispatchEvent(new window.Event('input', { bubbles: true }));
+  doc.querySelector('#agw-purpose').value = 'p';
+  doc.querySelector('#agw-purpose').dispatchEvent(new window.Event('input', { bubbles: true }));
+  click(window, doc.querySelector('#agw-start'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(doc.querySelector('#agw-step-1').classList.contains('hidden'), false);
+  const hint = doc.querySelector('#agw-step1-hint');
+  assert.equal(hint.textContent, "Claude Code isn't signed in. Sign in…");
+  assert.ok(hint.classList.contains('err'));
+  const setup = doc.getElementById('claude-setup-modal');
+  click(window, hint.querySelector('a'));
+  assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens the dialog');
+});
+
 test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a live gen', async () => {
   const stops = [];
   const { window, ws } = await boot({

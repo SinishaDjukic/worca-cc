@@ -16,6 +16,8 @@ import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink } from 'node:fs/promises';
 
 import { runClaude } from '../claude-runner.mjs';
+import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
+import { failedBecauseSignedOut } from '../claude-auth.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome } from '../projects.mjs';
 import { generateTitle } from '../title.mjs';
@@ -86,6 +88,7 @@ class AskTurn extends EventEmitter {
     this.extraCostUsd = 0;            // PD2: money the MCP child spent on the workflow classifier, booked by this turn
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
+      failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
       memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       store: {
         finishMessage, setMessageBlocks, addThreadTotals, updateThread, setThreadTitle, listAttachments,
@@ -555,7 +558,15 @@ class AskTurn extends EventEmitter {
       console.warn(`[worca-ask] turn ${this.assistantMessageId}: ${summary.reducerErrors} reducer error(s) absorbed`);
     }
     if (kind === 'error') {
-      this._frame({ type: 'ask-error', message: message || 'unknown error', ...(errorClass !== undefined ? { errorClass } : {}) });
+      // `code` lets the panel swap the CLI's raw error for a Sign in… line. Signed
+      // out, the CLI may not even say so (`unrecognized_model` on a first-party id),
+      // so claude-auth asks `claude auth status` instead of trusting the text.
+      const signedOut = await d.failedBecauseSignedOut({ message, model: this.model }).catch(() => false);
+      this._frame({
+        type: 'ask-error', message: message || 'unknown error',
+        ...(errorClass !== undefined ? { errorClass } : {}),
+        ...(signedOut ? { code: CLAUDE_SIGNED_OUT_CODE } : {}),
+      });
       this._emit('error', { message: message || 'unknown error' });
     } else {
       this._frame({

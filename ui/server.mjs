@@ -194,8 +194,10 @@ import {
 } from '../src/core/memory-store.mjs';
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
-import { onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
+import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { createWorkspaceScan } from '../src/core/workspace-scan.mjs';
+import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
+import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -3219,7 +3221,9 @@ app.get('/api/runs/:id/recovery-patch', async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
 // Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
-// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500.
+// ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500, or
+// 409 code 'claude-signed-out' when the CLI is signed out (a cached overview
+// needs no Claude, so this maps the failure instead of probing up front).
 // ---------------------------------------------------------------------------
 app.post('/api/runs/:id/overview', async (req, res) => {
   const id = req.params.id;
@@ -3235,6 +3239,9 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
+    if (msg !== 'pipeline not found' && await failedBecauseSignedOut({ message: msg })) {
+      return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+    }
     const code = msg === 'pipeline not found' ? 404 : 500;
     res.status(code).json({ error: msg });
   }
@@ -3268,8 +3275,9 @@ app.get('/api/history', async (_req, res) => {
 // POST writes ONLY those flags ({hidden?, welcomeSeen?}; booleans; unknown keys
 // 400) and answers with the same full payload, so one round trip repaints.
 // ---------------------------------------------------------------------------
-app.get('/api/onboarding', async (_req, res) => {
-  try { res.json(await onboardingStatus()); }
+// ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
+app.get('/api/onboarding', async (req, res) => {
+  try { res.json(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -4716,6 +4724,20 @@ function startScan({ projectPaths, name, workspaceId }) {
   return scanId;
 }
 
+/**
+ * Refuse a detached Claude job (workspace scan, agent generation) up front when
+ * the CLI is signed out (preflight probeClaudeAuth): otherwise it starts and its
+ * first agent dies ~30 s in with "Not logged in". Only a definite 'signed-out'
+ * refuses — mock, an auth env var, or an unknown answer (an older CLI) all pass.
+ * Sends the 409 and returns true when it refused.
+ */
+async function refuseSignedOutClaude(res) {
+  const { state } = await probeClaudeAuth({ bin: configuredClaudeBin(), mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK) });
+  if (state !== 'signed-out') return false;
+  res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
+  return true;
+}
+
 // POST /api/workspaces/scan (pre-persist, Step 2->3). Takes projectPaths directly:
 // validate >=2 paths + fs.existsSync each + reject non-git-repos (400); the deep
 // git work happens inside the engine.
@@ -4730,6 +4752,7 @@ app.post('/api/workspaces/scan', async (req, res) => {
       if (!fs.existsSync(dir)) return badRequest(res, `member path is missing: ${dir}`);
       if (!isGitRepo(dir)) return badRequest(res, `member is not a git repository: ${dir}`);
     }
+    if (await refuseSignedOutClaude(res)) return;
     const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
     const scanId = startScan({ projectPaths, name });
     res.json({ scanId });
@@ -4751,6 +4774,7 @@ app.post('/api/workspaces/:id/scan', async (req, res) => {
       r.workspaceId === id && r.kind === 'workspace-run' &&
       ['running', 'starting', 'created'].includes(String(r.status || '').toLowerCase()));
     if (liveRun) return res.status(409).json({ error: 'a live run exists for this workspace' });
+    if (await refuseSignedOutClaude(res)) return;
     const scanId = startScan({ projectPaths: ws.projectPaths, name: ws.name, workspaceId: ws.id });
     res.json({ scanId });
   } catch (err) {
@@ -7374,6 +7398,7 @@ app.post('/api/agents/generate', async (req, res) => {
     const allAgents = await listAgents();
     const byKey = Object.fromEntries(allAgents.map((m) => [m.key, m]));
     const pick = (keys) => (Array.isArray(keys) ? keys : []).map((k) => byKey[k]).filter(Boolean);
+    if (await refuseSignedOutClaude(res)) return;
     const genId = startAgentGen({
       name, purpose: String(body.purpose || ''), details: String(body.details || ''),
       expectedBefore: pick(body.expectedBefore), expectedAfter: pick(body.expectedAfter),

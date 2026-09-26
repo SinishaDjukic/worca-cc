@@ -262,6 +262,33 @@ test('scan-error returns to Step 1 with the error message', async () => {
   assert.match(doc.querySelector('#wiz-step1-hint').textContent, /scanner exploded/);
 });
 
+test('a signed-out Claude refusal (409 claude-signed-out) shows one red line whose link opens Connect Claude Code', async () => {
+  const { window } = await boot({
+    fetchHandler: (u, opts) => u.endsWith('/api/workspaces/scan') && opts.method === 'POST'
+      ? Promise.resolve({ ok: false, status: 409, json: async () => ({ code: 'claude-signed-out', error: "Claude Code isn't signed in. Run `claude` in a terminal and type /login, then try again." }) }) : null,
+  });
+  goCreate(window);
+  await new Promise((r) => setTimeout(r, 0));
+  const doc = window.document;
+  doc.querySelector('#wiz-name').value = 'A';
+  doc.querySelector('#wiz-name').dispatchEvent(new window.Event('input', { bubbles: true }));
+  for (const v of ['/a/svc-iam', '/a/svc-ui']) {
+    const cb = [...doc.querySelectorAll('#wiz-projects .wiz-proj-cb')].find((c) => c.value === v);
+    cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  click(window, doc.querySelector('#wiz-start-scan'));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(stepVisible(doc, 1), 'back to step 1');
+  const hint = doc.querySelector('#wiz-step1-hint');
+  assert.equal(hint.textContent, "Claude Code isn't signed in. Sign in…");
+  assert.ok(hint.classList.contains('err'), 'red');
+  assert.doesNotMatch(hint.textContent, /Scan error/);
+  const setup = doc.getElementById('claude-setup-modal');
+  assert.equal(setup.classList.contains('hidden'), true);
+  click(window, hint.querySelector('a'));
+  assert.equal(setup.classList.contains('hidden'), false, 'Sign in… opens the dialog');
+});
+
 test('Step 3 Save (create) POSTs {name,projectPaths,description} then navigates to #workspaces', async () => {
   const posts = [];
   const { window, ws } = await boot({

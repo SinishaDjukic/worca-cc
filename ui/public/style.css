@@ -5251,6 +5251,7 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .ob-claude-cmd{margin:12px 0;padding:12px 14px;background:var(--field);border-radius:12px;overflow:auto;}
 .ob-claude-cmd code{background:none;padding:0;font-size:12.5px;}
 .ob-claude-note a{color:var(--blue-ink-strong);}
+.ob-claude-step{margin-top:16px;}
 .ob-claude-status{min-height:18px;margin-top:12px;font-size:13px;line-height:1.45;}
 .ob-claude-status.ok{color:var(--green-ink);}
 .ob-claude-status.err{color:var(--red-ink);}

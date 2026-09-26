@@ -190,6 +190,7 @@ export function createThreadModel({ threadId }) {
         row.text = live.text;
         row.status = 'error';
         row.errorMessage = frame.message || 'unknown error';
+        row.errorCode = frame.code || null;
         live = null;
         inFlight = null;
         dirty.structure = true;

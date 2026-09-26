@@ -7369,11 +7369,7 @@ function renderWizardProjects() {
   const projects = Array.isArray(state.projects) ? state.projects : [];
   const usable = projects.filter((p) => p && p.exists);
 
-  if (el.wizStep1Hint) {
-    el.wizStep1Hint.textContent = usable.length < 2
-      ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
-      : 'Select two or more projects to scan their interconnections.';
-  }
+  resetWizStep1Hint();
 
   projects.forEach((p) => {
     if (!p || !p.path) return;
@@ -7495,7 +7491,7 @@ async function startWizardScan() {
       state.wizard.abort = null;
       setStatusText('');
       showWizardStep(1);
-      setWizStep1Error(data.error || `Scan failed (${res.status})`);
+      setWizStep1Error(data.error || `Scan failed (${res.status})`, data.code);
       return;
     }
     state.wizard.scanId = data.scanId;
@@ -7509,8 +7505,39 @@ async function startWizardScan() {
   }
 }
 
-function setWizStep1Error(message) {
-  if (el.wizStep1Hint) el.wizStep1Hint.textContent = `Scan error: ${message}`;
+function resetWizStep1Hint() {
+  const hint = el.wizStep1Hint;
+  if (!hint) return;
+  const usable = (Array.isArray(state.projects) ? state.projects : []).filter((p) => p && p.exists);
+  hint.classList.remove('err');
+  claudeSignedOutHints.delete(hint);
+  hint.textContent = usable.length < 2
+    ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
+    : 'Select two or more projects to scan their interconnections.';
+}
+
+// A signed-out Claude CLI (409 code 'claude-signed-out') gets one short red line
+// whose link opens the Connect Claude Code dialog. `restore` repaints the hint's
+// normal text once Check again there finds the CLI signed in (paintClaudeSetupStatus).
+const claudeSignedOutHints = new Map();   // hint element -> restore()
+function showClaudeSignedOut(hint, restore) {
+  const link = document.createElement('a');
+  link.href = '#';
+  link.textContent = 'Sign in…';
+  link.addEventListener('click', (e) => { e.preventDefault(); openClaudeSetup(); });
+  hint.classList.add('err');
+  hint.replaceChildren("Claude Code isn't signed in. ", link);
+  claudeSignedOutHints.set(hint, restore);
+}
+
+// Any other refusal keeps the "Scan error: …" text.
+function setWizStep1Error(message, code) {
+  const hint = el.wizStep1Hint;
+  if (!hint) return;
+  if (code === 'claude-signed-out') { showClaudeSignedOut(hint, resetWizStep1Hint); return; }
+  claudeSignedOutHints.delete(hint);
+  hint.classList.add('err');
+  hint.textContent = `Scan error: ${message}`;
 }
 
 // Persist at Step 3 Save: new → POST /api/workspaces; re-scan → PATCH :id.
@@ -9855,7 +9882,7 @@ async function startAgentGenerate() {
     if (!res.ok || !data.genId) {
       state.agentWizard.abort = null;
       showAgentWizardStep(1);
-      if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${data.error || res.status}`;
+      setAgwStep1Error(data.error || res.status, data.code);
       return;
     }
     state.agentWizard.genId = data.genId;
@@ -9865,8 +9892,25 @@ async function startAgentGenerate() {
     if (err && err.name === 'AbortError') return;
     state.agentWizard.abort = null;
     showAgentWizardStep(1);
-    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${err.message}`;
+    setAgwStep1Error(err.message);
   }
+}
+
+const AGW_STEP1_HINT = 'Name + purpose are required (or paste your own markdown).';
+function resetAgwStep1Hint() {
+  const hint = el.agwStep1Hint;
+  if (!hint) return;
+  claudeSignedOutHints.delete(hint);
+  hint.classList.remove('err');
+  hint.textContent = AGW_STEP1_HINT;
+}
+function setAgwStep1Error(message, code) {
+  const hint = el.agwStep1Hint;
+  if (!hint) return;
+  if (code === 'claude-signed-out') { showClaudeSignedOut(hint, resetAgwStep1Hint); return; }
+  claudeSignedOutHints.delete(hint);
+  hint.classList.add('err');
+  hint.textContent = `Generation error: ${message}`;
 }
 
 function onAgentGenEvent(msg) {
@@ -9893,7 +9937,7 @@ function onAgentGenEvent(msg) {
     state.agentWizard.abort = null;
     state.agentWizard.genId = '';
     showAgentWizardStep(1);
-    if (el.agwStep1Hint) el.agwStep1Hint.textContent = `Generation error: ${msg.message || 'failed'}`;
+    setAgwStep1Error(msg.message || 'failed');
   }
 }
 
@@ -22852,10 +22896,10 @@ function gsEnsurePillHost() {
   return gsPillHost;
 }
 
-async function loadOnboarding() {
+async function loadOnboarding({ recheck = false } = {}) {
   let data;
   try {
-    const res = await fetch('/api/onboarding');
+    const res = await fetch(recheck ? '/api/onboarding?recheck=1' : '/api/onboarding');
     data = await safeJson(res);
     if (!res.ok) return;
   } catch { return; }
@@ -22962,10 +23006,13 @@ function paintClaudeSetupStatus() {
   if (!box || !gs.status) return;
   const c = gs.status.claude || {};
   const ok = !!gs.status.steps.claude;
+  const bin = c.bin || 'claude';
   box.className = `ob-claude-status ${ok ? 'ok' : 'err'}`;
-  box.textContent = ok
-    ? `Found ${c.bin || 'claude'} — you're set.`
-    : (c.hint || `"${c.bin || 'claude'}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`);
+  if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in — you're set.` : `Found ${bin} — you're set.`;
+  else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
+  else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+  // The wizards' signed-out lines are stale once the CLI checks out.
+  if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
 }
 function openClaudeSetup() {
   const modal = document.getElementById('claude-setup-modal');
@@ -22980,7 +23027,7 @@ document.getElementById('claude-setup-modal')?.addEventListener('click', (e) => 
 document.getElementById('claude-setup-check')?.addEventListener('click', async () => {
   const btn = document.getElementById('claude-setup-check');
   btn.disabled = true;
-  try { await loadOnboarding(); } finally { btn.disabled = false; }
+  try { await loadOnboarding({ recheck: true }); } finally { btn.disabled = false; }
   paintClaudeSetupStatus();
 });
 document.addEventListener('keydown', (e) => {
@@ -24148,6 +24195,7 @@ askPanel = createAskPanel({
   getPageContext,
   openNewPipeline,
   openComposer: (id) => { openComposerFromAsk(id); },
+  openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
   storage: window.localStorage,

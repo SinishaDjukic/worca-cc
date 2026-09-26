@@ -237,7 +237,18 @@ test('ask-model: ask-error finalizes with the accumulated partial text', () => {
   assert.equal(row.status, 'error');
   assert.equal(row.text, 'partial answer');
   assert.equal(row.errorMessage, 'claude exited with code 1: boom');
+  assert.equal(row.errorCode, null);
   assert.equal(m.live(), null);
+});
+
+test('ask-model: ask-error keeps the frame code (claude-signed-out)', () => {
+  const m = createThreadModel({ threadId: TID });
+  const bare = [
+    { type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-error', message: 'claude exited with code 1: Not logged in', errorClass: 'auth', code: 'claude-signed-out' },
+  ];
+  for (const f of stampFrames(bare, { threadId: TID, messageId: MID })) m.apply(f);
+  assert.equal(m.messages()[0].errorCode, 'claude-signed-out');
 });
 
 test('ask-model: dirty tracking drains once and is per-kind', () => {
