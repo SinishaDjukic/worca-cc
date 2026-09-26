@@ -52,10 +52,13 @@ test('upstreamCode: a numeric code (OpenRouter\'s HTTP status) is not a machine 
 
 const HARNESS_ONLY = JSON.stringify({ error: { message: 'thinkingmachines/inkling:free is only available on agentic harnesses. Try plugging it into a coding agent or productivity app listed on https://openrouter.ai/apps', code: 403 } });
 
-test('mapUpstreamError: a 403 policy refusal leads with the body and is not an auth failure', () => {
+// The CLI reads ANY 403 from its endpoint as a sign-in failure ("Failed to authenticate",
+// or on worca-01 "Not logged in · Please run /login") and buries the reason, so the bridge
+// answers a policy refusal as a plain 400 carrying it.
+test('mapUpstreamError: a 403 policy refusal reaches the CLI as a 400 that leads with the body, not an auth failure', () => {
   const e = mapUpstreamError(403, HARNESS_ONLY, { provider: 'openai' });
-  assert.equal(e.status, 403);
-  assert.equal(e.body.error.type, 'permission_error');
+  assert.equal(e.status, 400, 'never a 403 to the CLI');
+  assert.equal(e.body.error.type, 'invalid_request_error');
   assert.match(e.body.error.message, /^openai: refused \(403\) — thinkingmachines\/inkling:free is only available on agentic harnesses/);
   assert.doesNotMatch(e.body.error.message, /authentication/);
   assert.equal(classifyError(new Error(e.body.error.message)), null, 'permanent: never retried');

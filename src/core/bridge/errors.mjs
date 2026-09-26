@@ -128,9 +128,12 @@ export function mapUpstreamError(status, text, { provider = 'upstream', retryAft
   // refusal (OpenRouter gates some :free models to listed agent apps: "only
   // available on agentic harnesses"). Calling that an auth failure sends the
   // user to re-enter a key that works; the body is the real reason, and it is
-  // permanent, so nothing downstream classifies it as retryable.
+  // permanent, so nothing downstream classifies it as retryable. It reaches the
+  // CLI as a 400: the CLI reads ANY 403 from its endpoint as a sign-in failure
+  // ("Failed to authenticate" / "Not logged in · Please run /login") and buries
+  // the reason under it.
   if (status === 403 && /[a-z]{3}/i.test(msg) && !AUTH_403_RE.test(msg)) {
-    return anthropicError(403, 'permission_error', `${who}: refused (403) — ${msg}`);
+    return anthropicError(400, 'invalid_request_error', `${who}: refused (403) — ${msg}`);
   }
   if (status === 401 || status === 403) {
     return anthropicError(401, 'authentication_error', `${who}: authentication failed (${status})${msg ? ` — ${msg}` : ''}`);
