@@ -43,6 +43,8 @@ import { classifyTask, ClassifierError } from './auto/classify.mjs';
 import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
 import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
 import { resolveAutoModel } from './auto/model.mjs';
+import { autoModelsFor } from './auto/runnable.mjs';
+import { probeClaudeAuth } from './preflight.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions,
@@ -99,6 +101,9 @@ export class GraphOrchestrator extends RunHarness {
     // `classify` is the test seam.
     this._auto = { feedback: [], round: 0, prior: null, costUsd: 0, pending: null };
     this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
+    // Whether Claude Code is signed in decides which models Auto may design with
+    // (auto/runnable.mjs). `claudeAuth` is the test seam.
+    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth : () => probeClaudeAuth({ bin: this.claude.bin || undefined });
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -235,7 +240,14 @@ export class GraphOrchestrator extends RunHarness {
 
   async _decideTopologyInner() {
     const registry = this.registry;
-    const models = await listModels(this.projectDir);
+    // Only models this install can run (auto/runnable.mjs): signed out, a first-party pick —
+    // or the CLI default a stage without a model falls back to — dies at its first spawn.
+    let auth = 'unknown';
+    try { auth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+    const runnable = autoModelsFor(await listModels(this.projectDir), { auth, routed: modelHasBaseUrlRouting });
+    const models = runnable.models;
+    const requireModel = runnable.requireModel;
+    if (runnable.note) this._log('orchestrator', requireModel ? 'info' : 'warn', `auto: ${runnable.note}`);
     const model = resolveAutoModel(models);
     const fingerprint = await fingerprintProject(this.projectDir);
     this._log('orchestrator', 'info', `auto: fingerprint ${Buffer.byteLength(fingerprint, 'utf8')} B`);
@@ -266,7 +278,7 @@ export class GraphOrchestrator extends RunHarness {
       }
       let outcome;
       try {
-        outcome = await this._autoRound({ registry, models, model, fingerprint, extras, taskText, classify: classifyFor, round });
+        outcome = await this._autoRound({ registry, models, requireModel, model, fingerprint, extras, taskText, classify: classifyFor, round });
       } catch (err) {
         if (isAbort(err) || isPause(err)) throw err;
         if (pending && err instanceof ShapeError) {
@@ -281,7 +293,7 @@ export class GraphOrchestrator extends RunHarness {
           // nothing about the task: run the default workflow rather than park a run
           // that has not started. Only a transient cause falls back — an unusable reply
           // or a timeout keeps the D17 pause below.
-          return await this._autoFallbackDefault({ err, registry, round });
+          return await this._autoFallbackDefault({ err, registry, round, nodeModel: requireModel ? model : null });
         }
         if (err instanceof ClassifierError || err instanceof ShapeError) {
           // spec D17 / §5.6: the shell's failure policy parks the run (setup site ⇒
@@ -327,9 +339,9 @@ export class GraphOrchestrator extends RunHarness {
   }
 
   /** One round: classifier call (one assembler-driven retry), match, proposal. */
-  async _autoRound({ registry, models, model, fingerprint, extras, taskText, classify, round }) {
+  async _autoRound({ registry, models, requireModel = false, model, fingerprint, extras, taskText, classify, round }) {
     const input = {
-      taskText, extras, fingerprint, models, registry,
+      taskText, extras, fingerprint, models, requireModel, registry,
       domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
       // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
@@ -520,11 +532,18 @@ export class GraphOrchestrator extends RunHarness {
    *  that has not started. With a human in the loop that is the standard recipe, whose
    *  exact twin is the built-in Default (wf_default); with nobody in the loop it is the
    *  same recipe without Clarify, because spec D3 forbids stopping the run to ask. */
-  async _autoFallbackDefault({ err, registry, round }) {
+  async _autoFallbackDefault({ err, registry, round, nodeModel = null }) {
     const cause = firstLine(err?.detail || err?.message);
     const cls = classifyError(err);
     const recipe = RECIPE_SHAPES.find((r) => r.id === (this.humanInLoop ? 'prompt' : 'plan-partial'));
     const assembled = assembleShape(normalizeShape(jsonClone(recipe.shape)), { registry, humanInLoop: this.humanInLoop });
+    // Signed out (auto/runnable.mjs), the recipe's nodes have no model to fall back to: run
+    // every one on the model Auto itself runs on — routed by construction.
+    if (nodeModel) {
+      for (const n of assembled.template.nodes || []) {
+        if (n.kind === 'agent') assembled.tunables[n.id] = { ...(assembled.tunables[n.id] || {}), model: nodeModel, effort: '' };
+      }
+    }
     const match = findEquivalentWorkflow(assembled.template, await autoCandidates());
     this._log('orchestrator', 'warn',
       `auto: the workflow classifier failed (${cls}) after ${HELPER_RETRY_ATTEMPTS} retries — running the default workflow "${match ? match.candidate.name : assembled.shape.name}" instead: ${cause}`);

@@ -371,6 +371,11 @@ click Apply.
 - **`[claude-code:unrecognized_model]` in a bridged run's log** — harmless: the
   CLI prints it for every model id it does not know, which is every bridged id.
   Worca never reports it as a failure's cause; the real error follows it.
+- **An Auto run on a host without a Claude sign-in** (a hosted Worca that reaches
+  models only through a provider) — Auto offers the classifier only the models
+  routed through an endpoint or provider and has it name one on every stage; the
+  default model is Claude Code's own and cannot run there. If the classifier
+  still fails, the default workflow runs on the classifier's own model.
 - **"Your previous response had no visible output"** — the endpoint ended a turn
   with no text and no tool call (reasoning only, or nothing; OpenRouter's free
   Nvidia models do it now and then). The bridge turns such a turn into a retryable

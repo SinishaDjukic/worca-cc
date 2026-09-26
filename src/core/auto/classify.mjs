@@ -153,7 +153,7 @@ export function shapeForPrompt(shape) {
   return { ...shape, stages: (Array.isArray(shape.stages) ? shape.stages : []).map((u) => (isObject(u) && Array.isArray(u.parallel) ? { ...u, parallel: u.parallel.map(flatStage) } : flatStage(u))) };
 }
 
-export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false } = {}) {
+export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false } = {}) {
   const modelLines = models.filter((m) => m && !m.hidden).map((m) => `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}`);
   return [
     'You design a worca workflow for ONE software task. Reply with exactly one fenced ```json block containing a shape object and nothing else.',
@@ -183,7 +183,10 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
     '',
     RECIPE_GUIDE,
     '',
-    '## Models (use only these ids; omit both "model" and "effort" to run on the default model — an effort without a model is rejected)',
+    requireModel
+      // Signed out (auto/runnable.mjs): the default model is the CLI's own and cannot run here.
+      ? '## Models (use only these ids; every stage MUST name one of these models — this install has no default model; an effort without a model is rejected)'
+      : '## Models (use only these ids; omit both "model" and "effort" to run on the default model — an effort without a model is rejected)',
     ...modelLines,
     'Tuning guide: planning and review stages deserve the strongest model at high effort; producer stages (checklist, decomposer) the cheapest; the implementer a strong model at medium or high effort; set fanOut only where allowed and only for wide tasks.',
     'size and signals are shown to the user as chips: keep them short and literal.',
@@ -223,7 +226,7 @@ export function parseShapeReply(text) {
 
 /** Catalog check of the per-stage model/effort picks; canonicalises the id casing IN PLACE.
  *  Hidden catalog entries are accepted (a hidden id still resolves), they are just never offered. */
-export function checkShapeModels(shape, models) {
+export function checkShapeModels(shape, models, { requireModel = false } = {}) {
   const byId = new Map((models || []).map((m) => [String(m.id).toLowerCase(), m]));
   const issues = [];
   for (const st of flat(shape)) {
@@ -235,6 +238,8 @@ export function checkShapeModels(shape, models) {
       if (t.effort !== undefined && !(m.efforts || []).includes(t.effort)) issues.push({ code: 'BAD_EFFORT', message: `stage "${st.id}": model ${m.id} has no effort "${t.effort}"`, stageId: st.id });
     } else if (t.effort !== undefined) {
       issues.push({ code: 'EFFORT_WITHOUT_MODEL', message: `stage "${st.id}": an effort needs a model`, stageId: st.id });
+    } else if (requireModel) {
+      issues.push({ code: 'MISSING_MODEL', message: `stage "${st.id}": needs a model — this install has no default model (Claude Code is not signed in)`, stageId: st.id });
     }
   }
   return issues;
@@ -254,7 +259,7 @@ export function withCardsSignal(shape, n) {
  */
 export async function classifyTask(input, deps = {}) {
   const {
-    taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null,
+    taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null, requireModel = false,
     model, modelEnv, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook = false, timeoutMs,
   } = input || {};
   const timeout = Number.isFinite(timeoutMs) ? timeoutMs : (repoLook ? REPO_LOOK_TIMEOUT_MS : CLASSIFIER_TIMEOUT_MS);
@@ -266,7 +271,7 @@ export async function classifyTask(input, deps = {}) {
     return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
   }
   const known = new Set(agents.map((a) => a.key));
-  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook });
+  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel });
   const nudge = repoLook ? ' Do not spend more tool calls: reply with the shape now.' : '';
   let fb = [...feedback];
   let prior = priorShape;
@@ -345,7 +350,7 @@ export async function classifyTask(input, deps = {}) {
       try { shape = normalizeShape(raw); } catch (e) { if (e instanceof ShapeError) issues = e.issues; else throw e; }
       if (shape) {
         for (const st of flat(shape)) if (!known.has(st.agent)) issues.push({ code: 'UNKNOWN_AGENT', message: `stage "${st.id}": unknown agent "${st.agent}"`, stageId: st.id });
-        issues.push(...checkShapeModels(shape, models));
+        issues.push(...checkShapeModels(shape, models, { requireModel }));
       }
     }
     if (!issues.length) return { shape: withCardsSignal(shape, agents.length), warnings, attempts: attempt, costUsd, usage, raw: text, model: model || null };

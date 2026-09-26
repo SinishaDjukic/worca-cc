@@ -68,6 +68,7 @@ const state = {
 
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
+import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { decorFromState, applyDecor, isGraphManifest } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -1086,6 +1087,9 @@ function handleServerMessage(msg) {
   // resurrect the phantom.)
   if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
+  // A reconnect re-subscribes and the server replays the run's buffer: skip what this page
+  // already applied, or every earlier log line shows twice (ws-seq.mjs).
+  if (alreadyApplied(r, msg)) return;
 
   switch (msg.type) {
     case 'log':
@@ -1149,6 +1153,7 @@ function handleServerMessage(msg) {
 function onHello(msg) {
   const ws = state.ws;
   const list = Array.isArray(msg.runs) ? msg.runs : [];
+  noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
 
   if (!helloSeeded) {
     helloSeeded = true;
