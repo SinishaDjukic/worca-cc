@@ -8,6 +8,7 @@
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { resolveModelEnv, resolveModelCost } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
+import { classifyError } from '../recoverable-error.mjs';
 import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
 import { RECIPE_GUIDE, mockShapeFor } from './recipes.mjs';
 
@@ -27,7 +28,12 @@ export const VOCAB_LIMITS = Object.freeze({ maxAgents: 32, purpose: 300, role: 4
 export class ClassifierError extends Error {
   /** `costUsd`/`usage` = what the FAILED attempts already spent (two billed replies
    *  behind CLASSIFIER_FAILED, a partial reply behind a timeout): the caller books it. */
-  constructor(code, detail, issues = [], { costUsd = 0, usage = null } = {}) {
+  /** `errorClass` = the recovery class of the runner failure behind it
+   *  (recoverable-error.mjs), stamped so classifyError() reads it instead of sniffing
+   *  the wrapped message: a rate_limit/network cause is retried and, if it outlasts
+   *  the retries, the run falls back to the default workflow. Every other failure — a
+   *  timeout, an unusable reply — stays null and keeps the D17 error-pause. */
+  constructor(code, detail, issues = [], { costUsd = 0, usage = null, errorClass = null } = {}) {
     super(`${code === 'CLASSIFIER_TIMEOUT' ? 'the workflow classifier timed out' : 'the workflow classifier failed'}: ${detail}`);
     this.name = 'ClassifierError';
     this.code = code;
@@ -35,6 +41,7 @@ export class ClassifierError extends Error {
     this.issues = issues;
     this.costUsd = Number.isFinite(Number(costUsd)) ? Number(costUsd) : 0;
     this.usage = usage;
+    this.errorClass = errorClass;
   }
 }
 
@@ -323,7 +330,7 @@ export async function classifyTask(input, deps = {}) {
         fb = [...fb, `Your previous attempt ran out of turns before replying with a shape.${nudge || ' Reply with the shape now.'}`];
         continue;
       }
-      throw new ClassifierError('CLASSIFIER_FAILED', err?.message || String(err), [], { costUsd, usage });
+      throw new ClassifierError('CLASSIFIER_FAILED', err?.message || String(err), [], { costUsd, usage, errorClass: classifyError(err) });
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener?.('abort', onOuterAbort);

@@ -407,6 +407,73 @@ export function isLocalBaseUrl(v) {
 }
 
 /**
+ * Whether a base URL is OpenRouter's (openrouter.ai or a subdomain). The
+ * bridge then speaks OpenRouter's dialect of chat completions: usage
+ * accounting, unified `reasoning`, provider routing and attribution headers.
+ */
+export function isOpenRouterBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  const host = new URL(v.trim()).hostname.toLowerCase();
+  return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+}
+
+/** OpenRouter's provider sort orders (provider routing). */
+export const OPENROUTER_SORTS = Object.freeze(['price', 'throughput', 'latency']);
+
+/** A list of non-empty trimmed strings, or a throw naming the field. */
+function stringList(v, field) {
+  if (!Array.isArray(v)) throw new Error(`${field} must be an array of strings`);
+  const out = [];
+  for (const s of v) {
+    if (typeof s !== 'string') throw new Error(`${field} must be an array of strings`);
+    if (s.trim()) out.push(s.trim());
+  }
+  return out;
+}
+
+/**
+ * Validate an `upstream.openrouter` block — OpenRouter's request options,
+ * sent only when the entry's base URL is OpenRouter's:
+ * `{ models?: string[], provider?: { order?: string[], allow_fallbacks?: boolean, sort?: 'price'|'throughput'|'latency' } }`.
+ * `models` is the fallback list tried after the entry's own model. Returns the
+ * normalized block, or undefined when nothing is set. Throws.
+ */
+export function assertOpenRouterOptions(o) {
+  if (o === undefined || o === null) return undefined;
+  if (typeof o !== 'object' || Array.isArray(o)) throw new Error('upstream.openrouter must be an object');
+  const out = {};
+  for (const k of Object.keys(o)) {
+    if (k !== 'models' && k !== 'provider') throw new Error(`unknown upstream.openrouter key ${JSON.stringify(k)} — allowed: models, provider`);
+  }
+  if (o.models !== undefined && o.models !== null) {
+    const models = stringList(o.models, 'upstream.openrouter.models');
+    if (models.length) out.models = models;
+  }
+  const p = o.provider;
+  if (p !== undefined && p !== null) {
+    if (typeof p !== 'object' || Array.isArray(p)) throw new Error('upstream.openrouter.provider must be an object');
+    const provider = {};
+    for (const k of Object.keys(p)) {
+      if (!['order', 'allow_fallbacks', 'sort'].includes(k)) throw new Error(`unknown upstream.openrouter.provider key ${JSON.stringify(k)} — allowed: order, allow_fallbacks, sort`);
+    }
+    if (p.order !== undefined && p.order !== null) {
+      const order = stringList(p.order, 'upstream.openrouter.provider.order');
+      if (order.length) provider.order = order;
+    }
+    if (p.allow_fallbacks !== undefined && p.allow_fallbacks !== null) {
+      if (typeof p.allow_fallbacks !== 'boolean') throw new Error('upstream.openrouter.provider.allow_fallbacks must be true or false');
+      provider.allow_fallbacks = p.allow_fallbacks;
+    }
+    if (p.sort !== undefined && p.sort !== null && p.sort !== '') {
+      if (!OPENROUTER_SORTS.includes(p.sort)) throw new Error(`upstream.openrouter.provider.sort must be one of ${OPENROUTER_SORTS.join(' | ')}`);
+      provider.sort = p.sort;
+    }
+    if (Object.keys(provider).length) out.provider = provider;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
  * Validate a model `upstream` block. Returns the normalized shape or undefined
  * (for null/undefined); THROWS on malformed input with a message naming the
  * field. Secrets (`apiKey`) are literal strings or whole-value `${VAR}` refs.
@@ -453,6 +520,11 @@ export function assertModelUpstream(upstream) {
   }
   const caps = assertModelCapabilities(upstream.capabilities);
   if (caps) out.capabilities = caps;
+  if (upstream.openrouter !== undefined && upstream.openrouter !== null) {
+    if (provider !== 'openai') throw new Error('upstream.openrouter is only for the openai provider (an OpenRouter base URL)');
+    const or = assertOpenRouterOptions(upstream.openrouter);
+    if (or) out.openrouter = or;
+  }
   return out;
 }
 

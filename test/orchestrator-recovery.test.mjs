@@ -134,6 +134,30 @@ test('auto: bounded retry then PAUSE when a transient error never clears', async
   assert.equal(calls, 4);
 });
 
+// OpenRouter's `:free` pool: a 429 for one request, whatever worca's own rate. The
+// run retries it like any rate limit, logs each wait, then pauses naming the cause.
+const POOL_ERR = () => new Error('claude exited with code 1: API Error: Request rejected (429) · openai: rate limited (429) — qwen/qwen3.8-27b:free is temporarily rate-limited upstream');
+
+test('auto: a shared-pool 429 retries with logged waits, then pauses naming the shared pool', async () => {
+  const dir = gitDir();
+  let calls = 0;
+  const logs = [];
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: async () => { calls++; throw POOL_ERR(); }, verifier: okVerifier },
+  });
+  orch.on('log', (l) => logs.push(l));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused');
+  assert.equal(res.reason, 'recoverable');
+  assert.equal(calls, 4, '1 initial + 3 retries');
+  const waits = logs.filter((l) => /retrying in \d+(\.\d+)?s \(retry \d\/\d\)/.test(l.text || ''));
+  assert.equal(waits.length, 3, 'each wait is logged');
+  assert.match(res.detail || '', /^rate_limit: .*rate-limited upstream/);
+  assert.match(res.detail || '', /shared free pool/);
+  assert.match(res.detail || '', /not worca's max-concurrent/);
+});
+
 test('auto: auth error pauses immediately — a 7s backoff cannot re-login', async () => {
   const dir = gitDir();
   let calls = 0;

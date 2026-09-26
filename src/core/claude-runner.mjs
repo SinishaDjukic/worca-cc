@@ -42,6 +42,7 @@ import { createInterface } from 'node:readline';
 import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
 import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
+import { bridgeEvents } from './bridge/telemetry.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
 // The offline classifier and the shape normalizer the mock ask role answers
@@ -162,6 +163,39 @@ function spawnFailure(bin, err, prefix) {
 // does NOT ride on the capped message: recovery markers are classified line-by-
 // line as stderr streams (see rlErr) and stamped on the error as `errorClass`.
 const STDERR_DETAIL_MAX = 2000;
+
+// stderr lines the CLI prints on spawns that go on to succeed, which are never
+// the cause of a failure. `[claude-code:unrecognized_model]` fires on EVERY spawn
+// whose model id the CLI does not know — every bridged or endpoint-routed catalog
+// id — so as exit detail it masked the real cause (a 429 carried on the stdout
+// result) and classified null, which kept the rate-limit retry from running.
+// Such a line is still streamed as a stderr event; it only stops being evidence.
+export const BENIGN_STDERR_PATTERNS = Object.freeze([
+  /^\[claude-code:unrecognized_model\]/,
+]);
+
+/** Whether a stderr line is a known-benign CLI notice (BENIGN_STDERR_PATTERNS). */
+export function isBenignStderrLine(line) {
+  const t = String(line ?? '').trim();
+  return !!t && BENIGN_STDERR_PATTERNS.some((re) => re.test(t));
+}
+
+// A bridged spawn's base URL names its catalog id and run tag (bridge/server.mjs
+// bridgeBaseUrl: …/m/<id>[/r/<tag>]). Null for any other endpoint.
+const BRIDGE_PATH_RE = /\/m\/([^/?#]+)(?:\/r\/([^/?#]+))?\/?$/;
+function bridgeSpawnKey(modelEnv) {
+  const url = modelEnv && typeof modelEnv.ANTHROPIC_BASE_URL === 'string' ? modelEnv.ANTHROPIC_BASE_URL : '';
+  const m = /^https?:\/\/127\.0\.0\.1:\d+\//.test(url) ? BRIDGE_PATH_RE.exec(url) : null;
+  if (!m) return null;
+  try {
+    return { catalogId: decodeURIComponent(m[1]).toLowerCase(), tag: m[2] ? decodeURIComponent(m[2]) : '' };
+  } catch { return null; }
+}
+
+// The CLI reports an upstream API failure as an assistant text block ("API Error:
+// Request rejected (429) · …"), usually repeated in the is_error result. The
+// assistant copy is kept as the fallback detail for an exit without a result.
+const API_ERROR_TEXT_RE = /^API Error\b/;
 
 /**
  * Translate a pipeline "effort" level into claude CLI argv additions. This is
@@ -771,6 +805,19 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
     // non-zero exit surfaces the real cause instead of an opaque "no stderr".
     let errorDetail = '';
+    let apiErrorText = '';   // the last "API Error: …" assistant text (API_ERROR_TEXT_RE)
+    // A bridged spawn: the in-process bridge records the upstream's own reason
+    // (bridge/telemetry.mjs 'failure'), matched on this spawn's catalog id + tag
+    // as model-test.mjs does. The last fallback before the CLI's bare notice, so
+    // a CLI that exits without an API Error line still names the real cause.
+    let bridgeFailureText = '';
+    const bridgeKey = bridgeSpawnKey(modelEnv);
+    const onBridgeFailure = (e) => {
+      if (e && e.message && String(e.catalogId || '').toLowerCase() === bridgeKey.catalogId && (e.tag || '') === bridgeKey.tag) {
+        bridgeFailureText = String(e.message);
+      }
+    };
+    if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
     let settled = false;
 
     const onAbort = () => {
@@ -800,6 +847,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
       cleanupStaged();
       fn(arg);
     };
@@ -822,7 +870,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
         safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
       }
-      if (evt?.type === 'assistant' && text) assistantText += text;
+      if (evt?.type === 'assistant' && text) {
+        assistantText += text;
+        if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
+      }
       if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
       // Remember the most specific error text we see, for the non-zero-exit path.
       if (evt?.type === 'result' && evt.is_error) {
@@ -867,7 +918,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       // Classify BEFORE buffering: the class must see every line ever printed —
       // an early 401 or session-limit notice followed by hundreds of KB of MCP
       // chatter would otherwise scroll past both the trim and the tail cap.
-      stderrClass = strongestClass(stderrClass, classifyError(line));
+      if (!isBenignStderrLine(line)) stderrClass = strongestClass(stderrClass, classifyError(line));
       stderrBuf += line + '\n';        // still the source of the exit-code detail
       // Rolling tail: bound memory against chatty MCP servers. Trim at 4x the
       // cap down to 2x — amortized, and the kept tail always exceeds
@@ -893,8 +944,12 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         return;
       }
       if (code !== 0) {
-        const fromStderr = stderrBuf.trim();
-        const raw = fromStderr || errorDetail || 'no stderr';
+        // Benign notices are not evidence (BENIGN_STDERR_PATTERNS): stderr feeds
+        // the detail only when something else is left, else the stream's own
+        // error wins. A notice alone still beats the opaque "no stderr".
+        const fromStderr = stderrBuf.split('\n').filter((l) => !isBenignStderrLine(l)).join('\n').trim();
+        const streamDetail = errorDetail || apiErrorText || bridgeFailureText;
+        const raw = fromStderr || streamDetail || stderrBuf.trim() || 'no stderr';
         // Tail, not head: the terminal cause sits at the END of a long stderr.
         const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
         const err = new Error(`${bin} exited with code ${code}: ${detail}`);
@@ -903,7 +958,11 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         // stdout errorDetail. classifyError() returns this stamp verbatim, so
         // the tail cap above can never starve recovery — or flip an early auth
         // failure into 'network' because connection chatter filled the tail.
-        err.errorClass = fromStderr ? stderrClass : classifyError(raw);
+        // A stream-borne API error (a 429 in the result) counts even when real
+        // stderr chatter fed the message.
+        err.errorClass = fromStderr
+          ? strongestClass(stderrClass, streamDetail ? classifyError(streamDetail) : null)
+          : classifyError(raw);
         // Mark the origin channel so the orchestrator can tag its `error` log
         // line with stream:'err' without sniffing the message. Absent when the
         // detail came from the stdout `result` envelope (the common case — see

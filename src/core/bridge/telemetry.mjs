@@ -46,8 +46,35 @@ export function bridgeCallsFor(tag) {
   return s ? { ...s } : { initiated: 0, continued: 0, errors: 0 };
 }
 
-/** Forget a tag's counters (a finished run). */
-export function forgetBridgeTag(tag) { calls.delete(tag || ''); }
+// The USD an upstream itself reported for a tag's calls (OpenRouter's
+// usage.cost). Kept apart from the call counters: a priced call is the
+// exception, and the run harness prefers this figure over the CLI's $0.
+const costs = new Map();   // tag -> { costUsd, calls }
+
+/** Book the cost one upstream call reported. Ignores anything but a finite, non-negative number. */
+export function recordBridgeCost({ tag, costUsd }) {
+  const n = Number(costUsd);
+  if (costUsd == null || !Number.isFinite(n) || n < 0) return;
+  const k = tag || '';
+  let c = costs.get(k);
+  if (!c) {
+    if (costs.size >= MAX_TAGS) costs.delete(costs.keys().next().value);
+    c = { costUsd: 0, calls: 0 };
+    costs.set(k, c);
+  }
+  // Rounded to 1e-9 USD: summing float fractions of a cent would otherwise drift.
+  c.costUsd = Math.round((c.costUsd + n) * 1e9) / 1e9;
+  c.calls += 1;
+}
+
+/** The upstream-reported cost for a tag: {costUsd, calls}, or null when no call reported one. */
+export function bridgeCostFor(tag) {
+  const c = costs.get(tag || '');
+  return c ? { ...c } : null;
+}
+
+/** Forget a tag's counters and cost (a finished run). */
+export function forgetBridgeTag(tag) { calls.delete(tag || ''); costs.delete(tag || ''); }
 
 /** Test hook. */
-export function _resetBridgeTelemetry() { calls.clear(); }
+export function _resetBridgeTelemetry() { calls.clear(); costs.clear(); }

@@ -12,6 +12,7 @@
 // cost of a tool block appearing a moment later than its first delta.
 
 import { randomBytes } from 'node:crypto';
+import { CHAT_REASONING_SIGNATURE, chatReasoningText } from './common.mjs';
 
 /** finish_reason -> stop_reason (§5.5). */
 export function mapStopReason(finish, { emitted = false } = {}) {
@@ -60,11 +61,13 @@ export class ChatStreamTranslator {
     this.started = false;
     this.nextIndex = 0;
     this.textIndex = null;          // open text block index, or null
+    this.thinkIndex = null;         // open thinking block index, or null
     this.tools = new Map();         // tool_calls index -> {id, name, args, order}
     this.toolOrder = [];
     this.flushedTools = 0;          // how many of toolOrder have been emitted
     this.finishReason = null;
     this.usage = null;
+    this.costUsd = null;            // the upstream's own USD cost (OpenRouter usage.cost), when reported
     this.emittedAny = false;
     this.contentFilter = false;
   }
@@ -90,6 +93,17 @@ export class ChatStreamTranslator {
     const i = this.textIndex;
     this.textIndex = null;
     return [{ event: 'content_block_stop', data: { type: 'content_block_stop', index: i } }];
+  }
+
+  /** Close the open thinking block, signing it as ours (common.mjs#CHAT_REASONING_SIGNATURE). */
+  _closeThinking() {
+    if (this.thinkIndex === null) return [];
+    const index = this.thinkIndex;
+    this.thinkIndex = null;
+    return [
+      { event: 'content_block_delta', data: { type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: CHAT_REASONING_SIGNATURE } } },
+      { event: 'content_block_stop', data: { type: 'content_block_stop', index } },
+    ];
   }
 
   /** Emit every buffered tool call not yet emitted (in first-seen order). */
@@ -119,12 +133,31 @@ export class ChatStreamTranslator {
       out.push({ event: 'error', data: { type: 'error', error: { type: 'api_error', message: `upstream stream error: ${msg}` } } });
       return out;
     }
-    if (chunk.usage && typeof chunk.usage === 'object') this.usage = chunk.usage;
+    if (chunk.usage && typeof chunk.usage === 'object') {
+      this.usage = chunk.usage;
+      const cost = Number(chunk.usage.cost);
+      if (chunk.usage.cost != null && Number.isFinite(cost) && cost >= 0) this.costUsd = cost;
+    }
     const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : null;
     if (!choice) return out;
     const delta = choice.delta || {};
 
+    // Reasoning streams first on a reasoning model; one live thinking block per
+    // contiguous run, closed before any text or tool block starts.
+    const reasoning = chatReasoningText(delta);
+    if (reasoning) {
+      if (this.thinkIndex === null) {
+        out.push(...this._closeText());
+        if (this.toolOrder.length > this.flushedTools) out.push(...this._flushTools());
+        this.thinkIndex = this.nextIndex++;
+        out.push({ event: 'content_block_start', data: { type: 'content_block_start', index: this.thinkIndex, content_block: { type: 'thinking', thinking: '', signature: '' } } });
+      }
+      out.push({ event: 'content_block_delta', data: { type: 'content_block_delta', index: this.thinkIndex, delta: { type: 'thinking_delta', thinking: reasoning } } });
+      this.emittedAny = true;
+    }
+
     if (typeof delta.content === 'string' && delta.content.length) {
+      out.push(...this._closeThinking());
       // Text after tool calls: the tools are complete — flush them first.
       if (this.toolOrder.length > this.flushedTools) { out.push(...this._closeText(), ...this._flushTools()); }
       if (this.textIndex === null) {
@@ -142,7 +175,7 @@ export class ChatStreamTranslator {
         let t = this.tools.get(key);
         if (!t) {
           // A new tool call: text before it is complete; earlier tool calls are complete.
-          out.push(...this._closeText());
+          out.push(...this._closeThinking(), ...this._closeText());
           out.push(...this._flushTools());
           t = { id: tc.id || newToolUseId(), name: '', args: '' };
           this.tools.set(key, t);
@@ -164,6 +197,7 @@ export class ChatStreamTranslator {
   /** End of stream: close blocks, emit message_delta + message_stop. */
   finish() {
     const out = this._start();
+    out.push(...this._closeThinking());
     // Cut off mid tool call (finish_reason `length` — the output cap, or on a
     // small local model the context window filling up): the last call's
     // arguments are unterminated JSON. Forwarded, the CLI rejects it as an

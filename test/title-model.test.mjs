@@ -80,6 +80,35 @@ test('generateTitle spawns with the RUN model and --effort low when nothing else
   }
 });
 
+test('generateTitle retries a rate-limited call (recovery backoff) and titles on the retry', POSIX_SHIM, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-title-429-'));
+  const bin = join(dir, 'fake-claude.sh');
+  const count = join(dir, 'count');
+  const fail = JSON.stringify({ type: 'result', is_error: true, result: 'API Error: Request rejected (429) · openai: rate limited (429)' });
+  const ok = JSON.stringify({ type: 'result', result: 'Retried Title' });
+  // First call: a 429 on the result frame + the benign notice on stderr, exit 1. Second: a title.
+  await writeFile(bin, [
+    '#!/bin/sh',
+    `if [ -f ${JSON.stringify(count)} ]; then printf '%s\\n' '${ok}'; exit 0; fi`,
+    `touch ${JSON.stringify(count)}`,
+    `printf '%s\\n' '[claude-code:unrecognized_model] {"model":"m1"}' 1>&2`,
+    `printf '%s\\n' '${fail}'`,
+    'exit 1',
+  ].join('\n') + '\n', 'utf8');
+  await chmod(bin, 0o755);
+  const prev = { WORCA_MOCK: process.env.WORCA_MOCK, WORCA_RECOVERY_BACKOFF_MS: process.env.WORCA_RECOVERY_BACKOFF_MS };
+  delete process.env.WORCA_MOCK; process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
+  const errors = [];
+  try {
+    const t = await generateTitle('some task', { cwd: dir, bin, runModel: 'm1', onError: (i) => errors.push(i) });
+    assert.equal(t, 'Retried Title');
+    assert.equal(errors.length, 0, 'a call that recovered reports nothing');
+  } finally {
+    for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('generateTitle reports a failed call ONCE through onError (with the model), still returns ""', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-cc-title-err-'));
   const prev = process.env.WORCA_MOCK;

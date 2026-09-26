@@ -2833,6 +2833,10 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-conn-note{margin:0;}
 .mvi-tbl{margin-top:8px;}
 .mvi-tbl td{vertical-align:top;}
+/* A hosted catalog's filters (OpenRouter lists hundreds): the shared .chip-select pills, one row. */
+.mvi-or-filters{margin-top:10px;}
+.mvi-or-filters .mvi-f-ctx{padding:2px 6px;font-size:12.5px;min-height:0;}
+.mv-pv-presets{display:block;margin-top:4px;}
 .mvi-tbl .mvi-id{display:block;margin:2px 0 0;font-family:var(--mono);}
 .mvi-tbl tr.mvi-disabled{opacity:.55;}
 .mvi-status{color:var(--ink-3);font-size:12px;}

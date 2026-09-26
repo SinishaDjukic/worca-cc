@@ -13,11 +13,20 @@ import { mapUpstreamError, mapNetworkError, bridgeErrors, anthropicError, isFail
 import { copilotToken, invalidateCopilotToken, copilotApiHost, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
 import { upstreamSettings, providerReadiness } from './registry.mjs';
 import { KeyedSemaphore } from './semaphore.mjs';
-import { recordBridgeCall, recordBridgeError } from './telemetry.mjs';
+import { recordBridgeCall, recordBridgeError, recordBridgeCost } from './telemetry.mjs';
+import { isOpenRouter, adaptOpenRouterChatBody, OPENROUTER_HEADERS } from './openrouter.mjs';
+import { unsupportedSchemaKeyword, withToolSchemaKeywordsDropped } from './translate/schema-keywords.mjs';
 
 export const semaphore = new KeyedSemaphore();
 const PING_INTERVAL_MS = 15_000;
 const warned = new Set();
+
+// Tool-schema keywords an upstream model refused (translate/schema-keywords.mjs),
+// learned per provider + base URL + upstream model for the life of the process,
+// so only the first request after a boot pays the refusal round trip.
+const schemaKeywordDrops = new Map();
+const MAX_SCHEMA_KEYWORD_RETRIES = 4;
+export function _resetSchemaKeywordDrops() { schemaKeywordDrops.clear(); }
 
 /** Once-per-process warning (dropped fields, queue notices). */
 function warnOnce(key, line, log) {
@@ -65,7 +74,12 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
   const base = (us.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
   return {
     url: `${base}/${us.api === 'openai-responses' ? 'responses' : 'chat/completions'}`,
-    headers: { 'content-type': 'application/json', ...(us.apiKey ? { authorization: `Bearer ${us.apiKey}` } : {}), ...us.headers },
+    headers: {
+      'content-type': 'application/json',
+      ...(us.apiKey ? { authorization: `Bearer ${us.apiKey}` } : {}),
+      ...(isOpenRouter(base) ? OPENROUTER_HEADERS : {}),   // an entry's own headers still win
+      ...us.headers,
+    },
     provider: us.provider,
     initiator,
   };
@@ -111,9 +125,12 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         : `${w} has no ${responses ? 'Responses API' : 'chat/completions'} equivalent — dropped`;
       warnOnce(`${entry.id}:${w}`, `[worca] bridge: model ${JSON.stringify(entry.id)}: ${line}`, log);
     }
-    outBody = t.body;
+    outBody = !responses && isOpenRouter(us.baseUrl) ? adaptOpenRouterChatBody(t.body, us) : t.body;
   }
-  const payload = JSON.stringify(outBody);
+  const dropKey = `${us.provider}|${us.baseUrl || ''}|${us.model}`;
+  const drops = us.api === 'anthropic' ? null : schemaKeywordDrops.get(dropKey);
+  if (drops) outBody = withToolSchemaKeywordsDropped(outBody, drops);
+  let payload = JSON.stringify(outBody);
   if (Buffer.byteLength(payload) > PAYLOAD_CEILING_BYTES) {
     const e = bridgeErrors.tooLarge();
     return reply.json(e.status, e.body);
@@ -152,6 +169,21 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         const again = await prep.retryAuth();
         res = await doFetch(again);
       }
+      // A tool-schema keyword the upstream's grammar cannot take: drop it from
+      // every tool schema, remember it for this model, and retry — once per new
+      // keyword, so a refusal that survives the drop is answered, not looped.
+      for (let i = 0; i < MAX_SCHEMA_KEYWORD_RETRIES && res.status === 400 && us.api !== 'anthropic' && Array.isArray(outBody.tools); i++) {
+        const text = await res.clone().text().catch(() => '');
+        const kw = unsupportedSchemaKeyword(mapUpstreamError(400, text, { provider: us.provider }).body.error.message);
+        const known = schemaKeywordDrops.get(dropKey) || new Set();
+        if (!kw || known.has(kw)) break;
+        known.add(kw);
+        schemaKeywordDrops.set(dropKey, known);
+        warnOnce(`schema-kw:${dropKey}:${kw}`, `[worca] bridge: ${us.provider} model ${JSON.stringify(us.model)} refuses the tool-schema keyword "${kw}" — dropping it from tool schemas`, log);
+        outBody = withToolSchemaKeywordsDropped(outBody, known);
+        payload = JSON.stringify(outBody);
+        res = await doFetch(prep);
+      }
     } catch (err) {
       if (signal && signal.aborted) return reply.end();
       const e = mapNetworkError(err, { provider: us.provider });
@@ -188,6 +220,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         recordBridgeError({ tag, catalogId: entry.id, provider: us.provider, status: 200, message: e.body.error.message });
         return reply.json(e.status, e.body);
       }
+      if (us.api === 'openai-chat') recordBridgeCost({ tag, costUsd: j && j.usage ? j.usage.cost : undefined });
       return reply.json(200, us.api === 'openai-responses'
         ? toMessagesResponseFromResponses(j, { model: entry.id, upstreamModel: us.model })
         : toMessagesResponse(j, { model: entry.id }));
@@ -226,6 +259,7 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
         for (const obj of parser.end()) reply.write(serializeSse(booked(translator.push(obj))));
       }
       reply.write(serializeSse(booked(translator.finish())));
+      if (translator.costUsd != null) recordBridgeCost({ tag, costUsd: translator.costUsd });
     } finally {
       clearInterval(ping);
     }

@@ -299,3 +299,94 @@ test('spawn failure (ENOENT) stamps errorClass so the run can pause, not hard-fa
     return true;
   });
 });
+
+// ── benign CLI notices on stderr (bridged / endpoint-routed models) ──────────
+// The CLI prints `[claude-code:unrecognized_model] {...}` to stderr on EVERY spawn
+// whose model id it does not know — i.e. every bridged catalog id. It is not a
+// failure; when it fed the exit detail it masked the real cause (a 429 carried on
+// the stdout result), and it classified null so the rate-limit retry never ran.
+const NOTICE = '[claude-code:unrecognized_model] {"model":"local-qwen3-8-27b-free","query_source":"sdk"}';
+const API_429 = 'API Error: Request rejected (429) · openai: rate limited (429) — qwen/qwen3.8-27b:free is temporarily rate-limited upstream';
+
+test('a benign CLI notice on stderr does not mask the stdout API error', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 1,
+    stderr: NOTICE,
+    stdout:
+      `{"type":"assistant","message":{"content":[{"type":"text","text":${JSON.stringify(API_429)}}]}}\n` +
+      `{"type":"result","is_error":true,"result":${JSON.stringify(API_429)}}`,
+  });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.match(err.message, /exited with code 1: API Error: Request rejected \(429\)/);
+    assert.doesNotMatch(err.message, /unrecognized_model/, 'the notice is not the cause');
+    assert.equal(err.errorClass, 'rate_limit', 'the 429 on the stream classifies');
+    assert.equal(classifyError(err), 'rate_limit');
+    assert.equal(err.stream, undefined, 'the detail came from stdout, not stderr');
+    return true;
+  });
+});
+
+test('an API error that only arrives as assistant text still reaches the detail', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 1,
+    stderr: NOTICE,
+    stdout: `{"type":"assistant","message":{"content":[{"type":"text","text":${JSON.stringify(API_429)}}]}}`,
+  });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.match(err.message, /API Error: Request rejected \(429\)/);
+    assert.equal(err.errorClass, 'rate_limit');
+    return true;
+  });
+});
+
+test('real stderr beside a benign notice still wins, without the notice', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeShell(dir, [
+    `printf '%s\\n' '${NOTICE}' 1>&2`,
+    `printf '%s\\n' 'boom from stderr' 1>&2`,
+    'exit 1',
+  ]);
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.match(err.message, /exited with code 1: boom from stderr$/);
+    assert.equal(err.stream, 'err');
+    return true;
+  });
+});
+
+test('a benign notice alone (no other evidence) is still reported rather than "no stderr"', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, { code: 1, stderr: NOTICE });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.match(err.message, /unrecognized_model/);
+    assert.equal(err.errorClass, null);
+    return true;
+  });
+});
+
+// A bridged spawn whose CLI leaves only the benign notice (no API Error line, no
+// is_error result): the in-process bridge recorded the upstream's reason for this
+// catalog id + tag, and that reason is the detail — the Auto classifier and title
+// calls used to report the notice alone.
+test('a bridged spawn with only the notice reports the bridge failure for its model + tag', POSIX_SHIM, async () => {
+  const { recordBridgeError } = await import('../src/core/bridge/telemetry.mjs');
+  const dir = await makeTmpDir();
+  const bin = join(dir, 'slow-claude.sh');
+  await writeFile(bin, `#!/bin/sh\nsleep 0.4\nprintf '%s\\n' ${JSON.stringify(NOTICE)} 1>&2\nexit 1\n`, 'utf8');
+  await chmod(bin, 0o755);
+  const modelEnv = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9/m/local-inkling-free/r/x%3An_plan%3A1', ANTHROPIC_AUTH_TOKEN: 't', ANTHROPIC_MODEL: 'local-inkling-free' };
+  const p = runClaude({ bin, prompt: 'hi', cwd: dir, model: 'local-inkling-free', modelEnv });
+  setTimeout(() => {
+    // another tag on the same model, and another model on this tag: both ignored
+    recordBridgeError({ tag: 'x:n_other:1', catalogId: 'local-inkling-free', provider: 'openai', status: 500, message: 'openai: not this one' });
+    recordBridgeError({ tag: 'x:n_plan:1', catalogId: 'other-model', provider: 'openai', status: 500, message: 'openai: nor this one' });
+    recordBridgeError({ tag: 'x:n_plan:1', catalogId: 'local-inkling-free', provider: 'openai', status: 403, message: 'openai: refused (403) — only available on agentic harnesses' });
+  }, 100);
+  await assert.rejects(() => p, (err) => {
+    assert.match(err.message, /refused \(403\) — only available on agentic harnesses/);
+    assert.doesNotMatch(err.message, /unrecognized_model|not this one|nor this one/);
+    assert.equal(err.errorClass, null, 'a policy refusal is permanent');
+    return true;
+  });
+});

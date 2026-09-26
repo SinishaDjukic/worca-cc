@@ -1,0 +1,40 @@
+{
+  "_note": "Trimmed from the live https://openrouter.ai/api/v1/models (2026-09-26): a free reasoning model, a priced one with cache rates, one without tools, one with image output, and the variable-price Auto router.",
+  "data": [
+    {
+      "id": "qwen/qwen3.8-27b:free", "name": "Qwen: Qwen3.8 27B (free)", "context_length": 262144,
+      "architecture": { "modality": "text+image+video->text", "input_modalities": ["text", "image", "video"], "output_modalities": ["text"] },
+      "pricing": { "prompt": "0", "completion": "0" },
+      "top_provider": { "context_length": 262144, "max_completion_tokens": 235929, "is_moderated": false },
+      "supported_parameters": ["max_tokens", "reasoning", "reasoning_effort", "temperature", "tool_choice", "tools", "top_p"]
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.5", "name": "Anthropic: Claude Sonnet 4.5", "context_length": 1000000,
+      "architecture": { "input_modalities": ["text", "image", "file"], "output_modalities": ["text"] },
+      "pricing": { "prompt": "0.000003", "completion": "0.000015", "input_cache_read": "0.0000003", "input_cache_write": "0.00000375" },
+      "top_provider": { "context_length": 1000000, "max_completion_tokens": 64000, "is_moderated": true },
+      "supported_parameters": ["max_tokens", "reasoning", "tools", "tool_choice"]
+    },
+    {
+      "id": "sao10k/l3-lunaris-8b", "name": "Sao10K: Llama 3 8B Lunaris", "context_length": 8192,
+      "architecture": { "input_modalities": ["text"], "output_modalities": ["text"] },
+      "pricing": { "prompt": "0.00000004", "completion": "0.00000005" },
+      "top_provider": { "context_length": 8192, "max_completion_tokens": null },
+      "supported_parameters": ["max_tokens", "temperature"]
+    },
+    {
+      "id": "google/gemini-3-pro-image", "name": "Google: Nano Banana Pro", "context_length": 65536,
+      "architecture": { "input_modalities": ["text", "image"], "output_modalities": ["image", "text"] },
+      "pricing": { "prompt": "0.000002", "completion": "0.000012" },
+      "top_provider": { "context_length": 65536, "max_completion_tokens": 32768 },
+      "supported_parameters": ["max_tokens", "temperature"]
+    },
+    {
+      "id": "openrouter/auto", "name": "Auto Router", "context_length": 2000000,
+      "architecture": { "input_modalities": ["text"], "output_modalities": ["text"] },
+      "pricing": { "prompt": "-1", "completion": "-1" },
+      "top_provider": { "context_length": null, "max_completion_tokens": null },
+      "supported_parameters": ["tools", "max_tokens"]
+    }
+  ]
+}

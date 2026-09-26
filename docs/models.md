@@ -161,9 +161,13 @@ list for anything else:
 
 An imported entry is bridged through the `openai` provider with the endpoint's
 base URL on the entry itself — so one catalog can hold an Ollama model and a
-llama.cpp model at once — priced **free**, and keyless when the URL is local. A
-second import refreshes the upstream and never overwrites a label, efforts or
-price you edited. Embedding models, and models whose server says they cannot call
+llama.cpp model at once — priced **free**, and keyless when the URL is local. Its
+id names the server (`ollama-…`, `llama-…`, `vllm-…`); a plain list on this
+machine or your network is `local-…`, and one on a hosted gateway is named after
+its host (`api.groq.com` → `groq-…`). A second import refreshes the upstream and
+never overwrites a label, efforts or price you edited — it finds the entry by
+the upstream id and base URL it points at, so an entry imported under an older
+id is refreshed in place, not duplicated. Embedding models, and models whose server says they cannot call
 tools, are listed but cannot be ticked: a pipeline agent needs tool calls.
 
 **The window is the one thing Worca will not guess.** Only the window the server
@@ -178,6 +182,88 @@ know it.
 ```
 worca models import openai [--base-url http://127.0.0.1:11434/v1] [--all | --pick id,id] [--yes]
 ```
+
+### OpenRouter
+
+OpenRouter is the **OpenAI-compatible** provider pointed at
+`https://openrouter.ai/api/v1` — not a provider of its own, so it shares that
+card's key and *Max concurrent requests*. On the Providers card, *Preset:
+OpenRouter* fills the base URL (and `${OPENROUTER_KEY}` when no key is set);
+*Test connection*, then *Save*. From a terminal:
+
+```
+worca models set openrouter apiKey='${OPENROUTER_KEY}'
+worca models test openrouter
+worca models import openrouter --search qwen --tools --min-context 128k
+```
+
+Keep the key as a `${VAR}` reference and export it where Worca starts. OpenRouter
+lists its models without a key, so a reachable list proves nothing about the key;
+*Test connection* also asks OpenRouter about the key itself and shows what it
+may still spend — credit left, the free-model requests left today and its rate
+limit (never the key). A key OpenRouter rejects fails the test.
+
+**Import reads what OpenRouter publishes.** The import is recognised by host, makes
+one call and reads, per model: the window OpenRouter serves (pinned as the Prompt
+limit — unlike Ollama, it serves what it lists), the output cap (pinned only while
+it leaves half the window for the prompt; a cap that is most of the window would
+overflow it on the first large turn), tool and reasoning support, image input, and
+the listed price, pinned per million tokens so the entry is not *cost not verified*
+(`:free` models import as Free; a variable price, like the Auto router's, is left
+unset). Models that cannot call tools, or do not reply in text, are listed but
+cannot be ticked. Ids keep the vendor — `openrouter-qwen-qwen3-8-27b-free` — since
+two vendors ship same-named models. The dialog adds *Free* and *Tools* filters and
+a minimum window to its text filter; the CLI has `--search`, `--free`, `--tools`
+and `--min-context`, which narrow both the listing and `--all`.
+
+**`:free` models and 429s.** A `:free` model runs on capacity OpenRouter shares
+with every user. While that pool is busy **every** request gets a 429 —
+`"limit_source": "upstream_provider_shared_pool"` — however few you send, so
+*Max concurrent requests* cannot help: it caps what Worca has in flight, not
+what OpenRouter will accept. For pipelines use the paid variant (a few cents a
+run for a 27B model), add your own provider key on OpenRouter (BYOK — OpenRouter
+then bills that provider's rate limits, not the shared pool), or give the model
+fallbacks. The run log shows OpenRouter's own explanation rather than "Provider
+returned error", a rate-limited step backs off and retries before it pauses, and
+Worca's small helper calls — the title and the Auto workflow classifier — retry
+too; a classifier that still fails falls back to the default workflow instead of
+failing the run. Settings › General picks the model for each helper call — *Title model* and
+*Auto workflow model* (`WORCA_AUTO_MODEL` overrides the latter) — so pointing both at
+a steadier model leaves a flaky free model touching only the pipeline steps.
+
+**Routing and fallbacks.** An OpenRouter model's *Connection › Advanced* takes
+fallback models — tried in order when the first is rate-limited or down (e.g.
+`qwen/qwen3.8-27b:free` falling back to `qwen/qwen3.8-27b`) — and OpenRouter's
+provider routing: a provider order, a sort (price, throughput or latency) and
+*allow other providers*. They are stored on the entry as
+`upstream.openrouter = {models?: [...], provider?: {order?, allow_fallbacks?, sort?}}`,
+validated on save, and sent only to OpenRouter. There is no CLI for them; edit
+the model.
+
+**What the bridge adds for OpenRouter** (recognised by base URL — openrouter.ai
+or a subdomain). Each request asks for usage accounting (`usage: {include: true}`)
+and the cost OpenRouter reports is booked per step — the real spend, fallbacks and
+BYOK included — in place of the CLI's $0 and of any pinned price. Effort goes as
+`reasoning: {effort}`, and a streamed `reasoning` delta shows as a thinking block;
+it is not carried into the next turn. (The same mapping picks up `reasoning_content`
+from vLLM and DeepSeek.) Requests carry OpenRouter's app attribution —
+`HTTP-Referer: https://worca.dev`, `X-OpenRouter-Title: Worca` (and the older
+`X-Title`), `X-OpenRouter-Categories: cloud-agent,cli-agent` — so every install
+reports as the one public Worca app and your activity page names it; a model's own
+`upstream.headers` still win. A 429 names the provider behind OpenRouter and the
+limit's source, e.g. `… rate-limited upstream … [upstream_provider_shared_pool]`.
+A 403 whose reason is not the key — some `:free` models are "only available on
+agentic harnesses" — reads `refused (403) — <OpenRouter's reason>`, not
+"authentication failed", and is never retried: it is a policy, not a blip.
+
+**Tool schemas an upstream cannot take.** Some providers compile tool parameter
+schemas into a decoding grammar that knows only part of JSON Schema and refuse the
+whole request over one keyword (`unsupported schema keyword "maxLength"`, from a
+tool of the CLI's own). The bridge drops the named keyword from every tool schema
+and retries, and keeps dropping it for that model until Worca restarts — the run
+log says so once. Such keywords only narrow what the model may send; the CLI still
+checks each tool call against the full schema. This applies to any
+OpenAI-compatible endpoint, not only OpenRouter.
 
 ### Import from Copilot
 
@@ -209,8 +295,11 @@ worca models login copilot [--accept-terms]
 worca models logout copilot
 worca models import copilot [--all | --pick id,id] [--yes]
 worca models import openai [--base-url <url>] [--all | --pick id,id] [--yes]
-worca models test <copilot|openai|anthropic>
+                  [--search <text>] [--free] [--tools] [--min-context <n|64k>]
+worca models import openrouter …        # the same, at https://openrouter.ai/api/v1
+worca models test <copilot|openai|anthropic|openrouter>
 worca models set openai apiKey='${OPENAI_KEY}' baseUrl=https://…/v1
+worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → OpenRouter
 ```
 
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.
@@ -274,6 +363,15 @@ click Apply.
   least **64k** (llama.cpp `-c 65536`) and set the model's Prompt limit to match.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
+- **OpenRouter 429 on a `:free` model** — OpenRouter's shared free pool is busy,
+  not your concurrency cap; see [OpenRouter](#openrouter).
+- **`[claude-code:unrecognized_model]` in a bridged run's log** — harmless: the
+  CLI prints it for every model id it does not know, which is every bridged id.
+  Worca never reports it as a failure's cause; the real error follows it.
+- **A rate-limited step** (429 / 529) retries three times, waiting 5s, 10s and
+  20s (longer when the upstream sends `retry-after`, at most 40s a wait), on top
+  of the CLI's own ~3 minutes of retries, then pauses as recoverable — resume it
+  once the limit clears.
 - **"prompt is too long" early in a run** — expected on a translated model:
   Copilot's prompt limits are well below Anthropic's, and the run compacts.
 - **"model not found"** — the upstream id is not offered to your account; pick

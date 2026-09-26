@@ -18,6 +18,10 @@
 //   LM Studio   GET {root}/api/v0/models  type (llm | vlm | embeddings), state, max_context_length,
 //                                       loaded_context_length.
 //   vLLM / other  GET {base}/models     ids, plus max_model_len where the server sets it.
+//   OpenRouter  GET {base}/models       recognised by its host and never probed: context_length and
+//                                       top_provider (the window it serves, the output cap),
+//                                       supported_parameters (tools, reasoning), modalities and
+//                                       per-token pricing — everything the generic list lacks.
 //
 // The window a model is SERVED with and the one it was TRAINED for are different numbers, and only
 // the served one may become a prompt limit: Ollama serves 4096 by default however large the model
@@ -25,11 +29,33 @@
 // built WITHOUT a prompt limit and the caller's warning says so — a wrong window is worse than
 // none, because the CLI would compact against a number the endpoint never had.
 
+import { isLocalBaseUrl } from '../../model-env.mjs';
+import { isOpenRouter } from '../openrouter.mjs';
+
 const SERVERS = Object.freeze({
-  'llama.cpp': 'llama.cpp', ollama: 'Ollama', lmstudio: 'LM Studio', vllm: 'vLLM', 'openai-compatible': 'OpenAI-compatible',
+  'llama.cpp': 'llama.cpp', ollama: 'Ollama', lmstudio: 'LM Studio', vllm: 'vLLM', openrouter: 'OpenRouter', 'openai-compatible': 'OpenAI-compatible',
 });
 /** The catalog-id prefix per server, so two endpoints' models never collide. */
-const ID_PREFIX = Object.freeze({ 'llama.cpp': 'llama', ollama: 'ollama', lmstudio: 'lmstudio', vllm: 'vllm', 'openai-compatible': 'local' });
+const ID_PREFIX = Object.freeze({ 'llama.cpp': 'llama', ollama: 'ollama', lmstudio: 'lmstudio', vllm: 'vllm', openrouter: 'openrouter', 'openai-compatible': 'local' });
+
+// Re-exported for the import's callers; the one host rule lives in model-env (via ../openrouter.mjs).
+export { isOpenRouter };
+
+/**
+ * The catalog-id prefix for a server at a base URL. A generic list used to be `local-` wherever it
+ * lived, so a model on a hosted gateway read as a local one; a remote host now names its own
+ * prefix (`api.groq.com` → `groq`), and only a local / private URL keeps `local`.
+ */
+export function endpointIdPrefix(server, baseUrl) {
+  if (server !== 'openai-compatible') return ID_PREFIX[server] || 'local';
+  if (isLocalBaseUrl(baseUrl)) return 'local';
+  let host = '';
+  try { host = new URL(String(baseUrl || '').trim()).hostname.toLowerCase(); } catch { return 'local'; }
+  const labels = host.split('.').filter(Boolean);
+  if (labels.length < 2) return 'local';   // a single-label name (`http://gw/v1`) is on your network
+  while (labels.length > 2 && ['api', 'www', 'llm', 'inference'].includes(labels[0])) labels.shift();
+  return (labels[0] || '').replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 16) || 'remote';
+}
 /** Below this a pipeline thrashes the CLI's auto-compact (docs/models.md Troubleshooting). */
 export const MIN_PIPELINE_WINDOW = 65536;
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -142,6 +168,56 @@ function openAiModels(list) {
   })).filter((m) => m.id);
 }
 
+/** A USD-per-token price string → USD per million tokens; null for a missing or negative one. */
+function perMillion(v) {
+  const n = Number.parseFloat(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 1e12) / 1e6;   // 0.000003 × 1e6 is 3.0000000000000004 in floating point
+}
+
+/**
+ * OpenRouter's listed price as a catalog `cost`: `{free:true}` for a zero price, `{perMtok}` for a
+ * real one, null when the listing has none or a variable one (the Auto router lists -1) — an
+ * unknown price is left unset ("cost not verified"), never claimed free.
+ */
+function openRouterPricing(p) {
+  if (!p || typeof p !== 'object') return null;
+  const input = perMillion(p.prompt); const output = perMillion(p.completion);
+  if (input === null || output === null) return null;
+  const cacheRead = perMillion(p.input_cache_read); const cacheWrite = perMillion(p.input_cache_write);
+  if (!input && !output && !cacheRead && !cacheWrite) return { free: true };
+  return { perMtok: { input, output, ...(cacheRead ? { cacheRead } : {}), ...(cacheWrite ? { cacheWrite } : {}) } };
+}
+
+const money = (n) => `$${Number(n.toFixed(2))}`;
+
+function openRouterModels(list) {
+  return (Array.isArray(list && list.data) ? list.data : []).map((m) => {
+    const arch = m.architecture || {};
+    const top = m.top_provider || {};
+    const params = Array.isArray(m.supported_parameters) ? m.supported_parameters : [];
+    const outputs = Array.isArray(arch.output_modalities) ? arch.output_modalities : ['text'];
+    const pricing = openRouterPricing(m.pricing);
+    const ctx = num(top.context_length) ?? num(m.context_length);
+    return {
+      id: String(m.id ?? ''),
+      name: String(m.name || m.id || ''),
+      kind: outputs.includes('text') ? 'llm' : 'other',
+      // OpenRouter serves the window it lists — unlike Ollama, there is no smaller default behind it.
+      servedContext: ctx,
+      trainedContext: null,
+      maxOutputTokens: num(top.max_completion_tokens),
+      toolCalls: params.includes('tools'),
+      vision: has(arch.input_modalities, 'image'),
+      reasoning: params.includes('reasoning') || params.includes('reasoning_effort'),
+      loaded: null,
+      pricing,
+      free: !!(pricing && pricing.free),
+      detail: !pricing ? 'variable price' : pricing.free ? 'free' : `${money(pricing.perMtok.input)} / ${money(pricing.perMtok.output)} per M`,
+    };
+  }).filter((m) => m.id);
+}
+
 /** What the caller must know before pinning a prompt limit on what this server reports. */
 function warningsFor(server, models, props) {
   const w = [];
@@ -156,6 +232,9 @@ function warningsFor(server, models, props) {
   }
   if (server === 'lmstudio' && models.some((m) => m.kind !== 'embedding' && !m.servedContext)) {
     w.push('LM Studio reports a model\'s real window only while it is loaded; for the others the number shown is what the model supports, and the prompt limit is left unset.');
+  }
+  if (server === 'openrouter' && models.some((m) => m.free)) {
+    w.push(':free models run on a pool OpenRouter shares with every user: while it is busy EVERY request gets a 429, however few you send — Max concurrent requests cannot help. For pipelines use the paid variant, add your own provider key on OpenRouter (BYOK), or give the model a fallback in its Connection.');
   }
   if (server === 'openai-compatible' && models.every((m) => !m.servedContext)) {
     w.push('This endpoint does not report context windows — set each model\'s prompt limit by hand after importing.');
@@ -181,6 +260,16 @@ export async function listEndpointModels(baseUrl, { apiKey = '', fetch: f = glob
   let server = 'openai-compatible';
   let models = [];
   let props = null;
+
+  if (isOpenRouter(base)) {
+    // A hosted API: probing it for llama.cpp / Ollama / LM Studio would cost three requests for
+    // three 404s. Its own /models is the whole answer.
+    const list = await json(f, `${base}/models`, opt);
+    if (!list) throw new Error(`no OpenAI-compatible model list at ${base}/models — is the base URL right?`);
+    models = openRouterModels(list);
+    models.sort((a, b) => (Number(b.kind === 'llm') - Number(a.kind === 'llm')) || a.id.localeCompare(b.id));
+    return { server: 'openrouter', serverLabel: SERVERS.openrouter, baseUrl: base, models, warnings: warningsFor('openrouter', models, null) };
+  }
 
   const props0 = await json(f, `${root}/props`, opt);
   if (props0 && (props0.default_generation_settings || props0.chat_template_caps)) {
@@ -221,21 +310,34 @@ export async function listEndpointModels(baseUrl, { apiKey = '', fetch: f = glob
  * A discovered model as a catalog entry (§8.4's Copilot shape, for a server you run).
  * `baseUrl` rides the ENTRY when it differs from the provider's, so one catalog can hold an Ollama
  * and a llama.cpp model at once. A prompt limit is pinned only from a window the server really
- * serves; `maxOutputTokens` is never guessed — no local server reports one.
+ * serves; `maxOutputTokens` is never guessed — no local server reports one. OpenRouter does, and
+ * its cap is pinned only while it leaves at least half the window for the prompt: a cap that is
+ * most of the window (235929 of 262144) becomes the CLI's max_tokens, and prompt + max_tokens
+ * then overflows the window on the first large turn.
  * @param {object} m           a row from listEndpointModels
  * @param {{server:string, baseUrl:string, providerBaseUrl?:string}} ctx
  */
 export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', baseUrl, providerBaseUrl = '' } = {}) {
+  const window = num(m.servedContext);
+  const outCap = num(m.maxOutputTokens);
   const capabilities = {
     ...(m.toolCalls === true || m.toolCalls === false ? { toolCalls: m.toolCalls } : {}),
     ...(m.vision === true ? { vision: true } : {}),
     ...(m.reasoning === true ? { reasoning: true } : {}),
-    ...(num(m.servedContext) ? { maxPromptTokens: num(m.servedContext) } : {}),
+    ...(window ? { maxPromptTokens: window } : {}),
+    ...(outCap && window && outCap <= window / 2 ? { maxOutputTokens: outCap } : {}),
   };
   const own = String(baseUrl || '').replace(/\/+$/, '');
   const provider = String(providerBaseUrl || '').replace(/\/+$/, '');
+  const hosted = server === 'openrouter';
+  // A hosted catalog keeps the vendor in the id (`qwen/…`, `anthropic/…`): the last path segment
+  // alone collides across vendors there. A local server's ids stay as they were.
+  const stem = hosted ? String(m.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'model' : slugModelId(m.id);
+  // A model on your own machine bills nothing; OpenRouter lists its price, and one it lists as
+  // variable is left unset rather than claimed free.
+  const cost = hosted ? (m.pricing || undefined) : { free: true };
   return {
-    id: `${ID_PREFIX[server] || 'local'}-${slugModelId(m.id)}`,
+    id: `${endpointIdPrefix(server, own)}-${stem}`,
     label: `${m.name || m.id} (${SERVERS[server] || 'local'})`,
     ...(m.reasoning === true ? {} : { efforts: ['medium'] }),
     upstream: {
@@ -243,13 +345,14 @@ export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', 
       ...(own && own !== provider ? { baseUrl: own } : {}),
       ...(Object.keys(capabilities).length ? { capabilities } : {}),
     },
-    cost: { free: true },       // a model on your own machine bills nothing; never "cost not verified"
+    ...(cost ? { cost } : {}),
   };
 }
 
 /** Whether a discovered model can carry a pipeline at all (the sheet greys the rest). */
 export function importableModel(m) {
   if (!m || m.kind === 'embedding') return { ok: false, why: 'an embedding model — not a chat model' };
+  if (m.kind === 'other') return { ok: false, why: 'does not reply in text — not a chat model' };
   if (m.toolCalls === false) return { ok: false, why: 'no tool calls — a pipeline agent cannot run without them' };
   return { ok: true };
 }

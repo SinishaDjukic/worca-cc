@@ -3,6 +3,7 @@
 // local count_tokens estimate (model-bridge-design.md §5.4 buffered path, §5.9).
 
 import { mapStopReason, mapUsage, newMessageId, newToolUseId, parsesAsJson, truncatedToolNote } from './stream.mjs';
+import { CHAT_REASONING_SIGNATURE, chatReasoningText } from './common.mjs';
 
 /**
  * @param {object} completion  the upstream JSON body
@@ -12,6 +13,8 @@ export function toMessagesResponse(completion, { model } = {}) {
   const choice = completion && Array.isArray(completion.choices) ? completion.choices[0] : null;
   const msg = (choice && choice.message) || {};
   const content = [];
+  const reasoning = chatReasoningText(msg);
+  if (reasoning) content.push({ type: 'thinking', thinking: reasoning, signature: CHAT_REASONING_SIGNATURE });
   if (typeof msg.content === 'string' && msg.content) content.push({ type: 'text', text: msg.content });
   const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
   const finish = choice ? choice.finish_reason : null;

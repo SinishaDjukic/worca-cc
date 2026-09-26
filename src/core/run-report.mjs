@@ -164,7 +164,8 @@ function templateShape(template, auto) {
   if (!template) return null;
   const id = template.id || '';
   const name = template.name || '';
-  const builtin = STOCK_WORKFLOW_NAMES.has(id) && auto?.via !== 'created';
+  // A classifier fallback records what it saved on `saved` (via is 'fallback').
+  const builtin = STOCK_WORKFLOW_NAMES.has(id) && auto?.via !== 'created' && auto?.saved !== 'created';
   const out = { builtin, id: builtin ? id : null };
   if (builtin) out.name = STOCK_WORKFLOW_NAMES.get(id) ?? '';
   else { out.id = id; out.name = name; }

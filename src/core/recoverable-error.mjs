@@ -37,6 +37,27 @@ export function classifyError(err) {
   return null;
 }
 
+// OpenRouter's `:free` models run on a donated provider pool that every OpenRouter
+// user shares: its 429 ("temporarily rate-limited upstream", limit_source
+// upstream_provider_shared_pool) arrives for a single request, whatever worca's
+// max-concurrent setting. Still class rate_limit (a retry can clear it); only the
+// final pause message changes, so it names the real cause and the real fixes.
+const SHARED_POOL_RE = /rate-limited upstream|upstream_provider_shared_pool/i;
+
+/** Whether a rate-limit error came from a provider's shared (free) pool. */
+export function isSharedPoolRateLimit(err) {
+  const msg = String((err && typeof err === 'object' ? err.message : err) ?? '');
+  return SHARED_POOL_RE.test(msg);
+}
+
+/** The fix text a rate-limit pause carries ('' when there is nothing specific to say). */
+export function rateLimitHint(err) {
+  if (!isSharedPoolRateLimit(err)) return '';
+  return "the provider's shared free pool is saturated — every user of this free model shares it, " +
+    "so this is not worca's max-concurrent setting. Use the paid variant, add your own provider key " +
+    '(BYOK) on the provider, or give the model a fallback model list';
+}
+
 // Precedence for folding per-line classes into the one whole-text class — the
 // SAME order as the regex chain above. First-match-wins there equals
 // strongest-class-wins here, because every per-line match (the patterns are

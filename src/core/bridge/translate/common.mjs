@@ -120,6 +120,37 @@ export function mapEffort(requested, capabilities = {}) {
   return atOrBelow.length ? atOrBelow[atOrBelow.length - 1] : levels[0];
 }
 
+/**
+ * The signature on a thinking block the CHAT translator emits. Chat
+ * completions returns reasoning as plain text with nothing to replay, but a
+ * thinking block needs a signature the CLI can carry back; this one tells the
+ * request side the block is ours and is dropped quietly on the next turn.
+ */
+export const CHAT_REASONING_SIGNATURE = 'worca.rsn.chat.v1';
+
+/**
+ * The reasoning text in a chat/completions delta or message: OpenRouter's
+ * `reasoning` (with `reasoning_details` beside it — the same text, so it is
+ * read only when `reasoning` is absent), vLLM / DeepSeek's
+ * `reasoning_content`. Encrypted details carry no text and are skipped.
+ * @returns {string}
+ */
+export function chatReasoningText(m) {
+  if (!m || typeof m !== 'object') return '';
+  if (typeof m.reasoning === 'string' && m.reasoning) return m.reasoning;
+  if (typeof m.reasoning_content === 'string' && m.reasoning_content) return m.reasoning_content;
+  if (Array.isArray(m.reasoning_details)) {
+    let s = '';
+    for (const d of m.reasoning_details) {
+      if (!d || typeof d !== 'object') continue;
+      if (d.type === 'reasoning.text' && typeof d.text === 'string') s += d.text;
+      else if (d.type === 'reasoning.summary' && typeof d.summary === 'string') s += d.summary;
+    }
+    return s;
+  }
+  return '';
+}
+
 const MARKER_PREFIX = 'worca.rsn.v1.';
 
 /**

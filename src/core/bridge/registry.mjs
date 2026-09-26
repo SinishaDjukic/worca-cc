@@ -83,6 +83,7 @@ export function upstreamSettings(upstream) {
     accountType: p === 'copilot' ? cfg.accountType : null,
     headers: upstream.headers || {},
     capabilities: upstream.capabilities || {},
+    ...(upstream.openrouter ? { openrouter: upstream.openrouter } : {}),
     maxConcurrent: cfg.maxConcurrent,
   };
 }
