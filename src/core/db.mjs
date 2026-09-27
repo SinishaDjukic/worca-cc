@@ -264,6 +264,7 @@ CREATE TABLE pipelines (
   workspace_meta  TEXT,  -- JSON: { workspaceId, workspaceName, projectKeys, projects[], checkpointRefs, branches, workspaceDescription }
   stepper         TEXT,  -- JSON: buildStepperManifest() snapshot
   tools           TEXT   -- JSON: detectTools()/resolved tool descriptor
+  mock            INTEGER NOT NULL DEFAULT 0,  -- 0 = false, 1 = true
   -- resume_point TEXT (added v5): JSON dispatch position of a paused run (NULL otherwise)
 );
 CREATE INDEX idx_pipelines_project_started   ON pipelines (project_key, started_at);

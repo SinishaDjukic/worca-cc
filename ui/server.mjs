@@ -3016,10 +3016,15 @@ app.get('/api/runs', async (req, res) => {
       const ws = await readWorkspace(workspaceId);
       if (!ws) return res.status(404).json({ error: 'workspace not found' });
       const primaryDir = ws.projectPaths[0] || null;
-      const pipelines = (await listWorkspacePipelines(ws.id, primaryDir, { withPr: true })) || [];
+      let pipelines = (await listWorkspacePipelines(ws.id, primaryDir, { withPr: true })) || [];
+      // Ensure mock field is present in pipeline objects
+      pipelines = pipelines.map(pipeline => ({
+        ...pipeline,
+        mock: pipeline.mock ?? false
+      }));
       const live = [...runs.values()]
         .filter((r) => r.workspaceId === ws.id)
-        .map((r) => ({ id: r.pipelineId || r.id, runId: r.id, title: r.title, status: r.status, live: true }));
+        .map((r) => ({ id: r.pipelineId || r.id, runId: r.id, title: r.title, status: r.status, live: true, mock: r.mock ?? false }));
       return res.json({ pipelines, live, scheduled: listTickets({ workspaceId: ws.id }), ghAvailable: await hasGh() });
     } catch (err) {
       return res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -3029,7 +3034,12 @@ app.get('/api/runs', async (req, res) => {
   const projectDir = resolveProjectDir(req.query.projectDir);
   if (!projectDir) return badRequest(res, 'projectDir is required');
   try {
-    const pipelines = (await Promise.resolve(listPipelines(projectDir, { withPr: true }))) || [];
+    let pipelines = (await Promise.resolve(listPipelines(projectDir, { withPr: true }))) || [];
+    // Ensure mock field is present in pipeline objects
+    pipelines = pipelines.map(pipeline => ({
+      ...pipeline,
+      mock: pipeline.mock ?? false
+    }));
     // Also expose any live (in-memory) runs for this project that may not yet
     // be on disk, so the UI history reflects an active run too.
     const live = [...runs.values()]
@@ -3043,6 +3053,7 @@ app.get('/api/runs', async (req, res) => {
         title: r.title,
         status: r.status,
         live: true,
+        mock: r.mock ?? false,
       }));
     // Additive: runs that WAIT for their start time are tickets, not pipelines.
     res.json({ pipelines, live, scheduled: listTickets({ projectDir }), ghAvailable: await hasGh() });
@@ -3251,7 +3262,8 @@ app.get('/api/history', async (_req, res) => {
     try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort */ }
     // Phase 1: PR-light skeleton (no `gh pr list`). Live PR state is pushed
     // separately over the WS by POST /api/history/pr -> enrichPipelinesPr.
-    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
+    const pipelines = (await listAllPipelines()) || [];
+    res.json({ pipelines, ghAvailable: await hasGh() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -5077,6 +5089,7 @@ app.get('/api/config', async (req, res) => {
   // legacy per-project custom models need a projectDir.
   if (raw == null || raw === '') {
     return res.json({
+      mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       config: { steps: {}, customModels: [] },
       models: await listModels(''), steps: agentSteps(), efforts: EFFORTS,
       subagentModels: SUBAGENT_MODEL_VALUES,
@@ -5097,6 +5110,7 @@ app.get('/api/config', async (req, res) => {
       readRunConfig(projectDir), listModels(projectDir),
     ]);
     res.json({
+      mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       config, models, steps: agentSteps(), efforts: EFFORTS,
       // The sub-agent model policy vocabulary is a FIXED alias enum (the CLI's Task
       // tool refuses catalog ids), so it ships beside `efforts` rather than being
@@ -5122,7 +5136,7 @@ app.post('/api/config', async (req, res) => {
     // to their whole config state — echoing the narrow view dropped workflows/
     // activeWorkflowId and made saved node models paint as unconfigured.
     const config = await readRunConfig(projectDir);
-    res.json({ config });
+    res.json({ mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK), config });
   } catch (err) {
     // setStep throws only on validation (unknown step/model/effort) -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));

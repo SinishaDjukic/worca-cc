@@ -40,6 +40,7 @@ const state = {
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
   scriptsList: [],   // GET /api/scripts cache; dropped on every scripts-changed frame
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
+  mock: false,       // server mock mode state from /api/config
   historyAll: [],    // full /api/history dataset; client-side filter cache
   commentCounts: {}, // "<storeKey>/<pipelineId>" -> unresolved diff-comment count
   historyFilter: '', // active projectKey filter for History; '' === All Projects
@@ -601,6 +602,7 @@ function setSidebarCollapsed(v) {
   updateNavCounts();             // Running's title/aria-label (both states)
   renderPipelineTabs();          // child rows <-> initials tiles (phase 3)
   paintBudget();                 // spend block <-> budget ring (phase 4)
+  updateMockUI();                // Update mock pill/dot visibility based on sidebar state
 }
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
@@ -1966,6 +1968,7 @@ async function loadConfig(projectDir) {
       if (Array.isArray(data.subagentModels) && data.subagentModels.length) {
         state.subagentModels = data.subagentModels;
       }
+      state.mock = Boolean(data.mock);
       state.stepDefaults = {};
       if (Array.isArray(data.steps)) {
         for (const s of data.steps) if (s && s.key) state.stepDefaults[s.key] = {
@@ -1976,6 +1979,7 @@ async function loadConfig(projectDir) {
         };
       }
       setConfigError('');
+      updateMockUI();
     } else {
       // Surface the failure but DO fall through to loadWorkflowsInto below: an
       // early return here left the whole form dead (static Default-only dropdown,
@@ -1984,6 +1988,7 @@ async function loadConfig(projectDir) {
       // save — and render defaults with a visible explanation.
       state.config = { steps: {}, customModels: [] };
       state.stepDefaults = {};
+      state.mock = false;
       appendLog({ source: 'ui', level: 'error', text: `config: ${data.error || res.status}`, ts: Date.now() });
       setConfigError(`Could not load saved config (${data.error || `HTTP ${res.status}`}) — showing defaults.`);
     }
@@ -5542,6 +5547,51 @@ function toggleMock() {
   mockSwitch.classList.toggle('on', on);
   mockSwitch.setAttribute('aria-checked', String(on));
 }
+function updateMockUI() {
+  const mockPill = $('#mock-pill');
+  const mockDot = $('#mock-dot');
+  const mockSwitch = $('#mock-switch');
+  const mockCheckbox = $('#mock');
+
+  if (state.mock) {
+    // Force the mock mode to be ON and disabled
+    mockCheckbox.checked = true;
+    mockSwitch.classList.add('on');
+    mockSwitch.setAttribute('aria-checked', 'true');
+    mockSwitch.setAttribute('disabled', '');
+    mockSwitch.setAttribute('aria-disabled', 'true');
+    mockSwitch.title = "The server is in mock mode — every run is mocked.";
+    mockSwitch.setAttribute('aria-label', "The server is in mock mode — every run is mocked.");
+    // Adjust pill and dot visibility based on sidebar state
+    if (sidebarCollapsed) {
+      // collapsed: hide pill, show dot
+      mockPill.classList.add('hidden');
+      mockDot.classList.remove('hidden');
+    } else {
+      // expanded: show pill, hide dot
+      mockPill.classList.remove('hidden');
+      mockDot.classList.add('hidden');
+    }
+  } else {
+    // Enable the switch
+    mockSwitch.removeAttribute('disabled');
+    mockSwitch.removeAttribute('aria-disabled');
+    // Update the switch to match the checkbox (which should be the user's choice)
+    if (mockCheckbox.checked) {
+      mockSwitch.classList.add('on');
+      mockSwitch.setAttribute('aria-checked', 'true');
+    } else {
+      mockSwitch.classList.remove('on');
+      mockSwitch.setAttribute('aria-checked', 'false');
+    }
+    // Clear the tooltip
+    mockSwitch.title = "";
+    mockSwitch.removeAttribute('aria-label');
+    // Hide pill and dot
+    mockPill.classList.add('hidden');
+    mockDot.classList.add('hidden');
+  }
+}
 if (mockSwitch) {
   mockSwitch.addEventListener('click', toggleMock);
   mockSwitch.addEventListener('keydown', (e) => {
@@ -5551,6 +5601,11 @@ if (mockSwitch) {
     }
   });
 }
+// Also keep switch and checkbox in sync when checkbox changes programmatically
+// We'll update the switch in updateMockUI, but we also need to listen for changes to the checkbox
+// from other parts of the code (e.g., form reset). However, the only place we change the checkbox
+// programmatically is in updateMockUI and toggleMock, so we are safe.
+// If we ever change the checkbox elsewhere, we should call updateMockUI or manually update the switch.
 
 // File-picker buttons trigger their (hidden) <input type=file>.
 $$('.pick[data-pick]').forEach((btn) => {
@@ -21765,6 +21820,16 @@ function paintRunCard(r) {
     const { family, text } = statusPill(r);
     wordEl.textContent = text;
     wordEl.className = `rc-status-word st-${family}`;
+  }
+  // Mock tag: show if the run is mocked
+  const mockTag = r.el.querySelector('.mock-tag');
+  if (mockTag) {
+    mockTag.hidden = !r.mock;
+    if (r.mock) {
+      mockTag.title = "Mock run — no Claude calls were made.";
+    } else {
+      mockTag.removeAttribute('title');
+    }
   }
   paintAutoBadge(r.el.querySelector('.rc-acts .auto-badge'), r.stepper);
   const afterBtn = r.el.querySelector('.rc-after');

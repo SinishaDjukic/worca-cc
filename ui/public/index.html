@@ -16,6 +16,8 @@
         <div class="brand">
           <span class="logo" role="img" aria-label="Worca"></span>
           <span class="logo-mark" role="img" aria-label="Worca"></span>
+          <span class="mock-dot" id="mock-dot" role="status" aria-live="polite" title="Mock mode — this server was started with --mock (WORCA_MOCK). Runs, scans and Ask Worca use canned responses: no Claude calls, no cost — changes stay on the run's own branch." aria-label="Mock mode — this server was started with --mock (WORCA_MOCK). Runs, scans and Ask Worca use canned responses: no Claude calls, no cost — changes stay on the run's own branch."></span>
+          <span class="mock-pill" id="mock-pill" role="status" aria-live="polite" title="Mock mode — this server was started with --mock (WORCA_MOCK). Runs, scans and Ask Worca use canned responses: no Claude calls, no cost — changes stay on the run's own branch." aria-label="Mock mode — this server was started with --mock (WORCA_MOCK). Runs, scans and Ask Worca use canned responses: no Claude calls, no cost — changes stay on the run's own branch.">MOCK MODE</span>
         </div>
 
         <nav class="nav" aria-label="Primary">
@@ -571,6 +573,7 @@
                     Back
                   </button>
                   <h1 class="rd-title"></h1>
+                  <span class="mock-tag" aria-label="Mock run" title="Mock run — no Claude calls were made." hidden>MOCK</span>
                   <span class="auto-badge" hidden></span>
                   <span class="rd-status pill-run"><span class="pdot"></span><span class="rd-status-word"></span></span>
                 </div>
@@ -670,6 +673,7 @@
                         <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
                         <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
                         <span class="hm-seg hist-by-seg"><span class="hm-dot">·</span><span class="hist-by"></span></span>
+                        <span class="mock-tag" aria-label="Mock run" title="Mock run — no Claude calls were made." hidden>MOCK</span>
                         <span class="hist-diff-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
                           <span class="hist-diff mono" aria-label="lines changed"></span>

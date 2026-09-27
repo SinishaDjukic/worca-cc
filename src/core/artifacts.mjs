@@ -945,6 +945,7 @@ export async function createPipeline(projectDir, opts = {}) {
     guardrailsId = null, startedBy = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
+    mock = false,
   } = opts;
   const paths = await ensureArtifactDirs(projectDir, workspaceKey || undefined, {
     workspaceId: workspaceId || workspaceKey,
@@ -1041,6 +1042,8 @@ export async function createPipeline(projectDir, opts = {}) {
     guardrailsId: guardrailsId || null,
     // Who started the run (identity.mjs): creation-immutable like guardrailsId. NULL = unknown.
     startedBy: startedBy || null,
+    // Mock mode flag: true if the run is mocked (via body.mock or server env)
+    mock: Boolean(mock),
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -1190,11 +1193,11 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, mock)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@mock)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1205,7 +1208,8 @@ export async function writeState(pipelineDir, stateObj) {
         resume_point=excluded.resume_point,
         outcome=excluded.outcome,
         base_name=COALESCE(excluded.base_name, base_name),
-        date_prefix=COALESCE(excluded.date_prefix, date_prefix)
+        date_prefix=COALESCE(excluded.date_prefix, date_prefix),
+        mock=excluded.mock
     `).run(toPipelineRow(obj));
 
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
@@ -1574,6 +1578,7 @@ function toPipelineRow(o) {
     workspace_meta: workspaceMeta,
     stepper: s(o.stepper),
     tools: s(o.tools),
+    mock: o.mock ?? 0,
     resume_point: o.resumePoint == null ? null : s(o.resumePoint),
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
@@ -1733,6 +1738,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     diffFrozen: !!frozen,
     totalCostUsd: cost,
     totalActiveMs: active,
+    mock: !!row.mock,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
   // Live PR state (opt-in; only the UI history endpoints request it). When gh is
@@ -1784,7 +1790,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id, started_by, pr_url,
+           branch, workspace_meta, guardrails_id, started_by, pr_url, mock,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1814,6 +1820,7 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url,
+           mock,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines

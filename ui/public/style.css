@@ -47,7 +47,9 @@
   --slate-bg:light-dark(#E8ECF0,#262A2E);  --slate:#8A96A3;  --slate-ink:light-dark(#58646F,#B3BEC8);
   --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
 
-  /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
+  .mock-pill{display:inline-flex;align-items:center;gap:7px;background:var(--violet-bg);color:var(--violet-ink);font-size:9px;font-weight:700;letter-spacing:.01em;padding:1px 6px;border-radius:999px;white-space:nowrap;margin-left:8px;}
+  .mock-dot{width:8px;height:8px;border-radius:50%;background:var(--violet);display:inline-block;}
+/* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
      is the pale field it sits on, with its line and the radio ring. */
   --amber-wash:light-dark(#FEF7EC,#322816);
   --amber-wash-2:light-dark(#FEFAF3,#2B2314); --amber-line:light-dark(#F5D9A8,#6A5228); --radio-ring:light-dark(#D6D6D2,#4A4A45);
@@ -1665,6 +1667,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
    name (cf. skill pills). Uses the shared violet token (defined :root, l.24) so it
    reads as agent metadata, distinct from the skill (blue) / MCP (green) pills. */
 .rd-ag-name .agent-type-pill,.hd-ag-row .agent-type-pill{font-size:10.5px;font-weight:700;letter-spacing:.01em;padding:2px 9px;border-radius:999px;white-space:nowrap;background:var(--violet-bg);color:var(--violet-ink);}
+.mock-tag{display:inline-flex;align-items:center;gap:7px;background:var(--violet-bg);color:var(--violet-ink);font-size:9px;font-weight:700;letter-spacing:.01em;padding:1px 6px;border-radius:999px;white-space:nowrap;}
 /* Sub-agent run model (neutral outline) — the model a spawned child actually ran on.
    Deliberately the QUIETEST pill on the row: it is present on every sub-agent once a
    run records one, so a filled colour would out-shout the type + graphify badges that

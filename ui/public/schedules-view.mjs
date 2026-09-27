@@ -117,8 +117,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     const bits = [deps.targetLabel(item), deps.workflowLabel(item.summary.workflowId)];
     if (item.summary.sourceBranch) bits.push(`from ${item.summary.sourceBranch}`);
     if (item.sourceFromPrevious) bits.push('from the run before it');
-    if (item.summary.mock) bits.push('mock');
-    return bits.filter(Boolean).join(' · ');
+    if (item.summary.mock) bits.push(h('span', { class: 'mock-tag', 'aria-label': 'Mock run', title: 'Mock run — no Claude calls were made.' }, 'MOCK'));
+    return bits.filter(Boolean);
   }
 
   function detailsBlock(item) {
