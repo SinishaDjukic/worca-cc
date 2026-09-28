@@ -2990,7 +2990,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   if (RESUMING.has(pipelineId)) throw new ResumeError(400, { error: 'pipeline is already live' });
   RESUMING.add(pipelineId);
   try {
-    return await resumeRunClaimed(pipelineId, { ignoreCostCap, mock });
+    return await resumeRunClaimed(pipelineId, { ignoreCostCap, mock, pastTeamCap, policyReason, by });
   } finally {
     RESUMING.delete(pipelineId);
   }
@@ -2999,7 +2999,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
 /** Pipeline ids a resume is in flight for. See resumeRun. */
 const RESUMING = new Set();
 
-async function resumeRunClaimed(pipelineId, { ignoreCostCap = false, mock = false } = {}) {
+async function resumeRunClaimed(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local' } = {}) {
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });

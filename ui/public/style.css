@@ -6056,7 +6056,7 @@ input.gv-name:focus-visible{outline:none;}
 /* position:fixed, NOT absolute: .gv-world carries the pan/zoom transform and
    .run-flow-wrap.gv-wrap-monitor clips overflow, so the panel lives on body. */
 .rt-pop{position:fixed;z-index:70;width:268px;padding:14px;background:var(--panel);
-  border:1px solid var(--line-2);border-radius:16px;box-shadow:var(--shadow-menu);}
+  border:1px solid var(--line-2);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
 .rt-pop .rt-apply{width:100%;margin-top:2px;}
 .rt-pop .rt-note{margin-top:10px;font-size:11px;line-height:1.45;color:var(--ink-3);}
 .rt-pop .rt-err{font-size:11.5px;color:var(--red-ink);}
