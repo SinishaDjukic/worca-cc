@@ -145,13 +145,23 @@ test('B: a reading, lowered per forwarded :free call, emptied by a daily-limit r
   await withSettings(OR_SETTINGS, async () => {
     assert.deepEqual(freeModelIds(), ['nemo-free']);
     const reads = [];
-    let t = Date.parse('2026-09-27T04:39:00Z');
+    // The fake clock is pinned to the CURRENT UTC day, not to a literal date.
+    // Only freeDailyStatus takes an injected `now`: the bridge's own telemetry
+    // listener calls tallyFreeCall(account) with no clock, so it reads the REAL
+    // one, and its "a new day: the next reading says" branch DELETES a cached
+    // reading whose resetAt has already passed. A literal date therefore made
+    // this test pass only until that date's midnight — it started failing for
+    // real on 2026-09-28, when the recordBridgeCall calls below began evicting
+    // the reading and the TTL assertions saw a second fetch.
+    const dayStart = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+    const resetAt = new Date(dayStart + 86_400_000).toISOString();
+    let t = dayStart + (4 * 60 + 39) * 60_000;   // 04:39 UTC today
     const now = () => t;
     const s1 = await freeDailyStatus({ fetch: fakeKeyFetch(reads), now });
     assert.equal(reads.length, 1);
     assert.equal(reads[0].url, 'https://openrouter.ai/api/v1/key');
     assert.equal(reads[0].auth, 'Bearer sk-or-v1-testkey0000000000000001');
-    assert.deepEqual({ ...s1, readAt: undefined }, { enabled: true, known: true, models: ['nemo-free'], used: 59, limit: 1000, remaining: 941, resetAt: '2026-09-28T00:00:00.000Z', readAt: undefined });
+    assert.deepEqual({ ...s1, readAt: undefined }, { enabled: true, known: true, models: ['nemo-free'], used: 59, limit: 1000, remaining: 941, resetAt, readAt: undefined });
 
     // Two :free calls through the bridge with this key, one with another key, one not free.
     const account = keyAccount('sk-or-v1-testkey0000000000000001');
