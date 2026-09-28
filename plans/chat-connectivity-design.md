@@ -181,13 +181,17 @@ the child through the environment.
 - Commands: global (`/start /help /whoami /projects /use /mute <30m|1h|2d> /unmute`);
   status (`/status /runs /last /cost` — live from the `runs` Map, history from the DB;
   `resolveRunId` wildcard-suffix matching `*a1b2` with disambiguation); control
-  (`/pause /stop /resume`); **approvals** (new): `/approve` → gate `{decision:'continue'}`,
+  (`/pause /stop /resume`); tuning (`/retune [*ref] <nodeId> <model|-> [effort|-]` —
+  repoint an idle agent node on a run already in flight; `-` clears the field back to
+  inherit, and the change applies from that node's next execution); **approvals** (new):
+  `/approve` → gate `{decision:'continue'}`,
   `/retry` → `{decision:'another'}`, `/answer <n>…` → clarify answers with ordinal
   validation. No `/run` in v1.
 - `actions` is an injected capability object built in `ui/server.mjs` by factoring the
-  existing `/api/answer`, `/api/stop`, `/api/pause`, `/api/resume` route bodies into
-  shared functions used by both the routes and the router — including `resolvePending`,
-  so answering from chat clears the question card in every open browser tab.
+  existing `/api/answer`, `/api/stop`, `/api/pause`, `/api/resume`, `/api/retune` route
+  bodies into shared functions used by both the routes and the router — including
+  `resolvePending`, so answering from chat clears the question card in every open
+  browser tab.
 - Security stance (stated in consent and README): a bot token, or membership in an
   allow-listed chat, **is control of worca-cc** (approve gates, stop/pause runs, read
   titles/costs). Deny-by-default allowlists; supervised workers see secrets but their

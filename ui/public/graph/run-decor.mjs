@@ -9,6 +9,7 @@
 // colours read the manifest node. History renders with the registry absent.
 import { levelAtLeast } from '../ui-level.mjs';
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
+import { NO_DISPATCH_STATUS, nodeBusy } from '../../../src/shared/graph/retune-gate.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 
@@ -31,8 +32,11 @@ const TERMINAL_ROW = new Set(['done', 'error', 'stopped', 'paused']);
 /** P8's bookend EXECUTIONS (`x:preflight:1` / `x:done:1`); never executions, never progress. */
 const BOOKEND_EXECS = new Set(BOOKEND_EXECUTION_IDS);
 
-// Re-exported so run-hosts has ONE import for the manifest readers.
-export { manifestPortsFn, manifestTemplate };
+// Re-exported so run-hosts has ONE import for the manifest readers, and app.js
+// one for the two retune-gate readers it needs. Only what is actually consumed:
+// retune-popover.mjs imports armFor/retuneArm from the shared module directly,
+// which is the same door — this is a convenience, not a chokepoint.
+export { manifestPortsFn, manifestTemplate, NO_DISPATCH_STATUS, nodeBusy };
 
 // ── formatters ──────────────────────────────────────────────────────────────
 
@@ -62,8 +66,52 @@ export function isGraphManifest(stepper) {
 export function manifestNodes(stepper) {
   return isGraphManifest(stepper) ? stepper.graph.nodes.filter(Boolean) : [];
 }
+/**
+ * One v2 graph cell by id, or null. `findManifestNode` (app.js) is NOT the same
+ * reader: it walks the derived `steps` shim bands, whose cells carry no `kind` —
+ * which is exactly what the retune arm derivation needs. Two callers resolving
+ * the same id against different cell shapes is how they end up disagreeing.
+ */
+export function manifestNodeById(stepper, nodeId) {
+  return manifestNodes(stepper).find((n) => n.id === nodeId) || null;
+}
+
 export function manifestWires(stepper) {
   return isGraphManifest(stepper) && Array.isArray(stepper.graph.wires) ? stepper.graph.wires.filter(Boolean) : [];
+}
+
+/**
+ * {nodeId: {model, effort}} — the model each AGENT node is configured to run on,
+ * straight off the manifest cell. buildGraphManifest folds the run-config overlay
+ * in at build time and a live retune patches the same two cells
+ * (manifest.mjs#patchManifestNodeTune), so this IS the node's effective
+ * selection.
+ *
+ * A cell with NEITHER set is pure inherit — no entry, no pill, never a guess at a
+ * name the client cannot resolve. An EFFORT alone still counts: buildGraphManifest
+ * fills `effort` independently of `model`, and _execCtx passes it to the CLI
+ * whether or not a model is set, so `--effort high` is genuinely in the argv and
+ * the surfaces have to say so. A FLOW cell carries neither, hence the kind check.
+ * v2 graph manifests only — frozen v1 snapshots recorded none, and manifestNodes
+ * returns [] for them.
+ *
+ * The value is the raw model ID: this module is PURE, with no catalog and no
+ * DOM. The catalog LABEL is resolved by the renderer, so the graph pill and the
+ * Agents-tab pill say the same words. ONE definition, read by both.
+ */
+export function tuneByNode(stepper) {
+  const out = {};
+  for (const n of manifestNodes(stepper)) {
+    if (n.kind !== 'agent' || !n.id) continue;
+    const model = typeof n.model === 'string' ? n.model : '';
+    const effort = typeof n.effort === 'string' ? n.effort : '';
+    // A RETUNED node keeps an entry even when it was cleared back to inherit: the
+    // fact that it changed mid-run is worth saying on its own, and a bare "inherit"
+    // pill with no explanation would be worse than none.
+    if (!model && !effort && !n.retuned) continue;
+    out[n.id] = { model, effort, retuned: n.retuned === true };
+  }
+  return out;
 }
 /** The header registry the view reads (`agents[node.key]` -> tint, title, icon),
  *  built from the manifest's own agent nodes so History never needs the registry. */
@@ -156,7 +204,7 @@ export function statusOf(node, rows, ctx) {
  * @param {object} st                 { stepper, status, steps, active, endReached, result, warnings, wireDeliveries, tokens, gate }
  * @param {{live?:boolean, now?:number, subsOf?:(nodeId:string)=>Array}} opts
  */
-export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, lastLines = null } = {}) {
+export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, tuneText = null, lastLines = null } = {}) {
   const state = st || {};
   const stepper = state.stepper || null;
   const nodes = manifestNodes(stepper);
@@ -188,6 +236,17 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
     status[node.id] = statusOf(node, grouped.get(node.id) || [], ctx);
     colors[node.id] = node.color || '';
   }
+
+  // `tuneText` is the caller's formatter for a {model, effort} selection — the ONE
+  // place the app spells one (`Opus 5 · high`), injected because this module is
+  // pure and has no model catalog. Resolved HERE, inside the memoised reducer,
+  // rather than stamped onto the bag afterwards: the bag is documented as
+  // immutable and shared across every host, and a caption written into it in place
+  // could not reach the DOM anyway, since run-hosts skips paint() outright when the
+  // bag identity has not changed. Omit it and entries carry no `text`, which
+  // setNodeTune reads as "no pill" — never a raw id guessed at by the renderer.
+  const tune = tuneByNode(stepper);
+  if (tuneText) for (const t of Object.values(tune)) t.text = tuneText(t);
 
   // Progress = done KEYED nodes / keyed nodes (D15: a number, never a bar). A script is a keyed card.
   const keyed = nodes.filter((n) => KEYED_KINDS.includes(n.kind));
@@ -223,7 +282,7 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
   const loopDeliveries = wires.reduce((a, w) => a + (w.loop ? (Number(deliveries[w.id]) || 0) : 0), 0);
 
   const decor = {
-    version: 2, live, resolved, runStatus, status, colors,
+    version: 2, live, resolved, runStatus, status, colors, tune,
     footers: {}, totals: {}, liveWireIds: [], loopBadges: {}, gate: null,
     endResult, progress, activeNodes, warnings, quiescent,
     executions: rows.length, loopDeliveries,
@@ -388,6 +447,13 @@ function decorateExecutions(decor, ctx) {
  */
 export function applyDecor(view, decor) {
   if (!view || !decor) return;
+  // The cards' dialog-trigger semantics, refreshed on every paint because the
+  // answer moves under them — see view.setCardsOpenPanel. The flag rides the
+  // per-host bag, stamped by whoever knows the screen (app.js's paintGraphFor).
+  // Unguarded, like every other view method below: applyDecor's contract is a real
+  // view, and probing one call while calling ten others bare only hides the first
+  // symptom of a wrong one.
+  view.setCardsOpenPanel(decor.opensPanel === true);
   // Interface mode (docs/ui-levels.md): status colours, the gate pip, the End result and live wires
   // are for everyone; per-node totals, the fan and execution strips and loop-count badges are
   // expert detail. Gated HERE, not in CSS — a footer band sets the card's height.
@@ -401,6 +467,12 @@ export function applyDecor(view, decor) {
         ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate — open the question panel' } : null,
       totals: full ? (decor.totals[nodeId] || null) : null,
     });
+    // MONITOR hosts only. `.ntune` hangs at `bottom:-9px`, outside `view.bounds()`
+    // so the fit reserves no room for it, and the Running-list card's wrap is a
+    // fixed 300px with `overflow-y:hidden` — the bottom row's pill would be clipped.
+    // That card already prints the same words in its step label, so there is
+    // nothing to lose. History and the run detail both mount 'monitor'.
+    view.setNodeTune(nodeId, (decor.mode !== 'static' && decor.tune && decor.tune[nodeId]) || null);
     const foot = full ? (decor.footers[nodeId] || null) : null;
     const bands = [];
     if (foot && foot.fan) {

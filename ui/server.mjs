@@ -20,6 +20,7 @@ import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { RETUNE_ERROR_CODES } from '../src/core/orchestrator.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, readPipelineForResume, persistPrState, readPrState,
@@ -2654,6 +2655,9 @@ const chatActions = {
   answer: (runId, id, payload, by) => answerRun(runId, id, payload, by || 'local'),
   stop: (runId, by) => stopRun(runId, by || 'local'),
   pause: (runId, by) => pauseRun(runId, by || 'local'),
+  // No `by`: retuneRunNode writes no audit row and stamps no lastAction, so there
+  // is no actor column for one to land in.
+  retune: (runId, nodeId, selection) => retuneRunNode(runId, nodeId, selection),
   // The long chain of budget/worktree/double-resume guards lives in resumeRun();
   // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
   // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
@@ -2779,6 +2783,19 @@ function stopRun(runId, by = 'local') {
   entry.status = 'stopped';
   resolvePending(entry, { reason: 'stopped' });
 }
+/** Entry statuses that mean a sibling entry is NOT driving the pipeline row: it
+ *  has either finished with it or is parked. Only a sibling outside this set has
+ *  taken over. It mirrors resumeRun's own eviction predicate, which deletes the
+ *  'paused' OR 'interrupted' lineage — a parked entry is what gets superseded, so
+ *  it can never be the thing doing the superseding. Leaving 'interrupted' out
+ *  would let a lingering interrupted entry mark the LIVE run as superseded and
+ *  refuse its retune.
+ *
+ *  resumeRun's own double-resume guard asks the identical question and reads this
+ *  same set — the two must not drift, or a status parked by one and live by the
+ *  other re-opens the window retuneRunNode's refusal exists to close. */
+const PARKED_OR_DONE_STATUS = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
+
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
@@ -2787,6 +2804,67 @@ function pauseRun(runId, by = 'local') {
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
+}
+
+/**
+ * Retune ONE agent node on a live run. Async (the orchestrator validates against
+ * the model catalog, which reads the DB), so unlike its three synchronous
+ * siblings the caller must await it. `runs` also holds workspace-scan
+ * (`scan_<uuid>`) and agent-gen (`agen_<uuid>`) entries whose `orch` is not an
+ * orchestrator at all, and a terminal run entry usually lingers, so `runs.has`
+ * is a presence check only — this capability probe and the engine's own guards
+ * do the real work (the same shape pauseRun uses).
+ *
+ * Both refusals are CODE-TAGGED so the route maps them to 400. The `unknown
+ * runId` arm is reachable despite the route's own runs.has check: an eviction
+ * can land between them, and a lost race deserves the same 400 the pre-check
+ * would have given, not a 500.
+ */
+async function retuneRunNode(runId, nodeId, selection) {
+  const entry = runs.get(runId);
+  if (!entry) throw Object.assign(new Error('unknown runId'), { code: 'RUN_NOT_RETUNABLE' });
+  if (typeof entry.orch?.retuneNode !== 'function') {
+    throw Object.assign(new Error('this run does not support live retuning'), { code: 'RUN_NOT_RETUNABLE' });
+  }
+  // A SUPERSEDED entry must not write. This is the one refusal a paused run needs
+  // beyond the engine's own gate, and it exists because 'paused' is deliberately
+  // retunable: retuneNode ends in _persist(), and writeState UPSERTs the pipelines
+  // row and then DELETEs and re-inserts every pipeline_steps row for that pipeline
+  // id. resumeRun reuses the SAME pipeline id and evicts the paused lineage only
+  // after it has registered the new run, so a retune landing in that window would
+  // write this entry's stale status, stepper, resume point and step ledger straight
+  // over the live one. The three sibling actions cannot hit this: none of them
+  // persists, and stop/pause/answer on an inert orchestrator are no-ops.
+  // A plain scan with an early exit: `runs` also holds every workspace-scan and
+  // agent-gen entry, and materialising the whole Map to short-circuit on the first
+  // match allocates a pair array per retune for nothing.
+  const superseded = () => {
+    if (!entry.pipelineId) return false;
+    // A resume that has CLAIMED this pipeline but not yet registered its entry.
+    // The window is entirely awaits, and a write inside it is lost with no error.
+    if (RESUMING.has(entry.pipelineId)) return true;
+    for (const [id, e] of runs) {
+      if (id !== runId && e.pipelineId === entry.pipelineId
+        && !PARKED_OR_DONE_STATUS.has(String(e.status || ''))) return true;
+    }
+    return false;
+  };
+  const refuse = () => Object.assign(new Error('this run has been resumed — retune the run that took over'),
+    { code: 'RUN_NOT_RETUNABLE' });
+  if (superseded()) throw refuse();
+  // Handed to the engine as well, because this pre-check alone is a TOCTOU:
+  // retuneNode awaits the model catalog (a DB read) before it writes, and
+  // resumeRun registers the taking-over entry without holding any lock. The engine
+  // calls this again on the synchronous path immediately before it persists, which
+  // is the only moment that matters — that is the write that would land on the
+  // shared pipeline row.
+  //
+  // The other direction stays open by design: a retune that lands after resumeRun
+  // has already read the resume point is simply not in it. Closing that needs an
+  // ownership claim on the row, which is a bigger change than this feature.
+  return await entry.orch.retuneNode(nodeId, selection, {
+    guard: () => { if (superseded()) throw refuse(); },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2844,6 +2922,38 @@ app.post('/api/pause', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/retune { runId, nodeId, model, effort } — change one agent node's
+// model/effort on a run already in flight. The NEXT dispatch of that node honours
+// it (_execute re-reads nodeCtx every time); an execution already spawned keeps
+// the argv it launched with. '' on either field clears it back to inherit.
+// Refusals ride err.code (RETUNE_ERROR_CODES) -> 400, like CANNOT_PAUSE.
+// ---------------------------------------------------------------------------
+app.post('/api/retune', async (req, res) => {
+  const { runId, nodeId, model, effort } = req.body || {};
+  if (!runId || !runs.has(runId)) return badRequest(res, 'unknown runId');
+  if (!nodeId || typeof nodeId !== 'string') return badRequest(res, 'nodeId is required');
+  // `model` is REQUIRED, and must be a string — '' is the deliberate clear, which
+  // is what the popover posts. retuneNode normalizes anything else to '', so an
+  // absent, null or mistyped field would otherwise wipe the node's override back
+  // to inherit and be answered 200: a caller meaning "change only the effort", or
+  // a client that dropped a field, would destroy the authored value with no way to
+  // recover it. The chat router refuses the same shape for the same reason.
+  if (typeof model !== 'string') return badRequest(res, 'model is required (use "" to clear it to inherit)');
+  // `effort` stays optional: absent means "reset to the model's default", the same
+  // reading `/retune <node> <model>` has.
+  if (effort !== undefined && effort !== null && typeof effort !== 'string') {
+    return badRequest(res, 'effort must be a string');
+  }
+  try {
+    const applied = await retuneRunNode(runId, nodeId, { model, effort });
+    res.json({ ok: true, ...applied });
+  } catch (err) {
+    if (RETUNE_ERROR_CODES.has(err?.code)) return badRequest(res, err.message);
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // resumeRun(pipelineId, opts) — the resume guard chain + rehydration, callable
 // in-process. Chat used to reuse it by POSTing http://127.0.0.1:PORT/api/resume
 // over loopback, which breaks under WORCA_HOST (the server may not be bound on
@@ -2861,6 +2971,26 @@ class ResumeError extends Error {
 
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local' } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
+  // CLAIM the pipeline before reading its resume point, and hold the claim until
+  // the new entry is registered. Everything between those two moments is awaited
+  // — cost-cap reads, project lookup, createOrchestratorFor — and a retune landing
+  // in that window would be written by the OLD paused orchestrator, reported as
+  // saved, and then overwritten by the resume restoring from the point it had
+  // already read. `runs` cannot express this: the taking-over entry does not exist
+  // yet, which is exactly the problem.
+  if (RESUMING.has(pipelineId)) throw new ResumeError(400, { error: 'pipeline is already live' });
+  RESUMING.add(pipelineId);
+  try {
+    return await resumeRunClaimed(pipelineId, { ignoreCostCap, mock, pastTeamCap, policyReason, by });
+  } finally {
+    RESUMING.delete(pipelineId);
+  }
+}
+
+/** Pipeline ids a resume is in flight for. See resumeRun. */
+const RESUMING = new Set();
+
+async function resumeRunClaimed(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local' } = {}) {
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') throw new ResumeError(400, { error: `pipeline is "${saved.row.status}", not resumable` });
@@ -2895,9 +3025,12 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     });
   }
 
-  // Double-resume guard: any live entry already driving this pipeline id.
+  // Double-resume guard: any live entry already driving this pipeline id. The SAME
+  // predicate retuneRunNode refuses on — "is a sibling entry actually driving this
+  // row?" — so a sixth parked status added to one and not the other cannot re-open
+  // the clobber window that guard exists to close.
   for (const e of runs.values()) {
-    if (e.pipelineId === pipelineId && !['done', 'stopped', 'error', 'paused', 'interrupted'].includes(String(e.status || ''))) {
+    if (e.pipelineId === pipelineId && !PARKED_OR_DONE_STATUS.has(String(e.status || ''))) {
       throw new ResumeError(400, { error: 'pipeline is already live' });
     }
   }
@@ -9203,7 +9336,7 @@ export const _testing = {
   startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
-  uiControl, bearerMatches,
+  uiControl, bearerMatches, RESUMING,
   broadcast, askFilesRunDir,
   trackHeartbeat, heartbeatTick, BOOT_ID,
 };

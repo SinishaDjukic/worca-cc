@@ -17,18 +17,30 @@ import { createCodeEditor } from './code-editor.mjs';
 export const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 export const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
 
+/**
+ * Replace a select's options from `[{value, text}]` and select `value`. Exported
+ * because the live-run retune popover (graph/retune-popover.mjs) REBUILDS its
+ * option lists in place — its effort list is filtered by the chosen model, so it
+ * repaints on every change — and would otherwise hand-roll this same loop.
+ */
+export function fillOptions(doc, sel, items, value) {
+  sel.replaceChildren();
+  const want = value == null ? '' : String(value);
+  for (const opt of items) {
+    const o = doc.createElement('option');
+    o.value = opt.value; o.textContent = opt.text;
+    if (opt.value === want) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
 export function select(doc, cls, name, label, items, value, { disabled = false, title = '' } = {}) {
   const wrap = field(doc, cls, label);
   if (title) wrap.title = title;
   const sel = h(doc, 'select', 'ins-select');
   sel.dataset.field = name;
   sel.disabled = Boolean(disabled);
-  for (const opt of items) {
-    const o = doc.createElement('option');
-    o.value = opt.value; o.textContent = opt.text;
-    if (opt.value === (value == null ? '' : String(value))) o.selected = true;
-    sel.appendChild(o);
-  }
+  fillOptions(doc, sel, items, value);
   const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
   shell.appendChild(sel);
   wrap.appendChild(shell);

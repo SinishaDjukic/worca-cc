@@ -22,6 +22,22 @@ const FLOW_BLURB = {
   combine: 'Joins its md inputs into one document, in port order.',
 };
 
+/**
+ * The models a picker may OFFER. "Hide built-in models" (#422) drops a hidden
+ * entry from every list — unless it is the id currently stored on the thing being
+ * edited, which still resolves at run time and so must stay selectable. The
+ * catalog's own rule: hiding an id never stops it resolving; pickers skip
+ * `hidden`, validators ignore it. `hidden` is OPTIONAL on an entry, so it is
+ * probed, never assumed.
+ *
+ * Exported because the live-run retune popover (graph/retune-popover.mjs) offers
+ * the same list under the same rule — the DOM primitives it shares with this
+ * panel come from ../script-forms.mjs, but this is a catalog rule, not markup.
+ */
+export function offeredModels(models, keepId = '') {
+  return (models || []).filter((m) => m && (!m.hidden || m.id === keepId));
+}
+
 function head(doc, title, sub) {
   const w = h(doc, 'div', 'ins-head');
   w.appendChild(h(doc, 'div', 'ins-name', title));
@@ -61,9 +77,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
 
   if (node.kind === 'agent') {
     root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
-    // Hidden built-ins (#422) leave the list unless one is THIS node's stored
-    // pick — it still resolves at run time and must stay visible here.
-    const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
+    const offered = offeredModels(models, node.config.model);
     body.appendChild(select(doc, 'ins-model', 'model', 'Model',
       [{ value: '', text: 'inherit' }, ...offered.map((m) => ({ value: m.id, text: m.label || m.id }))], node.config.model));
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
