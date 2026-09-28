@@ -34,7 +34,10 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   delete process.env.WORCA_MOCK;
-  await rm(homeDir, { recursive: true, force: true });
+  // Retried, like every other home/sandbox rm in the suite (test/helpers/temp-home.mjs):
+  // under full-suite load a just-closed sqlite handle or a git hook still being written
+  // makes the bare rmdir fail ENOTEMPTY, and CI does not re-run a failed step.
+  await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 // The MINIMAL RUNNABLE graph. `nodes: [], wires: []` used to be enough here, but
@@ -64,7 +67,7 @@ const runDir = async () => {
   projects.push(d);
   return d;
 };
-after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true }))));
+after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }))));
 
 test('POST /api/run accepts a graph row: it dispatches to the graph engine', async () => {
   await writeGraphWorkflow({ id: 'wf_graph', name: 'G', ...MINIMAL });
