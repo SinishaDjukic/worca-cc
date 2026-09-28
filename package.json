@@ -59,6 +59,7 @@
     "verify:memory": "node --disable-warning=ExperimentalWarning tools/verify-memory-cdp.mjs",
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
+    "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
     "test": "rm -rf .worca-cc-test && PATH=\"$PWD/test/helpers/no-real-claude:$PATH\" WORCA_HOME=.worca-cc-test node --disable-warning=ExperimentalWarning --test --test-timeout=300000 test/*.mjs; s=$?; node test/helpers/no-real-claude/assert-none.mjs || s=1; exit $s"
   },
   "dependencies": {
@@ -67,7 +68,9 @@
     "express": "^4.19.2",
     "htmlparser2": "12.0.0",
     "marked": "18.0.10",
-    "ws": "^8.18.0"
+    "smol-toml": "1.9.0",
+    "ws": "^8.18.0",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",

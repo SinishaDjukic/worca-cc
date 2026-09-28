@@ -1,0 +1,18 @@
+{
+  "key": "workspaceMapRender",
+  "metaVersion": 2,
+  "displayName": "Workspace map: render",
+  "description": "Workspace scan: renders the workspace description from the map and the synthesis under the workspace's line budget. Built into worca.",
+  "domain": "shared",
+  "color": "teal",
+  "icon": "<path d=\"M6 3h9l4 4v14H6z\" stroke-linejoin=\"round\"/><path d=\"M9 11h7M9 15h7\" stroke-linecap=\"round\"/>",
+  "order": 93,
+  "runtime": "node",
+  "file": "workspace-map-render.mjs",
+  "timeoutMs": 1800000,
+  "placeable": false,
+  "inputs": [ { "id": "map", "type": "json" }, { "id": "synthesis", "type": "json" } ],
+  "outputs": [
+    { "id": "workspace", "type": "md", "filename": "workspace-scan.md" }
+  ]
+}

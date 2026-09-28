@@ -19,6 +19,7 @@ import { dirname, resolve, join, basename } from 'node:path';
 import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
+import { preflightDeps } from '../core/preflight-deps.mjs';
 import { createOrchestratorFor } from '../core/engine-select.mjs';
 import {
   addProject,
@@ -72,6 +73,13 @@ if (process.argv[2] === 'version' || process.argv.slice(2).some((a) => VERSION_F
 }
 // Fail fast on an unsupported Node / missing node:sqlite BEFORE any DB is opened.
 preflightNode();
+// …and on a node_modules that no longer matches package.json (a source checkout
+// after `git pull`), before any command runs — so `worca ui restart` refuses up
+// front instead of stopping a working UI and failing to start the new one. Help
+// stays readable on a broken install, like --version above.
+if (process.argv[2] !== 'help' && !process.argv.slice(2).some((a) => a === '-h' || a === '--help')) {
+  preflightDeps();
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

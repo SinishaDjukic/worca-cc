@@ -68,6 +68,24 @@ export function envelopeAuditPath(ctx) {
   return join(ctx.pipelineDir, 'scripts', `${ctx.node.id}-c${ctx.ordinal ?? 1}${slice}.envelope.json`);
 }
 
+/** The envelope's `ctx.workspace` (wsmap P2, additive — apiVersion stays 1): the workspace the
+ *  run spans, built from the run harness's workspace channel on EVERY workspace run, detached and
+ *  legacy run-root modes alike (`ctx.repos` stays detached-only). `dir` = the member's checkout for
+ *  this run, `projectDir` = the live project; members sorted by key, a keyless entry dropped, a
+ *  missing field null. `overrides` (wsmap M15) = the workspace's edge overrides a scan froze at run
+ *  start — present only when the channel carries them (a re-scan). null when the run spans no
+ *  workspace (a single-project run, a bench run). */
+export function workspaceEnvelope(ws) {
+  if (!ws || typeof ws !== 'object' || !Array.isArray(ws.projects)) return null;
+  const str = (v) => (typeof v === 'string' && v ? v : null);
+  const members = ws.projects
+    .filter((p) => p && str(p.projectKey))
+    .map((p) => ({ key: p.projectKey, name: str(p.projectName) || p.projectKey, dir: str(p.worktreeDir), projectDir: str(p.projectDir) }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const overrides = ws.overrides && typeof ws.overrides === 'object' ? ws.overrides : null;
+  return { id: str(ws.workspaceId), name: str(ws.workspaceName), members, ...(overrides ? { overrides } : {}) };
+}
+
 /** The envelope (§4.1): BOUND inputs only (never the synthesized await), every
  *  declared output with its allocated path, the params, the run context. */
 export function buildEnvelope(ctx) {
@@ -109,6 +127,7 @@ export function buildEnvelope(ctx) {
       projectDir: ctx.runCtx?.projectDir ?? ctx.projectDir,
       runRoot: ctx.runRoot ?? null,
       repos,
+      workspace: workspaceEnvelope(ctx.workspace),       // wsmap P2: BOTH run-root modes (repos: detached only)
       checkpointRef: ctx.checkpointRef ?? null,
       baseName: ctx.runCtx?.baseName ?? null,
       runId: ctx.pipelineId ?? null,

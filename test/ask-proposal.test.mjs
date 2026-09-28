@@ -181,3 +181,14 @@ test('memoryScope: only with wf_memory_defrag, never on a workspace; the card ca
   const good = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_memory_defrag', memoryScope: 'project' }));
   assert.equal(good.memoryScope, 'project'); assert.equal(good.workflowId, 'wf_memory_defrag');
 });
+
+test('the Workspace scan workflow is refused: it starts only from Workspaces (D2)', async () => {
+  const { validateProposal: v } = createProposalValidator({
+    ...deps,
+    assertRunnableWorkflow: async (id) => (id === 'wf_workspace_scan'
+      ? { id, name: 'Workspace scan', version: 2, domain: 'shared', nodes: [], wires: [] }
+      : deps.assertRunnableWorkflow(id)),
+  });
+  assert.deepEqual(errs(await v({ workspaceId: 'wks-team-0000abcd', brief: 'x', workflowId: 'wf_workspace_scan' })), [PROPOSAL_ERRORS.scanWorkflow]);
+  assert.deepEqual(errs(await v({ projectKey: 'demo-00000001', brief: 'x', workflowId: 'wf_workspace_scan' })), [PROPOSAL_ERRORS.scanWorkflow]);
+});

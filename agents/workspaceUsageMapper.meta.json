@@ -1,0 +1,20 @@
+{
+  "key": "workspaceUsageMapper",
+  "metaVersion": 2,
+  "humanEffort": { "factor": 0 },
+  "mockRole": "workspace-usage",
+  "placeable": false,
+  "inputs": [{ "id": "brief", "type": "md" }],
+  "outputs": [{ "id": "usage", "type": "json", "filename": "usage.json" }],
+  "domain": "shared",
+  "displayName": "Workspace Usage",
+  "description": "Checks, for every workspace member, which of the other members' catalogued APIs, topics, packages and services it really uses, with file:line evidence.",
+  "color": "violet",
+  "icon": "<circle cx=\"6\" cy=\"12\" r=\"2.5\"/><circle cx=\"18\" cy=\"12\" r=\"2.5\"/><path d=\"M8.5 12h7\" stroke-linecap=\"round\"/><path d=\"M13 9.5l2.5 2.5-2.5 2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "agentFile": "worca-cc-workspace-usage-mapper.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "asksQuestions": false,
+  "order": 0.6,
+  "scope": "workspace-only"
+}

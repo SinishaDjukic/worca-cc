@@ -63,6 +63,51 @@ test('system init envelope logs [init] model=… at debug', () => {
   assert.equal(noModel[0].text, '[init] model=?');
 });
 
+// The CLI retries a failed API call silently and reports each retry ONLY as this
+// stdout frame (CLI 2.1.281, captured live against a dead endpoint): no text, no
+// stderr. Dropping it left a run that retried a timing-out call for an hour with
+// no log line at all (2026-09-28).
+const apiRetry = (over = {}) => ({
+  type: 'system',
+  raw: { type: 'system', subtype: 'api_retry', attempt: 5, max_retries: 10, retry_delay_ms: 4103, error_status: null, error: 'unknown', session_id: 's', ...over },
+});
+
+test('api_retry with no HTTP status logs a timeout/connection warning with the attempt and backoff', () => {
+  const logs = capture('workspaceScanner', apiRetry());
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'warn');
+  assert.equal(logs[0].source, 'workspaceScanner');
+  assert.equal(logs[0].text, 'API call failed: no HTTP response (timeout or connection error); retry 5/10 in 4.1s');
+});
+
+test('api_retry with an HTTP status names the CLI category and the status', () => {
+  const logs = capture('planner', apiRetry({ attempt: 2, error_status: 529, error: 'overloaded', retry_delay_ms: 1200 }));
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].level, 'warn');
+  assert.equal(logs[0].text, 'API call failed: overloaded (HTTP 529); retry 2/10 in 1.2s');
+});
+
+test('api_retry reports how long a no-response attempt waited', () => {
+  const logs = capture('planner', apiRetry({ attempt: 1, retry_delay_ms: 500, no_response: { waited_ms: 300000, retry_wait_ms: 500 } }));
+  assert.equal(logs[0].text, 'API call failed: no HTTP response (timeout or connection error) after 300.0s; retry 1/10 in 0.5s');
+});
+
+test('api_retry with a status-less named category keeps the category', () => {
+  const logs = capture('planner', apiRetry({ attempt: 1, error: 'cloud_credential_error', retry_delay_ms: 500 }));
+  assert.equal(logs[0].text, 'API call failed: cloud_credential_error; retry 1/10 in 0.5s');
+});
+
+test('api_retry from a sub-agent is attributed to it', () => {
+  const logs = captureSeq([
+    ['workspaceScanner', { type: 'assistant', raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: 'Investigate hawkbit' } }] } } }],
+    ['workspaceScanner', { type: 'system', raw: { ...apiRetry().raw, parent_tool_use_id: 'toolu_A' } }],
+  ]);
+  const retry = logs.find((l) => l.text.startsWith('API call failed'));
+  assert.ok(retry, 'retry line logged');
+  assert.equal(retry.source, 'workspaceScanner ▸ Investigate hawkbit');
+  assert.equal(retry.sub, true);
+});
+
 test('assistant text still logs at info unchanged', () => {
   const logs = capture('planner', { type: 'assistant', text: 'Considering the design.', raw: {} });
   assert.equal(logs.length, 1);

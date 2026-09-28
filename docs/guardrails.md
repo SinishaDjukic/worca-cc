@@ -66,9 +66,15 @@ policy, plugin-granted tools remain subject to it). Protected paths expand to
 rule is never consulted and only produces CLI warnings, so it is not emitted).
 
 A workspace run enforces the run's ONE selected set uniformly on every member
-— nothing is unioned across member projects — and the workspace scanner is
-not subject to guardrails at all (a scan takes no guardrails selection and
-spawns permissive). Repo `.claude/settings.json` `permissions` are honored:
+— nothing is unioned across member projects — and a workspace scan runs as a pipeline under the Normal set, like a memory
+defragment run. The scan's script stages (extract, catalog, join, render) are
+worca's own programs, not `claude` spawns: no deny rule reaches them. Extract
+reads the files its detectors claim in each member's checkout, `.env` and
+`.env.*` files such as `.env.example` included, which Normal protects from
+agents; checking a line an agent cites reads that file whatever its name; the
+catalog's literal search skips every file Normal protects
+(see [workspace-map.md](workspace-map.md#guardrails)).
+Repo `.claude/settings.json` `permissions` are honored:
 natively on single-project runs (cwd is the project worktree — the toggle can
 only decide whether they're *lifted*, it cannot un-load what the worktree
 loads itself); on **detached workspace runs (the default)** each member's own
@@ -118,8 +124,12 @@ enforces the set's latest definition.
   per-file exceptions, so those become read-only under Normal/Strict too.
 - Exempt from scrub/deny: UI-triggered utility agents outside pipeline runs
   (overview generation, agent generation), the `graphify` graph-build
-  subprocess, **workspace scans**, and the `claude --help`/`--version`
+  subprocess, and the `claude --help`/`--version`
   capability probe. In-run title generation IS scrubbed.
+- Script nodes (the Workspace scan's extract, catalog, join and render stages
+  included) are worca's own child processes, not `claude` spawns: no deny rule
+  reaches them, and they start from the run's scrubbed environment when its
+  set scrubs (the scan runs under Normal, which does not scrub).
 - **Ask Worca sandbox.** The in-app assistant (`Ask Worca`) is a headless
   `claude` spawned by Worca itself, never inside a project folder: its cwd is
   `<worcaHome>/tmp/ask`, its built-in tools are reduced to `Task` (`--tools

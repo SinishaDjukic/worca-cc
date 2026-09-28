@@ -106,6 +106,12 @@ test('a node carries its sub-agent model policy so a resumed run keeps it', () =
   assert.equal(over.graph.nodes.find((n) => n.id === 'n_plan').subagentModel, 'auto');
 });
 
+test('a node carries its pinned investigator effort so a resumed run keeps it', () => {
+  assert.equal(build().graph.nodes.find((n) => n.id === 'n_plan').subagentEffort, '');
+  const over = build({ overlays: { nodes: { n_plan: { subagentEffort: 'max' } } } });
+  assert.equal(over.graph.nodes.find((n) => n.id === 'n_plan').subagentEffort, 'max');
+});
+
 test('the icon is sanitized and dropped when oversized or script-ish', () => {
   const iconOf = (icon) => buildGraphManifest(TPL, { ...AGENTS, planner: { ...AGENTS.planner, icon } })
     .graph.nodes.find((n) => n.id === 'n_plan').icon;

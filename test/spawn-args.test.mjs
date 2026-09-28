@@ -16,7 +16,7 @@ import { mkdtemp, rm, writeFile, readFile, chmod, mkdir } from 'node:fs/promises
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildClaudeArgs, runClaude, debugSpawnEnabled, redactArgvForLog } from '../src/core/claude-runner.mjs';
+import { buildClaudeArgs, runClaude, debugSpawnEnabled, redactArgvForLog, cleanRunEnv } from '../src/core/claude-runner.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -457,6 +457,65 @@ test('runClaude mock path is unaffected by modelEnv (no spawn, no error)', async
   assert.equal(r.exitCode, 0);
 });
 
+// ── spawnEnv (wsmap D9): the fan-out concurrency cap ─────────────────────────
+// Same drop-at-runClaude hazard as every field above, plus its place in the merge:
+//   guardrail env (inherited or scrubbed) < spawnEnv < modelEnv.
+const CAP_KEY = 'CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY';
+
+/** runWithEnvDump with the cap key pinned in the parent env for the call (undefined = unset). The
+ *  child's env never leaves this helper whole — a failed assertion would print it, host tokens and
+ *  all: `line(key)` is that key's line ('' when unset), `has(text)` a boolean. */
+async function dumpWithAmbientCap(ambient, extraOpts, opts) {
+  const prev = process.env[CAP_KEY];
+  if (ambient === undefined) delete process.env[CAP_KEY]; else process.env[CAP_KEY] = ambient;
+  let dump;
+  try {
+    dump = await runWithEnvDump(extraOpts, opts);
+  } finally {
+    if (prev === undefined) delete process.env[CAP_KEY]; else process.env[CAP_KEY] = prev;
+  }
+  const lines = dump.split(/\r?\n/);
+  return {
+    line: (key) => lines.filter((l) => l.startsWith(`${key}=`)).join('\n'),
+    has: (text) => dump.includes(text),
+  };
+}
+
+test('runClaude FORWARDS spawnEnv into the spawn env: it replaces an ambient value, the parent env is still inherited', POSIX_SHIM, async () => {
+  const env = await dumpWithAmbientCap('2', { spawnEnv: { [CAP_KEY]: '8' } }, { leak: 'inherited' });
+  assert.equal(env.line(CAP_KEY), `${CAP_KEY}=8`, 'the run-level value replaces the ambient 2');
+  assert.ok(env.has('WORCA_TEST_LEAK=inherited'), 'still inherits process.env around it');
+});
+
+test('spawnEnv survives env scrub, and a model env that sets the same key wins', POSIX_SHIM, async () => {
+  const scrubbed = await dumpWithAmbientCap(undefined,
+    { envScrub: true, envAllowlist: [], spawnEnv: { [CAP_KEY]: '8' } }, { leak: 'should-not-appear' });
+  assert.equal(scrubbed.line(CAP_KEY), `${CAP_KEY}=8`);
+  assert.ok(!scrubbed.has('WORCA_TEST_LEAK'), 'scrub still applies to everything else');
+  const both = await dumpWithAmbientCap(undefined, { spawnEnv: { [CAP_KEY]: '8' }, modelEnv: { [CAP_KEY]: '3' } });
+  assert.equal(both.line(CAP_KEY), `${CAP_KEY}=3`, 'the catalog entry wins');
+});
+
+test('spawnEnv never sets a reserved key or a non-string; absent keeps the env byte-identical', POSIX_SHIM, async () => {
+  const bad = await dumpWithAmbientCap(undefined, { spawnEnv: { PATH: '/evil', WORCA_MOCK: '1', NUMERIC: 8 } });
+  assert.ok(!bad.has('PATH=/evil'), 'PATH override dropped');
+  assert.ok(bad.has(`PATH=${process.env.PATH}`), 'parent PATH intact');
+  assert.ok(!bad.has('WORCA_MOCK=1'), 'reserved WORCA_ key dropped');
+  assert.equal(bad.line('NUMERIC'), '', 'non-string dropped');
+  for (const extra of [{}, { spawnEnv: undefined }, { spawnEnv: {} }]) {
+    const env = await dumpWithAmbientCap(undefined, extra, { leak: 'inherited' });
+    assert.equal(env.line(CAP_KEY), '', JSON.stringify(extra));
+    assert.ok(env.has('WORCA_TEST_LEAK=inherited'), `inherits for ${JSON.stringify(extra)}`);
+  }
+});
+
+test('cleanRunEnv: string values only, reserved keys dropped, null when nothing survives', () => {
+  assert.deepEqual(cleanRunEnv({ [CAP_KEY]: '8', HOME: '/h', WORCA_X: '1', N: 8 }), { [CAP_KEY]: '8' });
+  assert.equal(cleanRunEnv({ PATH: '/x' }), null);
+  assert.equal(cleanRunEnv({}), null);
+  assert.equal(cleanRunEnv(undefined), null);
+});
+
 // ── wire model: ANTHROPIC_MODEL in modelEnv names the id the endpoint sees (#374)
 // Without this the key was legal-but-dead: the spawned `--model <catalog-id>`
 // always outranked the env var inside the CLI. The rule: the resolved model
@@ -782,6 +841,24 @@ test('runClaude FORWARDS addDirs to runReal (--add-dir reaches the spawn)', POSI
   assert.ok(i > -1, `--add-dir reached the spawn: ${JSON.stringify(argv)}`);
   assert.equal(argv[i + 1], join(dir, 'mount'));
   assert.equal(argv.lastIndexOf('--add-dir'), i, 'one dir ⇒ one flag');
+});
+
+test('runClaude FORWARDS agents to runReal (--agents reaches the spawn)', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  const agents = { 'worca-investigator': { description: 'd', prompt: 'p', tools: ['Read'], effort: 'high' } };
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Read'], agents });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--agents');
+  assert.ok(i > -1, `--agents reached the spawn: ${JSON.stringify(argv)}`);
+  assert.deepEqual(JSON.parse(argv[i + 1]), agents);
 });
 
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──

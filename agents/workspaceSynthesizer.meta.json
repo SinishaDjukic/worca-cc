@@ -1,0 +1,20 @@
+{
+  "key": "workspaceSynthesizer",
+  "metaVersion": 2,
+  "humanEffort": { "factor": 0 },
+  "mockRole": "workspace-synth",
+  "placeable": false,
+  "inputs": [{ "id": "brief", "type": "md" }],
+  "outputs": [{ "id": "synthesis", "type": "json", "filename": "synthesis.json" }],
+  "domain": "shared",
+  "displayName": "Workspace Synthesis",
+  "description": "Writes the workspace overview, missing member roles, change-coordination notes and change-order notes from the verified map.",
+  "color": "violet",
+  "icon": "<path d=\"M5 6h14M5 10h14M5 14h9M5 18h6\" stroke-linecap=\"round\"/>",
+  "agentFile": "worca-cc-workspace-synthesizer.md",
+  "runnerType": "producer",
+  "fanOut": false,
+  "asksQuestions": false,
+  "order": 0.7,
+  "scope": "workspace-only"
+}

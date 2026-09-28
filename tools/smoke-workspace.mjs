@@ -2,14 +2,13 @@
 // tools/smoke-workspace.mjs
 // Offline mock SMOKE for a WORKSPACE pipeline run (M4). Proves the review-fanout loop
 // end to end with $0 spend:
-//   scanner (mock) writes a description -> a 2-project workspace run injects it into
-//   every system prompt -> the reviewer node resolves to `workspaceReviewer` -> its
-//   mock blocking count decays with cycle so the review -> implementer loop TERMINATES.
+//   a fixed workspace description -> a 2-project workspace run injects it into every
+//   system prompt -> the reviewer node resolves to `workspaceReviewer` -> its mock
+//   blocking count decays with cycle so the review -> implementer loop TERMINATES.
 //
-// SCOPE SEAM (§6.8): M4 exercises the mock PIPELINE RUN (fully achievable now). The
-// real SCAN ENGINE (workspace-scan.mjs, the `scan-*` WS family) lands in M5; here we
-// mock the scanner role directly to populate the workspace description, then run the
-// pipeline. The M5 smoke will replace the mocked scan with the real engine.
+// SCOPE SEAM (§6.8): this smoke exercises the mock workspace PIPELINE RUN. The scan itself is a
+// wf_workspace_scan pipeline run (the hybrid map pipeline; test/orchestrator-workspace-scan.test.mjs
+// runs it end to end in mock mode); here a fixed description stands in for its output.
 //
 // ISOLATION (mirrors `npm run smoke`): runs under WORCA_HOME=.worca-cc-smoke and uses
 // THROWAWAY git repos created in an OS temp dir (never sandbox/, never this
@@ -25,7 +24,6 @@ import { spawnSync } from 'node:child_process';
 
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { runClaude } from '../src/core/claude-runner.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 
 function die(msg) {
@@ -65,28 +63,23 @@ async function main() {
       .map((dir) => ({ projectDir: dir, projectKey: projectKey(dir), projectName: dir.split('/').pop() }))
       .sort((x, y) => (x.projectKey < y.projectKey ? -1 : x.projectKey > y.projectKey ? 1 : 0));
 
-    // 1) SCAN (mocked role — the real engine is M5). Produce the interconnection
-    // description the run will inject into every agent.
-    let description = '';
-    {
-      const scanOut = join(repos[0], 'ws-description.md');
-      const prompt = [
-        '## Member projects to investigate',
-        ...members.map((m) => `- **${m.projectName}** (\`${m.projectKey}\`): investigate ${m.projectDir}`),
-        'MOCK_ROLE: workspace-scan',
-        `MOCK_OUT: ${scanOut}`,
-        'MOCK_BASE: Smoke Workspace',
-      ].join('\n');
-      const investigating = [];
-      await runClaude({
-        cwd: repos[0], prompt, mock: true,
-        onEvent: (e) => { if (/^INVESTIGATING /.test(e.text || '')) investigating.push(e.text); },
-      });
-      description = await (await import('node:fs/promises')).readFile(scanOut, 'utf8');
-      if (!/# Workspace: Smoke Workspace/.test(description)) return die('scan did not write a template description');
-      if (investigating.length !== members.length) return die(`expected ${members.length} INVESTIGATING lines, got ${investigating.length}`);
-      console.log(`  scan: wrote ${description.length}-char description, ${investigating.length} investigations`);
-    }
+    // 1) The workspace description the run injects into every agent — a fixed one in the scan's
+    // template (the scan pipeline itself is covered by test/orchestrator-workspace-scan.test.mjs).
+    const description = [
+      '# Workspace: Smoke Workspace',
+      '## Overview',
+      'Two throwaway member projects for the offline workspace smoke.',
+      '## Projects',
+      ...members.map((m) => `- ${m.projectName} (\`${m.projectKey}\`): member project`),
+      '## Interconnections',
+      `- ${members[0].projectName} -> ${members[1].projectName}: REST API; smoke fixture`,
+      '## Change-coordination notes',
+      '## Suggested change order',
+      `1. ${members[1].projectName}`,
+      `2. ${members[0].projectName}`,
+      '',
+    ].join('\n');
+    console.log(`  description: ${description.length} chars (fixed)`);
 
     // 2) RUN the mock workspace pipeline with the frozen description injected.
     const workspace = {
@@ -220,7 +213,7 @@ async function main() {
     if (state.target !== 'workspace') return die(`state.target should be 'workspace', got ${state.target}`);
 
     console.log(`  run:  status=${res.status}, review node=workspaceReviewer, loop terminated (cycles capped)`);
-    console.log('smoke:workspace OK — scanner wrote a description, the workspace run injected it, the workspaceReviewer loop terminated.');
+    console.log('smoke:workspace OK — the workspace run injected the description, the workspaceReviewer loop terminated.');
   } finally {
     await Promise.all(repos.map((d) => rm(d, { recursive: true, force: true }).catch(() => {})));
     // The smoke home (.worca-cc-smoke) is left for inspection like `npm run smoke`; the

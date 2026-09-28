@@ -1536,6 +1536,91 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .ws-desc-edit[hidden]{display:none;}
 .ws-desc-edit .md-tabs{margin-bottom:8px;}
 .ws-desc-preview[hidden]{display:none;}
+/* Workspace page › Map tab (workspace-map-view.mjs): coverage strip, layered graph, edge table,
+   add form. One colour family per edge kind, set as --wm-k on the element and read by the line,
+   the arrow, the swatch. */
+.wm{display:flex;flex-direction:column;gap:18px;}
+.wm-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;}
+.wm-meta{font-size:12.5px;color:var(--ink-2);}
+.wm-top .wm-regen{margin-left:auto;}
+.wm-empty{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+.wm .card-head{flex-wrap:wrap;gap:8px 12px;margin-bottom:12px;}
+.wm .card-head b{font-size:14px;}
+.wm-k-http{--wm-k:var(--blue);}
+.wm-k-grpc{--wm-k:var(--indigo);}
+.wm-k-graphql{--wm-k:var(--pink);}
+.wm-k-topic{--wm-k:var(--amber);}
+.wm-k-pkg{--wm-k:var(--slate);}
+.wm-k-db{--wm-k:var(--cocoa);}
+.wm-k-service{--wm-k:var(--teal);}
+.wm-k-other{--wm-k:var(--violet);}
+.wm-coverage{display:flex;flex-wrap:wrap;gap:8px;}
+.wm-chip{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;color:var(--ink);background:var(--field);
+  border:1.5px solid transparent;border-radius:999px;padding:5px 11px;cursor:pointer;}
+.wm-chip:hover{border-color:var(--line-2);}
+.wm-chip.is-active{border-color:var(--ink);background:var(--surface);}
+.wm-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wm-chip-name{font-weight:600;}
+.wm-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--seq);}
+.wm-chip.lvl-rich .wm-dot{background:var(--green);}
+.wm-chip.lvl-partial .wm-dot{background:var(--amber);}
+.wm-chip.lvl-none .wm-dot{background:var(--red);}
+.wm-tag{font-size:11px;color:var(--ink-2);}
+.wm-tag.is-bad{color:var(--red-ink);}
+.wm-tag.is-off{color:var(--ink-3);}
+.wm-legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-2);}
+.wm-legend-item,.wm-kind{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+.wm-swatch{display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--wm-k);}
+/* The graph keeps its drawn size and scrolls inside its card on a narrow screen. */
+.wm-graph-scroll{overflow-x:auto;overflow-y:hidden;max-width:100%;}
+.wm-graph{display:block;max-width:none;}
+.wm-node{cursor:pointer;}
+.wm-node rect{fill:var(--surface);stroke:var(--line-2);stroke-width:1.5;}
+.wm-node.lvl-partial rect{stroke:var(--amber);}
+.wm-node.lvl-none rect{stroke:var(--red);stroke-dasharray:4 3;}
+.wm-node.is-selected rect{stroke:var(--ink);stroke-width:2;}
+.wm-node text{fill:var(--ink);font:600 12.5px var(--sans);pointer-events:none;}
+.wm-pair{cursor:pointer;outline:none;}
+.wm-hit{fill:none;stroke:transparent;stroke-width:14;pointer-events:stroke;}
+.wm-line{fill:none;stroke:var(--wm-k);stroke-width:1.8;pointer-events:none;}
+.wm-pair.is-dashed .wm-line{stroke-dasharray:6 4;}
+.wm-pair.is-confirmed .wm-line{stroke-width:3.2;}
+.wm-pair:hover .wm-hit,.wm-pair:focus-visible .wm-hit{stroke:var(--selection);}
+.wm-graph.has-focus .wm-pair.is-dim{opacity:.25;}
+.wm-arrow{fill:var(--wm-k);}
+.wm-filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px;}
+.wm-filters .select-wrap{flex:0 1 180px;min-width:140px;}
+.wm-add-form .select-wrap{flex:0 1 170px;min-width:130px;}
+.wm-filters .select,.wm-add-form .select{padding:8px 34px 8px 12px;font-size:12.5px;}
+.wm-filters .select-wrap::after,.wm-add-form .select-wrap::after{right:12px;}
+.wm-table-scroll{overflow-x:auto;}
+.wm-table{width:100%;border-collapse:collapse;font-size:12.5px;}
+.wm-table th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);
+  padding:6px 10px 6px 0;border-bottom:1px solid var(--line);white-space:nowrap;}
+.wm-table td{padding:8px 10px 8px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink);}
+.wm-table tr:last-child td{border-bottom:0;}
+.wm-row.is-rejected td{color:var(--ink-3);}
+.wm-row.is-rejected .badge,.wm-row.is-rejected .wm-kind{opacity:.6;}
+/* Collapsed borders: a dashed top would lose to the solid bottom of the row above (CSS 2.1 §17.6.2.1),
+   so a missing row dashes its bottom border, on the last row too: this selector (0,3,1) outranks
+   .wm-table tr:last-child td{border-bottom:0} (0,2,2). Longhands: jsdom drops a shorthand with var(). */
+.wm-table .wm-row.is-missing td{border-bottom-width:1px;border-bottom-style:dashed;border-bottom-color:var(--line-2);font-style:italic;}
+/* A stale review (a rejection whose edge a re-scan no longer finds): greyed like a rejected row, dashed like a missing one. */
+.wm-table .wm-row.is-stale td{color:var(--ink-3);border-bottom-width:1px;border-bottom-style:dashed;border-bottom-color:var(--line-2);font-style:italic;}
+.wm-disp .mono{word-break:break-all;}
+.wm-sub,.wm-ctx{display:block;color:var(--ink-3);font-size:11.5px;margin-top:2px;}
+.wm-ev + .wm-ev{margin-top:6px;}
+.wm-ev-side{display:inline-block;min-width:34px;font-size:11px;color:var(--ink-3);}
+.wm-ev-loc{font-size:11.5px;margin-right:8px;color:var(--ink-2);word-break:break-all;}
+.wm-actions{white-space:nowrap;}
+.wm-actions .btn-mini{padding:5px 10px;font-size:12px;}
+.wm-actions .btn-mini + .btn-mini{margin-left:6px;}
+.wm-none td,.wm-more td{color:var(--ink-3);}
+.wm-add-box{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);}
+.wm-add-box > b{display:block;font-size:13px;margin-bottom:8px;}
+.wm-add-form{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.wm-add-form .input{flex:1 1 160px;width:auto;padding:8px 12px;font-size:12.5px;}
+.wm-add-msg[hidden]{display:none;}
 /* A markdown-by-contract body (workspace description, its edit preview, a task-source
    body) keeps the .viewer frame but drops the pre look once it actually rendered:
    sans type, normal flow (marked emits its own breaks) and no stray outer margins. */
@@ -1549,8 +1634,6 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .artifact-markdown p{margin:6px 0;}
 .md-preview{min-height:72px;}
 .md-preview:empty::before{content:'Nothing to preview yet';color:var(--ink-2);}
-#wiz-desc-tabs{margin-left:auto;}
-#wiz-desc-preview[hidden]{display:none;}
 .ws-delete{display:inline-flex;align-items:center;gap:6px;background:var(--red-ink);border:1.5px solid var(--red-ink);color:var(--on-status);font-family:inherit;font-weight:600;font-size:12px;padding:7px 12px;border-radius:8px;cursor:pointer;}
 .ws-delete:hover:not(:disabled){filter:brightness(0.95);}
 .ws-delete:disabled{opacity:.6;cursor:default;}
@@ -1566,6 +1649,19 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .wiz-select-all{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer;}
 .wiz-select-all input{margin:0;cursor:pointer;}
 .wiz-select-all:has(input:disabled){opacity:.5;cursor:not-allowed;}
+/* Workspace size (D24): the project list scrolls inside the card so the size note under it stays in
+   view while a big pick is made; the note's data-level picks the tone. */
+#wiz-projects{max-height:min(52vh,480px);overflow-y:auto;}
+.wiz-size-note{margin-top:8px;font-size:12.5px;line-height:1.45;border-radius:10px;}
+.wiz-size-note[hidden]{display:none;}
+.wiz-size-note[data-level="big"]{color:var(--amber-ink);}
+.wiz-size-note[data-level="very-big"]{color:var(--amber-ink);background:var(--amber-wash);border:1px solid var(--amber-line);padding:8px 11px;font-weight:600;}
+.wiz-size-note[data-level="over"]{color:var(--red-ink);background:var(--red-bg);padding:8px 11px;font-weight:600;}
+.wiz-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:28px;align-items:start;}
+.wiz-models{border-left:1px solid var(--line);padding-left:24px;}
+.wiz-models-title{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);margin:2px 0 12px;}
+.wiz-model-pair{display:grid;grid-template-columns:minmax(0,1fr) 108px;gap:8px;}
+@media (max-width:760px){.wiz-grid{grid-template-columns:1fr;}.wiz-models{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:16px;}}
 
 /* Live scan loader (role=status aria-live=polite). */
 .ws-loader{display:flex;flex-direction:column;align-items:center;gap:12px;padding:36px 24px;text-align:center;}
@@ -1582,11 +1678,6 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 }
 .status-label{font-weight:600;font-size:14.5px;color:var(--ink);max-width:520px;}
 .status-sub{font-family:var(--mono);font-size:12px;color:var(--ink-3);}
-
-/* Phase track: graph → investigate → synthesize. */
-.wiz-phase-track{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 0 14px;}
-.wiz-phase-track [data-phase]{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);background:var(--field);border:1px solid var(--line);border-radius:999px;padding:6px 14px;}
-.wiz-phase-track [data-phase].active{color:var(--on-ink);background:var(--ink);border-color:var(--ink);}
 
 /* History pill "WS" badge for workspace runs. */
 .hist-pill.ws::before{content:'WS';font-size:9px;font-weight:800;letter-spacing:.06em;background:var(--violet-bg);color:var(--violet-ink);border-radius:5px;padding:2px 5px;margin-right:2px;}
@@ -2539,9 +2630,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-warn{margin-top:14px;padding:10px 12px;border-radius:12px;background:var(--amber-bg);color:var(--amber-ink);}
 .tm-delegate-wrap{margin-top:8px;}
 /* Wizard (board 7) */
-.wiz-track{display:flex;gap:18px;list-style:none;padding:0;margin:0 0 18px;font-size:12.5px;color:var(--ink-2);}
-.wiz-track li span{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--field);margin-right:6px;font-weight:700;}
-.wiz-track li.on{color:var(--ink);font-weight:600;} .wiz-track li.on span{background:var(--ink);color:var(--on-ink);}
 .wiz-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-ctrl);}
 .wiz-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid var(--line);}
 /* The metrics-home picker's radio + slug: the label had no rule, so the radio touched the text. */

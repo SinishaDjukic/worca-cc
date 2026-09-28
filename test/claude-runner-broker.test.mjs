@@ -157,3 +157,31 @@ test('run preflight: every node\'s model is checked against the paying person\'s
   useBroker(single);
   await RunHarness.prototype._brokerPreflight.call(fake, manifest, {});
 });
+
+// PR #502 merge guard: the credential-broker path (runViaBroker → runReal({...opts})) must keep the
+// workspace-map run-level spawn env (wsmap D9: the fan-out concurrency cap, background tasks off)
+// and the run-scoped --agents definitions. Both arrive through runClaude's dispatch object.
+test('the broker path keeps the run-level spawn env and the --agents definitions', POSIX, async () => {
+  useBroker(single);
+  const probe = join(dir, 'claude-env-probe.mjs');
+  await writeFile(probe, `#!/usr/bin/env node
+const i = process.argv.indexOf('--agents');
+const seen = {
+  cap: process.env.CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY || null,
+  bg: process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS || null,
+  agents: i >= 0 ? JSON.parse(process.argv[i + 1]) : null,
+};
+process.stdout.write(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' }) + '\\n');
+process.stdout.write(JSON.stringify({ type: 'result', result: JSON.stringify(seen), total_cost_usd: 0 }) + '\\n');
+`, 'utf8');
+  await chmod(probe, 0o755);
+  const agents = { investigator: { description: 'pinned investigator', prompt: 'Investigate one member project.' } };
+  const r = await runClaude({
+    bin: probe, prompt: 'hi', model: 'claude-sonnet-5', agents,
+    spawnEnv: { CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY: '8', CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
+  });
+  const seen = JSON.parse(r.text);
+  assert.equal(seen.cap, '8', 'the run-level spawn env reaches the CLI through runViaBroker');
+  assert.equal(seen.bg, '1');
+  assert.deepEqual(seen.agents, agents, '--agents survives the broker path');
+});

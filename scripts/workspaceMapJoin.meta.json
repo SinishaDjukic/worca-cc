@@ -1,0 +1,19 @@
+{
+  "key": "workspaceMapJoin",
+  "metaVersion": 2,
+  "displayName": "Workspace map: join",
+  "description": "Workspace scan: verifies the usage evidence, joins consumers to providers into edges with confidence, computes the change order and writes the workspace map plus the synthesis brief. Built into worca.",
+  "domain": "shared",
+  "color": "teal",
+  "icon": "<circle cx=\"5\" cy=\"6\" r=\"2\"/><circle cx=\"19\" cy=\"6\" r=\"2\"/><circle cx=\"12\" cy=\"18\" r=\"2\"/><path d=\"M7 6h10M6 8l5 8M18 8l-5 8\" stroke-linecap=\"round\"/>",
+  "order": 92,
+  "runtime": "node",
+  "file": "workspace-map-join.mjs",
+  "timeoutMs": 1800000,
+  "placeable": false,
+  "inputs": [ { "id": "catalog", "type": "json" }, { "id": "usage", "type": "json" } ],
+  "outputs": [
+    { "id": "map", "type": "json", "filename": "workspace-map.json" },
+    { "id": "brief", "type": "md", "filename": "synth-brief.md" }
+  ]
+}

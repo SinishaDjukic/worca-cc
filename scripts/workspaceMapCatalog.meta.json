@@ -1,0 +1,19 @@
+{
+  "key": "workspaceMapCatalog",
+  "metaVersion": 2,
+  "displayName": "Workspace map: catalog",
+  "description": "Workspace scan: verifies the survey's evidence, catalogs what every member provides, finds literal candidate uses in the other members and writes one usage brief per member. Built into worca.",
+  "domain": "shared",
+  "color": "teal",
+  "icon": "<path d=\"M8 6h12M8 12h12M8 18h12\" stroke-linecap=\"round\"/><circle cx=\"4\" cy=\"6\" r=\"1\"/><circle cx=\"4\" cy=\"12\" r=\"1\"/><circle cx=\"4\" cy=\"18\" r=\"1\"/>",
+  "order": 91,
+  "runtime": "node",
+  "file": "workspace-map-catalog.mjs",
+  "timeoutMs": 1800000,
+  "placeable": false,
+  "inputs": [ { "id": "extract", "type": "json" }, { "id": "survey", "type": "json" } ],
+  "outputs": [
+    { "id": "catalog", "type": "json", "filename": "catalog.json" },
+    { "id": "brief", "type": "md", "filename": "usage-brief.md" }
+  ]
+}

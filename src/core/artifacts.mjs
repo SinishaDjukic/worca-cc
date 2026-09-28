@@ -851,9 +851,9 @@ function shortId() {
 
 /**
  * Freeze a workspace description into a run: take a VERBATIM snapshot of the text so
- * later registry edits never retroactively alter a started run. No length cap — the
- * description's size is bounded only by the workspace-scanner prompt. Non-strings
- * become ''.
+ * later registry edits never retroactively alter a started run. No length cap — a scan's
+ * description is held to its line budget by the render card (scanDescriptionBudget); a hand edit
+ * has no cap. Non-strings become ''.
  * @param {string} text
  * @returns {string}
  */

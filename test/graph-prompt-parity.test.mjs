@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 11 shipped builtins this
+// THE prompt snapshot pin, in two layers. For each of the 14 shipped builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -44,7 +44,7 @@ import {
 useTempHome(after);
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
-/** Builtin layer only — the pin is about the 11 files that ship in agents/. */
+/** Builtin layer only — the pin is about the 14 files that ship in agents/. */
 const REGISTRY = loadAgentRegistry(AGENTS_DIR, { userAgentsDir: null, includePlugins: false });
 const portsFn = registryPortsFn(REGISTRY);
 
@@ -193,7 +193,6 @@ const PARITY_TPL = {
   wires: [
     { id: 'w_t_clarify', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('clarify'), port: 'task' } },
     { id: 'w_t_planner', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('planner'), port: 'task' } },
-    { id: 'w_t_scan', from: { node: 'n_task', port: 'task' }, to: { node: nodeId('workspaceScanner'), port: 'task' } },
     { id: 'w_dec_impl', from: { node: nodeId('decomposer'), port: 'tasks' }, to: { node: nodeId('implementer'), port: 'task' } },
   ],
 };
@@ -256,12 +255,13 @@ function ctxFor(key, { only = null, workspace = null, extras = [], slice = null,
 
 const promptFor = (key, opts) => buildAgentPrompt(ctxFor(key, opts));
 
-// ── the 12 ────────────────────────────────────────────────────────────────────
+// ── the 14 ────────────────────────────────────────────────────────────────────
 
-test('the pin covers exactly the 12 shipped builtins, all v2-ported', () => {
+test('the pin covers exactly the 14 shipped builtins, all v2-ported', () => {
   assert.deepEqual(BUILTIN_KEYS, [
     'clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
     'memoryDefragmenter', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
+    'workspaceSynthesizer', 'workspaceUsageMapper',
   ]);
   for (const key of BUILTIN_KEYS) {
     assert.equal(REGISTRY[key].metaVersion, 2, `${key} is metaVersion 2`);
@@ -311,9 +311,10 @@ test('every builtin opens "## What to do" with the base instruction for its runn
 
 // ── request policy (v1 phases.mjs:449-496 semantics, restated without the key list) ──
 
-const TASK_WIRED = ['clarify', 'planner', 'workspaceScanner'];
+const TASK_WIRED = ['clarify', 'planner'];
 const WANTS_REQUEST = ['refiner', 'reviewer', 'planReviewer'];
-const UPSTREAM_ONLY = ['decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer'];
+const UPSTREAM_ONLY = ['decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer',
+  'workspaceScanner', 'workspaceUsageMapper', 'workspaceSynthesizer'];
 
 test('request policy: task-wired builtins get the request AND the attachments', () => {
   const extras = [{ name: 'spec.md', path: '/abs/spec.md' }];
@@ -392,7 +393,7 @@ const MOCK_ROLES = {
   implementer: 'implementer', reviewer: 'reviewer', planReviewer: 'plan-review',
   workspaceReviewer: 'workspace-reviewer', manualTestsChecklist: 'manual-tests-checklist',
   manualWebUiTesting: 'manual-web-ui-testing', workspaceScanner: 'workspace-scan',
-  memoryDefragmenter: 'memory-defrag',
+  memoryDefragmenter: 'memory-defrag', workspaceUsageMapper: 'workspace-usage', workspaceSynthesizer: 'workspace-synth',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {

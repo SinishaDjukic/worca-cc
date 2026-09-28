@@ -18,7 +18,7 @@ const AWAIT_PORT_ID = 'await';
  *  would warn on the task node and an agent-only `awaitAll` would pass silently
  *  on a flow card. Unknown keys are PRESERVED and ignored, never stripped. */
 const KNOWN_CONFIG = {
-  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel']),
+  agent: new Set(['model', 'effort', 'fanOut', 'askQuestions', 'awaitAll', 'subagentModel', 'subagentEffort']),
   script: new Set(['params', 'ports', 'timeoutMs', 'awaitAll', 'mock', 'paramsPort']),
   task: new Set(['planStoreSeed']),
   and: new Set(['arity']),
@@ -41,7 +41,9 @@ const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 /**
  * @param {object} tpl v2 template
  * @param {(node:object) => object|undefined} portsFn  MUST synthesize the await port
- * @param {{limits?:{maxNodes:number, maxWires:number}}} [opts]
+ * @param {{limits?:{maxNodes:number, maxWires:number}, allowUnplaceable?:boolean}} [opts]
+ *   allowUnplaceable: the SERVER's reserved built-ins only (workflows.mjs) — they may carry an
+ *   agent that declares placeable:false (the Workspace scan's scanner). Never set for a saved row.
  * @returns {{ok:boolean, errors:Array, warnings:Array}}  Issue = {code, message, nodeId?, wireId?, portId?}
  */
 export function validateGraph(tpl, portsFn, opts = {}) {
@@ -56,6 +58,7 @@ export function validateGraph(tpl, portsFn, opts = {}) {
   const over = limitIssue(tpl, limits);
   if (over) return { ok: false, errors: [over], warnings: [] };
   const ctx = buildContext(tpl, portsFn, limits);
+  ctx.allowUnplaceable = opts?.allowUnplaceable === true;
   const errors = [];
   const warnings = [];
   for (const rule of RULES) {
@@ -194,7 +197,7 @@ export const RULES = [
     }
   } },
 
-  { code: 'V4', level: 'E', check({ nodes, portsFor }, add) {
+  { code: 'V4', level: 'E', check({ nodes, portsFor, allowUnplaceable }, add) {
     for (const n of nodes) {
       if (!KEYED_KINDS.includes(n.kind) || !n.key) continue;             // a missing key is V3's
       const p = portsFor(n.id);
@@ -205,7 +208,7 @@ export const RULES = [
       } else if (!p.ported && p.meta?.configPortsInvalid) {
         add(`script "${n.key}" has invalid ports in its config — fix them in the inspector`, { nodeId: n.id });
       } else if (!p.ported) add(`agent "${n.key}" has no v2 ports — port its sidecar to metaVersion 2`, { nodeId: n.id });
-      else if (p.meta?.placeable === false) {
+      else if (p.meta?.placeable === false && !allowUnplaceable) {
         add(`${what} "${n.key}" declares placeable: false and cannot be a graph node`, { nodeId: n.id });
       } else if (p.meta?.runtime === 'python' && p.meta?.runtimeMissing) {
         // Workbench §7 / W17: GET /api/scripts stamps `runtimeMissing` on a python

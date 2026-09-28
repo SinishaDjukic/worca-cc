@@ -1,26 +1,15 @@
 // test/workspace-prompt-inject.test.mjs
-// M4: the workspace runners (runWorkspaceReviewer, runWorkspaceScan) inject the
+// M4: the workspace runners (runWorkspaceReviewer; the scanner is a pipeline node now) inject the
 // frozen description into the SYSTEM prompt on a workspace run, while single-project
 // prompts are BYTE-IDENTICAL. We capture the exact systemPrompt/prompt by stubbing
 // the claude-runner's runClaude (the runners' single IO seam).
-import { test, after } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildSystemPrompt } from '../src/core/phases.mjs';
-
-const tmpDirs = [];
-async function makeTmpDir() {
-  const dir = await mkdtemp(join(tmpdir(), 'worca-cc-ws-prompt-'));
-  tmpDirs.push(dir);
-  return dir;
-}
-after(async () => {
-  await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
-});
 
 const WS = {
   key: 'wks-demo-1a2b3c4d',
@@ -37,22 +26,6 @@ const WS = {
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 const reviewerBody = await readFile(join(AGENTS_DIR, 'worca-cc-workspace-reviewer.md'), 'utf8');
 const scannerBody = await readFile(join(AGENTS_DIR, 'worca-cc-workspace-scanner.md'), 'utf8');
-
-function ctxFor(dir, extra = {}) {
-  return {
-    projectDir: dir,
-    pipelineDir: dir,
-    taskPrompt: 'demo task',
-    toolInstruction: '',
-    agentPrompts: { workspaceReviewer: reviewerBody, workspaceScanner: scannerBody },
-    checkpointRef: null,
-    signal: undefined,
-    onEvent: () => {},
-    claudeOpts: { mock: true },
-    cycle: 1,
-    ...extra,
-  };
-}
 
 test('the workspace reviewer system prompt injects the description (byte-identity off)', () => {
   // The runner builds buildSystemPrompt(toolInstruction, body, 'workspace-reviewer',
@@ -72,27 +45,13 @@ test('the workspace reviewer system prompt injects the description (byte-identit
   assert.match(withoutWs, /You are the \*\*Workspace Reviewer\*\*/);
 });
 
-test('runWorkspaceScan does NOT inject a workspace block (it IS the scanner)', () => {
+test('the scanner body gets no workspace block when none is passed (a scan run passes description "")', () => {
   // The scanner produces the description, so it gets NO injected context (4th arg
   // undefined). Its body is the contract.
   const sys = buildSystemPrompt('', scannerBody, 'workspace-scanner', undefined);
   assert.doesNotMatch(sys, /## Workspace Context/, 'the scanner is not given an injected description');
   assert.match(sys, /Workspace Scanner/, 'the scanner body is the contract');
-});
-
-test('runWorkspaceScan (mock) writes a §5.8-template description and returns it', async () => {
-  const dir = await makeTmpDir();
-  const { runWorkspaceScan } = await import('../src/core/phases.mjs');
-  const ctx = ctxFor(dir, {
-    workspaceName: 'Demo WS',
-    projects: WS.projects.map((p) => ({ projectKey: p.projectKey, projectName: p.projectName, projectDir: p.worktreeDir })),
-  });
-  const { description, outPath } = await runWorkspaceScan(ctx, { name: 'Demo WS' });
-  assert.equal(outPath, join(dir, 'workspace-description.md'));
-  assert.match(description, /# Workspace: Demo WS/);
-  assert.match(description, /## Overview/);
-  assert.match(description, /## Interconnections/);
-  assert.match(description, /## Suggested change order/);
-  // The mock derived the member keys from the task prompt's member lines.
-  assert.match(description, /iam-1a2b3c4d|ui-5e6f7a8b/);
+  // A scan RUN passes the synthetic target with description '' (D9): still no block.
+  const scanRun = buildSystemPrompt('', scannerBody, 'workspace-scanner', { ...WS, description: '' });
+  assert.doesNotMatch(scanRun, /## Workspace Context/, 'a scan run passes description "": no block');
 });

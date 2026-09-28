@@ -1,12 +1,14 @@
 // test/workspace-mock.test.mjs
-// M4 §6.7: the two new MOCK_ROLE arms in claude-runner's runMock.
-//  - workspace-scan: writes a deterministic §5.8-template description to MOCK_OUT and
-//    emits one `INVESTIGATING <key> relations to <other>` log line per project.
+// M4 §6.7: the workspace MOCK_ROLE arms in claude-runner's runMock.
+//  - workspace-scan (wsmap P2: the Workspace scan's survey stage): writes a valid survey.json to
+//    MOCK_OUT off the extract.json the survey brief (MOCK_IN) names — every member with needs
+//    `investigated` with a mock role, the rest `skipped` (test/workspace-scan-mock.test.mjs covers
+//    the writers themselves).
 //  - workspace-reviewer: mirrors mockReviewer — blocking count DECREASES with cycle so
 //    the review->implementer loop terminates; writes ONE merged review md + json.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,44 +44,34 @@ function collect() {
   return { events, onEvent: (e) => events.push(e) };
 }
 
-test('workspace-scan mock writes a template description + one INVESTIGATING line per project', async () => {
+test('workspace-scan mock (the survey stage) writes a valid survey.json off the extract the brief names', async () => {
   const dir = await makeTmpDir();
-  const out = join(dir, 'workspace-description.md');
+  const extractPath = join(dir, 'extract.json');
+  await writeFile(extractPath, JSON.stringify({ version: 1, workspace: { name: 'Demo WS' }, members: {
+    'iam-1a2b3c4d': { key: 'iam-1a2b3c4d', needs: ['provides', 'consumes'] },
+    'ui-5e6f7a8b': { key: 'ui-5e6f7a8b', needs: [] },
+  } }));
+  const briefPath = join(dir, 'survey-brief.md');
+  await writeFile(briefPath, `# Workspace survey brief\n<!-- worca:extract=${extractPath} -->\n<!-- worca:check=x "<OUT>" -->\n`);
+  const out = join(dir, 'survey.json');
   const { events, onEvent } = collect();
-  const prompt = [
-    '## Member projects to investigate',
-    '- **iam** (`iam-1a2b3c4d`): investigate /wt/iam',
-    '- **ui** (`ui-5e6f7a8b`): investigate /wt/ui',
-    'MOCK_ROLE: workspace-scan',
-    `MOCK_OUT: ${out}`,
-    'MOCK_BASE: Demo WS',
-  ].join('\n');
-  const { text } = await runClaude({ cwd: dir, prompt, mock: true, onEvent });
-  assert.match(text, /workspace description written/);
-
-  const md = await readFile(out, 'utf8');
-  assert.match(md, /# Workspace: Demo WS/);
-  assert.match(md, /## Overview/);
-  assert.match(md, /## Projects/);
-  assert.match(md, /## Interconnections/);
-  assert.match(md, /## Change-coordination notes/);
-  assert.match(md, /## Suggested change order/);
-
-  const investigating = events.filter((e) => /^INVESTIGATING /.test(e.text || ''));
-  assert.equal(investigating.length, 2, 'one INVESTIGATING line per project');
-  assert.ok(investigating.some((e) => /iam-1a2b3c4d/.test(e.text)));
-  assert.ok(investigating.some((e) => /ui-5e6f7a8b/.test(e.text)));
-  assert.ok(events.some((e) => /^SYNTHESIZING /.test(e.text || '')), 'emits a synthesize line');
+  const { text } = await runClaude({ cwd: dir, mock: true, onEvent,
+    prompt: ['MOCK_ROLE: workspace-scan', `MOCK_OUT: ${out}`, `MOCK_IN: ${briefPath}`, 'MOCK_BASE: Demo WS'].join('\n') });
+  assert.match(text, /workspace survey written/);
+  const doc = JSON.parse(await readFile(out, 'utf8'));
+  assert.equal(doc.version, 1);
+  assert.equal(doc.members['iam-1a2b3c4d'].status, 'investigated');
+  assert.equal(doc.members['iam-1a2b3c4d'].role, 'Mock role for iam-1a2b3c4d');
+  assert.equal(doc.members['ui-5e6f7a8b'].status, 'skipped');
+  assert.ok(events.some((e) => /workspace survey: 1 investigated, 1 skipped/.test(e.text || '')), 'the run log says what the mock did');
 });
 
-test('workspace-scan mock degrades gracefully with no member lines', async () => {
+test('workspace-scan mock degrades to an empty valid survey with no brief', async () => {
   const dir = await makeTmpDir();
-  const out = join(dir, 'desc.md');
+  const out = join(dir, 'survey.json');
   const { onEvent } = collect();
-  const prompt = `MOCK_ROLE: workspace-scan\nMOCK_OUT: ${out}\nMOCK_BASE: Empty`;
-  await runClaude({ cwd: dir, prompt, mock: true, onEvent });
-  const md = await readFile(out, 'utf8');
-  assert.match(md, /# Workspace: Empty/, 'still writes a valid description');
+  await runClaude({ cwd: dir, prompt: `MOCK_ROLE: workspace-scan\nMOCK_OUT: ${out}\nMOCK_BASE: Empty`, mock: true, onEvent });
+  assert.deepEqual(JSON.parse(await readFile(out, 'utf8')), { version: 1, members: {} });
 });
 
 test('workspace-reviewer mock: blocking count decreases with cycle (loop terminates)', async () => {

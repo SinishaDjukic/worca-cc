@@ -78,10 +78,10 @@ jobs:
       # server on an ephemeral port, and runs the pipeline under WORCA_MOCK=1 —
       # nothing else has to be provisioned. --no-sandbox is required whenever
       # headless Chrome runs as root.
-      - name: Composer, run-monitor, theme, memory and scripts CDP proofs
+      - name: Headless-Chrome UI proofs
         env:
           CHROME_NO_SANDBOX: "1"
-        run: npm run verify:composer && npm run verify:run-monitor && npm run verify:theme && npm run verify:memory && npm run verify:scripts && npm run verify:ask-forms
+        run: npm run verify:composer && npm run verify:run-monitor && npm run verify:theme && npm run verify:memory && npm run verify:scripts && npm run verify:ask-forms && npm run verify:workspace-map
 
   # The container image (docs/docker.md): build it from this checkout's
   # `npm pack` output — the same path the release takes — lint the Dockerfile,

@@ -39,7 +39,7 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { prepareModelEnv, envFlag, describeModelEnv, withProviderModesOff } from './model-env.mjs';
+import { prepareModelEnv, envFlag, describeModelEnv, isReservedModelEnvKey, withProviderModesOff, withStreamTimeouts } from './model-env.mjs';
 import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
@@ -54,6 +54,7 @@ import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { stripGithubCredentials } from './github-credentials.mjs';
+import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from './workspace-scan-mock.mjs';
 import { agentIdentity, agentSpawn, killAgentGroup, shareWithAgent } from './agent-user.mjs';
 import { agentIdentityFor } from './agent-pool.mjs';
 import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, slotOfBaseUrl } from './broker-client.mjs';
@@ -343,6 +344,20 @@ export function buildSpawnEnv(envScrub, envAllowlist) {
 }
 
 /**
+ * The run-level spawn env (runClaude's `spawnEnv`, wsmap D9) as it may reach a child: string
+ * values only, never a reserved key (isReservedModelEnvKey: PATH, HOME, NODE_OPTIONS, WORCA_*, …).
+ * null when nothing survives, so the caller merges nothing. Pure + exported for testing.
+ * @param {Record<string,*>|undefined} env
+ * @returns {Record<string,string>|null}
+ */
+export function cleanRunEnv(env) {
+  if (!env || typeof env !== 'object') return null;
+  const out = {};
+  for (const [k, v] of Object.entries(env)) if (typeof v === 'string' && !isReservedModelEnvKey(k)) out[k] = v;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * Whether mock mode is active. Driven by WORCA_MOCK or an explicit opts.mock
  * passed through by the orchestrator (handled by caller mapping mock->env or
  * by passing systemPrompt/prompt markers; we also honor a `mock` field).
@@ -398,6 +413,12 @@ export function mockEnabled(opts) {
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
  * @param {string[]} [o.disallowedTools]   --disallowedTools <list>: built-ins withheld from this spawn
  *   (model bridge §5.3: WebSearch/WebFetch for a translated model). Absent/empty ⇒ flag omitted.
+ * @param {Record<string, object>} [o.agents]  run-scoped sub-agent definitions (--agents; phases.mjs investigatorAgents)
+ * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
+ *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
+ *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
+ *   same key wins); string values only, reserved keys (isReservedModelEnvKey) dropped (cleanRunEnv).
+ *   Absent ⇒ the spawn env is byte-identical.
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -422,6 +443,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    spawnEnv,
     disallowedTools,
     workspaceWriteTargets,
     resumeSessionId,
@@ -436,6 +458,7 @@ export async function runClaude(o = {}) {
     maxBudgetUsd,
     appendSubagentSystemPrompt,
     addDirs,
+    agents,
     argvInlineLimit,
     // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
     // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
@@ -482,6 +505,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    spawnEnv,
     disallowedTools,
     tools,
     strictMcpConfig,
@@ -492,6 +516,7 @@ export async function runClaude(o = {}) {
     maxBudgetUsd,
     appendSubagentSystemPrompt,
     addDirs,
+    agents,
     argvInlineLimit,
     asAgent,
     billTo,
@@ -637,7 +662,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -704,6 +729,13 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
+  // Run-scoped sub-agent definitions (the pinned investigator, phases.mjs investigatorAgents).
+  // ALWAYS inline JSON, on the staged branch too: Claude Code reads `--agents <file>` only from
+  // 2.1.281, and docker/CLAUDE_CODE_VERSION pins 2.1.278 (a path there fails at spawn with
+  // "Invalid --agents configuration"). The definition is ~600 chars. Before --add-dir (LAST).
+  if (agents && typeof agents === 'object' && Object.keys(agents).length) {
+    args.push('--agents', JSON.stringify(agents));
+  }
   // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
   // stays a prefix; absent / [] / non-strings ⇒ nothing (the `names` filter above).
   for (const d of names(addDirs)) args.push('--add-dir', d);
@@ -759,7 +791,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -838,7 +870,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -857,12 +889,16 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // spawn inherits process.env exactly as it did before guardrails existed.
     const guardrailEnv = buildSpawnEnv(envScrub, envAllowlist);
 
+    // wsmap D9: the run-level env (a fan-out node's concurrency cap) merges OVER the guardrail env —
+    // it survives scrub and replaces an ambient value — and UNDER the model env below.
     // Model env merges LAST: it survives scrub and wins collisions (explicit
-    // operator config outranks ambient-env hygiene). With no modelEnv (or
-    // nothing surviving the filter) the spawn env is byte-identical to the
+    // operator config outranks ambient-env hygiene — a catalog entry that sets the cap wins too).
+    // With neither (or nothing surviving the filters) the spawn env is byte-identical to the
     // pre-feature behavior, including the undefined -> inherit-process.env case.
+    const runEnv = cleanRunEnv(runSpawnEnv);
     let spawnEnv = guardrailEnv;
-    if (safeModelEnv) spawnEnv = { ...(guardrailEnv ?? process.env), ...safeModelEnv };
+    if (runEnv) spawnEnv = { ...(spawnEnv ?? process.env), ...runEnv };
+    if (safeModelEnv) spawnEnv = { ...(spawnEnv ?? process.env), ...safeModelEnv };
 
     // WORCA_HOST_PID rides every guarded spawn (the hook reads it; scrub would
     // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
@@ -879,6 +915,12 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     if (brokerEnabled()) {
       for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
     }
+    // Routed off first party, a long turn behind a stream-buffering gateway must
+    // not hit Bun's ~5-min fetch timeout or the CLI's first-byte watchdog
+    // (model-env.mjs#withStreamTimeouts).
+    // Read off the FINAL env so the ambient shell, the run env and the model entry
+    // all count for both the route and an explicit value.
+    spawnEnv = withStreamTimeouts(spawnEnv);
 
     // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
     // path when unset). Everything here is derived from values already computed above
@@ -1218,7 +1260,7 @@ async function emitLog(onEvent, text) {
 export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
-  'generic-producer', 'generic-verifier',
+  'generic-producer', 'generic-verifier', 'workspace-usage', 'workspace-synth',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
@@ -1235,7 +1277,7 @@ export const MOCK_ROLE_MEMORY_DEFRAG = 'memory-defrag';
  */
 const MOCK_FANOUT_ROLES = new Set([
   'planner-plan', 'refiner', 'implementer', 'plan-review',
-  'workspace-reviewer', 'workspace-scan',
+  'workspace-reviewer', 'workspace-scan', 'workspace-usage',
 ]);
 
 /**
@@ -1596,7 +1638,13 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
       text = await mockPlanReview(m, cycle, onEvent);
       break;
     case 'workspace-scan':
-      text = await mockWorkspaceScan(m, prompt, onEvent);
+      text = await mockWorkspaceSurvey(m, onEvent);
+      break;
+    case 'workspace-usage':
+      text = await mockWorkspaceUsage(m, onEvent);
+      break;
+    case 'workspace-synth':
+      text = await mockWorkspaceSynth(m, onEvent);
       break;
     case 'agent-gen':
       text = await mockAgentGen(m, onEvent);
@@ -2066,54 +2114,35 @@ async function mockPlanReview(m, cycle, onEvent) {
   return JSON.stringify(review);
 }
 
-/**
- * Mock the off-pipeline workspace scanner. Writes a deterministic interconnection
- * description following the §5.8 template (so the wizard textarea is populated in
- * mock mode) and emits one `INVESTIGATING <key> relations to <other>` log line per
- * project so the live-status UI can be exercised offline. Project keys are parsed
- * from the prompt's member lines (the runner does NOT spawn sub-agents — fan-out is
- * a prompt directive the mock ignores).
- */
-async function mockWorkspaceScan(m, prompt, onEvent) {
-  const out = m.MOCK_OUT;
-  const name = m.MOCK_BASE || 'Workspace';
-  // Parse `(`backtick-key`)` member markers the scan task prompt renders, in order.
-  const keys = [];
-  for (const line of String(prompt || '').split(/\r?\n/)) {
-    const mm = line.match(/^\s*-\s+\*\*.*\*\*\s+\(`([^`]+)`\)/);
-    if (mm) keys.push(mm[1]);
-  }
-  await emitLog(onEvent, `[mock] workspace scanner investigating ${keys.length} project(s)`);
-  // One INVESTIGATING line per project (paired with the next project, round-robin),
-  // then the synthesize line — the changing live-status text the server maps.
-  for (let i = 0; i < keys.length; i++) {
-    const other = keys[(i + 1) % keys.length] || keys[i];
-    await emitLog(onEvent, `INVESTIGATING ${keys[i]} relations to ${other}`);
-  }
-  await emitLog(onEvent, 'SYNTHESIZING workspace description');
+/** Mock the Workspace scan's survey stage (wsmap D20; role workspace-scan, the repurposed
+ *  workspaceScanner): survey.json off the extract the brief names (MOCK_IN = the survey brief) —
+ *  workspace-scan-mock.mjs writeMockSurvey. */
+async function mockWorkspaceSurvey(m, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] workspace-scan: no MOCK_OUT given';
+  const r = await writeMockSurvey({ briefPath: m.MOCK_IN, outPath: m.MOCK_OUT });
+  await emitLog(onEvent, `[mock] workspace survey: ${r.investigated} investigated, ${r.skipped} skipped`);
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] workspace survey written to ${m.MOCK_OUT}`;
+}
 
-  const projects = keys.length ? keys : ['project-a', 'project-b'];
-  const md =
-    `# Workspace: ${name}\n` +
-    `## Overview\n` +
-    `Deterministic mock interconnection description for ${projects.length} member project(s). ` +
-    `The dominant integration theme is a shared REST contract.\n` +
-    `## Projects\n` +
-    projects.map((k) => `- ${k}: member project`).join('\n') + '\n' +
-    `## Interconnections\n` +
-    (projects.length >= 2
-      ? `- ${projects[0]} -> ${projects[1]}: REST API; ${projects[0]} calls ${projects[1]}'s HTTP endpoints.\n`
-      : `- (single project — no interconnections)\n`) +
-    `## Change-coordination notes\n` +
-    `- Changes that touch the shared REST contract must be coordinated across both members.\n` +
-    `## Suggested change order\n` +
-    (projects.length >= 2 ? `${projects[1]} before ${projects[0]} (provider before consumer).\n` : `no strict ordering\n`);
+/** Mock the Workspace scan's usage stage (wsmap D20): usage.json off the catalog the brief names
+ *  (MOCK_IN = the usage brief), every candidate confirmed — workspace-scan-mock.mjs writeMockUsage. */
+async function mockWorkspaceUsage(m, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] workspace-usage: no MOCK_OUT given';
+  const r = await writeMockUsage({ briefPath: m.MOCK_IN, outPath: m.MOCK_OUT });
+  await emitLog(onEvent, `[mock] workspace usage: ${Object.keys(r.doc.members).length} member(s), ${r.uses} use(s) confirmed`);
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] workspace usage written to ${m.MOCK_OUT}`;
+}
 
-  if (!out) return '[mock] workspace-scan: no MOCK_OUT given';
-  await ensureDir(out);
-  await writeFile(out, md, 'utf8');
-  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
-  return `[mock] workspace description written to ${out}`;
+/** Mock the Workspace scan's synthesis stage (wsmap D20): synthesis.json off the map the brief names
+ *  (MOCK_IN = the synthesis brief) — workspace-scan-mock.mjs writeMockSynthesis. */
+async function mockWorkspaceSynth(m, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] workspace-synth: no MOCK_OUT given';
+  const r = await writeMockSynthesis({ briefPath: m.MOCK_IN, outPath: m.MOCK_OUT });
+  await emitLog(onEvent, `[mock] workspace synthesis: ${Object.keys(r.doc.roles).length} role(s) filled`);
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_OUT}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] workspace synthesis written to ${m.MOCK_OUT}`;
 }
 
 /**

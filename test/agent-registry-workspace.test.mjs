@@ -1,5 +1,5 @@
 // test/agent-registry-workspace.test.mjs
-// M4: the two workspace agents in the registry — scope coercion, the
+// M4: the workspace agents in the registry — scope coercion, the
 // produces===['workspace'] canary (the §6.9 highest-risk hazard), the DEFAULT_SPEC
 // channel wiring, and the mandatory registryToSteps `scope:'workspace-only'`
 // exclusion that keeps AGENT_STEPS at EXACTLY 8 (single-project byte-identity).
@@ -17,7 +17,7 @@ after(async () => {
   await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
-test('the two workspace agents load with scope:"workspace-only"', () => {
+test('the scanner and the reviewer load with scope:"workspace-only"', () => {
   const reg = loadAgentRegistry();
   assert.ok(reg.workspaceScanner, 'workspaceScanner present');
   assert.ok(reg.workspaceReviewer, 'workspaceReviewer present');
@@ -32,13 +32,13 @@ test('every original project agent stays scope:"project" (coercion default)', ()
   }
 });
 
-test('CANARY: the workspaceScanner sidecar declares its typed ports', () => {
+test('CANARY: the workspaceScanner sidecar declares its typed ports (the scan\'s survey stage)', () => {
   // The v1 channel-id list is gone; the ports ARE the wiring vocabulary now, and
   // an un-ported sidecar is refused outright by resolveGraph.
   const reg = loadAgentRegistry();
   assert.equal(reg.workspaceScanner.metaVersion, 2);
-  assert.deepEqual(reg.workspaceScanner.inputs.map((p) => p.id), ['task']);
-  assert.deepEqual(reg.workspaceScanner.outputs.map((p) => p.id), ['workspace']);
+  assert.deepEqual(reg.workspaceScanner.inputs.map((p) => p.id), ['brief']);
+  assert.deepEqual(reg.workspaceScanner.outputs.map((p) => p.id), ['survey']);
   assert.equal(reg.workspaceScanner.placeable, false, 'off-pipeline: never placeable on a canvas');
 });
 

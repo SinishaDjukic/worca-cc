@@ -82,6 +82,50 @@ export function withProviderModesOff(env) {
   return out;
 }
 
+// What aborts a quiet API response in Claude Code (CLI 2.1.281) as "Request timed
+// out." and retries it FROM SCRATCH: Bun's own fetch timeout (~5 min without a
+// byte), which the CLI lifts only where its stream watchdog runs or when
+// API_FORCE_IDLE_TIMEOUT is falsy — probed against a held request: cut at 360s
+// with every other knob at 30 min, held past 420s with it '0'; the watchdog
+// itself (300s to first byte off first party, +1s per 32 KB of request); and
+// API_TIMEOUT_MS (default 600s), which caps the watchdog and is the only bound
+// left once Bun's timeout is lifted. A gateway that buffers the stream (Vertex
+// via the Bosch farm, 2026-09-28) sends nothing until a long xhigh turn is done,
+// so every retry died at the same wall. 30 min is the CLI's clamp ceiling for
+// the watchdogs; API_TIMEOUT_MS matches it so it never undercuts them.
+export const STREAM_TIMEOUT_MS = '1800000';
+export const STREAM_TIMEOUT_ENV = Object.freeze({
+  API_FORCE_IDLE_TIMEOUT: '0',
+  API_TIMEOUT_MS: STREAM_TIMEOUT_MS,
+  CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS: STREAM_TIMEOUT_MS,
+  CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS: STREAM_TIMEOUT_MS,
+  CLAUDE_STREAM_IDLE_TIMEOUT_MS: STREAM_TIMEOUT_MS,
+});
+export const STREAM_TIMEOUT_ENV_KEYS = Object.freeze(Object.keys(STREAM_TIMEOUT_ENV));
+
+// The CLI's own truthiness for its CLAUDE_CODE_USE_* switches.
+const cliTruthy = (v) => typeof v === 'string' && ['1', 'true', 'yes', 'on'].includes(v.trim().toLowerCase());
+
+/**
+ * A spawn env routed off first party (a cloud transport switched on, or a custom
+ * ANTHROPIC_BASE_URL) with Bun's fetch timeout lifted and every other stream
+ * timeout it left unset raised to the CLI ceiling (STREAM_TIMEOUT_ENV). Pure: a
+ * first-party env comes back untouched (the same object) — the
+ * CLI's defaults there are right, since the API streams its first byte at once —
+ * and an explicit key, from the operator's shell or a model entry, is never
+ * overwritten.
+ * @param {Record<string,string>|undefined|null} env  the FINAL spawn env
+ * @returns {Record<string,string>|undefined|null}
+ */
+export function withStreamTimeouts(env) {
+  if (!env || typeof env !== 'object') return env;
+  const routed = PROVIDER_MODE_ENV_KEYS.some((k) => cliTruthy(env[k])) || !!env.ANTHROPIC_BASE_URL;
+  if (!routed) return env;
+  const out = { ...env };
+  for (const [k, v] of Object.entries(STREAM_TIMEOUT_ENV)) if (!(k in out)) out[k] = v;
+  return out;
+}
+
 // Env keys a model entry may NOT set (§4.4): process fundamentals and worca's
 // own runtime knobs, any of which injection could otherwise subvert (mock
 // mode, the claude binary path, the effort flag name). Everything else —
@@ -263,7 +307,7 @@ export function assertModelCost(cost) {
 }
 
 // ── sub-agent model policy (per-node `subagentModel`) ─────────────────────────
-// What a fan-out node's Task/Agent children run on. ONE wire — a prompt block
+// What a fan-out node's Task/Agent children run on. ONE wire for the MODEL — a prompt block
 // (phases.mjs#subagentModelDirective) that tells the agent to pass `model` on
 // every Task call — because the CLI resolves a child's model as Task-call
 // `model` > the agent definition's own `model:` frontmatter > env default >
@@ -271,6 +315,7 @@ export function assertModelCost(cost) {
 // earlier CLAUDE_CODE_SUBAGENT_MODEL env floor was removed for exactly that
 // reason — it bound only agents with no model key — and the key is reserved
 // above so a catalog entry cannot resurrect it.)
+// (A pinned EFFORT is a second wire: a run-scoped --agents definition, phases.mjs investigatorAgents.)
 //
 // The vocabulary is deliberately NOT the worca catalog: the CLI's Task tool
 // accepts an ALIAS enum, so a catalog id (or an ANTHROPIC_MODEL wire id) would

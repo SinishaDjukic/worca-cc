@@ -1,13 +1,13 @@
-# Task: Workspace Scan
+# Task: Workspace Survey
 
 Project directory (your cwd): <PROJECT_DIR>
 Pipeline directory (shared artifacts): <PIPELINE_DIR>
 
 Project and personal skills (.claude/skills in this project and ~/.claude/skills) are available via the Skill tool — invoke any that fit (e.g. design, framework-pattern, or knowledge-graph skills) rather than guessing conventions.
 
-## Original request
+## Upstream input
 
-BUILD THE THING
+Your input is the output of the preceding step(s); the file paths to read are named below.
 
 ## What to do
 
@@ -38,14 +38,14 @@ When unsure between two tiers, take the lower one only if you will verify the re
 
 ### Inputs
 
-- **task** (md) -> /abs/task.md
+- **brief** (md) -> /abs/brief.md
 
 ### Outputs
 
-- Write **workspace** to: <PIPELINE_DIR>/workspace-description.md
+- Write **survey** to: <PIPELINE_DIR>/survey.json
 
 MOCK_ROLE: workspace-scan
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/workspace-description.md
-MOCK_IN: /abs/task.md
+MOCK_OUT: <PIPELINE_DIR>/survey.json
+MOCK_IN: /abs/brief.md

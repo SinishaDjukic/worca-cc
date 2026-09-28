@@ -38,14 +38,14 @@ test('GET /api/scripts lists built-ins + the user layer in order, D16-filtered, 
   const r = await fetch(`${base}/api/scripts`);
   assert.equal(r.status, 200);
   const { scripts } = await r.json();
-  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'lint']);
+  assert.deepEqual(scripts.map((s) => s.key), ['shell', 'js', 'py', 'gitDiff', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender', 'lint']);
   assert.equal(scripts.find((s) => s.key === 'reviewer'), undefined, 'an agent key wins');
   const shell = scripts[0];
   assert.equal(shell.origin, 'builtin');
   assert.equal(shell.ports, 'config');
   assert.ok(Array.isArray(shell.defaultPorts.outputs));
   assert.deepEqual(shell.params.map((p) => p.type), ['command']);
-  const lint = scripts[4];
+  const lint = scripts.find((s) => s.key === 'lint');
   assert.equal(lint.origin, 'user');
   assert.equal(lint.runtime, 'node');
   assert.match(lint.scriptPath, /lint\.mjs$/);

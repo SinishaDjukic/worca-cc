@@ -71,9 +71,13 @@ after(async () => {
   await rm(scratch, { recursive: true, force: true });
 });
 
-const scans = () => [...runs.values()].filter((r) => r.kind === 'scan').length;
+// The scan is a pipeline run since PR #502 (wf_workspace_scan, a 'workspace-run' entry): "nothing
+// started" means no run entry of ANY kind was registered — counting the retired kind 'scan' would
+// pass even when the refusal is missing.
+const entries = () => runs.size;
 
 test('POST /api/workspaces/scan: signed-out Claude → 409 claude-signed-out, no scan started', { skip }, async () => {
+  const before = entries();
   const a = await repo('a');
   const b = await repo('b');
   const r = await post('/api/workspaces/scan', { projectPaths: [a, b], name: 'Gate WS' });
@@ -82,8 +86,8 @@ test('POST /api/workspaces/scan: signed-out Claude → 409 claude-signed-out, no
   assert.equal(body.code, 'claude-signed-out');
   assert.match(body.error, /isn't signed in/);
   assert.match(body.error, /\/login/);
-  assert.equal(body.scanId, undefined);
-  assert.equal(scans(), 0, 'no scan entry registered');
+  assert.equal(body.runId, undefined);
+  assert.equal(entries(), before, 'no run registered');
 });
 
 test('POST /api/workspaces/:id/scan (re-scan): same refusal', { skip }, async () => {
@@ -91,10 +95,11 @@ test('POST /api/workspaces/:id/scan (re-scan): same refusal', { skip }, async ()
   const b = await repo('d');
   const { workspace: created } = await (await post('/api/workspaces', { name: 'Gate Rescan WS', projectPaths: [a, b] })).json();
   assert.ok(created.id, JSON.stringify(created));
+  const before = entries();
   const r = await post(`/api/workspaces/${encodeURIComponent(created.id)}/scan`, {});
   assert.equal(r.status, 409);
   assert.equal((await r.json()).code, 'claude-signed-out');
-  assert.equal(scans(), 0);
+  assert.equal(entries(), before, 'no run registered');
 });
 
 test('POST /api/agents/generate: same refusal, no generation started', { skip }, async () => {

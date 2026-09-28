@@ -86,6 +86,10 @@ import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/st
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
 import { byActor } from './identity.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { finalizeWorkspaceScan } from './workspace-scan-run.mjs';
+import { readWorkspaceMap } from './workspaces.mjs';
+import { redactSecrets } from '../shared/workspace-map/redact.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -324,6 +328,29 @@ function describeToolResults(raw) {
     lines.push(`result ${b.is_error ? 'error' : 'ok'} ${id}`);
   }
   return lines;
+}
+
+/**
+ * Describe a `system`/`api_retry` frame: the CLI retries a failed API call on its
+ * own and this frame is its ONLY report of it (no text, nothing on stderr). Shape
+ * on 2.1.281: {attempt, max_retries, retry_delay_ms, error_status: number|null,
+ * error: 'overloaded'|'rate_limit'|'authentication_failed'|'server_error'|
+ * 'cloud_credential_error'|'unknown', no_response?: {waited_ms}}. The error
+ * message itself is not carried; a status-less 'unknown' is a request that never
+ * got an HTTP response — a timeout or a dropped connection. null for any other frame.
+ */
+function describeApiRetry(raw) {
+  if (raw?.type !== 'system' || raw?.subtype !== 'api_retry') return null;
+  const secs = (ms) => `${(Number(ms) / 1000).toFixed(1)}s`;
+  const status = Number.isFinite(raw.error_status) ? raw.error_status : null;
+  const category = typeof raw.error === 'string' && raw.error ? raw.error : 'unknown';
+  let reason = status != null
+    ? `${category} (HTTP ${status})`
+    : category === 'unknown' ? 'no HTTP response (timeout or connection error)' : category;
+  if (Number.isFinite(raw.no_response?.waited_ms)) reason += ` after ${secs(raw.no_response.waited_ms)}`;
+  const of = Number.isFinite(raw.max_retries) ? `/${raw.max_retries}` : '';
+  const wait = Number.isFinite(raw.retry_delay_ms) ? ` in ${secs(raw.retry_delay_ms)}` : '';
+  return `API call failed: ${reason}; retry ${raw.attempt ?? '?'}${of}${wait}`;
 }
 
 /** The tools whose `file_path` can be a memory write. */
@@ -622,6 +649,7 @@ export class RunHarness extends EventEmitter {
     this.branchInfos = new Map();      // projectKey -> createWorktree() result
     this.toolInstructions = new Map(); // projectKey -> per-project graph instruction
     this.workspaceDescription = '';    // frozen at run start (after createPipeline)
+    this.workspaceOverrides = null;    // wsmap M15: a re-scan's stored overrides, read at run start / resume
 
     // primaryCwd: the lowest-projectKey member in workspace mode, else the scalar
     // projectDir. resolve() keeps the single-project behavior byte-identical.
@@ -677,6 +705,11 @@ export class RunHarness extends EventEmitter {
     // Which saved workflow topology to run (default reproduces today's pipeline) and
     // the runner registry the dispatcher consults (overridable for tests).
     this.workflowId = this.opts.workflowId || 'wf_default';
+    // The Workspace scan reads, compares and saves a WORKSPACE: refuse it on any other target
+    // (the CLI's --workflow, an Ask card) before a pipeline exists.
+    if (this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !this.isWorkspace) {
+      throw new Error('the Workspace scan workflow runs over a workspace only — start it from Workspaces › Create workspace');
+    }
     // Which guardrail set governs this run (guardrails are selected PER RUN;
     // there is no per-project guardrails dimension). 'permissive' = the empty
     // policy = byte-identical legacy spawn, so callers that never pass the
@@ -1154,6 +1187,7 @@ export class RunHarness extends EventEmitter {
         this.workspaceDescription = await readFile(
           join(this.pipeline.dir, 'workspace-description.md'), 'utf8',
         ).catch(() => this.workspace.description || '');
+        this.workspaceOverrides = await this._scanOverrides();
         this.state.target = 'workspace';
         this.state.workspaceId = this.workspace.id;
         this.state.workspaceKey = this.workspaceKey;
@@ -1297,6 +1331,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: null });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
+      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
 
       // 9) Done.
       this._setStatus('done');
@@ -1575,6 +1610,7 @@ export class RunHarness extends EventEmitter {
       // ── workspace rehydration (no-op on single-project) ──
       if (this.isWorkspace && meta) {
         this.workspaceDescription = meta.workspaceDescription || '';
+        this.workspaceOverrides = await this._scanOverrides();
         this.checkpointRefs = meta.checkpointRefs || {};
         for (const p of rehydrated.memberWorktrees) {
           if (p.projectKey && p.worktreeDir) {
@@ -1672,6 +1708,7 @@ export class RunHarness extends EventEmitter {
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
+      await this._finalizeWorkspaceScan();   // wf_workspace_scan only: create/update the workspace (D6)
 
       this._setStatus('done');
       this.state.resumePoint = null; // finished rows are not resumable (clears the boundary trail)
@@ -2653,8 +2690,8 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Workspace teardown (C1, N times): per member, commit its work onto its feature
-   * branch (in its own repo), remove its checkout, and KEEP the branch — done,
-   * error, or stopped alike. Each member's SHA + survival flags are recorded on
+   * branch (in its own repo), remove its checkout, and KEEP the branch (a read-only
+   * Workspace scan deletes it, D5) — done, error, or stopped alike. Each member's SHA + survival flags are recorded on
    * state.branches[projectKey]. Idempotent (guards against a double teardown by
    * clearing branchInfos); best-effort (never throws). Iterated serially so the
    * teardown commits don't contend on interleaved git index locks across repos.
@@ -2675,10 +2712,11 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(projectKey_);
         continue;
       }
+      const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(projectKey_)?.projectDir || this.projectDir),
         worktreeDir: info.worktreeDir,
-        branch: null, // always keep the branch
+        branch: readOnly ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
@@ -2687,12 +2725,12 @@ export class RunHarness extends EventEmitter {
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (kept branch \`${info.branch}\`).`,
+          `Worktree \`${projectKey_}\` removed at \`${info.worktreeDir}\` (${readOnly ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = true;
+        branchRecord.branchKept = !readOnly;
       }
       this.workDirs.delete(projectKey_);
     }
@@ -2701,7 +2739,7 @@ export class RunHarness extends EventEmitter {
     // via !retainedMembers.length).
     if (this.state.branch && !anyRetained) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !this._isWorkspaceScan();
     }
     this.branchInfo = null;
     this.workDir = this.projectDir;
@@ -2723,7 +2761,7 @@ export class RunHarness extends EventEmitter {
    *      file is deliberately NOT in the exclusion pathspecs)
    *   3. _commitWork with the §8.8 exclusion set (+ status recheck, hook retry)
    *   4. remove this worktree's remaining injected paths
-   *   5. removeWorktree(force:true) — the branch is ALWAYS kept
+   *   5. removeWorktree(force:true) — the branch is kept, except on a read-only Workspace scan (deleted, D5)
    * then, at the run-root level: (6) the same rescue for run-root mounts, (7) the
    * §8.11 stray scan, (8) the run.json durability copy, (9) guarded rm -rf (§8.13).
    */
@@ -2783,11 +2821,12 @@ export class RunHarness extends EventEmitter {
         this.workDirs.delete(key);
         continue;
       }
-      // (5) remove the checkout; the branch is always kept.
+      // (5) remove the checkout; the branch is kept — except on a read-only Workspace scan (D5).
+      const readOnly = this._isWorkspaceScan();   // D5: a scan leaves no branch behind
       const res = await removeWorktree({
         projectDir: resolve(this.memberByKey.get(key)?.projectDir || this.projectDir),
         worktreeDir: wt,
-        branch: null,
+        branch: readOnly ? info.branch : null,
         force: true,
       });
       for (const s of res.steps.filter((x) => !x.ok)) {
@@ -2796,19 +2835,19 @@ export class RunHarness extends EventEmitter {
       if (this.pipeline) {
         await appendAudit(
           this.pipeline.dir,
-          `Worktree \`${key}\` removed at \`${wt}\` (kept branch \`${info.branch}\`).`,
+          `Worktree \`${key}\` removed at \`${wt}\` (${readOnly ? 'deleted' : 'kept'} branch \`${info.branch}\`).`,
         ).catch(() => {});
       }
       if (branchRecord) {
         branchRecord.worktreeRemoved = true;
-        branchRecord.branchKept = true;
+        branchRecord.branchKept = !readOnly;
       }
       this.workDirs.delete(key);
     }
     // Keep the scalar mirror coherent for late observers.
     if (this.state.branch && !retainedMembers.length) {
       this.state.branch.worktreeRemoved = true;
-      this.state.branch.branchKept = true;
+      this.state.branch.branchKept = !this._isWorkspaceScan();
     }
     this.branchInfo = null;
     this.workDir = this.projectDir;
@@ -2948,6 +2987,37 @@ export class RunHarness extends EventEmitter {
     return true;
   }
 
+  /** A Workspace scan run (wf_workspace_scan on a workspace target) is READ-ONLY: nothing is
+   *  committed and every member's run branch is deleted at teardown. Read live, never cached:
+   *  resume() restores this.workflowId from the resume point AFTER construction. */
+  _isWorkspaceScan() {
+    return this.isWorkspace && this.workflowId === WORKSPACE_SCAN_WORKFLOW_ID;
+  }
+
+  /** Workspace scan: save the scan's map + description as the workspace's (workspace-scan-run.mjs
+   *  finalizeWorkspaceScan) — create it on a first scan, update it on a re-scan. The `done` path
+   *  of run() and resume() only, BEFORE the status flips, so the run log carries the outcome. A
+   *  failure is a warning on a done run (the outputs stay in the run folder), never an error. */
+  async _finalizeWorkspaceScan() {
+    if (!this._isWorkspaceScan() || !this.pipeline) return;
+    const res = await finalizeWorkspaceScan({
+      // The target's id (server: the future workspaceKey on a first scan, the EXISTING id on a
+      // re-scan — never recomputed, a renamed workspace keeps its id). key === id for workspaces.
+      workspaceId: this.workspace.id || this.workspaceKey,
+      name: this.workspace.name,
+      projectPaths: this.members.map((m) => resolve(m.projectDir)),
+      pipelineDir: this.pipeline.dir,
+    });
+    this.state.workspaceScan = { ...res, at: new Date().toISOString() };
+    if (res.outcome === 'failed') {
+      this._log('orchestrator', 'warn', `Workspace not saved: ${res.error}`);
+      await appendAudit(this.pipeline.dir, `Workspace **not saved**: ${res.error}`).catch(() => {});
+    } else {
+      this._log('orchestrator', 'info', `Workspace ${res.outcome}: ${this.workspace.name} (${res.workspaceId})`);
+      await appendAudit(this.pipeline.dir, `Workspace **${res.outcome}**: \`${res.workspaceId}\`.`).catch(() => {});
+    }
+  }
+
   /**
    * Commit every change in the worktree onto the feature branch so the kept
    * branch actually carries the agent's work after the worktree is removed.
@@ -2973,6 +3043,10 @@ export class RunHarness extends EventEmitter {
   async _commitWork(info, branchRecord = this.state.branch, { excludePathspecs = [] } = {}) {
     const cwd = info?.worktreeDir;
     if (!cwd) return { ok: true, committed: false, sha: null };
+    if (this._isWorkspaceScan()) {
+      this._log('git', 'info', 'Read-only workspace scan: nothing is committed.');
+      return { ok: true, committed: false, sha: null };
+    }
     // ignoreAbort on every call: teardown runs after stop/error has aborted the
     // signal, so binding it would no-op these commands and lose the partial work.
     const gitOpts = { cwd, ignoreAbort: true };
@@ -3298,6 +3372,19 @@ export class RunHarness extends EventEmitter {
     return ++this._recoverySeq;
   }
 
+  /** wsmap M15: the overrides a Workspace scan's join and render cards apply (its stored change order,
+   *  its synth brief and its run-folder description follow the edges a review left standing) — the
+   *  stored overrides of the workspace finalize will write (the same id: `workspace.id`, else
+   *  `workspaceKey`), read ONCE when the run starts and again when it resumes. null off a scan, and on a
+   *  first scan (the workspace does not exist yet). A manual edge's display and detail are a person's text,
+   *  stored as typed: this doc reaches every script card's envelope file (a run artifact), so it carries
+   *  them redacted, as the description shows them (D21). The join and render cards read no manual text. */
+  async _scanOverrides() {
+    if (!this._isWorkspaceScan()) return null;
+    const ov = (await readWorkspaceMap(this.workspace.id || this.workspaceKey))?.overrides ?? null;
+    return ov && { ...ov, manual: ov.manual.map((m) => ({ ...m, display: redactSecrets(m.display).slice(0, 300), detail: redactSecrets(m.detail).slice(0, 200) })) };
+  }
+
   /**
    * Build the read-only `workspace` metadata channel handle (the bus value for the
    * workspace channel): the frozen description + the member set with each member's
@@ -3308,9 +3395,17 @@ export class RunHarness extends EventEmitter {
     return {
       kind: 'metadata',
       workspaceDescription: this.workspaceDescription,
+      // wsmap M15: a re-scan's frozen overrides (null otherwise) — the envelope's ctx.workspace.overrides.
+      overrides: this.workspaceOverrides ?? null,
+      // wsmap P2: what the script envelope's ctx.workspace is built from (script-runner.mjs
+      // workspaceEnvelope) — the target's id (a first scan's is the future workspaceKey) and name,
+      // and each member's LIVE project dir beside its checkout.
+      workspaceId: this.workspace?.id || this.workspaceKey || null,
+      workspaceName: this.workspace?.name || null,
       projects: this.members.map((m) => ({
         projectKey: m.projectKey,
         projectName: m.projectName,
+        projectDir: m.projectDir ? resolve(m.projectDir) : null,
         worktreeDir: this.workDirs.get(m.projectKey),
         checkpointRef: this.checkpointRefs[m.projectKey],
         graphInstruction: this.toolInstructions.get(m.projectKey) || '',
@@ -3477,6 +3572,14 @@ export class RunHarness extends EventEmitter {
       topReal = await realpath(top.stdout.trim()).catch(() => top.stdout.trim());
     }
     const isOwnRepo = topReal === projReal;
+    // A read-only Workspace scan (scan D5) never `git init`s or commits a member. Both scan routes
+    // refuse such a member up front (workspaces.mjs scanMemberProblems); this refuses one that
+    // changed since, on the first run and on the setup replay alike.
+    if (this._isWorkspaceScan()) {
+      const why = !isOwnRepo ? 'is not its own git repository'
+        : (await this._git(['rev-parse', '--verify', '-q', 'HEAD'], { cwd: dir })).ok ? null : 'has no commit';
+      if (why) throw new Error(`read-only workspace scan: ${dir} ${why}`);
+    }
     if (!isOwnRepo) {
       if (topReal) {
         this._log(
@@ -4173,6 +4276,11 @@ export class RunHarness extends EventEmitter {
         this._persist().catch(() => {});
       }
     }
+
+    // The CLI's silent API retries (`system`/`api_retry`): without this line a call
+    // that keeps timing out leaves the run log dead for as long as the retries last.
+    const retry = describeApiRetry(e.raw);
+    if (retry) this._log(source, 'warn', retry, logAttr);
 
     // Concrete tool calls the agent made this turn (assistant.tool_use blocks).
     for (const call of describeToolUses(e.raw, this.projectDir)) {

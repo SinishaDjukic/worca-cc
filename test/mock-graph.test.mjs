@@ -8,7 +8,7 @@
 // graph-executor.test.mjs; what this file adds is the two things a unit test cannot
 // see:
 //   1. the STRUCTURAL audit — the writer switch's case labels and the
-//      MOCK_WRITER_ROLES export are the same set, and the 12 builtin sidecars pin
+//      MOCK_WRITER_ROLES export are the same set, and the 14 builtin sidecars pin
 //      roles that already exist in it;
 //   2. the BEHAVIOURAL audit — real graphs run to completion offline. Every seed
 //      graph and the graph default terminate because the mock verdicts get less
@@ -72,13 +72,13 @@ test('MOCK_WRITER_ROLES is exactly the writer switch case set', () => {
     'the export and the switch it mirrors must not drift');
 });
 
-test('the 12 builtins pin roles the switch already handles — no new case strings', () => {
+test('the 14 builtins pin roles the switch already handles — no new case strings', () => {
   const pinned = {};
   for (const file of readdirSync(AGENTS_DIR).filter((f) => f.endsWith('.meta.json'))) {
     const meta = JSON.parse(readFileSync(join(AGENTS_DIR, file), 'utf8'));
     pinned[meta.key] = meta.mockRole ?? null;
   }
-  assert.equal(Object.keys(pinned).length, 12, 'the 12 builtin sidecars');
+  assert.equal(Object.keys(pinned).length, 14, 'the 14 builtin sidecars');
   for (const [key, role] of Object.entries(pinned)) {
     assert.notEqual(role, null, `${key} pins an explicit mockRole`);
     assert.ok(MOCK_WRITER_ROLES.has(role), `${key} -> ${role} is a handled writer role`);

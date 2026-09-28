@@ -42,8 +42,8 @@ function ctxFor(key, { params = {}, ports: configPorts, cwd = tmp('worca-bi-cwd-
   };
 }
 
-test('the built-in layer is exactly shell, js, py, gitDiff — normalized, ordered, and disjoint from the agent keys', () => {
-  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff']);
+test('the built-in layer is exactly shell, js, py, gitDiff and the four workspace-map cards — normalized, ordered, and disjoint from the agent keys', () => {
+  assert.deepEqual(Object.keys(REG), ['shell', 'js', 'py', 'gitDiff', 'workspaceMapExtract', 'workspaceMapCatalog', 'workspaceMapJoin', 'workspaceMapRender']);
   assert.equal(REG.shell.runtime, 'shell');
   assert.equal(REG.shell.ports, 'config');
   assert.deepEqual(REG.shell.params.map((p) => [p.id, p.type, p.required]), [['command', 'command', true]]);

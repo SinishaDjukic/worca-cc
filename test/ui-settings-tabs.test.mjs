@@ -219,13 +219,13 @@ test('General keeps the machine cards; Runs, Ask Worca and Models hold the moved
     'appearance-card', 'credentials-card', 'mode-settings-card', 'root-settings-card',
     'debug-spawn-settings-card', 'getting-started-card', 'about-card',
   ]);
-  assert.deepEqual(cardIds(view, 'runs'), ['budget-settings-card', 'schedule-settings-card', 'chat-settings-card']);
+  assert.deepEqual(cardIds(view, 'runs'), ['budget-settings-card', 'schedule-settings-card', 'ws-scan-models-card', 'chat-settings-card']);
   assert.deepEqual(cardIds(view, 'ask'), ['ask-settings-card']);
   assert.deepEqual(cardIds(view, 'models'), ['title-model-settings-card', 'auto-model-settings-card']);
-  // Nothing got lost or duplicated in the move: the thirteen cards are all still here, once.
+  // Nothing got lost or duplicated in the move: the fourteen cards (dev's thirteen + Workspaces) are all still here, once.
   const all = [...view.querySelectorAll('section.card.settings-card')].map((c) => c.id);
-  assert.equal(all.length, 13);
-  assert.equal(new Set(all).size, 13);
+  assert.equal(all.length, 14);
+  assert.equal(new Set(all).size, 14);
 });
 
 test('each moved card keeps its level; Runs is a Simple tab, Ask Worca an Advanced one', () => {
@@ -234,6 +234,7 @@ test('each moved card keeps its level; Runs is a Simple tab, Ask Worca an Advanc
   assert.equal(lv('budget-settings-card'), 'simple');
   assert.equal(lv('schedule-settings-card'), 'advanced');
   assert.equal(lv('chat-settings-card'), 'advanced');
+  assert.equal(lv('ws-scan-models-card'), 'advanced', 'Workspaces (scan models): an Advanced card on the Simple Runs tab');
   assert.equal(lv('ask-settings-card'), 'simple', 'the Advanced tab gates it; a deep link must not open on an empty page');
   assert.equal(lv('title-model-settings-card'), 'expert');
   assert.equal(lv('auto-model-settings-card'), 'expert');

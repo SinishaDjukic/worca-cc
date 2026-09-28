@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   runScriptExecution, buildEnvelope, envForShell, parseFrame, materializeOutputs, shellReport, envelopeAuditPath, scriptBaseEnv, resolveWiredParams,
-  MAX_LINE, STREAM_MAX, FRAME_MAX,
+  workspaceEnvelope, MAX_LINE, STREAM_MAX, FRAME_MAX,
 } from '../src/core/graph/script-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
 import { stripGithubCredentials } from '../src/core/github-credentials.mjs';
@@ -93,6 +93,47 @@ test('buildEnvelope: bound inputs only (await never), fresh mirrors the trigger,
   assert.equal(buildEnvelope({ ...ctx, claudeOpts: { mock: true } }).ctx.mock, true);
   assert.equal(envelopeAuditPath(ctx), join(ctx.pipelineDir, 'scripts', 'n_tests-c2.envelope.json'));
   assert.equal(envelopeAuditPath({ ...ctx, slice: { id: 'p1t2' } }), join(ctx.pipelineDir, 'scripts', 'n_tests-c2-p1t2.envelope.json'));
+});
+
+// wsmap P2: the harness channel as _workspaceChannel builds it (test/workspace-channel.test.mjs).
+const WS_CHANNEL = {
+  kind: 'metadata', workspaceDescription: '', workspaceId: 'wks-shop-1234abcd', workspaceName: 'Shop',
+  projects: [
+    { projectKey: 'web-2222', projectName: 'web', projectDir: '/live/web', worktreeDir: '/wt/web', checkpointRef: 'b', graphInstruction: '' },
+    { projectKey: 'api-1111', projectName: 'api', projectDir: '/live/api', worktreeDir: '/wt/api', checkpointRef: 'a', graphInstruction: '' },
+  ],
+};
+const WS_ENVELOPE = { id: 'wks-shop-1234abcd', name: 'Shop', members: [
+  { key: 'api-1111', name: 'api', dir: '/wt/api', projectDir: '/live/api' },
+  { key: 'web-2222', name: 'web', dir: '/wt/web', projectDir: '/live/web' },
+] };
+
+test('buildEnvelope: ctx.workspace on EVERY workspace run — legacy run-root too — sorted by key; null off a workspace run', () => {
+  const ctx = ctxFor({ meta: nodeMeta() });
+  assert.equal(buildEnvelope(ctx).ctx.workspace, null, 'a single-project run spans no workspace');
+  const legacy = buildEnvelope({ ...ctx, runRoot: null, workspace: WS_CHANNEL });
+  assert.deepEqual(legacy.ctx.workspace, WS_ENVELOPE, 'legacy run-root: the workspace is there');
+  assert.equal(legacy.ctx.repos, null, 'ctx.repos stays detached-only');
+  const detached = buildEnvelope({ ...ctx, runRoot: '/abs/root', workspace: WS_CHANNEL });
+  assert.deepEqual(detached.ctx.workspace, WS_ENVELOPE);
+  assert.deepEqual(detached.ctx.repos, [{ key: 'app', dir: ctx.projectDir }], 'repos unchanged');
+  assert.deepEqual(workspaceEnvelope({ projects: [{}, { projectKey: 'x' }] }),
+    { id: null, name: null, members: [{ key: 'x', name: 'x', dir: null, projectDir: null }] }, 'keyless entries dropped, missing fields null');
+  assert.equal(workspaceEnvelope(undefined), null);
+  assert.equal(workspaceEnvelope({ kind: 'metadata' }), null, 'no projects list, no workspace');
+});
+
+test('a node program reads ctx.workspace off its api (the envelope reaches the child)', async () => {
+  const file = writeProgram(tmp('worca-sr-prog-'), `import { writeFileSync } from 'node:fs';
+export default async function ({ outputs, ctx }) {
+  writeFileSync(outputs.log.path, JSON.stringify(ctx.workspace));
+  return { summary: 'ok' };
+}\n`);
+  const ports = { inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'ws-cycle{cycle}.md' }] };
+  const ctx = { ...ctxFor({ meta: nodeMeta({ verdict: undefined }), file, ports }), workspace: WS_CHANNEL };
+  const res = await runScriptExecution(ctx);
+  assert.equal(res.summary, 'ok');
+  assert.deepEqual(JSON.parse(readFileSync(ctx.outputs.log.path, 'utf8')), WS_ENVELOPE);
 });
 
 test('envForShell: strips the three WORCA vars, passes the rest, maps ports/params/ctx to WORCA_* (lowerCamel -> UPPER_SNAKE)', () => {

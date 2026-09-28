@@ -807,7 +807,7 @@ const SCRIPT_GRAPH = (key, out = 'log') => JSON.stringify({
 });
 
 test('builtinScriptMetas: the built-in scripts, normalized', () => {
-  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'py', 'shell']);
+  assert.deepEqual(builtinScriptMetas().map((m) => m.key), ['gitDiff', 'js', 'py', 'shell', 'workspaceMapCatalog', 'workspaceMapExtract', 'workspaceMapJoin', 'workspaceMapRender']);
 });
 
 test('validatePluginDir: scripts/ — pairing, key = stem, meta v2 rules, file containment, runtime', () => {

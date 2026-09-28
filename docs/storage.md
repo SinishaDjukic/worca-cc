@@ -24,6 +24,11 @@ project's working tree, so nothing is ever committed to your repo.
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
                          Archiving a run deletes its comments with its artifacts.
+  store/workspaces/<workspaceId>/       a workspace's runs, laid out like a project's store, plus
+                                        workspace-graph.json — the last scan's merged cross-project
+                                        graph (see workspace-map.md); the map itself and its reviews
+                                        are DB columns (workspaces.map_json, map_overrides_json,
+                                        description_origin — schema v40)
   scheduled/<id>/extras/                files attached to a scheduled run (or a repeating
                                         schedule), kept until it starts — the OS temp dir does
                                         not survive a reboot. The tickets, schedules and the

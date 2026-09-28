@@ -1,0 +1,19 @@
+{
+  "key": "workspaceMapExtract",
+  "metaVersion": 2,
+  "displayName": "Workspace map: extract",
+  "description": "Workspace scan: reads every member checkout and writes the boundary facts code can find (packages, routes, topics, services) with file:line evidence, plus the survey brief. Built into worca; runs git with worca's privileges.",
+  "domain": "shared",
+  "color": "teal",
+  "icon": "<rect x=\"3\" y=\"4\" width=\"8\" height=\"6\" rx=\"1\"/><rect x=\"13\" y=\"14\" width=\"8\" height=\"6\" rx=\"1\"/><path d=\"M7 10v4h6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "order": 90,
+  "runtime": "node",
+  "file": "workspace-map-extract.mjs",
+  "timeoutMs": 1800000,
+  "placeable": false,
+  "inputs": [ { "id": "task", "type": "md" } ],
+  "outputs": [
+    { "id": "extract", "type": "json", "filename": "extract.json" },
+    { "id": "brief", "type": "md", "filename": "survey-brief.md" }
+  ]
+}

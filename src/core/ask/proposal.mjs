@@ -9,6 +9,7 @@ import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPA
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
 import { validateMemoryScope } from '../memory-sync.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID } from '../graph/builtin-workflows.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -35,6 +36,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   briefRequired: 'brief is required',
   briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
   autoWorkspace: 'Auto workflow is not available for workspace targets yet',
+  scanWorkflow: 'the Workspace scan starts from Workspaces (Create workspace, or a workspace\'s Re-scan) — never from a card',
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
@@ -156,6 +158,9 @@ export function createProposalValidator({
     let wf = null;
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
+    // The Workspace scan starts only through the Workspaces routes (D2): POST /api/run refuses it,
+    // so a card for it could never start.
+    if (wf && wf.id === WORKSPACE_SCAN_WORKFLOW_ID) { errors.push(PROPOSAL_ERRORS.scanWorkflow); wf = null; }
 
     // ── memoryScope (agent memory §7.3): the same gate as POST /api/run ──────
     let memoryScope = null;

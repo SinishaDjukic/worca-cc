@@ -25,6 +25,21 @@ The choice is the **Connection** section at the top of the model editor, which
 opens as a dialog (*Add model*, *Edit*, *Duplicate*, *Edit a copy*) and asks
 before it closes on unsaved changes.
 
+**Timeouts off first party.** The CLI drops a response that has sent nothing
+for about 5 minutes, reports `Request timed out.` and retries the call from
+scratch. A gateway that buffers the stream sends nothing until the whole reply
+is done, so a long high-effort turn fails at the same point on every retry.
+Every spawn routed through Vertex, Bedrock, Foundry or an `ANTHROPIC_BASE_URL`
+therefore carries `API_FORCE_IDLE_TIMEOUT=0` (lifts the fetch timeout of the
+runtime the CLI is built on, which none of the other settings reach) and
+`API_TIMEOUT_MS`, `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS`,
+`CLAUDE_BYTE_STREAM_IDLE_TIMEOUT_MS` and `CLAUDE_STREAM_IDLE_TIMEOUT_MS` at
+`1800000` (30 minutes, the CLI's ceiling). A request that never answers then
+fails after 30 minutes. A value set in the shell Worca starts from, or in the
+entry's env, wins. First-party spawns keep the CLI defaults. Each retry the CLI
+makes shows in the run log as a warning, for example `API call failed: no HTTP
+response (timeout or connection error); retry 5/10 in 4.1s`.
+
 ## The catalog
 
 Settings › Models is the catalog and nothing else. Above the rows sit a search

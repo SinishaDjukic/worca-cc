@@ -55,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 39;
+export const SCHEMA_VERSION = 40;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -854,7 +854,10 @@ const INCREMENTAL_COLUMNS = {
   ask_threads:            { created_by: 'TEXT' },    // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
-                            policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
+                            policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
+                            map_json: 'TEXT',           // v40: the last scan's { map, synthesis } (workspace map); NULL = none yet
+                            map_overrides_json: 'TEXT', // v40: confirm / reject / manual edge overrides; NULL = none
+                            description_origin: 'TEXT' },   // v40: 'generated' | 'edited'; NULL = before v40
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it (identity.mjs actor)
   scheduled_runs:         { after_kind: 'TEXT', after_id: 'TEXT', after_policy: "TEXT NOT NULL DEFAULT 'done'",
@@ -1357,6 +1360,13 @@ function applySchemaV39(db) {
   }
 }
 
+/** v40 (workspace map): workspaces.map_json + map_overrides_json + description_origin — plain
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV30's shape. NULL on every
+ *  existing row = no map yet, no overrides, a description of unknown origin (never re-rendered). */
+function applySchemaV40(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -1752,6 +1762,7 @@ export function migrate(db) {
     if (current < 37) applySchemaV37(db);            // attribution: comment authors, thread owners, per-person reads
     if (current < 38) applySchemaV38(db);            // attribution: who did each human action on a run
     if (current < 39) applySchemaV39(db);            // attribution: schedules/tickets created_by + updated_by
+    if (current < 40) applySchemaV40(db);            // workspace map: map_json, map_overrides_json, description_origin
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

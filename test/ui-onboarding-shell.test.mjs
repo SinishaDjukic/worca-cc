@@ -580,7 +580,7 @@ test('a run tour ends on the run\'s card under Running, not at the Start click; 
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
 });
 
-test('the workspace tour walks the wizard: Create → name → two projects → Scan → (scanning) → Save; leaving the wizard re-lights Create', async () => {
+test('the workspace tour walks the wizard: Create → name → two projects → Scan (the last stop); leaving the wizard re-lights Create', async () => {
   const projects = [{ name: 'a', path: '/tmp/a', key: 'a-1', exists: true }, { name: 'b', path: '/tmp/b', key: 'b-2', exists: true }];
   const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects });
   click(window, doc.querySelector('.gs-pill'));
@@ -601,14 +601,8 @@ test('the workspace tour walks the wizard: Create → name → two projects → 
   assert.match(layer().querySelector('.guide-text').textContent, /two or more/);
   for (const cb of doc.querySelectorAll('#wiz-projects input[type="checkbox"]')) { cb.checked = true; cb.dispatchEvent(new window.Event('change', { bubbles: true })); }
   await until(() => target() === '#wiz-start-scan');
-  // The scan: step 1 gives way to the loader, then the description step.
-  doc.getElementById('wiz-step-1').classList.add('hidden'); doc.getElementById('wiz-step-2').classList.remove('hidden');
-  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
-  await until(() => target() === '#wiz-step-2 .status-label');
-  doc.getElementById('wiz-step-2').classList.add('hidden'); doc.getElementById('wiz-step-3').classList.remove('hidden');
-  doc.dispatchEvent(new window.Event('click', { bubbles: true }));
-  await until(() => target() === '#wiz-save');
-  assert.match(layer().querySelector('.guide-text').textContent, /save/);
+  assert.match(layer().querySelector('.guide-text').textContent, /scan run/);
+  assert.equal(layer()?.querySelector('.guide-next'), null, 'scanning is the action: no Next');
   // Backing out to Workspaces resets the wizard: Create is the stop again, not the Workspaces nav.
   click(window, doc.querySelector('.nav button[data-nav="workspaces"]'));
   await until(() => target() === '#ws-create-btn');

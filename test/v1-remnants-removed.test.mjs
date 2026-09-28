@@ -53,8 +53,11 @@ const BANNED = [
   // a bare \bloopSource\b would flag it forever. `uiPhase` is NOT here: the
   // RUNTIME attribution field survives (the sub_agents.ui_phase column). Only
   // the SIDECAR key dies, and the agents/ test below is what pins that.
+  // The workspace interconnection map (src/{shared,core}/workspace-map/) has a field of its OWN
+  // named `consumes` — a member's consumed boundary facts (map spec §5.1), not the v1 sidecar
+  // field — so both folders are exempt as DIRECTORY prefixes (entries ending in '/').
   [/\b(consumes|optionalConsumes|produces|connectsTo|loopSource)\s*:/,
-    'a v1 sidecar wiring field', []],
+    'a v1 sidecar wiring field', ['src/shared/workspace-map/', 'src/core/workspace-map/']],
   [/\bCHANNEL_IDS\b|\bPRESEEDED_CHANNELS\b|\bentrySeedChannels\b|\bvalidateWorkflow\b/,
     'the v1 channel / validator vocabulary', []],
   // The retired coexistence alias. db.mjs is the ONE sanctioned reader: V24's
@@ -70,16 +73,37 @@ const BANNED = [
   [/\brunners\.mjs\b|\bchannels\.mjs\b|\bworkflow-validator\.mjs\b/, 'a deleted module', []],
 ];
 
-test('no v1 engine remnant survives in src/ or ui/', () => {
+/** An allowlist entry is an exact POSIX path, or a directory prefix when it ends in '/'. */
+const allowed = (f, allow) => allow.some((a) => (a.endsWith('/') ? f.startsWith(a) : a === f));
+
+/** [[path, text]] → one "path: why (re)" line per banned pattern matching outside its allowlist. */
+function remnantHits(entries) {
   const hits = [];
-  for (const f of files()) {
-    const text = stripComments(readFileSync(f, 'utf8'));
+  for (const [f, raw] of entries) {
+    const text = stripComments(raw);
     for (const [re, why, allow] of BANNED) {
-      if (allow.includes(f)) continue;
+      if (allowed(f, allow)) continue;
       if (re.test(text)) hits.push(`${f}: ${why} (${re})`);
     }
   }
+  return hits;
+}
+
+test('no v1 engine remnant survives in src/ or ui/', () => {
+  const hits = remnantHits(files().map((f) => [f, readFileSync(f, 'utf8')]));
   assert.deepEqual(hits, [], `v1 remnants found:\n${hits.join('\n')}`);
+});
+
+test('the workspace-map exemption is a directory prefix; a bare consumes: anywhere else is still flagged', () => {
+  const field = 'export const x = { consumes: [], produces: [] };\n';
+  const flagged = remnantHits([
+    ['src/shared/workspace-map/schema.mjs', field],
+    ['src/core/workspace-map/detectors/pkg-npm.mjs', field],
+    ['src/core/workspace-map-legacy/x.mjs', field],
+    ['src/core/scheduler.mjs', field],
+    ['ui/public/workspace-map-view.mjs', field],
+  ]).map((h) => h.slice(0, h.indexOf(': ')));
+  assert.deepEqual(flagged, ['src/core/workspace-map-legacy/x.mjs', 'src/core/scheduler.mjs', 'ui/public/workspace-map-view.mjs']);
 });
 
 // The 11 builtin sidecars live OUTSIDE src/ and ui/, so the sweep above cannot

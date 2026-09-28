@@ -114,7 +114,7 @@ test('normalizeMeta exposes requiresSkills (defaulting to []) and filters junk',
   );
 });
 
-test('M4: the two workspace agents are paired (md + sidecar) and scope:"workspace-only"', async () => {
+test('M4: the scanner and the reviewer are paired (md + sidecar) and scope:"workspace-only"', async () => {
   const { prompts } = await listAgents();
   const registry = loadAgentRegistry(AGENTS_DIR);
   for (const key of ['workspaceScanner', 'workspaceReviewer']) {

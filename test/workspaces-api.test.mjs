@@ -464,7 +464,7 @@ test('POST /api/run on a valid workspace returns {runId} and registers a kind:"w
 // summarizeRuns kind discriminator (the WS hello snapshot payload)
 // ───────────────────────────────────────────────────────────────────────────
 
-test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', async () => {
+test('summarizeRuns carries a kind discriminator + workspaceId (no scanId)', async () => {
   runs.clear();
   // A single-project run entry (as POST /api/run registers it).
   runs.set('r-proj', { id: 'r-proj', projectDir: '/x/proj', title: 't', status: 'running', startedAt: 'now', kind: 'run' });
@@ -479,8 +479,8 @@ test('summarizeRuns carries a kind discriminator + scanId/workspaceId fields', a
   assert.equal(byId['r-ws'].kind, 'workspace-run');
   assert.equal(byId['r-ws'].workspaceId, 'wks-x-00000000');
   assert.equal(byId['r-legacy'].kind, 'run', 'entries without a kind default to "run"');
-  // The new fields are present on every summary (scanId reserved for M5 scans).
-  assert.ok('scanId' in byId['r-proj']);
+  // The off-pipeline scan and its scanId are retired: a scan is a workspace-run now.
+  assert.ok(!('scanId' in byId['r-proj']));
   runs.clear();
 });
 
