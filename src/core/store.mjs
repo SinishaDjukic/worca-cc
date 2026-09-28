@@ -32,6 +32,11 @@ export function canonicalProjectRoot(projectDir) {
   try { return realpathSync(dir); } catch { return dir; }
 }
 
+/** The SHAPE projectKey() produces — `<slug>-<sha1[:8]>`, lowercase. One source of truth for the
+ *  readers that validate a key before a lookup or a path join (ui/server.mjs' /api/memory routes),
+ *  next to WORKSPACE_KEY_RE's role in workspaces.mjs. */
+export const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/;
+
 /** Stable key for a project. Memoized by resolved input path. */
 export function projectKey(projectDir) {
   const cacheKey = resolve(projectDir);

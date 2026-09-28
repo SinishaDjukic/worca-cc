@@ -60,6 +60,8 @@ test('GET /api/workflows lists the built-in default first', async () => {
   assert.equal(j.workflows[0].version, 2);
   assert.equal(j.workflows[0].nodes.length, 7);
   assert.equal(j.workflows[0].steps, undefined, 'no v1 topology on the default');
+  assert.equal(j.workflows[1].id, 'wf_memory_defrag', 'the Memory defragment built-in is listed second');
+  assert.equal(j.workflows[1].nodes.length, 3);
 });
 
 test('GET /api/workflows/:id returns the default template', async () => {

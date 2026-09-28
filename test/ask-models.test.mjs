@@ -35,7 +35,7 @@ after(async () => {
 // What composeCatalog() would emit: the plugin has already won/lost its shadows,
 // so every entry here carries id/label/efforts/custom/hasEnv (config.mjs:188-218).
 const FAKE = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
   { id: 'claude-haiku-4-5', label: 'Haiku (via plugin)', efforts: ['medium', 'high'], custom: 'plugin', plugin: 'p', hasEnv: true },
   { id: 'my-global', label: 'Mine', efforts: ['medium', 'high'], custom: 'global', hasEnv: true, costUnreliable: true },
   { id: 'plugin-only-model', label: 'Plug', efforts: ['medium'], custom: 'plugin', plugin: 'p', hasEnv: true },
@@ -59,7 +59,7 @@ const models = createAskModels({
 test('askCatalog: plugin entries survive with plugin/hasEnv/costUnreliable; project entries do not', async () => {
   const cat = await models.askCatalog();
   assert.deepEqual(cat.models, [
-    { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
+    { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false, hasEnv: false },
     { id: 'claude-haiku-4-5', label: 'Haiku (via plugin)', efforts: ['medium', 'high'], custom: 'plugin', hasEnv: true, plugin: 'p' },
     { id: 'my-global', label: 'Mine', efforts: ['medium', 'high'], custom: 'global', hasEnv: true, costUnreliable: true },
     { id: 'plugin-only-model', label: 'Plug', efforts: ['medium'], custom: 'plugin', hasEnv: true, plugin: 'p', secretsMissing: ['MISSING'] },
@@ -83,7 +83,7 @@ test('askCatalog: precedence is inherited from composeCatalog, one entry per id'
 
 test('askCatalog: default comes from ASK_LIMITS, validated against the catalog', async () => {
   const cat = await models.askCatalog();
-  assert.deepEqual(cat.default, { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(cat.default, { model: 'claude-opus-5-5', effort: 'high' });
 
   // Default id gone -> first entry wins, effort clamped to what that entry offers.
   const gone = createAskModels({
@@ -100,17 +100,17 @@ test('askCatalog: default comes from ASK_LIMITS, validated against the catalog',
 });
 
 test('validateModelEffort: widens to plugin models; effort must belong to the entry', async () => {
-  assert.deepEqual(await models.validateModelEffort('CLAUDE-OPUS-5', 'high'), { ok: true, model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(await models.validateModelEffort('CLAUDE-OPUS-5-5', 'high'), { ok: true, model: 'claude-opus-5-5', effort: 'high' });
   assert.deepEqual(await models.validateModelEffort('my-global', 'medium'), { ok: true, model: 'my-global', effort: 'medium' });
   assert.deepEqual(await models.validateModelEffort('plugin-only-model', 'medium'), { ok: true, model: 'plugin-only-model', effort: 'medium' },
     'a plugin model is now selectable — a missing secret is a warning, not a block (D9)');
   assert.deepEqual(await models.validateModelEffort('legacy-project-model', 'medium'), { ok: false, error: 'unknown model "legacy-project-model"' });
-  assert.deepEqual(await models.validateModelEffort('claude-opus-5', 'low'), { ok: false, error: 'effort "low" is not available for model "claude-opus-5"' });
+  assert.deepEqual(await models.validateModelEffort('claude-opus-5-5', 'low'), { ok: false, error: 'effort "low" is not available for model "claude-opus-5-5"' });
   assert.deepEqual(await models.validateModelEffort('my-global', 'max'), { ok: false, error: 'effort "max" is not available for model "my-global"' });
   assert.deepEqual(await models.validateModelEffort('', 'high'), { ok: false, error: 'model is required' });
   assert.deepEqual(await models.validateModelEffort(undefined, 'high'), { ok: false, error: 'model is required' });
-  assert.deepEqual(await models.validateModelEffort('claude-opus-5', ''), { ok: false, error: 'effort is required' });
-  assert.deepEqual(await models.validateModelEffort('claude-opus-5', 42), { ok: false, error: 'effort is required' });
+  assert.deepEqual(await models.validateModelEffort('claude-opus-5-5', ''), { ok: false, error: 'effort is required' });
+  assert.deepEqual(await models.validateModelEffort('claude-opus-5-5', 42), { ok: false, error: 'effort is required' });
 });
 
 test('validateModelEffort: no secret probe on the per-message path', async () => {
@@ -145,5 +145,5 @@ test('bound defaults use the real catalog: every predefined id is present, no pr
   }
   assert.ok(!cat.models.some((m) => m.custom === 'project'), 'project entries never reach the project-less chat');
   assert.deepEqual(cat.default, { model: ASK_LIMITS.defaultModel, effort: ASK_LIMITS.defaultEffort });
-  assert.equal((await validateModelEffort('claude-opus-5', 'high')).ok, true, 'the D8 initial choice validates');
+  assert.equal((await validateModelEffort('claude-opus-5-5', 'high')).ok, true, 'the D8 initial choice validates');
 });

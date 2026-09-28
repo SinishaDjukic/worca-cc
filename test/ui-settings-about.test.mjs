@@ -76,12 +76,12 @@ async function boot({ settings = okSettings } = {}) {
   return { window, tick, $, openSettings };
 }
 
-test('About is the LAST settings card, read-only, with no version baked into the markup', () => {
+test('About is the LAST General card, read-only, with no version baked into the markup', () => {
   const view = settingsView();
-  const cards = [...view.querySelectorAll('section.card.settings-card')];
+  const cards = [...view.querySelectorAll('.settings-pane[data-tab="general"] section.card.settings-card')];
   const about = cards[cards.length - 1];
-  assert.equal(cards.length, 9, 'Appearance + the seven cards plus About');
-  assert.equal(about.id, 'about-card', 'About sits after the Chat notifications card');
+  assert.equal(cards.length, 7, 'Appearance, My model credentials (hidden without a broker), Interface mode, folders, spawn diagnostics, Getting started, then About — Runs, Ask Worca and Models hold the rest');
+  assert.equal(about.id, 'about-card', 'About sits after the Getting started card');
   assert.equal(about.querySelector('.label-row > h2').textContent.trim(), 'About');
 
   assert.equal(about.querySelector('input, select, textarea, button'), null, 'no controls');
@@ -98,7 +98,7 @@ test('About is the LAST settings card, read-only, with no version baked into the
   assert.equal(version.getAttribute('rel'), 'noopener noreferrer');
 
   // The two existing settings-view invariants stay intact (ui-settings-tooltips).
-  assert.equal(view.querySelectorAll('button.info-tip').length, 14, 'About adds no ⓘ icon');
+  assert.equal(view.querySelectorAll('button.info-tip').length, 18, 'About adds no ⓘ icon (18 = 14 + Interface mode + Scheduled runs heading and failures field + My model credentials)');
   for (const hint of view.querySelectorAll('.hint')) assert.equal(hint.textContent.trim(), '');
 });
 

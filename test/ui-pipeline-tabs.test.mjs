@@ -211,15 +211,14 @@ test('paused pipelines get their own badge; running badge excludes them', async 
 });
 
 // Green is spent only on work in flight. At zero the running badge takes the
-// sidebar's inert-inventory grey (the treatment History/Projects/Workspaces
-// get), so a permanently green pill cannot dilute the green that should catch
-// the eye. It is greyed, not hidden: History et al. show a grey 0 too, and
-// Running would otherwise be the only nav item bare at rest.
+// sidebar's inert-inventory grey (the treatment the Schedules count gets), so a
+// permanently green pill cannot dilute the green that should catch the eye. It
+// is greyed, not hidden: Schedules shows a grey 0 too.
 test('the running badge is green only while something is running, grey at zero', async () => {
   const { window, recv } = await boot();
   const badge = window.document.querySelector('#nav-running-count');
   assert.equal(badge.textContent, '0');
-  assert.ok(badge.classList.contains('n-grey'), 'zero is inert — grey, like History');
+  assert.ok(badge.classList.contains('n-grey'), 'zero is inert — grey, like Schedules');
   assert.ok(!badge.classList.contains('n-run'), 'no green when nothing runs');
   assert.equal(badge.hidden, false, 'greyed, not hidden');
 

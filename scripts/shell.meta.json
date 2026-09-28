@@ -1,0 +1,24 @@
+{
+  "key": "shell",
+  "metaVersion": 2,
+  "displayName": "Shell",
+  "description": "Runs a command in the run's checkout with worca's privileges. Exit 0 fires pass, exit 1 fires fail with the output attached, any other exit pauses the run.",
+  "domain": "general",
+  "color": "amber",
+  "icon": "<path d=\"M4 17l6-5-6-5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M12 19h8\" stroke-linecap=\"round\"/>",
+  "order": 10,
+  "runtime": "shell",
+  "ports": "config",
+  "defaultPorts": {
+    "inputs": [ { "id": "in", "type": "md", "required": false } ],
+    "outputs": [
+      { "id": "log", "type": "md", "when": "always", "filename": "shell-cycle{cycle}.md" },
+      { "id": "fail", "type": "md", "when": "blocking", "filename": "shell-cycle{cycle}.md" },
+      { "id": "pass", "type": "void", "when": "clean" }
+    ]
+  },
+  "verdict": { "filename": "shell-cycle{cycle}.json" },
+  "params": [
+    { "id": "command", "type": "command", "label": "Command", "description": "Runs through /bin/sh -c (cmd.exe /c on Windows) in the run's checkout.", "required": true }
+  ]
+}

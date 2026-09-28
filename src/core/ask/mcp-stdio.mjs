@@ -24,21 +24,95 @@ import { pathToFileURL } from 'node:url';
 import { createAskTools, AskToolError } from './tools.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
+import { defaultMemoryDeps } from './memory-deps.mjs';
+import { defaultScriptDeps } from './script-deps.mjs';
 import { defaultCommentDeps } from './comment-deps.mjs';
 import { defaultWorkflowDeps } from './workflow-deps.mjs';
+import { defaultMetricsDeps } from './metrics-deps.mjs';
+import { defaultPolicyDeps } from './policy-deps.mjs';
+import { defaultScheduleDeps } from './schedule-deps.mjs';
+import { defaultSourceDeps } from './source-deps.mjs';
+import { defaultModelDeps } from './model-deps.mjs';
+import { defaultCloneDeps } from './clone-deps.mjs';
+import { defaultWebDeps } from './web-deps.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
 const PKG_VERSION = createRequire(import.meta.url)('../../../package.json').version;
 
-/** `--home <base> --thread <id>`; a flag without a value is ignored. */
+/** `--home <base> --thread <id> [--relay <url>]`; a flag without a value is ignored. */
 export function parseArgv(argv) {
-  const out = { home: null, thread: null };
+  const out = { home: null, thread: null, relay: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--home' && argv[i + 1] !== undefined) out.home = argv[++i];
     else if (argv[i] === '--thread' && argv[i + 1] !== undefined) out.thread = argv[++i];
+    else if (argv[i] === '--relay' && argv[i + 1] !== undefined) out.relay = argv[++i];
   }
   return out;
+}
+
+/**
+ * The worca tools of one chat, wired to their real deps. Used by this process (the classic
+ * mode, where the MCP child reads worca's database itself) and, in relay mode, by the worca
+ * server (ui/server.mjs /api/ask/relay), when the chat's claude runs as an agent user that
+ * cannot read that database (agent-pool.mjs, credential broker).
+ */
+export function createAskToolServer({ threadId, reader = null, signal, write, log, env = process.env }) {
+  return createRpcServer({
+    tools: createAskTools({
+      ...defaultToolDeps({ threadId, viewer: reader }),
+      ...defaultWorktreeDeps({ threadId }),
+      ...defaultMemoryDeps({ threadId }),
+      // The life signal (already built for propose_workflow's nested classifier): the turn
+      // ending or being stopped also stops a bench run still going.
+      ...defaultScriptDeps({ threadId, signal }),
+      ...defaultCommentDeps(),
+      ...defaultWorkflowDeps({ threadId, signal }),
+      ...defaultMetricsDeps({ threadId }),
+      ...defaultPolicyDeps({ threadId }),
+      ...defaultScheduleDeps({ threadId, reader }),
+      ...defaultSourceDeps(),
+      ...defaultModelDeps({ threadId }),
+      ...defaultCloneDeps(),
+      // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
+      // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
+      ...defaultWebDeps({ threadId, signal, env }),
+    }),
+    write,
+    ...(log ? { log } : {}),
+  });
+}
+
+/**
+ * Relay mode: every JSON-RPC line from claude goes to the worca server, which runs the tool
+ * (createAskToolServer) and answers with the output lines. One line at a time, in order.
+ * The per-turn token (WORCA_ASK_RELAY_TOKEN) is the only credential, and only for this chat.
+ */
+async function relayMain({ url, token, stdin, stdout, fetchImpl = globalThis.fetch }) {
+  const rl = createInterface({ input: stdin });
+  let chain = Promise.resolve();
+  rl.on('line', (line) => {
+    if (!String(line).trim()) return;
+    chain = chain.then(async () => {
+      try {
+        const res = await fetchImpl(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-worca-relay': token },
+          body: JSON.stringify({ line }),
+        });
+        const j = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        for (const out of j.out || []) stdout.write(out.endsWith('\n') ? out : `${out}\n`);
+      } catch (err) {
+        let id = null;
+        try { id = JSON.parse(line).id ?? null; } catch { /* unparseable: id stays null */ }
+        if (id !== null) stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: `worca is not reachable: ${err.message}` } })}\n`);
+      }
+    });
+  });
+  await new Promise((resolve) => rl.on('close', resolve));
+  await chain;
+  await new Promise((resolve) => stdout.write('', resolve));
 }
 
 /**
@@ -110,19 +184,17 @@ export function createRpcServer({ tools, write, log = (s) => process.stderr.writ
 }
 
 export async function main({ argv = process.argv.slice(2), env = process.env, stdin = process.stdin, stdout = process.stdout } = {}) {
-  const { home, thread } = parseArgv(argv);
+  const { home, thread, relay } = parseArgv(argv);
+  if (relay) {
+    return relayMain({ url: relay, token: String(env.WORCA_ASK_RELAY_TOKEN || ''), stdin, stdout });
+  }
   if (home) env.WORCA_HOME = home;                               // argv wins; worcaHome() reads the env at call time
   const threadId = thread || env.WORCA_ASK_THREAD_ID || null;
   // P3 (v7): stdin closing == the chat turn ended or was stopped — abort whatever propose_workflow is still classifying
   // (its result could never be delivered), so the drain below returns promptly instead of after the classifier's timeout.
   const life = new AbortController();
-  const server = createRpcServer({
-    tools: createAskTools({
-      ...defaultToolDeps({ threadId }),
-      ...defaultWorktreeDeps({ threadId }),
-      ...defaultCommentDeps(),
-      ...defaultWorkflowDeps({ threadId, signal: life.signal }),
-    }),
+  const server = createAskToolServer({
+    threadId, reader: process.env.WORCA_ASK_READER || null, signal: life.signal, env,
     write: (s) => stdout.write(s),
   });
   const rl = createInterface({ input: stdin });

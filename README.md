@@ -90,9 +90,24 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 - **AI-assisted agent creation** — describe a new agent in the UI and Worca
   generates both its system prompt and metadata (or paste your own prompt and
   let it infer just the wiring); edit, regenerate, and save.
+- **Ask forms** — an agent that needs a human can ship the UI its question is
+  asked with: JSON in its sidecar, drawn by worca from a fixed widget catalog
+  (galleries, rankings, per-item review lists, previews of the files it just
+  produced), validated on the way back, with a text projection for the CLI, chat
+  and History. Plugins can ship them too.
 - **Per-agent model & effort** — pick model and reasoning effort per agent,
   per workflow, or per run, with a clear resolution order and "save as
   workflow defaults".
+
+### Scripts
+
+- **Cards that run your own program** — a script card keeps the whole outside of
+  an agent card (typed ports, verdict routing, loops) and replaces the inside
+  with your own `node` or `shell` program, so a test gate or a
+  transform costs no model call; the **Scripts** page creates, edits, duplicates
+  and deletes them, and its test bench runs one by itself with hand-filled
+  inputs — saved as named cases with an optional expectation, re-run one at a
+  time or all at once — through the very same runner a pipeline run uses.
 
 ### Workflow Composer
 
@@ -137,15 +152,31 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 ### Plugins & chat
 
 - **Plugin system with marketplaces** — plugins contribute task sources
-  (e.g. GitHub Issues), agents, skills, workflow templates, models, and chat
-  channels. Install from a marketplace with an explicit consent ceremony
-  (what's installed, which secrets are required, which setup commands run);
-  updates show a commit-level preview before you accept.
+  (e.g. GitHub Issues), agents (with their ask forms), scripts, skills, workflow
+  templates, models, and chat channels. Install from a marketplace with an
+  explicit consent ceremony (what's installed, which ask forms an agent can show
+  and which file types they may display, which secrets are required, which setup
+  commands run); updates show a commit-level preview before you accept.
 - **Drive runs from chat** — bundled two-way **Telegram**, **Slack**,
   **Discord**, and **Microsoft Teams** channels: get notified on questions,
   finishes, failures, and cost pauses, and answer back with commands —
   `/status`, `/cost`, `/answer`, `/approve`, `/pause`, `/resume`, `/stop`,
   `/retune`, and more — with allowlist-based authorization.
+
+### Scheduled runs
+
+- **Run it later** — schedule a pipeline for a date and time, or on a repeat
+  ("every weekday at 02:00"), from New pipeline, an Ask card, the CLI
+  (`--at`, `--every`, `--cron`) or the API (`scheduledFor`, `repeat`). The
+  **Schedules** view lists what is planned and an activity feed of every miss,
+  failure and self-pause. Runs start while `worca ui` (or a `--wait` terminal) is
+  up and the machine is awake. A run can also start after another run, on its
+  branch, so runs form a train. See [docs/scheduled-runs.md](docs/scheduled-runs.md).
+- **Ask Worca schedules too** — "run the dependency upgrade every weekday at 2am"
+  becomes a run card whose main button is *Schedule*. It lists, explains, pauses,
+  resumes and skips schedules on request; moving, editing, cancelling or deleting
+  one is a card you confirm. Name a tracker issue ("fix Jira bug PROJ-123 with
+  auto, tonight") and the card runs from the issue itself, read when the run starts.
 
 ### Costs & budgets
 
@@ -158,6 +189,43 @@ and durations, the clarify Q&A, agent transcripts, and logs:
 
 ![Statistics — spend, time worked, outcomes, and per-day charts](docs/screenshots/stats.png)
 
+### Team metrics
+
+- **A shared, git-backed record** — every finished run is pushed as one file to an orphan
+  `worca-metrics` branch on the project's own `origin`; there is no separate metrics server.
+- **Opt-in per project, with delegation** — enable it on the repository itself, or delegate to
+  another project (or a workspace's metrics home) that already records.
+- **A Team metrics page** — project and workspace scope, spend/runs/duration/autonomy/review
+  KPIs, breakdowns and a CSV export.
+- **A Timeline for planners** — work items as bars on a calendar (month → week → day), grouped
+  by work item or person: what shipped (the PR merged), what waits for review, what needs
+  attention. Merge dates come from an optional GitHub Action (`worca metrics pr-workflow`) or the
+  GitHub CLI, and the page still works without either. With the Action, pull requests made
+  outside Worca show too, so the calendar covers the whole team's delivery.
+- **`worca metrics push`** — flush pending run records from the CLI, e.g. on a headless machine.
+
+See [`docs/team-metrics.md`](docs/team-metrics.md).
+
+### Team policy
+
+- **Team-set caps and expectations, distributed by git** — a product manager or lead publishes
+  a policy to an orphan `worca-policy` branch on the project's `origin` (protect it so only
+  maintainers push); every teammate's Worca reads it. A project carries its own policy or
+  follows another project's; a workspace follows a policy home.
+- **Soft by design** — every value is a *default* the developer may change or a *soft
+  constraint* the tighter of team and local applies to. Going past a team cap is allowed
+  after a confirmation (with an optional or required reason) and is recorded to team
+  metrics. Nothing blocks a run; unattended (`--yes`) runs warn instead of pausing.
+- **What a policy can set** — per-pipeline and total cost caps, an advisory pooled budget,
+  Ask Worca limits, a default guardrail set and a minimum tier, allowed models and step
+  defaults, marketplaces and required plugins (offered through a setup checklist, never
+  installed without a click), a default workflow, human-in-the-loop, and more.
+- **A Team policy page** — the effective policy per project or workspace (team value, yours,
+  what applies) and an editor that publishes in one commit.
+- **`worca policy show|pull|init|setup`** and `--past-team-cap [--reason "…"]` on runs.
+
+See [`docs/team-policy.md`](docs/team-policy.md).
+
 ### Models
 
 - **Bring your own models** — register any model id (a proxy, a fine-tune, an
@@ -166,11 +234,18 @@ and durations, the clarify Q&A, agent transcripts, and logs:
   into that model's agent spawns. Share a model catalog as a plugin, with
   secrets required at install time.
 - **No first-party account needed** — run and chat titles are written by the
-  model the run or chat itself uses (Settings › General › Title generation picks
+  model the run or chat itself uses (Settings › Models › Title generation picks
   a fixed one instead), endpoint-routed models carry Claude Code's internal
   haiku/sonnet/opus/fable tier keys so nothing falls back to the Anthropic API,
   and *Hide built-in models* (Settings › Models) drops the built-ins from every
   picker.
+- **GitHub Copilot and OpenAI-compatible endpoints, built in** — Worca's own
+  in-process bridge lets the Claude Code CLI run against a Copilot subscription
+  (Claude models through Copilot's native Anthropic endpoint, thinking intact;
+  GPT, Gemini and the rest through a translation layer) or any
+  `/chat/completions` or `/responses` endpoint — no LiteLLM, no second daemon. Sign in once on
+  Settings › Models › Providers, import Copilot's models, pick them anywhere.
+  See [`docs/models.md`](docs/models.md).
 
 ### Storage
 
@@ -199,6 +274,31 @@ Requirements:
   native `claude.exe` next to it instead. If that binary is missing (the package's
   `postinstall` didn't run) or the layout isn't npm's, Worca says so rather than
   a bare `ENOENT`; `WORCA_CLAUDE_BIN` can always point at a `claude.exe` directly.
+
+### In a container
+
+Prefer the agents to run in a disposable Linux box instead of on your machine?
+The same Worca ships as an image (`ghcr.io/sinishadjukic/worca`) with a Compose
+file; the UI, the CLI, guardrails, plugins and your data work the same way.
+
+```bash
+worca container up        # from the npm install: writes ~/.worca-cc/container/, starts the box
+worca container login     # log Claude Code in, once; UI on http://localhost:4317
+```
+
+or, without npm, download `docker/compose.yml`, set `WORCA_PROJECTS` in a
+`.env` beside it and `docker compose up -d`. See [`docs/docker.md`](docs/docker.md)
+for login options, git credentials, the egress allowlist, clone-in mode and
+the Windows/WSL2 notes.
+
+### Hosted, behind Cloudflare Access
+
+The same image runs as an always-on service: on Railway (or any host), reachable only through a
+Cloudflare Tunnel with Cloudflare Access in front, and worca verifying the Access token itself.
+Step by step: [`docs/deploy-railway.md`](docs/deploy-railway.md); the Cloudflare side and the
+security model: [`docs/remote-access.md`](docs/remote-access.md). Upgrades, configuration and checks of a running
+deployment: [Operate your deployment](docs/deploy-railway.md#operate-your-deployment), with the
+`tools/railway/worca-railway.mjs` tool and the `/worca-railway` skill for Claude Code.
 
 ## Quick start
 
@@ -252,24 +352,55 @@ worca --project /path/to/your/project --prompt "Add a /search endpoint" --workfl
 # pause with Ctrl+C, continue later (survives restarts)
 worca resume <pipelineId>
 
+# see every run from the terminal — no browser, no Worca server needed
+worca runs
+worca runs --status paused
+worca runs <pipelineId>    # one run in detail (any unique prefix; --json for machines)
+
+# run it later: once, from this terminal, or on a repeat (needs `worca ui` up, or --wait)
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at "tomorrow 02:00"
+worca --project /path/to/your/project --prompt "Upgrade dependencies" --at 02:00 --wait --yes
+worca --project /path/to/your/project --file ./nightly.md --every "weekdays 02:00"
+worca schedule list
+
 # offline demo — full pipeline, no tokens
 worca --project /path/to/your/project --prompt "demo task" --mock --yes
 
-# share a saved pipeline: as JSON, or as a plugin folder bundling your agents + skills
+# flush pending team-metrics run records (headless machines with no UI server)
+worca metrics push
+
+# record PR merges for the Team metrics Timeline (adds a GitHub Action; commit and push it)
+worca metrics pr-workflow
+
+# team policy: what applies to this project, fetch the branch now, meet the setup checklist
+worca policy show
+worca policy pull
+worca policy setup --install
+
+# share a saved pipeline: as JSON, or as a plugin folder bundling your agents, scripts + skills
 worca workflow export wf_my-flow --format json --out my-flow.json
 worca workflow import my-flow.json
 worca workflow export wf_my-flow --format plugin --target ./my-flow-plugin
+
+# scripts: list, scaffold and test a script card — no server needed
+worca script list
+worca script new runTests --runtime shell
+worca script test runTests
+worca script test shell --param command="npm test" --cwd .
+worca plugin new-script tidy --dir ./my-plugin
+worca plugin validate ./my-plugin --run-cases
 ```
 
 Run `worca --help` for all subcommands (projects, plugins, marketplaces,
-workflows, config, doctor) and flags.
+workflows, scripts, config, doctor) and flags.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an
 interactive pause an error forced; `2` a usage error; `3` a `--yes` run that
 parked itself — auth, quota, a usage or cost limit, exhausted retries, or a
 step error — with nobody attached to resume it. Nothing is discarded on a
-pause: `worca resume <pipelineId>` picks the run up where it stopped, and the
+pause: `worca resume <pipelineId>` picks the run up where it stopped — on the
+model it was started with (`--model`, or the one picked in the UI) — and the
 cause is printed with the pause block on stdout.
 
 ### `/worca` skill (inside Claude Code)
@@ -290,7 +421,13 @@ The skill starts the same deterministic orchestrator.
 
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture
 - [Guardrails](docs/guardrails.md) — policy model, enforcement, limitations
+- [Team metrics](docs/team-metrics.md) — git-backed, team-wide run records
+- [Team policy](docs/team-policy.md) — team-set cost caps, plugins, models and guardrails from a `worca-policy` branch
+- [Models](docs/models.md) — the catalog, providers (GitHub Copilot, OpenAI-compatible) and the built-in bridge
+- [Getting started](docs/getting-started.md) — the in-app checklist, welcome and spotlight guides
 - [Storage](docs/storage.md) — where state lives, project keys, migration
+- [Remote access](docs/remote-access.md) — opt-in, behind Cloudflare Access, with worca checking the token
+- [Deploy on Railway](docs/deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Releasing](docs/RELEASING.md) — how `@worca/app` versions are published
 - [Contributing](CONTRIBUTING.md) — developing Worca from source
 

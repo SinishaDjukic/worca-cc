@@ -108,7 +108,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     honorProjectSettings: true,
     envScrub: false,
     envAllowlist: [],
-    protectedPaths: ['.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx'],
+    protectedPaths: ['.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**'],
     deny: [
       'Bash(git push)', 'Bash(git push:*)',
       'Bash(npm publish)', 'Bash(npm publish:*)',
@@ -121,7 +121,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: true,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx',
+      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
       '.npmrc', '.netrc', '*.tfstate*', '*.keystore', '*.jks',
       '**/secrets/**', '**/.git/config', '~/.git-credentials',
       '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.kube/**', '~/.config/gh/**',
@@ -217,4 +217,25 @@ test('detectPreset: round-trips every preset, order-insensitive, null on any per
   assert.equal(detectPreset({ ...GUARDRAIL_PRESETS.normal, envScrub: true }), null);
   assert.equal(detectPreset({ ...GUARDRAIL_PRESETS.normal, deny: [...GUARDRAIL_PRESETS.normal.deny, 'Bash(curl:*)'] }), null);
   assert.equal(detectPreset({ ...GUARDRAIL_PRESETS.normal, protectedPaths: [] }), null);
+});
+
+// ── the memory floor (agent-memory-design.md §13) ────────────────────────────
+
+test('no preset protects a memory mount path: a defragment run is never blocked by a protected-path rule', () => {
+  // The documented protectedPaths semantics (guardrails.mjs, "Rule-spelling invariants"): a
+  // slash-less pattern is a BASENAME glob matched at any depth; a slash-containing pattern is a
+  // path glob anchored at the run cwd unless it opens with `**/`.
+  const esc = (p) => p.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const globRe = (p) => new RegExp(`^${p.split('**/').map((part) => esc(part).replace(/\*/g, '[^/]*')).join('(?:.*/)?')}$`);
+  const protects = (pat, rel) => (pat.includes('/') ? globRe(pat).test(rel) : globRe(pat).test(rel.split('/').pop()));
+  assert.equal(protects('.env*', 'a/b/.env.local'), true, 'the matcher itself is not vacuous');
+  assert.equal(protects('**/secrets/**', 'deep/secrets/token.txt'), true);
+  const MOUNTED = ['.claude/rules/worca/global/testing.md', '.claude/rules/worca/project/conventions.md', '.claude/rules/worca/projects/demo-00000001/conventions.md'];
+  for (const [level, preset] of Object.entries(GUARDRAIL_PRESETS)) {
+    for (const pat of preset.protectedPaths) {
+      for (const rel of MOUNTED) {
+        assert.equal(protects(pat, rel), false, `${level}: "${pat}" would protect the memory file ${rel}`);
+      }
+    }
+  }
 });

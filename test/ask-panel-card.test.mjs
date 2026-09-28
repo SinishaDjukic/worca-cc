@@ -26,7 +26,7 @@ const WS_CARD = {
 const WF_DEFAULT_TPL = { id: 'wf_default', name: 'Default', version: 2,
   nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
           { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
-          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5', effort: 'high' } },
+          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5-5', effort: 'high' } },
           { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: {} },
           { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
@@ -49,7 +49,7 @@ const AGENTS = [
     outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
 ];
 const MODELS = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
 ];
@@ -274,7 +274,101 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
   assert.deepEqual(handoffs[0], {
     target: 'project', projectDir: '/repos/proj', workflowId: 'wf_default', guardrailsId: 'normal',
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
+    memoryScope: null,
   });
+});
+
+// Agent memory (§7.3 / B17): a Memory defragment proposal carries the scope it restructures. Both
+// exits of the card must keep it — Start sends it in the run body, Open in New Pipeline hands it to
+// the picker, which would otherwise default to `global` and restructure the wrong scope.
+const MEM_WORKFLOWS = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_memory_defrag', name: 'Memory defragment' }];
+const MEM_CARD = { ...PROJECT_CARD, workflowId: 'wf_memory_defrag', workflowName: 'Memory defragment',
+  memoryScope: 'project', brief: 'Defragment the memory of project proj.', title: 'Memory defragment: proj' };
+function memHandler(rec) {
+  const base = apiHandler(rec);
+  return (url, opts) => {
+    const path = String(url).split('?')[0];
+    if (path === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: MEM_WORKFLOWS }) };
+    if (path === '/api/workflows/wf_memory_defrag') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment' }) };
+    return base(url, opts);
+  };
+}
+
+test('ask-panel-card: a Memory defragment proposal sends memoryScope with Start', async () => {
+  const rec = {};
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: memHandler(rec) });
+  assert.equal(ctx.doc.querySelector('.ask-card-workflow').value, 'wf_memory_defrag');
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(rec.runBodies[0].workflowId, 'wf_memory_defrag');
+  assert.equal(rec.runBodies[0].memoryScope, 'project');
+});
+
+// Settings › Memory: the defragment built-in reads with `pinnedAgentModel`, so the card's lane is
+// PREFILLED from the setting (over the template's own opus/high) and locked — and a Start writes
+// nothing into the project config, so ordinary cards never inherit the defragment model.
+test('ask-panel-card: a Memory defragment card prefills every lane row from Settings › Memory, locked; Start saves no agent config', async () => {
+  const rec = {};
+  const base = memHandler(rec);
+  const handler = (url, opts) => (String(url).split('?')[0] === '/api/workflows/wf_memory_defrag'
+    ? { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment', pinnedAgentModel: { model: 'claude-haiku-4-5', effort: 'high', source: 'settings' } }) }
+    : base(url, opts));
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: handler });
+  const lane = await laneOf(ctx);
+  for (const id of ['n_plan', 'n_impl', 'n_rev']) {
+    const tile = lane.querySelector(`.ask-rp-tile[data-node-id="${id}"]`);
+    const sel = tile.querySelector('.ask-rp-model');
+    assert.equal(sel.value, 'claude-haiku-4-5', `${id}: the setting's model`);
+    assert.equal(sel.disabled, true, `${id}: locked`);
+    const pills = [...tile.querySelectorAll('.ask-rp-effbtn')];
+    assert.deepEqual(pills.filter((b) => b.classList.contains('on')).map((b) => b.textContent), ['high'], `${id}: the setting's effort`);
+    assert.ok(pills.every((b) => b.disabled), `${id}: every effort pill locked`);
+    assert.match(tile.querySelector('.ask-rp-name small').textContent, /model from Settings › Memory/);
+  }
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(rec.runBodies.length, 1);
+  assert.equal(rec.configWrites, undefined, 'nothing written into the project config');
+  assert.equal('model' in rec.runBodies[0], false, 'no pair in the body: the run resolves the setting itself');
+});
+
+// The lane re-sends a pinned row's hidden pick on a save of another tunable — healed against the
+// lane's catalog first, so an effort the model no longer offers never turns Start into a refused save.
+test('ask-panel-card: an edited tunable on a pinned lane row re-sends the project\'s pick healed against the catalog', async () => {
+  const rec = {};
+  const base = memHandler(rec);
+  const handler = (url, opts) => {
+    const path = String(url).split('?')[0];
+    if (path === '/api/workflows/wf_memory_defrag') return { ok: true, status: 200, json: async () => ({ ...WF_DEFAULT_TPL, id: 'wf_memory_defrag', name: 'Memory defragment', pinnedAgentModel: { model: 'claude-opus-5-5', effort: 'high', source: 'settings' } }) };
+    if (path === '/api/config' && (opts.method || 'GET').toUpperCase() === 'GET') {
+      const body = configBody();
+      body.config.workflows = { wf_memory_defrag: { nodes: { n_impl: { model: 'claude-haiku-4-5', effort: 'max' } }, feedbacks: {} } };
+      return { ok: true, status: 200, json: async () => body };
+    }
+    return base(url, opts);
+  };
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: handler });
+  const lane = await laneOf(ctx);
+  const implFan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
+  implFan.checked = false;
+  implFan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+  ctx.doc.querySelector('[data-ask-card-start]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.deepEqual(rec.configWrites[0].body.nodes.n_impl, { model: 'claude-haiku-4-5', effort: '', fanOut: false, askQuestions: null, subagentModel: '' },
+    'Haiku 4.5 no longer offers max: dropped, as an unpinned select would');
+  assert.equal(rec.runBodies.length, 1);
+});
+
+test('ask-panel-card: a Memory defragment proposal hands memoryScope to New Pipeline', async () => {
+  const rec = {};
+  const handed = [];
+  const ctx = await openWithCard(MEM_CARD, rec, { fetchHandler: memHandler(rec), openNewPipeline: (p) => handed.push(p) });
+  ctx.doc.querySelector('[data-ask-card-open-np]').click();
+  for (let i = 0; i < 6; i++) await ctx.tick();
+  assert.equal(handed.length, 1);
+  assert.equal(handed[0].workflowId, 'wf_memory_defrag');
+  assert.equal(handed[0].memoryScope, 'project');
 });
 
 test('ask-panel-card v2: head shows kicker, editable title and the note; the title edit posts as title', async () => {
@@ -310,13 +404,13 @@ test('ask-panel-card v2: the lane renders one two-line tile per agent with effec
   assert.deepEqual(tiles.map((t) => t.querySelector('.ask-rp-name b').textContent), ['Plan', 'Implement', 'Review']);
   assert.equal(tiles[0].querySelector('.ask-rp-name small').textContent, 'step 1 · workflow default', 'caption counts lane position, not the task card');
   const impl = tiles[1];
-  assert.equal(impl.querySelector('.ask-rp-model').value, 'claude-opus-5');
+  assert.equal(impl.querySelector('.ask-rp-model').value, 'claude-opus-5-5');
   assert.equal(impl.querySelector('.ask-rp-eff button.on').textContent, 'high');
   assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="fanOut"]').checked, true, 'registry fanOut default');
   assert.equal(impl.querySelector('.ask-rp-tile-l2 [data-ctl="questions"]').checked, false);
   assert.equal(tiles[2].querySelector('[data-ctl="questions"]'), null, 'no questions capability → no switch');
   assert.ok(tiles[0].querySelector('.ask-rp-eff').classList.contains('unset'), 'no model → inherits workflow');
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5 ×1 · 1 fan-out');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · inherit ×2 · Opus 5.5 ×1 · 1 fan-out');
   assert.equal(ctx.doc.querySelector('.ask-rp-wfdesc[data-for="workflow"]').textContent, '3 agents · 1 loop · Review → Implement, max 3 cycles');
 });
 
@@ -333,7 +427,7 @@ test('ask-panel-card v2: editing tints the tile, updates the sub-line and summar
   assert.equal(plan2.querySelector('.ask-rp-eff button[disabled]').textContent, 'xhigh', 'efforts the model lacks are disabled');
   assert.match(lane.querySelector('.ask-rp-sec-sub').textContent, /you changed 1 agent · 1 override/);
   assert.match(lane.querySelector('.ask-rp-agents-foot').textContent, /Edits become this project's defaults for Default/);
-  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5 ×1 · inherit ×1 · 1 fan-out');
+  assert.equal(ctx.doc.querySelector('.ask-rp-summary').textContent, '3 agents · Haiku 4.5 ×1 · Opus 5.5 ×1 · inherit ×1 · 1 fan-out');
   lane.querySelector('.ask-rp-mini').click();
   assert.ok(!lane.querySelector('.ask-rp-tile[data-node-id="n_plan"]').classList.contains('mod'));
   assert.equal(lane.querySelector('.ask-rp-mini').hidden, true);
@@ -386,7 +480,7 @@ test('ask-panel-card v2: a saved workflow persists per NODE via PATCH', async ()
   ctx.doc.querySelector('[data-ask-card-start]').click();
   for (let i = 0; i < 6; i++) await ctx.tick();
   assert.deepEqual(rec.order, ['config:PATCH', 'run']);
-  assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
+  assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
 });
 
 test('ask-panel-card v2: a failed config write shows inline and the run is NOT started', async () => {
@@ -594,4 +688,315 @@ test('workflow card: openComposer receives the workflowId; dropping the card (ne
   ctx.doc.querySelector('[data-ask-new-btn]').click();
   ctx.flush();
   assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
+});
+
+// ---- Scheduled runs (docs/scheduled-runs.md "Ask Worca") ----
+const ONCE = { kind: 'once', runAt: '2026-09-19T00:00:00.000Z', when: 'Sat Sep 19, 02:00', timeZone: 'Europe/Berlin' };
+const REPEAT = {
+  kind: 'repeat', rule: { freq: 'weekly', interval: 1, time: '02:00', tz: 'Europe/Berlin', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], anchor: '2026-09-18', end: { type: 'never' } },
+  sentence: 'Every weekday at 02:00', next: [{ at: '2026-09-21T00:00:00.000Z', when: 'Mon Sep 21, 02:00' }], overlap: 'skip', maxFailures: 3, timeZone: 'Europe/Berlin',
+};
+
+test('ask-panel-card: a proposal Ask Worca scheduled makes Schedule the primary action; Start now is the alternative', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: ONCE }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('[data-ask-card-sched-proposed]');
+  assert.ok(line, 'the schedule line');
+  assert.equal(line.querySelector('.badge').textContent, 'Scheduled');
+  assert.match(line.querySelector('.ask-card-sched-text').textContent, /^Starts [A-Z][a-z]{2} Sep 1[89], \d{2}:00$/);
+  assert.ok(line.querySelector('[data-ask-card-sched-change]'), 'Change… opens the sheet');
+  const go = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(go.textContent, 'Schedule');
+  assert.equal(cardEl.querySelector('[data-ask-card-schedule]'), null, 'no second Schedule… button');
+  assert.equal(cardEl.querySelector('[data-ask-card-start-now]').dataset.minLevel, undefined, 'the answer is never gated (ui-levels rule 4)');
+  go.click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal(rec.runBodies.at(-1).scheduledFor, ONCE.runAt);
+  cardEl.querySelector('[data-ask-card-start-now]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.equal('scheduledFor' in rec.runBodies.at(-1), false, 'Start now starts now');
+});
+
+test('ask-panel-card: a repeating proposal posts repeat; a plain card keeps its Advanced "Schedule…"', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: REPEAT }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  assert.equal(cardEl.querySelector('[data-ask-card-sched-proposed] .badge').textContent, 'Repeats');
+  assert.match(cardEl.querySelector('.ask-card-sched-text').textContent, /^Every weekday at 02:00 · first run /);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.deepEqual(rec.runBodies.at(-1).repeat, { rule: REPEAT.rule, overlap: 'skip', maxFailures: 3 });
+  const plain = await openWithCard(PROJECT_CARD);
+  assert.equal(plain.doc.querySelector('[data-ask-card-schedule]').dataset.minLevel, 'advanced');
+  assert.equal(plain.doc.querySelector('[data-ask-card-start]').textContent, 'Start run');
+});
+
+test('ask-panel-card: a card that became a repeating schedule follows the series (Run now / Delete schedule)', async () => {
+  const calls = [];
+  const rec = {};
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    if (url.startsWith('/api/schedules/')) { calls.push([(opts.method || 'GET').toUpperCase(), url]); return { ok: true, status: 200, json: async () => ({ runId: 'r', status: 'fired' }) }; }
+    return base(url, opts);
+  } });
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'scheduled', scheduleId: 'sch_0000abcd', sentence: 'Every weekday at 02:00', scheduledFor: '2026-09-21T00:00:00.000Z', card: PROJECT_CARD }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.badge').textContent, 'Repeats');
+  assert.match(el.querySelector('.ask-card-sched-text').textContent, /^Fix login — Every weekday at 02:00 · next /);
+  const [runNow, del] = [...el.querySelectorAll('button')];
+  assert.equal(del.textContent, 'Delete schedule');
+  runNow.click();
+  await ctx.tick();
+  assert.deepEqual(calls[0], ['POST', '/api/schedules/sch_0000abcd/run-now']);
+});
+
+test('schedule card: before / after, Decline and the action\'s own Apply post the card verbs; applied shows the result', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'schedule', action: 'move', id: 'u-1', itemKind: 'once', title: 'Upgrade deps', targetName: 'shop', status: 'scheduled', scheduleId: null,
+    note: 'you asked for later', summary: 'Move "Upgrade deps" from Sat Sep 19, 02:00 to Sat Sep 19, 06:00',
+    before: { when: 'Sat Sep 19, 02:00', at: '2026-09-19T00:00:00.000Z' }, after: { when: 'Sat Sep 19, 06:00', at: '2026-09-19T04:00:00.000Z' }, patch: { scheduledFor: '2026-09-19T04:00:00.000Z' } };
+  const SC_ID = 'card_00000008';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: SC_ID, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-scard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed schedule change');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Change time');
+  assert.deepEqual([...el.querySelectorAll('.ask-scard-k')].map((x) => x.textContent), ['From', 'To']);
+  assert.equal(el.querySelector('[data-ask-sc-apply]').textContent, 'Move');
+  el.querySelector('[data-ask-sc-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [SC_ID, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: SC_ID, state: 'applied', card: { ...card, result: { ok: true, detail: 'now at Sat Sep 19, 06:00' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-scard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'now at Sat Sep 19, 06:00');
+  assert.ok(done.querySelector('a[href="#schedules"]'));
+  const del = { ...card, action: 'delete', itemKind: 'recurring', summary: 'Delete the schedule "Nightly"' };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000009', state: 'proposed', card: del }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const apply = ctx.doc.querySelector('[data-ask-scard="proposed"] [data-ask-sc-apply]');
+  assert.equal(apply.textContent, 'Delete');
+  assert.ok(apply.classList.contains('is-danger'), 'a removal reads as one');
+});
+
+test('schedule card: a move to AFTER another run names the predecessor on both sides, never "later" (run chains)', async () => {
+  const rec = { cardPosts: [] };
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: apiHandler(rec) });
+  const afterSide = { afterRun: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: false, text: 'After ‘Refactor’ finishes' };
+  const timed = { type: 'schedule', action: 'move', id: 'u-2', itemKind: 'once', title: 'Tests', targetName: 'shop', status: 'scheduled', scheduleId: null,
+    summary: 'Tests: after ‘Refactor’ finishes', before: { when: 'Sat Sep 19, 02:00', at: '2026-09-19T00:00:00.000Z' }, after: afterSide, patch: { after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'any' } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000a', state: 'proposed', card: timed }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  let vals = [...ctx.doc.querySelector('[data-ask-scard="proposed"]').querySelectorAll('.ask-scard-v')].map((x) => x.textContent);
+  assert.equal(vals.length, 2);
+  assert.notEqual(vals[0], 'later', 'a timed ticket keeps its instant');
+  assert.equal(vals[1], 'After ‘Refactor’ finishes');
+  // An already-chained ticket re-pointed at another run: the validator hands `before` as { when, at: null }.
+  const chained = { ...timed, id: 'u-3', before: { when: 'after ‘Old’', at: null } };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: chained }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  vals = [...ctx.doc.querySelectorAll('[data-ask-scard="proposed"]')].at(-1).querySelectorAll('.ask-scard-v');
+  assert.deepEqual([...vals].map((x) => x.textContent), ['after ‘Old’', 'After ‘Refactor’ finishes']);
+});
+
+const AFTER_S = { kind: 'after', after: { kind: 'pipeline', id: 'p1', title: 'Refactor', status: 'running' }, policy: 'any', sourceFromPrevious: true, text: 'After ‘Refactor’ finishes' };
+
+test('ask-panel-card: a proposal after ANOTHER run says so on its schedule line, and Schedule posts the after fields (run chains)', async () => {
+  const rec = {};
+  const ctx = await openWithCard({ ...PROJECT_CARD, schedule: AFTER_S }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const line = cardEl.querySelector('[data-ask-card-sched-proposed]');
+  assert.ok(line, 'the schedule line');
+  assert.equal(line.querySelector('.badge').textContent, 'After run');
+  assert.equal(line.querySelector('.ask-card-sched-text').textContent, 'After ‘Refactor’ finishes · from its branch');
+  const go = cardEl.querySelector('[data-ask-card-start]');
+  assert.equal(go.textContent, 'Schedule');
+  cardEl.querySelector('.ask-card-source').value = 'dev';   // a branch picked on the card
+  go.click();
+  await ctx.tick(); await ctx.tick();
+  const body = rec.runBodies.at(-1);
+  assert.deepEqual(body.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
+  assert.equal(body.afterPolicy, 'any');
+  assert.equal(body.sourceFromPrevious, true);
+  assert.equal('scheduledFor' in body, false);
+  assert.equal('sourceBranch' in body, false, 'the flag replaces the branch name on the wire (the server refuses both)');
+  // Start now on the same card: no predecessor, no flag — and the branch the user picked stays.
+  cardEl.querySelector('[data-ask-card-start-now]').click();
+  await ctx.tick(); await ctx.tick();
+  const now = rec.runBodies.at(-1);
+  assert.equal('after' in now, false); assert.equal('sourceFromPrevious' in now, false);
+  assert.equal(now.sourceBranch, 'dev', 'Start now keeps the branch the user picked');
+});
+
+test('ask-panel-card: a card scheduled after another run reads After run (run chains)', async () => {
+  const rec = {};
+  const ctx = await openWithCard(PROJECT_CARD, rec);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CARD_ID, state: 'scheduled', runId: 'r-after', scheduledFor: null, after: { kind: 'pipeline', id: 'p1', title: 'Refactor' }, card: PROJECT_CARD }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-card-scheduled]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.badge').textContent, 'After run');
+  assert.equal(el.querySelector('.ask-card-sched-text').textContent, 'Fix login — after ‘Refactor’ finishes');
+});
+
+test('model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'model', kind: 'edit_model', target: 'oa', summary: 'Edit model OA', note: 'bigger window',
+    rows: [{ field: 'Limits', before: 'maxPromptTokens 100000', after: 'maxPromptTokens 128000' }, { field: 'Base URL', before: null, after: 'http://x/v1' }],
+    warnings: ['${OA_KEY} is not set in worca\'s environment — set it and restart Worca before a run uses this model'], change: { id: 'oa', patch: {} } };
+  const MC_ID = 'card_0000000a';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: MC_ID, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-modcard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed model change');
+  assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Edit model');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Limits', 'Base URL']);
+  assert.equal(el.querySelector('.ask-mcard-before.is-unset').textContent, 'unset', 'a field that was not set');
+  assert.match(el.querySelector('.ask-modcard-warn li').textContent, /OA_KEY/);
+  assert.equal(el.querySelector('[data-ask-mod-apply]').textContent, 'Apply');
+  el.querySelector('[data-ask-mod-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [MC_ID, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: MC_ID, state: 'applied', card: { ...card, result: { ok: true, detail: 'oa updated' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-modcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied model change');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'oa updated');
+  assert.ok(done.querySelector('a[href="#settings/models"]'));
+  assert.equal(done.querySelector('.ask-modcard-warn'), null, 'warnings belong to the proposal');
+  const rm = { ...card, kind: 'remove_model', summary: 'Remove model OA', rows: [{ field: 'Label', before: 'OA', after: null }], warnings: [] };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const rmEl = ctx.doc.querySelector('[data-ask-modcard="proposed"]');
+  assert.equal(rmEl.querySelector('.ask-mcard-arrow'), null, 'a removal lists what goes, no arrows');
+  const apply = rmEl.querySelector('[data-ask-mod-apply]');
+  assert.equal(apply.textContent, 'Remove');
+  assert.ok(apply.classList.contains('is-danger'));
+  const prov = { type: 'model', kind: 'provider', target: 'openai', summary: 'Change the OpenAI-compatible provider', rows: [{ field: 'Base URL', before: 'a', after: 'b' }], warnings: [] };
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000c', state: 'declined', card: prov }, threadId: TID, messageId: MID, seq: 6 });
+  ctx.flush();
+  assert.ok([...ctx.doc.querySelectorAll('.ask-card-stub')].some((x) => x.textContent === 'Declined — Change the OpenAI-compatible provider'));
+});
+
+test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and Start posts the source reference, never a prompt', async () => {
+  const rec = {};
+  const source = { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', displayName: 'Jira', profile: 'acme', profileVia: 'binding',
+    inputs: { writeBack: 'yes' }, title: 'Login loops after SSO', url: 'https://acme.atlassian.net/browse/PROJ-123' };
+  const ctx = await openWithCard({ ...PROJECT_CARD, brief: '', title: 'Login loops after SSO', workflowId: 'wf_auto', source, sourceWarning: 'could not reach Jira just now (network); the run fetches the task when it starts' }, rec);
+  const cardEl = ctx.doc.querySelector('.ask-card');
+  const task = cardEl.querySelector('[data-ask-card-task]');
+  assert.ok(task);
+  assert.equal(task.querySelector('.badge').textContent, 'PROJ-123');
+  const link = task.querySelector('a.ask-card-task-title');
+  assert.equal(link.href, 'https://acme.atlassian.net/browse/PROJ-123');
+  assert.equal(link.textContent, 'Login loops after SSO');
+  assert.equal(task.querySelector('.ask-card-task-meta').textContent, 'profile acme');
+  assert.match(cardEl.querySelector('.ask-card-task-warn').textContent, /could not reach Jira/);
+  assert.equal(cardEl.querySelector('.ask-card-brief').hidden, true);
+  assert.equal(cardEl.querySelector('.ask-rp-brief-host .ask-rp-sec-title').textContent, 'Task');
+  assert.equal(cardEl.querySelector('[data-ask-card-open-np]').hidden, true);
+  cardEl.querySelector('[data-ask-card-start]').click();
+  await ctx.tick(); await ctx.tick();
+  assert.ok(rec.runBodies, `Start posted (card error: "${cardEl.querySelector('.ask-card-err').textContent}")`);
+  const body = rec.runBodies.at(-1);
+  assert.equal('prompt' in body, false);
+  assert.deepEqual(body.source, { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', profile: 'acme', inputs: { writeBack: 'yes' } });
+});
+
+test('clone card: repository, branch, folder and GitHub rows; Clone / Decline post the verbs; cloning, applied and failed read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'clone', kind: 'clone', summary: 'Clone acme/api as project api', url: 'https://github.com/acme/api.git', branch: null,
+    name: 'api', dir: '/data/projects/api', github: 'GitHub App 123 (a read-only token for this clone)', note: '<b>why</b>',
+    change: { url: 'https://github.com/acme/api.git', branch: null, name: 'api' } };
+  const CC = 'card_0000000d';
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  const el = ctx.doc.querySelector('[data-ask-clonecard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Proposed project');
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'GitHub']);
+  assert.deepEqual([...el.querySelectorAll('.ask-mcard-after')].map((x) => x.textContent),
+    ['https://github.com/acme/api.git', 'default branch', '/data/projects/api', 'GitHub App 123 (a read-only token for this clone)']);
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<b>why</b>', 'text, never markup');
+  assert.equal(el.querySelector('.ask-mcard-note b'), null);
+  el.querySelector('[data-ask-clone-apply]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), [CC, { state: 'applied' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'cloning', card: { ...card, result: { ok: null, jobId: 'cln_1' } } }, threadId: TID, messageId: MID, seq: 4 });
+  ctx.flush();
+  const cloning = ctx.doc.querySelector('[data-ask-clonecard="cloning"]');
+  assert.equal(cloning.querySelector('.ask-mcard-title').textContent, 'Cloning…');
+  assert.equal(cloning.querySelector('[data-ask-clone-apply]'), null, 'no second click while it runs');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: CC, state: 'applied', card: { ...card, result: { ok: true, project: { name: 'api', path: '/data/projects/api' } } } }, threadId: TID, messageId: MID, seq: 5 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-clonecard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Project cloned');
+  assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'Registered as api at /data/projects/api');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000e', state: 'failed', error: 'GitHub refused the credential', card }, threadId: TID, messageId: MID, seq: 6 });
+  ctx.flush();
+  const failed = ctx.doc.querySelector('[data-ask-clonecard="failed"]');
+  assert.equal(failed.querySelector('.ask-mcard-failed').textContent, 'Could not clone: GitHub refused the credential');
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000f', state: 'proposed', card }, threadId: TID, messageId: MID, seq: 7 });
+  ctx.flush();
+  ctx.doc.querySelector('[data-ask-clonecard="proposed"] [data-ask-clone-decline]').click();
+  await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_0000000f', { state: 'declined' }]);
+});
+
+test('web card: host, reason and exact URL as text; Deny / Always allow / Allow for this chat post the verbs; applied and failed read as such', async () => {
+  const rec = { cardPosts: [] };
+  const base = apiHandler(rec);
+  const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
+    const m = /^\/api\/ask\/threads\/[^/]+\/cards\/(card_[0-9a-f]{8})$/.exec(url);
+    if (m && (opts.method || '').toUpperCase() === 'POST' && m[1] !== CARD_ID) { rec.cardPosts.push([m[1], JSON.parse(opts.body)]); return { ok: true, status: 200, json: async () => ({}) }; }
+    return base(url, opts);
+  } });
+  const card = { type: 'web', kind: 'web', summary: 'Read jev.example.dev', host: 'jev.example.dev', url: 'https://jev.example.dev/docs?v=2', reason: '<i>docs</i>', change: { host: 'jev.example.dev' } };
+  const push = (id, state, extra = {}, seq = 3) => { ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id, state, card, ...extra }, threadId: TID, messageId: MID, seq }); ctx.flush(); };
+  push('card_00000010', 'proposed');
+  const el = ctx.doc.querySelector('[data-ask-webcard="proposed"]');
+  assert.ok(el);
+  assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Ask Worca wants to read a new site');
+  assert.equal(el.querySelector('.ask-mcard-after').textContent, 'https://jev.example.dev/docs?v=2');
+  assert.equal(el.querySelector('.ask-mcard-note').textContent, '<i>docs</i>'); assert.equal(el.querySelector('.ask-mcard-note i'), null);
+  el.querySelector('[data-ask-web-chat]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000010', { state: 'applied', scope: 'chat' }]);
+  push('card_00000011', 'proposed', {}, 4);
+  const last = (sel) => [...ctx.doc.querySelectorAll(sel)].at(-1);
+  last('[data-ask-webcard="proposed"] [data-ask-web-always]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000011', { state: 'applied', scope: 'always' }]);
+  push('card_00000012', 'proposed', {}, 5);
+  last('[data-ask-webcard="proposed"] [data-ask-web-decline]').click(); await ctx.tick();
+  assert.deepEqual(rec.cardPosts.at(-1), ['card_00000012', { state: 'declined' }]);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000010', state: 'applied', card: { ...card, result: { ok: true, scope: 'chat' } } }, threadId: TID, messageId: MID, seq: 6 });
+  ctx.flush();
+  const done = ctx.doc.querySelector('[data-ask-webcard="applied"]');
+  assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Allowed for this chat');
+  assert.equal(done.querySelector('[data-ask-web-chat]'), null);
+  ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000011', state: 'failed', error: 'web access is off', card }, threadId: TID, messageId: MID, seq: 7 });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('[data-ask-webcard="failed"] .ask-mcard-failed').textContent, 'Could not allow: web access is off');
 });

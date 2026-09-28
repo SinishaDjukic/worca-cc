@@ -42,7 +42,7 @@ test('v19 -> v20 creates ask_cost_ledger and backfills costed messages', async (
   const t1 = createThread(); ids.t1 = t1.id;
   // m1: costed, usage sum 1500, model set the way production sets it —
   // appendMessage's model param (store.mjs:165; ui/server.mjs:3373).
-  const m1 = appendMessage(t1.id, { role: 'assistant', text: '', status: 'streaming', model: 'claude-opus-5' });
+  const m1 = appendMessage(t1.id, { role: 'assistant', text: '', status: 'streaming', model: 'claude-opus-5-5' });
   finishMessage(m1.id, { text: 'a', blocks: [], status: 'done', reason: null,
     usage: { input: 1000, output: 400, cacheRead: 50, cacheCreation: 50 }, costUsd: 0.42, durationMs: 5 });
   ids.m1 = m1.id;
@@ -94,7 +94,7 @@ test('v19 -> v20 creates ask_cost_ledger and backfills costed messages', async (
   assert.equal(r1.thread_id, ids.t1);
   assert.equal(r1.amount_usd, 0.42);
   assert.equal(r1.tokens, 1500);
-  assert.equal(r1.model, 'claude-opus-5');
+  assert.equal(r1.model, 'claude-opus-5-5');
   assert.equal(r1.ts, Date.parse(
     db2.prepare('SELECT created_at FROM ask_messages WHERE id = ?').get(ids.m1).created_at));
   const r5 = byMsg.get(ids.m5);

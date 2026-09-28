@@ -57,6 +57,14 @@ const postJson = (body) => fetch(`${base}/api/settings`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
 
+test('humanRateUsdPerHour: GET null by default, POST stores a positive number, empty clears, junk → 400', async () => {
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).humanRateUsdPerHour, null);
+  assert.equal((await (await postJson({ humanRateUsdPerHour: 95 })).json()).humanRateUsdPerHour, 95);
+  assert.equal((await (await fetch(`${base}/api/settings`)).json()).humanRateUsdPerHour, 95);
+  assert.equal((await postJson({ humanRateUsdPerHour: -1 })).status, 400);
+  assert.equal((await (await postJson({ humanRateUsdPerHour: '' })).json()).humanRateUsdPerHour, null);
+});
+
 test('GET /api/settings: debugSpawnEnabled defaults to false, with the effective state and its source', async () => {
   const j = await (await fetch(`${base}/api/settings`)).json();
   assert.equal(j.debugSpawnEnabled, false);
@@ -130,10 +138,12 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // A body carrying only a non-root known key must not clear root — one probe per
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
-      projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', debugSpawnEnabled: false,
-      titleModel: '', hideBuiltinModels: false, theme: '',
+      projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false,
+      titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
+      memoryDefrag: null,
+      schedule: {},
     };
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
@@ -148,7 +158,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
   }
 });
 
-// The Settings ▸ About card reads these two fields. They are derived from
+// The Settings ▸ About card reads these fields. They are derived from
 // package.json at module load, so a release bump needs no code change; the
 // assertion below is what stops anyone hardcoding a version string.
 test('GET /api/settings carries app identity: version + a browsable repo URL', async () => {
@@ -156,7 +166,8 @@ test('GET /api/settings carries app identity: version + a browsable repo URL', a
   const j = await (await fetch(`${base}/api/settings`)).json();
 
   assert.ok(j.app && typeof j.app === 'object', 'GET carries an `app` block');
-  assert.deepEqual(Object.keys(j.app).sort(), ['releaseUrl', 'repoUrl', 'version'], 'exactly the three About fields');
+  assert.deepEqual(Object.keys(j.app).sort(), ['bugsUrl', 'releaseUrl', 'repoUrl', 'version'],
+    'exactly the four About fields');
   assert.equal(j.app.version, pkg.version, 'straight from package.json — never a literal');
   // Derived, not hardcoded: this stays true if the repo is ever moved or renamed.
   assert.equal(j.app.repoUrl, pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, ''),
@@ -214,4 +225,14 @@ test('a mixed POST whose root is unusable answers 400 with the theme NOT applied
   assert.equal(r.status, 400);
   const j = await (await fetch(`${base}/api/settings`)).json();
   assert.equal(j.theme, 'system', 'the theme write must come after the root write, which failed');
+});
+
+test('GET has askWeb; POST askWeb validates, saves, and null clears', async () => {
+  const get = async () => (await fetch(`${base}/api/settings`)).json();
+  assert.deepEqual((await get()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
+  const r = await postJson({ askWeb: { enabled: true, allowedDomains: ['docs.example.com'], search: null } });
+  assert.equal(r.status, 200); assert.deepEqual((await r.json()).askWeb.allowedDomains, ['docs.example.com']);
+  const bad = await postJson({ askWeb: { enabled: true, allowedDomains: ['nope'] } });
+  assert.equal(bad.status, 400); assert.match((await bad.json()).error, /not a host name/);
+  assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
 });

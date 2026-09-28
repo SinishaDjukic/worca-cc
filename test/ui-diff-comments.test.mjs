@@ -236,12 +236,13 @@ const keydown = (window, node, key, init = {}) => node.dispatchEvent(
  *  change the comment set between renders. 8 ticks, not 3: buildHdDiff paints the
  *  file list from `results` first and repaints after the SECOND fetch
  *  (ensureComments) lands, so a synthetic row appears one round trip late. */
-async function bootComments({ patch = CMT_PATCH, files = A_JS, comments = [], patchAvailable = true, counts = {}, markdown = null, arms = null } = {}) {
+async function bootComments({ patch = CMT_PATCH, files = A_JS, comments = [], patchAvailable = true, counts = {}, markdown = null, arms = null, whoami = null } = {}) {
   const box = { patch, comments, patchAvailable, counts, calls: [] };
   const base = armsFor(box);
   const ctx = await bootDetail({
     detail: diffDetail(cmtResults(files)),
-    arms: (url, opts) => (arms && arms(url, opts, box)) || base(url, opts),
+    arms: (url, opts) => (whoami && String(url).endsWith('/api/whoami') ? { ok: true, status: 200, json: async () => whoami } : null)
+      || (arms && arms(url, opts, box)) || base(url, opts),
     markdown,
   });
   await openDetail(ctx);
@@ -274,7 +275,7 @@ const MID = 'askm_00000001';
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
   if (url.includes('/api/ask/models')) {
-    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
     return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
@@ -1120,4 +1121,21 @@ test('the page context names the member project of the open workspace diff file'
   assert.ok(post, 'the panel POSTed');
   assert.equal(JSON.parse(post.opts.body).context.diffPath, 'src/a.js (member team-00000001)',
     'add_diff_comment needs memberProjectKey and never guesses it');
+});
+
+test('a person\'s comment names its author on a shared deployment ("You" for the viewer); "You" when unknown, local or not shared; Ask stays Worca', async () => {
+  const comments = [
+    cmt({ id: 'dc_00000011', body: 'named', authorName: 'ada@example.com' }),
+    cmt({ id: 'dc_00000012', body: 'mine', authorName: 'Me@example.com' }),
+    cmt({ id: 'dc_00000013', body: 'local', authorName: 'local' }),
+    cmt({ id: 'dc_00000014', body: 'ask', author: 'ask', authorName: 'ada@example.com' }),
+  ];
+  const authors = async (whoami) => {
+    const ctx = await bootComments({ comments, whoami });
+    const block = ctx.window.document.querySelector('.hd-dl-row[data-new="2"]').nextElementSibling;
+    return [...block.querySelectorAll('.hd-cmt-author')].map((n) => n.textContent);
+  };
+  assert.deepEqual(await authors({ name: 'me@example.com', source: 'access', shared: true }), ['ada@example.com', 'You', 'You', 'Worca']);
+  assert.deepEqual(await authors({ name: 'Solo', source: 'operator', shared: false }), ['You', 'You', 'You', 'Worca']);
+  assert.deepEqual(await authors(null), ['You', 'You', 'You', 'Worca']);
 });

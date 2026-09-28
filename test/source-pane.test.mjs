@@ -105,6 +105,38 @@ test('search -> pick a row: taskId set, preview rendered, collect round-trips', 
   assert.deepEqual(picked.inputs, { repo: '', filter: 'assignee:@me state:open', kind: 'issue' });
 });
 
+test('a task body renders through the injected markdown seam; without it (or before it is ready) it is a verbatim <pre>', async () => {
+  const clock = manualTimers();
+  const call = async (op, args) => {
+    if (op === 'listTasks') return { tasks: [{ id: 'o/r#7', title: 'T', labels: [], updatedAt: '', state: 'open' }] };
+    if (op === 'getTask') return { id: args.id, title: 'T', body: '## Steps\n- one', state: 'open', updatedAt: '' };
+    return null;
+  };
+  const pick = async (renderMarkdown) => {
+    const pane = renderSourcePane(SOURCE, { call, doc, timers: clock, renderMarkdown });
+    const search = pane.querySelector('.sp-search');
+    search.value = 'x'; search.dispatchEvent(new win.Event('input'));
+    clock.flush();
+    await new Promise((r) => setTimeout(r, 0));
+    pane.querySelector('.sp-row').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    await pane.querySelector('.sp-preview')._load;
+    return pane.querySelector('.sp-prev-body');
+  };
+  const plain = await pick(undefined);
+  assert.equal(plain.tagName, 'PRE'); assert.equal(plain.textContent, '## Steps\n- one');
+  const notReady = await pick(() => ({ kind: 'plain' }));
+  assert.equal(notReady.tagName, 'PRE');
+  const md = await pick((text) => {
+    const t = doc.createElement('template');
+    t.innerHTML = `<h2>${text.split('\n')[0].replace(/^##\s*/, '')}</h2><ul><li>one</li></ul>`;
+    return { kind: 'md', frag: t.content };
+  });
+  assert.equal(md.tagName, 'DIV');
+  assert.ok(md.classList.contains('artifact-markdown'));
+  assert.equal(md.querySelector('h2').textContent, 'Steps');
+  assert.equal(md.querySelector('li').textContent, 'one');
+});
+
 test('editing a filter input re-runs the listing with the new value', async () => {
   const clock = manualTimers();
   const seen = [];

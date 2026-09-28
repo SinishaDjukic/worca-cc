@@ -1,6 +1,6 @@
 // test/ui-composer-pointer-capture.test.mjs — MAJ-28.
 // The composer's POINTER-CAPTURE contract, which until now lived only in
-// scripts/verify-composer-cdp.mjs check(4) — a script no automation runs.
+// tools/verify-composer-cdp.mjs check(4) — a script no automation runs.
 // Three production sites are covered: composer.mjs `stage.setPointerCapture`
 // (onDown), `stage.releasePointerCapture` (finish) and `btn.setPointerCapture`
 // (onPalDown, the palette pill).

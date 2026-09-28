@@ -1,0 +1,22 @@
+{
+  "key": "py",
+  "metaVersion": 2,
+  "displayName": "Python",
+  "description": "Runs an inline Python function with worca's privileges: `def main(api)`. Works unchanged as a file script.",
+  "domain": "general",
+  "color": "blue",
+  "icon": "<path d=\"M12 3h3a2 2 0 0 1 2 2v4H9a2 2 0 0 0-2 2v2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M12 21H9a2 2 0 0 1-2-2v-4h8a2 2 0 0 0 2-2v-2h2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "order": 25,
+  "runtime": "python",
+  "file": "py-inline.py",
+  "ports": "config",
+  "defaultPorts": {
+    "inputs": [ { "id": "in", "type": "md", "required": false } ],
+    "outputs": [ { "id": "out", "type": "md", "when": "always", "filename": "py-cycle{cycle}.md" } ]
+  },
+  "verdict": { "filename": "py-cycle{cycle}.json" },
+  "params": [
+    { "id": "source", "type": "code", "language": "python", "label": "Source", "required": true,
+      "default": "def main(api):\n    with open(api.outputs.out.path, 'w', encoding='utf-8') as f:\n        f.write('# py card\\n')\n    return {'summary': 'ok'}\n" }
+  ]
+}

@@ -5,6 +5,12 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
+// The DOM primitives and the two script forms live in ../script-forms.mjs so the
+// composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
+import {
+  h, field, select, toggle, number, renderParamsForm, renderPortEditor,
+} from '../script-forms.mjs';
 
 const ARITY_KINDS = new Set(['and', 'or', 'combine']);
 const FLOW_TITLES = { task: 'Task', end: 'End', and: 'AND', or: 'OR', combine: 'Combine' };
@@ -16,12 +22,6 @@ const FLOW_BLURB = {
   combine: 'Joins its md inputs into one document, in port order.',
 };
 
-// Exported so every panel wearing the `ins-*` skin builds it the same way — the
-// live-run retune popover (retune-popover.mjs) is the second one. Two hand-rolled
-// copies of this markup drift, and the stylesheet only dresses one shape.
-export const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-export const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
-
 /**
  * The models a picker may OFFER. "Hide built-in models" (#422) drops a hidden
  * entry from every list — unless it is the id currently stored on the thing being
@@ -29,64 +29,20 @@ export const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls
  * catalog's own rule: hiding an id never stops it resolving; pickers skip
  * `hidden`, validators ignore it. `hidden` is OPTIONAL on an entry, so it is
  * probed, never assumed.
+ *
+ * Exported because the live-run retune popover (graph/retune-popover.mjs) offers
+ * the same list under the same rule — the DOM primitives it shares with this
+ * panel come from ../script-forms.mjs, but this is a catalog rule, not markup.
  */
 export function offeredModels(models, keepId = '') {
   return (models || []).filter((m) => m && (!m.hidden || m.id === keepId));
 }
 
-/**
- * Replace a select's options from `[{value, text}]` and select `value`. Exported
- * because the live-run retune popover REBUILDS its option lists in place (the
- * effort list is filtered by the chosen model, so it repaints on every change)
- * and would otherwise hand-roll the same loop.
- */
-export function fillOptions(doc, sel, items, value) {
-  sel.replaceChildren();
-  const want = value == null ? '' : String(value);
-  for (const opt of items) {
-    const o = doc.createElement('option');
-    o.value = opt.value; o.textContent = opt.text;
-    if (opt.value === want) o.selected = true;
-    sel.appendChild(o);
-  }
-}
-
-function select(doc, cls, name, label, items, value, { disabled = false, title = '' } = {}) {
-  const wrap = field(doc, cls, label);
-  if (title) wrap.title = title;
-  const sel = h(doc, 'select', 'ins-select');
-  sel.dataset.field = name;
-  sel.disabled = Boolean(disabled);
-  fillOptions(doc, sel, items, value);
-  const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
-  shell.appendChild(sel);
-  wrap.appendChild(shell);
-  return wrap;
-}
-function toggle(doc, cls, name, label, hint, { checked = false, disabled = false, title = '' } = {}) {
-  const row = h(doc, 'div', `ins-tog ${cls}`);
-  if (title) row.title = title;
-  const box = doc.createElement('input');
-  box.type = 'checkbox'; box.dataset.field = name; box.checked = Boolean(checked); box.disabled = Boolean(disabled);
-  const body = h(doc, 'span', 'ins-tog-b');
-  body.appendChild(h(doc, 'span', 'ins-tog-t', label));
-  if (hint) body.appendChild(h(doc, 'small', 'ins-tog-h', hint));
-  row.append(box, body);
-  return row;
-}
 function head(doc, title, sub) {
   const w = h(doc, 'div', 'ins-head');
   w.appendChild(h(doc, 'div', 'ins-name', title));
   if (sub) w.appendChild(h(doc, 'div', 'ins-sub', sub));
   return w;
-}
-function number(doc, cls, name, label, value, min) {
-  const wrap = field(doc, cls, label);
-  const input = doc.createElement('input');
-  input.type = 'number'; input.className = 'ins-number'; input.dataset.field = name;
-  input.min = String(min); input.step = '1'; input.value = String(value);
-  wrap.appendChild(input);
-  return wrap;
 }
 /** Read-only listing of a node's resolved ports. */
 function portList(doc, ports) {
@@ -100,7 +56,7 @@ function portList(doc, ports) {
       item.appendChild(h(doc, 'i', p.synthetic ? 'gdot' : `dot ${p.type}`));
       item.appendChild(h(doc, 'span', 'pn', p.id));
       const bits = [p.type];
-      if (p.synthetic) bits.push('engine');
+      if (p.synthetic || p.engine) bits.push('engine');
       else if (dir === 'in') bits.push(p.loop ? 'loop' : (p.required === false ? 'optional' : 'required'));
       else if (p.when && p.when !== 'always') bits.push(`on ${p.when}`);
       if (p.expands) bits.push('fan-out');
@@ -113,10 +69,9 @@ function portList(doc, ports) {
   zone('Outputs', ports.outputs, 'out');
   return wrap;
 }
-
-export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], doc = globalThis.document } = {}) {
+export function renderNodeInspector(node, { template, portsFn, meta = null, models = [], efforts = [], subagentModels = [], editorFor = null, doc = globalThis.document } = {}) {
   const ports = portsFn(node) || { inputs: [], outputs: [] };
-  const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : `flow ins-${node.kind}`}`);
+  const root = h(doc, 'div', `ins-panel ins-${node.kind === 'agent' ? 'agent' : node.kind === 'script' ? 'script' : `flow ins-${node.kind}`}`);
   root.dataset.nodeId = node.id;
   const body = h(doc, 'div', 'ins-body-in');
 
@@ -128,8 +83,8 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
       [{ value: '', text: 'default' }, ...efforts.map((e) => ({ value: e, text: e }))], node.config.effort));
     if (meta && meta.fanOut) {
-      body.appendChild(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
-        { checked: node.config.fanOut === true }));
+      body.appendChild(lv(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
+        { checked: node.config.fanOut === true }), 'expert', node.config.fanOut === true));
       // What this node's sub-agents run on. Gated by the SAME meta flag as the
       // toggle above: an agent that cannot fan out has no children to place.
       // '' = unset — the run resolves the auto default (a per-spawn choice
@@ -142,7 +97,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
       // the locked option carries the stored value — and the full control
       // returns when the node moves back to a plain model.
       const chosen = node.config.model ? models.find((m) => m && m.id === node.config.model) : null;
-      body.appendChild(chosen && chosen.routed
+      body.appendChild(lv(chosen && chosen.routed
         ? select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
           [{ value: node.config.subagentModel || '', text: 'same endpoint (locked)' }],
           node.config.subagentModel || '',
@@ -150,19 +105,44 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
         : select(doc, 'ins-subagent', 'subagentModel', 'Sub-agent model',
           [{ value: '', text: 'default (agent picks)' },
             ...subagentModels.map((m) => ({ value: m, text: m === 'auto' ? 'agent picks' : m }))],
-          node.config.subagentModel));
+          node.config.subagentModel), 'expert', !!node.config.subagentModel));
     }
     if (meta && meta.asksQuestions) {
       const locked = Boolean(meta.questionsLocked);
       const saved = node.config.askQuestions;
-      body.appendChild(toggle(doc, 'ins-questions', 'askQuestions', 'Ask questions', 'pauses the run for input', {
+      body.appendChild(lv(toggle(doc, 'ins-questions', 'askQuestions', 'Ask questions', 'pauses the run for input', {
         checked: locked ? Boolean(meta.questionsDefault) : (typeof saved === 'boolean' ? saved : Boolean(meta.questionsDefault)),
         disabled: locked,
         title: locked ? (meta.questionsDefault ? 'Always on for this agent' : 'Always off for this agent') : '',
-      }));
+      }), 'expert', !locked && typeof saved === 'boolean'));
     }
-    body.appendChild(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
-      { checked: node.config.awaitAll === true }));
+    body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
+      { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+  } else if (node.kind === 'script') {
+    root.appendChild(head(doc, (meta && meta.displayName) || node.key || node.id, `${node.key} · ${node.id}`));
+    const chips = h(doc, 'div', 'ins-chiprow');
+    chips.append(h(doc, 'span', 'badge', (meta && meta.origin) || 'builtin'), h(doc, 'span', 'chip rt', (meta && meta.runtime) || 'script'));
+    body.appendChild(chips);
+    body.appendChild(renderParamsForm(meta, node.config, { doc, editorFor }));
+    const ms = Number.isInteger(node.config.timeoutMs) ? node.config.timeoutMs : ((meta && meta.timeoutMs) || DEFAULT_TIMEOUT_MS);
+    // Interface mode (docs/ui-levels.md): what the card RUNS is never hidden; per-node tuning and ports are expert.
+    const timeout = number(doc, 'ins-timeout', 'timeoutMs', 'Timeout (s)', Math.round(ms / 1000), 1);
+    timeout.querySelector('input').max = String(MAX_TIMEOUT_MS / 1000);
+    body.appendChild(lv(timeout, 'expert', Number.isInteger(node.config.timeoutMs)));
+    body.appendChild(lv(toggle(doc, 'ins-awaitall', 'awaitAll', 'Await all inputs', 'gate until every wire fires',
+      { checked: node.config.awaitAll === true }), 'expert', node.config.awaitAll === true));
+    // Offered only where ticking it takes effect: `meta` here is the registry entry, so the forced-on probe is honest.
+    // A ticked box always renders, so an opt-in V22 refuses (the script changed under the card) can still be un-ticked.
+    if (node.config.paramsPort === true || hasParamsPort(meta, { ...node.config, paramsPort: true })) {
+      body.appendChild(lv(toggle(doc, 'ins-paramsport', 'paramsPort', 'Params from a wire', `json sets: ${wirableParams(meta).map((p) => p.id).join(', ') || 'nothing'}`,
+        { checked: node.config.paramsPort === true }), 'expert', node.config.paramsPort === true));
+    }
+    body.appendChild(lv(h(doc, 'div', 'ins-sep'), 'expert'));
+    body.appendChild(lv(meta && meta.ports === 'config'
+      ? renderPortEditor(node.config.ports, { doc, hasVerdict: Boolean(meta && meta.verdict) })
+      : portList(doc, ports), 'expert'));
+    root.appendChild(body);
+    return root;
   } else {
     root.appendChild(head(doc, FLOW_TITLES[node.kind] || node.kind, node.id));
     body.appendChild(h(doc, 'p', 'ins-blurb', FLOW_BLURB[node.kind] || ''));
@@ -177,28 +157,40 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
       body.appendChild(h(doc, 'div', 'ins-resolved', resolved ? `forwards: ${resolved}` : 'unresolved'));
     }
     if (node.kind === 'task') {
-      body.appendChild(toggle(doc, 'ins-seed', 'planStoreSeed', 'Seed the plan store', 'treat an attached plan as the run’s plan',
-        { checked: node.config.planStoreSeed === true }));
+      body.appendChild(lv(toggle(doc, 'ins-seed', 'planStoreSeed', 'Seed the plan store', 'treat an attached plan as the run’s plan',
+        { checked: node.config.planStoreSeed === true }), 'expert', node.config.planStoreSeed === true));
     }
     if (node.kind === 'end') body.appendChild(h(doc, 'div', 'ins-result', ''));
   }
-  body.appendChild(h(doc, 'div', 'ins-sep'));
-  body.appendChild(portList(doc, ports));
+  body.appendChild(lv(h(doc, 'div', 'ins-sep'), 'expert'));
+  body.appendChild(lv(portList(doc, ports), 'expert'));
   root.appendChild(body);
   return root;
 }
 
 /** Loop wires carry the per-wire cycle budget; a plain wire must NOT expose one
  *  (maxCycles on a non-loop wire is V13's error). */
+/** Interface mode (docs/ui-levels.md): model and effort are the advanced inspector; everything else
+ *  here is expert. `keep` = the control holds a non-default value, so it stays on screen. */
+function lv(el, min, keep = false) {
+  el.dataset.minLevel = min;
+  if (keep) el.dataset.levelKeep = '1';
+  return el;
+}
+
 export function renderWireInspector(wire, { loop = false, doc = globalThis.document } = {}) {
   const root = h(doc, 'div', `ins-panel ins-wire${loop ? ' ins-loop' : ''}`);
   root.dataset.wireId = wire.id;
   root.appendChild(head(doc, loop ? 'Loop wire' : 'Wire', `${wire.from.node}.${wire.from.port} → ${wire.to.node}.${wire.to.port}`));
   const body = h(doc, 'div', 'ins-body-in');
   if (loop) {
-    body.appendChild(number(doc, 'ins-maxcycles', 'maxCycles', 'Max cycles',
-      wire.config && Number.isInteger(wire.config.maxCycles) ? wire.config.maxCycles : 3, 1));
-    body.appendChild(h(doc, 'small', 'ins-hint', 'How many times this loop may re-deliver before the gate asks.'));
+    const budgeted = !!(wire.config && Number.isInteger(wire.config.maxCycles));
+    body.appendChild(lv(number(doc, 'ins-maxcycles', 'maxCycles', 'Max cycles',
+      budgeted ? wire.config.maxCycles : 3, 1), 'expert', budgeted));
+    body.appendChild(lv(h(doc, 'small', 'ins-hint', 'How many times this loop may re-deliver before the gate asks.'), 'expert', budgeted));
+    const plain = h(doc, 'p', 'ins-blurb ins-loop-plain', 'A loop: work flows back here until it passes, up to a cycle limit. Expert mode sets the limit.');
+    plain.dataset.maxLevel = 'advanced';
+    body.appendChild(plain);
   } else {
     body.appendChild(h(doc, 'p', 'ins-blurb', 'Plain data wire. Delete it to rewire the target input.'));
   }

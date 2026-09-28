@@ -1,0 +1,79 @@
+# docker/compose.broker.yml — the credential broker overlay (docs/credential-broker.md).
+#
+#   docker compose -f compose.yml -f compose.broker.yml up -d
+#   (add -f compose.egress.yml as well to lock worca's network down)
+#
+# Model keys move out of the worca container into a second container from the same
+# image. worca holds no key: each claude spawn gets a short-lived token from the
+# broker, and the broker adds the real key on the way to the provider. Agents can't
+# read a key because there is none where they run.
+#
+# In .env (never ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN: compose.yml would hand
+# those to worca, and worca refuses to start while a key is within agents' reach):
+#
+#   WORCA_BROKER_SECRET=<32+ random chars>       # `docker compose run --rm broker worca broker secrets`
+#   WORCA_BROKER_KEY_ANTHROPIC=sk-ant-…          # single mode: the one key, held by the broker only
+#
+# Multi mode (a team sharing one instance, each person with their own keys) also needs
+# WORCA_BROKER_MODE=multi, WORCA_BROKER_VAULT_KEY, WORCA_BROKER_PUBLIC_URL and an identity
+# check for the key page; see docs/credential-broker.md.
+
+services:
+  worca:
+    depends_on:
+      - broker
+    environment:
+      WORCA_BROKER_URL: http://broker:8080
+      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
+      WORCA_BROKER_SYSTEM_BILL_TO: ${WORCA_BROKER_SYSTEM_BILL_TO:-}
+      # Optional: pushes and pull requests as the person who acted (prefer | required),
+      # and what to do with MCP servers that carry a literal secret (block | warn | off).
+      WORCA_GH_AS_PERSON: ${WORCA_GH_AS_PERSON:-}
+      WORCA_MCP_SECRETS: ${WORCA_MCP_SECRETS:-}
+      # The key lives in the broker now; these stay empty in worca.
+      ANTHROPIC_API_KEY: ""
+      CLAUDE_CODE_OAUTH_TOKEN: ""
+
+  broker:
+    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-latest}
+    init: true
+    command: ["worca", "broker"]
+    environment:
+      WORCA_BROKER_MODE: ${WORCA_BROKER_MODE:-single}
+      WORCA_BROKER_SECRET: ${WORCA_BROKER_SECRET:?set WORCA_BROKER_SECRET in .env}
+      WORCA_BROKER_VAULT_KEY: ${WORCA_BROKER_VAULT_KEY:-}
+      WORCA_BROKER_KEY_ANTHROPIC: ${WORCA_BROKER_KEY_ANTHROPIC:-}
+      WORCA_BROKER_LOCAL_URL: ${WORCA_BROKER_LOCAL_URL:-}
+      WORCA_BROKER_PUBLIC_URL: ${WORCA_BROKER_PUBLIC_URL:-}
+      WORCA_BROKER_RETURN_URL: ${WORCA_BROKER_RETURN_URL:-}
+      WORCA_CF_ACCESS_TEAM_DOMAIN: ${WORCA_BROKER_CF_ACCESS_TEAM_DOMAIN:-}
+      WORCA_CF_ACCESS_AUD: ${WORCA_BROKER_CF_ACCESS_AUD:-}
+      WORCA_IDENTITY_HEADER: ${WORCA_BROKER_IDENTITY_HEADER:-}
+      WORCA_BROKER_DEFAULT_DAILY_USD: ${WORCA_BROKER_DEFAULT_DAILY_USD:-}
+      WORCA_BROKER_DEFAULT_MONTHLY_USD: ${WORCA_BROKER_DEFAULT_MONTHLY_USD:-}
+      # "Push as me": the GitHub App or OAuth App people sign in with on the key page.
+      WORCA_BROKER_GITHUB_CLIENT_ID: ${WORCA_BROKER_GITHUB_CLIENT_ID:-}
+      WORCA_BROKER_GITHUB_CLIENT_SECRET: ${WORCA_BROKER_GITHUB_CLIENT_SECRET:-}
+      WORCA_BROKER_GITHUB_SCOPES: ${WORCA_BROKER_GITHUB_SCOPES:-repo}
+      # The image's /worca is owned by the worca user, so a named volume there is too.
+      WORCA_BROKER_DATA_DIR: /worca/broker
+    volumes:
+      - broker-data:/worca
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    # No published ports: worca reaches the broker on the compose network. In multi mode
+    # the key page (8081) is published through cloudflared or a reverse proxy, never 8080.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 256m
+    restart: unless-stopped
+
+volumes:
+  broker-data:

@@ -20,10 +20,10 @@ const MODEL = {
   range: 'week',
   totals: { spentUsd: 12.34, pipelineSpendUsd: 10.34,
     ask: { spendUsd: 2, sessions: 4, turns: 10 },
-    workedMs: 22320000, runs: 40, finished: 34, stopped: 5,
+    workedMs: 22320000, humanHours: 449.2, savedUsd: 35315, runs: 40, finished: 34, stopped: 5,
     failed: 1, paused: 0, running: 2, prsOpened: 18, prsMerged: 12 },
   prev: { spentUsd: 10, pipelineSpendUsd: 9, ask: { spendUsd: 1, sessions: 2, turns: 3 },
-    workedMs: 20000000, runs: 30, finished: 30, stopped: 0,
+    workedMs: 20000000, humanHours: 100, savedUsd: -12.5, runs: 30, finished: 30, stopped: 0,
     failed: 0, paused: 0, running: 0, prsOpened: 10, prsMerged: 8 },
   budget: BUDGET,
 };
@@ -31,17 +31,17 @@ const MODEL = {
 test('renderKpiRow: 6 tiles, caveat tooltip, fractions, subs', () => {
   const el = renderKpiRow(MODEL, { doc });
   const tiles = el.querySelectorAll('.stat-tile');
-  assert.equal(tiles.length, 6);
+  assert.equal(tiles.length, 7);
   assert.match(tiles[0].title, /not authoritative billing/);
   assert.match(tiles[0].querySelector('.stat-value').textContent, /\$12\.34/);
   assert.match(tiles[0].querySelector('.stat-sub').textContent, /of \$50\.00/);
   assert.ok(tiles[0].querySelector('.stat-meter'));
-  assert.match(tiles[4].querySelector('.stat-value').textContent, /34/);
-  assert.match(tiles[4].querySelector('.stat-frac').textContent, /\/ 40/);
-  assert.match(tiles[4].querySelector('.stat-sub').textContent, /5 stopped · 1 failed/);
-  assert.match(tiles[4].querySelector('.stat-sub').textContent, /2 running now/);
-  assert.match(tiles[5].querySelector('.stat-value').textContent, /12/);
-  assert.match(tiles[5].querySelector('.stat-frac').textContent, /\/ 18/);
+  assert.match(tiles[5].querySelector('.stat-value').textContent, /34/);
+  assert.match(tiles[5].querySelector('.stat-frac').textContent, /\/ 40/);
+  assert.match(tiles[5].querySelector('.stat-sub').textContent, /5 stopped · 1 failed/);
+  assert.match(tiles[5].querySelector('.stat-sub').textContent, /2 running now/);
+  assert.match(tiles[6].querySelector('.stat-value').textContent, /12/);
+  assert.match(tiles[6].querySelector('.stat-frac').textContent, /\/ 18/);
 });
 
 test('renderKpiRow: numeric tokens in tile subs are bold, prose stays plain', () => {
@@ -49,9 +49,9 @@ test('renderKpiRow: numeric tokens in tile subs are bold, prose stays plain', ()
   const bolds = (t) => [...t.querySelectorAll('.stat-sub b')].map((b) => b.textContent);
   assert.deepEqual(bolds(tiles[0]), ['$50.00', '3d 4h']);
   assert.equal(tiles[0].querySelector('.stat-sub').textContent, 'of $50.00 · resets in 3d 4h');
-  assert.deepEqual(bolds(tiles[3]), ['40']);
-  assert.deepEqual(bolds(tiles[4]), ['5', '1', '2']);
-  assert.deepEqual(bolds(tiles[5]), [], 'no numbers in "opened in this period"');
+  assert.deepEqual(bolds(tiles[4]), ['40']);
+  assert.deepEqual(bolds(tiles[5]), ['5', '1', '2']);
+  assert.deepEqual(bolds(tiles[6]), [], 'no numbers in "opened in this period"');
 
   // Range/window mismatch line bolds both dollar figures.
   const all = renderKpiRow({ ...MODEL, range: 'all' }, { doc }).querySelectorAll('.stat-tile')[0];
@@ -85,37 +85,37 @@ test('renderKpiRow: the Spent meter only when the selected range IS the budget r
 
 test('renderKpiRow: Pipeline spend + Ask Worca cards (D4-D7)', () => {
   const tiles = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile');
-  assert.equal(tiles.length, 6);
+  assert.equal(tiles.length, 7);
   // tile 1: pipeline-only money + share of the combined total
-  assert.match(tiles[1].querySelector('.stat-label').textContent, /Pipeline spend/);
-  assert.match(tiles[1].querySelector('.stat-value').textContent, /\$10\.34/);
-  assert.equal(tiles[1].querySelector('.stat-sub').textContent, '84% of spend'); // 10.34/12.34
-  assert.match(tiles[1].title, /not authoritative billing/);
-  assert.equal(tiles[1].querySelector('.stat-delta').textContent, '↑ 15%',
+  assert.match(tiles[2].querySelector('.stat-label').textContent, /Pipeline spend/);
+  assert.match(tiles[2].querySelector('.stat-value').textContent, /\$10\.34/);
+  assert.equal(tiles[2].querySelector('.stat-sub').textContent, '84% of spend'); // 10.34/12.34
+  assert.match(tiles[2].title, /not authoritative billing/);
+  assert.equal(tiles[2].querySelector('.stat-delta').textContent, '↑ 15%',
     'delta vs prev.pipelineSpendUsd: (10.34-9)/9');
   // tile 2: chat money + sessions math
-  assert.match(tiles[2].querySelector('.stat-label').textContent, /Ask Worca/);
-  assert.match(tiles[2].querySelector('.stat-value').textContent, /\$2\.00/);
-  assert.equal(tiles[2].querySelector('.stat-sub').textContent,
+  assert.match(tiles[3].querySelector('.stat-label').textContent, /Ask Worca/);
+  assert.match(tiles[3].querySelector('.stat-value').textContent, /\$2\.00/);
+  assert.equal(tiles[3].querySelector('.stat-sub').textContent,
     '4 sessions · $0.50/session · 10 turns');
-  assert.match(tiles[2].title, /not authoritative billing/);
-  assert.equal(tiles[2].querySelector('.stat-delta').textContent, '↑ 100%',
+  assert.match(tiles[3].title, /not authoritative billing/);
+  assert.equal(tiles[3].querySelector('.stat-delta').textContent, '↑ 100%',
     'delta vs prev.ask.spendUsd: (2-1)/1');
   // sub bolding: numeric tokens only
   const bolds = (t) => [...t.querySelectorAll('.stat-sub b')].map((b) => b.textContent);
-  assert.deepEqual(bolds(tiles[1]), ['84']);
-  assert.deepEqual(bolds(tiles[2]), ['4', '$0.50', '10']);
+  assert.deepEqual(bolds(tiles[2]), ['84']);
+  assert.deepEqual(bolds(tiles[3]), ['4', '$0.50', '10']);
 });
 
 test('renderKpiRow: zero states for the new cards', () => {
   const zero = { ...MODEL, prev: null, totals: { ...MODEL.totals,
     spentUsd: 0, pipelineSpendUsd: 0, ask: { spendUsd: 0, sessions: 0, turns: 0 } } };
   const tiles = renderKpiRow(zero, { doc }).querySelectorAll('.stat-tile');
-  assert.match(tiles[1].querySelector('.stat-sub').textContent, /no spend in this period/);
-  assert.match(tiles[2].querySelector('.stat-sub').textContent, /no sessions in this period/);
-  assert.match(tiles[2].querySelector('.stat-value').textContent, /\$0\.00/);
+  assert.match(tiles[2].querySelector('.stat-sub').textContent, /no spend in this period/);
+  assert.match(tiles[3].querySelector('.stat-sub').textContent, /no sessions in this period/);
+  assert.match(tiles[3].querySelector('.stat-value').textContent, /\$0\.00/);
   const one = { ...MODEL, totals: { ...MODEL.totals, ask: { spendUsd: 0.5, sessions: 1, turns: 1 } } };
-  assert.equal(renderKpiRow(one, { doc }).querySelectorAll('.stat-tile')[2]
+  assert.equal(renderKpiRow(one, { doc }).querySelectorAll('.stat-tile')[3]
     .querySelector('.stat-sub').textContent, '1 session · $0.50/session · 1 turn',
     'singular forms');
 });
@@ -126,10 +126,10 @@ test('renderKpiRow: a payload without the new fields renders zeros, not a throw'
   delete legacy.totals.pipelineSpendUsd; delete legacy.totals.ask;
   delete legacy.prev.pipelineSpendUsd; delete legacy.prev.ask;
   const tiles = renderKpiRow(legacy, { doc }).querySelectorAll('.stat-tile');
-  assert.equal(tiles.length, 6);
-  assert.match(tiles[1].querySelector('.stat-value').textContent, /\$12\.34/,
+  assert.equal(tiles.length, 7);
+  assert.match(tiles[2].querySelector('.stat-value').textContent, /\$12\.34/,
     'pipelineSpendUsd falls back to spentUsd');
-  assert.match(tiles[2].querySelector('.stat-sub').textContent, /no sessions in this period/);
+  assert.match(tiles[3].querySelector('.stat-sub').textContent, /no sessions in this period/);
 });
 
 test('renderKpiRow: no total limit -> no meter, "No total limit set"', () => {
@@ -160,7 +160,61 @@ test('renderBudgetIndicator: states default/warn/over/no-limit + period label + 
     resetPeriod: 'monthly' }, { doc });
   assert.equal(el.querySelector('.spend-ind-meter'), null);
   assert.match(el.querySelector('.spend-ind-label').textContent, /Spent this month/);
-  assert.match(el.querySelector('.spend-ind-sub').textContent, /no total limit/);
+  assert.equal(el.querySelector('.spend-ind-sub'), null, 'the "no total limit" note is gone');
+});
+
+// ---- no total limit: Spent + Saved ----
+const NO_LIMIT = { ...BUDGET, totalLimitUsd: null, remainingUsd: null, blocked: false,
+  resetPeriod: 'monthly', windowSpendUsd: 10604.7, windowHumanHours: 1512, windowSavedUsd: 42315.3 };
+
+test('renderBudgetIndicator: no limit -> a Saved row under Spent, no meter, no "no total limit"', () => {
+  const el = renderBudgetIndicator(NO_LIMIT, { doc });
+  const rows = el.querySelectorAll('.spend-ind-row');
+  assert.equal(rows.length, 2, 'Spent and Saved');
+  assert.equal(rows[0].querySelector('.spend-ind-label').textContent, 'Spent this month');
+  assert.equal(rows[0].querySelector('.spend-ind-amt').textContent, '$10,604.70');
+  assert.ok(rows[1].classList.contains('spend-ind-saved'));
+  assert.equal(rows[1].querySelector('.spend-ind-label').textContent, 'Saved this month');
+  const amt = rows[1].querySelector('.spend-ind-amt');
+  assert.equal(amt.textContent, '$42,315.30');
+  assert.ok(rows[1].classList.contains('pos'), 'a gain is green (.pos → --green-ink-strong)');
+  assert.equal(rows[0].classList.contains('pos'), false, 'Spent stays neutral ink');
+  assert.equal(el.querySelector('.spend-ind-meter'), null);
+  assert.equal(el.querySelector('.spend-ind-sub'), null);
+  assert.doesNotMatch(el.textContent, /no total limit/i);
+  assert.match(el.title, /Saved this month: \$42,315\.30/);
+  assert.match(el.title, /human hours × your rate − spent/);
+});
+
+test('renderBudgetIndicator: a loss prints "−$"; the period word follows resetPeriod', () => {
+  const el = renderBudgetIndicator({ ...NO_LIMIT, resetPeriod: 'weekly', windowSavedUsd: -12.5 }, { doc });
+  const saved = el.querySelector('.spend-ind-saved');
+  assert.equal(saved.querySelector('.spend-ind-label').textContent, 'Saved this week');
+  const amt = saved.querySelector('.spend-ind-amt');
+  assert.equal(amt.textContent, '−$12.50', 'U+2212 before the $, never "$-12.50"');
+  assert.equal(saved.classList.contains('pos'), false,
+    'a loss is neutral ink, never green: the sign carries it (--red-ink fails 4.5:1 on hover)');
+  const zero = renderBudgetIndicator({ ...NO_LIMIT, windowSavedUsd: 0 }, { doc })
+    .querySelector('.spend-ind-saved');
+  assert.equal(zero.querySelector('.spend-ind-amt').textContent, '$0.00');
+  assert.ok(zero.classList.contains('pos'), 'zero is not a loss');
+});
+
+test('renderBudgetIndicator: no Saved figure in the payload -> Spent alone, never a fake $0', () => {
+  for (const windowSavedUsd of [undefined, null, Number.NaN]) {
+    const el = renderBudgetIndicator({ ...NO_LIMIT, windowSavedUsd }, { doc });
+    assert.equal(el.querySelectorAll('.spend-ind-row').length, 1, `windowSavedUsd=${windowSavedUsd}`);
+    assert.equal(el.querySelector('.spend-ind-sub'), null);
+    assert.doesNotMatch(el.title, /Saved/);
+  }
+});
+
+test('renderBudgetIndicator: with a total limit the card is unchanged — Saved never shows', () => {
+  const el = renderBudgetIndicator({ ...BUDGET, windowSavedUsd: 900 }, { doc });
+  assert.equal(el.querySelectorAll('.spend-ind-row').length, 1);
+  assert.equal(el.querySelector('.spend-ind-saved'), null);
+  assert.ok(el.querySelector('.spend-ind-meter'));
+  assert.doesNotMatch(el.title, /Saved/);
 });
 
 test('renderBudgetReadout: meter + bold figures; meterless when no limit', () => {
@@ -307,4 +361,46 @@ test('renderStatsBody: Today gets a single-date range label and per-hour cards',
     series: SPEND_HOURLY.series.map((p) => ({ ...p, finished: 0, stopped: 0, failed: 0 })) };
   const hint = renderStatsBody(model, { doc }).querySelector('.chart-card .hint');
   assert.equal(hint.textContent, 'Thu Aug 6', 'no "Thu Aug 6 – Thu Aug 6" span');
+});
+
+test('renderKpiRow: Saved tile = $ value, no delta pill, hours sub-line; positive wears is-pos, negative is-neg', () => {
+  const el = renderKpiRow(MODEL, { doc });
+  const saved = el.querySelectorAll('.stat-tile')[1];
+  assert.equal(saved.querySelector('.stat-label span:not(.stat-delta)').textContent, 'Saved');
+  assert.equal(saved.querySelector('.stat-value').textContent, '$35,315.00', 'en-US grouping, like Team metrics');
+  assert.equal(saved.querySelector('.stat-sub').textContent, '≈ 449.2 h of human work');
+  assert.equal(saved.querySelector('.stat-delta'), null, 'the Saved tile never wears a delta pill');
+  assert.equal(saved.querySelector('.stat-value').classList.contains('is-neg'), false);
+  assert.ok(saved.querySelector('.stat-value').classList.contains('is-pos'), 'a positive Saved figure is green');
+  const up = renderKpiRow({ ...MODEL, prev: { ...MODEL.prev, savedUsd: 30000 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(up.querySelector('.stat-delta'), null, 'not even with a positive previous window (dropped 2026-09-22)');
+  const neg = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: -6.12, humanHours: 0 }, prev: null }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(neg.querySelector('.stat-value').textContent, '−$6.12');
+  assert.ok(neg.querySelector('.stat-value').classList.contains('is-neg'));
+  assert.equal(neg.querySelector('.stat-value').classList.contains('is-pos'), false);
+  assert.equal(neg.querySelector('.stat-sub').textContent, '≈ 0 h of human work');
+  const zero = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 0 }, prev: null }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.deepEqual([...zero.querySelector('.stat-value').classList].filter((c) => /^is-/.test(c)), [], 'zero is neither green nor red');
+});
+
+test('renderKpiRow: Saved tile wears a "× spend" pill (saved ÷ spent) as the only pill in its label; none for a loss or zero spend', () => {
+  const label = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')[1].querySelector('.stat-label');
+  const mult = label.querySelector('.stat-mult');
+  assert.equal(mult.textContent, '2,862× spend', '35315 ÷ 12.34 — whole number from 10× up, en-US grouping');
+  assert.equal(mult.title, 'Saved ÷ spent in this period');
+  assert.equal(label.lastElementChild, mult, 'far right of the label row');
+  const withPrev = renderKpiRow({ ...MODEL, prev: { ...MODEL.prev, savedUsd: 30000 } }, { doc })
+    .querySelectorAll('.stat-tile')[1].querySelector('.stat-label');
+  assert.deepEqual([...withPrev.querySelectorAll('.stat-delta, .stat-mult')].map((c) => c.className), ['stat-mult'],
+    'the multiplier is the only pill, whatever the previous window held');
+  const small = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 100 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(small.querySelector('.stat-mult').textContent, '8.1× spend', 'one decimal below 10×');
+  const edge = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: 122.9 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(edge.querySelector('.stat-mult').textContent, '10× spend', '9.96 rounds up past the one-decimal band, never "10.0×"');
+  const loss = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, savedUsd: -6.12 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(loss.querySelector('.stat-mult'), null, 'a loss has no multiplier');
+  const free = renderKpiRow({ ...MODEL, totals: { ...MODEL.totals, spentUsd: 0 } }, { doc }).querySelectorAll('.stat-tile')[1];
+  assert.equal(free.querySelector('.stat-mult'), null, 'nothing spent → nothing to multiply');
+  const others = [...renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')].filter((_, i) => i !== 1);
+  assert.ok(others.every((t) => !t.querySelector('.stat-mult')), 'only the Saved tile carries the pill');
 });

@@ -19,13 +19,13 @@
         </div>
 
         <nav class="nav" aria-label="Primary">
-          <button type="button" class="active nav-cta" data-nav="new">
+          <button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
             <span>New pipeline</span>
           </button>
 
           <div class="nav-sect">Activity</div>
-          <button type="button" data-nav="running">
+          <button type="button" data-nav="running" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path></svg>
             <span>Running</span>
             <span class="nav-rollup" id="nav-running-rollup" hidden title="A pipeline needs your input"></span>
@@ -35,46 +35,84 @@
             <span class="nav-count n-paused" id="nav-paused-badge" hidden title="Paused pipelines"><span id="nav-paused-count">0</span><svg class="pause-flag" viewBox="0 0 10 10" aria-hidden="true"><rect x="2.2" y="2" width="2" height="6" rx="1"></rect><rect x="5.8" y="2" width="2" height="6" rx="1"></rect></svg></span>
           </button>
           <div class="nav-children" id="nav-running-children"></div>
-          <button type="button" data-nav="history">
+          <button type="button" data-nav="schedules" data-min-level="advanced">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
+            <span>Schedules</span>
+            <!-- Waiting runs + active repeating schedules (grey: waiting is the resting state);
+                 the amber twin counts UNREAD PROBLEMS in the activity feed. -->
+            <span class="nav-count n-grey" id="nav-schedules-count">0</span>
+            <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
+          </button>
+                    <button type="button" data-nav="history" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path></svg>
             <span>History</span>
-            <span class="nav-count n-grey" id="nav-history-count">0</span>
           </button>
-          <button type="button" data-nav="stats">
+          <button type="button" data-nav="stats" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
             <span>Statistics</span>
           </button>
+          <button type="button" data-nav="team-metrics" data-min-level="expert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
+            <span>Team metrics</span>
+          </button>
 
-          <div class="nav-sect">Build</div>
-          <button type="button" data-nav="composer">
+          <div class="nav-sect" data-min-level="advanced">Build</div>
+          <button type="button" data-nav="composer" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
             <span>Workflow Composer</span>
           </button>
-          <button type="button" data-nav="agents">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
-            <span>Agents</span>
+          <!-- Nodes: the two composer node types. A disclosure, not a route — it carries no
+               data-nav, so the router never marks it active; app.js#setNodesCollapsed owns
+               aria-expanded + the box's .collapsed and remembers a fold. The children keep their
+               own data-nav: the `.nav button[data-nav]` snapshot reaches nested buttons. -->
+          <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert" aria-expanded="true" aria-controls="nav-nodes-children">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
+            <span>Nodes</span>
+            <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
           </button>
+          <div class="nav-children nav-group-children" id="nav-nodes-children" data-min-level="expert">
+            <button type="button" class="nav-child" data-nav="agents" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
+              <span>Agents</span>
+            </button>
+            <button type="button" class="nav-child" data-nav="scripts" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
+              <span>Scripts</span>
+            </button>
+          </div>
 
           <div class="nav-sect">Manage</div>
-          <button type="button" data-nav="projects">
+          <button type="button" data-nav="projects" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
             <span>Projects</span>
-            <span class="nav-count n-grey" id="nav-projects-count">0</span>
           </button>
-          <button type="button" data-nav="workspaces">
+          <button type="button" data-nav="workspaces" data-min-level="advanced">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
             <span>Workspaces</span>
-            <span class="nav-count n-grey" id="nav-workspaces-count">0</span>
+          </button>
+          <button type="button" data-nav="team-policy" data-min-level="expert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+            <span>Team policy</span>
           </button>
 
           <div class="nav-sep" aria-hidden="true"></div>
-          <button type="button" data-nav="settings">
+          <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
+               and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
+               repaints it, and on the collapsed rail it is all that shows. -->
+          <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
+            <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
+            <span class="lv-name">Expert</span>
+          </button>
+          <button type="button" data-nav="settings" data-min-level="simple">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
             <span>Settings</span>
           </button>
         </nav>
 
         <div class="side-foot">
+          <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
+               identity proxy or an operator-set name; a local install never shows it. -->
+          <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
           <div id="side-spend"></div>
           <button type="button" class="side-toggle" id="side-toggle"
                   aria-expanded="true" aria-controls="side-rail"
@@ -88,20 +126,33 @@
       <main class="main">
         <!-- compact top-nav (shown <1080px, where the sidebar is hidden) -->
         <nav class="topnav" aria-label="Primary compact">
-          <button type="button" class="active" data-nav="new">New</button>
+          <button type="button" class="active" data-nav="new" data-min-level="simple">New</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="running">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
-          <button type="button" data-nav="history">History</button>
-          <button type="button" data-nav="stats">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
+          <button type="button" data-nav="running" data-min-level="simple">Running<span class="nav-rollup" id="topnav-running-rollup" hidden></span></button>
+          <button type="button" data-nav="schedules" data-min-level="advanced">Schedules</button>
+          <button type="button" data-nav="history" data-min-level="simple">History</button>
+          <button type="button" data-nav="stats" data-min-level="advanced">Stats<span class="topnav-amt mono" id="topnav-spend" hidden></span></button>
+          <button type="button" data-nav="team-metrics" data-min-level="expert">Team metrics</button>
+          <span class="topnav-sep" aria-hidden="true" data-min-level="advanced"></span>
+          <button type="button" data-nav="composer" data-min-level="advanced">Composer</button>
+          <button type="button" data-nav="agents" data-min-level="expert">Agents</button>
+          <button type="button" data-nav="scripts" data-min-level="expert">Scripts</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="composer">Composer</button>
-          <button type="button" data-nav="agents">Agents</button>
+          <button type="button" data-nav="projects" data-min-level="simple">Projects</button>
+          <button type="button" data-nav="workspaces" data-min-level="advanced">Workspaces</button>
+          <button type="button" data-nav="team-policy" data-min-level="expert">Team policy</button>
           <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="projects">Projects</button>
-          <button type="button" data-nav="workspaces">Workspaces</button>
-          <span class="topnav-sep" aria-hidden="true"></span>
-          <button type="button" data-nav="settings">Settings</button>
+          <button type="button" class="topnav-mode" data-mode-open="short" data-min-level="simple" aria-haspopup="dialog"><i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i><span class="lv-name">Expert</span></button>
+          <button type="button" data-nav="settings" data-min-level="simple">Settings</button>
         </nav>
+
+        <!-- Shown when the open page sits above the interface mode (a deep link, a guide, or a
+             mode change while on it). app.js#paintLevelBanner fills and toggles it. -->
+        <div id="level-banner" class="level-banner" role="status" hidden>
+          <span class="lv-pill" id="level-banner-pill"></span>
+          <span class="level-banner-text" id="level-banner-text"></span>
+          <button type="button" class="btn btn-ghost btn-mini" id="level-banner-switch" data-mode-set=""></button>
+        </div>
 
         <!-- ===== VIEW: NEW PIPELINE ===== -->
         <section class="view" data-view="new">
@@ -118,7 +169,7 @@
                 <!-- Target switch and the thing it selects share one row: they are one
                      decision, and the switch is only meaningful next to its picker. -->
                 <div class="split-row">
-                  <div class="field field-compact">
+                  <div class="field field-compact" id="target-field" data-min-level="advanced">
                     <label>Target</label>
                     <div class="seg" id="target-seg">
                       <button type="button" data-target="project" class="on" aria-pressed="true">Project</button>
@@ -199,8 +250,18 @@
                   </div>
                 </div>
 
+                <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
+                <div class="field field-compact" id="memory-scope-row" data-min-level="expert" hidden>
+                  <label>Memory scope</label>
+                  <div class="seg" id="memory-scope-seg" role="group" aria-label="Memory scope">
+                    <button type="button" data-scope="global" class="on" aria-pressed="true">Global</button>
+                    <button type="button" data-scope="project" aria-pressed="false">Project</button>
+                  </div>
+                  <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else — the task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
+                </div>
+
                 <!-- Task source switch; the panes below span the full width. -->
-                <div class="field field-compact">
+                <div class="field field-compact" id="source-field" data-min-level="advanced">
                   <label>Task source</label>
                   <div class="seg" id="source-seg">
                     <button type="button" data-src="prompt" class="on" aria-pressed="true">Prompt</button>
@@ -247,7 +308,7 @@
                 </div>
 
                 <!-- Branch pair: one decision (from → into), so one compact row. -->
-                <div class="field-grid-2">
+                <div class="field-grid-2" id="branch-fields" data-min-level="advanced">
                   <div class="field field-compact">
                     <label for="sourceBranch">Source branch</label>
                     <div class="select-wrap" id="sourceBranchWrap">
@@ -255,6 +316,10 @@
                     </div>
                     <!-- Workspace mode: one source-branch dropdown per member project. -->
                     <div class="ws-source-branches hidden" id="ws-source-branches"></div>
+                    <div class="switch-row ws-src-prev hidden" id="ws-source-previous-row">
+                      <div class="switch" id="ws-source-previous" role="switch" tabindex="0" aria-checked="false" aria-label="Branch off the run before it"></div>
+                      <span class="txt">Branch off the run before it</span>
+                    </div>
                     <small class="hint" id="sourceBranchHint">The worktree branches off this. Defaults to the current branch.</small>
                   </div>
 
@@ -269,7 +334,7 @@
                      A workflow ships tuned, so its per-agent knobs belong here with
                      guardrails and mock mode; the workflow PICKER stays above.
                      Collapsed unless something inside is already non-default. -->
-                <details class="advanced" id="advanced-config">
+                <details class="advanced" id="advanced-config" data-min-level="advanced">
                   <summary>
                     <span class="adv-chev" aria-hidden="true"></span>
                     <span>Advanced</span>
@@ -288,12 +353,12 @@
                       <span class="agents-wf" id="agentsWorkflow"></span>
                       <span class="agents-summary" id="agentsSummary">all defaults</span>
                       <span class="agents-actions">
-                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" hidden>Save as workflow defaults</button>
+                        <button type="button" id="agentsPromote" class="btn-ghost btn-mini" data-min-level="expert" hidden>Save as workflow defaults</button>
                         <button type="button" id="agentsReset" class="btn-ghost btn-mini" hidden>Reset</button>
                       </span>
                     </div>
                     <div id="agents-rows"></div>
-                    <div id="wf-feedback-config" class="agent-row-body-inner" hidden></div>
+                    <div id="wf-feedback-config" class="agent-row-body-inner" data-min-level="expert" hidden></div>
                   </div>
                 </div>
 
@@ -320,21 +385,56 @@
                       <small class="hint" id="guardrailsHint">Applies to every agent this run spawns. Permissive = no restrictions (the legacy default).</small>
                     </div>
 
-                    <div class="switch-row">
-                      <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
-                      <span class="txt">Mock mode — no Claude calls, offline dry run</span>
-                    </div>
-                    <input id="mock" type="checkbox" hidden />
                   </div>
                 </details>
 
+                <!-- Mock mode sits OUTSIDE Advanced (docs/ui-levels.md): onboarding sends first-time
+                     users to it, and it is the one switch that makes a run free and harmless. -->
+                <div class="switch-row mock-row" id="mock-row" data-min-level="simple">
+                  <div class="switch" id="mock-switch" role="switch" aria-checked="false" tabindex="0"></div>
+                  <span class="txt">Mock mode — try it offline: no Claude calls, no cost</span>
+                </div>
+                <input id="mock" type="checkbox" hidden />
+
+                <!-- Settings the current mode hides but this run still uses (app.js#paintHiddenSettings). -->
+                <div class="level-hidden-note" id="level-hidden-note" hidden>
+                  <span id="level-hidden-text"></span>
+                  <button type="button" class="link-btn" id="level-hidden-show" data-mode-set=""></button>
+                </div>
+
+                <!-- Team policy notes (design board 8): in the main column, never inside Advanced,
+                     and never gated — a team cap applies in every interface mode. -->
+                <div id="policyLine" hidden></div>
+
                 <!-- Actions -->
                 <div class="hint err" id="newBlockedNote" hidden></div>
+                <!-- OpenRouter free requests left today vs what a run here takes (openrouter-free-view.mjs). -->
+                <div class="hint warn" id="newFreeNote" hidden></div>
                 <div class="actions" style="justify-content:flex-end">
-                  <button type="submit" id="start-btn" class="btn-go">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
-                    Start run
-                  </button>
+                  <!-- A time picked BEFORE the task (Schedules › Schedule a run, or Change… here):
+                       it waits on the form and Start run becomes Schedule. -->
+                  <div class="ask-card-sched new-sched" id="new-sched" hidden>
+                    <span class="badge grey" id="new-sched-badge">Scheduled</span>
+                    <span class="ask-card-sched-text" id="new-sched-text"></span>
+                    <button type="button" class="link-btn" id="new-sched-change">Change…</button>
+                    <button type="button" class="link-btn" id="new-sched-clear" title="Drop the time and start the run right away">Start now instead</button>
+                  </div>
+                  <!-- Split button: Start run stays the primary action; the caret opens the
+                       other way to start — Schedule… (once, later, or on a repeat). -->
+                  <div class="btn-split" id="start-split">
+                    <button type="submit" id="start-btn" class="btn-go">
+                      <svg id="start-btn-play" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8V4Z"></path></svg>
+                      <svg id="start-btn-clock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7.5V12l3 2"></path></svg>
+                      <span id="start-btn-label">Start run</span>
+                    </button>
+                    <button type="button" id="start-more" class="btn-split-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" aria-controls="start-menu" title="More ways to start" aria-label="More ways to start">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+                    </button>
+                    <div class="btn-split-menu" id="start-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" id="start-menu-now"><b>Start run now</b><small>Begins immediately</small></button>
+                      <button type="button" role="menuitem" id="start-menu-schedule"><b>Schedule…</b><small>Run once later, or on a repeat</small></button>
+                    </div>
+                  </div>
                 </div>
                 <p id="form-msg" class="form-msg" aria-live="polite"></p>
               </form>
@@ -342,6 +442,20 @@
           </div>
         </section>
         <!-- /view new -->
+
+        <!-- ===== VIEW: GETTING STARTED (docs/getting-started.md) ===== -->
+        <!-- Its own page: the sidebar pill (mounted by app.js under New pipeline) and
+             Settings › General › Getting started route here. The tile shelf is painted
+             into the host by getting-started.mjs on every entry. -->
+        <section class="view hidden" data-view="getting-started">
+          <div class="topbar">
+            <div>
+              <h1>Getting started</h1>
+              <div class="sub">Nine things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
+            </div>
+          </div>
+          <div id="getting-started-host" class="gs-host" hidden></div>
+        </section>
 
         <!-- ===== VIEW: RUNNING ===== -->
         <section class="view hidden" data-view="running">
@@ -353,7 +467,7 @@
               <div class="sub" id="running-sub">0 pipelines executing · 0 need your input</div>
             </div>
             <span class="pill-run amber hidden" id="running-status-pill" style="box-shadow:var(--shadow-soft)"><span class="pdot"></span> 0 needs input</span>
-            <div class="run-density" role="group" aria-label="List density">
+            <div class="run-density" role="group" data-min-level="advanced" aria-label="List density">
               <button type="button" class="rc-dseg" data-density="compact" aria-pressed="false" title="Compact — three runs per screen">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="5" width="18" height="3" rx="1.5"></rect><rect x="3" y="10.5" width="18" height="3" rx="1.5"></rect><rect x="3" y="16" width="18" height="3" rx="1.5"></rect></svg>
               </button>
@@ -373,6 +487,16 @@
 
           <div class="run-list" id="run-list"></div>
 
+          <!-- Runs that start within 24 hours (tickets, not pipelines). The full list,
+               repeating schedules and the activity feed live in the Schedules view. -->
+          <div class="run-scheduled" id="run-scheduled" hidden>
+            <div class="run-scheduled-head">
+              <div class="sched-group-title">Scheduled · next 24 hours</div>
+              <a href="#schedules">All schedules →</a>
+            </div>
+            <div class="sched-list" id="run-scheduled-list"></div>
+          </div>
+
           <!-- clone target for one run card (Task 3 fills it) -->
           <template id="run-card-tpl">
             <section class="card run-card" data-run-id="" data-density="detailed">
@@ -390,11 +514,12 @@
                   <div class="rc-meta">
                     <span class="rc-status-word"></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="rm-text"></span></span>
-                    <span class="rc-seg rc-prog" hidden><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
+                    <span class="rc-seg rc-by" hidden><span class="rc-dot">·</span><span class="person-ini" aria-hidden="true"></span><span class="rc-by-text"></span></span>
+                    <span class="rc-seg rc-prog" hidden data-min-level="advanced"><span class="rc-dot">·</span><span class="rc-prog-text"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-time mono"></span></span>
                     <span class="rc-seg"><span class="rc-dot">·</span><span class="run-cost mono"></span></span>
                   </div>
-                  <span class="rc-branch mono" hidden>
+                  <span class="rc-branch mono" hidden data-min-level="advanced">
                     <span class="rc-base" hidden></span>
                     <button type="button" class="rc-branch-copy" title="Copy branch name" aria-label="Copy branch name">
                       <span class="rc-branch-name"></span>
@@ -414,19 +539,20 @@
                   <button type="button" class="btn-resume" title="Resume — restart this paused pipeline where it left off" aria-label="Resume" hidden><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg></button>
                   <button type="button" class="btn-pause" title="Pause — gracefully stop the session so it can be resumed" aria-label="Pause"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg></button>
                   <button type="button" class="btn-stop" title="Stop this pipeline" aria-label="Stop"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg></button>
+                  <button type="button" class="rc-after" title="Schedule a run after this" aria-label="Schedule a run after this" data-min-level="advanced" hidden><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h12"></path><path d="M13 6l6 6-6 6"></path></svg></button>
                   <button type="button" class="rc-open" title="Open run" aria-label="Open run"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
                 </div>
               </div>
               <div class="rc-compact">
                 <span class="rc-step-chip"></span>
                 <span class="rc-step-name"></span>
-                <span class="rc-step-model mono" hidden></span>
+                <span class="rc-step-model mono" hidden data-min-level="advanced"></span>
               </div>
               <div class="cost-banner" hidden></div>
               <div class="rc-detailed">
                 <div class="run-flow-wrap"><div class="run-flow"></div></div>
-                <div class="run-log">
-                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+                <div class="run-log" data-min-level="advanced">
+                  <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec" hidden title="Showing one execution — click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true">×</span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
                   <div class="log"></div>
                 </div>
               </div><!-- /.rc-detailed -->
@@ -452,8 +578,8 @@
                 </div>
                 <div class="rd-meta mono"></div>
                 <div class="rd-row3">
-                  <span class="rd-base mono" hidden></span>
-                  <button type="button" class="rd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                  <span class="rd-base mono" hidden data-min-level="advanced"></span>
+                  <button type="button" class="rd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                     <span class="rd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -545,17 +671,18 @@
                         <span class="hm-seg hist-clock-seg"><span class="hm-dot">·</span><span class="hist-clock"></span></span>
                         <span class="hm-seg hist-time-seg"><span class="hm-dot">·</span><span class="hist-time mono"></span></span>
                         <span class="hm-seg hist-total-seg"><span class="hm-dot">·</span><span class="hist-total mono"></span></span>
-                        <span class="hist-diff-pill" hidden>
+                        <span class="hm-seg hist-by-seg"><span class="hm-dot">·</span><span class="hist-by"></span></span>
+                        <span class="hist-diff-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg>
                           <span class="hist-diff mono" aria-label="lines changed"></span>
                           <span class="hist-nodiff mono" hidden>no diff</span>
                         </span>
-                        <span class="hist-cmt-pill" hidden>
+                        <span class="hist-cmt-pill" hidden data-min-level="advanced">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8z" stroke-linejoin="round"></path></svg>
                           <span class="hist-cmt-count mono" aria-label="unresolved diff comments"></span>
                         </span>
                       </div>
-                      <span class="hist-branch mono" hidden>
+                      <span class="hist-branch mono" hidden data-min-level="advanced">
                         <span class="hist-branch-src" hidden></span>
                         <svg class="hist-branch-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-label="into" role="img" hidden><path d="M4 12h15M13 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                         <span class="hist-branch-dst"></span>
@@ -573,7 +700,7 @@
                       <span class="hist-pausenote" hidden></span>
                     </div>
                     <div class="hist-aside">
-                      <button type="button" class="hist-pr btn-ghost" hidden>Create PR</button>
+                      <button type="button" class="hist-pr btn-ghost" hidden data-min-level="advanced">Create PR</button>
                       <button type="button" class="hist-open" aria-label="Open run details">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                       </button>
@@ -596,9 +723,10 @@
                   </button>
                   <h1 class="hd-title"></h1>
                   <span class="auto-badge" hidden></span>
-                  <span class="hist-merge" hidden></span>
-                  <button type="button" class="hd-pr" hidden>Create PR</button>
-                  <a class="hd-pr-link" hidden target="_blank" rel="noopener"></a>
+                  <span class="hist-merge" hidden data-min-level="expert"></span>
+                  <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
+                  <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-after btn-ghost" hidden data-min-level="advanced">Schedule a run after this</button>
                 </div>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
@@ -613,8 +741,8 @@
                   <div class="hd-meta mono"></div>
                 </div>
                 <div class="hd-row3">
-                  <span class="hd-base mono"></span>
-                  <button type="button" class="hd-branch-copy mono" hidden title="Copy branch name" aria-label="Copy branch name">
+                  <span class="hd-base mono" data-min-level="advanced"></span>
+                  <button type="button" class="hd-branch-copy mono" hidden data-min-level="advanced" title="Copy branch name" aria-label="Copy branch name">
                     <span class="hd-branch-name"></span>
                     <svg class="ico-copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg>
                     <svg class="ico-check" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -633,10 +761,28 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                     <span class="hd-btn-label">Resume</span>
                   </button>
-                  <button type="button" class="hd-archive" hidden>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                    <span class="hd-btn-label">Archive</span>
-                  </button>
+                  <!-- Archive and Report live behind one ⋯ trigger, but keep their own
+                       classes: every gate, the busy-label swap and hdSetArchiveGate all
+                       address them directly, and only their PLACEMENT moved here.
+                       Report this run: a History row is finished by definition, but a
+                       still-live row also appears here, so setupHdActions unhides both
+                       only for a deletable entry, and hides the trigger when neither is
+                       offered rather than opening onto an empty menu. -->
+                  <span class="hd-more-wrap" data-min-level="advanced">
+                    <button type="button" class="hd-more" hidden aria-haspopup="menu" aria-expanded="false" title="More actions" aria-label="More actions">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>
+                    </button>
+                    <div class="hd-menu" role="menu" hidden>
+                      <button type="button" class="hd-archive" role="menuitem" hidden>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                        <span class="hd-btn-label">Archive</span>
+                      </button>
+                      <button type="button" class="hd-report" role="menuitem" hidden>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4.5"></path><path d="M12 17h.01"></path></svg>
+                        <span class="hd-btn-label">Report this run</span>
+                      </button>
+                    </div>
+                  </span>
                 </div>
                 <!-- The inline error lives on the HEADER, not in .hd-body, so an archive
                      failure is not pushed below the fold by a long Diff or Logs tab.
@@ -660,6 +806,32 @@
         <!-- /view history -->
 
         <!-- ===== VIEW: STATISTICS ===== -->
+        <section class="view hidden" data-view="schedules">
+          <div class="topbar">
+            <div>
+              <h1>Schedules</h1>
+              <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
+            </div>
+            <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+              Schedule a run
+            </a>
+          </div>
+          <p id="schedules-msg" class="form-msg" aria-live="polite"></p>
+          <!-- Tabs, the Statistics .seg idiom: #schedules/<tab> routes them (activity | once | repeating). -->
+          <div class="sched-tabs">
+            <div class="seg" id="schedules-tabs" role="group" aria-label="Schedules">
+              <button type="button" data-tab="activity">Activity</button>
+              <button type="button" data-tab="once">Once</button>
+              <button type="button" data-tab="repeating">Repeating</button>
+            </div>
+          </div>
+          <section class="card sched-feed sched-pane" id="schedules-feed" data-pane="activity" aria-label="Activity"></section>
+          <div class="sched-list sched-pane" id="schedules-once" data-pane="once" hidden><small class="hint">Loading…</small></div>
+          <div class="sched-list sched-pane" id="schedules-repeating" data-pane="repeating" hidden><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view schedules -->
+
         <section class="view hidden" data-view="stats">
           <div class="topbar">
             <div>
@@ -677,53 +849,120 @@
           </div>
           <div id="stats-body"><small class="hint">Loading…</small></div>
           <div id="stats-tip" class="chart-tip" hidden></div>
+          <a class="hint tm-stats-hint" id="stats-tm-hint" href="#team-metrics" data-min-level="expert" hidden>Team-wide view →</a>
         </section>
         <!-- /view stats -->
 
-        <!-- ===== VIEW: WORKSPACES ===== -->
-        <section class="view hidden" data-view="workspaces">
+        <!-- ===== VIEW: TEAM METRICS ===== -->
+        <section class="view hidden" data-view="team-metrics">
           <div class="topbar">
             <div>
-              <h1>Workspaces</h1>
-              <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description</div>
+              <h1>Team metrics</h1>
+              <div class="sub">Shared across the team from the <code>worca-metrics</code> branch · costs are Claude Code estimates, not billing</div>
             </div>
-            <button type="button" id="ws-create-btn" class="btn-go" style="padding:11px 20px">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create workspace
-            </button>
+            <div class="sync-chip" id="tm-sync" hidden></div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tm-scope" class="select" aria-label="Scope"></select></div>
+            <div class="seg tm-tabs" id="tm-tabs" role="tablist" aria-label="Team metrics view">
+              <button type="button" role="tab" data-tm-tab="overview" aria-selected="true" class="on">Overview</button>
+              <button type="button" role="tab" data-tm-tab="timeline" aria-selected="false">Timeline</button>
+            </div>
+            <div class="seg" id="tm-range" role="group" aria-label="Time range">
+              <button type="button" data-range="this-month">This month</button>
+              <button type="button" data-range="last-month">Last month</button>
+              <button type="button" data-range="quarter">Quarter</button>
+              <button type="button" data-range="year">Year</button>
+              <button type="button" data-range="all">All time</button>
+              <button type="button" data-range="custom">Custom</button>
+            </div>
+            <span class="tm-custom" id="tm-custom" hidden>
+              <input type="date" id="tm-from" class="input" aria-label="From" /> – <input type="date" id="tm-to" class="input" aria-label="To" />
+            </span>
+          </div>
+          <div class="tm-active-filters" id="tm-filters" hidden></div>
+          <div id="tm-body"><small class="hint">Loading…</small></div>
+          <div id="tm-timeline" hidden></div>
+          <div id="tm-tip" class="chart-tip" hidden></div>
+        </section>
+        <!-- /view team-metrics -->
+
+        <!-- ===== VIEW: TEAM POLICY (team-policy design §11, boards 4–5) ===== -->
+        <section class="view hidden" data-view="team-policy">
+          <div class="topbar">
+            <div>
+              <h1>Team policy</h1>
+              <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
+            </div>
+            <div class="sync-chip" id="tp-sync" hidden></div>
+          </div>
+          <div class="tm-filter">
+            <div class="select-wrap tm-scope-wrap"><select id="tp-scope" class="select" aria-label="Scope"></select></div>
+          </div>
+          <div id="tp-body"><small class="hint">Loading…</small></div>
+        </section>
+        <!-- /view team-policy -->
+
+        <!-- ===== VIEW: WORKSPACES ===== -->
+        <section class="view hidden" data-view="workspaces">
+          <!-- Two-screen slide track, twin of the Projects #proj-shell: the list and the workspace
+               page (#workspaces/<id>[/team]) are sibling screens; .detail-open slides. -->
+          <div class="ws-shell" id="ws-shell">
+            <div class="ws-screen ws-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>Workspaces</h1>
+                  <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
+                </div>
+                <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Create workspace
+                </button>
+              </div>
+              <p id="ws-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="ws-list"></div>
+            </div>
+            <div class="ws-screen ws-screen-detail" id="ws-detail" aria-hidden="true"></div>
           </div>
 
-          <p id="ws-msg" class="form-msg" aria-live="polite"></p>
-
-          <div class="run-list" id="ws-list"></div>
-
-          <!-- clone target for one workspace card -->
-          <template id="ws-card-tpl">
-            <section class="card ws-card">
-              <div class="ws-head" role="button" tabindex="0" aria-expanded="false">
-                <div class="ws-h-meta">
-                  <b class="ws-name"></b>
+          <!-- clone target for the workspace page (#workspaces/<id>). A SCREEN inside this
+               section, never a routed view of its own: the page's view count is pinned. It rides
+               the project page's pd- classes so the two pages are laid out the same way. -->
+          <template id="ws-detail-tpl">
+            <div class="pd wd">
+              <header class="pd-header">
+                <div class="pd-row1">
+                  <button type="button" class="pd-back btn-ghost" aria-label="Back to workspaces">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="pd-title ws-name"></h1>
                   <span class="ws-stale badge red" hidden>missing projects</span>
-                  <small class="ws-projects"></small>
                 </div>
-                <div class="ws-actions">
-                  <button type="button" class="ws-edit btn-ghost" title="Edit description">Edit description</button>
-                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set">Re-scan</button>
-                  <button type="button" class="ws-delete btn-danger" title="Delete workspace">Delete</button>
+                <!-- One row under the title: the summary on the left, the actions on the right. This
+                     page configures and tracks a workspace; runs start from New pipeline. -->
+                <div class="wd-row2">
+                <div class="pd-meta"><small class="ws-projects"></small></div>
+                <div class="pd-actions">
+                  <button type="button" class="ws-rescan btn-ghost" title="Re-scan the project set and regenerate the description">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7"></path><path d="M20 4v5h-5"></path></svg>
+                    Re-scan
+                  </button>
+                  <span class="pd-spacer"></span>
+                  <button type="button" class="pd-remove ws-delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
+                    <span class="pd-btn-label">Delete</span>
+                  </button>
                 </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                </div>
+                <!-- On the HEADER (like .pd-error): a delete failure must not sit below a long tab. -->
+                <div class="pd-error" hidden></div>
+              </header>
+              <div class="pd-body">
+                <div class="pd-tabs" role="tablist"></div>
+                <div class="pd-sections"></div>
               </div>
-              <div class="ws-detail" hidden>
-                <pre class="ws-desc-view viewer"></pre>
-                <div class="ws-desc-edit" hidden>
-                  <textarea class="ws-desc-input textarea" rows="10" spellcheck="false"></textarea>
-                  <div class="actions" style="justify-content:flex-end;margin-top:10px">
-                    <button type="button" class="ws-desc-cancel btn btn-ghost btn-mini">Cancel</button>
-                    <button type="button" class="ws-desc-save btn btn-primary btn-mini">Save</button>
-                  </div>
-                </div>
-              </div>
-            </section>
+            </div>
           </template>
         </section>
         <!-- /view workspaces -->
@@ -739,6 +978,11 @@
           </div>
 
           <section class="card" style="max-width:820px">
+            <ol class="wiz-track" id="wiz-track" aria-label="Create workspace steps">
+              <li data-track="1"><span>1</span> Projects</li>
+              <li data-track="2"><span>2</span> Scan</li>
+              <li data-track="3"><span>3</span> Description</li>
+            </ol>
             <!-- Step 1: name + project multi-select -->
             <div class="wiz-step" id="wiz-step-1">
               <div class="field">
@@ -746,7 +990,11 @@
                 <input id="wiz-name" class="input" type="text" placeholder="e.g. IoT SP Platform" spellcheck="false" />
               </div>
               <div class="field">
-                <label>Projects <span class="opt">(select 2 or more)</span></label>
+                <div class="wiz-proj-head">
+                  <label class="label">Projects <span class="opt">(select 2 or more)</span></label>
+                  <!-- Outside #wiz-projects so every checkbox in the list stays a project. -->
+                  <label class="wiz-select-all"><input type="checkbox" id="wiz-select-all" /> Select all</label>
+                </div>
                 <div class="wiz-proj-list" id="wiz-projects"></div>
                 <small class="hint" id="wiz-step1-hint">Onboard at least two projects to create a workspace.</small>
               </div>
@@ -757,6 +1005,10 @@
                 </button>
               </div>
             </div>
+
+            <!-- Team metrics is NOT a wizard step any more: the home is adopted automatically when
+                 exactly one member already records (POST /api/workspaces), otherwise chosen on the
+                 workspace card ("Choose…"). -->
 
             <!-- Step 2: live scan loader -->
             <div class="wiz-step hidden" id="wiz-step-2">
@@ -778,8 +1030,15 @@
             <!-- Step 3: editable description -->
             <div class="wiz-step hidden" id="wiz-step-3">
               <div class="field">
-                <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                <div class="label-row">
+                  <label for="wiz-desc">Interconnection description <span class="opt">(editable)</span></label>
+                  <div class="md-tabs" id="wiz-desc-tabs" role="tablist" aria-label="Description editor">
+                    <button type="button" class="md-tab" role="tab" data-mode="text" aria-selected="true">Text</button>
+                    <button type="button" class="md-tab" role="tab" data-mode="preview" aria-selected="false">Preview</button>
+                  </div>
+                </div>
                 <textarea id="wiz-desc" class="textarea" rows="16" spellcheck="false" placeholder="# Workspace: ..."></textarea>
+                <div id="wiz-desc-preview" class="md-preview viewer" hidden></div>
                 <small class="hint" id="wiz-graphify-note"></small>
               </div>
               <p id="wiz-msg" class="form-msg" aria-live="polite"></p>
@@ -838,6 +1097,7 @@
               </div>
               <div class="agent-detail" hidden>
                 <pre class="agent-md-view viewer"></pre>
+                <div class="agent-forms-view" hidden></div>
                 <div class="agent-edit-pane" hidden>
                   <div class="agent-form"></div>
                   <p class="agent-edit-msg form-msg" aria-live="polite"></p>
@@ -852,20 +1112,73 @@
         </section>
         <!-- /view agents -->
 
+        <!-- ===== VIEW: SCRIPTS ===== -->
+        <section class="view hidden" data-view="scripts">
+          <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
+          <div id="scripts-host" class="scripts-host"></div>
+        </section>
+        <!-- /view scripts -->
+
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
-          <div class="topbar">
-            <div>
-              <h1>Projects</h1>
-              <div class="sub">Registered projects. Add a folder or remove one from the list — files on disk and run history are never touched.</div>
+          <!-- Two-screen slide track, twin of History's #hist-shell: the list and the project
+               page (#projects/<key>[/memory[/<name>]]) are sibling screens; .detail-open slides. -->
+          <div class="proj-shell" id="proj-shell">
+            <div class="proj-screen proj-screen-list">
+              <div class="topbar">
+                <div>
+                  <h1>Projects</h1>
+                  <div class="sub">Registered projects. Open one for its details and memory; add a folder or remove one from the list — files on disk and run history are never touched.</div>
+                </div>
+                <button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add project
+                </button>
+              </div>
+              <p id="projects-msg" class="form-msg" aria-live="polite"></p>
+              <div class="run-list" id="projects-list"></div>
             </div>
-            <button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Add project
-            </button>
+            <div class="proj-screen proj-screen-detail" id="proj-detail" aria-hidden="true"></div>
           </div>
-          <p id="projects-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="projects-list"></div>
+
+          <!-- clone target for the project page (#projects/<key>). It is a SCREEN inside this
+               section, never a routed view of its own: the page's view count is pinned. -->
+          <template id="proj-detail-tpl">
+            <div class="pd">
+              <header class="pd-header">
+                <div class="pd-row1">
+                  <button type="button" class="pd-back btn-ghost" aria-label="Back to projects">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Back
+                  </button>
+                  <h1 class="pd-title"></h1>
+                </div>
+                <div class="pd-meta mono"><span class="pd-path"></span></div>
+                <div class="pd-actions">
+                  <button type="button" class="pd-new btn-ghost">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                    New pipeline
+                  </button>
+                  <button type="button" class="pd-history btn-ghost">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    Open in History
+                  </button>
+                  <span class="pd-spacer"></span>
+                  <!-- The label lives in its own span so a busy state can swap the word and keep the icon. -->
+                  <button type="button" class="pd-remove">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"></path></svg>
+                    <span class="pd-btn-label">Remove</span>
+                  </button>
+                </div>
+                <!-- On the HEADER (like .hd-error): a remove failure must not sit below a long Memory tab. -->
+                <div class="pd-error" hidden></div>
+              </header>
+              <div class="pd-body">
+                <div class="pd-tabs" role="tablist"></div>
+                <div class="pd-sections"></div>
+              </div>
+            </div>
+          </template>
         </section>
         <!-- /view projects -->
 
@@ -974,6 +1287,11 @@
                     <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
                   </div>
                   <div class="gv-palette" id="gv-palette"></div>
+                  <!-- The advanced door to the agent wizard (the Agents page is expert, docs/ui-levels.md). -->
+                  <button type="button" class="pal-create" id="gv-create-agent" data-min-level="advanced">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                    Create agent&hellip;
+                  </button>
                 </div>
                 <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
               </div>
@@ -993,7 +1311,7 @@
             <!-- The key belongs to the whole editor, canvas AND rail — not to a
                  palette card that no longer exists. -->
             <div class="gv-foot">
-              <span class="gv-legend" id="gv-legend">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
+              <span class="gv-legend" id="gv-legend" data-min-level="expert">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
             </div>
           </section>
 
@@ -1012,7 +1330,7 @@
                  Rendered by gvRenderSaved(); hidden while the library is empty. -->
             <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
             <div class="saved-list" id="gv-saved-list"></div>
-            <div class="gv-archived" id="gv-archived" hidden></div>
+            <div class="gv-archived" id="gv-archived" data-min-level="expert" hidden></div>
             <!-- A refused DELETE (the built-in, a 404, a 500) has to land
                  SOMEWHERE: same .form-msg line every other list view uses. -->
             <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
@@ -1032,10 +1350,16 @@
              literal routing attribute name, so never spell it out in a comment. -->
         <section class="view hidden" data-view="settings">
           <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
-            <button type="button" class="on" data-tab="general" aria-pressed="true">General</button>
-            <button type="button" data-tab="guardrails" aria-pressed="false">Guardrails</button>
-            <button type="button" data-tab="models" aria-pressed="false">Models</button>
-            <button type="button" data-tab="plugins" aria-pressed="false">Plugins</button>
+            <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
+                 strip; Models sits next to Providers. -->
+            <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
+            <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
+            <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
+            <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
+            <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
+            <button type="button" data-tab="plugins" data-min-level="advanced" aria-pressed="false">Plugins</button>
+            <button type="button" data-tab="models" data-min-level="expert" aria-pressed="false">Models</button>
+            <button type="button" data-tab="providers" data-min-level="expert" aria-pressed="false">Providers</button>
           </div>
 
           <section class="settings-pane" data-tab="general">
@@ -1046,7 +1370,7 @@
               </div>
             </div>
 
-            <section class="card settings-card" id="appearance-card">
+            <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Appearance</h2>
@@ -1063,7 +1387,42 @@
               <small class="hint" id="themeMsg"></small>
             </section>
 
-            <section class="card settings-card">
+            <!-- Credential broker (docs/credential-broker.md): shown only when worca runs with one. -->
+            <section class="card settings-card" id="credentials-card" data-min-level="simple" hidden>
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>My model credentials</h2>
+                  <button type="button" class="info-tip" aria-label="About model credentials">i<span class="tip-content hidden">
+                    Model keys are held by the credential broker, not by Worca. Agents never see them.
+                    Each person uses their own keys, and what a run costs is charged to whoever started it.
+                  </span></button>
+                </div>
+              </div>
+              <div id="credentialsHost"></div>
+            </section>
+
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the sidebar item, same dialog. -->
+            <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Interface mode</h2>
+                  <button type="button" class="info-tip" aria-label="About interface mode">i<span class="tip-content hidden">
+                    How much of Worca is on screen. Nothing is switched off: a hidden page still opens from a link,
+                    and settings made in a higher mode keep applying. The choice applies to every browser that opens this Worca.
+                  </span></button>
+                </div>
+              </div>
+              <div class="mode-current">
+                <span class="mode-current-icon" id="modeSettingsIcon"></span>
+                <div class="mode-current-text">
+                  <strong id="modeSettingsName">Expert</strong>
+                  <span id="modeSettingsDesc"></span>
+                </div>
+                <button type="button" class="btn btn-ghost btn-mini" id="modeSettingsChange" data-mode-open="button" aria-haspopup="dialog">Change&hellip;</button>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="root-settings-card" data-min-level="advanced">
               <div class="field">
                 <div class="label-row">
                   <label for="settingsRoot">Worca root folder</label>
@@ -1097,7 +1456,98 @@
               <small class="hint" id="settingsMsg"></small>
             </section>
 
-            <section class="card settings-card">
+            <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
+                 claude-runner.mjs reads the setting per spawn (UI server AND CLI);
+                 a non-empty env var overrides it. This card only flips the gate —
+                 the runner decides what is printable (routing keys readable,
+                 credentials as "<set, N chars>"). -->
+            <section class="card settings-card" id="debug-spawn-settings-card" data-min-level="expert">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Spawn diagnostics</h2>
+                  <button type="button" class="info-tip" aria-label="About spawn diagnostics">i<span class="tip-content hidden">
+                    Logs the exact claude binary, argv and routing env handed to every spawn, in the run
+                    log. Credentials never appear: routing keys (endpoint, wire model) print readable,
+                    every other value as <code>&lt;set, N chars&gt;</code>. Applies to runs started here
+                    and from the CLI, with no restart. A non-empty <code>WORCA_DEBUG_SPAWN</code> in the
+                    environment overrides this setting.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="check-row" for="debugSpawnEnabled"><input id="debugSpawnEnabled" type="checkbox" /> Log claude spawn details (binary, argv, routing env)</label>
+              </div>
+              <small class="hint" id="debugSpawnEnvNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="debugSpawnReset" class="btn btn-ghost btn-mini">Reset to default</button>
+                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="debugSpawnMsg"></small>
+            </section>
+
+            <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
+                 the welcome dialog stays seen. No info-tip (the row explains itself);
+                 the .hint is painted by app.js like every other settings status line. -->
+            <section class="card settings-card" id="getting-started-card" data-min-level="simple">
+              <div class="label-row">
+                <h2>Getting started</h2>
+              </div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">The checklist on New pipeline walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
+              </div>
+              <small class="hint" id="gsSettingsMsg"></small>
+            </section>
+
+            <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
+            <section class="card settings-card" id="about-card" data-min-level="simple">
+              <div class="label-row">
+                <h2>About</h2>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Version</span>
+                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
+                     without one the anchor is plain text, so the placeholder never links. -->
+                <a class="about-val about-version" id="aboutVersion"
+                   target="_blank" rel="noopener noreferrer">&mdash;</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Repository</span>
+                <a class="about-val about-link" id="aboutRepoLink"
+                   href="https://github.com/SinishaDjukic/worca-cc"
+                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key">Feedback</span>
+                <!-- hrefs are repainted from app.bugsUrl (package.json bugs.url); the
+                     static fallback keeps the links usable before /api/settings lands.
+                     Anchors only: ui-settings-about.test.mjs forbids a control here,
+                     and neither the label nor the href carries a version string. -->
+                <a class="about-val about-link" id="aboutBugLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=bug"
+                   target="_blank" rel="noopener noreferrer">Report a bug</a>
+              </div>
+              <div class="about-row">
+                <span class="about-key"></span>
+                <a class="about-val about-link" id="aboutIdeaLink"
+                   href="https://github.com/SinishaDjukic/worca-cc/issues/new?labels=enhancement"
+                   target="_blank" rel="noopener noreferrer">Suggest an improvement</a>
+              </div>
+            </section>
+          </section>
+          <!-- /pane general -->
+
+          <!-- ===== TAB: RUNS — how pipeline runs are capped, scheduled and reported.
+               Simple, for Budget; the two Advanced cards keep their own level. ===== -->
+          <section class="settings-pane hidden" data-tab="runs">
+            <div class="topbar">
+              <div>
+                <h1>Runs</h1>
+                <div class="sub">Cost limits and defaults for your pipeline runs</div>
+              </div>
+            </div>
+
+            <section class="card settings-card" id="budget-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Budget &amp; cost limits</h2>
@@ -1107,6 +1557,8 @@
                 </div>
               </div>
               <div id="budgetReadout"></div>
+              <!-- Team policy (design board 7): each policy home's caps, read-only context. -->
+              <div id="teamCapsReadout"></div>
               <div class="field">
                 <div class="label-row">
                   <label for="budgetPerPipeline">Per-pipeline cost limit (USD)</label>
@@ -1140,6 +1592,12 @@
                   </select>
                 </div>
               </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="budgetHumanRate">Developer rate (USD/h)</label>
+                </div>
+                <input id="budgetHumanRate" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" />
+              </div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
                 <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
@@ -1147,13 +1605,91 @@
               <small class="hint" id="budgetMsg"></small>
             </section>
 
+            <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
+                 its own copy, so a change here never rewrites an existing one. -->
+            <section class="card settings-card" id="schedule-settings-card" data-min-level="advanced">
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Scheduled runs</h2>
+                  <button type="button" class="info-tip" aria-label="About scheduled run defaults">i<span class="tip-content hidden">
+                    Defaults for new schedules. A scheduled run starts only while Worca is running and this computer is awake; these settings decide what happens when it was not.
+                  </span></button>
+                </div>
+              </div>
+              <div class="field-grid-2">
+                <div class="field">
+                  <label for="schedIfMissed">If Worca is not running at that time</label>
+                  <div class="select-wrap">
+                    <select id="schedIfMissed" class="select">
+                      <option value="run">Start it late</option>
+                      <option value="skip">Skip it</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="schedGraceMin">At most this late</label>
+                  <div class="select-wrap">
+                    <select id="schedGraceMin" class="select">
+                      <option value="30">30 minutes</option>
+                      <option value="60">1 hour</option>
+                      <option value="120">2 hours</option>
+                      <option value="360">6 hours</option>
+                      <option value="720">12 hours</option>
+                      <option value="1440">24 hours</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label for="schedMaxFailures">Pause a repeating schedule after failures in a row</label>
+                  <button type="button" class="info-tip" aria-label="About pausing after failures">i<span class="tip-content hidden">
+                    A run that could not start, a missed slot, or a run that ended in an error each count. A successful run resets the count. 0 never pauses a schedule. Every failure is reported in Schedules either way.
+                  </span></button>
+                </div>
+                <input id="schedMaxFailures" class="input" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="3" autocomplete="off" />
+              </div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="schedDefaultsReset" class="btn btn-ghost btn-mini">Use defaults</button>
+                <button type="button" id="schedDefaultsSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="schedDefaultsMsg"></small>
+            </section>
+
+            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
+                 events ping which chat channels. Body rendered by
+                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
+            <section class="card settings-card" id="chat-settings-card" data-min-level="advanced">
+              <div class="label-row">
+                <h2>Chat notifications</h2>
+              </div>
+              <div id="chat-settings-host"></div>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
+              </div>
+              <small class="hint" id="chatSettingsMsg"></small>
+            </section>
+          </section>
+          <!-- /pane runs -->
+
+          <!-- ===== TAB: ASK WORCA — the assistant chat's limits, tools, web access and history ===== -->
+          <section class="settings-pane hidden" data-tab="ask">
+            <div class="topbar">
+              <div>
+                <h1>Ask Worca</h1>
+                <div class="sub">The assistant chat: how far one turn may go, which tools and websites it may use, and its saved history</div>
+              </div>
+            </div>
+
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
                  budget means "no cap". Posted ALONE — never with root/budget keys. -->
-            <section class="card settings-card">
+            <!-- Simple on purpose: the Ask Worca tab (Advanced) already gates it, and a deep link at a lower mode
+                 must still show the card under the level banner (docs/ui-levels.md rule 3). -->
+            <section class="card settings-card" id="ask-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
-                  <h2>Ask Worca</h2>
+                  <h2>Limits &amp; access</h2>
                   <button type="button" class="info-tip" aria-label="About Ask Worca limits">i<span class="tip-content hidden">
                     Per-turn guards for the Ask Worca assistant chat. A chat turn stops when it reaches the turn limit or the per-turn cost cap; both are read fresh on every turn.
                   </span></button>
@@ -1163,21 +1699,27 @@
                 <div class="label-row">
                   <label for="askMaxTurns">Turn limit</label>
                   <button type="button" class="info-tip" aria-label="About Turn limit">i<span class="tip-content hidden">
-                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 40.
+                    Maximum assistant/tool turns one chat message may use (1&ndash;500). Leave empty to restore the default of 400.
                   </span></button>
                 </div>
-                <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="40" autocomplete="off" />
+                <input id="askMaxTurns" class="input" type="number" min="1" max="500" step="1" inputmode="numeric" placeholder="400" autocomplete="off" />
               </div>
               <div class="field">
                 <div class="label-row">
                   <label for="askMaxBudgetUsd">Per-turn cost cap (USD)</label>
                   <button type="button" class="info-tip" aria-label="About Per-turn cost cap">i<span class="tip-content hidden">
-                    Stop a chat turn when its estimated cost reaches this amount (0.1&ndash;100). Leave empty to restore the default of $2, or tick No cap to disable the guard.
+                    There is no cap by default. Untick No cap and enter an amount (0.1&ndash;100) to turn the guard on: a chat turn then stops when its estimated cost reaches it. Leaving the amount empty, or pressing Use defaults, means no cap.
                   </span></button>
                 </div>
-                <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="2" autocomplete="off" />
+                <input id="askMaxBudgetUsd" class="input" type="number" min="0.1" max="100" step="0.1" inputmode="decimal" placeholder="No cap" autocomplete="off" />
                 <label class="check-row" for="askNoCap"><input id="askNoCap" type="checkbox" /> No cap</label>
               </div>
+              <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
+                   rendered by chat-settings-view.mjs; saved with this card's Save button. -->
+              <div class="field" id="ask-script-tools-host"></div>
+              <!-- Ask web access (off by default): rendered by chat-settings-view.mjs; saved with this
+                   card's Save button, and only when one of its fields was touched. -->
+              <div class="field" id="ask-web-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
                 <button type="button" id="askLimitsSave" class="btn btn-primary btn-mini">Save</button>
@@ -1197,131 +1739,8 @@
                 <small class="hint" id="askHistoryMsg"></small>
               </div>
             </section>
-
-            <!-- Title generation (#422): which model writes run/chat titles.
-                 Empty = the model of the run or chat itself (title.mjs
-                 resolveTitleModel), so a first-party-free install needs no setup.
-                 The select is built from the project-less catalog; a stored id
-                 that left the catalog paints disabled + "not installed". -->
-            <section class="card settings-card" id="title-model-settings-card">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Title generation</h2>
-                  <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
-                    Every run and chat gets a short LLM-written title. By default it is written by the
-                    model the run or chat itself uses, so an install without a first-party Anthropic
-                    account needs no setup here. Pick a model to write every title with it instead;
-                    the change applies to the next title, no restart. A non-empty
-                    <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
-                  </span></button>
-                </div>
-              </div>
-              <div class="field">
-                <div class="label-row">
-                  <label for="titleModel">Model</label>
-                </div>
-                <select id="titleModel" class="select" aria-label="Title model"></select>
-              </div>
-              <small class="hint" id="titleModelEnvNote"></small>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-              <small class="hint" id="titleModelMsg"></small>
-            </section>
-
-            <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
-                 Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
-            <section class="card settings-card" id="auto-model-settings-card">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Auto workflow model</h2>
-                  <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
-                    When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
-                    Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
-                    <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
-                    run as a sub-agent row named "Auto workflow (round n)".
-                  </span></button>
-                </div>
-              </div>
-              <div class="field">
-                <div class="label-row"><label for="autoModel">Model</label></div>
-                <select id="autoModel" class="select" aria-label="Auto workflow model"></select>
-              </div>
-              <small class="hint" id="autoModelEnvNote"></small>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-              <small class="hint" id="autoModelMsg"></small>
-            </section>
-
-            <!-- Spawn-debug diagnostics: the stored side of WORCA_DEBUG_SPAWN.
-                 claude-runner.mjs reads the setting per spawn (UI server AND CLI);
-                 a non-empty env var overrides it. This card only flips the gate —
-                 the runner decides what is printable (routing keys readable,
-                 credentials as "<set, N chars>"). -->
-            <section class="card settings-card" id="debug-spawn-settings-card">
-              <div class="card-head">
-                <div class="label-row">
-                  <h2>Spawn diagnostics</h2>
-                  <button type="button" class="info-tip" aria-label="About spawn diagnostics">i<span class="tip-content hidden">
-                    Logs the exact claude binary, argv and routing env handed to every spawn, in the run
-                    log. Credentials never appear: routing keys (endpoint, wire model) print readable,
-                    every other value as <code>&lt;set, N chars&gt;</code>. Applies to runs started here
-                    and from the CLI, with no restart. A non-empty <code>WORCA_DEBUG_SPAWN</code> in the
-                    environment overrides this setting.
-                  </span></button>
-                </div>
-              </div>
-              <div class="field">
-                <label class="check-row" for="debugSpawnEnabled"><input id="debugSpawnEnabled" type="checkbox" /> Log claude spawn details (binary, argv, routing env)</label>
-              </div>
-              <small class="hint" id="debugSpawnEnvNote"></small>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="debugSpawnReset" class="btn btn-ghost btn-mini">Reset to default</button>
-                <button type="button" id="debugSpawnSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-              <small class="hint" id="debugSpawnMsg"></small>
-            </section>
-
-            <!-- Chat notifications (chat-connectivity-design.md §4.8): which run
-                 events ping which chat channels. Body rendered by
-                 chat-settings-view.mjs; app.js owns fetch/save/Test wiring. -->
-            <section class="card settings-card" id="chat-settings-card">
-              <div class="label-row">
-                <h2>Chat notifications</h2>
-              </div>
-              <div id="chat-settings-host"></div>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button id="chatSettingsSave" class="btn btn-primary btn-mini" type="button">Save</button>
-              </div>
-              <small class="hint" id="chatSettingsMsg"></small>
-            </section>
-
-            <!-- About: intentionally no info-tip and no .hint (test/ui-settings-tooltips.test.mjs pins both). -->
-            <section class="card settings-card" id="about-card">
-              <div class="label-row">
-                <h2>About</h2>
-              </div>
-              <div class="about-row">
-                <span class="about-key">Version</span>
-                <!-- href is painted from app.releaseUrl (the worca-app-v<version> tag);
-                     without one the anchor is plain text, so the placeholder never links. -->
-                <a class="about-val about-version" id="aboutVersion"
-                   target="_blank" rel="noopener noreferrer">&mdash;</a>
-              </div>
-              <div class="about-row">
-                <span class="about-key">Repository</span>
-                <a class="about-val about-link" id="aboutRepoLink"
-                   href="https://github.com/SinishaDjukic/worca-cc"
-                   target="_blank" rel="noopener noreferrer">github.com/SinishaDjukic/worca-cc</a>
-              </div>
-            </section>
           </section>
-          <!-- /pane general -->
+          <!-- /pane ask -->
 
           <!-- ===== TAB: GUARDRAILS (was the top-level Guardrails view) ===== -->
           <section class="settings-pane hidden" data-tab="guardrails">
@@ -1330,7 +1749,7 @@
                 <h1>Guardrails</h1>
                 <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
               </div>
-              <button type="button" id="guardrail-create-btn" class="btn-go" style="padding:11px 20px">
+              <button type="button" id="guardrail-create-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Create guardrails
               </button>
@@ -1340,25 +1759,42 @@
           </section>
           <!-- /pane guardrails -->
 
-          <!-- ===== TAB: MODELS (was the top-level Models view) ===== -->
-          <section class="settings-pane hidden" data-tab="models">
+          <!-- ===== TAB: MEMORY (agent-memory-design.md §10) ===== -->
+          <section class="settings-pane hidden" data-tab="memory">
             <div class="topbar">
               <div>
-                <h1>Models</h1>
-                <div class="sub">Global model catalog — available in every project; entries can override built-ins and carry per-model routing env</div>
-              </div>
-              <div style="display:flex;gap:8px">
-                <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px">Share as plugin…</button>
-                <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                  Add model
-                </button>
+                <h1>Memory</h1>
+                <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
-            <p id="models-msg" class="form-msg" aria-live="polite"></p>
-            <div class="run-list" id="models-list"></div>
+            <!-- Settings › Memory: the model + effort EVERY Memory defragment run uses (memory-defrag-model.mjs).
+                 Expert, like the health card's Defragment. No ⓘ and empty hints: the settings-view census
+                 (test/ui-settings-tooltips.test.mjs) pins both. A plain .card like the health card, NOT a
+                 .settings-card: that census (About last) counts the Settings cards. -->
+            <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
+              <div class="label-row"><h2>Defragment model</h2></div>
+              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
+              <div class="mem-model-row">
+                <div class="field">
+                  <div class="label-row"><label for="memDefragModel">Model</label></div>
+                  <select id="memDefragModel" class="select" aria-label="Defragment model"></select>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="memDefragEffort">Effort</label></div>
+                  <select id="memDefragEffort" class="select" aria-label="Defragment effort"></select>
+                </div>
+              </div>
+              <small class="hint" id="memDefragModelNote"></small>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="memDefragModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                <button type="button" id="memDefragModelSave" class="btn btn-primary btn-mini">Save</button>
+              </div>
+              <small class="hint" id="memDefragModelMsg"></small>
+            </section>
+            <p id="memory-msg" class="form-msg" aria-live="polite"></p>
+            <div id="memory-host" class="mem-host"></div>
           </section>
-          <!-- /pane models -->
+          <!-- /pane memory -->
 
           <!-- ===== TAB: PLUGINS (was the top-level Plugins view) ===== -->
           <section class="settings-pane hidden" data-tab="plugins">
@@ -1367,29 +1803,170 @@
                 <h1>Plugins</h1>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
-              <button type="button" id="plugin-add-btn" class="btn-go" style="padding:11px 20px">
+              <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
                 Add marketplace
               </button>
             </div>
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-            <div class="card hidden" id="marketplace-add-row" style="padding:16px 20px;margin-bottom:14px">
+            <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
               <div class="path-row">
                 <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
                 <button type="button" id="marketplace-add" class="btn btn-primary btn-mini">Add</button>
               </div>
             </div>
+            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
+            <div id="plugins-policy"></div>
             <h3 class="pl-sec-title">Installed</h3>
             <div class="run-list" id="plugins-list"></div>
             <h3 class="pl-sec-title">Available</h3>
             <div class="run-list" id="plugins-available"></div>
-            <h3 class="pl-sec-title">Marketplaces</h3>
-            <div class="run-list" id="marketplaces-list"></div>
+            <h3 class="pl-sec-title" data-min-level="expert">Marketplaces</h3>
+            <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
           </section>
           <!-- /pane plugins -->
+
+          <!-- ===== TAB: MODELS (was the top-level Models view) ===== -->
+          <section class="settings-pane hidden" data-tab="models">
+            <div class="topbar">
+              <div>
+                <h1>Models</h1>
+                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The two cards on top pick the models Worca's own titles and Auto classifier use. Sign-ins and endpoints live on the Providers tab.</div>
+              </div>
+              <div style="display:flex;gap:8px;flex:0 0 auto">
+                <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Share as plugin…</button>
+                <button type="button" id="model-import-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Import models…</button>
+                <button type="button" id="model-create-btn" class="btn-go" style="padding:11px 20px;white-space:nowrap">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+                  Add model
+                </button>
+              </div>
+            </div>
+            <!-- The models Worca's own helper calls use (titles, the Auto classifier). Two columns on a
+                 wide screen so the catalog below is not pushed a screen down. -->
+            <div class="models-helpers" data-min-level="expert">
+              <!-- Title generation (#422): which model writes run/chat titles.
+                   Empty = the model of the run or chat itself (title.mjs
+                   resolveTitleModel), so a first-party-free install needs no setup.
+                   The select is built from the project-less catalog; a stored id
+                   that left the catalog paints disabled + "not installed". -->
+              <section class="card settings-card" id="title-model-settings-card" data-min-level="expert">
+                <div class="card-head">
+                  <div class="label-row">
+                    <h2>Title generation</h2>
+                    <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
+                      Every run and chat gets a short LLM-written title. By default it is written by the
+                      model the run or chat itself uses, so an install without a first-party Anthropic
+                      account needs no setup here. Pick a model to write every title with it instead;
+                      the change applies to the next title, no restart. A non-empty
+                      <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
+                    </span></button>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="label-row">
+                    <label for="titleModel">Model</label>
+                  </div>
+                  <select id="titleModel" class="select" aria-label="Title model"></select>
+                </div>
+                <small class="hint" id="titleModelEnvNote"></small>
+                <div class="add-project-actions" style="margin-top:14px">
+                  <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                  <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                  <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
+                </div>
+                <small class="hint" id="titleModelMsg"></small>
+              </section>
+
+              <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
+                   Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
+              <section class="card settings-card" id="auto-model-settings-card" data-min-level="expert">
+                <div class="card-head">
+                  <div class="label-row">
+                    <h2>Auto workflow model</h2>
+                    <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
+                      When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
+                      Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
+                      <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
+                      run as a sub-agent row named "Auto workflow (round n)".
+                    </span></button>
+                  </div>
+                </div>
+                <div class="field">
+                  <div class="label-row"><label for="autoModel">Model</label></div>
+                  <select id="autoModel" class="select" aria-label="Auto workflow model"></select>
+                </div>
+                <small class="hint" id="autoModelEnvNote"></small>
+                <div class="add-project-actions" style="margin-top:14px">
+                  <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
+                  <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
+                  <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
+                </div>
+                <small class="hint" id="autoModelMsg"></small>
+              </section>
+            </div>
+            <p id="models-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="models-list"></div>
+          </section>
+          <!-- /pane models -->
+
+          <!-- ===== TAB: PROVIDERS (model-bridge-design.md §8.1) =====
+               Split out of Models: the card is account-level setup you touch rarely, and at
+               1000+px it buried the catalog it unlocks. Expert only, like Models. -->
+          <section class="settings-pane hidden" data-tab="providers">
+            <div class="topbar">
+              <div>
+                <h1>Providers</h1>
+                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models tab.</div>
+              </div>
+            </div>
+            <p id="providers-msg" class="form-msg" aria-live="polite"></p>
+            <div class="run-list" id="providers-list"></div>
+          </section>
+          <!-- /pane providers -->
         </section>
         <!-- /view settings -->
       </main>
+    </div>
+
+    <!-- ===== Model editor (configurable-models-design.md §4.10) =====
+         A task, not a page section: it used to render above the catalog, under a Providers card
+         taller than the viewport, so opening it looked like nothing happened. -->
+    <div id="model-editor-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mv-editor-heading">
+      <div id="mv-editor-host" class="mv-editor-host"></div>
+    </div>
+
+    <!-- ===== Import models (model-bridge-design.md §8.4) =====
+         One dialog for both sources: GitHub Copilot's catalog and any OpenAI-compatible server
+         you run. It lives with the CATALOG (Settings › Models), because what it produces is
+         catalog rows; the Providers tab only links into it with its endpoint filled in. -->
+    <div id="model-import-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mimp-title">
+      <div class="card mimp">
+        <h3 id="mimp-title" class="mv-editor-title">Import models</h3>
+        <div class="mimp-src">
+          <label class="mv-field mimp-source-field">
+            <span class="mv-field-label">From</span>
+            <select id="mimp-source" class="select"></select>
+          </label>
+          <label class="mv-field mimp-base-field">
+            <span class="mv-field-label">Base URL</span>
+            <!-- The button sits ON the field's line: below the hint it read as unrelated to the URL. -->
+            <span class="mimp-base-row">
+              <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
+              <button type="button" id="mimp-list" class="btn-ghost">List models</button>
+            </span>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway — on this machine or your network.</small>
+          </label>
+        </div>
+        <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
+        <!-- Copilot lists dozens of models; the filter narrows what is already listed, client-side. -->
+        <input id="mimp-filter" class="input mimp-filter hidden" type="search" placeholder="Filter by model, id or vendor…" aria-label="Filter the listed models" />
+        <div id="mimp-body"></div>
+        <div class="mv-editor-btns mimp-btns">
+          <button type="button" id="mimp-go" class="btn-go" disabled>Import selected</button>
+          <button type="button" id="mimp-cancel" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <!-- ===== Saved-markdown viewer (modal) ===== -->
@@ -1423,6 +2000,25 @@
       </div>
     </div>
 
+    <!-- ===== Interface mode (docs/ui-levels.md) ===== -->
+    <!-- Opened by every [data-mode-open]: the sidebar item, its top-nav twin, Settings › General.
+         Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
+         ui-level.mjs owns the cards, focus and keys. -->
+    <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="mode-title">Interface mode</h2>
+        </div>
+        <p class="mode-sub" id="mode-sub">Choose how much of Worca is on screen. Nothing is switched off, only tidied away, and you can change this at any time.</p>
+        <div class="lv-cards" id="mode-cards" role="radiogroup" aria-labelledby="mode-title"></div>
+        <small class="hint" id="mode-msg" aria-live="polite"></small>
+        <div class="mode-foot">
+          <span class="hint">Applies at once. Runs and saved settings are not affected.</span>
+          <button type="button" id="mode-done" class="btn btn-primary btn-mini">Done</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== Reusable confirmation modal ===== -->
     <div id="confirm-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div class="card">
@@ -1439,6 +2035,58 @@
         <div class="confirm-actions">
           <button type="button" id="confirm-cancel" class="btn btn-ghost btn-mini">Cancel</button>
           <button type="button" id="confirm-ok" class="btn btn-primary btn-mini">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Report this run ===== -->
+    <!-- The <pre> shows the EXACT payload that will leave the machine; nothing is
+         sent without a click. Follows the #viewer-card shape (scrollable monospace
+         body) plus the #export-modal checkbox rows.
+         NOTE: any new overlay must also be added to the two capture-phase Escape
+         guards in app.js (History and Running) or Escape will close it AND navigate
+         the detail screen back to its list. -->
+    <div id="report-modal" class="viewer-modal report-modal hidden" role="dialog" aria-modal="true" aria-labelledby="report-title">
+      <div class="card">
+        <!-- Sticky header: title, Close, and every action. The card is the scroll
+             container (.viewer-modal .card{overflow:auto}), so the actions stay
+             reachable while the reporter is reading the JSON preview, and an error
+             or a filed-issue link lands where they are already looking. -->
+        <div class="report-top">
+          <div class="card-head">
+            <h2 id="report-title">Report this run</h2>
+            <div class="report-head-actions">
+              <button type="button" id="report-create-issue" class="btn btn-primary btn-mini">Create GitHub issue</button>
+              <button type="button" id="report-close" class="btn btn-mini">Close</button>
+            </div>
+          </div>
+          <!-- Both outcomes of the button above them, so neither needs a scroll to read. -->
+          <div class="report-error" hidden></div>
+          <p id="report-filed" class="report-filed" hidden></p>
+        </div>
+        <div class="report-field">
+          <label for="report-reason">What went wrong?</label>
+          <select id="report-reason" class="select"></select>
+        </div>
+        <div class="report-field">
+          <label for="report-expectation">What did you expect? (optional)</label>
+          <textarea id="report-expectation" class="textarea" rows="3" placeholder="What should have happened instead?"></textarea>
+        </div>
+        <div id="report-optins"></div>
+        <div class="report-field">
+          <label for="report-preview">This is exactly what will be sent</label>
+          <pre id="report-preview" class="viewer"></pre>
+        </div>
+        <div class="confirm-actions">
+          <button type="button" id="report-copy" class="btn btn-ghost btn-mini">Copy JSON</button>
+          <button type="button" id="report-download" class="btn btn-ghost btn-mini">Download JSON</button>
+          <!-- The FALLBACK, hidden until the server says it could not file the issue
+               itself. An <a>, not a button: a real anchor gives the browser a genuine
+               user-gesture new tab. app.js strips the href while a rebuild is in
+               flight, so the link can never fire with a payload that disagrees with
+               the preview. Its prefilled body can only ASK for the JSON to be pasted
+               — a URL dies at ~8 KB and half of all runs serialize larger. -->
+          <a id="report-issue" class="btn btn-ghost btn-mini" target="_blank" rel="noopener noreferrer" hidden>Open a prefilled issue</a>
         </div>
       </div>
     </div>
@@ -1460,8 +2108,8 @@
           <span class="export-label">Format</span>
           <div id="export-format" class="seg" role="group" aria-label="Export format">
             <button type="button" class="seg-btn on" data-format="json">JSON file</button>
-            <button type="button" class="seg-btn" data-format="skill">Claude Code skill</button>
-            <button type="button" class="seg-btn" data-format="plugin">Worca plugin</button>
+            <button type="button" class="seg-btn" data-format="skill" data-min-level="expert">Claude Code skill</button>
+            <button type="button" class="seg-btn" data-format="plugin" data-min-level="expert">Worca plugin</button>
           </div>
           <span id="export-format-hint" class="hint"></span>
         </div>
@@ -1552,6 +2200,32 @@
           <b class="shipit-branch"></b>
           <span class="shipit-arrow">→</span>
           <span class="shipit-base"></span>
+          <!-- The base-branch pick, in place of the plain base name once GET
+               /api/pr/remotes names the choices: the run chain (root first, the
+               default) and the base remote's branches. While it is hidden the
+               plain `.shipit-base` text stands and the POST omits baseBranch. -->
+          <span class="select-wrap shipit-base-wrap" hidden>
+            <select id="shipit-base-branch" class="select shipit-base-branch" aria-label="Base branch"></select>
+          </span>
+        </div>
+        <!-- Fork support: where the branch is pushed and which repo the PR opens in
+             (GitHub's "compare across forks"). Filled from GET /api/pr/remotes on
+             open; hidden until the list arrives and stays hidden when it cannot be
+             loaded (the server then applies its own defaults). -->
+        <div class="shipit-remotes" hidden>
+          <div class="shipit-remote-field">
+            <label for="shipit-push-remote">Push branch to</label>
+            <div class="select-wrap">
+              <select id="shipit-push-remote" class="select shipit-push-remote" aria-label="Push remote"></select>
+            </div>
+          </div>
+          <div class="shipit-remote-field">
+            <label for="shipit-base-remote">Open PR in</label>
+            <div class="select-wrap">
+              <select id="shipit-base-remote" class="select shipit-base-remote" aria-label="Base repository"></select>
+            </div>
+          </div>
+          <small class="shipit-remotes-hint hint"></small>
         </div>
         <!-- `hint err`, not `err`: style.css has no standalone .err rule, only
              .hint.err (:284). .hint sets display:block, so .shipit-err ships an
@@ -1574,6 +2248,69 @@
          twice, and no flow opens both. Do not "fix" this with a z-index of its
          own; the .cb-override confirm on the detail page depends on #confirm-modal
          staying on top. -->
+    <!-- Welcome (docs/getting-started.md): shown once, on the first visit to New
+         pipeline, until a door or Skip marks it seen. Three doors in cognitive-load
+         order; each hands its step id to the matching guide. -->
+    <div id="welcome-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+      <div class="card ob-welcome">
+        <p class="ob-eyebrow">Welcome to Worca</p>
+        <h2 id="welcome-title" class="ob-headline">Your pipelines, <em>on autopilot.</em></h2>
+        <svg class="ob-hero" viewBox="0 0 560 104" role="img" aria-label="A task becomes a chain of agents: plan, refine, implement, review — looping until the work clears its gates">
+          <circle class="gs-pop gs-node" style="--d:.1s" cx="40" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:.5s;--t:1.1s" d="M52 44 C 90 44, 110 44, 150 44"></path>
+          <circle class="gs-pop gs-node" style="--d:1.2s" cx="162" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:1.5s;--t:1s" d="M174 44 C 210 44, 230 44, 270 44"></path>
+          <circle class="gs-pop gs-node" style="--d:2.2s" cx="282" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-thread" pathLength="1" style="--d:2.5s;--t:1s" d="M294 44 C 330 44, 350 44, 390 44"></path>
+          <circle class="gs-pop gs-node" style="--d:3.2s" cx="402" cy="44" r="9"></circle>
+          <path class="gs-draw gs-wire ob-loop" pathLength="1" style="--d:3.6s;--t:1.2s" d="M402 55 C 402 92, 282 92, 282 55"></path>
+          <path class="gs-draw gs-wire ob-thread gs-accent" pathLength="1" style="--d:4.4s;--t:.9s" d="M414 44 C 450 44, 470 44, 505 44"></path>
+          <circle class="gs-pop gs-ring-mark" style="--d:5s" cx="518" cy="44" r="16"></circle>
+          <circle class="gs-pop gs-node gs-accent" style="--d:5.1s" cx="518" cy="44" r="9"></circle>
+        </svg>
+        <div class="ob-doors">
+          <button type="button" class="ob-door" data-door="project">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg></span>
+            <span>Add your first project</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="ob-door" data-door="run">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M10 9l5 3-5 3z"></path></svg></span>
+            <span>Watch a run end to end, offline</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="ob-door" data-door="realRun">
+            <span class="ob-door-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7z"></path><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"></path></svg></span>
+            <span>Run a real pipeline</span>
+            <span class="ob-door-arrow" aria-hidden="true">›</span>
+          </button>
+        </div>
+        <button type="button" class="ob-skip">Skip</button>
+      </div>
+    </div>
+
+    <!-- Connect Claude Code: the one checklist step with no control to ring. The
+         tick is derived (the CLI resolves on PATH and is not signed out); "Check
+         again" refetches it with a fresh sign-in check. -->
+    <div id="claude-setup-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="claude-setup-title">
+      <div class="card ob-claude">
+        <div class="card-head">
+          <h2 id="claude-setup-title">Connect Claude Code</h2>
+          <button type="button" id="claude-setup-close" class="btn btn-mini">Close</button>
+        </div>
+        <p class="ob-claude-lead">Worca drives the <strong>Claude Code</strong> CLI. Real runs need it on your <code>PATH</code>; mock runs need nothing.</p>
+        <pre class="ob-claude-cmd"><code>npm install -g @anthropic-ai/claude-code</code></pre>
+        <p class="ob-claude-note">On native Windows the <a href="https://docs.anthropic.com/en/docs/claude-code/setup" target="_blank" rel="noopener noreferrer">native installer</a> works too. A binary elsewhere: set <code>WORCA_CLAUDE_BIN</code> to its full path and restart the UI.</p>
+        <p class="ob-claude-lead ob-claude-step"><strong>Then sign it in.</strong> Start it once in a terminal and type <code>/login</code>:</p>
+        <pre class="ob-claude-cmd"><code>claude</code></pre>
+        <p class="ob-claude-note">Signing in to the Claude desktop app does not carry over — the CLI keeps its own sign-in.</p>
+        <div class="ob-claude-status" id="claude-setup-status" aria-live="polite"></div>
+        <div class="stop-actions">
+          <button type="button" id="claude-setup-check" class="btn btn-primary btn-mini">Check again</button>
+        </div>
+      </div>
+    </div>
+
     <div id="stop-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="stop-title">
       <div class="card stop-card">
         <h2 id="stop-title" class="stop-title">Stop this pipeline?</h2>
@@ -1601,18 +2338,41 @@
           <h2 id="proj-add-title">Add project</h2>
           <button type="button" id="proj-add-cancel" class="btn btn-mini">Close</button>
         </div>
-        <div class="field">
-          <label for="proj-add-name">Name</label>
-          <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
+        <!-- Two ways in: a folder already on this machine, or a repository cloned into the
+             projects folder by the server (POST /api/projects/clone). Clone is the default
+             where no folder picker exists (a container or hosted worca). -->
+        <div class="md-tabs proj-add-tabs" id="proj-add-tabs" role="tablist" aria-label="How to add the project">
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-folder" data-mode="folder" aria-selected="true" aria-controls="proj-add-folder-pane">Folder</button>
+          <button type="button" class="md-tab" role="tab" id="proj-add-tab-clone" data-mode="clone" aria-selected="false" aria-controls="proj-add-clone-pane">Clone from URL</button>
         </div>
-        <div class="field">
-          <label for="proj-add-path">Folder</label>
-          <div class="path-row">
-            <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
-            <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+        <div id="proj-add-folder-pane" role="tabpanel" aria-labelledby="proj-add-tab-folder">
+          <div class="field">
+            <label for="proj-add-name">Name</label>
+            <input id="proj-add-name" class="input" type="text" spellcheck="false" placeholder="Project name" />
+          </div>
+          <div class="field">
+            <label for="proj-add-path">Folder</label>
+            <div class="path-row">
+              <input id="proj-add-path" class="input" type="text" spellcheck="false" placeholder="/absolute/path/to/project" />
+              <button type="button" id="proj-add-browse" class="btn btn-ghost btn-mini" title="Pick the project folder">Choose folder&hellip;</button>
+            </div>
           </div>
         </div>
-        <small class="hint" id="proj-add-msg"></small>
+        <div id="proj-add-clone-pane" role="tabpanel" aria-labelledby="proj-add-tab-clone" hidden>
+          <div class="field">
+            <label for="proj-clone-url">Repository URL</label>
+            <input id="proj-clone-url" class="input" type="url" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo" />
+          </div>
+          <div class="field">
+            <label for="proj-clone-branch">Branch <span class="opt">(optional)</span></label>
+            <input id="proj-clone-branch" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository's default branch" />
+          </div>
+          <div class="field">
+            <label for="proj-clone-name">Folder name <span class="opt">(optional)</span></label>
+            <input id="proj-clone-name" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="the repository name" />
+          </div>
+        </div>
+        <small class="hint" id="proj-add-msg" aria-live="polite"></small>
         <div class="confirm-actions">
           <button type="button" id="proj-add-save" class="btn btn-primary btn-mini">Add project</button>
         </div>

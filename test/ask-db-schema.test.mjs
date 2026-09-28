@@ -26,7 +26,7 @@ test('fresh DB: user_version = SCHEMA_VERSION, the four ask tables, the index an
   for (const t of ASK_TABLES) assert.ok(tableNames(db).includes(t), `${t} exists`);
   assert.ok(indexNames(db).includes('idx_ask_messages_thread'));
   assert.deepEqual(cols(db, 'ask_threads'),
-    ['id', 'title', 'created_at', 'updated_at', 'model', 'effort', 'session_id', 'context', 'totals']);
+    ['id', 'title', 'created_at', 'updated_at', 'model', 'effort', 'session_id', 'context', 'totals', 'created_by']);   // v37 owner appended
   assert.deepEqual(cols(db, 'ask_messages'),
     ['id', 'thread_id', 'seq', 'role', 'text', 'blocks', 'status', 'reason', 'model', 'effort', 'usage', 'cost_usd', 'duration_ms', 'created_at']);
   // ALTER TABLE ADD COLUMN appends, so the v27 columns (#398) are LAST.

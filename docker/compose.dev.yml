@@ -1,0 +1,24 @@
+# docker/compose.dev.yml — hack on Worca itself inside the container (CONTRIBUTING.md).
+#
+#   cd docker
+#   docker compose -f compose.yml -f compose.dev.yml up            # server from ../ (this checkout)
+#   docker compose -f compose.yml -f compose.dev.yml run --rm worca npm test
+#
+# Bind-mounts the repository checkout over /app and runs the server from it,
+# so edits on the host are live in the container's Linux `claude`. node_modules
+# is a container-side tmpfs owned by the worca user (a named volume at a path
+# the image does not have would be created root-owned): the host's modules stay
+# untouched, and `npm ci` (about a second) runs on every start.
+
+services:
+  worca:
+    image: ghcr.io/sinishadjukic/worca:${WORCA_TAG:-dev}
+    working_dir: /app
+    volumes:
+      - ..:/app
+    tmpfs:
+      - /tmp:size=2g
+      - /app/node_modules:size=1g,uid=1000,gid=1000
+    environment:
+      WORCA_HOME: /worca
+    command: ["bash", "-c", "npm ci --no-audit --no-fund && exec node --disable-warning=ExperimentalWarning ui/server.mjs"]

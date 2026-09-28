@@ -311,13 +311,15 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
-      'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd']);
+    assert.deepEqual(Object.keys(j).sort(), ['app', 'askMaxBudgetUsd', 'askMaxTurns', 'askWeb', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'pipelineCostLimitUsd', 'projectsRoot', 'projectsRootDefault', 'root',
+      'schedule', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel']);
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');
     assert.deepEqual(j.titleModelEffective, { model: null, source: 'run', stale: null });
     assert.equal(j.hideBuiltinModels, false);
+    assert.deepEqual(j.memoryDefrag, { model: null, effort: null }, 'no defragment model stored -> the workflow default');
+    assert.equal(j.memoryDefragDefault, 'claude-sonnet-5');
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, defaultRoot(), 'what applies while it is blank');
@@ -350,8 +352,8 @@ test('REGRESSION (Ask Worca): an ask-only POST must not clear the root or the bu
     const cleared = await postApi({ askMaxTurns: '', askMaxBudgetUsd: '' });
     assert.equal(cleared.status, 200);
     const k = await getApi();
-    assert.equal(k.askMaxTurns, 40);
-    assert.equal(k.askMaxBudgetUsd, 2);
+    assert.equal(k.askMaxTurns, 400);
+    assert.equal(k.askMaxBudgetUsd, null, 'cleared = the default, no cap');
     assert.equal(k.root, home, 'still untouched');
   });
 });

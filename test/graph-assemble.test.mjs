@@ -55,7 +55,7 @@ test('cleanText: ANSI, control and format characters are stripped; whitespace co
   // that the terminal and the pause card print — cleaned before they get there.
   assert.throws(() => normalizeShape({ stages: [{ id: 'a\x1b[31m', agent: 'implementer' }, { id: 'a', agent: 'reviewer' }] }),
     (e) => e.issues.some((i) => i.code === 'DUP_STAGE_ID' && i.message.includes('"a"') && !i.message.includes('\x1b')));
-  assert.equal(normalizeShape({ stages: [{ agent: 'planner', model: ' claude-\x1b[31mopus-5 ' }] }).stages[0].tunables.model, 'claude-opus-5');
+  assert.equal(normalizeShape({ stages: [{ agent: 'planner', model: ' claude-\x1b[31mopus-5-5 ' }] }).stages[0].tunables.model, 'claude-opus-5-5');
 });
 
 test('parallel groups mint lettered member ids; nesting and tiny groups are refused', () => {
@@ -116,15 +116,15 @@ const wire = (t, fromNode, fromPort, toNode, toPort) => t.wires.find((w) => w.fr
 
 test('the prompt base shape assembles to the built-in Default graph (isomorphic), valid and laid out', () => {
   const { template, warnings, stageToNode, tunables } = assembleShape({
-    name: 'Prompt base', stages: [{ agent: 'clarify' }, { agent: 'planner', model: 'claude-opus-5', effort: 'high' }, { agent: 'refiner', selfLoop: true }, { agent: 'implementer' }, { agent: 'reviewer' }],
+    name: 'Prompt base', stages: [{ agent: 'clarify' }, { agent: 'planner', model: 'claude-opus-5-5', effort: 'high' }, { agent: 'refiner', selfLoop: true }, { agent: 'implementer' }, { agent: 'reviewer' }],
   }, { registry: REG });
   assert.ok(isomorphic(template, GRAPH_DEFAULT_WORKFLOW), 'topology equals wf_default');
   assert.deepEqual(validateGraph(template, PORTS).errors, []);
   assert.deepEqual(warnings, []);
   assert.deepEqual(template.nodes.map((n) => n.id), ['n_task', 'n_clarify', 'n_planner', 'n_refiner', 'n_implementer', 'n_reviewer', 'n_end']);
   assert.equal(stageToNode.get('s2'), 'n_planner');
-  assert.deepEqual(tunables, { n_planner: { model: 'claude-opus-5', effort: 'high' } });
-  assert.deepEqual(template.nodes.find((n) => n.id === 'n_planner').config, { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(tunables, { n_planner: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(template.nodes.find((n) => n.id === 'n_planner').config, { model: 'claude-opus-5-5', effort: 'high' });
   assert.ok(template.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)), 'autoLayout positioned every node');
   assert.ok(template.nodes.find((n) => n.id === 'n_planner').x > template.nodes.find((n) => n.id === 'n_clarify').x);
   assert.equal(template.version, 2);
@@ -258,8 +258,8 @@ test('ids, awaitAll and graph warnings: w1..wN in creation order, sanitised node
 });
 
 test('an already-normalized shape assembles with its tunables intact (the classifier hands over a normalized shape)', () => {
-  const normalized = normalizeShape({ stages: [{ agent: 'planner', model: 'claude-opus-5', effort: 'high' }, { agent: 'implementer', fanOut: true }, { agent: 'reviewer' }] });
+  const normalized = normalizeShape({ stages: [{ agent: 'planner', model: 'claude-opus-5-5', effort: 'high' }, { agent: 'implementer', fanOut: true }, { agent: 'reviewer' }] });
   const { tunables, template } = assembleShape(normalized, { registry: REG });
-  assert.deepEqual(tunables, { n_planner: { model: 'claude-opus-5', effort: 'high' }, n_implementer: { fanOut: true } });
-  assert.deepEqual(template.nodes.find((n) => n.id === 'n_planner').config, { model: 'claude-opus-5', effort: 'high' });
+  assert.deepEqual(tunables, { n_planner: { model: 'claude-opus-5-5', effort: 'high' }, n_implementer: { fanOut: true } });
+  assert.deepEqual(template.nodes.find((n) => n.id === 'n_planner').config, { model: 'claude-opus-5-5', effort: 'high' });
 });

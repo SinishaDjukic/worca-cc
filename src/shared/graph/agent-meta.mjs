@@ -4,6 +4,7 @@
 // and agent-gen's read-back check. Pure — shared code cannot import
 // claude-runner.mjs, so the mock-role vocabulary is INJECTED.
 import { PORT_TYPES, MAX_PORTS_PER_SIDE, PORT_ID_RE } from './constants.mjs';
+import { normalizeAskBlock } from '../forms/form-def.mjs';
 
 const AGENT_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 // PORT_ID_RE is P1's, NOT a local copy: spec §3 puts it in constants.mjs
@@ -16,6 +17,9 @@ const RESERVED_PORT_ID = 'await';
 const DOMAIN_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const COLORS = new Set(['green', 'peach', 'red', 'blue', 'violet', 'amber']);
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
+/** What an agent may write outside its output ports: 'code' (the worktree — implementer tool
+ *  set) or 'memory' (worca's memory mount only — Read/Write/Edit/Glob/Grep, no Bash). */
+const SIDE_EFFECTS = new Set(['code', 'memory']);
 const INPUT_AS = new Set(['file', 'answers', 'fix-review', 'worktree']);
 /** The port type each non-default `as` renderer requires. `file` is the default
  *  and is materialized on NON-VOID inputs only, which makes `worktree` the only
@@ -59,6 +63,21 @@ export function derivePortSummary(meta) {
 /** Pure validation for the store's 400 path. Silent by design — the load path warns. */
 export function validateMetaV2(raw, opts = {}) {
   return { errors: normalizeAgentMeta(raw, { ...opts, warn: () => {} }).errors };
+}
+
+/** money-saved design §5: `{ factor?: >=0, hours?: >=0 }`; anything else is dropped with a warning. */
+export function readHumanEffort(raw, warn = () => {}) {
+  if (raw === undefined) return null;
+  const ok = (v) => v === undefined || (typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !ok(raw.factor) || !ok(raw.hours)
+      || (raw.factor === undefined && raw.hours === undefined)) {
+    warn(`humanEffort must be { factor?: number >= 0, hours?: number >= 0 }; ignored: ${JSON.stringify(raw)}`);
+    return null;
+  }
+  const out = {};
+  if (raw.factor !== undefined) out.factor = raw.factor;
+  if (raw.hours !== undefined) out.hours = raw.hours;
+  return out;
 }
 
 /**
@@ -112,7 +131,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // Scope coercion mirrors color: anything but the explicit 'workspace-only'
   // marker is a normal project agent, so a typo fails safe to a VISIBLE agent.
   const scope = raw.scope === 'workspace-only' ? 'workspace-only' : 'project';
-  if (raw.sideEffect !== undefined && raw.sideEffect !== 'code') err('sideEffect must be "code" when present');
+  if (raw.sideEffect !== undefined && !SIDE_EFFECTS.has(raw.sideEffect)) err(`sideEffect must be one of ${[...SIDE_EFFECTS].join(', ')}`);
   if (raw.workspaceStrategy !== undefined && !WORKSPACE_STRATEGIES.has(raw.workspaceStrategy)) {
     err(`workspaceStrategy must be one of ${[...WORKSPACE_STRATEGIES].join(', ')}`);
   }
@@ -132,6 +151,19 @@ export function normalizeAgentMeta(raw, opts = {}) {
     const vocab = opts.mockWriterRoles instanceof Set ? opts.mockWriterRoles : null;
     if (!vocab || vocab.has(role)) mockRole = role || null;
     else warn(`[agent-registry] ${key || '<unkeyed>'}.mockRole: unknown mock role "${role}"; ignored (the generic mock chain applies)`);
+  }
+
+  // Sidecar ask forms (spec §3). Gate 1 lives in the shared forms core; a form
+  // that fails it is DROPPED, never fatal — the agent stays usable with generic
+  // questions (§5). The drop needs its OWN channel to the registry's diagnostics
+  // sink, because `warn`'s last line is how scanMetaLayer names the reason a
+  // WHOLE sidecar was skipped, and a dropped form skips nothing.
+  const askBlock = raw.ask === undefined ? null : normalizeAskBlock(raw.ask);
+  const onDropForm = typeof opts.onDropForm === 'function' ? opts.onDropForm : null;
+  for (const d of askBlock?.dropped || []) {
+    const message = `BAD_ASK_FORM: ${key || '<unkeyed>'}/${d.id}: ${d.reason}`;
+    if (onDropForm) onDropForm({ formId: d.id, reason: d.reason, message });
+    warn(`[agent-registry] ${message}`);
   }
 
   const asksQuestions = !!raw.asksQuestions;
@@ -164,7 +196,13 @@ export function normalizeAgentMeta(raw, opts = {}) {
   // an absent field means "the default", so a v2 entry stays diffable against
   // the sidecar that produced it.
   if (verdict) meta.verdict = verdict;
-  if (raw.sideEffect === 'code') meta.sideEffect = 'code';
+  // Absent when the agent declares no SURVIVING form, so a sidecar without forms
+  // round-trips byte-identically through the store (the fixed key set is what
+  // makes {...existing, ...raw} safe).
+  if (askBlock && Object.keys(askBlock.forms).length) meta.ask = { forms: askBlock.forms };
+  if (SIDE_EFFECTS.has(raw.sideEffect)) meta.sideEffect = raw.sideEffect;
+  const humanEffort = readHumanEffort(raw.humanEffort, (m) => warn(`[agent-meta] "${key || '<unkeyed>'}": ${m}`));
+  if (humanEffort) meta.humanEffort = humanEffort;
   if (mockRole) meta.mockRole = mockRole;
   if (raw.wantsRequest) meta.wantsRequest = true;
   if (raw.workspaceFanOut) meta.workspaceFanOut = true;
@@ -174,7 +212,7 @@ export function normalizeAgentMeta(raw, opts = {}) {
   return { errors, meta };
 }
 
-function readVerdict(raw, err) {
+export function readVerdict(raw, err) {
   if (raw === undefined) return null;
   const filename = raw && typeof raw === 'object' && typeof raw.filename === 'string' ? raw.filename.trim() : '';
   if (!filename) { err('verdict must be an object with a filename'); return null; }
@@ -205,7 +243,11 @@ function readPortHead(raw, side, seen, err) {
   return port;
 }
 
-function readInputs(raw, err, warn) {
+/**
+ * @param {{noPromptFields?:boolean}} [opts] scripts: `as`, `directive` and `expands`
+ *  are prompt-side and REFUSED; no default `as` is stamped either.
+ */
+export function readInputs(raw, err, warn, opts = {}) {
   if (!Array.isArray(raw)) { err('inputs must be an array'); return []; }
   if (raw.length > MAX_PORTS_PER_SIDE) err(`inputs: at most ${MAX_PORTS_PER_SIDE} ports per side (got ${raw.length})`);
   const seen = new Set();
@@ -224,6 +266,13 @@ function readInputs(raw, err, warn) {
     }
     port.required = required;
     if (loop) port.loop = true;
+    if (opts.noPromptFields) {
+      for (const field of ['as', 'directive', 'expands']) {
+        if (p[field] !== undefined) err(`inputs.${port.id}: ${field} is a prompt-side field — a script input does not take it`);
+      }
+      out.push(port);
+      continue;
+    }
     if (p.expands) {
       if (port.type !== 'json') err(`inputs.${port.id}: expands is only legal on json inputs`);
       else port.expands = true;
@@ -241,9 +290,13 @@ function readInputs(raw, err, warn) {
   return out;
 }
 
-function readOutputs(raw, hasVerdict, err) {
+/**
+ * @param {{allowEmptyOutputs?:boolean, who?:string}} [opts] scripts may declare zero
+ *  outputs (a pure side effect); `who` names the declarer in the `when` error.
+ */
+export function readOutputs(raw, hasVerdict, err, opts = {}) {
   if (!Array.isArray(raw)) { err('outputs must be an array'); return []; }
-  if (raw.length === 0) err('at least one output port is required');
+  if (raw.length === 0 && !opts.allowEmptyOutputs) err('at least one output port is required');
   if (raw.length > MAX_PORTS_PER_SIDE) err(`outputs: at most ${MAX_PORTS_PER_SIDE} ports per side (got ${raw.length})`);
   const seen = new Set();
   const out = [];
@@ -254,7 +307,7 @@ function readOutputs(raw, hasVerdict, err) {
     if (!OUTPUT_WHEN.has(when)) err(`outputs.${port.id}: when must be one of ${[...OUTPUT_WHEN].join(', ')}`);
     else {
       if (when !== 'always' && !hasVerdict) {
-        err(`outputs.${port.id}: when "${when}" requires the agent to declare verdict: { filename }`);
+        err(`outputs.${port.id}: when "${when}" requires the ${opts.who || 'agent'} to declare verdict: { filename }`);
       }
       port.when = when;
     }

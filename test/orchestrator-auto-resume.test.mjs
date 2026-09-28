@@ -101,6 +101,72 @@ test('a classifier failure pauses the run through the failure policy before any 
   assert.equal(readPipelineForResume(st.id).row.resume_point, null);
 });
 
+// A transient classifier failure (a provider 429, a dropped connection) is retried with
+// the shared recovery backoff; one that outlasts the retries runs the default workflow
+// instead of parking the run before any work started. A NON-transient failure (no
+// usable reply, a timeout) keeps the D17 error-pause above.
+const transient = (cls, msg) => { const e = new ClassifierError('CLASSIFIER_FAILED', msg, [], { costUsd: 0.001, errorClass: cls }); return e; };
+
+test('a rate-limited classifier call is retried and the run proceeds on its shape', { timeout: 120000 }, async () => {
+  process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
+  try {
+    const dir = gitDir('auto-retry');
+    let calls = 0;
+    const logs = [];
+    const orch = orchFor(dir, { classify: async (input) => { calls++; if (calls < 3) throw transient('rate_limit', 'claude exited with code 1: API Error: 429'); return shapeOf(QUICK)(input); } });
+    orch.on('log', (l) => logs.push(l));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    assert.equal(calls, 3);
+    assert.equal(logs.filter((l) => /auto: classifier rate_limit — retrying in/.test(l.text || '')).length, 2);
+    const st = orch.getState();
+    assert.notEqual(st.stepper.auto.via, 'fallback', 'the retried classifier decided the workflow');
+    const billed = listSubAgents(st.id).find((s) => s.id === 'auto-classify-1');
+    assert.equal(billed?.costUsd, 0.012, 'the failed attempts are billed with the round');
+  } finally { delete process.env.WORCA_RECOVERY_BACKOFF_MS; }
+});
+
+const POOL_429 = 'claude exited with code 1: API Error: Request rejected (429) · openai: rate limited (429)';
+
+test('human out of the loop: a classifier that stays rate-limited falls back to the default recipe WITHOUT Clarify; the run completes', { timeout: 120000 }, async () => {
+  process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
+  try {
+    const dir = gitDir('auto-fallback');
+    let calls = 0;
+    const logs = [];
+    const orch = orchFor(dir, { classify: async () => { calls++; throw transient('rate_limit', POOL_429); } });
+    orch.on('log', (l) => logs.push(l));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    assert.equal(calls, 4, '1 call + 3 retries');
+    const st = orch.getState();
+    assert.equal(st.stepper.auto.status, 'decided');
+    assert.equal(st.stepper.auto.via, 'fallback');
+    assert.match(st.stepper.auto.reason, /^rate_limit: .*429/);
+    const keys = st.stepper.graph.nodes.filter((n) => n.kind === 'agent').map((n) => n.key);
+    assert.deepEqual(keys, ['planner', 'refiner', 'implementer', 'reviewer'], 'spec D3: no clarifier when nobody is in the loop');
+    const warn = logs.find((l) => /auto: the workflow classifier failed \(rate_limit\).*running the default workflow/.test(l.text || ''));
+    assert.ok(warn, 'the fallback names the real cause in the run log');
+    assert.match(warn.text, /429/);
+  } finally { delete process.env.WORCA_RECOVERY_BACKOFF_MS; }
+});
+
+test('human in the loop: the fallback adopts the built-in Default (wf_default) without a proposal', { timeout: 120000 }, async () => {
+  process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
+  try {
+    const dir = gitDir('auto-fallback-hil');
+    const orch = orchFor(dir, { humanInLoop: true, classify: async () => { throw transient('network', 'request failed, reason: ECONNRESET'); } });
+    const seen = answerer(orch, () => ({ decision: 'accept' }));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    assert.equal(seen.filter((q) => q.kind === 'workflow').length, 0, 'no proposal to accept: the fallback is not a classifier answer');
+    const st = orch.getState();
+    assert.equal(st.stepper.auto.via, 'fallback');
+    assert.equal(st.stepper.auto.saved, 'reused');
+    assert.equal(st.stepper.auto.workflowId, 'wf_default');
+  } finally { delete process.env.WORCA_RECOVERY_BACKOFF_MS; }
+});
+
 test('two unassemblable shapes pause the run; the revise feedback survives the pause and resume', { timeout: 120000 }, async () => {
   const dir = gitDir('auto-shape');
   let n = 0;

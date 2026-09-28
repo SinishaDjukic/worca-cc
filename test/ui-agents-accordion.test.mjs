@@ -474,9 +474,12 @@ test('Advanced holds only the set-and-forget settings; the often-used fields are
   const details = doc.querySelector('#advanced-config');
   assert.ok(details, 'missing the Advanced disclosure');
   assert.equal(details.open, false, 'Advanced must start collapsed');
-  for (const id of ['agents-config', 'guardrailsSelect', 'mock']) {
+  for (const id of ['agents-config', 'guardrailsSelect']) {
     assert.ok(details.querySelector(`#${id}`), `#${id} must live inside Advanced`);
   }
+  // Mock mode left Advanced (docs/ui-levels.md): onboarding sends first-time users to it, and in
+  // Simple mode the whole disclosure is hidden. It sits beside Start run instead.
+  assert.ok(!details.contains(doc.querySelector('#mock-switch')), 'Mock mode must NOT be inside Advanced');
   // Title, the branch pair and extra files are edited often enough to earn a
   // place in the main column — burying them behind a disclosure was the bug.
   for (const id of ['title', 'sourceBranch', 'featureBranch', 'extras']) {

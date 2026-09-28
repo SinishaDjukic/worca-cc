@@ -283,7 +283,10 @@ export async function retryWriteback(pipelineId) {
       try {
         const meta = readStoreMeta(row.project_key);
         if (meta?.path && (await hasGh())) {
-          prUrl = (await findPrForBranch({ projectDir: meta.path, head: branch }))?.url || null;
+          // The persisted pr_url (SELECT * above) resolves a cross-repo PR by URL; the
+          // branch search stays the fallback for rows that never recorded one.
+          const persisted = row.pr_url || null;
+          prUrl = (await findPrForBranch({ projectDir: meta.path, head: branch, prUrl: persisted }))?.url || null;
         }
       } catch { prUrl = null; }
     }

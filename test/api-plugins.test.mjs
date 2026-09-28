@@ -258,3 +258,37 @@ test('DELETE /api/plugins/:name is guarded when a user workflow references a plu
   assert.equal((await get('/api/plugins/local-src/config')).status, 404, 'gone after uninstall');
   assert.equal((await del('/api/plugins/nope')).status, 404);
 });
+
+test('GET /api/plugins stamps pythonMissing on every row', async () => {
+  const { plugins } = await (await get('/api/plugins')).json();
+  for (const p of plugins) assert.equal(typeof p.pythonMissing, 'boolean');
+});
+
+test('GET /api/plugins: a plugin shipping a python script is flagged when the probe fails, and only that plugin', async () => {
+  const { linkPlugin } = await import('../src/core/plugin-store.mjs');
+  const { resetPythonProbe } = await import('../src/core/graph/python-probe.mjs');
+  const dev = await mkdtemp(join(tmpdir(), 'worca-cc-api-pyplugin-'));
+  // Removed when the FILE ends, not here: the plugin stays linked, and a linked dir
+  // that vanished mid-file would turn the row `broken` for any test added below.
+  after(() => rm(dev, { recursive: true, force: true, maxRetries: 3 }));
+  await mkdir(join(dev, 'scripts'), { recursive: true });
+  await writeFile(join(dev, 'worca-cc-plugin.json'), JSON.stringify({ name: 'py-notice-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } }));
+  await writeFile(join(dev, 'scripts', 'pyNotice.py'), "def main(api):\n    return { 'summary': 'ok' }\n");
+  await writeFile(join(dev, 'scripts', 'pyNotice.meta.json'), JSON.stringify({
+    metaVersion: 2, key: 'pyNotice', displayName: 'Py Notice', runtime: 'python', file: 'pyNotice.py', inputs: [], outputs: [],
+  }));
+  await linkPlugin('py-notice-plugin', dev);
+  const prev = process.env.WORCA_PYTHON;
+  process.env.WORCA_PYTHON = join(dev, 'no-such-python');
+  resetPythonProbe();                                    // the bare probe is cached 60 s per process
+  try {
+    const { plugins } = await (await get('/api/plugins')).json();
+    const row = plugins.find((p) => p.name === 'py-notice-plugin');
+    assert.deepEqual(row.scriptRuntimes, { python: 1 });
+    assert.equal(row.pythonMissing, true);
+    for (const p of plugins.filter((x) => x.name !== 'py-notice-plugin')) assert.equal(p.pythonMissing, false, p.name);
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_PYTHON; else process.env.WORCA_PYTHON = prev;
+    resetPythonProbe();
+  }
+});

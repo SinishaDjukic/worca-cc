@@ -50,6 +50,7 @@ export function allPluginModels() {
         plugin: name, id: m.id, label: m.label, efforts: [...m.efforts],
         ...(m.env ? { env: m.env } : {}),
         ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing (config.mjs modelCostConfig)
+        ...(m.upstream ? { upstream: m.upstream } : {}),   // bridged entry (bridge/registry.mjs)
         secrets: [...new Set(secrets)],
       });
     }

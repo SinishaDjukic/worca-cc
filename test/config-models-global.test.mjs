@@ -17,8 +17,8 @@ import {
   resolveRunConfig, readConfig, globalModelRefs, removeGlobalModelAndRefs,
   PREDEFINED_MODELS,
 } from '../src/core/config.mjs';
-import { addGlobalModel, listGlobalModels } from '../src/core/settings.mjs';
-import { EFFORTS, TIER_MODEL_ENV_KEYS } from '../src/core/model-env.mjs';
+import { addGlobalModel, listGlobalModels, memoryDefragModel, setMemoryDefragModel } from '../src/core/settings.mjs';
+import { EFFORTS, TIER_MODEL_ENV_KEYS, PROVIDER_MODE_ENV_KEYS } from '../src/core/model-env.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 
@@ -84,7 +84,7 @@ test('catalog: a global entry SHADOWS its predefined twin (id casing kept); lega
   assert.equal(models.filter((m) => m.id.toLowerCase() === 'glm-4.7').length, 1);
   assert.equal(models.find((m) => m.id.toLowerCase() === 'glm-4.7').custom, 'global');
   // Un-shadowed predefined entries are unchanged.
-  const opus = models.find((m) => m.id === 'claude-opus-5');
+  const opus = models.find((m) => m.id === 'claude-opus-5-5');
   assert.deepEqual(opus, { ...PREDEFINED_MODELS[0], custom: false, hasEnv: false, routed: false });
 });
 
@@ -96,6 +96,7 @@ test('addCustomModel rejects an id that already exists globally', async () => {
 
 test('resolveModelEnv: global env only, ${VAR} expanded, case-insensitive id, undefined otherwise', async () => {
   const p = await freshProject();
+  const modesOff = Object.fromEntries(PROVIDER_MODE_ENV_KEYS.map((k) => [k, '0']));
   await addGlobalModel({ id: 'glm-4.7', env: { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: '${GM_TEST_TOKEN}' } });
   await addGlobalModel({ id: 'plain-model' });
   await addCustomModel(p, { id: 'proj-model' });
@@ -103,17 +104,18 @@ test('resolveModelEnv: global env only, ${VAR} expanded, case-insensitive id, un
   process.env.GM_TEST_TOKEN = 'sk-42';
   try {
     // An endpoint-routed entry also carries the CLI tier keys = its own id (#422,
-    // test/model-env-tier.test.mjs) — the canonical spelling, not the lookup's.
+    // test/model-env-tier.test.mjs) — the canonical spelling, not the lookup's —
+    // and the CLI's cloud transports turned off.
     const tier = Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7']));
-    assert.deepEqual(resolveModelEnv('GLM-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-42', ...tier });
+    assert.deepEqual(resolveModelEnv('GLM-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-42', ...tier, ...modesOff });
   } finally {
     delete process.env.GM_TEST_TOKEN;
   }
   // Unset ref -> that key dropped, the rest survives.
-  assert.deepEqual(resolveModelEnv('glm-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ...Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7'])) });
+  assert.deepEqual(resolveModelEnv('glm-4.7'), { ANTHROPIC_BASE_URL: 'https://x', ...Object.fromEntries(TIER_MODEL_ENV_KEYS.map((k) => [k, 'glm-4.7'])), ...modesOff });
   assert.equal(resolveModelEnv('plain-model'), undefined);   // global, no env
   assert.equal(resolveModelEnv('proj-model'), undefined);    // legacy: never env
-  assert.equal(resolveModelEnv('claude-opus-5'), undefined); // predefined, unshadowed
+  assert.equal(resolveModelEnv('claude-opus-5-5'), undefined); // predefined, unshadowed
   assert.equal(resolveModelEnv(''), undefined);
 });
 
@@ -210,4 +212,33 @@ test('the built-in catalog offers Fable 5.1 and no longer Fable 5', () => {
   assert.deepEqual(fable, { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'] });
   assert.equal(PREDEFINED_MODELS.some((m) => m.id === 'claude-fable-5'), false,
     'the retired id is gone from the catalog (db.mjs V26 moves the stored pins)');
+});
+
+test('the built-in catalog offers Opus 5.5 and Opus 5 side by side, Opus 5.5 first', () => {
+  const opus55 = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5-5');
+  assert.deepEqual(opus55, { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  const opus5 = PREDEFINED_MODELS.find((m) => m.id === 'claude-opus-5');
+  assert.deepEqual(opus5, { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'] });
+  assert.deepEqual(PREDEFINED_MODELS.slice(0, 2).map((m) => m.id), ['claude-opus-5-5', 'claude-opus-5'],
+    'Opus 5.5 stays the first (default) entry; Opus 5 sits right after it');
+});
+
+// Settings › Memory: the defragment model is a GLOBAL ref — listed by the refs preview and cleared
+// with the entry (its effort with it); a predefined shadow keeps resolving, so it stays.
+test('globalModelRefs / removeGlobalModelAndRefs: the Memory defragment model is listed and cleared with the entry', async () => {
+  await addGlobalModel({ id: 'glm-4.7', efforts: ['medium', 'high'] });
+  await setMemoryDefragModel({ model: 'glm-4.7', effort: 'high' });
+  assert.deepEqual(globalModelRefs('GLM-4.7'), { predefinedShadow: false, steps: [], nodes: [], memoryDefrag: true });
+  assert.equal('memoryDefrag' in globalModelRefs('other-model'), false, 'another id: no key at all');
+  const result = await removeGlobalModelAndRefs('glm-4.7');
+  assert.deepEqual(result, { clearedSteps: 0, clearedNodes: 0, predefinedShadow: false, clearedMemoryDefrag: true });
+  assert.deepEqual(memoryDefragModel(), { model: null, effort: null }, 'the setting is gone with its effort');
+});
+
+test('removing a predefined SHADOW keeps the Memory defragment model (it still resolves to the built-in)', async () => {
+  await addGlobalModel({ id: 'claude-sonnet-4-6', label: 'Proxied', env: { ANTHROPIC_BASE_URL: 'https://p' } });
+  await setMemoryDefragModel({ model: 'claude-sonnet-4-6', effort: 'high' });
+  assert.deepEqual(globalModelRefs('claude-sonnet-4-6'), { predefinedShadow: true, steps: [], nodes: [] });
+  assert.deepEqual(await removeGlobalModelAndRefs('claude-sonnet-4-6'), { clearedSteps: 0, clearedNodes: 0, predefinedShadow: true });
+  assert.deepEqual(memoryDefragModel(), { model: 'claude-sonnet-4-6', effort: 'high' });
 });

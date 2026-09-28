@@ -3,6 +3,7 @@ import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv, catalogHasModel } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
+import { withRecoveryRetry } from './recovery-backoff.mjs';
 
 // The last-resort title model: the BUILT-IN Haiku id (config.mjs PREDEFINED_MODELS),
 // not the dated API id it used to be — a global entry that shadows the built-in
@@ -128,7 +129,10 @@ export async function generateTitle(prompt, opts = {}) {
     try { opts.onError({ model, error }); } catch { /* a logging sink must never fail the caller */ }
   };
   try {
-    const { text: out } = await runClaude({
+    // A provider 429 (a shared free pool) is retried with the recovery backoff;
+    // nothing else is — a title is cosmetic, and an unspawnable CLI (stamped
+    // network) would only make the run wait for it.
+    const { text: out } = await withRecoveryRetry(() => runClaude({
       cwd: opts.cwd || process.cwd(),
       systemPrompt: SYSTEM,
       prompt: `Write the title for this task:\n\n${text.slice(0, 4000)}`,
@@ -141,6 +145,7 @@ export async function generateTitle(prompt, opts = {}) {
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
+      spawnKind: 'aux',            // credential broker: a short-lived token (broker-client.mjs)
       // Title generation runs DURING a pipeline run, so it must honor the same
       // guardrails as the run itself. All three are undefined when absent, and
       // runClaude treats undefined as "not passed" — existing callers are unchanged.
@@ -161,7 +166,7 @@ export async function generateTitle(prompt, opts = {}) {
       disableSlashCommands: opts.disableSlashCommands,
       mcpConfigPath: opts.mcpConfigPath,
       onEvent: () => {},
-    });
+    }), { classes: ['rate_limit'], signal: opts.signal });
     const title = sanitizeTitle(out);
     if (!title) { report(new Error('the model returned an empty reply')); return ''; }
     if (isRefusalTitle(title)) { report(new Error(`the model did not write a title: ${title.slice(0, 120)}`)); return ''; }

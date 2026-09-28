@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  TEMPLATE_VERSION, KINDS, FLOW_KINDS, PORT_TYPES, AWAIT_PORT, TASK_PORTS, END_PORTS,
+  TEMPLATE_VERSION, KINDS, FLOW_KINDS, KEYED_KINDS, PORT_TYPES, AWAIT_PORT, TASK_PORTS, END_PORTS,
   gatePorts, NODE_ID_RE, WIRE_ID_RE, PORT_ID_RE, DEFAULT_MAX_CYCLES, MAX_PORTS_PER_SIDE, LIMITS,
   BOOKEND_EXECUTION_IDS, FLOW_LABEL,
 } from '../src/shared/graph/constants.mjs';
@@ -11,11 +11,14 @@ test('scalars and kind sets', () => {
   assert.equal(TEMPLATE_VERSION, 2);
   assert.equal(DEFAULT_MAX_CYCLES, 3);
   assert.equal(MAX_PORTS_PER_SIDE, 8);
-  assert.deepEqual([...KINDS], ['agent', 'task', 'end', 'and', 'or', 'combine']);
+  assert.deepEqual([...KINDS], ['agent', 'script', 'task', 'end', 'and', 'or', 'combine']);
   assert.deepEqual([...FLOW_KINDS], ['task', 'end', 'and', 'or', 'combine']);
   assert.deepEqual([...PORT_TYPES], ['md', 'json', 'void', 'any']);
   assert.deepEqual(FLOW_KINDS.filter((k) => !KINDS.includes(k)), [], 'flow kinds are kinds');
-  assert.deepEqual(KINDS.filter((k) => !FLOW_KINDS.includes(k)), ['agent']);
+  assert.deepEqual(KINDS.filter((k) => !FLOW_KINDS.includes(k)), ['agent', 'script']);
+  assert.deepEqual([...KEYED_KINDS], ['agent', 'script'], 'the kinds that carry a registry key');
+  assert.deepEqual(KEYED_KINDS.filter((k) => FLOW_KINDS.includes(k)), [], 'a keyed kind is never a flow kind');
+  assert.ok(Object.isFrozen(KEYED_KINDS));
 });
 
 test('every exported table is deep-frozen (a shared constant no consumer can mutate)', () => {

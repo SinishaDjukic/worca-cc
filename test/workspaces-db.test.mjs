@@ -170,3 +170,78 @@ test('deleteWorkspace rejects a path-traversal id and deletes nothing', async ()
   }
   assert.ok(await readWorkspace(ws.id), 'the real workspace survives crafted ids');
 });
+
+// ---- p1t4: workspaces.metricsProject (team-metrics home) ----
+
+test('createWorkspace({metricsProject}) stores it and returns it on the create response', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Homed', projectPaths: [a, b], metricsProject: a });
+  assert.equal(ws.metricsProject, a, 'returned by create, not only by a later read');
+  assert.equal((await readWorkspace(ws.id)).metricsProject, a, 'persisted');
+});
+
+test('createWorkspace defaults metricsProject to null when omitted', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Homeless', projectPaths: [a, b] });
+  assert.equal(ws.metricsProject, null);
+  assert.equal((await readWorkspace(ws.id)).metricsProject, null);
+});
+
+test('createWorkspace rejects a metricsProject that is not a member path', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const outsider = await freshRepo();
+  await assert.rejects(
+    () => createWorkspace({ name: 'Bad Home', projectPaths: [a, b], metricsProject: outsider }),
+    (e) => e.code === 'BAD_REQUEST',
+  );
+});
+
+test('updateWorkspace({metricsProject}) round-trips via readWorkspace and returns the new value', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Rehome', projectPaths: [a, b] });
+  const up = await updateWorkspace(ws.id, { metricsProject: b });
+  assert.equal(up.metricsProject, b, 'returned by update');
+  assert.equal((await readWorkspace(ws.id)).metricsProject, b, 'persisted');
+});
+
+test('updateWorkspace rejects a non-member metricsProject with BAD_REQUEST', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const outsider = await freshRepo();
+  const ws = await createWorkspace({ name: 'Guarded', projectPaths: [a, b] });
+  await assert.rejects(
+    () => updateWorkspace(ws.id, { metricsProject: outsider }),
+    (e) => e.code === 'BAD_REQUEST',
+  );
+});
+
+test('updateWorkspace rejects a blank-string metricsProject with BAD_REQUEST, not a 500', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Blanked', projectPaths: [a, b] });
+  await assert.rejects(
+    () => updateWorkspace(ws.id, { metricsProject: '   ' }),
+    (e) => e.code === 'BAD_REQUEST',
+  );
+});
+
+test('updateWorkspace({metricsProject: null}) clears a previously-set home', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Clearable', projectPaths: [a, b], metricsProject: a });
+  const up = await updateWorkspace(ws.id, { metricsProject: null });
+  assert.equal(up.metricsProject, null);
+  assert.equal((await readWorkspace(ws.id)).metricsProject, null);
+});
+
+test('updateWorkspace omitting metricsProject leaves the existing home untouched', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = await createWorkspace({ name: 'Untouched', projectPaths: [a, b], metricsProject: a });
+  const up = await updateWorkspace(ws.id, { description: 'new desc' });
+  assert.equal(up.metricsProject, a, 'home survives an update that does not mention it');
+});

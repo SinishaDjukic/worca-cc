@@ -122,7 +122,7 @@ test('createAgent 400s with the meta v2 rule text, one rule per broken field', a
       /expands is only legal on json inputs/],
     [{ ...META, displayName: 'As Void', inputs: [{ id: 'plan', type: 'void', as: 'file' }] },
       /as "file" requires a non-void port \(got void\)/],
-    [{ ...META, displayName: 'Side', sideEffect: 'yes' }, /sideEffect must be "code" when present/],
+    [{ ...META, displayName: 'Side', sideEffect: 'yes' }, /sideEffect must be one of code, memory/],
     [{ ...META, displayName: 'Strategy', workspaceStrategy: 'wander' }, /workspaceStrategy must be one of explore, task, review/],
     [{ ...META, displayName: 'Variant', workspaceVariantOf: 'reviewer' }, /workspaceVariantOf requires scope "workspace-only"/],
   ];
@@ -180,6 +180,12 @@ test('a complete v2 PUT CLEARS the optional capability surface', async () => {
   const partial = await updateAgent('docsWriter', { meta: { description: 'partial edit' } });
   assert.equal(partial.meta.sideEffect, 'code', 'a partial meta save never clears the capabilities');
   assert.equal(partial.meta.description, 'partial edit');
+});
+
+test('sideEffect "memory" round-trips through a v2 PUT', async () => {
+  const on = await updateAgent('docsWriter', { meta: { ...META, sideEffect: 'memory' } });
+  assert.equal(on.meta.sideEffect, 'memory');
+  assert.equal((await readAgent('docsWriter')).meta.sideEffect, 'memory');
 });
 
 test('an unknown mockRole is a warning, not a 400', async () => {

@@ -58,6 +58,30 @@ export function withTierModelEnv(env, modelId) {
   return out;
 }
 
+// The CLI's cloud transports. Any one truthy makes the CLI ignore
+// ANTHROPIC_BASE_URL and talk to that cloud instead (Vertex: ANTHROPIC_VERTEX_BASE_URL),
+// so a shell that exports CLAUDE_CODE_USE_VERTEX=1 for its first-party Claude
+// sent every bridged or endpoint-routed model there — an id the cloud does not
+// know (`unrecognized_model`, exit 1). The model env merges over the ambient env
+// at spawn, so an explicit '0' (the CLI reads it as false) wins.
+export const PROVIDER_MODE_ENV_KEYS = Object.freeze([
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_FOUNDRY',
+]);
+
+/**
+ * An endpoint-routed env with every cloud transport the entry left unset
+ * turned off. Pure: a non-routed env (no ANTHROPIC_BASE_URL) comes back
+ * untouched and an explicit key in the env is never overwritten.
+ * @param {Record<string,string>|undefined} env  a PREPARED model env
+ * @returns {Record<string,string>|undefined}
+ */
+export function withProviderModesOff(env) {
+  if (!env || typeof env !== 'object' || !('ANTHROPIC_BASE_URL' in env)) return env;
+  const out = { ...env };
+  for (const k of PROVIDER_MODE_ENV_KEYS) if (!(k in out)) out[k] = '0';
+  return out;
+}
+
 // Env keys a model entry may NOT set (§4.4): process fundamentals and worca's
 // own runtime knobs, any of which injection could otherwise subvert (mock
 // mode, the claude binary path, the effort flag name). Everything else —
@@ -285,3 +309,240 @@ export function subagentModelIssue(v) {
   if (v == null || v === '' || isSubagentModelValue(v)) return '';
   return `unknown sub-agent model ${JSON.stringify(String(v))}`;
 }
+
+// ── model bridge: `upstream` on a catalog entry (model-bridge-design.md §6.1) ──
+// Lives in this zero-import leaf for the same reason `cost` does: the user
+// catalog (settings.mjs) and a plugin manifest (plugin-manifest.mjs) validate
+// the same shape against one rule, and neither may import the other.
+//
+//   { provider: 'copilot'|'openai'|'anthropic', api: 'anthropic'|'openai-chat'|'openai-responses',
+//     model: '<upstream id>', baseUrl?, apiKey?, headers?, capabilities? }
+//
+// A bridged entry is dispatched through worca's in-process loopback bridge
+// (src/core/bridge/): resolveModelEnv synthesizes ANTHROPIC_BASE_URL /
+// ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL itself, so those keys — and
+// ANTHROPIC_API_KEY, which would make the CLI prefer a first-party key — may
+// not also appear in the entry's own `env` map.
+
+export const UPSTREAM_PROVIDERS = Object.freeze(['copilot', 'openai', 'anthropic']);
+export const UPSTREAM_APIS = Object.freeze(['anthropic', 'openai-chat', 'openai-responses']);
+/** Which wire protocols each provider can be driven through. */
+export const PROVIDER_APIS = Object.freeze({
+  copilot: Object.freeze(['anthropic', 'openai-chat', 'openai-responses']),
+  openai: Object.freeze(['openai-chat', 'openai-responses']),
+  anthropic: Object.freeze(['anthropic']),
+});
+/** The wire protocols the bridge TRANSLATES to — everything but the Anthropic passthrough. */
+export const TRANSLATED_APIS = Object.freeze(['openai-chat', 'openai-responses']);
+/** Whether `api` is translated by the bridge (no server tools, no thinking passthrough). */
+export function isTranslatedApi(api) { return TRANSLATED_APIS.includes(api); }
+/** Env keys the bridge owns; rejected in an `env` map beside `upstream`. */
+export const BRIDGE_ROUTING_KEYS = Object.freeze([
+  'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+]);
+/** Boolean capability flags an entry may pin (model-bridge-design.md §5.6). */
+export const CAPABILITY_FLAGS = Object.freeze(['toolCalls', 'vision', 'reasoning']);
+/** Numeric capability limits an entry may pin. */
+export const CAPABILITY_LIMITS = Object.freeze(['maxPromptTokens', 'maxOutputTokens']);
+/** Reasoning-effort levels an upstream may list, lowest first (capabilities.reasoningEfforts). */
+export const REASONING_EFFORT_LEVELS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+/** List-valued capabilities an entry may pin. */
+export const CAPABILITY_LISTS = Object.freeze(['reasoningEfforts']);
+const FORBIDDEN_UPSTREAM_HEADERS = new Set(['authorization', 'host', 'content-length', 'content-type', 'transfer-encoding']);
+const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,80}$/;
+
+/** Validate a `capabilities` map; returns the normalized map or undefined. Throws. */
+export function assertModelCapabilities(caps) {
+  if (caps === undefined || caps === null) return undefined;
+  if (typeof caps !== 'object' || Array.isArray(caps)) throw new Error('upstream.capabilities must be an object');
+  const out = {};
+  for (const [k, v] of Object.entries(caps)) {
+    if (CAPABILITY_FLAGS.includes(k)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v !== 'boolean') throw new Error(`upstream.capabilities.${k} must be true or false`);
+      out[k] = v;
+    } else if (CAPABILITY_LIMITS.includes(k)) {
+      if (v === null || v === undefined || v === '') continue;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0) throw new Error(`upstream.capabilities.${k} must be a positive integer`);
+      out[k] = n;
+    } else if (CAPABILITY_LISTS.includes(k)) {
+      if (v === null || v === undefined) continue;
+      if (!Array.isArray(v)) throw new Error(`upstream.capabilities.${k} must be an array of effort levels`);
+      for (const e of v) {
+        if (!REASONING_EFFORT_LEVELS.includes(e)) throw new Error(`upstream.capabilities.${k}: unknown level ${JSON.stringify(e)} — allowed: ${REASONING_EFFORT_LEVELS.join(', ')}`);
+      }
+      const levels = REASONING_EFFORT_LEVELS.filter((e) => v.includes(e));
+      if (levels.length) out[k] = levels;
+    } else {
+      throw new Error(`unknown upstream.capabilities key ${JSON.stringify(k)} — allowed: ${[...CAPABILITY_FLAGS, ...CAPABILITY_LIMITS, ...CAPABILITY_LISTS].join(', ')}`);
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Whether `v` is an acceptable http(s) base URL with no query or fragment. */
+export function isUpstreamBaseUrl(v) {
+  if (typeof v !== 'string' || !v.trim()) return false;
+  let u;
+  try { u = new URL(v.trim()); } catch { return false; }
+  return (u.protocol === 'http:' || u.protocol === 'https:') && !u.search && !u.hash;
+}
+
+/**
+ * Whether an OpenAI-compatible base URL points at this machine or a private
+ * network — llama.cpp, Ollama, LM Studio, a LAN vLLM — which typically take no
+ * API key. The bridge then treats the key as optional instead of refusing the
+ * model as "needs API key".
+ */
+export function isLocalBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  const host = new URL(v.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host) || host.startsWith('fe80:')) return true;
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31);
+}
+
+/**
+ * Whether a base URL is OpenRouter's (openrouter.ai or a subdomain). The
+ * bridge then speaks OpenRouter's dialect of chat completions: usage
+ * accounting, unified `reasoning`, provider routing and attribution headers.
+ */
+export function isOpenRouterBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  const host = new URL(v.trim()).hostname.toLowerCase();
+  return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+}
+
+/** OpenRouter's provider sort orders (provider routing). */
+export const OPENROUTER_SORTS = Object.freeze(['price', 'throughput', 'latency']);
+
+/** A list of non-empty trimmed strings, or a throw naming the field. */
+function stringList(v, field) {
+  if (!Array.isArray(v)) throw new Error(`${field} must be an array of strings`);
+  const out = [];
+  for (const s of v) {
+    if (typeof s !== 'string') throw new Error(`${field} must be an array of strings`);
+    if (s.trim()) out.push(s.trim());
+  }
+  return out;
+}
+
+/**
+ * Validate an `upstream.openrouter` block — OpenRouter's request options,
+ * sent only when the entry's base URL is OpenRouter's:
+ * `{ models?: string[], provider?: { order?: string[], allow_fallbacks?: boolean, sort?: 'price'|'throughput'|'latency' } }`.
+ * `models` is the fallback list tried after the entry's own model. Returns the
+ * normalized block, or undefined when nothing is set. Throws.
+ */
+export function assertOpenRouterOptions(o) {
+  if (o === undefined || o === null) return undefined;
+  if (typeof o !== 'object' || Array.isArray(o)) throw new Error('upstream.openrouter must be an object');
+  const out = {};
+  for (const k of Object.keys(o)) {
+    if (k !== 'models' && k !== 'provider') throw new Error(`unknown upstream.openrouter key ${JSON.stringify(k)} — allowed: models, provider`);
+  }
+  if (o.models !== undefined && o.models !== null) {
+    const models = stringList(o.models, 'upstream.openrouter.models');
+    if (models.length) out.models = models;
+  }
+  const p = o.provider;
+  if (p !== undefined && p !== null) {
+    if (typeof p !== 'object' || Array.isArray(p)) throw new Error('upstream.openrouter.provider must be an object');
+    const provider = {};
+    for (const k of Object.keys(p)) {
+      if (!['order', 'allow_fallbacks', 'sort'].includes(k)) throw new Error(`unknown upstream.openrouter.provider key ${JSON.stringify(k)} — allowed: order, allow_fallbacks, sort`);
+    }
+    if (p.order !== undefined && p.order !== null) {
+      const order = stringList(p.order, 'upstream.openrouter.provider.order');
+      if (order.length) provider.order = order;
+    }
+    if (p.allow_fallbacks !== undefined && p.allow_fallbacks !== null) {
+      if (typeof p.allow_fallbacks !== 'boolean') throw new Error('upstream.openrouter.provider.allow_fallbacks must be true or false');
+      provider.allow_fallbacks = p.allow_fallbacks;
+    }
+    if (p.sort !== undefined && p.sort !== null && p.sort !== '') {
+      if (!OPENROUTER_SORTS.includes(p.sort)) throw new Error(`upstream.openrouter.provider.sort must be one of ${OPENROUTER_SORTS.join(' | ')}`);
+      provider.sort = p.sort;
+    }
+    if (Object.keys(provider).length) out.provider = provider;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * Validate a model `upstream` block. Returns the normalized shape or undefined
+ * (for null/undefined); THROWS on malformed input with a message naming the
+ * field. Secrets (`apiKey`) are literal strings or whole-value `${VAR}` refs.
+ * @param {*} upstream
+ * @returns {{provider:string, api:string, model:string, baseUrl?:string, apiKey?:string, headers?:Record<string,string>, capabilities?:object}|undefined}
+ * @throws {Error}
+ */
+export function assertModelUpstream(upstream) {
+  if (upstream === undefined || upstream === null) return undefined;
+  if (typeof upstream !== 'object' || Array.isArray(upstream)) throw new Error('upstream must be an object');
+  const provider = typeof upstream.provider === 'string' ? upstream.provider.trim() : '';
+  if (!UPSTREAM_PROVIDERS.includes(provider)) {
+    throw new Error(`upstream.provider must be one of ${UPSTREAM_PROVIDERS.join(' | ')}`);
+  }
+  const api = typeof upstream.api === 'string' ? upstream.api.trim() : '';
+  if (!UPSTREAM_APIS.includes(api)) throw new Error(`upstream.api must be one of ${UPSTREAM_APIS.join(' | ')}`);
+  if (!PROVIDER_APIS[provider].includes(api)) {
+    throw new Error(`provider ${provider} cannot be driven through api ${api} — allowed: ${PROVIDER_APIS[provider].join(' | ')}`);
+  }
+  const model = typeof upstream.model === 'string' ? upstream.model.trim() : '';
+  if (!model) throw new Error('upstream.model must be a non-empty string (the id the endpoint expects)');
+  const out = { provider, api, model };
+  if (upstream.baseUrl !== undefined && upstream.baseUrl !== null && upstream.baseUrl !== '') {
+    if (provider === 'copilot') throw new Error('upstream.baseUrl cannot be set for the copilot provider (the host follows the account type)');
+    if (!isUpstreamBaseUrl(upstream.baseUrl)) throw new Error('upstream.baseUrl must be an http(s) URL with no query or fragment');
+    out.baseUrl = upstream.baseUrl.trim().replace(/\/+$/, '');
+  }
+  if (upstream.apiKey !== undefined && upstream.apiKey !== null && upstream.apiKey !== '') {
+    if (provider === 'copilot') throw new Error('upstream.apiKey cannot be set for the copilot provider (sign in instead)');
+    if (typeof upstream.apiKey !== 'string' || !upstream.apiKey.trim()) throw new Error('upstream.apiKey must be a non-empty string or ${VAR}');
+    out.apiKey = upstream.apiKey.trim();
+  }
+  if (upstream.headers !== undefined && upstream.headers !== null) {
+    const h = upstream.headers;
+    if (typeof h !== 'object' || Array.isArray(h)) throw new Error('upstream.headers must be an object of string values');
+    const headers = {};
+    for (const [k, v] of Object.entries(h)) {
+      if (!HEADER_NAME_RE.test(k)) throw new Error(`upstream.headers: invalid header name ${JSON.stringify(k)}`);
+      if (FORBIDDEN_UPSTREAM_HEADERS.has(k.toLowerCase())) throw new Error(`upstream.headers: ${k} is set by the bridge and cannot be overridden`);
+      if (typeof v !== 'string' || !v.trim()) throw new Error(`upstream.headers: value for ${JSON.stringify(k)} must be a non-empty string`);
+      headers[k] = v.trim();
+    }
+    if (Object.keys(headers).length) out.headers = headers;
+  }
+  const caps = assertModelCapabilities(upstream.capabilities);
+  if (caps) out.capabilities = caps;
+  if (upstream.openrouter !== undefined && upstream.openrouter !== null) {
+    if (provider !== 'openai') throw new Error('upstream.openrouter is only for the openai provider (an OpenRouter base URL)');
+    const or = assertOpenRouterOptions(upstream.openrouter);
+    if (or) out.openrouter = or;
+  }
+  return out;
+}
+
+/** The first env key an `upstream` entry may not also carry, or null. */
+export function upstreamEnvConflict(env) {
+  for (const k of Object.keys(env || {})) if (BRIDGE_ROUTING_KEYS.includes(k)) return k;
+  return null;
+}
+
+/** The CLI's web tools a translated (openai-chat / openai-responses) upstream withholds (§5.3). */
+export function bridgeExcludedTools(upstream) {
+  return upstream && isTranslatedApi(upstream.api) ? ['WebSearch', 'WebFetch'] : [];
+}
+
+// ── providers: account-level state shared by bridged entries (§6.2) ─────────
+export const COPILOT_ACCOUNT_TYPES = Object.freeze(['individual', 'business', 'enterprise']);
+export const DEFAULT_PROVIDER_CONCURRENCY = Object.freeze({ copilot: 4, openai: 8, anthropic: 8 });
+export const MAX_PROVIDER_CONCURRENCY = 64;
+/** Bump when the Copilot terms notice wording changes materially — a stored
+ *  acknowledgement of an older version is shown again (§8.2). */
+export const COPILOT_TERMS_VERSION = 1;

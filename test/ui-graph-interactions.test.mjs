@@ -1,6 +1,6 @@
 // test/ui-graph-interactions.test.mjs — MAJ-30.
 // jsdom ports of the MECHANICAL half of the behaviours that were asserted only
-// inside scripts/verify-composer-cdp.mjs and scripts/verify-run-monitor-cdp.mjs
+// inside tools/verify-composer-cdp.mjs and tools/verify-run-monitor-cdp.mjs
 // — two scripts no automation runs (see the CI-COVERAGE header block in each).
 //
 // Ported here: the wheel preventDefault policy on BOTH canvases, the two pan

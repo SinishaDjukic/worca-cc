@@ -370,11 +370,12 @@ test('ask-panel-stream: the orb node survives live-row rebuilds so the spin neve
   const first = ctx.doc.querySelector('.ask-transcript .ask-orb');
   assert.ok(first, 'the orb mounted with the live turn');
   assert.equal(first.style.width, '28.5px', 'the panel mounts the orb at 28.5 CSS px');
-  // A tool block rebuilds the whole row (buildMessage → replaceWith); the ONE
-  // orb must be re-parented, not rebuilt, or every tool call restarts the spin.
+  // A tool block patches the live row in place now, but the ONE orb still has to
+  // be the SAME node — a rebuilt canvas restarts the spin, and the structural
+  // flush at ask-start/ask-done re-parents it for real.
   ctx.panel.pushServerFrame({ type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'running' }, threadId: TID, messageId: MID, seq: 2 });
   ctx.flush();
-  assert.ok(ctx.doc.querySelector('.ask-tool-row'), 'the row really was rebuilt');
+  assert.ok(ctx.doc.querySelector('.ask-tool-row'), 'the tool row really did land');
   assert.equal(ctx.doc.querySelector('.ask-transcript .ask-orb'), first, 'same node, moved');
   assert.equal(ctx.doc.querySelectorAll('.ask-transcript .ask-orb').length, 1, 'never two orbs in the transcript');
 });
@@ -437,4 +438,92 @@ test('ask-panel-stream: adoption mid-turn shows Stop; the subscribe replay after
   ctx.flush();
   assert.ok(ctx.doc.querySelector('.ask-transcript').textContent.includes('ABCE'), 'the replayed prefix renders');
   assert.equal(ctx.doc.querySelector('.ask-stop').hidden, false, 'still streaming');
+});
+
+// ---- the transcript must stop jumping while a turn streams -----------------
+// The live row used to be REBUILT (buildMessage → wrap.replaceWith) on every
+// ask-label and every ask-block frame. Each rebuild handed the column a brand
+// new `.ask-msg`, which replayed the `wr-rise` entry animation — a 10px rise and
+// a fade — under text the user was already reading.
+
+test('ask-panel-stream: a mid-turn label or tool frame patches the live row in place', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref);
+  const open = stampFrames([
+    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
+    { type: 'ask-delta', text: 'the first half' },
+  ], { threadId: TID, messageId: MID });
+  for (const f of open) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  const msg = ctx.doc.querySelector('.ask-msg-assistant');
+  const answer = msg.querySelector('.ask-answer');
+  const activity = msg.querySelector('.ask-activity');
+  assert.match(answer.textContent, /the first half/);
+
+  const rest = stampFrames([
+    { type: 'ask-label', label: 'Finding runs' },
+    { type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'running' } },
+    { type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'mcp__worca__list_runs', input: {}, status: 'ok', durationMs: 1200 } },
+    { type: 'ask-block', block: { kind: 'tool', id: 't2', name: 'mcp__worca__read_run', input: {}, status: 'running' } },
+    { type: 'ask-label', label: 'Writing' },
+  ], { threadId: TID, messageId: MID, seqStart: open.length + 1 });
+  for (const f of rest) { ctx.panel.pushServerFrame(f); ctx.flush(); }
+
+  assert.equal(ctx.doc.querySelector('.ask-msg-assistant'), msg, 'the live row is the same node — no entry animation can replay');
+  assert.equal(msg.querySelector('.ask-answer'), answer, 'the answer the user is reading is never re-created');
+  assert.equal(msg.querySelector('.ask-activity'), activity, 'the activity block is patched, not swapped');
+  assert.match(answer.textContent, /the first half/, 'and it kept its text');
+  const tools = [...msg.querySelectorAll('.ask-tool-row')];
+  assert.equal(tools.length, 2, 'a repeated tool id upserts, a new one appends');
+  assert.notEqual(tools[0].querySelector('.ask-tool-note').textContent, '…', 'the finished tool row took its duration');
+  assert.equal(tools[1].querySelector('.ask-tool-note').textContent, '…', 'the running one is still running');
+  assert.equal(msg.querySelector('.ask-activity-label').textContent, 'Thinking');
+  assert.equal(ctx.doc.querySelector('.ask-thinking-label').textContent, 'Writing…', 'the label still follows the server');
+  assert.equal(msg.lastElementChild, ctx.doc.querySelector('.ask-thinking'), 'the orb row is still the bottom of the message');
+});
+
+test('ask-panel-stream: only a message the transcript has never shown carries the entry stamp', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref);
+  const stamped = () => [...ctx.doc.querySelectorAll('.ask-msg')].filter((m) => m.hasAttribute('data-ask-enter'));
+  assert.deepEqual(stamped().map((m) => m.className), ['ask-msg ask-msg-user'], 'the loaded row rises in once');
+
+  const { frames } = replayFixture('plain-text', { threadId: TID, messageId: MID });
+  ctx.panel.pushServerFrame(frames[0]);                      // ask-start → a new row → a structural repaint
+  ctx.flush();
+  assert.deepEqual(stamped().map((m) => m.className), ['ask-msg ask-msg-assistant'],
+    'the new assistant row rises in; the user row above it does NOT rise again');
+
+  for (const f of frames.slice(1, -1)) ctx.panel.pushServerFrame(f);
+  ctx.flush();
+  ctx.panel.pushServerFrame(frames[frames.length - 1]);      // ask-done → another structural repaint
+  ctx.flush();
+  assert.equal(ctx.doc.querySelectorAll('.ask-msg').length, 2);
+  assert.deepEqual(stamped(), [], 'every row was already on screen — none may rise a second time');
+});
+
+test('ask-panel-stream: the bottom pin writes scrollTop only when the bottom moved', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref);
+  const t = ctx.doc.querySelector('.ask-transcript');
+  let height = 1000;
+  let top = 0;
+  const writes = [];
+  Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => height });
+  Object.defineProperty(t, 'clientHeight', { configurable: true, get: () => 200 });
+  Object.defineProperty(t, 'scrollTop', { configurable: true, get: () => top, set: (v) => { writes.push(v); top = Math.min(v, height - 200); } });
+  ctx.flush();
+  assert.deepEqual(writes, [1000], 'the first flush pins to the bottom');
+  ctx.flush();
+  ctx.flush();
+  assert.deepEqual(writes, [1000], 'nothing grew — flush() must not re-snap the scrollport every frame');
+  height = 1400;
+  ctx.flush();
+  assert.deepEqual(writes, [1000, 1400], 'a grown transcript follows the bottom again');
+  // the release is untouched: scrolling up unpins and shows the jump pill
+  top = 100;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'the 24px threshold still releases the pin');
+  ctx.flush();
+  assert.deepEqual(writes, [1000, 1400], 'and an unpinned transcript is left where the user put it');
 });

@@ -39,7 +39,7 @@ test('the built-in layer is non-empty through the DEFAULT (argument-less) regist
 });
 
 // Sweep: no module may derive a filesystem path from `import.meta.url` via
-// `.pathname` again. Walks src/, scripts/ and ui/server.mjs (the Node side —
+// `.pathname` again. Walks src/, tools/, scripts/ and ui/server.mjs (the Node side —
 // browser modules never touch the filesystem).
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -52,7 +52,8 @@ function walk(dir, out = []) {
 }
 
 test('no Node-side module uses `new URL(…, import.meta.url).pathname` as a filesystem path', () => {
-  const files = [...walk(join(REPO, 'src')), ...walk(join(REPO, 'scripts')), join(REPO, 'ui', 'server.mjs')];
+  const dirs = ['src', 'tools', 'scripts'].map((d) => join(REPO, d)).filter((d) => existsSync(d));
+  const files = [...dirs.flatMap((d) => walk(d)), join(REPO, 'ui', 'server.mjs')];
   assert.ok(files.length > 50, 'sweep must actually see the codebase');
   const offenders = files.filter((f) => /import\.meta\.url\)\s*\.pathname/.test(readFileSync(f, 'utf8')));
   assert.deepEqual(offenders.map((f) => f.slice(REPO.length)), [], 'use fileURLToPath(new URL(…, import.meta.url)) instead');

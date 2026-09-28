@@ -6,6 +6,7 @@
 import { listModels as realListModels, EFFORTS } from '../config.mjs';
 import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSecretStatus } from '../plugin-models.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
 
 /**
  * @param {{
@@ -13,6 +14,7 @@ import { ASK_LIMITS } from './limits.mjs';
  *   pluginModels?: ()=>Array<{plugin:string,id:string,secrets?:string[]}>,
  *   secretStatus?: (plugin:string)=>Array<{key:string,set:boolean}>,
  *   defaults?: {defaultModel:string, defaultEffort:string},
+ *   effortless?: ()=>Set<string>,
  * }} [deps]
  */
 export function createAskModels({
@@ -20,6 +22,7 @@ export function createAskModels({
   pluginModels = realPluginModels,
   secretStatus = realSecretStatus,
   defaults = ASK_LIMITS,
+  effortless = realEffortless,
 } = {}) {
   /**
    * lc id -> the modelSecrets keys that model needs but that are NOT set.
@@ -71,6 +74,7 @@ export function createAskModels({
   async function askCatalog({ withSecrets = true } = {}) {
     const all = await listModels('');
     const models = [];
+    const noEffort = effortless();
     let missing = null; // lazily built on the first plugin entry
     for (const m of all) {
       if (!m || typeof m.id !== 'string') continue;
@@ -88,13 +92,28 @@ export function createAskModels({
         hasEnv: m.hasEnv === true,
       };
       if (custom === 'plugin' && typeof m.plugin === 'string' && m.plugin) entry.plugin = m.plugin;
-      if (m.hidden === true) entry.hidden = true;   // the picker skips it; validation does not (#422)
+      if (m.hidden === true) entry.hidden = true;
+      // Its upstream refused a reasoning effort (bridge/upstream.mjs leaves it out from then
+      // on): the picker shows the effort as not applicable. The effort still validates.
+      if (noEffort.has(m.id)) entry.noEffort = true;   // the picker skips it; validation does not (#422)
       // Only globals and plugin entries can arrive flagged: composeCatalog emits an
       // UNSHADOWED built-in as {...m, custom:false, hasEnv:false} with no
       // ...unreliable(lc) (src/core/config.mjs:200), so a built-in in model_cost_flags
       // shows no ⚠cost here. Pre-existing gap, shared with the pipeline dropdown and
       // /api/config; fixing it means editing composeCatalog and its three other consumers.
       if (m.costUnreliable === true) entry.costUnreliable = true;
+      // Model bridge (model-bridge-design.md §8.5/§8.7): the picker skips a
+      // bridged entry whose provider is not usable, and shows why.
+      if (m.bridged) {
+        entry.bridged = m.bridged;
+        if (m.upstreamApi) entry.upstreamApi = m.upstreamApi;
+        if (m.needsSignIn) {
+          entry.needsSignIn = true;
+          entry.signInMessage = m.signInReason === 'terms' ? 'GitHub Copilot notice not acknowledged — Settings › Providers.'
+            : m.signInReason === 'no_key' ? `No API key for ${m.bridged} — Settings › Providers.`
+              : `Not signed in to ${m.bridged} — Settings › Providers.`;
+        }
+      }
       if (custom === 'plugin' && withSecrets) {
         if (!missing) missing = missingSecretsByIdLc();
         const keys = missing.get(m.id.toLowerCase());

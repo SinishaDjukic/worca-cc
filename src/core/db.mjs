@@ -21,6 +21,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { worcaHome } from './projects.mjs';
 import { maybeMigrateFromFs } from './migrate-fs-to-db.mjs';
+import { backfillHumanHours } from './human-backfill.mjs';
 import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates.mjs';
 
 const _require = createRequire(import.meta.url);
@@ -54,7 +55,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 39;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -166,6 +167,9 @@ CREATE UNIQUE INDEX idx_projects_name ON projects (name COLLATE NOCASE);
 
 -- workspaces: named sets of 2+ projects (was workspaces.json header fields).
 -- id is the frozen workspaceKey (wks-<slug>-<sha1[:8]>). name is CI-unique.
+-- metrics_project (v30, added via INCREMENTAL_COLUMNS/ladder, NOT in this base
+-- DDL — matches diff_comments.parent_id) holds the team-metrics home: one
+-- member's absolute path, or NULL for no home configured.
 CREATE TABLE workspaces (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL COLLATE NOCASE,
@@ -303,7 +307,9 @@ CREATE INDEX idx_pipeline_events_pipeline ON pipeline_events (pipeline_id, id);
 CREATE TABLE clarify (
   pipeline_id TEXT PRIMARY KEY,
   questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+                     --    OR: the full resolved ask form { kind:'form', … } (spec §9)
   answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+                     --    OR: { kind:'form', form, version, values } (spec §9)
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
 
@@ -518,7 +524,9 @@ CREATE TABLE IF NOT EXISTS step_questions (
   node_id     TEXT,
   agent_key   TEXT,
   questions   TEXT,  -- JSON: { questions: [ {id,question,options[2..4],allowFreeText} ] }
+                     --    OR: the full resolved ask form { kind:'form', … } (spec §9)
   answers     TEXT,  -- JSON: { answers: [ {id,question,choice} ] }
+                     --    OR: { kind:'form', form, version, values } (spec §9)
   PRIMARY KEY (pipeline_id, step_key, round),
   FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
 );
@@ -723,6 +731,86 @@ CREATE TABLE IF NOT EXISTS ask_card_comments (
 );
 `;
 
+/** v31 (scheduled runs): launch tickets, recurring schedule parents, and the generic
+ *  notification log. A run that waits for its start time lives HERE, never in
+ *  `pipelines`: the pipeline row is still born inside run(), so no status-aware
+ *  reader (stats, stale sweep, delete guard, team metrics) ever meets a waiting row.
+ *  IF NOT EXISTS + INCREMENTAL_TABLES entries: reconcile-safe on a divergently
+ *  stamped DB. An older build simply ignores all three tables. */
+const SCHEDULED_RUNS_DDL = `
+CREATE TABLE IF NOT EXISTS schedules (
+  id             TEXT PRIMARY KEY,           -- 'sch_' + 8 hex
+  title          TEXT,
+  project_key    TEXT,
+  project_dir    TEXT,
+  workspace_id   TEXT,
+  request        TEXT NOT NULL,              -- JSON: POST /api/run body shape (+ internal)
+  rule           TEXT NOT NULL,              -- JSON: recurrence rule (local time + tz)
+  overlap        TEXT NOT NULL DEFAULT 'skip',   -- skip | start | queue
+  max_failures   INTEGER NOT NULL DEFAULT 3,     -- 0 = never pause
+  failure_streak INTEGER NOT NULL DEFAULT 0,
+  if_missed      TEXT NOT NULL DEFAULT 'run',    -- run | skip
+  grace_min      INTEGER NOT NULL DEFAULT 360,
+  status         TEXT NOT NULL DEFAULT 'active', -- active | paused | ended
+  pause_reason   TEXT,                       -- user | failure_streak
+  runs_count     INTEGER NOT NULL DEFAULT 0,
+  next_run_at    TEXT,
+  last_result    TEXT,                       -- last occurrence outcome (display)
+  ask_thread_id  TEXT,                       -- the Ask Worca card that made it (NULL = made by hand)
+  ask_card_id    TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scheduled_runs (
+  id           TEXT PRIMARY KEY,             -- the runId UUID the fired run will carry
+  schedule_id  TEXT REFERENCES schedules(id) ON DELETE CASCADE,
+  title        TEXT,
+  project_key  TEXT,
+  project_dir  TEXT,
+  workspace_id TEXT,
+  run_at       TEXT NOT NULL,                -- UTC ISO instant
+  request      TEXT NOT NULL,                -- JSON: POST /api/run body shape (+ internal)
+  status       TEXT NOT NULL DEFAULT 'scheduled', -- scheduled|firing|fired|canceled|skipped|missed|failed
+  if_missed    TEXT NOT NULL DEFAULT 'run',
+  grace_min    INTEGER NOT NULL DEFAULT 360,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  retry_at     TEXT,                         -- next attempt after a transient start error
+  queued       INTEGER NOT NULL DEFAULT 0,   -- overlap=queue: waiting for the previous run
+  forced       INTEGER NOT NULL DEFAULT 0,   -- Run now: start at once, bypass missed/overlap checks
+  owner_pid    INTEGER,                      -- a waiting --wait CLI (or the firing process)
+  owner_host   TEXT,
+  pipeline_id  TEXT,
+  fail_reason  TEXT,
+  ask_thread_id TEXT,
+  ask_card_id  TEXT,
+  after_kind   TEXT,                         -- v34: 'ticket' | 'pipeline' | NULL (a timed ticket)
+  after_id     TEXT,                         -- v34: scheduled_runs.id | pipelines.id
+  after_policy TEXT NOT NULL DEFAULT 'done', -- v34: done | any
+  source_from_previous INTEGER NOT NULL DEFAULT 0,  -- v34: start on the predecessor's feature branch
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_runs_due ON scheduled_runs (status, run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_runs_schedule ON scheduled_runs (schedule_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_runs_after ON scheduled_runs (after_id);
+CREATE TABLE IF NOT EXISTS notifications (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope       TEXT NOT NULL DEFAULT 'schedule',
+  kind        TEXT NOT NULL,                 -- missed|failed|skipped|late|paused|completed|run_error|run_paused|ended|retrying
+  severity    TEXT NOT NULL DEFAULT 'problem',   -- problem | info
+  schedule_id TEXT,
+  ticket_id   TEXT,
+  pipeline_id TEXT,
+  project_dir TEXT,
+  title       TEXT,
+  message     TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  read_at     TEXT,
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications (scope, created_at);
+`;
+
 const SCHEMA_V11 = `
 ALTER TABLE config_workflow_nodes ADD COLUMN ask_questions INTEGER;
 ${STEP_QUESTIONS_DDL}
@@ -743,19 +831,35 @@ const INCREMENTAL_COLUMNS = {
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
-                            outcome: 'TEXT' },
+                            outcome: 'TEXT',
+                            scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
+                            policy_state: 'TEXT',     // v32: team-policy run state (JSON: home, sha, overrides, exceeded, deviations, reason)
+                            human_hours: 'REAL NOT NULL DEFAULT 0',     // v33: Σ pipeline_steps.human_hours (money-saved design §6)
+                            started_by: 'TEXT' },   // v36: who started the run (identity.mjs; NULL = before attribution)
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
-                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT' },
+                            exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
+                            human_hours: 'REAL', human_signals: 'TEXT' },   // v33: per-execution human-hours credit + its signals JSON
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
+  artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
   ask_attachments:        { kind: "TEXT NOT NULL DEFAULT 'text'",  // v27: text | image | binary (#398)
                             mime: 'TEXT' },               // v27: sniffed mime; NULL on pre-v27 rows (= text)
   project_config:         { human_in_loop: 'INTEGER NOT NULL DEFAULT 1' },   // v28: the Auto entry's human-in-the-loop switch
-  diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE' },  // v29: reply threads; NULL = thread root
+  diff_comments:          { parent_id: 'TEXT REFERENCES diff_comments(id) ON DELETE CASCADE',  // v29: reply threads; NULL = thread root
+                            author_name: 'TEXT' },   // v37: who wrote it (identity.mjs actor); NULL = before attribution / Ask
+  ask_threads:            { created_by: 'TEXT' },    // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
+  pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
+  workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
+                            policy_project: 'TEXT' },   // v32: team-policy home (member absolute path); NULL = no home
+  schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
+                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it (identity.mjs actor)
+  scheduled_runs:         { after_kind: 'TEXT', after_id: 'TEXT', after_policy: "TEXT NOT NULL DEFAULT 'done'",
+                            source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
+                            created_by: 'TEXT', updated_by: 'TEXT' },   // v39: who made / last changed it
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -781,6 +885,17 @@ CREATE TABLE IF NOT EXISTS config_workflow_wires (
  * several tables (ASK_DDL, DIFF_COMMENTS_DDL) is listed under EACH of them, so a
  * DB missing only one is healed; repairSchemaGaps de-duplicates at exec time.
  */
+/** v37: per-person read state of notifications, used only on a shared deployment (a real
+ *  per-person sign-in, identity.mjs#isSharedIdentity); local installs keep notifications.read_at. */
+const NOTIFICATION_READS_DDL = `
+CREATE TABLE IF NOT EXISTS notification_reads (
+  notification_id INTEGER NOT NULL,
+  reader          TEXT NOT NULL,
+  read_at         TEXT NOT NULL,
+  PRIMARY KEY (notification_id, reader)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -796,6 +911,10 @@ const INCREMENTAL_TABLES = {
   ask_worktrees:     ASK_WORKTREES_DDL,
   diff_comments:     DIFF_COMMENTS_DDL,
   ask_card_comments: DIFF_COMMENTS_DDL,
+  schedules:         SCHEDULED_RUNS_DDL,
+  scheduled_runs:    SCHEDULED_RUNS_DDL,
+  notifications:     SCHEDULED_RUNS_DDL,
+  notification_reads: NOTIFICATION_READS_DDL,
 };
 
 /**
@@ -810,6 +929,10 @@ const INCREMENTAL_INDEXES = {
   idx_ask_attachments_thread: {
     table: 'ask_attachments',
     ddl: 'CREATE INDEX IF NOT EXISTS idx_ask_attachments_thread ON ask_attachments (thread_id)',
+  },
+  idx_scheduled_runs_after: {
+    table: 'scheduled_runs',
+    ddl: 'CREATE INDEX IF NOT EXISTS idx_scheduled_runs_after ON scheduled_runs (after_id)',
   },
 };
 
@@ -856,22 +979,29 @@ function schemaGaps(db) {
 
 /** Apply the gap repairs with NO transaction control of its own — the caller owns
  *  the transaction (the ladder tx in migrate(), or reconcileSchema's own lock).
- *  ORDER IS LOAD-BEARING: tables and indexes FIRST, then the columns RE-probed
- *  against the post-CREATE schema. `gaps.columns` was computed BEFORE this pass
- *  ran, so it cannot see an incremental column on a table this pass is about to
- *  create (ask_run_links.comment_ids on a >=20-stamped DB missing the ask
- *  tables) — the ALTER would be skipped and the DB stamped current with the
- *  column absent, and only a LATER migrate() would heal it. No gap DDL
- *  references an INCREMENTAL_COLUMNS column, so nothing here needs an ALTER to
- *  run first. */
+ *  ORDER IS LOAD-BEARING, three ways:
+ *  1. Columns on the tables that ALREADY exist go first. A table's DDL block may carry a
+ *     CREATE INDEX on an INCREMENTAL_COLUMNS column (v34: SCHEDULED_RUNS_DDL's
+ *     idx_scheduled_runs_after names scheduled_runs.after_id), and INCREMENTAL_TABLES
+ *     re-execs the WHOLE block when any sibling table (schedules / notifications) is
+ *     missing — CREATE TABLE IF NOT EXISTS skips the old-shape table and the index
+ *     would throw `no such column` inside getDb().
+ *  2. Then the tables; then the columns RE-probed against the post-CREATE schema.
+ *     `gaps.columns` was computed BEFORE this pass ran, so it cannot see an incremental
+ *     column on a table this pass is about to create (ask_run_links.comment_ids on a
+ *     >=20-stamped DB missing the ask tables) — the ALTER would be skipped and the DB
+ *     stamped current with the column absent, and only a LATER migrate() would heal it.
+ *  3. INCREMENTAL_INDEXES last, for the same reason as 1. */
 function repairSchemaGaps(db, gaps) {
+  const addColumns = () => {
+    for (const { table, col, type } of missingColumns(db)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+  };
+  addColumns();
   // One DDL block can create several tables (ASK_DDL, DIFF_COMMENTS_DDL) — the
   // Set collapses the duplicate keys to a single idempotent exec.
   for (const ddl of new Set((gaps.tables || []).map((t) => INCREMENTAL_TABLES[t]))) db.exec(ddl);
+  addColumns();
   for (const name of gaps.indexes || []) db.exec(INCREMENTAL_INDEXES[name].ddl);
-  for (const { table, col, type } of missingColumns(db)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
-  }
 }
 
 /**
@@ -1141,6 +1271,90 @@ function applySchemaV28(db) {
  *  thread root; nothing is backfilled. */
 function applySchemaV29(db) {
   repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v30 (team metrics home): workspaces.metrics_project — a plain additive column
+ *  declared in INCREMENTAL_COLUMNS, applySchemaV29's shape: this repairSchemaGaps
+ *  call CREATES it on the ladder path (a DB stamped exactly 29), reconcileSchema
+ *  covers the fast path (a DB already stamped >= 30 by a divergent ladder). NULL
+ *  on every existing row = no team-metrics home configured yet. */
+function applySchemaV30(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v31 (scheduled runs): schedules + scheduled_runs + notifications (INCREMENTAL_TABLES)
+ *  and pipelines.scheduled_for/schedule_id (INCREMENTAL_COLUMNS) — applySchemaV30's shape. */
+function applySchemaV31(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v32 (team policy): pipelines.policy_state + workspaces.policy_project — two plain
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV30's shape. NULL on
+ *  every existing row = no team policy touched this run / no policy home yet.
+ *  It is v32, not v31: scheduled runs claimed 31 on dev first, and a DB already
+ *  stamped 31 by that ladder would skip these columns forever (the v11 collision
+ *  this file's INCREMENTAL_COLUMNS comment describes). */
+function applySchemaV32(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v33 (money saved): pipelines.human_hours + pipeline_steps.human_hours/human_signals —
+ *  additive columns declared in INCREMENTAL_COLUMNS, applySchemaV32's shape. Task 5 adds
+ *  the run-level backfill call for pre-v33 runs here. */
+function applySchemaV33(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  // Legacy credit for every terminal run recorded before v33. Best-effort by construction;
+  // a throw here would roll the ladder back, so it is fenced. Runs once (the fast path
+  // reconcileSchema never calls it). Cost: one read per indexed plan/review markdown.
+  try { backfillHumanHours(db); } catch { /* never fail the migration on the backfill */ }
+}
+
+/** v34 (run chains): scheduled_runs.after_kind/after_id/after_policy/source_from_previous + the
+ *  after_id index — INCREMENTAL_COLUMNS / INCREMENTAL_INDEXES, applySchemaV30's shape. */
+function applySchemaV34(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v35 (Opus 5.5 replaces Opus 5 in PREDEFINED_MODELS): V26's catalog swap again —
+ *  same reasons, same stores, same rules (renameStoredModelPins). History keeps
+ *  recording `claude-opus-5` where that is what ran. */
+const V35_MODEL_RENAMES = [['claude-opus-5', 'claude-opus-5-5']];
+
+function applySchemaV35(db) {
+  for (const [from, to] of V35_MODEL_RENAMES) renameStoredModelPins(db, from, to);
+}
+
+/** v36 (attribution): pipelines.started_by, a plain additive column declared in
+ *  INCREMENTAL_COLUMNS, applySchemaV30's shape. NULL on every existing row = started
+ *  before attribution existed. */
+function applySchemaV36(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v37 (attribution, step 1): diff_comments.author_name, ask_threads.created_by
+ *  (INCREMENTAL_COLUMNS) and notification_reads (INCREMENTAL_TABLES), applySchemaV30's
+ *  shape. NULL / no rows everywhere existing = before attribution. */
+function applySchemaV37(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v38 (attribution, step 3): pipeline_events.actor — who did a human action on a run
+ *  (INCREMENTAL_COLUMNS), applySchemaV30's shape. NULL on every existing row. */
+function applySchemaV38(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
+
+/** v39 (attribution): schedules/scheduled_runs created_by + updated_by (INCREMENTAL_COLUMNS, the v36
+ *  shape), then a backfill: a series or ticket whose stored request carries internal.startedBy (who
+ *  scheduled it, recorded since attribution) gets that as created_by. Fenced like v33's backfill. */
+function applySchemaV39(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  for (const t of ['schedules', 'scheduled_runs']) {
+    try {
+      db.exec(`UPDATE ${t} SET created_by = json_extract(request, '$.internal.startedBy')
+        WHERE created_by IS NULL AND json_valid(request) AND json_type(request, '$.internal.startedBy') = 'text'`);
+    } catch { /* a hand-seeded table without request/JSON1: attribution is decoration */ }
+  }
 }
 
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
@@ -1528,6 +1742,16 @@ export function migrate(db) {
     if (current < 27) applySchemaV27(db);            // ask_attachments.kind/mime (#398)
     if (current < 28) applySchemaV28(db);            // Auto workflow: human_in_loop + flip to wf_auto
     if (current < 29) applySchemaV29(db);            // diff-comment reply threads: parent_id
+    if (current < 30) applySchemaV30(db);            // team metrics: workspaces.metrics_project
+    if (current < 31) applySchemaV31(db);            // scheduled runs: tickets + schedules + notifications
+    if (current < 32) applySchemaV32(db);            // team policy: pipelines.policy_state + workspaces.policy_project
+    if (current < 33) applySchemaV33(db);            // money saved: human_hours columns
+    if (current < 34) applySchemaV34(db);            // run chains: scheduled_runs.after_* + source_from_previous
+    if (current < 35) applySchemaV35(db);            // Opus 5 pins -> Opus 5.5 (catalog swap)
+    if (current < 36) applySchemaV36(db);            // attribution: pipelines.started_by
+    if (current < 37) applySchemaV37(db);            // attribution: comment authors, thread owners, per-person reads
+    if (current < 38) applySchemaV38(db);            // attribution: who did each human action on a run
+    if (current < 39) applySchemaV39(db);            // attribution: schedules/tickets created_by + updated_by
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

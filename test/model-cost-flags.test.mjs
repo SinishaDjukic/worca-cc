@@ -47,14 +47,14 @@ test('modelHasBaseUrlRouting: only global entries with an ANTHROPIC_BASE_URL key
   assert.equal(modelHasBaseUrlRouting('routed-ref'), true, 'a ref still routes');
   assert.equal(modelHasBaseUrlRouting('token-only'), false);
   assert.equal(modelHasBaseUrlRouting('plain'), false);
-  assert.equal(modelHasBaseUrlRouting('claude-opus-5'), false, 'unshadowed predefined never routes');
+  assert.equal(modelHasBaseUrlRouting('claude-opus-5-5'), false, 'unshadowed predefined never routes');
   assert.equal(modelHasBaseUrlRouting(''), false);
 });
 
 test('observe: unrouted models are never observed, whatever they report', async () => {
   await addGlobalModel({ id: 'plain' });
   assert.equal(observeModelCost('plain', 0, USAGE), null);
-  assert.equal(observeModelCost('claude-opus-5', null, USAGE), null);
+  assert.equal(observeModelCost('claude-opus-5-5', null, USAGE), null);
   assert.equal(costUnreliableModelIds().size, 0);
 });
 
@@ -75,7 +75,7 @@ test('observe: routed + zero/absent cost + tokens -> flagged; positive cost auto
   // The catalog surfaces the observation...
   const entry = (await listModels('')).find((m) => m.id === 'routed');
   assert.equal(entry.costUnreliable, true);
-  assert.equal((await listModels('')).find((m) => m.id === 'claude-opus-5').costUnreliable, undefined);
+  assert.equal((await listModels('')).find((m) => m.id === 'claude-opus-5-5').costUnreliable, undefined);
 
   // ...and a later positive-cost run clears it.
   assert.equal(observeModelCost('ROUTED', 1.23, USAGE), 'cleared', 'case-insensitive clear');
@@ -96,11 +96,11 @@ test('catalog: every entry carries routed = ANTHROPIC_BASE_URL key presence', as
   assert.equal(byId.get('token-only').routed, false, 'hasEnv true, routed false — the flags are not the same');
   assert.equal(byId.get('plain').routed, false);
   for (const m of models) assert.equal(typeof m.routed, 'boolean', `${m.id} carries the flag`);
-  assert.equal(byId.get('claude-opus-5').routed, false, 'unshadowed predefined never routes');
+  assert.equal(byId.get('claude-opus-5-5').routed, false, 'unshadowed predefined never routes');
 });
 
 test('catalog: a global shadow of a predefined id carries the shadow env routing', async () => {
-  await addGlobalModel({ id: 'claude-opus-5', env: { ANTHROPIC_BASE_URL: 'https://gw' } });
+  await addGlobalModel({ id: 'claude-opus-5-5', env: { ANTHROPIC_BASE_URL: 'https://gw' } });
   const models = await listModels('');
-  assert.equal(models.find((m) => m.id === 'claude-opus-5').routed, true);
+  assert.equal(models.find((m) => m.id === 'claude-opus-5-5').routed, true);
 });

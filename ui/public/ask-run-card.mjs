@@ -15,7 +15,7 @@ export const TERMINAL_RUN_STATUS = new Set(['done', 'error', 'stopped', 'aborted
 const LIVE_STATUS = new Set(['starting', 'running', 'pausing']);
 /** The six manifest colours the view's h-* / --c vocabulary knows (style.css .gv-world .h-*; app.js PILL_FAMILIES). */
 const NODE_COLORS = new Set(['violet', 'blue', 'green', 'red', 'peach', 'amber']);
-const PAUSE_WHY = { cost_pipeline: 'cost limit', cost_total: 'total budget', error: 'error', recoverable: 'recoverable', usage_limit: 'usage limit' };
+const PAUSE_WHY = { cost_pipeline: 'cost limit', cost_total: 'total budget', cost_pipeline_policy: 'team cap', cost_total_policy: 'team total', error: 'error', recoverable: 'recoverable', usage_limit: 'usage limit' };
 
 /** A frozen snapshot from GET /api/ask/runs/:id `state` (artifacts.mjs rowToState). null for a non-object. */
 export function snapshotFromState(state, { now = Date.now() } = {}) {

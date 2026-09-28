@@ -60,7 +60,8 @@ const BANNED = [
   // The retired coexistence alias. db.mjs is the ONE sanctioned reader: V24's
   // fold has to NAME the id it folds, and that migration is permanent — an
   // upgraded DB can be re-reconciled on any later launch. The client's save-as
-  // guard no longer mentions it (there is one reserved id left, `wf_default`).
+  // guard no longer mentions it (the reserved ids are the built-ins: `wf_default`,
+  // `wf_auto`, `wf_memory_defrag`).
   [/\bwf_default_v2\b/, 'the coexistence alias', ['src/core/db.mjs']],
   // Emitter AND listener: the CLI's `orch.on('phase', …)` is a remnant too.
   [/(_emit|\.on|\.once)\(\s*['"]phase['"]/, 'the phase event (emitter or listener)', []],
@@ -97,7 +98,7 @@ test('no builtin agent sidecar carries a v1 wiring field', () => {
 
 // Agent keys are DATA, never control flow: the engine is generic (spec §1).
 const AGENT_KEYS = ['planner', 'refiner', 'implementer', 'reviewer', 'decomposer',
-  'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer'];
+  'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting', 'workspaceReviewer', 'memoryDefragmenter'];
 // 'clarify' is NOT in the list: it is also an artifact kind, a question kind and
 // a DB table name, and `run-harness.mjs` branches on all three.
 const KEY_ALLOW = new Set([

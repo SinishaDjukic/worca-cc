@@ -14,11 +14,12 @@ and the demos land in the right shape.
 2. **Show the mechanism, not the menu.** The demo animates the thing the
    feature *does* — a flag appearing, a value being masked, a precedence
    resolving — in a 2–3 second loop. It is never a second screenshot.
-3. **Outcome headlines.** *Spend caps that pause, not kill.* *Define once.
-   Use everywhere.* The h2 states what the user gets; the sub explains the
-   feature that delivers it.
-4. **Facts as chips.** Counts, limits, guarantees go in chips, numbers in
-   `<b>`. Chips are scannable proof; the sub is the argument.
+3. **Obvious headlines, problem-first subs.** The h2 names the feature so
+   plainly a first-time user knows what it is (*New to Worca? Follow the
+   checklist.*); the sub opens with the reader's problem in bold, then
+   *Now …* and what Worca does about it.
+4. **Plain chips, few of them.** Only facts a reader understands at a
+   glance and actually cares about, numbers in `<b>`. No internal names.
 5. **Motion is progressive.** Content reveals on scroll, ribbons drift with
    scroll position, demos loop on timers. With `prefers-reduced-motion`
    everything is visible immediately in its final state — the page must be
@@ -123,15 +124,23 @@ the script (`if (reduced) { … add the class …; return; }`).
 
 ## Voice
 
-- **Headlines** are outcomes: *If the endpoint hides costs, you'll know.*
-  *Ship your models to the team.* Present tense, second person implied,
-  ≤ 7 words, ending in a period.
-- **Subs** explain the change in one or two sentences and may name the
-  feature. Prefer concrete nouns (`base URL`, `--yes`, `0600`) to
-  adjectives. Never "we've added", "now supports", "improved".
-- **Chips** are noun phrases or short guarantees: `merged at spawn`,
-  `secrets never exported`, `<b>3</b> groups`. A chip can carry one glyph
-  (`⚠cost`) when the product shows it that way.
+- **Headlines** are obvious before they are clever: a reader must know
+  what the feature is from the headline alone — *New to Worca? Follow the
+  checklist.* *Team metrics & spend dashboard.* — never a riddle the sub
+  has to decode. ≤ 7 words, ending in a period.
+- **Subs** state the problem first, then the answer. Line 1 is one plain
+  question or pain the reader recognises, in bold (`<b>…</b><br>`): *Ever
+  wondered which workflow to pick for a task?* Line 2 begins *Now …* and
+  says what Worca does and how, in words a first-time user understands:
+  *Now Worca can pick one for you. Start a run on Auto: …* Never "we've
+  added", "now supports", "improved"; no internal terms.
+- **Chips** are plain phrases anyone understands at a glance, and only
+  the ones that matter: `highlights the real button`, `stored in your git
+  remote`, `<b>8</b> steps, in order`. Two to four per section. No tool
+  names, flags, schema versions, internal terms, or shorthand that needs
+  decoding (`Esc · scrim · Skip`, `ticks derived, never stored` are the
+  kind to cut). A chip can carry one glyph (`⚠cost`) when the product
+  shows it that way. Demo labels, steps and notes follow the same rule.
 - **Captions** (`.shot-cap`) tell the reader where they are looking: *The
   editor: efforts, label, and the full routing env per model.*
 - **Receipts** are two lines: a bold claim (`Tests green`) and the number

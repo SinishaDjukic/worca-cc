@@ -3,7 +3,7 @@
 // (Task 17) only asserts structure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createTurnReducer, normalizeUsage, estimateAgentCosts, matchModelKey, labelForTool } from '../src/core/ask/events.mjs';
+import { createTurnReducer, normalizeUsage, estimateAgentCosts, matchModelKey, labelForTool, scriptResultNote, scriptToolKey } from '../src/core/ask/events.mjs';
 
 // ── frame builders (the runner envelope: {type, raw}) ───────────────────────
 const SID = 'sess-0001';
@@ -102,6 +102,26 @@ test('text comes from the main stream only; result.result is a fallback when no 
   assert.equal(h2.r.finish().text, 'from result');
 });
 
+test('a synthetic CLI error message is never answer text; an is_error result never feeds the fallback', () => {
+  const apiLine = 'Failed to authenticate. API Error: 403 No access to this model: claude-opus-5-5';
+  const h = harness();
+  // The real failure shape: init → synthetic assistant (model "<synthetic>") carrying
+  // the refusal → is_error result whose `result` repeats it.
+  h.push(
+    init(),
+    ev({ type: 'assistant', message: { id: 'synth-1', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: apiLine }], usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } }, parent_tool_use_id: null, session_id: SID }),
+    result({ is_error: true, result: apiLine, total_cost_usd: 0, num_turns: 0 }),
+  );
+  const s = h.r.finish();
+  assert.equal(s.text, '', 'neither the synthetic line nor the error result becomes the answer');
+  assert.equal(s.cliErrorText, apiLine, 'the synthetic line is kept aside for the error notice');
+  assert.equal(s.isError, true);
+  // An error result must not feed the result-text fallback either.
+  const h2 = harness();
+  h2.push(result({ is_error: true, result: apiLine }));
+  assert.equal(h2.r.finish().text, '');
+});
+
 test('usage dedupe: repeated per-block assistant usage is never summed; message ids are summed; result wins', () => {
   const h = harness();
   h.push(atext('msg_1', 'a', { input_tokens: 100, output_tokens: 5 }), atext('msg_1', 'b', { input_tokens: 100, output_tokens: 5 }));
@@ -167,6 +187,11 @@ test('labelForTool table', () => {
   assert.equal(labelForTool('mcp__worca__resolve_diff_comment', {}), 'Updating a diff comment');
   assert.equal(labelForTool('mcp__worca__delete_diff_comment', {}), 'Deleting a diff comment');
   assert.equal(labelForTool('mcp__worca__reply_to_diff_comment', {}), 'Replying to a diff comment');
+  assert.equal(labelForTool('mcp__worca__list_memory', {}), 'Reading memory');
+  assert.equal(labelForTool('mcp__worca__read_memory', { name: 'testing' }), 'Reading memory: testing');
+  assert.equal(labelForTool('mcp__worca__read_memory', {}), 'Reading memory');
+  assert.equal(labelForTool('mcp__worca__remember', { name: 'style' }), 'Saving memory: style');
+  assert.equal(labelForTool('mcp__worca__forget', { name: 'style' }), 'Removing memory: style');
 
   assert.equal(labelForTool('Task', {}), null);
   assert.equal(labelForTool('Agent', {}), null);
@@ -589,6 +614,28 @@ test('onWorktreeMutation: a throwing sink is contained', () => {
   assert.equal(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
 });
 
+test('a successful remember/forget calls onMemoryMutation with the scope key from the RESULT; errors, reads and sub-agent double-fires do not', () => {
+  const seen = [];
+  const h = harness({ onMemoryMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'style', body: 'x' }));
+  h.push(uresult('toolu_1', JSON.stringify({ scope: 'global', projectKey: null, scopeKey: 'global', name: 'style', bytes: 9, created: true, mode: 'replace' })));
+  // The refusal carries a VALID result body with a scopeKey, so ONLY `is_error` can stop the poke.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__forget', { scope: 'project', name: 'old' }));
+  h.push(uresult('toolu_2', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', scopeKey: 'projects/demo-00000001', name: 'old', removed: true }), { isError: true }));
+  // ...and the READ carries one too (B24 does not, by design), so ONLY the tool name can stop it.
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__read_memory', { scope: 'global', name: 'style' }));
+  h.push(uresult('toolu_3', JSON.stringify({ scope: 'global', scopeKey: 'global', name: 'style', body: 'x' })));
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'save it', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__forget', { scope: 'project', name: 'conv' }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', scopeKey: 'projects/demo-00000001', name: 'conv', removed: true }), { ptu: 'toolu_agent' }));
+  h.push(uresult('toolu_agent', [{ type: 'text', text: 'removed' }], { tur: AGENT_TUR }));
+  assert.deepEqual(seen, [{ scope: 'global', tool: 'remember' }, { scope: 'projects/demo-00000001', tool: 'forget' }]);
+  const boom = harness({ onMemoryMutation: () => { throw new Error('sink'); } });
+  boom.push(atool('msg_1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'a', body: 'x' }));
+  assert.doesNotThrow(() => boom.push(uresult('toolu_1', JSON.stringify({ scopeKey: 'global' }))));
+  assert.equal(boom.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
 test('propose_workflow: label, START hook with the full input, RESULT hook with the raw text + isError; sub-agent calls never fire the hooks', () => {
   assert.equal(labelForTool('mcp__worca__propose_workflow', {}), 'Building a workflow');
   const starts = []; const results = [];
@@ -609,6 +656,28 @@ test('propose_workflow: label, START hook with the full input, RESULT hook with 
   assert.deepEqual(results.at(-1), { toolUseId: 'toolu_wf3', input: {}, text: 'error: propose_workflow: boom', isError: true });
 });
 
+test('propose_metrics_change: label, RESULT hook with the full input + raw text + isError; never for a sub-agent', () => {
+  assert.equal(labelForTool('mcp__worca__propose_metrics_change', {}), 'Proposing a metrics change');
+  assert.equal(labelForTool('mcp__worca__get_team_metrics', {}), 'Reading team metrics');
+  const results = [];
+  const h = harness({ onMetricsProposal: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { kind: 'record', projectKey: 'p-00000001', record: false };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_tm', 'mcp__worca__propose_metrics_change', input));
+  assert.deepEqual(results, [], 'no START hook: the card is minted at RESULT, from the input');
+  h.push(uresult('toolu_tm', '{"ok":true,"card":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_tm', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_tm2', 'mcp__worca__propose_metrics_change', input, 'toolu_task'));
+  h.push(uresult('toolu_tm2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(results.length, 1, 'child-stream calls are logged, never intercepted');
+  h.push(atool('msg_1', 'toolu_tm3', 'mcp__worca__propose_metrics_change', {}));
+  h.push(uresult('toolu_tm3', 'error: propose_metrics_change: boom', { isError: true }));
+  assert.deepEqual(results.at(-1), { toolUseId: 'toolu_tm3', input: {}, text: 'error: propose_metrics_change: boom', isError: true });
+  const throwing = harness({ onMetricsProposal: () => { throw new Error('hook'); } });
+  throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_metrics_change', input));
+  assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
+});
+
 test('onTrackRun fires on the MAIN-stream track_run tool_result with the full input, the text and isError; never for a sub-agent', () => {
   const calls = [];
   const h = harness({ onTrackRun: (e) => calls.push(e) });
@@ -621,4 +690,149 @@ test('onTrackRun fires on the MAIN-stream track_run tool_result with the full in
   // a sub-agent's call (parent_tool_use_id set) is logged on the agent block, never hooked (D16)
   h.push(atool('msg_3', 'agent-1', 'Task', { prompt: 'x' }), atool('msg_4', 't3', 'mcp__worca__track_run', { id: 'abcd1234' }, 'agent-1'), uresult('t3', '{"ok":true}', { ptu: 'agent-1' }));
   assert.equal(calls.length, 2);
+});
+
+test('a successful save_script pokes onScriptMutation with the key and the action; a refusal, an error and a test run do not', () => {
+  const seen = [];
+  const h = harness({ onScriptMutation: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__save_script', { key: 'runTests', meta: {}, source: 'npm test' }));
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'runTests', created: true, path: '/h/s/runTests.sh', link: '#scripts/runTests' })));
+  // A refusal carries a well-formed body and is NOT an is_error result, so only `ok` can stop it.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__save_script', { key: 'shell', meta: {}, source: 'x' }));
+  h.push(uresult('toolu_2', JSON.stringify({ ok: false, errors: ['script "shell" is a built-in — save your version under a new key instead'] })));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__save_script', { key: 'boom', meta: {}, source: 'x' }));
+  h.push(uresult('toolu_3', 'error: EACCES', { isError: true }));
+  // …and running a script changes no file.
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__test_script', { key: 'runTests' }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true, key: 'runTests', result: { status: 'clean' } })));
+  // A sub-agent's save still wrote the file, so it still pokes (the memory rule).
+  h.push(atool('msg_1', 'toolu_agent', 'Task', { description: 'save it', subagent_type: 'general-purpose' }));
+  h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__save_script', { key: 'lint', meta: {}, source: 'x' }, 'toolu_agent'));
+  h.push(uresult('toolu_c1', JSON.stringify({ ok: true, key: 'lint', created: false }), { ptu: 'toolu_agent' }));
+  h.push(uresult('toolu_agent', [{ type: 'text', text: 'saved' }], { tur: AGENT_TUR }));
+  assert.deepEqual(seen, [{ key: 'runTests', action: 'created' }, { key: 'lint', action: 'updated' }]);
+  const boom = harness({ onScriptMutation: () => { throw new Error('sink'); } });
+  boom.push(atool('msg_1', 'toolu_1', 'mcp__worca__save_script', { key: 'a', meta: {}, source: 'x' }));
+  assert.doesNotThrow(() => boom.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'a', created: true }))));
+  assert.equal(boom.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
+test('script tools: activity labels, the key stamped at the call, and the result note merged on the block', () => {
+  assert.equal(labelForTool('mcp__worca__list_scripts', {}), 'Looking at scripts');
+  assert.equal(labelForTool('mcp__worca__get_script', { key: 'runTests' }), 'Reading script: runTests');
+  assert.equal(labelForTool('mcp__worca__save_script', { key: 'runTests' }), 'Saving script: runTests');
+  assert.equal(labelForTool('mcp__worca__save_script', {}), 'Saving a script');
+  assert.equal(labelForTool('mcp__worca__test_script', { key: 'runTests' }), 'Testing script: runTests');
+
+  assert.equal(scriptToolKey('mcp__worca__save_script', { key: 'runTests', source: 'x' }), 'runTests');
+  assert.equal(scriptToolKey('mcp__worca__list_scripts', {}), '', 'a script tool with no key still says "script tool"');
+  assert.equal(scriptToolKey('mcp__worca__save_script', { key: 'a'.repeat(200) }), 'a'.repeat(64), 'clipped to the key regex\'s width');
+  assert.equal(scriptToolKey('mcp__worca__list_runs', { key: 'x' }), null, 'not a script tool');
+
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":true,"key":"a","created":true}'), { saved: 'created' });
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":true,"key":"a","created":false}'), { saved: 'updated' });
+  assert.deepEqual(scriptResultNote('mcp__worca__save_script', '{"ok":false,"errors":["x"]}'), { saved: 'not saved' });
+  assert.deepEqual(scriptResultNote('mcp__worca__test_script', '{"ok":true,"result":{"status":"blocking","exitCode":1}}'), { status: 'blocking', exitCode: 1 });
+  assert.deepEqual(scriptResultNote('mcp__worca__test_script', '{"ok":false,"errors":["x"]}'), { status: 'not run' });
+  assert.equal(scriptResultNote('mcp__worca__test_script', 'not json'), null);
+  assert.equal(scriptResultNote('mcp__worca__save_script', '{"ok":true}', true), null, 'an errored call keeps the row\'s own error');
+  assert.equal(scriptResultNote('mcp__worca__list_scripts', '{"scripts":[]}'), null, 'the readers carry no note');
+
+  const h = harness();
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__test_script', { key: 'runTests' }));
+  assert.deepEqual(h.frames.filter((f) => f.type === 'ask-block').at(-1).block.script, { key: 'runTests' }, 'the key rides the block from the call on');
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, key: 'runTests', result: { status: 'blocking', exitCode: 1, durationMs: 4200 } })));
+  const block = h.frames.filter((f) => f.type === 'ask-block').at(-1).block;
+  assert.deepEqual(block.script, { key: 'runTests', status: 'blocking', exitCode: 1 });
+  assert.equal(block.status, 'done');
+  // A save_script input is a whole program: past blockIoMaxChars the persisted input is the
+  // { _truncated, preview } stub and input.key is GONE — the stamp is what keeps the key.
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__save_script', { key: 'runTests', meta: {}, source: 'x'.repeat(5000) }));
+  h.push(uresult('toolu_2', JSON.stringify({ ok: true, key: 'runTests', created: true })));
+  const big = h.frames.filter((f) => f.type === 'ask-block').at(-1).block;
+  assert.equal(big.input._truncated, true);
+  assert.deepEqual(big.script, { key: 'runTests', saved: 'created' });
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_runs', { limit: 5 }));
+  h.push(uresult('toolu_3', '[]'));
+  assert.equal('script' in h.frames.filter((f) => f.type === 'ask-block').at(-1).block, false, 'other tools are untouched');
+});
+
+test('propose_policy_change / get_team_policy: labels, the RESULT hook with the full input; never for a sub-agent', () => {
+  assert.equal(labelForTool('mcp__worca__propose_policy_change', {}), 'Proposing a policy change');
+  assert.equal(labelForTool('mcp__worca__get_team_policy', {}), 'Reading team policy');
+  const results = [];
+  const h = harness({ onPolicyProposal: (e) => { results.push(e); return Promise.resolve(); } });
+  const input = { kind: 'edit', projectKey: 'p-00000001', set: [{ key: 'cost.pipelineLimitUsd', value: 30 }] };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_tp', 'mcp__worca__propose_policy_change', input));
+  assert.deepEqual(results, [], 'minted at RESULT');
+  h.push(uresult('toolu_tp', '{"ok":true,"card":{}}'));
+  assert.deepEqual(results, [{ toolUseId: 'toolu_tp', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_tp2', 'mcp__worca__propose_policy_change', input, 'toolu_task'));
+  h.push(uresult('toolu_tp2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(results.length, 1, 'child-stream calls are never intercepted');
+  const throwing = harness({ onPolicyProposal: () => { throw new Error('hook'); } });
+  throwing.push(atool('msg_1', 'toolu_x', 'mcp__worca__propose_policy_change', input));
+  assert.doesNotThrow(() => throwing.push(uresult('toolu_x', '{"ok":true}')));
+});
+
+// Scheduled runs (docs/scheduled-runs.md "Ask Worca"): the four direct writes repaint the page; a
+// propose_schedule_change RESULT hands its INPUT to the parent for the authoritative re-validation.
+test('schedule tools: a successful direct write pokes onScheduleMutation (errors and reads do not); propose_schedule_change reaches onScheduleProposal', () => {
+  const pokes = [];
+  const proposals = [];
+  const h = harness({ onScheduleMutation: (e) => pokes.push(e), onScheduleProposal: (e) => { proposals.push(e); } });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__pause_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_1', JSON.stringify({ ok: true, schedule: { id: 'sch_0000abcd', status: 'paused' } })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__resume_schedule', { id: 'sch_0000abcd' }));
+  h.push(uresult('toolu_2', 'error: resume_schedule: this schedule is active', { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_schedules', {}));
+  h.push(uresult('toolu_3', JSON.stringify({ schedules: [], runs: [] })));
+  h.push(atool('msg_1', 'toolu_4', 'mcp__worca__mark_schedule_activity_read', { all: true }));
+  h.push(uresult('toolu_4', JSON.stringify({ ok: true, marked: 2, unread: 0 })));
+  const input = { id: 'sch_0000abcd', action: 'delete' };
+  h.push(atool('msg_1', 'toolu_5', 'mcp__worca__propose_schedule_change', input));
+  h.push(uresult('toolu_5', JSON.stringify({ ok: true, card: { type: 'schedule' } })));
+  assert.deepEqual(pokes, [{ tool: 'pause_schedule' }, { tool: 'mark_schedule_activity_read' }]);
+  assert.equal(proposals.length, 1);
+  assert.deepEqual(proposals[0].input, input);
+  assert.equal(proposals[0].isError, false);
+  assert.equal(labelForTool('mcp__worca__preview_schedule', {}), 'Working out the dates');
+  assert.equal(labelForTool('mcp__worca__propose_schedule_change', {}), 'Proposing a schedule change');
+});
+
+test('propose_clone_project: labelled, and its RESULT reaches onCloneProposal with the full input; a sub-agent call never does', () => {
+  assert.equal(labelForTool('mcp__worca__propose_clone_project', {}), 'Proposing a project clone');
+  const seen = [];
+  const h = harness({ onCloneProposal: (e) => { seen.push(e); return Promise.resolve(); } });
+  const input = { url: 'https://github.com/acme/api', branch: 'dev' };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_cl', 'mcp__worca__propose_clone_project', input));
+  assert.deepEqual(seen, [], 'minted at RESULT, never at START');
+  h.push(uresult('toolu_cl', '{"ok":true,"card":{}}'));
+  assert.deepEqual(seen, [{ toolUseId: 'toolu_cl', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_cl2', 'mcp__worca__propose_clone_project', input, 'toolu_task'));
+  h.push(uresult('toolu_cl2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(seen.length, 1, 'child-stream calls are never intercepted');
+});
+
+test('labelForTool: web tools name the host, never the full URL', () => {
+  assert.equal(labelForTool('mcp__worca__web_fetch', { url: 'https://docs.example.com/x' }), 'Reading docs.example.com');
+  assert.equal(labelForTool('mcp__worca__web_fetch', { url: 'bad' }), 'Reading a web page');
+  assert.equal(labelForTool('mcp__worca__web_search', { query: 'q' }), 'Searching the web');
+});
+
+test('propose_web_access: labelled, and its RESULT reaches onWebProposal with the full input; a sub-agent call never does', () => {
+  assert.equal(labelForTool('mcp__worca__propose_web_access', {}), 'Asking to read a new site');
+  const seen = [];
+  const h = harness({ onWebProposal: (e) => { seen.push(e); return Promise.resolve(); } });
+  const input = { url: 'https://jev.example.dev/', reason: 'docs' };
+  h.push(session(), init(), mstart('msg_1'), atool('msg_1', 'toolu_w', 'mcp__worca__propose_web_access', input));
+  assert.deepEqual(seen, []);
+  h.push(uresult('toolu_w', '{"ok":true,"card":{}}'));
+  assert.deepEqual(seen, [{ toolUseId: 'toolu_w', input, text: '{"ok":true,"card":{}}', isError: false }]);
+  h.push(atool('msg_1', 'toolu_task', 'Agent', { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' }));
+  h.push(atool('msg_c', 'toolu_w2', 'mcp__worca__propose_web_access', input, 'toolu_task'));
+  h.push(uresult('toolu_w2', '{"ok":true}', { ptu: 'toolu_task' }));
+  assert.equal(seen.length, 1, 'child-stream calls are never intercepted');
 });

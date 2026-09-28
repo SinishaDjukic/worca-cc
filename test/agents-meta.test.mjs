@@ -10,6 +10,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { effectiveAllowedTools } from '../src/core/phases.mjs';
+import { toolsForMeta } from '../src/core/graph/executor.mjs';
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 const RUNNER_TYPES = new Set(['producer', 'verifier', 'clarifier']);
@@ -129,4 +131,16 @@ test('M4: the two workspace agents are paired (md + sidecar) and scope:"workspac
 test('M4: a workspace-only sidecar carries the optional scope field on disk', async () => {
   const raw = JSON.parse(await readFile(join(AGENTS_DIR, 'workspaceScanner.meta.json'), 'utf8'));
   assert.equal(raw.scope, 'workspace-only', 'the sidecar declares scope explicitly');
+});
+
+test('the shipped defragmenter is a memory agent: no Bash, no Skill, no MultiEdit anywhere in its spawn', async () => {
+  // effectiveAllowedTools UNIONS the .md frontmatter onto the base set, so the `tools:` line can
+  // only ADD: the sidecar's sideEffect is the only thing that keeps Bash away from this agent.
+  const meta = JSON.parse(await readFile(join(AGENTS_DIR, 'memoryDefragmenter.meta.json'), 'utf8'));
+  assert.equal(meta.sideEffect, 'memory', 'the sidecar is what selects MEMORY_TOOLS');
+  const body = await readFile(join(AGENTS_DIR, 'worca-cc-memory-defragmenter.md'), 'utf8');
+  const declared = (body.match(/^tools:\s*(.+)$/m)?.[1] || '').split(',').map((t) => t.trim());
+  const tools = effectiveAllowedTools(toolsForMeta(meta), declared, false);
+  assert.deepEqual(tools, ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+  for (const banned of ['Bash', 'Skill', 'MultiEdit', 'Task', 'Agent']) assert.ok(!tools.includes(banned), banned);
 });

@@ -24,6 +24,13 @@ project's working tree, so nothing is ever committed to your repo.
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
                          Archiving a run deletes its comments with its artifacts.
+  scheduled/<id>/extras/                files attached to a scheduled run (or a repeating
+                                        schedule), kept until it starts — the OS temp dir does
+                                        not survive a reboot. The tickets, schedules and the
+                                        activity feed are DB rows: scheduled_runs, schedules,
+                                        notifications (see scheduled-runs.md).
+                                        (v34: after_kind/after_id/after_policy/
+                                        source_from_previous — a run that waits for another run.)
   ask/<threadId>/att/<attachmentId>.<ext>  Ask Worca attachment bodies — .txt for text kinds,
                                         the sniffed type's extension for images/PDFs (threads, messages and
                                         run links live in the DB: ask_threads, ask_messages,
@@ -35,8 +42,20 @@ project's working tree, so nothing is ever committed to your repo.
                                         checkouts the assistant opens (registry: ask_worktrees;
                                         removed with the thread, reconciled at boot)
   tmp/ask/                              the Ask Worca assistant's scratch cwd + per-turn
-                                        mcp-<messageId>.json (never a project folder)
+                                        mcp-<messageId>.json, mode 0600 (never a project folder)
+  logs/ask-web.jsonl                    Ask Worca web access: one line per web_fetch/web_search
+                                        call (redacted URL, status, bytes); rotated to .1 at 5 MB
   runs/<pipelineId>/                    detached run roots: run.json, repos/<projectKey>/ worktrees
+  metrics/
+    repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-metrics
+    outbox/<owner~repo>/*.jsonl  .lock   pending run records (durability point) + cross-process lock
+    no-hooks/                            empty core.hooksPath for metrics git commands
+    ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
+    pr-cache.json                        Timeline: pull requests per repo#branch asked from gh (merged = final)
+    tmp/enable-*                         transient staging for the orphan root commit
+  policy/
+    repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
+    locks/<owner~repo>.lock              cross-process lock for enable / follow / publish
   plugins/                              installed plugin checkouts
   agents/                               installed agent registry checkouts
   workflows/                            saved workflow templates

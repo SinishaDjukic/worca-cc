@@ -1,0 +1,25 @@
+# docker/compose.teams.yml — Microsoft Teams webhook ingress (docs/docker.md, "Teams").
+#
+#   docker compose -f compose.yml -f compose.teams.yml up -d
+#
+# Teams is the one chat channel that needs an inbound HTTPS URL (Bot Framework
+# has no polling mode). A cloudflared sidecar dials OUT to Cloudflare and
+# forwards to worca's token-guarded ingress route; nothing is published.
+#
+#   CLOUDFLARE_TUNNEL_TOKEN   a named tunnel's token (recommended; stable URL)
+#                             unset: a Quick Tunnel with a random trycloudflare.com
+#                             URL printed in `docker compose logs teams-tunnel`
+
+services:
+  teams-tunnel:
+    image: cloudflare/cloudflared:latest
+    command: >
+      tunnel --no-autoupdate
+      ${CLOUDFLARE_TUNNEL_TOKEN:+run --token }${CLOUDFLARE_TUNNEL_TOKEN:---url http://worca:4317}
+    depends_on:
+      - worca
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped

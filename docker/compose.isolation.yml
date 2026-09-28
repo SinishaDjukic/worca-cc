@@ -1,0 +1,40 @@
+# docker/compose.isolation.yml — agents under their own users, for a worca a TEAM shares
+# (docs/credential-broker.md). Use it with the broker overlay:
+#
+#   docker compose -f compose.yml -f compose.broker.yml -f compose.isolation.yml up -d
+#
+# What it changes, and why:
+#   - One volume (/data) holds everything, like the single-volume hosts (Railway): the
+#     entrypoint starts as root ONLY to prepare it, then drops to the `worca` user.
+#   - Agents run as `worca-agent`, and each signed-in person's agents as their own user
+#     from the pool (worca-agent-01..16): they can't read worca's settings, database or
+#     environment, nor each other's processes (and the broker token in them).
+#   - That switch is a `sudo` to those users only (never root), which needs setuid to
+#     work: `no-new-privileges` is lifted and exactly the capabilities it needs are kept.
+#
+# Needs Docker Compose 2.24 or newer (the !reset tag). Your repositories live on the
+# volume (/data/projects): clone them from the UI, or copy them in.
+
+services:
+  worca:
+    user: "0:0"
+    environment:
+      WORCA_DATA_DIR: /data
+    volumes:
+      - worca-data:/data
+    security_opt: !reset []
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # the entrypoint takes the fresh volume
+      - DAC_OVERRIDE
+      - FOWNER
+      - FSETID         # the shared folders' setgid bit (without it the kernel silently drops it,
+                       # new files get worca's own group, and agent users can't read them)
+      - SETUID         # dropping to worca, and sudo to the agent users
+      - SETGID
+      - AUDIT_WRITE    # sudo's session record
+      - KILL           # stopping an agent's process group
+
+volumes:
+  worca-data:

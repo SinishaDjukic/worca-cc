@@ -31,6 +31,35 @@ test('install consent lists a requested secret (.pl-secret) + setup commands ver
   assert.match(el.querySelector('.pl-setup-cmd').textContent, /npm ci --prefix <dir> --ignore-scripts --omit=dev/);
 });
 
+test('install consent names an agent’s ask forms and the file types they may display', () => {
+  const el = renderInstallConsent(
+    { name: 'mockup-source', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    {
+      agents: [
+        { key: 'mockupReviewer', tools: ['Read'], forms: ['review-mockups'], fileTypes: ['application/pdf', 'image/*'] },
+        { key: 'plainAgent', tools: [], forms: [], fileTypes: [] },
+      ],
+      taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [],
+    },
+    { doc },
+  );
+  const rows = [...el.querySelectorAll('.pl-consent-forms')];
+  assert.equal(rows.length, 1, 'only the agent that HAS forms gets the line');
+  assert.equal(rows[0].textContent,
+    '1 form: review-mockups · may display application/pdf, image/* from the run folder');
+  assert.match(el.textContent, /mockupReviewer — tools: Read/, 'the tools line is untouched');
+});
+
+test('install consent tolerates a snapshot taken before ask forms existed', () => {
+  const el = renderInstallConsent(
+    { name: 'old-snap', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
+    { agents: [{ key: 'legacy', tools: ['Read'] }], taskSources: [], skills: [], workflows: [], depCount: null, setupCommands: [] },
+    { doc },
+  );
+  assert.equal(el.querySelector('.pl-consent-forms'), null);
+  assert.match(el.textContent, /legacy — tools: Read/);
+});
+
 test('install consent: chat channels render security-loud with secrets; absent -> no section', () => {
   const el = renderInstallConsent(
     { name: 'telegram-chat', repoUrl: 'https://github.com/o/r', sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' },
@@ -457,4 +486,30 @@ test('a card renders the ignored contributions as an amber note (MAJ-13)', () =>
     ignored: [{ file: 'agents/x.meta.json', reason: 'unreadable JSON' }] }], { doc });
   assert.equal(one.querySelector('.pl-ignored-note').textContent,
     '1 contribution ignored: agents/x.meta.json — unreadable JSON');
+});
+
+test('install consent lists shipped scripts with their runtime and command; the card summary counts them', () => {
+  const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
+    { agents: [], taskSources: [], scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy' }, { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null }], skills: [], workflows: [] }, { doc });
+  assert.match(el.textContent, /Scripts \(2\)/);
+  assert.match(el.textContent, /tidy — shell · npm run tidy/);
+  assert.match(el.textContent, /lint — node · lint\.mjs/);
+  const list = renderPluginList([{ name: 'p', version: '1', enabled: true, contributions: { agents: 1, scripts: 2, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 }, ignored: [] }], { doc });
+  assert.match(list.textContent, /1 agent · 2 scripts/);
+});
+
+test('the Plugins card carries the python notice; a consent script row counts its cases', () => {
+  const contributions = { agents: 0, scripts: 1, taskSources: 0, chatChannels: 0, models: 0, skills: 0, workflows: 0 };
+  const loud = renderPluginList([{ name: 'p', version: '1', enabled: true, pythonMissing: true, contributions, ignored: [] }], { doc });
+  assert.ok(loud.querySelector('.pl-python-missing'), 'the notice is a chip, not a paragraph');
+  assert.match(loud.textContent, /python not found/);
+  const quiet = renderPluginList([{ name: 'q', version: '1', enabled: true, contributions, ignored: [] }], { doc });
+  assert.equal(quiet.querySelector('.pl-python-missing'), null);
+
+  const el = renderInstallConsent({ name: 'p', repoUrl: 'https://x/y', sha: 'a'.repeat(40) },
+    { agents: [], taskSources: [], skills: [], workflows: [],
+      scripts: [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 2 },
+        { key: 'lint', runtime: 'node', file: 'lint.mjs', command: null, cases: 1 }] }, { doc });
+  assert.match(el.textContent, /tidy — shell · npm run tidy · 2 cases/);
+  assert.match(el.textContent, /lint — node · lint\.mjs · 1 case/);
 });

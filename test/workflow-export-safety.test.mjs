@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { applyExport } from '../src/core/workflow-export.mjs';
+import { applyExport, planExport } from '../src/core/workflow-export.mjs';
+import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writeKeyGraph } from './helpers/export-fixtures.mjs';
 
@@ -48,4 +49,16 @@ test('decomposer node gets the fan-out workaround (Agent tool + clause)', async 
   const agentMd = await readFile(join(dest, `.claude/agents/${dispatch[1]}.md`), 'utf8');
   assert.match(agentMd, /^tools:.*\bAgent\b/m);                       // fan-out tool added
   assert.match(agentMd, /parallel READ-ONLY research subagents/);    // fan-out clause in preamble
+});
+
+test('a template with script nodes cannot be exported to Claude Code yet: UNSUPPORTED naming the nodes', async () => {
+  const tpl = await writeKeyGraph({ name: 'Script Fixture', keys: ['planner'] });
+  const shellPorts = { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] };
+  await writeGraphWorkflow({ ...tpl,
+    nodes: [...tpl.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 500, y: 300, config: { params: { command: 'npm test' }, ports: shellPorts } }],
+    wires: [...tpl.wires, { id: 'w_sh', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }] });
+  for (const fn of [planExport, applyExport]) {
+    await assert.rejects(fn({ workflowId: tpl.id, destination: 'project', projectDir: await tmp(), onConflict: 'overwrite' }),
+      (e) => e.code === 'UNSUPPORTED' && e.message === 'export to Claude Code does not carry script cards yet: Shell (n_sh)' && e.nodes[0] === 'n_sh');
+  }
 });

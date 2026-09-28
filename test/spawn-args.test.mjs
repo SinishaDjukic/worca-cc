@@ -765,3 +765,43 @@ test('WORCA_DEBUG_SPAWN on, no model env: routingEnv=[(none)]', POSIX_SHIM, asyn
   assert.ok(debug, 'spawn-debug event present');
   assert.ok(debug.text.includes('routingEnv=[(none)]'), debug.text);
 });
+
+test('runClaude FORWARDS addDirs to runReal (--add-dir reaches the spawn)', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const out = join(dir, 'argv.txt');
+  const bin = await fakeBin(dir, out);
+  const prevMock = process.env.WORCA_MOCK;
+  delete process.env.WORCA_MOCK;
+  try {
+    await runClaude({ cwd: dir, bin, prompt: 'p', allowedTools: ['Read'], addDirs: [join(dir, 'mount')] });
+  } finally {
+    if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
+  }
+  const argv = (await readFile(out, 'utf8')).split('\0').filter(Boolean);
+  const i = argv.indexOf('--add-dir');
+  assert.ok(i > -1, `--add-dir reached the spawn: ${JSON.stringify(argv)}`);
+  assert.equal(argv[i + 1], join(dir, 'mount'));
+  assert.equal(argv.lastIndexOf('--add-dir'), i, 'one dir ⇒ one flag');
+});
+
+// ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
+
+test('no GitHub credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
+  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  for (const k of keys) process.env[k] = `secret-${k}`;
+  try {
+    const dumps = [
+      await runWithEnvDump({}, { leak: 'x' }),                                              // Permissive / Normal: scrub off
+      await runWithEnvDump({ envScrub: true, envAllowlist: keys }),                         // Strict, allowlisted anyway
+      await runWithEnvDump({ modelEnv: { GH_TOKEN: 'from-model', ANTHROPIC_BASE_URL: 'http://p' } }),
+    ];
+    for (const d of dumps) {
+      assert.ok(!/secret-|from-model/.test(d), 'no credential in the child env');
+      assert.ok(d.includes('PATH='), 'the child still got a usable env');
+    }
+    assert.ok(dumps[0].includes('WORCA_TEST_LEAK=x'), 'scrub off still inherits everything else');
+  } finally {
+    for (const k of keys) if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+  }
+});

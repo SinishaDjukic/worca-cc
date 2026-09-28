@@ -20,6 +20,9 @@
 //   pipelineCostLimitUsd   — per-pipeline lifetime USD spend cap; unset = no limit.
 //   totalCostLimitUsd      — windowed all-pipelines USD spend cap; unset = no limit.
 //   costLimitResetPeriod   — total-budget window, 'weekly' | 'monthly' (default).
+//   pythonPath             — §7 of the scripts-workbench spec: the python
+//                            interpreter the script-card probe tries after
+//                            WORCA_PYTHON and before the platform defaults.
 //   models                 — the global model catalog (configurable-models-design.md
 //                            §4.1): [{id, label?, efforts?, env?}]. Entries shadow
 //                            PREDEFINED_MODELS by id; env is per-model routing env
@@ -35,7 +38,8 @@
 // bootstrap value or a plain scalar toggle, so a table would buy nothing.
 //
 // IMPORTANT: this module imports NOTHING from the core graph (Node builtins
-// plus the zero-import model-env.mjs leaf only). projects.mjs imports it, so
+// plus the zero-import model-env.mjs leaf and the web-allowlist.mjs leaf, which
+// imports only node:net and node:url). projects.mjs imports it, so
 // importing projects.mjs back would make worcaHome() -> getWorcaRoot() ->
 // projects.mjs an infinite cycle.
 //
@@ -48,7 +52,13 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag } from './model-env.mjs';
+import {
+  EFFORTS, isReservedModelEnvKey, assertModelCost, envFlag,
+  assertModelUpstream, upstreamEnvConflict, modelEnvRef,
+  UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
+  COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+} from './model-env.mjs';
+import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 
 /**
  * The real OS home base, honoring HOME/USERPROFILE so tests can sandbox it.
@@ -277,6 +287,163 @@ export function contextMaxBytesTotal() {
   return readByteCap('contextMaxBytesTotal', DEFAULT_CONTEXT_MAX_BYTES_TOTAL);
 }
 
+// ── Agent memory caps (agent-memory-design.md §2 / §12) ─────────────────────
+export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health above this
+export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
+export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
+export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+
+export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_BYTES_PCT = 60;  // % of (maxFilesPerScope × softBytesPerFile) at which a scope is "due"
+export const DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES = 16384;  // bytes of path-less memory (loaded into EVERY agent's context) at which a scope is "due"
+
+/** settings.json → { memory: { maxBytesPerFile, softBytesPerFile, maxFilesPerScope, hookMaxChars,
+ *  defrag: { writes, files, bytesPct, alwaysOnBytes } } }. Every key optional; a bad value warns (naming the full key) and falls back. */
+function memoryBlock() {
+  const block = readSettings().memory;
+  return block && typeof block === 'object' && !Array.isArray(block) ? block : {};
+}
+function readMemoryCap(key, fallback) {
+  const v = memoryBlock()[key];
+  if (v === undefined) return fallback;
+  if (isByteCap(v)) return v;
+  console.warn(`[worca] invalid memory.${key} ${JSON.stringify(v)} — using ${fallback}`);
+  return fallback;
+}
+let warnedDefragBlock = false;   // module-level: the reader runs once per threshold key, the block is one mistake
+/** `memory.defrag.<key>`: a positive integer; `bytesPct` additionally ≤ 100 (it is a share).
+ *  A `defrag` that is not a plain object is one mistake, not three: warn ONCE and fall back. */
+function readDefragThreshold(key, fallback, { pct = false } = {}) {
+  const d = memoryBlock().defrag;
+  const isBlock = Boolean(d) && typeof d === 'object' && !Array.isArray(d);
+  if (d !== undefined && !isBlock) {
+    if (!warnedDefragBlock) {
+      warnedDefragBlock = true;
+      console.warn(`[worca] invalid memory.defrag ${JSON.stringify(d)} — using the defaults`);
+    }
+    return fallback;
+  }
+  const v = isBlock ? d[key] : undefined;
+  if (v === undefined) return fallback;
+  if (isByteCap(v) && (!pct || v <= 100)) return v;
+  console.warn(`[worca] invalid memory.defrag.${key} ${JSON.stringify(v)} — using ${fallback}`);
+  return fallback;
+}
+
+/** The caps every memory reader/writer takes (memory-store.mjs, memory-sync.mjs). Read fresh per call.
+ *  `defrag` is the health threshold block (agent-memory-design.md §8 / §12). */
+export function memoryCaps() {
+  return {
+    softBytesPerFile: readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
+    hardBytesPerFile: readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
+    maxFilesPerScope: readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
+    hookMaxChars: readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    defrag: {
+      writes: readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
+      files: readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
+      bytesPct: readDefragThreshold('bytesPct', DEFAULT_MEMORY_DEFRAG_BYTES_PCT, { pct: true }),
+      alwaysOnBytes: readDefragThreshold('alwaysOnBytes', DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES),
+    },
+  };
+}
+
+// ── Memory defragment model (Settings › Memory) ─────────────────────────────
+// `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
+// (memory-defrag-model.mjs resolves it at run start; the setting is GLOBAL, there is no
+// per-project variant). They share the `memory.defrag` block with the numeric health
+// thresholds, but readDefragThreshold reads only its own four keys and memoryCaps() —
+// which feeds every memory sync — never carries them.
+const DEFRAG_MODEL_MAX_LEN = 200;
+const UNSET_DEFRAG_MODEL = Object.freeze({ model: null, effort: null });
+// The reader runs on every GET /api/settings, every memory report and every defragment run: a
+// hand-edited bad value is one mistake — warn once per key + value, not once per request.
+const warnedDefragModel = new Set();
+function warnDefragModelOnce(key, value, tail) {
+  const id = `${key}:${JSON.stringify(value)}`;
+  if (warnedDefragModel.has(id)) return;
+  warnedDefragModel.add(id);
+  console.warn(`[worca] invalid memory.defrag.${key} ${JSON.stringify(value)} — ${tail}`);
+}
+
+/** The STORED pair: `{ model, effort }`, both null when unset (= the workflow default). Sync and
+ *  never throws. An effort without a model means nothing and reads as unset; a bad value warns
+ *  (once) and reads as unset. Under the node:test runner it reads unset unless the test sandboxes
+ *  HOME and sets WORCA_TEST_ALLOW_HOME_FALLBACK (the listGlobalModels guard): settings.json lives
+ *  under HOME, not WORCA_HOME, so a developer's own pick must never leak into a mock run. */
+export function memoryDefragModel() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return { ...UNSET_DEFRAG_MODEL };
+  const d = memoryBlock().defrag;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return { ...UNSET_DEFRAG_MODEL }; // readDefragThreshold warns about the block
+  const m = d.model;
+  if (m === undefined) return { ...UNSET_DEFRAG_MODEL };
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnDefragModelOnce('model', m, 'defragment runs use the workflow default');
+    return { ...UNSET_DEFRAG_MODEL };
+  }
+  const e = d.effort;
+  const effort = typeof e === 'string' && EFFORTS.includes(e) ? e : null;
+  if (e !== undefined && effort === null) warnDefragModelOnce('effort', e, 'defragment runs use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+/**
+ * Validate a POST value: `{ model, effort }`, or null / '' to clear (a blank model clears the
+ * effort with it). With `models` (the effective catalog) the model must name an entry — it comes
+ * back in the catalog's casing — and the effort must be one that entry offers; without it the ids
+ * pass as given (tests, callers that validated already).
+ * @returns {{model:string, effort:(string|null)}|null} the pair to store, null to clear
+ * @throws {Error} on a malformed value, an effort without a model, an unknown model or an effort
+ *   the model does not offer
+ */
+export function assertMemoryDefragModelInput(input, models = null) {
+  if (input === '' || input === null || input === undefined) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) throw new Error('memoryDefrag must be { model, effort } or null');
+  const blank = (v) => v === null || v === undefined || (typeof v === 'string' && !v.trim());
+  if (blank(input.model)) {
+    if (!blank(input.effort)) throw new Error('memoryDefrag.effort needs a model — an effort without a model means nothing');
+    return null;
+  }
+  if (typeof input.model !== 'string' || !input.model.trim() || input.model.length > DEFRAG_MODEL_MAX_LEN) {
+    throw new Error('memoryDefrag.model must be a catalog model id');
+  }
+  const effortIn = typeof input.effort === 'string' ? input.effort.trim() : input.effort;   // trimmed like setNodeModel / checkStartPair
+  if (!blank(effortIn) && !EFFORTS.includes(effortIn)) {
+    throw new Error(`memoryDefrag.effort must be one of ${EFFORTS.join(' | ')}`);
+  }
+  let model = input.model.trim();
+  const effort = blank(effortIn) ? null : effortIn;
+  if (Array.isArray(models)) {
+    const hit = models.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === model.toLowerCase());
+    if (!hit) throw new Error(`unknown model "${model}" — add it to the catalog first`);
+    model = hit.id;
+    if (effort && !(Array.isArray(hit.efforts) && hit.efforts.includes(effort))) {
+      throw new Error(`${model} does not offer effort "${effort}"`);
+    }
+  }
+  return { model, effort };
+}
+
+/** Store (or, on null / a blank model, clear) the pair — read-modify-write of the `memory` block,
+ *  so the health thresholds and every other memory key survive. A block left empty is removed. */
+export async function setMemoryDefragModel(input, { models = null } = {}) {
+  const pair = assertMemoryDefragModelInput(input, models);
+  const settings = readSettings();
+  const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+  const memory = isObj(settings.memory) ? { ...settings.memory } : {};
+  const defrag = isObj(memory.defrag) ? { ...memory.defrag } : {};
+  delete defrag.model;
+  delete defrag.effort;
+  if (pair) {
+    defrag.model = pair.model;
+    if (pair.effort) defrag.effort = pair.effort;
+  }
+  if (Object.keys(defrag).length) memory.defrag = defrag; else delete memory.defrag;
+  if (Object.keys(memory).length) settings.memory = memory; else delete settings.memory;
+  await persistSettings(settings);
+  return { memoryDefrag: memoryDefragModel() };
+}
+
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
 export function skillMount() {
   const v = readSettings().skillMount;
@@ -346,6 +513,13 @@ export function pipelineCostLimitUsd() { return readUsdCap('pipelineCostLimitUsd
 /** Windowed all-pipelines spend cap in USD, or null (no limit). */
 export function totalCostLimitUsd() { return readUsdCap('totalCostLimitUsd'); }
 
+/** Estimator constant overrides (money-saved design §4): `humanEstimate: { codeDiv: 40, … }`,
+ *  or {}. Validation is the estimator's resolveConstants (unknown keys ignored). */
+export function humanEstimateOverrides() {
+  const v = readSettings().humanEstimate;
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+}
+
 /** Reset period for the total budget window: 'weekly' (Mon 00:00) | 'monthly' (1st 00:00). */
 export function costLimitResetPeriod() {
   const v = readSettings().costLimitResetPeriod;
@@ -396,8 +570,10 @@ export function assertCostLimitInputs(inputs = {}) {
 // dollar cap (--max-budget-usd). For the budget key the literal `null` is a
 // STORED value meaning "no cap" (the flag is omitted), while '' / undefined clear
 // the key back to the default — the two semantics the design assigns to that key.
-export const DEFAULT_ASK_MAX_TURNS = 40;
-export const DEFAULT_ASK_MAX_BUDGET_USD = 2;
+// The defaults are 400 turns and NO cost cap: the default budget is itself `null`,
+// so an absent or invalid stored budget also means "no cap".
+export const DEFAULT_ASK_MAX_TURNS = 400;
+export const DEFAULT_ASK_MAX_BUDGET_USD = null;
 
 const isAskMaxTurns = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 500;
 const isAskMaxBudget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 100;
@@ -411,13 +587,13 @@ export function askMaxTurns() {
   return DEFAULT_ASK_MAX_TURNS;
 }
 
-/** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default (loudly). */
+/** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default, no cap (loudly). */
 export function askMaxBudgetUsd() {
   const v = readSettings().askMaxBudgetUsd;
   if (v === undefined) return DEFAULT_ASK_MAX_BUDGET_USD;
   if (v === null) return null;
   if (isAskMaxBudget(v)) return v;
-  console.warn(`[worca] invalid askMaxBudgetUsd ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_BUDGET_USD})`);
+  console.warn(`[worca] invalid askMaxBudgetUsd ${JSON.stringify(v)} — using the default (${DEFAULT_ASK_MAX_BUDGET_USD ?? 'no cap'})`);
   return DEFAULT_ASK_MAX_BUDGET_USD;
 }
 
@@ -458,6 +634,86 @@ export async function setAskMaxBudgetUsd(input) {
   return { askMaxBudgetUsd: askMaxBudgetUsd() };
 }
 
+// ── Ask Worca web access (docs/guardrails.md "Web access") ─────────────────────────────────
+// `askWeb` = { enabled, allowedDomains, search? }. Off by default; the allowlist is enforced by
+// worca's own MCP server (web-fetch.mjs). The search key is only ever a ${VAR} reference read from
+// worca's environment — a literal key is refused so settings.json never holds one.
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+function normalizeAskWebSearch(s) {
+  if (s === null || s === undefined || s === '') return null;
+  if (!isObj(s)) throw new Error('askWeb.search must be an object or null');
+  const url = typeof s.url === 'string' ? s.url.trim() : '';
+  if (!url) return null;                                     // an empty URL field = search off
+  let u; try { u = new URL(url.replace('{query}', 'q').replace('{key}', 'k')); } catch { throw new Error('askWeb.search.url is not a valid URL'); }
+  if (u.protocol !== 'https:') throw new Error('askWeb.search.url must be an https URL');
+  if (u.username || u.password) throw new Error('askWeb.search.url must not carry credentials');
+  if (!url.includes('{query}')) throw new Error('askWeb.search.url must contain {query}');
+  if (url.length > 500) throw new Error('askWeb.search.url is longer than 500 characters');
+  const key = typeof s.key === 'string' ? s.key.trim() : '';
+  const keyVar = key ? modelEnvRef(key) : null;
+  if (key && !keyVar) throw new Error('askWeb.search.key must be a ${VAR} reference — worca never stores a search API key in settings.json');
+  if (keyVar && RESERVED_KEY_VAR.test(keyVar)) throw new Error(`askWeb.search.key: ${keyVar} is a reserved variable name`);
+  const keyHeader = typeof s.keyHeader === 'string' ? s.keyHeader.trim() : '';
+  if (keyHeader && !/^[A-Za-z0-9-]{1,64}$/.test(keyHeader)) throw new Error('askWeb.search.keyHeader must be an HTTP header name');
+  const keyPrefix = typeof s.keyPrefix === 'string' ? s.keyPrefix : '';
+  if (keyPrefix.length > 20 || /[\r\n]/.test(keyPrefix)) throw new Error('askWeb.search.keyPrefix must be at most 20 characters on one line');
+  if ((keyHeader || url.includes('{key}')) && !keyVar) throw new Error('askWeb.search.key is required when a key header or {key} is used');
+  return { url, key, keyVar, keyHeader, keyPrefix };
+}
+
+/** Throws a 400-able message; returns the normalized value. */
+export function assertAskWebInput(input) {
+  if (!isObj(input)) throw new Error('askWeb must be an object');
+  if (typeof input.enabled !== 'boolean') throw new Error('askWeb.enabled must be true or false');
+  if (input.anyHost !== undefined && typeof input.anyHost !== 'boolean') throw new Error('askWeb.anyHost must be true or false');
+  if (!Array.isArray(input.allowedDomains)) throw new Error('askWeb.allowedDomains must be a list');
+  if (input.allowedDomains.length > DOMAIN_LIST_MAX) throw new Error(`askWeb.allowedDomains holds at most ${DOMAIN_LIST_MAX} entries`);
+  const { domains, invalid } = normalizeDomainList(input.allowedDomains);
+  if (invalid.length) throw new Error(`askWeb.allowedDomains: ${domainError(invalid[0])}`);
+  return { enabled: input.enabled, anyHost: input.anyHost === true, allowedDomains: domains, search: normalizeAskWebSearch(input.search) };
+}
+
+let askWebWarned = null;
+/** The local Ask web settings; invalid stored data falls back to off (never throws). */
+export function askWeb() {
+  const raw = readSettings().askWeb;
+  const off = { enabled: false, anyHost: false, allowedDomains: [], search: null };
+  if (raw === undefined || raw === null) return off;
+  try { return assertAskWebInput(isObj(raw) ? { enabled: raw.enabled, anyHost: raw.anyHost ?? false, allowedDomains: raw.allowedDomains ?? [], search: raw.search ?? null } : raw); }
+  catch (err) {
+    // Read on every turn and settings view: warn once per distinct problem, not on every read.
+    if (err.message !== askWebWarned) { askWebWarned = err.message; console.warn(`[worca] invalid askWeb setting (${err.message}) — web access stays off`); }
+    return off;
+  }
+}
+
+/** Stores exactly what the user saved; `null` clears the key (back to "unset" = off). */
+export async function setAskWeb(input) {
+  const settings = readSettings();
+  if (input === null) { delete settings.askWeb; await persistSettings(settings); return { askWeb: askWeb() }; }
+  const next = assertAskWebInput(input);
+  settings.askWeb = {
+    enabled: next.enabled,
+    ...(next.anyHost ? { anyHost: true } : {}),
+    allowedDomains: next.allowedDomains,
+    ...(next.search ? { search: { url: next.search.url, key: next.search.key, keyHeader: next.search.keyHeader, keyPrefix: next.search.keyPrefix } } : {}),
+  };
+  await persistSettings(settings);
+  return { askWeb: askWeb() };
+}
+
+/** The web card's "Always allow": one exact host joins the stored allowlist; everything else is kept. */
+export async function addAskWebHost(host) {
+  const h = normalizeDomainPattern(host);
+  if (!h || h.startsWith('*.')) throw new Error(`askWeb: "${host}" is not an exact host name`);
+  const cur = askWeb();
+  if (cur.allowedDomains.includes(h)) return { askWeb: cur };
+  const s = cur.search;
+  return setAskWeb({ enabled: cur.enabled, anyHost: cur.anyHost, allowedDomains: [...cur.allowedDomains, h],
+    search: s ? { url: s.url, key: s.key, keyHeader: s.keyHeader, keyPrefix: s.keyPrefix } : null });
+}
+
 /** Write (or clear) a USD cap key. @throws {Error} unless positive finite number (or empty). */
 async function setUsdCap(key, input) {
   assertUsdCapInput(key, input);
@@ -474,15 +730,31 @@ export const setPipelineCostLimitUsd = (input) => setUsdCap('pipelineCostLimitUs
 /** @throws {Error} unless `input` is a positive number (or empty, which clears). */
 export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', input);
 
+// ── Developer rate (money-saved design §8) ───────────────────────────────────
+// Prices the estimated human hours in Statistics and Team metrics. Stored value or
+// null; the EFFECTIVE rate (team policy default, then 35) is human-rate.mjs.
+export const DEFAULT_HUMAN_RATE_USD = 35;
+
+/** Stored developer rate in USD per hour, or null when unset (→ policy → 35). */
+export function humanRateUsdPerHour() { return readUsdCap('humanRateUsdPerHour'); }
+
+/** @throws {Error} unless a positive finite number, or '' / null / undefined (clear). */
+export function assertHumanRateInput(input) { assertUsdCapInput('humanRateUsdPerHour', input); }
+
+/** Write (or clear) the developer rate. */
+export const setHumanRateUsdPerHour = (input) => setUsdCap('humanRateUsdPerHour', input);
+
 // ── chat notification preferences (chat-connectivity-design.md §4.5) ─────────
 
 const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused'];
 
 /**
- * Effective chat notification prefs. Every event defaults ON; channels default
+ * Effective chat preferences. Every notification event defaults ON; channels default
  * enabled (an absent "<plugin>/<channelId>" key means enabled — presence with
- * {enabled:false} is the opt-out record).
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>}}
+ * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
+ * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
+ * takes save_script / test_script away.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -493,19 +765,22 @@ export function chatPrefs() {
   for (const [key, v] of Object.entries(chat.channels && typeof chat.channels === 'object' ? chat.channels : {})) {
     channels[key] = { enabled: v?.enabled !== false };
   }
-  return { notify, channels };
+  return { notify, channels, scriptTools: chat.scriptTools !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}}. Unknown notify keys are
- * rejected (400 at the API layer); channels merge per key.
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean}. Unknown
+ * notify keys and a non-boolean scriptTools are rejected (400 at the API layer);
+ * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('chat prefs must be an object');
   for (const k of Object.keys(patch.notify || {})) {
     if (!CHAT_NOTIFY_EVENTS.includes(k)) throw new Error(`unknown chat notify event "${k}"`);
   }
+  const hasScriptTools = Object.prototype.hasOwnProperty.call(patch, 'scriptTools');
+  if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -517,6 +792,7 @@ export async function setChatPrefs(patch = {}) {
         ...Object.fromEntries(Object.entries(patch.channels).map(([k, v]) => [k, { enabled: v?.enabled !== false }])),
       },
     } : {}),
+    ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -532,6 +808,42 @@ export async function setCostLimitResetPeriod(input) {
   return { costLimitResetPeriod: costLimitResetPeriod() };
 }
 
+// ── Python interpreter (scripts-workbench spec §7) ───────────────────────────
+// The second candidate the script-card probe tries, after the WORCA_PYTHON
+// environment override and before the platform defaults. Settings-file-only, the
+// company runRootMode / skillMount / the context caps keep: no /api/settings key
+// and no Settings card in this version, so it is deliberately absent from
+// SETTINGS_POST_KEYS below.
+export const PYTHON_PATH_MAX_LEN = 500;
+
+const isPythonPath = (v) => typeof v === 'string' && v.trim().length > 0 && v.length <= PYTHON_PATH_MAX_LEN;
+
+/** The STORED interpreter path (trimmed), or null when unset/invalid (loudly). */
+export function pythonPath() {
+  const v = readSettings().pythonPath;
+  if (v === undefined) return null;
+  if (isPythonPath(v)) return v.trim();
+  console.warn(`[worca] invalid pythonPath ${JSON.stringify(v)} — probing the platform defaults`);
+  return null;
+}
+
+/** @throws {Error} unless `input` is a non-empty path (or empty, which clears). */
+export function assertPythonPathInput(input) {
+  if (isClearInput(input)) return;
+  if (!isPythonPath(input)) {
+    throw new Error(`pythonPath must be a path of at most ${PYTHON_PATH_MAX_LEN} characters, or empty to probe the platform defaults`);
+  }
+}
+
+export async function setPythonPath(input) {
+  assertPythonPathInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.pythonPath;
+  else settings.pythonPath = input.trim();
+  await persistSettings(settings);
+  return { pythonPath: pythonPath() };
+}
+
 // ── The keys POST /api/settings understands ──────────────────────────────────
 // The route keeps a legacy contract: a body naming NONE of these clears root
 // (test/settings-projects-root.test.mjs "a bodyless POST resets root"). Every
@@ -540,12 +852,16 @@ export async function setCostLimitResetPeriod(input) {
 // its first save.
 export const SETTINGS_POST_KEYS = Object.freeze([
   'root', 'projectsRoot', 'chat',
-  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod',
+  'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'humanRateUsdPerHour',
   'askMaxTurns', 'askMaxBudgetUsd',
+  'askWeb',                                  // Ask Worca web access { enabled, allowedDomains, search }
   'debugSpawnEnabled',
   'titleModel', 'hideBuiltinModels',
   'theme',
+  'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
+  'memoryDefrag',                            // Settings › Memory: the defragment model + effort
+  'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
 ]);
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
@@ -604,6 +920,9 @@ export async function setHideBuiltinModels(input) {
   const settings = readSettings();
   if (input === DEFAULT_HIDE_BUILTIN_MODELS) delete settings.hideBuiltinModels;
   else settings.hideBuiltinModels = input;
+  // The developer has now made their own choice, even when it is the default: a team-policy
+  // `models.hideBuiltins` default no longer applies on this machine (team-policy design §6).
+  settings.hideBuiltinModelsChosen = true;
   await persistSettings(settings);
   return { hideBuiltinModels: hideBuiltinModels() };
 }
@@ -771,13 +1090,36 @@ function sanitizeGlobalModel(raw) {
     env[k] = t;
   }
   const cost = sanitizeModelCost(raw.cost, id);
+  const upstream = sanitizeModelUpstream(raw.upstream, id);
+  if (upstream) {
+    // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
+    // hand-edited file carrying both is degraded, not rejected: the bridge wins.
+    const clash = upstreamEnvConflict(env);
+    if (clash) {
+      console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(clash)} — the bridge sets it for an upstream entry`);
+      for (const k of Object.keys(env)) if (upstreamEnvConflict({ [k]: env[k] })) delete env[k];
+    }
+  }
   return {
     id,
     label,
     efforts: efforts.length ? efforts : [...EFFORTS],
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
+    ...(upstream ? { upstream } : {}),
   };
+}
+
+/** Lenient read-side counterpart of assertModelUpstream: drops an invalid
+ *  `upstream` loudly instead of throwing. */
+function sanitizeModelUpstream(raw, id) {
+  if (raw == null) return undefined;
+  try {
+    return assertModelUpstream(raw);
+  } catch (e) {
+    console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping invalid upstream — ${e.message}`);
+    return undefined;
+  }
 }
 
 /** Lenient read-side counterpart of assertModelCost (model-env.mjs): drops an
@@ -873,14 +1215,24 @@ function assertTestSettingsAccess() {
 }
 
 /** The MINIMAL stored shape for validated parts (see section comment). */
-function storedModelShape(id, label, efforts, env, cost) {
+function storedModelShape(id, label, efforts, env, cost, upstream) {
   return {
     id,
     ...(label && label !== id ? { label } : {}),
     ...(efforts.length && efforts.length !== EFFORTS.length ? { efforts } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
+    ...(upstream ? { upstream } : {}),
   };
+}
+
+/** @throws {Error} when an `env` map carries a key the bridge owns for an upstream entry. */
+function assertUpstreamEnvCompatible(env, upstream) {
+  if (!upstream) return;
+  const clash = upstreamEnvConflict(env);
+  if (clash) {
+    throw new Error(`env key ${JSON.stringify(clash)} cannot be set on a model with an upstream — the bridge sets it (remove it or drop the upstream)`);
+  }
 }
 
 /** Find the index of the raw `models` entry matching `id` (case-insensitive). */
@@ -899,21 +1251,26 @@ function rawModels(settings) {
  * Add a global catalog entry. `label` defaults to the id; `efforts` must be a
  * subset of EFFORTS (empty/absent = all); `env` keys must not be reserved;
  * `cost` is an optional per-model override ({free} | {perMtok}, see assertModelCost).
+ * `dryRun` validates exactly as a write would and returns the would-be entry
+ * without persisting (Ask Worca's model card validates with it).
  * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env, cost } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
   const vefforts = assertEfforts(efforts);
   const venv = assertEnvPairs(env);
   const vcost = assertModelCost(cost);
+  const vupstream = assertModelUpstream(upstream);
+  assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
   if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
-  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost)];
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream));
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -923,11 +1280,11 @@ export async function addGlobalModel({ id, label, efforts, env, cost } = {}) {
  * resets to the id. `efforts`: []/null resets to all. `env`: null clears the
  * whole map; an object merges per key, where a null value DELETES that key and
  * a string sets it (write-only PATCH semantics, design §4.10). `cost`: null/''
- * removes the override; an object replaces it wholesale.
+ * removes the override; an object replaces it wholesale. `dryRun` as addGlobalModel.
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env, cost } = {}) {
+export async function updateGlobalModel(id, { label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
@@ -960,8 +1317,15 @@ export async function updateGlobalModel(id, { label, efforts, env, cost } = {}) 
   let nextCost = current.cost;
   if (cost !== undefined) nextCost = isClearInput(cost) ? undefined : assertModelCost(cost);
 
+  // upstream: omitted keeps the current block; null/'' removes it (the entry
+  // reverts to plain env routing); an object replaces it wholesale.
+  let nextUpstream = current.upstream;
+  if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
+  assertUpstreamEnvCompatible(nextEnv, nextUpstream);
+
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream));
   settings.models = models.slice();
-  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost);
+  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream);
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -981,4 +1345,292 @@ export async function removeGlobalModel(id) {
   settings.models = models.slice(0, idx).concat(models.slice(idx + 1));
   if (!settings.models.length) delete settings.models;
   await persistSettings(settings);
+}
+
+// ---------------------------------------------------------------------------
+// Providers (model-bridge-design.md §6.2): account-level state the bridged
+// catalog entries share — one GitHub Copilot sign-in for every `copilot`
+// entry, one key/base URL for every `openai` entry. Stored under `providers`
+// in settings.json. Secrets are literal strings or whole-value ${VAR} refs
+// (resolved at use time from worca's own process.env), masked by the API.
+// The Copilot SHORT-LIVED token is never stored: providers/copilot.mjs keeps
+// it in memory. Readers are loud-and-lenient; setters throw.
+//
+//   providers: {
+//     copilot:   { githubToken?, accountType?, acknowledgedTerms?, termsVersion?, maxConcurrent?, login? },
+//     openai:    { baseUrl?, apiKey?, maxConcurrent? },
+//     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
+//   }
+// ---------------------------------------------------------------------------
+
+const PROVIDER_SECRET_KEYS = Object.freeze({ copilot: ['githubToken'], openai: ['apiKey'], anthropic: ['apiKey'] });
+const PROVIDER_DEFAULT_BASE_URL = Object.freeze({ openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com' });
+
+/** Sanitize one provider's stored block to its effective shape. Never throws. */
+function sanitizeProvider(name, raw) {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  const warn = (k, why) => console.warn(`[worca] providers.${name}.${k}: ${why} — ignored`);
+  for (const k of PROVIDER_SECRET_KEYS[name]) {
+    if (r[k] === undefined) continue;
+    if (typeof r[k] === 'string' && r[k].trim()) out[k] = r[k].trim();
+    else warn(k, 'not a non-empty string');
+  }
+  if (name === 'copilot') {
+    if (r.accountType !== undefined) {
+      if (COPILOT_ACCOUNT_TYPES.includes(r.accountType)) out.accountType = r.accountType;
+      else warn('accountType', `must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    }
+    if (r.acknowledgedTerms !== undefined) {
+      if (typeof r.acknowledgedTerms === 'string' && !Number.isNaN(Date.parse(r.acknowledgedTerms))) out.acknowledgedTerms = r.acknowledgedTerms;
+      else warn('acknowledgedTerms', 'not an ISO timestamp');
+    }
+    if (r.termsVersion !== undefined) {
+      if (Number.isInteger(r.termsVersion) && r.termsVersion > 0) out.termsVersion = r.termsVersion;
+      else warn('termsVersion', 'not a positive integer');
+    }
+    if (r.login !== undefined) {
+      if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
+      else warn('login', 'not a non-empty string');
+    }
+  } else if (r.baseUrl !== undefined) {
+    if (isUpstreamBaseUrl(r.baseUrl)) out.baseUrl = r.baseUrl.trim().replace(/\/+$/, '');
+    else warn('baseUrl', 'not an http(s) URL');
+  }
+  if (r.maxConcurrent !== undefined) {
+    const n = Number(r.maxConcurrent);
+    if (Number.isInteger(n) && n >= 1 && n <= MAX_PROVIDER_CONCURRENCY) out.maxConcurrent = n;
+    else warn('maxConcurrent', `must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
+  }
+  return out;
+}
+
+/**
+ * The EFFECTIVE provider config: stored values plus defaults (base URL,
+ * concurrency, account type). Secrets are returned as stored (literal or
+ * ${VAR}); use resolveProviderSecret for the live value. Never throws.
+ * @param {string} name
+ * @returns {object}
+ */
+export function providerConfig(name) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return providerDefaults(name);
+  const all = readSettings().providers;
+  const raw = all && typeof all === 'object' && !Array.isArray(all) ? all[name] : undefined;
+  return { ...providerDefaults(name), ...sanitizeProvider(name, raw) };
+}
+
+function providerDefaults(name) {
+  const d = { maxConcurrent: DEFAULT_PROVIDER_CONCURRENCY[name] };
+  if (name === 'copilot') d.accountType = 'individual';
+  else d.baseUrl = PROVIDER_DEFAULT_BASE_URL[name];
+  return d;
+}
+
+/** Every provider's effective config keyed by name. */
+export function allProviders() {
+  return Object.fromEntries(UPSTREAM_PROVIDERS.map((n) => [n, providerConfig(n)]));
+}
+
+/** Whether a stored provider secret exists (as a literal or a ${VAR} ref). */
+export function providerSecretSet(name) {
+  const cfg = providerConfig(name);
+  return PROVIDER_SECRET_KEYS[name].some((k) => typeof cfg[k] === 'string' && cfg[k]);
+}
+
+/**
+ * The live value of a stored secret: a `${VAR}` ref is read from `sourceEnv`
+ * (unset → ''), a literal is returned as is.
+ */
+export function resolveProviderSecret(value, sourceEnv = process.env) {
+  if (typeof value !== 'string' || !value) return '';
+  const ref = modelEnvRef(value);
+  if (ref === null) return value;
+  const v = sourceEnv ? sourceEnv[ref] : undefined;
+  return typeof v === 'string' ? v.trim() : '';
+}
+
+/** Whether the Copilot terms notice has been acknowledged at the CURRENT wording version. */
+export function copilotTermsAcknowledged() {
+  const c = providerConfig('copilot');
+  return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
+}
+
+/**
+ * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
+ * key. Validates the whole patch before writing. `dryRun` returns the
+ * would-be effective config without persisting.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  assertTestSettingsAccess();
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
+  const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
+    ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
+  for (const [k, v] of Object.entries(patch)) {
+    if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
+    if (isClearInput(v)) continue;
+    if (PROVIDER_SECRET_KEYS[name].includes(k) || k === 'login') {
+      if (typeof v !== 'string' || !v.trim()) throw new Error(`${k} must be a non-empty string`);
+    } else if (k === 'accountType') {
+      if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
+    } else if (k === 'baseUrl') {
+      if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
+    } else if (k === 'maxConcurrent') {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_PROVIDER_CONCURRENCY) throw new Error(`maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`);
+    } else if (k === 'acknowledgedTerms') {
+      if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) throw new Error('acknowledgedTerms must be an ISO timestamp');
+    } else if (k === 'termsVersion') {
+      if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
+    }
+  }
+  const settings = readSettings();
+  const all = settings.providers && typeof settings.providers === 'object' && !Array.isArray(settings.providers) ? settings.providers : {};
+  const cur = all[name] && typeof all[name] === 'object' && !Array.isArray(all[name]) ? { ...all[name] } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (isClearInput(v)) delete cur[k];
+    else if (k === 'maxConcurrent') cur[k] = Number(v);
+    else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
+    else cur[k] = typeof v === 'string' ? v.trim() : v;
+  }
+  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, cur) };
+  if (Object.keys(cur).length) all[name] = cur; else delete all[name];
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return providerConfig(name);
+}
+
+/** Record the Copilot terms acknowledgement at the current wording version. */
+export async function acknowledgeCopilotTerms(now = new Date()) {
+  return updateProvider('copilot', { acknowledgedTerms: now.toISOString(), termsVersion: COPILOT_TERMS_VERSION });
+}
+
+/** Forget the Copilot sign-in (token + login); the acknowledgement stays. */
+export async function clearCopilotSignIn() {
+  return updateProvider('copilot', { githubToken: null, login: null });
+}
+
+// ── Interface mode (docs/ui-levels.md) ───────────────────────────────────────
+// One machine-wide preference deciding how much of the web UI is on screen:
+// `simple` (the core loop), `advanced` (git, cost, workflows) or `expert`
+// (everything). A VIEW preference, never a permission. The server writes it into
+// the shell's <html data-level> at serve time, like the theme. The STORED value
+// may be absent: the default then depends on whether this is a fresh install
+// (defaultUiLevel), which only the server can tell, so `uiLevel()` answers null
+// for "never chosen" rather than guessing.
+export const UI_LEVELS = Object.freeze(['simple', 'advanced', 'expert']);
+const isUiLevel = (v) => UI_LEVELS.includes(v);
+
+/** STORED interface mode, or null when never chosen. An invalid value is null (loudly). */
+export function uiLevel() {
+  const v = readSettings().uiLevel;
+  if (v === undefined) return null;
+  if (isUiLevel(v)) return v;
+  console.warn(`[worca] invalid uiLevel ${JSON.stringify(v)} — using the default`);
+  return null;
+}
+
+/**
+ * The mode for an install that never chose one. A fresh install starts simple;
+ * an install that already has history starts expert, which is the UI it always
+ * had, so an upgrade hides nothing.
+ * @param {{fresh:boolean}} facts
+ */
+export function defaultUiLevel({ fresh } = {}) {
+  return fresh ? 'simple' : 'expert';
+}
+
+/** @throws {Error} unless `input` is simple|advanced|expert, or empty/null (a clear). */
+export function assertUiLevelInput(input) {
+  if (isClearInput(input)) return;
+  if (!isUiLevel(input)) throw new Error('uiLevel must be simple, advanced or expert');
+}
+
+/** Persist the mode. Every valid value is stored (there is no fixed default to elide); a clear deletes the key. */
+export async function setUiLevel(input) {
+  assertUiLevelInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.uiLevel;
+  else settings.uiLevel = input;
+  await persistSettings(settings);
+  return { uiLevel: uiLevel() };
+}
+
+// ── Getting started (onboarding) ─────────────────────────────────────────────
+// Two machine-wide flags, nothing more: which steps are DONE is derived from
+// product state by src/core/onboarding.mjs and never stored. `hidden` is the
+// checklist's Hide (Settings › General › Getting started shows it again);
+// `welcomeSeen` is the one-time welcome dialog. Both absent = both false.
+export function onboardingPrefs() {
+  const o = readSettings().onboarding;
+  const obj = o && typeof o === 'object' && !Array.isArray(o) ? o : {};
+  return { hidden: obj.hidden === true, welcomeSeen: obj.welcomeSeen === true };
+}
+
+/** @throws {Error} unless every present key is a boolean. Unknown keys are refused. */
+export function assertOnboardingPrefsInput(patch) {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('onboarding prefs must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (k !== 'hidden' && k !== 'welcomeSeen') throw new Error(`unknown onboarding key ${JSON.stringify(k)}`);
+    if (typeof v !== 'boolean') throw new Error(`onboarding.${k} must be true or false`);
+  }
+}
+
+/** Merge `patch` over the stored flags; a store with both flags false drops the key. */
+export async function setOnboardingPrefs(patch = {}) {
+  assertOnboardingPrefsInput(patch);
+  const settings = readSettings();
+  const next = { ...onboardingPrefs(), ...patch };
+  if (!next.hidden && !next.welcomeSeen) delete settings.onboarding;
+  else settings.onboarding = next;
+  await persistSettings(settings);
+  return onboardingPrefs();
+}
+
+// ── Scheduled runs (schema v31) ──────────────────────────────────────────────
+// Defaults a new schedule inherits; each schedule stores its own copy, so a later
+// change here never rewrites an existing schedule. Read fresh, never throwing.
+//   scheduleGraceMin    — minutes a missed slot may still start late (default 360).
+//   scheduleIfMissed    — 'run' (start late inside the grace window) | 'skip'.
+//   scheduleMaxFailures — consecutive failures before a recurring schedule pauses
+//                         itself; 0 = never (default 3).
+export const DEFAULT_SCHEDULE_GRACE_MIN = 360;
+export const DEFAULT_SCHEDULE_IF_MISSED = 'run';
+export const DEFAULT_SCHEDULE_MAX_FAILURES = 3;
+export const SCHEDULE_IF_MISSED = ['run', 'skip'];
+
+const isGraceMin = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 10080;
+const isMaxFailures = (v) => Number.isSafeInteger(v) && v >= 0 && v <= 100;
+
+/** The schedule defaults: { graceMin, ifMissed, maxFailures }. */
+export function scheduleDefaults() {
+  const s = readSettings();
+  return {
+    graceMin: isGraceMin(s.scheduleGraceMin) ? s.scheduleGraceMin : DEFAULT_SCHEDULE_GRACE_MIN,
+    ifMissed: SCHEDULE_IF_MISSED.includes(s.scheduleIfMissed) ? s.scheduleIfMissed : DEFAULT_SCHEDULE_IF_MISSED,
+    maxFailures: isMaxFailures(s.scheduleMaxFailures) ? s.scheduleMaxFailures : DEFAULT_SCHEDULE_MAX_FAILURES,
+  };
+}
+
+/**
+ * Persist any subset of the schedule defaults; '' / null clears a key back to its
+ * default. The whole patch is validated before anything is written.
+ * @throws {Error} on the first invalid value
+ */
+export async function setScheduleDefaults(patch = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+  const clear = (v) => v === '' || v === null || v === undefined;
+  if (has('graceMin') && !clear(patch.graceMin) && !isGraceMin(patch.graceMin)) throw new Error('scheduleGraceMin must be a whole number of minutes from 0 to 10080');
+  if (has('ifMissed') && !clear(patch.ifMissed) && !SCHEDULE_IF_MISSED.includes(patch.ifMissed)) throw new Error(`scheduleIfMissed must be one of ${SCHEDULE_IF_MISSED.join(' | ')}`);
+  if (has('maxFailures') && !clear(patch.maxFailures) && !isMaxFailures(patch.maxFailures)) throw new Error('scheduleMaxFailures must be a whole number from 0 to 100');
+  const settings = readSettings();
+  const put = (key, v) => { if (clear(v)) delete settings[key]; else settings[key] = v; };
+  if (has('graceMin')) put('scheduleGraceMin', patch.graceMin);
+  if (has('ifMissed')) put('scheduleIfMissed', patch.ifMissed);
+  if (has('maxFailures')) put('scheduleMaxFailures', patch.maxFailures);
+  await persistSettings(settings);
+  return scheduleDefaults();
 }

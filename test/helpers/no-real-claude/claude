@@ -8,6 +8,9 @@
 #   --version / --help   answered like a capable modern build: preflight's
 #                        probeClaudeCapabilities reads exactly these, and neither
 #                        writes ~/.claude.json on the real binary either
+#   auth status          answered signed in: the Getting-started checklist and the
+#                        scan endpoints ask it (preflight probeClaudeAuth); it only
+#                        reads the stored credentials on the real binary too
 #   anything else        logged, refused with exit 97; assert-none.mjs turns a
 #                        non-empty log into a red suite
 case "$1" in
@@ -16,6 +19,8 @@ case "$1" in
     echo "Usage: claude [options] [command] [prompt]   [worca test guard]"
     echo "  --mcp-config <configs...>  Load MCP servers from JSON files or strings"
     exit 0 ;;
+  auth)
+    if [ "$2" = "status" ]; then echo '{"loggedIn": true, "authMethod": "worca-test-guard"}'; exit 0; fi ;;
 esac
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 log=${WORCA_NO_REAL_CLAUDE_LOG:-"$root/.worca-cc-test/real-claude-spawns.log"}

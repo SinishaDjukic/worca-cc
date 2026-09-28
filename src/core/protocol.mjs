@@ -193,6 +193,49 @@ export async function readQuestionsFile(absPath) {
 }
 
 /**
+ * Classify one parsed ask payload into the two shapes the runtime protocol
+ * allows (spec §4).
+ *
+ *   { questions: [...] }      the LEGACY shape — handed straight to
+ *                             normalizeClarify, caps and all
+ *   { form: '<id>', data }    the FORM shape (spec §4)
+ *
+ * A payload carrying BOTH an array `questions` and a `form` takes the LEGACY
+ * path: a payload today's readers already accept must never change meaning.
+ * Anything else is `{ kind: 'none' }`. PURE — the file reader below wraps it.
+ * @param {unknown} data
+ * @returns {{kind:'questions', questions:Array}|{kind:'form', form:string, data:object}|{kind:'none'}}
+ */
+export function classifyAskPayload(data) {
+  if (!data || typeof data !== 'object') return { kind: 'none' };
+  if (Array.isArray(data.questions)) return { kind: 'questions', ...normalizeClarify(data) };
+  const form = typeof data.form === 'string' ? data.form.trim() : '';
+  if (!form) return { kind: 'none' };
+  return { kind: 'form', form, data: data.data === undefined ? {} : data.data };
+}
+
+/**
+ * Read one ask file (the per-round questions file, or a clarifier's answers
+ * port) from an ABSOLUTE path and classify it. Same tolerance as
+ * readQuestionsFile: a missing file is "the agent chose not to ask"
+ * (`malformed: false`), a present-but-unparseable one is `malformed: true` so
+ * the caller can audit-warn while proceeding.
+ * @param {string} absPath
+ * @returns {Promise<{kind:string, malformed:boolean, questions?:Array, form?:string, data?:object}>}
+ */
+export async function readAskFile(absPath) {
+  let text;
+  try {
+    text = await readFile(absPath, 'utf8');
+  } catch {
+    return { kind: 'none', malformed: false };
+  }
+  const parsed = safeParseJson(text);
+  if (parsed === null) return { kind: 'none', malformed: true };
+  return { ...classifyAskPayload(parsed), malformed: false };
+}
+
+/**
  * Coerce arbitrary parsed data into the canonical review shape:
  *   { issues: [ { severity, title, detail, location } ], summary }
  * Always returns { issues: [], summary: '' } on bad input.

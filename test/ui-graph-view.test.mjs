@@ -3,7 +3,7 @@
 // and no pointer capture, so the view takes injectable `raf` and `viewport`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { boot, fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
+import { boot, fixture, loopFixture, scriptFixture, portsFn, AGENTS, SCRIPTS } from './helpers/graph-view-fixture.mjs';
 import { routeAll, routePathD } from '../src/shared/graph/route.mjs';
 import { nodeSize, portAnchor } from '../src/shared/graph/geometry.mjs';
 import { portsOf } from '../src/shared/graph/ports.mjs';
@@ -538,7 +538,7 @@ test('scale: --gv-* are injected scaled, cards take the scaled box, anchors foll
 test('band: an agent card grows a .nband under its head with model · effort · flags; flow cards never do', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
-  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5', effort: 'high', flags: [{ text: 'asks', cls: 'q' }, { text: '↩ 3' }] } : null);
+  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5.5', effort: 'high', flags: [{ text: 'asks', cls: 'q' }, { text: '↩ 3' }] } : null);
   const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, band });
   view.render(fixture(), {});
   const el = view.nodeEl('n_agent');
@@ -546,7 +546,7 @@ test('band: an agent card grows a .nband under its head with model · effort · 
   assert.ok(nb, 'agent has a band');
   assert.ok(nb.previousElementSibling.classList.contains('nhead'), 'band sits under the head (class is "nhead h-<colour>")'); assert.equal(nb.nextElementSibling.className, 'nbody');
   assert.equal(el.querySelector('.nhead .tt').title, el.querySelector('.nhead .tt').textContent, 'head titles carry a tooltip (mockup F, A35)');
-  assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.textContent), ['Opus 5', 'high', 'asks', '↩ 3']);
+  assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.textContent), ['Opus 5.5', 'high', 'asks', '↩ 3']);
   assert.ok(nb.querySelector('.bchip.flag.q'));
   assert.equal(view.nodeEl('n_task').querySelector(':scope > .nband'), null, 'task card: no band');
   assert.equal(el.style.height, `${191.5 + 24}px`, 'nodeSize bills the band');
@@ -589,14 +589,14 @@ test('layout flow: rows of perRow in dispatch order, routes from the flow router
 test('band pick: model/effort chips become <button aria-haspopup="menu" data-chip> when the band says pick; flags stay spans; the signature separates pick', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
-  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }], pick: true } : null);
+  const band = (node) => (node.id === 'n_agent' ? { model: 'Opus 5.5', effort: '', flags: [{ text: 'asks', cls: 'q' }], pick: true } : null);
   const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS, band });
   view.render(fixture(), {});
   const nb = view.nodeEl('n_agent').querySelector(':scope > .nband');
   const chips = [...nb.querySelectorAll('.bchip')];
-  assert.deepEqual(chips.map((c) => [c.tagName, c.dataset.chip || null, c.textContent]), [['BUTTON', 'model', 'Opus 5'], ['BUTTON', 'effort', 'effort'], ['SPAN', null, 'asks']], 'an empty effort still gets a pickable placeholder chip');
+  assert.deepEqual(chips.map((c) => [c.tagName, c.dataset.chip || null, c.textContent]), [['BUTTON', 'model', 'Opus 5.5'], ['BUTTON', 'effort', 'effort'], ['SPAN', null, 'asks']], 'an empty effort still gets a pickable placeholder chip');
   assert.equal(chips[0].getAttribute('aria-haspopup'), 'menu'); assert.equal(chips[0].getAttribute('aria-expanded'), 'false'); assert.equal(chips[0].type, 'button');
-  view.setBands({ n_agent: { model: 'Opus 5', effort: '', flags: [{ text: 'asks', cls: 'q' }] } });
+  view.setBands({ n_agent: { model: 'Opus 5.5', effort: '', flags: [{ text: 'asks', cls: 'q' }] } });
   assert.deepEqual([...nb.querySelectorAll('.bchip')].map((c) => c.tagName), ['SPAN', 'SPAN'], 'pick off ⇒ spans, and the empty effort chip is gone');
 });
 
@@ -692,4 +692,24 @@ test('the run card\'s result link is not natively draggable: a pan that starts o
   assert.ok(a, 'the result band renders an anchor');
   assert.equal(a.draggable, false, 'Chrome drags an <a href> natively, which pointercancels the pan (D16)');
   assert.equal(a.getAttribute('href'), '#', 'and it is still the delegated link the host handles');
+});
+
+test('a script card: node-script class, sidecar tint, ƒ glyph when no icon, the runtime chip in the head', async () => {
+  const { doc, host } = boot();
+  const { createGraphView, SCRIPT_GLYPH } = await import(viewPath);
+  const view = createGraphView(host, { doc, mode: 'edit', portsFn, agents: { ...AGENTS, ...SCRIPTS } });
+  view.render(scriptFixture(), {});
+  const card = host.querySelector('.node[data-node-id="n_sh"]');
+  assert.ok(card.classList.contains('node-script'));
+  assert.equal(card.dataset.kind, 'script');
+  const head = card.querySelector('.nhead');
+  assert.ok(head.classList.contains('h-amber'));
+  assert.equal(head.querySelector('.tt').textContent, 'Shell');
+  assert.equal(head.querySelector('.chip.rt').textContent, 'shell');
+  assert.equal(head.querySelector('svg').innerHTML, SCRIPT_GLYPH, 'no sidecar icon: the ƒ glyph');
+  assert.equal(card.querySelectorAll('.prow.in').length, 2, 'done + await');
+  view.setAgents({ ...AGENTS, shell: { ...SCRIPTS.shell, color: 'green', displayName: 'Tests', icon: '<path d="M2 2"/>' } });
+  assert.ok(head.classList.contains('h-green'), 'setAgents repaints a script head');
+  assert.equal(head.querySelector('.tt').textContent, 'Tests');
+  assert.equal(head.querySelector('svg').innerHTML, '<path d="M2 2"></path>', 'a non-builtin icon goes through the shared sanitizer');
 });

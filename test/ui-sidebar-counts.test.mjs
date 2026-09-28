@@ -51,18 +51,38 @@ async function boot({ counts = { pipelines: 0, projects: 0, workspaces: 0 }, has
   return { window, wsBox, calls, box };
 }
 
-test('boot seeds ALL four badges from /api/counts (Workspaces no longer stuck at 0)', async () => {
-  const { window } = await boot({ counts: { pipelines: 7, projects: 3, workspaces: 2 } });
-  const doc = window.document;
-  assert.equal(doc.querySelector('#nav-history-count').textContent, '7');
-  assert.equal(doc.querySelector('#nav-projects-count').textContent, '3');
-  assert.equal(doc.querySelector('#nav-workspaces-count').textContent, '2');
+// Only Running and Schedules carry a number in the main menu; every other entry is a
+// bare label, whatever /api/counts reports.
+const navButton = (doc, nav) => doc.querySelector(`.nav button[data-nav="${nav}"]`);
+
+test('only Running and Schedules carry a count badge in the sidebar markup', () => {
+  const doc = new JSDOM(readFileSync(htmlPath, 'utf8')).window.document;
+  const counted = [...doc.querySelectorAll('.nav button[data-nav]')]
+    .filter((b) => b.querySelector('.nav-count'))
+    .map((b) => b.dataset.nav);
+  assert.deepEqual(counted, ['running', 'schedules']);
+  for (const id of ['nav-history-count', 'nav-projects-count', 'nav-workspaces-count'])
+    assert.equal(doc.getElementById(id), null, `#${id} is gone`);
 });
 
-test('a projects-changed broadcast re-reads /api/counts and updates the badge', async () => {
+test('boot paints Running + Schedules from /api/counts and no number on History/Projects/Workspaces', async () => {
+  const { window } = await boot({
+    counts: { pipelines: 7, projects: 3, workspaces: 2, schedules: { scheduled: 4, missed: 1, recurring: 0, unread: 0 } },
+  });
+  const doc = window.document;
+  assert.equal(doc.querySelector('#nav-running-count').textContent, '0');
+  assert.equal(doc.querySelector('#nav-schedules-count').textContent, '5');
+  for (const nav of ['history', 'projects', 'workspaces']) {
+    const b = navButton(doc, nav);
+    assert.ok(b, `${nav} nav button present`);
+    assert.equal(b.querySelector('.nav-count'), null, `${nav} has no count badge`);
+    assert.doesNotMatch(b.textContent, /\d/, `${nav} shows no number`);
+  }
+});
+
+test('a projects-changed broadcast re-reads /api/counts without adding a number to Projects', async () => {
   const { window, wsBox, calls, box } = await boot({ counts: { pipelines: 0, projects: 1, workspaces: 0 } });
   const doc = window.document;
-  assert.equal(doc.querySelector('#nav-projects-count').textContent, '1');
 
   box.counts = { pipelines: 0, projects: 2, workspaces: 0 };   // server now reports 2
   const before = calls.filter((u) => u.includes('/api/counts')).length;
@@ -70,7 +90,7 @@ test('a projects-changed broadcast re-reads /api/counts and updates the badge', 
   await new Promise((r) => setTimeout(r, 5));
 
   assert.ok(calls.filter((u) => u.includes('/api/counts')).length > before, 're-read /api/counts');
-  assert.equal(doc.querySelector('#nav-projects-count').textContent, '2');
+  assert.doesNotMatch(navButton(doc, 'projects').textContent, /\d/, 'Projects shows no number');
 });
 
 test('pipelines-changed while on History reloads the list (cards reflect a delete)', async () => {

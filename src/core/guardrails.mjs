@@ -40,6 +40,7 @@ const NORMAL_PROTECTED = [
   '*.pem', '*.key',        // TLS / private key material
   'id_rsa', 'id_ed25519',  // bare SSH keys checked into odd places
   '*.p12', '*.pfx',        // bundled cert+key stores
+  '//run/secrets/**',      // container secrets (docker/compose `secrets:`); `//` = absolute
 ];
 
 // Irreversible-publication commands no pipeline role ever needs.

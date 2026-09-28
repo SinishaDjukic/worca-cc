@@ -60,6 +60,15 @@ test('GET /api/budget returns the budgetStatus shape', async () => {
   assert.equal(b.blocked, false);
 });
 
+test('GET /api/budget also carries the window savings the sidebar shows', async () => {
+  // A run started now lands in the current window; its hours price at the default $35/h
+  // (the HOME sandbox has no stored rate).
+  await seedPipeline(seededProjectDir, { status: 'done', humanHours: 2 });
+  const b = await (await fetch(`${base}/api/budget`)).json();
+  assert.equal(b.windowHumanHours, 2);
+  assert.equal(b.windowSavedUsd, Math.round((2 * 35 - b.windowSpendUsd) * 100) / 100);
+});
+
 test('settings roundtrip for the three budget keys', async () => {
   let res = await fetch(`${base}/api/settings`, { method: 'POST',
     headers: { 'Content-Type': 'application/json' },

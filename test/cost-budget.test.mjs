@@ -155,7 +155,7 @@ test('allTimeTotals falls back to per-step sums when the row totals are 0', asyn
 test('recordAskCostDelta appends raw rows; skips null/zero/negative and missing threadId', () => {
   getDb().exec('DELETE FROM ask_cost_ledger');
   recordAskCostDelta({ threadId: 'ask_00000001', messageId: 'askm_00000001',
-    amountUsd: 0.123456, tokens: 1500, model: 'claude-opus-5', tsMs: 2000 });
+    amountUsd: 0.123456, tokens: 1500, model: 'claude-opus-5-5', tsMs: 2000 });
   recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: null, tsMs: 2001 }); // pre-result turn
   recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: 0, tsMs: 2002 });    // mock
   recordAskCostDelta({ threadId: 'ask_00000001', amountUsd: -1, tsMs: 2003 });
@@ -166,7 +166,7 @@ test('recordAskCostDelta appends raw rows; skips null/zero/negative and missing 
   assert.equal(rows[0].message_id, 'askm_00000001');
   assert.equal(rows[0].amount_usd, 0.123456); // raw, unrounded
   assert.equal(rows[0].tokens, 1500);
-  assert.equal(rows[0].model, 'claude-opus-5');
+  assert.equal(rows[0].model, 'claude-opus-5-5');
   assert.equal(rows[0].ts, 2000);
 });
 

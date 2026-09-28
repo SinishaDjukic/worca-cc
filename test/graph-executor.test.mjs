@@ -14,8 +14,9 @@ import {
   allocateOutputs, allocateVerdict, portIoBlock, changesInstruction, selectMode, taskSourcedPorts,
   expandsOutputPort, normalizeDecomposition, readDecomposition, resolveMockRole, readVerdict,
   runTaskExecution, runAndExecution, runOrExecution, runEndExecution, runCombineExecution, runExecution,
-  buildAgentPrompt, runAgentExecution, runClarifierExecution,
+  buildAgentPrompt, runAgentExecution, runClarifierExecution, toolsForMeta,
 } from '../src/core/graph/executor.mjs';
+import { READ_WRITE_TOOLS, IMPLEMENTER_TOOLS, MEMORY_TOOLS } from '../src/core/phases.mjs';
 
 // `store:'project'` allocations resolve under worcaHome() — MANDATORY isolation:
 // projects.mjs throws under node:test when WORCA_HOME is unset.
@@ -485,6 +486,34 @@ test('17 runAgentExecution spawns through runOpts, returns the same prompt it bu
   assert.match(r.sessionId, /^mock-session-/, 'the session id comes from the session event, not the resolved value');
 });
 
+test('17b runAgentExecution: ctx.memoryBlock is part of the system prompt it spawns with', async () => {
+  const BLOCK = '## Worca memory\nintro\nGlobal — /m/global:\n';
+  const r = await runAgentExecution(ctx8({ memoryBlock: BLOCK }));
+  assert.ok(r.systemPrompt.includes(BLOCK.trim()), 'the block is in the spawned system prompt');
+  assert.ok(r.systemPrompt.indexOf('TOOLS') < r.systemPrompt.indexOf('## Worca memory'));
+  assert.ok(r.systemPrompt.indexOf('## Worca memory') < r.systemPrompt.indexOf('You are custom.'));
+  const plain = await runAgentExecution(ctx8());
+  assert.ok(!plain.systemPrompt.includes('## Worca memory'), 'no block ⇒ nothing');
+});
+
+test('17c toolsForMeta: code ⇒ implementer tools, memory ⇒ no Bash and no Skill, else the read-write set', () => {
+  assert.deepEqual(toolsForMeta({ sideEffect: 'code' }), IMPLEMENTER_TOOLS);
+  assert.deepEqual(toolsForMeta({ sideEffect: 'memory' }), MEMORY_TOOLS);
+  assert.deepEqual(toolsForMeta({ sideEffect: 'memory' }), ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
+  assert.deepEqual(toolsForMeta({}), READ_WRITE_TOOLS);
+  assert.deepEqual(toolsForMeta(null), READ_WRITE_TOOLS);
+  assert.ok(!MEMORY_TOOLS.includes('Bash') && !MEMORY_TOOLS.includes('Skill') && !MEMORY_TOOLS.includes('MultiEdit'));
+});
+
+test('17d prepare() selects the spawn tool set through toolsForMeta ONLY — the old inline ternary is gone', () => {
+  // runAgentExecution does not return allowedTools and the mock runner ignores it, so the only
+  // way to pin the CALL SITE offline is the source: an inline `sideEffect === 'code' ? …` would
+  // silently spawn a memory agent with READ_WRITE_TOOLS (Bash + Skill) and no test would notice.
+  const src = readFileSync(new URL('../src/core/graph/executor.mjs', import.meta.url), 'utf8');
+  assert.match(src, /const allowedTools = toolsForMeta\(meta\);/, 'prepare() must delegate the choice');
+  assert.equal(src.includes("sideEffect === 'code' ? IMPLEMENTER_TOOLS"), false, 'no inline side-effect ternary anywhere in the executor');
+});
+
 test('18 runClarifierExecution gates the human and rewrites the file as {questions, answers}', async () => {
   const asked = [];
   const meta = {
@@ -567,4 +596,13 @@ test('20 an alias pin on a routed node warns on the execution result; auto/inher
   assert.deepEqual(inherit.warnings, [], 'inherit degrades silently');
   const unroutedPin = await runAgentExecution(mk({ subagentModel: 'sonnet', endpointRouted: false }));
   assert.deepEqual(unroutedPin.warnings, [], 'a pin on a normal model is honored, not warned');
+});
+
+test('runExecution dispatches kind:script to the script runner, and the runners.script seam wins', async () => {
+  const seen = [];
+  const res = await runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, runners: { script: async (c) => { seen.push(c.node.key); return { summary: 'seam', outputs: {} }; } } });
+  assert.deepEqual(res, { summary: 'seam', outputs: {} });
+  assert.deepEqual(seen, ['echo']);
+  await assert.rejects(runExecution({ node: { id: 'n_s', kind: 'script', key: 'echo' }, script: { meta: { runtime: 'ruby' } }, ports: {}, outputs: {}, pipelineDir: tmp('worca-exec-sd-'), claudeOpts: {} }),
+    (e) => /unknown runtime "ruby"/.test(e.message) && e.errorClass === null);
 });

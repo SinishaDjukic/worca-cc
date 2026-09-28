@@ -130,3 +130,14 @@ test('nodeById / wireById', () => {
   assert.equal(wireById(tpl(), 'w1').to.port, 'task');
   assert.equal(nodeById(null, 'x'), null);
 });
+
+test('script nodes are keyed like agent nodes (KEYED_KINDS): newNode keeps the key, normalizeTemplate keeps it, flow cards never do', () => {
+  const s = newNode('script', 'shell', 10, 20);
+  assert.equal(s.kind, 'script');
+  assert.equal(s.key, 'shell');
+  assert.deepEqual(s.config, {}, 'a fresh script card has no params yet — the palette seeds config.ports for config-ported scripts');
+  const t = normalizeTemplate({ nodes: [{ id: 'n_s', kind: 'script', key: 'shell', x: 0, y: 0, config: { params: { command: 'npm test' } } }] });
+  assert.equal(t.nodes[0].key, 'shell');
+  assert.deepEqual(t.nodes[0].config, { params: { command: 'npm test' } });
+  assert.equal(normalizeTemplate({ nodes: [{ id: 'n_a', kind: 'and', x: 0, y: 0, key: 'shell' }] }).nodes[0].key, undefined);
+});

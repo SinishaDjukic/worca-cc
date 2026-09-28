@@ -55,6 +55,22 @@ test('ui-ask-style: the sheet uses wr-rise and the card radius token', () => {
   assert.match(sheet, /height:min\(669px/);
 });
 
+test('ui-ask-style: the message rise is opt-in, so a rebuilt row cannot replay it', () => {
+  const msg = ruleBody('.ask-msg');
+  assert.ok(msg, '.ask-msg rule exists');
+  assert.ok(!/animation:/.test(msg), 'the bare row carries NO entry animation — every structural flush rebuilds it');
+  assert.match(ruleBody('.ask-msg[data-ask-enter]') || '', /animation:wr-rise/, 'the rise lives on the stamped twin');
+  // ask-panel.mjs stamps the attribute from its own ledger of rows already shown.
+  const anim = css.indexOf('.ask-msg[data-ask-enter]');
+  assert.ok(anim > 0 && anim < css.lastIndexOf('@media (prefers-reduced-motion: reduce)'),
+    'the twin still precedes the final reduced-motion block that neutralises it');
+});
+
+test('ui-ask-style: the transcript scrollport keeps scroll anchoring', () => {
+  assert.match(ruleBody('.ask-transcript') || '', /overflow-anchor:auto/,
+    'an ancestor turning anchoring off would let a growing activity block shove the text being read');
+});
+
 test('ui-ask-style: hidden twins exist for the hideable ask elements', () => {
   for (const sel of ['.ask-sheet[hidden]', '.ask-pill[hidden]', '.ask-jump[hidden]', '.ask-composer-msg[hidden]', '.ask-chips[hidden]',
     '.ask-wt-btn[hidden]']) {   // shares display:flex from .ask-agents-btn, so without the twin it never hides (jsdom cannot catch it)
@@ -83,7 +99,7 @@ test('ui-ask-style: the FINAL reduced-motion block neutralises the dock', () => 
 });
 
 test('ui-ask-style: the hljs variable block now feeds .ask-md too', () => {
-  assert.match(css, /\.hd-diff-pane,\.ask-md\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
+  assert.match(css, /\.hd-diff-pane,\.ask-md[^{]*\{\s*--hd-syntax-comment/, 'selector widened without restating hexes');
   const count = (css.match(/--hd-syntax-comment:light-dark\(#/g) || []).length;
   assert.equal(count, 1, 'the six syntax pairs still appear exactly once');
 });
@@ -224,7 +240,7 @@ test('ui-ask-style: the composer-row scope pill never shrinks and its popover op
   assert.match(chip, /width:288px/);
   assert.match(chip, /max-height:min\(420px,70%\)/, 'the whole catalog is 12+ rows and .ask-sheet clips — without a cap the Effort row is unreachable');
   assert.match(chip, /overflow-y:auto/);
-  assert.match(chip, /border-radius:14px/);
+  assert.match(chip, /border-radius:var\(--r-card\)/);
   assert.ok(css.indexOf('.ask-pop-chip{') > css.indexOf('.ask-pop{'), '.ask-pop-chip and .ask-pop are both (0,1,0) on the same element — source order decides, so the chip rule must come last');
   const title = ruleBody('.ask-title') || '';
   assert.match(title, /min-width:0/);
@@ -311,7 +327,7 @@ test('ui-ask-style: a wide sheet caps its content — the transcript column and 
   assert.match(box, /max-width:var\(--ask-col-max\)/);
   assert.match(box, /margin-inline:auto/);
   assert.match(box, /border:1px solid var\(--line-2\)/);
-  assert.match(box, /border-radius:16px/);
+  assert.match(box, /border-radius:var\(--r-card\)/);
   assert.match(box, /background:var\(--panel\)/, 'panel, not field: the textarea keeps its contrast baseline');
   assert.match(box, /display:flex;flex-direction:column;gap:4px/, 'chips → textarea → msg → row stack inside the box');
   // No focus-within override: the box keeps the same --line-2 grey while typing,

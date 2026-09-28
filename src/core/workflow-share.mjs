@@ -9,23 +9,60 @@
 //   exportGraphJson(id)                -> { version:2, name, domain, nodes, wires, canvas? }
 //   saveGraphWorkflow(body)            -> composer semantics: keeps a legal `id`, 409 on a minted collision
 //   importGraphWorkflow(body, opts)    -> import semantics: id/origin ignored, name suffixed on collision
+//   listScriptNodes(graph, scripts)    -> the command/code values an import must show first (D18)
+//   formatScriptNodes(list)            -> SCRIPT_IMPORT_NOTICE + those values, for the CLI
 //   nodeDefaultsError(raw, models, at) -> '' | reason  (per-node tunables vs the project-less catalog)
 //
 // Errors carry `.code` so surfaces map them to HTTP / exit codes:
 //   BAD_REQUEST | INVALID_GRAPH (+ .errors/.warnings/.summary) | RESERVED_NAME |
-//   ID_TAKEN (+ .id) | NOT_FOUND | UNSUPPORTED
+//   ID_TAKEN (+ .id) | NOT_FOUND | UNSUPPORTED | SCRIPTS_UNCONFIRMED (+ .scriptNodes)
 
 import { listModels } from './config.mjs';
 import { EFFORTS, subagentModelIssue } from './model-env.mjs';
 import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
+import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
+import { effectiveScriptParams, CONFIRM_PARAM_TYPES } from '../shared/graph/script-meta.mjs';
 import { readWorkflow, writeGraphWorkflow } from './workflows.mjs';
 
 /** How many `Name (n)` retries an import makes before giving up. */
 export const SUFFIX_CAP = 20;
 
 function err(message, code, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
+
+/** D18: the one sentence the CLI prints and the Import dialog shows above the commands. */
+export const SCRIPT_IMPORT_NOTICE = "These commands run on this machine with worca's privileges when the workflow runs.";
+
+/** The script nodes an import must show first (D18): every node whose EFFECTIVE
+ *  params include a command- or code-typed value, with those values. */
+export function listScriptNodes(graph, scripts) {
+  const out = [];
+  for (const n of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+    if (!n || n.kind !== 'script' || !n.key) continue;
+    const meta = scripts?.[n.key];
+    if (!meta) continue;                                          // V4 reports it; nothing to show
+    const values = effectiveScriptParams(meta, n.config);
+    const params = {};
+    for (const p of meta.params || []) {
+      if (CONFIRM_PARAM_TYPES.includes(p.type) && typeof values[p.id] === 'string') params[p.id] = values[p.id];
+    }
+    if (Object.keys(params).length) out.push({ nodeId: n.id, key: n.key, displayName: meta.displayName || n.key, runtime: meta.runtime, params });
+  }
+  return out;
+}
+
+/** The CLI block: the notice, then one indented value per command/code param. */
+export function formatScriptNodes(list) {
+  const lines = [SCRIPT_IMPORT_NOTICE];
+  for (const n of list) {
+    for (const [id, value] of Object.entries(n.params)) {
+      lines.push(`- ${n.displayName} (${n.nodeId}, ${n.runtime}) ${id}:`);
+      for (const l of String(value).split('\n')) lines.push(`    ${l}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
 
 /**
  * Validate one node-defaults block against the project-less catalog. Returns an
@@ -120,8 +157,8 @@ function prepareGraph(body, { keepId, name }) {
   return graph;
 }
 
-/** Catalog + structural validation. Throws BAD_REQUEST / INVALID_GRAPH; returns warnings. */
-async function validateForSave(graph, { registry, agentsDir }) {
+/** Catalog + structural validation. Throws BAD_REQUEST / INVALID_GRAPH; returns the warnings and the script registry it used. */
+async function validateForSave(graph, { registry, scripts, agentsDir }) {
   // Catalog validation FIRST: a v2 node's `config` IS its defaults block (§4),
   // so a value the per-project override could not name must not ride in
   // through a template save. Only AGENT_TUNABLES are handed to nodeDefaultsError —
@@ -133,15 +170,14 @@ async function validateForSave(graph, { registry, agentsDir }) {
     const bad = nodeDefaultsError(picked, models, `node "${n.id}"`);
     if (bad) throw err(bad, 'BAD_REQUEST');
   }
-  const portsFn = registryPortsFn(registry || loadAgentRegistry(agentsDir || DEFAULT_AGENTS_DIR));
-  const { errors, warnings } = validateGraph({ ...graph, version: 2 }, portsFn);
-  if (errors.length) {
-    // The message stays the composer's verbatim 'invalid graph' (app.js renders
-    // the issue list); `summary` is the one-line V4 fold for the CLI and the
-    // import button, which have no issue list to show.
-    throw err('invalid graph', 'INVALID_GRAPH', { errors, warnings, summary: summarizeUnknownAgents(errors) });
-  }
-  return warnings;
+  const reg = registry || loadAgentRegistry(agentsDir || DEFAULT_AGENTS_DIR);
+  const scr = scripts && typeof scripts === 'object' ? scripts : loadScriptRegistry({ agentKeys: Object.keys(reg) });
+  const { errors, warnings } = validateGraph({ ...graph, version: 2 }, registryPortsFn(reg, scr));
+  // The message stays the composer's verbatim 'invalid graph' (app.js renders
+  // the issue list); `summary` is the one-line V4 fold for the CLI and the
+  // import button, which have no issue list to show.
+  if (errors.length) throw err('invalid graph', 'INVALID_GRAPH', { errors, warnings, summary: summarizeUnknownAgents(errors) });
+  return { warnings, scripts: scr };
 }
 
 /**
@@ -152,7 +188,7 @@ async function validateForSave(graph, { registry, agentsDir }) {
  */
 export async function saveGraphWorkflow(body, { registry, agentsDir } = {}) {
   const graph = prepareGraph(body || {}, { keepId: true });
-  const warnings = await validateForSave(graph, { registry, agentsDir });
+  const { warnings } = await validateForSave(graph, { registry, agentsDir });
   const workflow = await writeGraphWorkflow(graph, { rejectCollision: true });
   return { workflow, warnings };
 }
@@ -164,13 +200,26 @@ const SUFFIX_RE = /\s\((\d+)\)$/;
  * importer mints), `name` overrides the file's name, and a collision with a live
  * row retries as `Name (2)`, `Name (3)`… up to SUFFIX_CAP — never overwrite.
  * @param {object} body  the exportGraphJson shape
- * @param {{name?: string, registry?: object, agentsDir?: string}} [opts]
- * @returns {Promise<{workflow: object, warnings: Array, requestedName: string, renamed: boolean}>}
+ * @param {{name?: string, registry?: object, scripts?: object, agentsDir?: string, dryRun?: boolean, acceptScripts?: boolean}} [opts]
+ *   dryRun: validate and list the script nodes (D18) WITHOUT writing — the Import
+ *   dialog and the CLI confirm from this before the real import.
+ *   acceptScripts: the caller SHOWED the user every command/code value and the user
+ *   agreed. Anything but the literal `true` refuses a graph that carries one (P10):
+ *   the default is the safe one, so a caller that never heard of scripts cannot
+ *   import a command by accident.
+ * @returns {Promise<{workflow: object|null, warnings: Array, requestedName: string, renamed: boolean, scriptNodes: Array}>}
+ * @throws code 'SCRIPTS_UNCONFIRMED' (`.scriptNodes`) — nothing was written
  */
-export async function importGraphWorkflow(body, { name, registry, agentsDir } = {}) {
+export async function importGraphWorkflow(body, { name, registry, scripts, agentsDir, dryRun = false, acceptScripts = false } = {}) {
   const graph = prepareGraph(body || {}, { keepId: false, name });
-  const warnings = await validateForSave(graph, { registry, agentsDir });
+  const { warnings, scripts: scr } = await validateForSave(graph, { registry, scripts, agentsDir });
+  const scriptNodes = listScriptNodes(graph, scr);
   const requestedName = graph.name;
+  if (dryRun) return { workflow: null, warnings, requestedName, renamed: false, scriptNodes };
+  if (scriptNodes.length && acceptScripts !== true) {
+    throw err(`this workflow runs commands on this machine (${scriptNodes.map((n) => `${n.displayName} · ${n.nodeId}`).join(', ')}) — review them, then import again with the scripts accepted`,
+      'SCRIPTS_UNCONFIRMED', { scriptNodes });
+  }
   const m = SUFFIX_RE.exec(requestedName);
   const base = m ? requestedName.slice(0, m.index) : requestedName;
   let n = m ? Number(m[1]) : 1;
@@ -178,7 +227,7 @@ export async function importGraphWorkflow(body, { name, registry, agentsDir } = 
   for (let attempt = 0; attempt <= SUFFIX_CAP; attempt++) {
     try {
       const workflow = await writeGraphWorkflow({ ...graph, name: candidate }, { rejectCollision: true });
-      return { workflow, warnings, requestedName, renamed: candidate !== requestedName };
+      return { workflow, warnings, requestedName, renamed: candidate !== requestedName, scriptNodes };
     } catch (e) {
       if (e?.code === 'RESERVED_NAME') {
         throw err(`${e.message} (pass a different name to import it)`, 'RESERVED_NAME');

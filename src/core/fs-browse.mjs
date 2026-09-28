@@ -8,14 +8,26 @@
 import { readdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { normalizeProjectPath } from './projects.mjs';
-import { defaultRoot } from './settings.mjs';
+import { defaultRoot, getProjectsRoot } from './settings.mjs';
 
 function err(message, code) { return Object.assign(new Error(message), { code }); }
 
+/** Where a blank listing opens: the projects root if it is a directory, else home. */
+async function startFolder(home) {
+  const root = getProjectsRoot();
+  try {
+    if (root !== home && (await stat(root)).isDirectory()) return root;
+  } catch { /* missing or unreadable root: fall back to home */ }
+  return home;
+}
+
 /**
  * List the sub-directories of `input` (tilde-expanded, resolved). Empty input
- * lists the OS home directory (normalizeProjectPath returns null for blank
- * input, so this can never fall through to process.cwd()).
+ * lists the effective projects root when it is an existing directory, else the
+ * OS home directory (normalizeProjectPath returns null for blank input, so this
+ * can never fall through to process.cwd()). With nothing configured the two are
+ * the same folder; in a container, WORCA_PROJECTS_ROOT names the mounted repos
+ * while home is an empty /home/worca. `home` stays the OS home (the Home button).
  * @param {string} input
  * @returns {Promise<{path:string, parent:string|null, home:string,
  *   dirs:Array<{name:string, path:string}>}>} parent is null at the fs root.
@@ -24,7 +36,7 @@ function err(message, code) { return Object.assign(new Error(message), { code })
  */
 export async function listFolders(input) {
   const home = resolve(defaultRoot());
-  const path = normalizeProjectPath(input) || home;
+  const path = normalizeProjectPath(input) || await startFolder(home);
   let entries;
   try {
     entries = await readdir(path, { withFileTypes: true });

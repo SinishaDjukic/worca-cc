@@ -337,7 +337,9 @@ test('legacy (pinned): the default workflow assembles NO context at all', async 
     assert.equal(orch.runContext, null, 'no assembly on a legacy run (§10 rollback contract)');
     assert.equal(orch.mcpConfigPath, null, 'so no --mcp-config can reach argv');
     assert.deepEqual(orch.mcpServerGrants, []);
-    assert.deepEqual(orch.injectedPaths, {}, 'and the §8.8 pathspec set stays empty');
+    // The memory mount is the ONE legacy injected path (mounted in both modes since P1; without
+    // the exclusion a legacy run would commit its memory into the user's branch).
+    assert.deepEqual(orch.injectedPaths, { [projectKey(repo)]: [{ path: '.claude/rules/worca', kind: 'memory', source: null }] });
     assert.ok(!existsSync(join(worcaHome(), 'runs', orch.getState().id)));
   });
 });

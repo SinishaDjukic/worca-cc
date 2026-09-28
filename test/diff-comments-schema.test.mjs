@@ -26,7 +26,7 @@ test('v22/v29: diff_comments has the spec columns (+ parent_id last), its index,
   assert.deepEqual(prepare('PRAGMA table_info(diff_comments)').all().map((c) => c.name), [
     'id', 'store_key', 'pipeline_id', 'project_key', 'path', 'old_path', 'side', 'line_no',
     'line_text', 'body', 'author', 'resolved', 'resolved_at', 'sent_run_id', 'source',
-    'external_url', 'created_at', 'parent_id']);
+    'external_url', 'created_at', 'parent_id', 'author_name']);   // v37 appended
   const fks = prepare('PRAGMA foreign_key_list(diff_comments)').all();
   const runFk = fks.find((f) => f.from === 'pipeline_id');
   assert.equal(runFk.table, 'pipelines');

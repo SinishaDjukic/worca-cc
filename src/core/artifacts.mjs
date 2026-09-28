@@ -11,13 +11,17 @@
 import { mkdir, writeFile, readFile, copyFile, readdir } from 'node:fs/promises';
 import { join, basename, resolve, isAbsolute } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, existsSync } from 'node:fs';
+import { realpathSync, existsSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
 import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
+import { readRunLedger } from './metrics/ledger.mjs';
+import { readPolicyState } from './policy/state.mjs';
+import { memoryTotals } from './memory-sync.mjs';
+import { actorLabel } from './identity.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -82,17 +86,27 @@ export function deleteStoreMeta(key) {
  * in plans//reviews/, siblings of pipelines/). Idempotent (INSERT OR IGNORE on the
  * (pipeline_id, kind, rel_path) PK), best-effort: a logging failure never breaks a
  * run. A null/empty path is a no-op. The pipelines row must already exist (FK).
+ * Optional per-step attribution (step_key/node_id/cycle/created_at) is stamped on
+ * the FIRST insert only — the conflict behavior stays byte-for-byte INSERT OR
+ * IGNORE (first write wins), so a re-record never clobbers an existing row's
+ * attribution. The 3-arg form still works (attr defaults to {}, columns NULL).
  * @param {string} pipelineId
  * @param {string} kind
  * @param {string} relPath
+ * @param {{stepKey?:string, nodeId?:string, cycle?:number}} [attr]
  */
-export function recordArtifact(pipelineId, kind, relPath) {
+export function recordArtifact(pipelineId, kind, relPath, attr = {}) {
   if (!pipelineId || !kind || !relPath) return;
+  const stepKey = attr.stepKey ?? null;
+  const nodeId = attr.nodeId ?? null;
+  const cycle = attr.cycle ?? null;
+  const createdAt = new Date().toISOString();
   try {
     tx(() => {
       getDb().prepare(
-        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path) VALUES (?, ?, ?)',
-      ).run(pipelineId, kind, relPath);
+        'INSERT OR IGNORE INTO artifacts (pipeline_id, kind, rel_path, step_key, node_id, cycle, created_at) '
+        + 'VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(pipelineId, kind, relPath, stepKey, nodeId, cycle, createdAt);
     });
   } catch { /* artifact indexing is best-effort; never break a run on it */ }
 }
@@ -109,6 +123,53 @@ export function recordArtifact(pipelineId, kind, relPath) {
 export async function listArtifacts(pipelineId) {
   return getDb().prepare('SELECT kind, rel_path FROM artifacts WHERE pipeline_id = ?')
     .all(pipelineId).map((r) => ({ kind: r.kind, relPath: r.rel_path }));
+}
+
+/**
+ * List a run's artifacts with step attribution and on-disk byte size, ordered
+ * created_at (NULLs first, so legacy rows bucket ahead) then rel_path. `bytes` is
+ * stat-ed run dir first, store root second (mirroring resolveIndexedArtifactForRow's
+ * base order); a missing file reports bytes: 0. Optional { stepKey, kind } filter.
+ * An optional `limit` caps the SQL result so the per-row statSync only runs on
+ * rows the caller keeps (pass limit+1 to detect truncation); omit it to size
+ * every row.
+ * @param {string} pipelineId
+ * @param {{stepKey?:string, kind?:string, limit?:number}} [filter]
+ * @returns {Promise<Array<{kind:string, stepKey:string|null, nodeId:string|null, cycle:number|null, relPath:string, bytes:number, createdAt:string|null}>>}
+ */
+export async function listRunArtifacts(pipelineId, filter = {}) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return [];
+  // Query the RESOLVED id: findPipelineRowById accepts a run-dir basename/suffix
+  // (DIR_ID_RE), so `pipelineId` may not equal the stored `pipeline_id`.
+  const clauses = ['pipeline_id = ?'];
+  const args = [row.id];
+  if (filter.stepKey) { clauses.push('step_key = ?'); args.push(filter.stepKey); }
+  if (filter.kind) { clauses.push('kind = ?'); args.push(filter.kind); }
+  const hasLimit = Number.isInteger(filter.limit) && filter.limit > 0;
+  const raw = getDb().prepare(
+    `SELECT kind, rel_path, step_key, node_id, cycle, created_at FROM artifacts
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY (created_at IS NULL) DESC, created_at ASC, rel_path ASC${hasLimit ? ' LIMIT ?' : ''}`,
+  ).all(...args, ...(hasLimit ? [filter.limit] : []));
+  const isWs = row.target === 'workspace' || !!row.workspace_key;
+  const storeRoot = isWs ? workspaceStorePath(row.workspace_key) : projectStorePath(row.project_key);
+  const runDir = await runDirForRow(row);
+  const sizeOf = (rel) => {
+    for (const base of [runDir, storeRoot]) {
+      try { return statSync(join(base, rel)).size; } catch { /* try next base */ }
+    }
+    return 0;
+  };
+  return raw.map((r) => ({
+    kind: r.kind,
+    stepKey: r.step_key ?? null,
+    nodeId: r.node_id ?? null,
+    cycle: r.cycle ?? null,
+    relPath: r.rel_path,
+    bytes: sizeOf(r.rel_path),
+    createdAt: r.created_at ?? null,
+  }));
 }
 
 /**
@@ -191,6 +252,42 @@ export async function writeStepQuestions(pipelineId, stepKey, round, { agentKey,
 }
 
 /**
+ * Spec §9: a form ask persists into the SAME schemaless JSON TEXT columns as the
+ * legacy Q&A — the `questions` half holds the full resolved ask, the `answers`
+ * half `{kind:'form', form, version, values}`. This merges the two into the one
+ * object History renders, or null for a legacy row. The legacy arrays are read
+ * separately and stay empty for a form row, so no existing reader changes.
+ * @param {object|null} qWrap parsed `questions` column
+ * @param {object|null} aWrap parsed `answers` column
+ */
+function formAskOf(qWrap, aWrap) {
+  if (!qWrap || qWrap.kind !== 'form') return null;
+  const values = aWrap && aWrap.kind === 'form' && aWrap.values && typeof aWrap.values === 'object'
+    ? aWrap.values
+    : null;
+  return { ...qWrap, values };
+}
+
+/** The two form fields a reader row carries — `{}` for a legacy row, so no legacy
+ *  payload gains a key (test/step-questions-db.test.mjs pins the exact row shape). */
+/** `{answeredBy}` when the answer row names who answered (identity.mjs actor), else {} —
+ *  additive, so a row answered before attribution keeps its exact wire shape. */
+function answeredByOf(aWrap) {
+  return aWrap && typeof aWrap.answeredBy === 'string' && aWrap.answeredBy ? { answeredBy: aWrap.answeredBy } : {};
+}
+
+function formFieldsOf(qWrap, aWrap) {
+  const ask = formAskOf(qWrap, aWrap);
+  return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
+}
+
+/** The `{form, version, values}` payload the agent was resumed with, or null. */
+function formAnswerOf(aWrap) {
+  if (!aWrap || aWrap.kind !== 'form') return null;
+  return { form: aWrap.form, version: aWrap.version, values: aWrap.values && typeof aWrap.values === 'object' ? aWrap.values : {} };
+}
+
+/**
  * All ask-then-resume rounds of a pipeline, unwrapped to plain arrays, in
  * chronological insert order (rowid — lexicographic step_key would mis-order
  * '10:' before '2:' on big workflows). Always returns an array.
@@ -211,6 +308,11 @@ export function readStepQuestions(pipelineId) {
       agentKey: r.agent_key || '',
       questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
       answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+      // Ask forms (spec §9): `ask` + `formAnswer` on a FORM row only. A legacy row
+      // gains no key at all, so its wire shape (History, get_run_progress) stays
+      // byte-identical; consumers test `row.ask`, never `'ask' in row`.
+      ...formFieldsOf(qWrap, aWrap),
+      ...answeredByOf(aWrap),
     };
   });
 }
@@ -289,6 +391,8 @@ export function readPipelineExtras(pipelineId) {
   const clarify = {
     questions: Array.isArray(qWrap?.questions) ? qWrap.questions : [],
     answers: Array.isArray(aWrap?.answers) ? aWrap.answers : [],
+    ...formFieldsOf(qWrap, aWrap),   // spec §9: `ask` + `formAnswer` on a form row only
+    ...answeredByOf(aWrap),
   };
   const reviews = getDb().prepare(
     'SELECT kind, cycle, verdict FROM reviews WHERE pipeline_id = ? ORDER BY kind, cycle'
@@ -536,6 +640,32 @@ export function updatePhaseStatus(pipelineId, ordinal, status, ts) {
       `).run(status, startedCol, finishedCol, pipelineId, Number(ordinal));
     });
   } catch { /* best-effort */ }
+}
+
+/**
+ * Aggregate live run progress from the existing readers. Free-text fields
+ * (titles, review summaries, question/answer text) are redacted by the caller,
+ * not here — this is a pure data assembler. Returns null for an unknown run.
+ * @param {string} pipelineId
+ * @returns {Promise<null | {runId:string, phase:string|null, status:string|null, phases:Array, tasks:Array, clarify:object, reviews:Array, stepQuestions:Array}>}
+ */
+export async function readRunProgress(pipelineId) {
+  const row = findPipelineRowById(pipelineId);
+  if (!row) return null;
+  // Read against the RESOLVED id — `pipelineId` may be a run-dir basename/suffix
+  // (findPipelineRowById's DIR_ID_RE) that no downstream table keys on.
+  const id = row.id;
+  const extras = readPipelineExtras(id);
+  return {
+    runId: row.id,
+    phase: row.phase ?? null,
+    status: row.status ?? null,
+    phases: listPhases(id),
+    tasks: listTasks(id),
+    clarify: extras.clarify,
+    reviews: extras.reviews,
+    stepQuestions: extras.stepQuestions,
+  };
 }
 
 /**
@@ -812,7 +942,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null,
+    guardrailsId = null, startedBy = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -909,6 +1039,8 @@ export async function createPipeline(projectDir, opts = {}) {
     // unguarded runs). Creation-immutable, like sourceType: written on INSERT,
     // never touched by updates. NULL = legacy/pre-entity or non-orchestrator row.
     guardrailsId: guardrailsId || null,
+    // Who started the run (identity.mjs): creation-immutable like guardrailsId. NULL = unknown.
+    startedBy: startedBy || null,
   };
 
   // Workspace runs carry the §5.2 superset, discriminated by target:'workspace'.
@@ -974,15 +1106,30 @@ function firstMeaningfulLine(text) {
  * @param {string} markdownLine
  * @returns {Promise<void>}
  */
-export async function appendAudit(pipelineDir, markdownLine) {
-  const id = resolvePipelineId(pipelineDir);
+export async function appendAudit(pipelineDir, markdownLine, { actor = null } = {}) {
+  appendAuditById(resolvePipelineId(pipelineDir), markdownLine, { actor });
+}
+
+/**
+ * appendAudit by pipeline id (the server's human actions: PRs, archive, cap overrides).
+ * `actor` = who did it (identity.mjs; 'local' allowed), stored in its own column always;
+ * the line's text names the person only when they are not 'local' (byActor), so the
+ * History view and the markdown export read "Paused by ada@example.com." Best-effort.
+ */
+export function appendAuditById(id, markdownLine, { actor = null } = {}) {
   if (!id) return;
   const ts = new Date().toISOString();
   const text = String(markdownLine ?? '').trim();
+  const who = typeof actor === 'string' && actor ? actor.slice(0, 200) : null;
   try {
     tx(() => {
-      getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
-        .run(id, ts, text);
+      if (who) {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text, actor) VALUES (?, ?, ?, ?)')
+          .run(id, ts, text, who);
+      } else {
+        getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
+          .run(id, ts, text);
+      }
     });
   } catch { /* audit is best-effort; never break a run on a logging failure */ }
 }
@@ -1043,15 +1190,16 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
-        total_active_ms=excluded.total_active_ms, branch=excluded.branch,
+        total_active_ms=excluded.total_active_ms, human_hours=excluded.human_hours,
+        branch=excluded.branch,
         workspace_meta=excluded.workspace_meta, stepper=excluded.stepper,
         tools=excluded.tools,
         resume_point=excluded.resume_point,
@@ -1065,16 +1213,24 @@ export async function writeState(pipelineDir, stateObj) {
       INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, step_index, cycle,
         status, started_at, updated_at, active_ms, running_since, cost_usd, session_id,
         skills, graphify_count,
-        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
+        human_hours, human_signals)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
-      const meta = (st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null)
+      const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null;
+      const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
-              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null })
+              taskIndex: st.taskIndex ?? null, taskTotal: st.taskTotal ?? null,
+              nodeKey: st.nodeKey ?? null, runtime: st.runtime ?? null, exitCode: st.exitCode ?? null,
+              // Model bridge (§8.6): requests the node initiated through the bridge.
+              ...(st.bridgeCalls != null ? { bridgeCalls: st.bridgeCalls, bridgeContinued: st.bridgeContinued ?? 0 } : {}),
+              // OpenRouter `:free` requests the node spent (openrouter-free.mjs).
+              ...(st.bridgeFreeCalls ? { bridgeFreeCalls: st.bridgeFreeCalls } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1093,6 +1249,8 @@ export async function writeState(pipelineDir, stateObj) {
         st.trigger === undefined ? null : s(st.trigger),
         st.result === undefined ? null : s(st.result),
         meta,
+        Number.isFinite(st.humanHours) ? st.humanHours : null,
+        st.humanSignals && typeof st.humanSignals === 'object' ? s(st.humanSignals) : null,
       );
     }
   });
@@ -1136,6 +1294,22 @@ export function persistPrState(pipelineId, pr) {
       ).run(pr.url, pr.number ?? null, pr.state ?? 'OPEN', new Date().toISOString(), pipelineId);
     });
   } catch { /* best-effort */ }
+}
+
+/**
+ * Last persisted PR facts for a pipeline (spec §6.8), or null when none were
+ * ever observed. Read by the later PR lookups so a cross-repo PR (which lives in
+ * the base repo, not the cwd's default) is resolved by URL instead of by branch.
+ * The resolved `state` (rowToState) deliberately omits pr_* — use this instead.
+ * @param {string} pipelineId
+ * @returns {{ url:string, number:(number|null), state:string }|null}
+ */
+export function readPrState(pipelineId) {
+  if (!pipelineId) return null;
+  try {
+    const row = getDb().prepare('SELECT pr_url, pr_number, pr_state FROM pipelines WHERE id = ?').get(pipelineId);
+    return row && row.pr_url ? { url: row.pr_url, number: row.pr_number ?? null, state: row.pr_state ?? 'OPEN' } : null;
+  } catch { return null; }
 }
 
 /**
@@ -1315,10 +1489,13 @@ export function reconcileStaleRunning({
     .map((r) => r.id);
   if (candidates.length === 0) return { reconciled: 0, ids: [] };
 
-  // Status-guarded UPDATE. Also NULLs owner columns so reclassified rows are clean.
+  // Status-guarded UPDATE. Also NULLs the owner columns so reclassified rows are clean.
+  // heartbeat_at STAYS: it is the last time the dead process was seen alive, and resume()
+  // measures the interrupted run's parked time (and closes its step clocks) from it. Nothing
+  // reads it on a non-running row otherwise; claimPipelineOwnership re-stamps it on resume.
   return tx(() => {
     const upd = getDb().prepare(
-      `UPDATE pipelines SET status = ?, owner_pid = NULL, owner_host = NULL, heartbeat_at = NULL
+      `UPDATE pipelines SET status = ?, owner_pid = NULL, owner_host = NULL
        WHERE id = ? AND status IN (${placeholders})`);
     const flipped = [];
     for (const id of candidates) {
@@ -1393,6 +1570,7 @@ function toPipelineRow(o) {
     updated_at: o.updatedAt ?? null,
     total_cost_usd: Number.isFinite(o.totalCostUsd) ? o.totalCostUsd : 0,
     total_active_ms: Number.isFinite(o.totalActiveMs) ? o.totalActiveMs : 0,
+    human_hours: Number.isFinite(o.humanHours) ? o.humanHours : 0,
     prompt: o.prompt ?? null,
     branch: s(o.branch),
     workspace_meta: workspaceMeta,
@@ -1402,6 +1580,7 @@ function toPipelineRow(o) {
     source_type: o.sourceType ?? 'prompt',
     source_ref: s(o.sourceMeta),
     guardrails_id: o.guardrailsId ?? null,
+    started_by: o.startedBy ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined)
@@ -1477,32 +1656,60 @@ export function retainedWorkFor(row) {
   return { reason: members[0].code || 'unknown', members };
 }
 
+// Kept local, not imported: results.mjs (which exports RESULTS_FILE) imports this module.
+const RESULTS_FILE = 'results.json';
+
+/**
+ * A run's frozen line counts from `<dir>/results.json` — persistResults writes it when
+ * the run ends (or error-pauses), and a workspace run's summary is the rollup across
+ * its members. Null when the file is absent or unparseable, or its summary lacks
+ * numeric counts.
+ * @param {string|undefined} dir the on-disk run dir
+ * @returns {Promise<{added:number, removed:number}|null>}
+ */
+async function frozenDiffCounts(dir) {
+  if (!dir) return null;
+  try {
+    const sum = JSON.parse(await readFile(join(dir, RESULTS_FILE), 'utf8'))?.summary;
+    if (!Number.isFinite(sum?.linesAdded) || !Number.isFinite(sum?.linesRemoved)) return null;
+    return { added: sum.linesAdded, removed: sum.linesRemoved };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a history row from a pipelines DB row. Mirrors the legacy pipelineEntry
  * wire shape EXACTLY: { id, dir, title, status, startedAt, branch, sourceBranch,
- * survived, added, removed, totalCostUsd, totalActiveMs, mtime[, pr] }. Git/PR work
- * (branchExists / diffShortstat / findPrForBranch) is UNCHANGED — it still shells
- * out — and is fed the DB row's branch JSON instead of a parsed state.json.
+ * survived, added, removed, diffFrozen, totalCostUsd, totalActiveMs, mtime[, pr] }.
+ * Git/PR work (branchExists / diffShortstat / findPrForBranch) is UNCHANGED — it
+ * still shells out — and is fed the DB row's branch JSON instead of a parsed state.json.
  *  - `branch` (wire) = state.branch.feature; `sourceBranch` = state.branch.source.
  *  - `mtime` maps to updated_at parsed to ms (a SORT KEY only; never displayed).
  *  - `row.dir` is attached by the caller (the real on-disk run dir).
  *  - `guardrailsId` (additive, v14+): the run's selected guardrail set id
  *    ('permissive' = unguarded) or null for legacy rows.
  *  - `retainedWork` is non-null only while a commit-failed worktree still exists.
+ *  - `added`/`removed` come from the run dir's results.json summary when it has one
+ *    (`diffFrozen: true`), whatever became of the branch since — a merge empties the
+ *    live three-dot diff. Otherwise (a run still going, a legacy run) they are the
+ *    live source...feature counts while the branch survives. `survived` is always
+ *    the live "branch exists" fact. `lite` skips the file read like the git work.
  * @param {object} row a pipelines row (incl. row.dir set by the caller)
  * @param {string|null} repoDir git repo root for live branch facts
- * @param {object} opts { withPr? }
+ * @param {object} opts { withPr?, lite? }
  */
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
   const source = branchObj?.source ?? null;
+  const frozen = opts.lite ? null : await frozenDiffCounts(row.dir);
   let survived = false;
-  let added = 0;
-  let removed = 0;
+  let added = frozen ? frozen.added : 0;
+  let removed = frozen ? frozen.removed : 0;
   if (repoDir && feature) {
     survived = await branchExists(repoDir, feature);
-    if (survived && source) {
+    if (!frozen && survived && source) {
       const d = await diffShortstat(repoDir, source, feature);
       added = d.added;
       removed = d.removed;
@@ -1518,12 +1725,14 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     branch: feature,
     sourceBranch: source,
     guardrailsId: row.guardrails_id ?? null,
+    startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
     retainedWork: retainedWorkFor(row),
     survived,
     added,
     removed,
+    diffFrozen: !!frozen,
     totalCostUsd: cost,
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
@@ -1532,7 +1741,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
   // unavailable we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".
   if (opts.withPr && repoDir && feature) {
-    entry.pr = (await hasGh()) ? await findPrForBranch({ projectDir: repoDir, head: feature }) : null;
+    // pr_url first (repo-agnostic view); the branch search only for rows with no PR yet.
+    entry.pr = (await hasGh())
+      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
+      : null;
   }
   return entry;
 }
@@ -1574,7 +1786,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
   const dirById = await runDirIndex(pipelinesDir);
   const rows = getDb().prepare(`
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
-           branch, workspace_meta, guardrails_id,
+           branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1603,7 +1815,7 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
     FROM pipelines
@@ -1700,7 +1912,8 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
     const items = await Promise.all(slice.map(async (r) => {
-      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch })) || null;
+      const prUrl = readPrState(r.id)?.url || null;
+      const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
       if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
@@ -1736,6 +1949,8 @@ function stepRowToStep(r) {
   if (r.execution_id != null && r.cycle != null) step.ordinal = r.cycle;  // `ordinal` is the v2 name; `cycle` is its alias
   if (r.exec_trigger != null) step.trigger = j(r.exec_trigger, { wireIds: [], freshPorts: [] });
   if (r.exec_result != null) step.result = j(r.exec_result, null);
+  if (r.human_hours != null) step.humanHours = r.human_hours;
+  if (r.human_signals != null) step.humanSignals = j(r.human_signals, null);
   const em = r.exec_meta != null ? j(r.exec_meta, null) : null;
   if (em) {
     if (em.taskId != null) step.taskId = em.taskId;
@@ -1744,6 +1959,11 @@ function stepRowToStep(r) {
     if (em.phaseOrdinal != null) step.phaseOrdinal = em.phaseOrdinal;
     if (em.taskIndex != null) step.taskIndex = em.taskIndex;
     if (em.taskTotal != null) step.taskTotal = em.taskTotal;
+    if (em.nodeKey != null) step.nodeKey = em.nodeKey;
+    if (em.runtime != null) step.runtime = em.runtime;
+    if (em.exitCode != null) step.exitCode = em.exitCode;
+    if (em.bridgeCalls != null) { step.bridgeCalls = em.bridgeCalls; step.bridgeContinued = em.bridgeContinued ?? 0; }
+    if (em.bridgeFreeCalls) step.bridgeFreeCalls = em.bridgeFreeCalls;
   }
   return step;
 }
@@ -1770,6 +1990,7 @@ function rowToState(row) {
     updatedAt: row.updated_at ?? null,
     totalCostUsd: row.total_cost_usd ?? 0,
     totalActiveMs: row.total_active_ms ?? 0,
+    humanHours: Number(row.human_hours || 0),
     prompt: row.prompt ?? null,
     baseName: row.base_name ?? null,
     datePrefix: row.date_prefix ?? null,
@@ -1777,13 +1998,18 @@ function rowToState(row) {
     stepper: j(row.stepper, null),
     tools: j(row.tools, null),
     guardrailsId: row.guardrails_id ?? null,
+    startedBy: row.started_by ?? null,
+    // v31 provenance: set when a schedule started this run (NULL = started by hand).
+    scheduledFor: row.scheduled_for ?? null,
+    scheduleId: row.schedule_id ?? null,
     // A retired v1 resume point was NULLed by the v2 upgrade: the run stays in
     // History with an honest status, but it can never be resumed again.
     resumable: row.resume_point != null,
     steps: getDb().prepare(`
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count,
-             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta
+             execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
+             human_hours, human_signals
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
@@ -1792,6 +2018,8 @@ function rowToState(row) {
   // too, so a deep-linked History detail no longer waits for the LIST row.
   const rp = j(row.resume_point, null);
   state.pauseReason = typeof rp?.pauseReason === 'string' ? rp.pauseReason : null;
+  // Who paused it (run-harness _recordAction): { kind, by, at } or null.
+  state.lastAction = rp && rp.lastAction && typeof rp.lastAction.by === 'string' ? { ...rp.lastAction } : null;
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
   const outcome = j(row.outcome, null);
   if (outcome) {
@@ -1843,6 +2071,7 @@ function buildAuditMarkdown(row) {
     `- **id**: ${row.id}\n` +
     `- **project**: ${(readStoreMeta(row.project_key)?.path) ?? ''}\n` +
     `- **started**: ${row.started_at ?? ''}\n` +
+    (actorLabel(row.started_by) ? `- **started by**: ${actorLabel(row.started_by)}\n` : '') +
     `- **prompt file**: prompt.md\n\n` +
     `## Prompt\n\n` +
     (row.prompt && row.prompt.trim() ? row.prompt.trim() + '\n' : '_(empty prompt)_\n') +
@@ -2055,8 +2284,23 @@ export async function readPipelineByKey(key, id) {
     artifacts: await listArtifacts(row.id), // [{kind, relPath}] — drives the Live-logs dropdown (project + workspace)
     results,
     overview,
+    teamMetrics: readRunLedger(row.id),
+    // Team policy (design §10 / board 10): the home the run's policy came from and what the
+    // developer did about it — the History meta line's "policy · 1 override" segment.
+    policy: readPolicyState(row.id),
+    memory: await readMemoryLedger(dir),
     ...readPipelineExtras(row.id),
   };
+}
+
+/** A run's memory ledger (<runDir>/memory.json, agent-memory P1 amendment A2) as
+ *  { mount, changes, totals }, or null when the run wrote none. The ONE reader: the History
+ *  detail above serves it whole, ask/tool-deps.mjs' readRunMemory serves get_run the
+ *  changes + totals (never the mount path). Read-only, null on any failure. */
+export async function readMemoryLedger(dir) {
+  const ledger = await readJsonFile(join(dir, 'memory.json'));
+  if (!ledger || !Array.isArray(ledger.changes)) return null;
+  return { mount: ledger.mount || null, changes: ledger.changes, totals: memoryTotals(ledger.changes) };
 }
 
 /** Local helper: read + JSON-parse a file, null on any failure. */

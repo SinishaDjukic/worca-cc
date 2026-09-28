@@ -33,10 +33,11 @@ test('ids: prefix + 8 hex, matching ASK_ID_RE; askRoot under the worca home', ()
 });
 
 test('createThread / getThread / updateThread / setThreadTitle', () => {
-  const t = createThread({ model: 'claude-opus-5', effort: 'high' });
+  const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
   assert.match(t.id, /^ask_[0-9a-f]{8}$/);
   assert.deepEqual(Object.keys(t).sort(),
-    ['context', 'createdAt', 'effort', 'id', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+    ['context', 'createdAt', 'createdBy', 'effort', 'id', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+  assert.equal(t.createdBy, null, 'ownerless unless created with an owner');
   assert.equal(t.title, null);
   assert.equal(t.sessionId, null);
   assert.equal(t.context, null);
@@ -48,7 +49,7 @@ test('createThread / getThread / updateThread / setThreadTitle', () => {
   assert.equal(u.sessionId, 'sess-1');
   assert.deepEqual(u.context, { view: 'history', projectKey: 'p-00000001' });
   assert.equal(u.title, 'First');
-  assert.equal(u.model, 'claude-opus-5', 'untouched keys survive');
+  assert.equal(u.model, 'claude-opus-5-5', 'untouched keys survive');
   assert.ok(u.updatedAt >= t.updatedAt);
   assert.equal(updateThread(t.id, { context: null }).context, null);
   assert.equal(updateThread('ask_ffffffff', { title: 'x' }), null);
@@ -113,7 +114,7 @@ test('countThreads / listThreadIds ignore the list cap; countWorktrees / countAt
 // write lock — SQLITE_BUSY_SNAPSHOT, which the busy handler never retries. The
 // whole tx() threw "database is locked" and the user's message was gone.
 test('appendMessage: concurrent writer processes lose no row (the tx takes the write lock up front)', async () => {
-  const t = createThread({ model: 'claude-opus-5', effort: 'high' });
+  const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
   const storeUrl = new URL('../src/core/ask/store.mjs', import.meta.url).href;
   const KIDS = 3;
   const PER_KID = 40;
@@ -205,6 +206,9 @@ test('cards: findCard / updateCardBlock patch only state, runId, error', () => {
   assert.deepEqual(flipped.card, card.card, 'only state/runId/error are patchable');
   assert.deepEqual(getMessage(m.id).blocks[0], { kind: 'notice', text: 'n' }, 'sibling blocks untouched');
   assert.equal(updateCardBlock(t.id, 'card_ffffffff', { state: 'dismissed' }), null);
+  // Run chains: `after` is a patchable key — the scheduled flip carries the predecessor to the card.
+  const chained = updateCardBlock(t.id, 'card_00000001', { state: 'scheduled', runId: 'run-9', after: { kind: 'pipeline', id: 'p1', title: 'Refactor' } });
+  assert.deepEqual(chained.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
 });
 
 test('addThreadTotals sums every turn; null cost adds 0 but counts the turn', () => {
@@ -445,6 +449,24 @@ test('workflow card: updateCardBlock keeps workflowId and shallow-merges a `card
   const run = updateCardBlock(t.id, 'card_0000aa09', { state: 'started', runId: 'run-1', workflowId: 'wf_x', card: { brief: 'hacked' } });
   assert.equal(run.card.brief, 'b', 'a RUN card never takes a card sub-patch');
   assert.equal(run.workflowId, 'wf_x', 'workflowId is a block key for both kinds (harmless on a run card)');
+});
+
+test('metrics card: updateCardBlock shallow-merges a `card` sub-patch (the apply result lands there)', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+  setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb01', state: 'proposed', card: { type: 'metrics', kind: 'record', projectKey: 'p-00000001', record: false, summary: 'Turn "Include my runs" off for p', effects: ['x'] } }]);
+  const b = updateCardBlock(t.id, 'card_0000bb01', { state: 'applied', card: { result: { ok: true, detail: '"Include my runs" is now off' } } });
+  assert.equal(b.state, 'applied');
+  assert.deepEqual(b.card, { type: 'metrics', kind: 'record', projectKey: 'p-00000001', record: false, summary: 'Turn "Include my runs" off for p', effects: ['x'], result: { ok: true, detail: '"Include my runs" is now off' } });
+  assert.deepEqual(findCard(t.id, 'card_0000bb01').block, b, 'persisted');
+});
+
+test('policy card: the same shallow `card` sub-patch as a metrics card', () => {
+  const t = createThread();
+  const m = appendMessage(t.id, { role: 'assistant', text: '', status: 'done' });
+  setMessageBlocks(m.id, [{ kind: 'card', id: 'card_0000bb02', state: 'proposed', card: { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [] } }]);
+  const b = updateCardBlock(t.id, 'card_0000bb02', { state: 'applied', card: { result: { ok: true, detail: 'published abc1234 to acme/gateway' } } });
+  assert.deepEqual(b.card, { type: 'policy', kind: 'edit', home: 'acme/gateway', summary: 'Edit', changes: [], result: { ok: true, detail: 'published abc1234 to acme/gateway' } });
 });
 
 test('boot sweep: a streaming row\'s building workflow card turns failed with the sweep text', () => {

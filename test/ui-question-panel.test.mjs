@@ -126,7 +126,7 @@ test('.qpanel is the amber card variant and no longer shares its rules with the 
   assert.ok(body, '.qpanel rule missing');
   assert.match(body, /background:\s*var\(--amber-wash\)/, 'card panel uses the amber wash');
   assert.match(body, /border:\s*1px solid var\(--amber-bg\)/);
-  assert.match(body, /border-radius:\s*14px/);
+  assert.match(body, /border-radius:\s*var\(--r-ctrl\)/, 'nested in the run card, so the inner radius');
   assert.ok(!/#FFFDF8/i.test(css), 'the old hardcoded wash is gone');
   // Comment-blind: strip comments first so prose can never fail the sweep.
   const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');

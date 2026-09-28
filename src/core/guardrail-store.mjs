@@ -19,6 +19,7 @@ import { GUARDRAIL_PRESETS, GUARDRAIL_LEVELS, sanitizeGuardrails } from './guard
 // store stamps code:'REFERENCED' at the throw site, and the server ALSO matches
 // structurally (err.name === 'ReferencedError' || err.code === 'REFERENCED').
 import { ReferencedError } from './plugin-workflows.mjs';
+import { policyGuardrailSets } from './policy/cache.mjs';
 
 export { ReferencedError };
 
@@ -79,7 +80,22 @@ function readRaw(id) {
  */
 export async function readGuardrailSet(id) {
   if (isBuiltinGuardrailSetId(id)) return builtinSet(id);
+  // Team policy sets (team-policy design §8): virtual, read-only, `gp:<id>`, resolved from the
+  // discovery cache at read time — so a paused run that pinned one re-reads its latest
+  // definition on resume, and a vanished one takes the existing fail-open path.
+  if (isPolicyGuardrailSetId(id)) return policyGuardrailSet(id);
   return readRaw(id);
+}
+
+/** `gp:<id>` — a guardrail set shipped by a team policy (never a row; `:` is not a row-id character). */
+export function isPolicyGuardrailSetId(id) { return typeof id === 'string' && /^gp:[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id); }
+function policyGuardrailSet(id) {
+  const hit = policyGuardrailSets().find((s) => s.id.toLowerCase() === id.toLowerCase());
+  return hit ? { ...hit, settings: sanitizeGuardrails(hit.settings) } : null;
+}
+/** Every policy set this machine has cached (Guardrails list rows with a policy badge). */
+export function listPolicyGuardrailSets() {
+  return policyGuardrailSets().map((s) => ({ ...s, settings: sanitizeGuardrails(s.settings) }));
 }
 
 /**

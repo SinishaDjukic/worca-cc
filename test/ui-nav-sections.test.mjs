@@ -24,38 +24,42 @@ const topnav = () => html.match(/<nav class="topnav"[\s\S]*?<\/nav>/)[0];
 test('sidebar reads: CTA, Activity, Build, Manage, divider, Settings — in order', () => {
   // One combined token stream: nav ids and section labels, in source order.
   const tokens = [...sidebar().matchAll(
-    /data-nav="([a-z]+)"|class="nav-sect">([A-Za-z]+)<|class="(nav-sep)"/g
-  )].map((m) => m[1] || m[2] || m[3]);
+    /data-nav="([a-z-]+)"|data-nav-group="([a-z-]+)"|class="nav-sect"[^>]*>([A-Za-z]+)<|class="(nav-sep)"|id="(nav-mode)"/g
+  )].map((m) => m[1] || m[2] || m[3] || m[4] || m[5]);
   assert.deepEqual(tokens, [
     'new',
-    'Activity', 'running', 'history', 'stats',
-    'Build', 'composer', 'agents',
-    'Manage', 'projects', 'workspaces',
-    'nav-sep', 'settings',
+    'Activity', 'running', 'schedules', 'history', 'stats', 'team-metrics',
+    'Build', 'composer', 'nodes', 'agents', 'scripts',   // Nodes is a disclosure holding the two (ui-nav-nodes-group)
+    'Manage', 'projects', 'workspaces', 'team-policy',
+    'nav-sep', 'nav-mode', 'settings',          // the interface-mode item sits directly above Settings (docs/ui-levels.md)
   ]);
 });
 
-// guardrails/models/plugins moved into Settings as tabs, so 12 -> 9.
-test('grouping adds no buttons and no anchors (9-button invariant holds)', () => {
-  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 9);
+// guardrails/models/plugins moved into Settings as tabs, so 12 -> 9; team-metrics adds one -> 10;
+// Schedules (docs/scheduled-runs.md) and team-policy (team-policy design §11) add a route each
+// -> 12; the interface-mode item (docs/ui-levels.md) adds one -> 13; Scripts -> 14; the Nodes
+// disclosure (test/ui-nav-nodes-group.test.mjs) -> 15, of which 13 route (data-nav).
+test('grouping adds no buttons and no anchors (15-button invariant holds)', () => {
+  assert.equal((sidebar().match(/<button type="button"/g) || []).length, 15);
+  assert.equal((sidebar().match(/<button type="button"[^>]*data-nav=/g) || []).length, 13);
   assert.ok(!/<a[\s>]/.test(sidebar()));
   assert.match(sidebar(), /<div class="nav-sect">Activity<\/div>/);
-  assert.match(sidebar(), /<div class="nav-sect">Build<\/div>/);
+  assert.match(sidebar(), /<div class="nav-sect" data-min-level="advanced">Build<\/div>/);
   assert.match(sidebar(), /<div class="nav-sect">Manage<\/div>/);
   assert.match(sidebar(), /<div class="nav-sep" aria-hidden="true"><\/div>/);
 });
 
 test('New-pipeline button is the CTA and still boots active', () => {
-  assert.match(sidebar(), /<button type="button" class="active nav-cta" data-nav="new">/);
+  assert.match(sidebar(), /<button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">/);
 });
 
 test('running children container still sits between Running and History', () => {
   assert.match(sidebar(),
-    /data-nav="running">[\s\S]*?id="nav-running-children"[\s\S]*?data-nav="history">/);
+    /data-nav="running"[^>]*>[\s\S]*?id="nav-running-children"[\s\S]*?data-nav="history"[^>]*>/);
 });
 
 test('Settings stays a .nav child (app.js selector `.nav button[data-nav]` must match it)', () => {
-  assert.match(sidebar(), /data-nav="settings">\s*<svg/);
+  assert.match(sidebar(), /data-nav="settings"[^>]*>\s*<svg/);
   const sideFoot = html.match(/<div class="side-foot">[\s\S]*?<\/aside>/)[0];
   assert.ok(!/data-nav=/.test(sideFoot),
     'settings must not move into .side-foot — routing would silently die');
@@ -173,21 +177,22 @@ test('CTA is outlined at rest and compensates the border in its padding', () => 
 // ---- Task 3: compact topnav mirrors the grouping ----
 
 test('topnav order mirrors the sidebar, with a separator per group boundary', () => {
-  const tokens = [...topnav().matchAll(/data-nav="([a-z]+)"|class="(topnav-sep)"/g)]
+  const tokens = [...topnav().matchAll(/data-nav="([a-z-]+)"|class="(topnav-sep)"/g)]
     .map((m) => m[1] || m[2]);
   assert.deepEqual(tokens, [
     'new', 'topnav-sep',
-    'running', 'history', 'stats', 'topnav-sep',
-    'composer', 'agents', 'topnav-sep',
-    'projects', 'workspaces', 'topnav-sep',
+    'running', 'schedules', 'history', 'stats', 'team-metrics', 'topnav-sep',
+    'composer', 'agents', 'scripts', 'topnav-sep',
+    'projects', 'workspaces', 'team-policy', 'topnav-sep',
     'settings',
   ]);
 });
 
 test('separators are spans (button count and settings-text invariants hold)', () => {
-  assert.equal((topnav().match(/<button type="button"/g) || []).length, 9);
-  assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"><\/span>/g) || []).length, 4);
-  assert.match(topnav(), /data-nav="settings">Settings<\/button>/);
+  // 13 routes (Schedules, Team policy and Scripts included) + the interface-mode twin (docs/ui-levels.md).
+  assert.equal((topnav().match(/<button type="button"/g) || []).length, 14);
+  assert.equal((topnav().match(/<span class="topnav-sep" aria-hidden="true"[^>]*><\/span>/g) || []).length, 4);
+  assert.match(topnav(), /data-nav="settings"[^>]*>Settings<\/button>/);
 });
 
 test('.topnav-sep is a hairline that cannot flex-grow', () => {

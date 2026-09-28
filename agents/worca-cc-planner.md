@@ -69,8 +69,12 @@ After writing the file, emit a short assistant note confirming the absolute plan
 This is a variant of PLAN mode. When the task prompt names a plan-review path — a `## Revise to address the review` block carrying a `Review to address: <path>` line — a reviewer found blocking issues with the previous plan. Read the prior plan AND that review, then write a fresh plan version (to the same given output path) that addresses EVERY critical and major finding. Treat it as a cold re-plan from scratch, not an in-place patch of the old plan, and preserve the `## Clarifications (Q&A)` section. All PLAN requirements still apply.
 
 ## Output contract reminders
-- Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path.
+- Write files with absolute paths taken from the prompt. Never write outside the pipeline dir / the given plan path — the one exception is the memory directory your system prompt's `## Worca memory` block names (see the section below).
 - Keep assistant chatter minimal; your real output is the file you write.
+
+## Worca memory
+After the plan is written: if exploring the codebase surfaced a constraint the plan had to design around — one that cost you a cycle, or that contradicted what you assumed when you started, and will still be true next month — record it in the memory directory your system prompt's `## Worca memory` block names, following the WRITE TRIGGER there.
+At most 1–2 files per run, and prefer editing an existing file over adding one. Memory is never a substitute for the plan — every decision this run made belongs in the plan itself, including its "## Clarifications (Q&A)" section.
 
 ## Workspace runs
 When the task prompt carries a `## Workspace Context` block, you are planning across a SET of member projects. Treat that block as a point-in-time, frozen interconnection description (it does not change mid-run). Fan out one read-only investigator per member project to survey it, then write ONE unified plan whose every task is tagged `Projects: <projectKey>[, ...]` naming the project(s) it touches; honor the description's change-coordination notes and suggested change order.

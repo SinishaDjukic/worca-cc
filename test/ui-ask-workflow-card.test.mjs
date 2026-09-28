@@ -15,7 +15,7 @@ const MID = 'askm_00000001';
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
   if (url.includes('/api/ask/models')) {
-    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
     return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
@@ -192,21 +192,21 @@ test('chip picker: the model chip opens a menu in the sheet; picking a model rep
   const items = [...pop.querySelectorAll('.ask-model-item')];
   assert.deepEqual(items.map((i) => i.textContent.replace('✓', '').trim()), p.models.map((m) => m.label));
   assert.ok(items.every((i) => i.getAttribute('role') === 'menuitem'), 'menuitem: the panel\'s arrow-key nav selects that role (PD28)');
-  items.find((i) => i.textContent.includes('Opus 5')).click();
+  items.find((i) => i.textContent.includes('Opus 5.5')).click();
   await settle(ctx.window, 2);
   assert.equal(ctx.window.document.querySelector('.ask-pop-chip'), null, 'picking closes');
-  assert.equal(el.querySelector(`[data-node-id="${nodeId}"] .bchip.model`).textContent, 'Opus 5');
-  assert.equal(el.querySelector(`[data-node-id="${nodeId}"] .bchip.effort`).textContent, 'medium', 'the fixture\'s "medium" is offered by Opus 5 ⇒ kept (else the model\'s second effort)');
+  assert.equal(el.querySelector(`[data-node-id="${nodeId}"] .bchip.model`).textContent, 'Opus 5.5');
+  assert.equal(el.querySelector(`[data-node-id="${nodeId}"] .bchip.effort`).textContent, 'medium', 'the fixture\'s "medium" is offered by Opus 5.5 ⇒ kept (else the model\'s second effort)');
   el.querySelector('[data-ask-wf-save]').click();
   await settle(ctx.window, 4);
-  assert.deepEqual(ctx.cardPosts.at(-1), { state: 'saved', name: p.name, nodes: { [nodeId]: { model: 'claude-opus-5' } } }, 'a DIFF: the unchanged effort is not posted');
+  assert.deepEqual(ctx.cardPosts.at(-1), { state: 'saved', name: p.name, nodes: { [nodeId]: { model: 'claude-opus-5-5' } } }, 'a DIFF: the unchanged effort is not posted');
   el.querySelector(`[data-node-id="${nodeId}"] .bchip.effort`).click();
   await settle(ctx.window, 2);
   [...ctx.window.document.querySelectorAll('.ask-pop-chip .ask-effort-pill')].find((b) => b.textContent === 'high').click();
   await settle(ctx.window, 2);
   el.querySelector('[data-ask-wf-save]').click();
   await settle(ctx.window, 4);
-  assert.deepEqual(ctx.cardPosts.at(-1).nodes, { [nodeId]: { model: 'claude-opus-5', effort: 'high' } });
+  assert.deepEqual(ctx.cardPosts.at(-1).nodes, { [nodeId]: { model: 'claude-opus-5-5', effort: 'high' } });
 });
 
 test('saved: head "Saved workflow" + Auto tag + the check line; Open in composer navigates to #composer and reads the row; declined/failed are stubs', async () => {

@@ -37,7 +37,7 @@ async function openWith(blocks, { store = null, runLinks = [], fetchHandler = nu
   const ctx = makePanel({ deps: store ? { runStore: store } : {}, fetchHandler: (url, opts) => {
     if (fetchHandler) { const r = fetchHandler(url, opts); if (r) return r; }
     if (url.startsWith('/api/ask/threads/' + TID)) return { ok: true, status: 200, json: async () => threadSnap(blocks, runLinks) };
-    if (url.startsWith('/api/ask/models')) return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['high'], custom: false }], efforts: ['high'] }) };
+    if (url.startsWith('/api/ask/models')) return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'], custom: false }], efforts: ['high'] }) };
     return { ok: true, status: 200, json: async () => ({}) };
   } });
   ctx.storage.setItem('worca-cc.ask.thread', TID);

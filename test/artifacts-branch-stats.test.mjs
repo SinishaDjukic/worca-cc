@@ -94,3 +94,86 @@ test('lite skips git enrichment on a row that would otherwise be enriched', asyn
   assert.equal(r.survived, false);
   assert.equal(r.added, 0);
 });
+
+// A finished run's results.json summary is the frozen truth: once the feature branch
+// is merged into source the three-dot diff is empty, yet the row keeps the run's counts.
+test('a run dir with results.json reports its frozen summary counts after the branch merged', async () => {
+  const { listPipelines, listAllPipelines, writeStoreMeta } = await import('../src/core/artifacts.mjs');
+  const { diffShortstat } = await import('../src/core/git-info.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const merged = await mkdtemp(join(tmpdir(), 'worca-cc-merged-'));
+  try {
+    const g = (a) => spawnSync('git', a, { cwd: merged });
+    g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+    await writeFile(join(merged, 'f.txt'), 'a\n'); g(['add', '-A']); g(['commit', '-qm', 'init']);
+    g(['checkout', '-q', '-b', 'worca-cc/feat-m']);
+    await writeFile(join(merged, 'f.txt'), 'b\nc\n'); g(['add', '-A']); g(['commit', '-qm', 'rewrite']);
+    g(['checkout', '-q', 'main']); g(['merge', '-q', '--no-ff', '-m', 'merge feat-m', 'worca-cc/feat-m']);
+    assert.deepEqual(await diffShortstat(merged, 'main', 'worca-cc/feat-m'), { added: 0, removed: 0 },
+      'fixture sanity: the live three-dot diff of a merged branch is empty');
+
+    const { id, dir } = await seedPipeline(merged, {
+      title: 'Merged', status: 'done', startedAt: '2026-06-03T00:00:00Z',
+      branch: { source: 'main', feature: 'worca-cc/feat-m', branchKept: true },
+    });
+    await writeFile(join(dir, 'results.json'), JSON.stringify({
+      summary: { filesNew: 0, filesChanged: 1, filesDeleted: 0, linesAdded: 7, linesRemoved: 3, blockingIssues: 0, nitpicks: 0 },
+    }));
+
+    const row = (await listPipelines(merged)).find((r) => r.id === id);
+    assert.equal(row.survived, true, 'survived stays the live "branch exists" fact');
+    assert.equal(row.added, 7);
+    assert.equal(row.removed, 3);
+    assert.equal(row.diffFrozen, true);
+
+    const key = projectKey(merged);
+    writeStoreMeta(key, 'project', { key, name: 'Merged', path: merged });
+    const all = (await listAllPipelines()).find((r) => r.id === id);
+    assert.equal(all.added, 7);
+    assert.equal(all.removed, 3);
+    assert.equal(all.diffFrozen, true);
+  } finally {
+    await rm(merged, { recursive: true, force: true });
+  }
+});
+
+test('frozen counts survive a deleted branch; a bad or non-numeric results.json falls back to live', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const gone = await seedPipeline(repo, {
+    title: 'Gone frozen', status: 'done', startedAt: '2026-06-04T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/deleted-frozen', branchKept: false },
+  });
+  await writeFile(join(gone.dir, 'results.json'), JSON.stringify({ summary: { linesAdded: 4, linesRemoved: 9 } }));
+  const bad = await seedPipeline(repo, {
+    title: 'Bad json', status: 'done', startedAt: '2026-06-04T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', branchKept: true },
+  });
+  await writeFile(join(bad.dir, 'results.json'), '{ not json');
+  const odd = await seedPipeline(repo, {
+    title: 'No numbers', status: 'done', startedAt: '2026-06-04T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', branchKept: true },
+  });
+  await writeFile(join(odd.dir, 'results.json'), JSON.stringify({ summary: { linesAdded: '4', linesRemoved: null } }));
+
+  const rows = await listPipelines(repo);
+  const g = rows.find((r) => r.id === gone.id);
+  assert.equal(g.survived, false);
+  assert.equal(g.added, 4);
+  assert.equal(g.removed, 9);
+  assert.equal(g.diffFrozen, true);
+  for (const { id } of [bad, odd]) {
+    const r = rows.find((x) => x.id === id);
+    assert.equal(r.diffFrozen, false, 'no usable summary -> not frozen');
+    assert.equal(r.survived, true);
+    assert.equal(r.added, 1, 'live diffShortstat fallback');
+    assert.equal(r.removed, 0);
+  }
+  const live = rows.find((r) => r.id === pp1Id);
+  assert.equal(live.diffFrozen, false, 'a run dir without results.json is not frozen');
+
+  // `lite` callers read only DB fields, so they skip the per-run file read too.
+  const { listAllPipelines } = await import('../src/core/artifacts.mjs');
+  const lite = (await listAllPipelines({ lite: true })).find((r) => r.id === gone.id);
+  assert.equal(lite.added, 0);
+  assert.equal(lite.diffFrozen, false);
+});

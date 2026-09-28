@@ -30,8 +30,45 @@ test('refined palette: status families present', () => {
 });
 
 test('refined shape tokens', () => {
-  assert.equal(tokenValue('r-card'), '24px');
-  assert.equal(tokenValue('r-ctrl'), '14px');
+  assert.equal(tokenValue('r-card'), '14px');
+  assert.equal(tokenValue('r-ctrl'), '10px');
+});
+
+test('no surface hard-codes a radius at or above the card scale — it uses the tokens', () => {
+  // Comment-blind; calc() radii are the scaled graph nodes, pinned in ui-graph-css.
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const off = [];
+  for (const m of bare.matchAll(/border(?:-[a-z]+)*-radius:\s*([^;}]+)/g)) {
+    if (m[1].includes('calc(')) continue;
+    for (const px of m[1].matchAll(/(\d+(?:\.\d+)?)px/g)) {
+      const n = Number(px[1]);
+      if (n >= 14 && n < 999) off.push(m[0].trim());
+    }
+  }
+  assert.deepEqual(off, [], 'pills stay 999px; everything else is var(--r-card) / var(--r-ctrl) or a smaller mark');
+});
+
+test('card-level surfaces take --r-card; boxes nested inside a card take --r-ctrl', () => {
+  const rule = (sel) => { const i = css.indexOf(`\n${sel}{`); return i < 0 ? null : css.slice(i, css.indexOf('}', i)); };
+  const cards = ['.log', '.hd-sec-logs .log', '.rd-sec-logs .log', '.viewer', '.run-flow-wrap', '.run-ask-banner',
+    '.session-expired', '.retained-banner', '.sync-chip-inner', '.wz .rt', '.tl-pop', '.hd-menu', '.hd-cmt-card',
+    '.btn-split-menu', '.save-dialog', '.tp-json', '.ask-card', '.ask-card.ask-rp', '.ask-composer-box',
+    '.ask-pop', '.ask-pop-at', '.ask-pop-model', '.ask-pop-chip', '.guide-balloon', '.level-banner',
+    '.mention-popup', '.run-warn'];
+  const nested = ['.agents-cfg', '.qpanel', '.wz .tile', '.wiz-list', '.shipit-summary', '.stop-ident',
+    '.ask-rp-agents', '.lv-card', '.tp-cat-item'];
+  for (const sel of cards) assert.match(rule(sel) ?? `${sel} missing`, /border-radius:var\(--r-card\)/, sel);
+  for (const sel of nested) assert.match(rule(sel) ?? `${sel} missing`, /border-radius:var\(--r-ctrl\)/, sel);
+});
+
+test('banners stacked with the retained-work banner match its --r-card radius', () => {
+  // .cost-banner / .pause-error-banner stay --r-ctrl inside a run card, but in the
+  // page-level .hd-banners / .rd-banners stack they sit on .retained-banner.
+  const m = css.match(/\n(\.hd-banners \.cost-banner,[^{]*)\{border-radius:var\(--r-card\);\}/);
+  assert.ok(m, 'banner-stack radius rule missing');
+  const sels = m[1].split(',').map((s) => s.trim()).sort();
+  assert.deepEqual(sels, ['.hd-banners .cost-banner', '.hd-banners .pause-error-banner',
+    '.rd-banners .cost-banner', '.rd-banners .pause-error-banner']);
 });
 
 test('self-hosted webfonts declared', () => {
@@ -120,5 +157,5 @@ test('dark arms exist for the canvas trio and are the warm charcoal', () => {
   assert.equal(darkTokenValue('bg'), '#161614');
   assert.equal(darkTokenValue('panel'), '#222220');
   assert.equal(darkTokenValue('ink'), '#ecece8');
-  assert.equal(darkTokenValue('r-card'), '24px', 'non-colour tokens have no arms');
+  assert.equal(darkTokenValue('r-card'), '14px', 'non-colour tokens have no arms');
 });

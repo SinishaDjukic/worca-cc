@@ -162,3 +162,33 @@ test('answering twice is idempotent: the second answer broadcasts no second reso
   a.ws.close();
   runs.delete('p_twice');
 });
+
+// ── ask forms (spec §4): the replayed frame IS the envelope ───────────────────
+test('a pending FORM question replays with its whole envelope', async () => {
+  const id = 'p_form_replay';
+  const entry = fakeRunWithBufferedQuestion(id, { pending: true });
+  const form = {
+    type: 'question', runId: id, id: 'questions-x:n1:1-r1', kind: 'form',
+    askId: 'questions-x_n1_1-r1', form: 'review-mockups', version: 2, title: 'Review mockups', surface: 'any',
+    data: { summary: 'Two directions.' },
+    layout: [{ widget: 'select', field: 'verdict' }],
+    answerSchema: { type: 'object', required: ['verdict'], properties: { verdict: { type: 'string', enum: ['approve'] } } },
+    fileRefs: [{ path: 'data.images[0].file', rel: 'mockups/a.png' }],
+    files: [{ index: 0, rel: 'mockups/a.png', name: 'a.png', mime: 'image/png', bytes: 12, sha256: 'c'.repeat(64) }],
+  };
+  entry.events = [form];
+  entry.pendingQuestion = form;
+  runs.set(id, entry);
+  const { ws, msgs } = connectAndCollect(id);
+  await open(ws);
+  await waitFor(() => msgs.some((m) => m.type === 'state' && m.runId === id));
+  const replayed = msgs.find((m) => m.type === 'question' && m.id === form.id);
+  assert.ok(replayed, 'the pending form question is replayed on connect');
+  for (const k of ['askId', 'form', 'version', 'title', 'surface', 'data', 'layout', 'answerSchema', 'fileRefs', 'files']) {
+    assert.ok(k in replayed, `a late joiner lost ${k} — the panel cannot rebuild the form`);
+  }
+  assert.deepEqual(replayed.fileRefs, form.fileRefs);
+  assert.deepEqual(replayed.files, form.files);
+  ws.close();
+  runs.delete(id);
+});

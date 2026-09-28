@@ -42,9 +42,9 @@ test('promptHints surfaces with a safe default; the v1 uiPhase/version fields do
   }
 });
 
-test('all 11 builtins validate as meta v2', () => {
+test('all 12 builtins validate as meta v2', () => {
   const raws = rawSidecars();
-  assert.equal(raws.length, 11);
+  assert.equal(raws.length, 12);
   for (const raw of raws) {
     assert.equal(raw.metaVersion, 2, `${raw.key} declares metaVersion 2`);
     assert.deepEqual(validateMetaV2(raw, { mockWriterRoles: MOCK_WRITER_ROLES }).errors, [], raw.key);
@@ -52,9 +52,9 @@ test('all 11 builtins validate as meta v2', () => {
   }
 });
 
-test('the 11 shipped sidecars are pure meta v2 — typed ports and nothing v1', () => {
+test('the 12 shipped sidecars are pure meta v2 — typed ports and nothing v1', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  assert.equal(Object.keys(reg).length, 11);
+  assert.equal(Object.keys(reg).length, 12);
   for (const m of Object.values(reg)) {
     for (const k of ['consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource', 'uiPhase', 'channelDefs']) {
       assert.equal(k in m, false, `${m.key} still carries the v1 field "${k}"`);

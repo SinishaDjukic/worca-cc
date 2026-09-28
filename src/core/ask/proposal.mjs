@@ -8,9 +8,16 @@ import { listProjects as realListProjects } from '../projects.mjs';
 import { readWorkspace as realReadWorkspace, isGitRepo as realIsGitRepo, WORKSPACE_KEY_RE } from '../workspaces.mjs';
 import { readWorkflow as realReadWorkflow, assertRunnableWorkflow as realAssertRunnableWorkflow } from '../workflows.mjs';
 import { readGuardrailSet as realReadGuardrailSet } from '../guardrail-store.mjs';
+import { validateMemoryScope } from '../memory-sync.mjs';
 import { sanitizeBranchName, suggestBranchName } from '../worktree.mjs';
 import { sanitizeTitle } from '../title.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { resolveScheduleSpec } from './schedule-spec.mjs';
+import { validateRunSource, checkTask } from './source-spec.mjs';
+import { listTaskSources as realListTaskSources } from '../sources.mjs';
+import { afterRefOf as realAfterRefOf } from '../scheduler.mjs';
+import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
+import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -21,10 +28,13 @@ export const PROPOSAL_ERRORS = Object.freeze({
   memberPathMissing: 'workspace member path is missing',
   memberNotGit: (dir) => `workspace member is not a git repository: ${dir}`,
   unknownWorkflow: (id) => `unknown workflowId "${id}"`,
+  memoryScopeType: 'memoryScope must be "global" or "project"',
   guardrailsType: 'guardrailsId must be a string',
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
+  briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
+  autoWorkspace: 'Auto workflow is not available for workspace targets yet',
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
   byKeyUnknown: (k) => `sourceBranchByKey has an unknown project key: ${k}`,
@@ -78,6 +88,8 @@ function cleanNote(v) {
   return s || null;
 }
 
+function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { return []; } }
+
 /**
  * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function}} [deps]
  */
@@ -90,13 +102,20 @@ export function createProposalValidator({
   readGuardrailSet = realReadGuardrailSet,
   isGitRepo = realIsGitRepo,
   pathExists = existsSync,
+  // Plugin task sources (source-spec.mjs): the installed sources with each one's profile roster.
+  listTaskSources = () => realListTaskSources().map((s) => (s.type === 'plugin' && s.multiProfile ? { ...s, profiles: safeIds(s.plugin) } : s)),
+  resolveProfile = realResolveProfile,
+  // Run chains: the predecessor reader (core afterRefOf; tests inject a stub). The MCP child gets
+  // the same default — tool-deps.mjs re-exports this module's default-bound validateProposal.
+  afterRef = realAfterRefOf,
 } = {}) {
   /**
    * @param {object} input  the propose_run tool input
-   * @param {{cardId?:string|null}} [opts]  the server passes the minted card id (feature-branch uniqueness)
+   * @param {{cardId?:string|null, timeZone?:string|null, nowMs?:number, scheduleDefaults?:object}} [opts]  the server passes the
+   *   minted card id (feature-branch uniqueness); timeZone is the user's (the schedule fields are read in it)
    * @returns {Promise<{ok:true, card:object}|{ok:false, errors:string[]}>}
    */
-  async function validateProposal(input, { cardId = null, attachments = [] } = {}) {
+  async function validateProposal(input, { cardId = null, attachments = [], timeZone = null, nowMs = Date.now(), scheduleDefaults = {}, lookupTask = null } = {}) {
     const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
     const errors = [];
     const fail = () => ({ ok: false, errors });
@@ -138,6 +157,20 @@ export function createProposalValidator({
     try { wf = await assertRunnableWorkflow(workflowId); }
     catch (err) { errors.push(err && err.message ? err.message : PROPOSAL_ERRORS.unknownWorkflow(workflowId)); }
 
+    // ── memoryScope (agent memory §7.3): the same gate as POST /api/run ──────
+    let memoryScope = null;
+    let scopeTypeBad = false;
+    if (inp.memoryScope !== undefined && inp.memoryScope !== null && inp.memoryScope !== '') {
+      if (typeof inp.memoryScope !== 'string') { errors.push(PROPOSAL_ERRORS.memoryScopeType); scopeTypeBad = true; }
+      else memoryScope = inp.memoryScope.trim() || null;
+    }
+    // Only when the workflow resolved (I2-#8): an unknown id has already pushed its own error and
+    // `wf` is null, so checking here would add a second, misleading one for a typo of the defrag id.
+    if (!scopeTypeBad && wf) {
+      const reason = validateMemoryScope({ workflowId: wf.id, memoryScope, isWorkspace: target.target === 'workspace' });
+      if (reason) errors.push(reason);
+    }
+
     // ── guardrails: default normal, permissive refused (D3) ────────────────
     let guardrailsId = 'normal';
     if (inp.guardrailsId !== undefined && inp.guardrailsId !== null && inp.guardrailsId !== '') {
@@ -147,9 +180,28 @@ export function createProposalValidator({
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
 
+    // ── Auto: project targets only, like POST /api/run ─────────────────────
+    if (wf && wf.id === 'wf_auto' && target.target === 'workspace') errors.push(PROPOSAL_ERRORS.autoWorkspace);
+
+    // ── task source (source-spec.mjs): a reference the run fetches at start ──
+    const src = validateRunSource(inp.source, { target, listTaskSources, resolveProfile });
+    if (!src.ok) errors.push(...src.errors);
+    let runSource = src.ok ? src.source : null;
+    let sourceWarning = null;
+    if (runSource && !errors.length) {
+      const chk = await checkTask(runSource, lookupTask);
+      if (!chk.ok) errors.push(chk.error);
+      else {
+        if (chk.task) runSource = { ...runSource, ...(chk.task.title ? { title: chk.task.title } : {}), ...(chk.task.url ? { url: chk.task.url } : {}) };
+        if (chk.warning) sourceWarning = chk.warning;
+      }
+    }
+
     // ── brief ──────────────────────────────────────────────────────────────
     const brief = String(inp.brief ?? '').trim();
-    if (!brief) errors.push(PROPOSAL_ERRORS.briefRequired);
+    if (runSource || (inp.source !== undefined && inp.source !== null)) {
+      if (brief) errors.push(PROPOSAL_ERRORS.briefAndSource);
+    } else if (!brief) errors.push(PROPOSAL_ERRORS.briefRequired);
     else if (brief.length > ASK_LIMITS.briefMaxChars) errors.push(PROPOSAL_ERRORS.briefTooLong);
 
     // ── branches (syntactic only) ──────────────────────────────────────────
@@ -180,18 +232,31 @@ export function createProposalValidator({
     // ── title + feature branch ─────────────────────────────────────────────
     const title = sanitizeTitle(typeof inp.title === 'string' ? inp.title : '')
       || sanitizeTitle(brief.split(/\r?\n/)[0].slice(0, 80))
+      || (runSource ? sanitizeTitle(runSource.title || `${runSource.taskId}`) : '')
       || 'Proposed run';
     let featureBranch = typeof inp.featureBranch === 'string' ? sanitizeBranchName(inp.featureBranch) : '';
     if (!featureBranch) {
       const m = typeof cardId === 'string' ? CARD_HEX_RE.exec(cardId) : null;
-      featureBranch = suggestBranchName({ prompt: brief, title, pipelineId: m ? m[1] : '' });
+      featureBranch = suggestBranchName({ prompt: brief || title, title, pipelineId: m ? m[1] : '' });
+    }
+
+    // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
+    const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
+    if (!spec.ok) errors.push(...spec.errors);
+    if (spec.ok && spec.schedule && spec.schedule.kind === 'after' && spec.schedule.sourceFromPrevious && (sourceBranch || (sourceBranchByKey && Object.keys(sourceBranchByKey).length))) {
+      errors.push('sourceFromPrevious and sourceBranch / sourceBranchByKey cannot both be given');
     }
 
     if (errors.length) return fail();
     return {
       ok: true,
-      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
-        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments) },
+      card: { ...target, workflowId: wf.id, workflowName: wf.name, guardrailsId, memoryScope, brief, title, sourceBranch, featureBranch, sourceBranchByKey,
+        note: cleanNote(inp.note), attachments: pickCardAttachments(inp.attachmentIds, attachments),
+        // Only a scheduled proposal carries the key: a plain run card keeps its shape byte for byte.
+        ...(spec.schedule ? { schedule: spec.schedule } : {}),
+        // Likewise a proposal whose task is a plugin task (an issue), not a brief.
+        ...(runSource ? { source: runSource } : {}),
+        ...(sourceWarning ? { sourceWarning } : {}) },
     };
   }
   return { validateProposal };

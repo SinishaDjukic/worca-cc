@@ -17,9 +17,9 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { join, basename, resolve, sep, relative } from 'node:path';
+import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, readdir, mkdir, realpath } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, realpath, rename } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
@@ -38,7 +38,10 @@ import { worcaHome } from './projects.mjs';
 import {
   runRootMode, getProjectsRoot,
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
+  memoryCaps,
 } from './settings.mjs';
+import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
+import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -52,7 +55,8 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, catalogHasModel } from './config.mjs';
+import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
 import { collectRequiredSkills, validateSkills, injectSkills, pluginSkillDirs } from './skills.mjs';
@@ -62,32 +66,40 @@ import {
   isValidSourceRef, snapshotWorktreePatch,
 } from './worktree.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
+import { cachedFreeDailyCounts } from './openrouter-free.mjs';
+import { withBillTo, currentBillTo } from './billing.mjs';
+import { brokerEnabled, brokerInfo, personSlots } from './broker-client.mjs';
+import { mockEnabled } from './claude-runner.mjs';
+import { modelSlot, manifestModels, missingCredentials, describeMissing } from './broker-routing.mjs';
+import { recoveryDelayMs, sleepAbortable } from './recovery-backoff.mjs';
 import {
   resolveFailure, isTerminal, markTerminal, answerFromDecision,
-  REASON, pauseConsequences, describePauseReason,
+  REASON, pauseConsequences, describePauseReason, RECOVERY_MAX_AUTO_ATTEMPTS,
 } from './failure-policy.mjs';
+import { recordRunMetrics } from './metrics/record.mjs';
+// Team policy (team-policy design §6–§7): the document a run's cost gates fold in, its
+// per-run state, and the off-policy findings the run log names at start.
+import { resolveProjectPolicy, resolveWorkspacePolicy } from './policy/sync.mjs';
+import { fieldsForRun, effectiveCap, deviationsFor } from './policy/effective.mjs';
+import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/state.mjs';
+import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
+import { readSettings as readRawSettings } from './settings.mjs';
+import { byActor } from './identity.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
 // in agent-registry.mjs, which is the single source for the built-in agents dir).
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * §9.4 message enrichment: does a DISABLED plugin ship this agent key? Scans
- * lock entries with enabled === false, reading key fields from each plugin's
- * current/agents/*.meta.json. Returns the plugin name or null. try/catch
- * throughout: no resolvable home / no lock / broken current => null (callers
- * fall back to the generic "not installed" message).
- * @param {string} key
- * @returns {string|null}
- */
-function findDisabledPluginFor(key) {
+/** The disabled plugin that ships `<subdir>/<key>.meta.json`, or null. Shared by the
+ *  agent preflight (`agents`) and the orchestrator's script preflight (`scripts`). */
+export function findDisabledPluginFor(key, subdir = 'agents') {
   try {
     const lock = readPluginsLock();
     for (const name of Object.keys(lock).sort()) {
       if (!lock[name] || lock[name].enabled !== false) continue;
-      const dir = join(pluginCurrentDir(name), 'agents');
+      const dir = join(pluginCurrentDir(name), subdir);
       let files;
       try { files = readdirSync(dir); } catch { continue; }
       for (const f of files) {
@@ -312,6 +324,18 @@ function describeToolResults(raw) {
     lines.push(`result ${b.is_error ? 'error' : 'ok'} ${id}`);
   }
   return lines;
+}
+
+/** The tools whose `file_path` can be a memory write. */
+const MEMORY_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+/** The human text of a tool_result block: a string, or the first text block; `<tool_use_error>`
+ *  tags stripped (the CLI wraps some errors in them). '' when there is none. */
+function toolResultText(block) {
+  const c = block?.content;
+  const raw = typeof c === 'string' ? c
+    : Array.isArray(c) ? (c.find((x) => x?.type === 'text' && typeof x.text === 'string')?.text || '') : '';
+  return raw.replace(/<\/?tool_use_error>/g, '').trim();
 }
 
 /** A short, human-readable target for a tool call (file, command, pattern…). */
@@ -540,6 +564,9 @@ export function scrubErrorRows(snapshot) {
  * questions with their first option so downstream never sees gaps.
  */
 export function normalizeClarifyAnswer(payload, questions) {
+  // A form answer is `{form, version, values}` and is NEVER flattened here: the
+  // "fill with the first option" fallback below is legacy-kind only (spec §5).
+  if (payload && typeof payload === 'object' && typeof payload.form === 'string' && payload.values) return [];
   const arr = Array.isArray(payload?.answers)
     ? payload.answers
     : Array.isArray(payload)
@@ -556,6 +583,11 @@ export function normalizeClarifyAnswer(payload, questions) {
       : (q.options && q.options.find((o) => o && o.trim())) || '',
   }));
 }
+
+// Upper bound for one RunHarness._git call. Matches worktree.mjs's slow-git
+// budget (SLOW_GIT_TIMEOUT_MS): `diff --cached` on a large agent change is the
+// slowest command issued here, and it legitimately takes seconds, never minutes.
+const HARNESS_GIT_TIMEOUT_MS = 120_000;
 
 export class RunHarness extends EventEmitter {
   constructor(opts) {
@@ -600,8 +632,27 @@ export class RunHarness extends EventEmitter {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
       model: this.opts.claude?.model,
+      effort: this.opts.claude?.effort,
       mock: !!this.opts.claude?.mock,
     };
+    // A resumed run keeps the model it was started with (`worca --model`, the UI's
+    // start pair): the resume sites pass none, so it rides the resume point — which
+    // _buildResumePoint rewrites at every pause from this.claude — like memoryScope
+    // below. A resume that names its own model wins. A saved model that left the
+    // catalog is dropped (the run falls back to the default, as before) and
+    // resume() says so once the run log is bound.
+    this._staleResumeModel = null;
+    {
+      const saved = this.opts.resume?.resumePoint?.claude;
+      if (saved && !this.claude.model && typeof saved.model === 'string' && saved.model) {
+        if (catalogHasModel(saved.model)) {
+          this.claude.model = saved.model;
+          if (!this.claude.effort && typeof saved.effort === 'string' && saved.effort) this.claude.effort = saved.effort;
+        } else {
+          this._staleResumeModel = saved.model;
+        }
+      }
+    }
     // The mock runner routes EVERY dontAsk spawn to the Ask Worca mock (claude-runner.mjs
     // runMock, rule R-F), so a mock pipeline role under dontAsk writes no artifact and
     // the run dies at its first artifact read with no hint why. Fail at construction
@@ -662,21 +713,48 @@ export class RunHarness extends EventEmitter {
     this.mcpServerGrants = [];      // `mcp__<server>` per merged server (V1 branch (a))
 
     this.abort = new AbortController();
+    this._answeredBy = new Map();            // question id -> who answered it (identity.mjs actor)
     this.pauseRequested = false;
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
+    // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
+    // stamped into the persisted resume point at every pause and re-seeded in resume().
+    // pausedMs: time the run spent parked (paused, or dead between a crash and its resume);
+    // pausedAt: the pause stamp resume() measures from (null while running).
+    this._metricsIv = { questions: 0, pauses: 0, resumes: 0, pausedMs: 0, pausedAt: null, lastPauseReason: null, lastPauseDetail: null };
+    this._metricsRecorded = false;
     this._setupDone = false;                 // run()/resume() flip this right before _engineRun (setup replay)
     this._rehydrated = true;                 // resume() clears this until the paused run is rehydrated (the 'resume' site)
     this._modeRecorded = false;              // resume(): the row recorded a run-root mode (a setup-incomplete point may not)
     this._pauseGate = null;                  // gate context snapshot when paused at a gate
     this._resumeNodeSessions = null;         // nodeId -> sessionId map, set by resume() (Task 5)
     this.resumeOpts = this.opts.resume || null; // { row, resumePoint, steps } from readPipelineForResume
+    // Agent memory (agent-memory-design.md §7.3): the defragment run option. A resumed run reads
+    // it back from its resume point — the resume sites pass no run options (B10). The API and the
+    // CLI validated already; this throw is the programming-error backstop (never a 400).
+    this.memoryScope = this.opts.memoryScope || this.resumeOpts?.resumePoint?.memoryScope || null;
+    {
+      const wf = this.resumeOpts?.resumePoint?.workflowId || this.workflowId;
+      const reason = validateMemoryScope({ workflowId: wf, memoryScope: this.memoryScope, isWorkspace: this.isWorkspace });
+      if (reason) throw new Error(reason);
+    }
     this.pendingQuestion = null; // { id, resolve, reject, kind }
     this._recovery = null;      // class -> in-flight Promise<'retry'|'pause'> (same-class dedupe)
     this._askTail = null;       // serializes _ask: ONE prompt open at a time (recovery + step questions)
     this._recoverySeq = 0;      // monotonic id source for recovery prompts (determinism-safe)
     this.agentPrompts = null;
+    this.memory = null;          // { root, mount, rules, dirs, baseline } after _mountMemory — mount = the WRITABLE copy (<pipeline.dir>/memory), rules = the read-only copy (<runCwd>/.claude/rules/worca)
+    this.memoryBlock = '';       // the ## Worca memory pointer block, rendered once per mount (files load natively — no per-spawn re-render)
+    this.memoryChanges = [];     // Change[] — the durable ledger's `changes`
+    this._memoryWarned = new Set();
+    this._memoryTail = null;     // per-run sync chain: one syncBack at a time (F1)
+    // Failed-write bookkeeping (memory-write-split design §4): executionId -> { calls: Map<toolUseId, key>,
+    // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryWrites from every stream frame,
+    // drained by _takeFailedMemoryWrites at sync time.
+    this._memoryWrites = new Map();
+    this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
+    this._pendingAudits = [];    // audit lines an engine hook queued before the pipeline dir existed (_resolveTopology runs first); run() appends them right after "Pipeline created"
     this.toolInstruction = '';
     // Cap for the in-worktree graphify build (macOS has no timeout(1)).
     // Resolution order: constructor option → WORCA_GRAPH_TIMEOUT_MS env → 120s.
@@ -721,6 +799,8 @@ export class RunHarness extends EventEmitter {
       // detached run throws TypeError on the first this.state.branches[key] = … .
       branches: {},
       checkpointRefs: {},
+      memoryMount: null, // <pipeline.dir>/memory after _mountMemory — the WRITABLE copy agents edit (--add-dir on every spawn)
+      memoryRules: null, // <runCwd>/.claude/rules/worca — the read-only copy the CLI loads natively
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
@@ -741,32 +821,57 @@ export class RunHarness extends EventEmitter {
    * @param {string} id
    * @param {object} payload clarify: {answers:[{id,choice}]} ; gate: {decision}
    */
-  answer(id, payload) {
+  answer(id, payload, by = null) {
     const pq = this.pendingQuestion;
+    // Who answered (identity.mjs actor): kept per question id for the writers that store
+    // the answer (answeredBy on the row) and audited for decisions below.
+    const settle = (value) => {
+      if (typeof by === 'string' && by) this._answeredBy.set(id, by);
+      this._auditDecision(pq, value, typeof by === 'string' && by ? by : null);
+    };
     if (!pq || pq.id !== id) {
       this._log('orchestrator', 'warn', `answer() ignored: no pending question with id ${id}`);
       return false;
     }
     if (pq.validate) {
-      // A question that carries a validator (the Auto proposal) stays OPEN on a
-      // malformed payload (spec §5.4); the awaiting code receives the CLEAN value.
-      const clean = pq.validate(payload);
-      if (clean == null) {
+      const out = pq.validate(payload);
+      // Two validator flavours, deliberately: the Auto proposal's returns the
+      // CLEAN value or null (§5.4 — the question stays open, silently), while a
+      // form's gate 3 returns a RESULT OBJECT carrying the field errors that
+      // POST /api/answer owes the client as 422. Only the latter throws.
+      if (out && typeof out === 'object' && typeof out.ok === 'boolean') {
+        if (!out.ok) {
+          this._log('orchestrator', 'warn', `answer() rejected: invalid answer for ${id} — the question stays open`);
+          const err = new Error('invalid answer');
+          err.code = 'INVALID_ANSWER';
+          err.errors = Array.isArray(out.errors) ? out.errors : [];
+          throw err;
+        }
+        this.pendingQuestion = null;
+        settle(out.payload);
+        pq.resolve(out.payload);
+        return true;
+      }
+      if (out == null) {
         this._log('orchestrator', 'warn', `answer() ignored: malformed payload for ${id} — the question stays open`);
         return false;
       }
       this.pendingQuestion = null;
-      pq.resolve(clean);
+      settle(out);
+      pq.resolve(out);
       return true;
     }
     this.pendingQuestion = null;
+    settle(payload);
     pq.resolve(payload);
     return true;
   }
 
-  /** Abort the run; marks state stopped and kills any child via the signal. */
-  stop() {
+  /** Abort the run; marks state stopped and kills any child via the signal. `by` = who
+   *  asked (identity.mjs actor), recorded as state.lastAction before the status event. */
+  stop(by = null) {
     if (this.state.status === 'done' || this.state.status === 'stopped') return;
+    this._recordAction('stop', by);
     this._setStatus('stopped');
     try {
       this.abort.abort();
@@ -788,8 +893,9 @@ export class RunHarness extends EventEmitter {
    * pause-only signal), unwind _dispatch, persist a resume point. The worktree is
    * kept. Returns false unless the run is currently 'running'.
    */
-  pause() {
+  pause(by = null) {
     if (this.state.status !== 'running') return false;
+    this._recordAction('pause', by);
     this.pauseRequested = true;
     this._setStatus('pausing');
     try {
@@ -804,6 +910,39 @@ export class RunHarness extends EventEmitter {
       pq.reject(pauseErr());
     }
     return true;
+  }
+
+  /** Who stopped / paused / resumed the run (identity.mjs actor): { kind, by, at } on the
+   *  state, so every `state` event, getState() and the resume point carry it. */
+  _recordAction(kind, by) {
+    if (typeof by !== 'string' || !by) return;
+    this.state.lastAction = { kind, by, at: new Date().toISOString() };
+  }
+
+  /** The audit line of a human action (`kind` = stop | pause | resume): "<text> by <name>."
+   *  when state.lastAction names who did it (actor stored always), "<text>." otherwise. */
+  async _auditAction(kind, text) {
+    const la = this.state.lastAction;
+    const actor = la && la.kind === kind && typeof la.by === 'string' ? la.by : null;
+    await appendAudit(this.pipeline.dir, `${text}${byActor(actor)}.`, { actor });
+  }
+
+  /** Who answered question `id` (identity.mjs actor), recorded by answer(). */
+  answeredBy(id) {
+    return this._answeredBy.get(id) ?? null;
+  }
+
+  /** Audit a human decision on a gate / recovery / workflow proposal (answer()). Question
+   *  and form answers are audited where they are written (with " by <name>"). */
+  _auditDecision(pq, value, by) {
+    if (!this.pipeline || !pq) return;
+    const d = value && typeof value === 'object' && typeof value.decision === 'string' ? value.decision : null;
+    let line = null;
+    if (pq.kind === 'workflow') line = `Workflow proposal **${d === 'decline' ? 'declined' : d || 'answered'}**`;
+    else if (pq.kind === 'gate') line = `Gate **${d || 'answered'}**`;
+    else if (pq.kind === 'recovery') line = `Recovery decision **${d || 'answered'}**`;
+    if (!line) return;
+    appendAudit(this.pipeline.dir, `${line}${byActor(by)}.`, { actor: by }).catch(() => {});
   }
 
   _checkPause() {
@@ -853,8 +992,16 @@ export class RunHarness extends EventEmitter {
     const where = label || nc?.key || ctx?.nodeId || 'orchestrator';
     const meta = ctx ? { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal } : {};
     const line = firstLine(err?.message || (err == null ? '' : String(err))) || 'unknown error';
+    // A shared-pool 429 (OpenRouter `:free`) names its real cause and fixes —
+    // otherwise "rate limited" reads as worca's own max-concurrent setting.
+    // A credential-broker refusal (a missing key, a spent cap) says where to fix it.
+    const hint = reason !== REASON.RECOVERABLE ? ''
+      : cls === 'rate_limit' ? rateLimitHint(err) : brokerHint(err, cls);
+    // OpenRouter's spent daily free requests: say what ran out and when it comes back,
+    // not the raw 429 line (freeDailyHint is '' for any other usage limit).
+    const freeDaily = reason === REASON.USAGE_LIMIT ? freeDailyHint(err, cachedFreeDailyCounts(currentBillTo())) : '';
     const text = detail ?? (reason === REASON.ERROR ? errorDetail(err)
-      : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}` : line);
+      : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}${hint ? ` — ${hint}` : ''}` : (freeDaily || line));
     if (reason === REASON.ERROR) {
       // The ONE error-level line, written BEFORE the pause sentinel the caller
       // throws next (a pause/abort is never logged as a failure).
@@ -872,9 +1019,9 @@ export class RunHarness extends EventEmitter {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
       audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset.`;
     } else if (reason === REASON.RECOVERABLE) {
-      this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}`,
+      this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}${hint ? ` — ${hint}` : ''}`,
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
-      audit = `Pipeline **paused**: recoverable ${cls || 'error'} error on ${where} — ${line}. Resume to retry.`;
+      audit = `Pipeline **paused**: recoverable ${cls || 'error'} error on ${where} — ${line}.${hint ? ` ${hint[0].toUpperCase()}${hint.slice(1)}.` : ''} Resume to retry.`;
     } else {
       this._log(where, 'warn', `${text} — pausing for manual resume`, meta);
       audit = `Pipeline **paused**: ${text}.`;
@@ -887,8 +1034,15 @@ export class RunHarness extends EventEmitter {
   /**
    * Execute the full pipeline. Resolves with { status, pipelineDir } on success
    * or stop; rejects only on unexpected internal errors (it emits 'error' too).
+   *
+   * Every spawn of the run is billed to the person who started it (billing.mjs,
+   * credential broker): the whole loop runs inside that async context.
    */
-  async run() {
+  run() {
+    return withBillTo(this.opts.startedBy || currentBillTo(), () => this._run());
+  }
+
+  async _run() {
     try {
       this.state.startedAt = new Date().toISOString();
       this._setStatus('running');
@@ -927,7 +1081,11 @@ export class RunHarness extends EventEmitter {
       this.toolInstruction = tools.instruction || '';
       this.state.tools = tools;
       this.stepModels = stepModels;
+      // Credential broker: every model this run will spawn needs its person's key; refuse
+      // NOW, naming what's missing, instead of pausing mid-run at the first node that needs it.
+      await this._brokerPreflight(topology.manifest, stepModels);
       await this._resolveGuardrails();
+      await this._resolvePolicy();
       this._log(
         'preflight',
         'info',
@@ -960,6 +1118,7 @@ export class RunHarness extends EventEmitter {
         extras: this.opts.extras,
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
+        startedBy: this.opts.startedBy || null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -984,6 +1143,8 @@ export class RunHarness extends EventEmitter {
       // guardrails_id and the curated UPSERT excludes it (creation-immutable), so
       // mirroring it onto the live state only keeps rowToState round-trips honest.
       this.state.guardrailsId = this.guardrailsId;
+      // Who started it (identity.mjs): creation-immutable too, mirrored for the same reason.
+      this.state.startedBy = this.opts.startedBy || null;
       // Workspace: mirror the §5.2 superset onto the live state and FREEZE the
       // description now (read from the pipeline's frozen state.json snapshot, never
       // re-read from workspaces.json), so later registry edits never alter this run.
@@ -1034,6 +1195,7 @@ export class RunHarness extends EventEmitter {
           `Preflight: using **${tools.tool}**${tools.kind ? ` (${tools.kind})` : ''}.`,
         );
       }
+      for (const line of this._pendingAudits.splice(0)) await appendAudit(this.pipeline.dir, line);
 
       // 3) Ensure a git repo + checkpoint commit (per member on a workspace run).
       if (this.isWorkspace) await this._ensureGitCheckpointAll();
@@ -1112,6 +1274,14 @@ export class RunHarness extends EventEmitter {
         await this._assembleContext(resolvedSkills);
       }
       this._checkAbort();
+      // 3f) Agent memory: mount the store twice — the read-only rules copy into
+      // <runCwd>/.claude/rules/worca (the CLI loads it natively) and the writable copy into
+      // <pipeline.dir>/memory (every spawn's --add-dir; the sync-back reads it) — and render the
+      // pointer block every spawn carries, naming the writable copy. Pure fs work, both modes,
+      // mock included. AFTER 3e: the assembly rewrites injectedPaths and the mount registers
+      // itself into that map.
+      await this._mountMemory();
+      this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
       this._setupDone = true;
@@ -1135,7 +1305,9 @@ export class RunHarness extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
+      await this._recordRunMetrics('done');
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -1166,7 +1338,7 @@ export class RunHarness extends EventEmitter {
         this.state.resumePoint = null;
         if (this.pipeline) {
           await this._persist().catch(() => {});
-          await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._auditAction('stop', 'Pipeline **stopped**').catch(() => {});
           // The diff artifact must survive a non-done terminal path too: the work done
           // up to this point IS committed onto the kept feature branch by the teardown
           // in the finally below, so History has to be able to show it. Safe HERE and
@@ -1178,6 +1350,7 @@ export class RunHarness extends EventEmitter {
           await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
+        await this._recordRunMetrics('stopped');
         this._emit('done', {
           status: 'stopped',
           pipelineDir: this.pipeline?.dir || null,
@@ -1218,6 +1391,7 @@ export class RunHarness extends EventEmitter {
         await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
+      await this._recordRunMetrics('error', err);
       this._emit('done', {
         status: 'error',
         pipelineDir: this.pipeline?.dir || null,
@@ -1242,8 +1416,18 @@ export class RunHarness extends EventEmitter {
    * artifacts exist from the original run, unless the point is stamped
    * `setupIncomplete` (D7 replay), which re-runs whatever setup never finished.
    * Resolves like run().
+   *
+   * Billed to whoever resumed it (the request's person, billing.mjs); a resume with
+   * no person behind it (a restart's auto-resume) stays with the run's starter.
    */
-  async resume() {
+  resume() {
+    const who = currentBillTo();
+    const starter = this.resumeOpts?.row?.started_by ?? this.opts.startedBy ?? null;
+    // Pays: whoever resumed. Runs as: the starter's agent user, whose HOME holds the sessions.
+    return withBillTo(who && who !== 'local' ? who : (starter || who), () => this._resume(), { owner: starter || who });
+  }
+
+  async _resume() {
     const saved = this.resumeOpts;
     if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
     const { row, resumePoint: rp, steps } = saved;
@@ -1276,17 +1460,43 @@ export class RunHarness extends EventEmitter {
       this.state.stepper = safeParse(row.stepper);
       this.state.tools = safeParse(row.tools);
       this.state.branch = safeParse(row.branch);
-      this.state.steps = (steps || []).map((s) => ({ ...s, runningSince: null }));
+      // Parked time (autonomy = active ÷ (wall − paused)). A paused row is measured from the
+      // stamp _completePaused wrote into the point; an interrupted row from the last heartbeat
+      // (the last time the dead process was seen alive — reconcileStaleRunning keeps it for
+      // this). A point written before the stamp existed falls back to the row's updated_at.
+      // The same anchor closes every step clock a crash left running: the tail up to the
+      // anchor is real work that the crash never folded, the rest of the gap is parked.
+      const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
+      const anchor = Date.parse(row.status === 'interrupted' ? (row.heartbeat_at || row.updated_at) : (iv.pausedAt || row.updated_at));
+      const now = Date.now();
+      const parkedMs = Number.isFinite(anchor) ? Math.max(0, now - anchor) : 0;
+      this.state.steps = (steps || []).map((s) => {
+        if (s.runningSince == null || !Number.isFinite(anchor)) return { ...s, runningSince: null };
+        return { ...s, activeMs: (s.activeMs || 0) + Math.max(0, Math.min(anchor, now) - s.runningSince), runningSince: null };
+      });
+      this.state.totalActiveMs = sumStepActive(this.state.steps);
       this.baseName = row.base_name;
       this.planDatePrefix = row.date_prefix;
       this.pipeline = { id: row.id, dir: rp.pipelineDir, promptText: row.prompt || '' };
       this.state.pipelineDir = rp.pipelineDir;
       this.logWriter.bind(rp.pipelineDir);
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
+      if (this._staleResumeModel) {
+        this._log('orchestrator', 'warn', `model ${JSON.stringify(this._staleResumeModel)} the run was started with is no longer in the catalog — resuming on the default model`);
+      }
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
+      // Pauses are counted only in _completePaused, so a crash-resume of an `interrupted`
+      // run adds a resume but no pause (§4.4 decision 6). The stamp is consumed here.
+      this._metricsIv = {
+        questions: iv.questions | 0, pauses: iv.pauses | 0, resumes: (iv.resumes | 0) + 1,
+        pausedMs: (Number.isFinite(iv.pausedMs) ? iv.pausedMs : 0) + parkedMs, pausedAt: null,
+        lastPauseReason: iv.lastPauseReason ?? null, lastPauseDetail: iv.lastPauseDetail ?? null,
+      };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      this.state.lastAction = null;
+      this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
       // LATEST saved set definition (missing set -> warn + Permissive, inside
       // _resolveGuardrails). Legacy resume points without the field fall back to
@@ -1294,6 +1504,7 @@ export class RunHarness extends EventEmitter {
       this.guardrailsId = rp.guardrailsId || this.guardrailsId;
       this.state.guardrailsId = this.guardrailsId;
       await this._resolveGuardrails();
+      await this._resolvePolicy();
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
       // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
@@ -1399,9 +1610,13 @@ export class RunHarness extends EventEmitter {
       this._setStatus('running');
       await this._persist();
       this._startHeartbeat();
-      await appendAudit(this.pipeline.dir, rehydrated.audit);
+      await this._auditAction('resume', String(rehydrated.audit || '').replace(/\.\s*$/, ''));
       this._emit('state', this.getState());
       this._rehydrated = true;
+      // The pause that parked this run is over; it must not colour a later failure
+      // or stop (§4.4 decision 2).
+      this._metricsIv.lastPauseReason = null;
+      this._metricsIv.lastPauseDetail = null;
 
       // 3a') Auto workflow (spec §5.6): a run that paused BEFORE its graph was
       // decided re-enters the decision HERE — before the setup replay, so the
@@ -1450,6 +1665,10 @@ export class RunHarness extends EventEmitter {
         }
       }
 
+      // Agent memory on resume (§5): capture what the interrupted execution wrote,
+      // then remount fresh from the store.
+      await this._mountMemory({ resume: true });
+
       const dispatched = await this._engineRun({ resume: rp, rehydrated });
       this._checkAbort();
       if (dispatched === 'paused') return await this._completePaused();
@@ -1460,7 +1679,9 @@ export class RunHarness extends EventEmitter {
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
       await this._buildResults();          // refs + worktree still live here
+      await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
+      await this._recordRunMetrics('done');
       this._emit('done', { status: 'done', pipelineDir: this.pipeline.dir });
       return { status: 'done', pipelineDir: this.pipeline.dir };
     } catch (err) {
@@ -1491,7 +1712,7 @@ export class RunHarness extends EventEmitter {
         this.state.resumePoint = null;
         if (this.pipeline) {
           await this._persist().catch(() => {});
-          await appendAudit(this.pipeline.dir, `Pipeline **stopped**.`).catch(() => {});
+          await this._auditAction('stop', 'Pipeline **stopped**').catch(() => {});
           // The diff artifact must survive a non-done terminal path too: the work done
           // up to this point IS committed onto the kept feature branch by the teardown
           // in the finally below, so History has to be able to show it. Safe HERE and
@@ -1503,6 +1724,7 @@ export class RunHarness extends EventEmitter {
           await this._buildResults({ stage: true });
           await this._reportToSource(); // statusToResult('stopped') -> 'failed' (design PR12: no longer success-only)
         }
+        await this._recordRunMetrics('stopped');
         this._emit('done', { status: 'stopped', pipelineDir: this.pipeline?.dir || null });
         return { status: 'stopped', pipelineDir: this.pipeline?.dir || null };
       }
@@ -1538,6 +1760,7 @@ export class RunHarness extends EventEmitter {
         await this._buildResults({ stage: true });
         await this._reportToSource(); // statusToResult('error') -> 'failed' (design PR12: no longer success-only)
       }
+      await this._recordRunMetrics('error', err);
       this._emit('done', { status: 'error', pipelineDir: this.pipeline?.dir || null });
       return { status: 'error', pipelineDir: this.pipeline?.dir || null, error: message };
     } finally {
@@ -1688,6 +1911,74 @@ export class RunHarness extends EventEmitter {
    * LATEST definition. A missing/deleted set fails OPEN to the Permissive
    * (empty) policy with a loud warn — never an abort.
    */
+  /**
+   * Team policy (design §6, §9): the document that governs this run, folded for its kind
+   * (workspaceRuns for a workspace target), plus the off-policy findings the run log names
+   * once. Cache-first: only a project with no cache at all pays one bounded fetch. A missing,
+   * unreadable or unsupported policy means local settings apply — loudly, never an abort.
+   * Sets `this.policyRun` = { home, sha, fields, deviations, unattended } or null.
+   */
+  async _resolvePolicy() {
+    this.policyRun = null;
+    this._policyPersisted = false;
+    this._policyWarned = new Set();
+    let r;
+    try {
+      r = this.isWorkspace
+        ? await resolveWorkspacePolicy(this.workspace?.id, { discover: 'if-missing' })
+        : await resolveProjectPolicy(this.projectDir, { discover: 'if-missing' });
+    } catch (err) {
+      this._log('policy', 'warn', `team policy could not be read (${err?.message || err}); your local settings apply`);
+      return;
+    }
+    if (!r.ok) {
+      if (r.reason === 'delegate-invalid' || r.reason === 'home-stale' || r.reason === 'unsupported' || r.code === 'DOC_UNKNOWN') {
+        this._log('policy', 'warn', `team policy not applied — ${r.detail || r.reason}; your local settings apply`);
+      }
+      return;
+    }
+    const fields = fieldsForRun(r.doc, { workspaceRun: this.isWorkspace });
+    let installed = {};
+    try { installed = installedPluginsMap(); } catch { /* no plugins root yet */ }
+    let metricsRecord = null;
+    try { const tm = readTeamMetricsPrefs(projectKey(this.projectDir)); metricsRecord = tm ? tm.record !== false : null; } catch { /* optional */ }
+    const stepModels = Object.entries(this.stepModels || {}).map(([role, sel]) => ({ role, model: sel?.model }));
+    const deviations = deviationsFor(fields, {
+      guardrailsId: this.guardrailsId, guardrailSet: this.guardrails ? { settings: this.guardrails } : null,
+      stepModels, installed, worcaVersion: POLICY_WORCA_VERSION, metricsRecord,
+    });
+    this.policyRun = { home: r.home, homeDir: r.homeDir, sha: r.sha, fields, deviations: deviations.map((d) => d.code), unattended: !!this.auto };
+    for (const w of r.warnings || []) this._log('policy', 'warn', `team policy ${r.home}: ${w}`);
+    const cap = fields['cost.pipelineLimitUsd'];
+    const tot = fields['cost.totalLimitUsd'];
+    const caps = [cap ? `pipeline cap $${Number(cap.value).toFixed(2)} (${cap.kind}${cap.kind === 'soft' ? `, ${cap.onBreach || 'pause'}` : ''})` : null,
+      tot ? `total cap $${Number(tot.value).toFixed(2)} (${tot.kind})` : null].filter(Boolean).join(' · ');
+    this._log('policy', 'info', `team policy ${r.home}${r.sha ? ` @ ${String(r.sha).slice(0, 7)}` : ''}${r.delegated ? ` (followed by ${r.from})` : ''}${this.isWorkspace && Object.keys(r.doc.workspaceRuns || {}).length ? ' · workspace-run values' : ''}${caps ? ` · ${caps}` : ''}`);
+    for (const d of deviations) this._log('policy', d.level === 'warn' ? 'warn' : 'info', `off-policy: ${d.text}`);
+    if (this.auto && ((cap?.kind === 'soft' && (cap.onBreach || 'pause') === 'pause') || (tot?.kind === 'soft' && (tot.onBreach || 'pause') === 'pause'))) {
+      this._log('policy', 'info', 'unattended run: a team soft cap warns instead of pausing (nobody can click "continue past")');
+    }
+    // Workspace runs never union member policies (design §6): say so once when a member is tighter.
+    if (this.isWorkspace && cap) {
+      for (const m of this.members || []) {
+        try {
+          const mr = await resolveProjectPolicy(m.projectDir, { discover: false });
+          if (!mr.ok || mr.home === r.home) continue;
+          const mc = fieldsForRun(mr.doc)['cost.pipelineLimitUsd'];
+          if (mc && mc.value < cap.value) this._log('policy', 'info', `member ${mr.from} carries a tighter pipeline cap ($${Number(mc.value).toFixed(2)}, ${mr.home}); the workspace policy applies to this run`);
+        } catch { /* informational only */ }
+      }
+    }
+  }
+
+  /** First persist of the run's policy state (needs the pipeline row); later writes merge. */
+  _persistPolicyState(patch = {}) {
+    if (!this.pipeline?.id || !this.policyRun) return;
+    const base = this._policyPersisted ? {} : { home: this.policyRun.home, sha: this.policyRun.sha, deviations: this.policyRun.deviations, unattended: this.policyRun.unattended };
+    this._policyPersisted = true;
+    try { writePolicyState(this.pipeline.id, { ...base, ...patch }); } catch (err) { this._log('policy', 'warn', `could not record policy state: ${err?.message || err}`); }
+  }
+
   async _resolveGuardrails() {
     let set = await readGuardrailSet(this.guardrailsId || 'permissive');
     if (!set) {
@@ -1793,6 +2084,366 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, renderContextAudit(rc)).catch(() => {});
     await this._recordCapabilities();
     return rc;
+  }
+
+  /** Absolute `<pipeline.dir>/memory.json` — the durable memory ledger (amendment A2). */
+  _memoryLedgerPath() { return join(this.pipeline.dir, 'memory.json'); }
+
+  /** Mount the memory store into this run — best-effort. Memory is additive (spec §4.3):
+   *  a store/mount fs failure degrades the run to "no memory" (no pointer block, no sync) and is
+   *  logged + audited; it never pauses the run at 'setup', where the replay would hit the
+   *  same error again. EXCEPTION (amendment B8): a DEFRAGMENT run (`this.memoryScope` set) IS
+   *  its mount — the error is rethrown and run()'s setup failure policy parks the run
+   *  paused/error with setupIncomplete, so a retryable mount failure can resume. */
+  async _mountMemory({ resume = false } = {}) {
+    if (!this.pipeline?.dir) return;
+    try { await this._mountMemoryUnguarded({ resume }); }
+    catch (err) {
+      this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null; this.state.memoryRules = null;
+      if (existsSync(this._memoryLedgerPath())) await this._writeMemoryLedger({ neutralised: true });
+      const why = String(err?.message || err).split('\n')[0];
+      // A defragment run IS its mount (B8): rethrow, and run()'s setup failure policy parks the run
+      // as paused/error with setupIncomplete — a retryable mount failure resumes, a persistent one
+      // stays visible. An ordinary run degrades to "no memory" as in P1.
+      if (this.memoryScope) {
+        await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}) — a defragment run cannot continue.`).catch(() => {});
+        throw new Error(`memory not mounted: ${why}`);
+      }
+      this._log('memory', 'warn', `memory not mounted: ${why} — this run's agents see no memory and their memory writes are not captured`);
+      await appendAudit(this.pipeline.dir, `Memory: not mounted (${why}).`).catch(() => {});
+    }
+  }
+
+  /**
+   * Mount the memory store into this run twice: the read-only rules copy at
+   * `<runCwd>/.claude/rules/worca` (where Claude Code discovers rules natively — run root on a
+   * detached workspace run, the primary worktree otherwise) and the writable copy at
+   * `<pipeline.dir>/memory` (the sync-back mount, outside every checkout). Always recomputed,
+   * never the ledger's absolute paths.
+   * On resume, the previous segment's ledger is read first and its mount is synced back BEFORE
+   * anything else (§5 "resume of a paused run"): the sync is pure fs and needs neither git nor
+   * the tracked guard, so a guard that fails only NOW (git broken, the previous segment's agent
+   * staged the mount) can never lose the interrupted segment's writes.
+   */
+  async _mountMemoryUnguarded({ resume }) {
+    const root = memoryRoot();
+    // Pre-setup there is no run cwd, and the LIVE checkout must never take a rules copy.
+    const cwd = this.runCwd || null;
+    if (!cwd || cwd === this.projectDir) throw new Error('no run cwd to mount into');
+    if (!this.pipeline?.dir) throw new Error('no pipeline dir for the writable memory copy');
+    // Two copies (memory-write-split design D1): the READ-ONLY rules copy inside the cwd, where Claude
+    // Code loads it and refuses every write (`.claude` is a protected path); the WRITABLE copy — the
+    // sync-back mount — under the pipeline dir, outside every checkout, reached by --add-dir.
+    const rules = memoryRulesPath(cwd);
+    const mount = memoryWorkPath(this.pipeline.dir);
+    // §8.8 scope of the record: 'runRoot' when the cwd IS the run root, else the member whose
+    // checkout is the cwd (the primary member on single and legacy-workspace runs).
+    const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
+      : ([...this.workDirs.entries()].find(([, d]) => d === cwd)?.[0] ?? null);
+    if (!scope) throw new Error(`run cwd ${cwd} is neither the run root nor a member checkout`);
+    const dirs = mountDirs({ members: this.members, isWorkspace: this.isWorkspace, memoryScope: this.memoryScope });
+    const onError = (p, err) => this._memoryReadWarn(p, err);
+    if (resume) {
+      let ledger = null;
+      try { ledger = JSON.parse(await readFile(this._memoryLedgerPath(), 'utf8')); } catch { ledger = null; }
+      if (ledger && ledger.baseline && Array.isArray(ledger.dirs)) {
+        this.memoryChanges = Array.isArray(ledger.changes) ? ledger.changes : [];
+        // The interrupted segment's writes live at the LEDGER's mount: this dir since the write
+        // split, the in-checkout `.claude/rules/worca` for a run paused before it (a pause keeps the
+        // checkout, so that dir is still there). Sync whichever exists; the recomputed paths are used from here on.
+        const prev = (typeof ledger.mount === 'string' && ledger.mount !== mount && existsSync(ledger.mount)) ? ledger.mount : mount;
+        try {
+          await this._syncMemoryWith({ mount: prev, dirs: ledger.dirs, baseline: ledger.baseline, nodeId: 'resume', executionId: null, agentKey: null, label: 'the interrupted execution' });
+        } catch (err) {
+          // Defensive — syncBack does not reject today (every fs error is per-file or routed
+          // through onError). If it ever does: do NOT remount over unsynced writes; keep the
+          // PREVIOUS mount + baseline so the next execution's sync retries them.
+          this._log('memory', 'warn', `memory: the interrupted execution's writes could not be synced (${err?.message || err}); keeping the previous mount`);
+          this.memory = { root, mount: prev, rules: null, dirs: ledger.dirs, baseline: ledger.baseline };
+          this.state.memoryMount = prev; this.state.memoryRules = null;
+          // Register in every case: the rules copy of the interrupted segment (if any) is still inside
+          // the checkout and must stay excluded from the commit and removed at teardown. Idempotent.
+          await this._registerMemoryMount(scope);
+          this._refreshMemoryBlock();
+          return;
+        }
+      }
+    }
+    // A checkout that TRACKS the mount path would have its committed files overwritten, excluded
+    // from the commit and deleted at teardown — refuse, like the skill mount's trackedNames guard.
+    // `:(icase)`: on a case-insensitive file system a repo tracking `.Claude/rules/worca` would
+    // otherwise pass the guard and have those files rm'd through the case-folded path. The
+    // detached workspace run root has no git and no check.
+    if (scope !== 'runRoot') {
+      const tracked = await this._git(['ls-files', '--', `:(icase)${MEMORY_RULES_REL}`], { cwd });
+      if (!tracked.ok) throw new Error(`cannot tell whether the checkout tracks ${MEMORY_RULES_REL} (git ls-files: ${tracked.stderr.trim() || `exit ${tracked.code}`})`);
+      // The way out differs: an ordinary run has nowhere else to go (its checkout IS the project's),
+      // a defragment targets a scope and can be started from any other project's checkout.
+      if (tracked.stdout.trim()) throw new Error(`the checkout tracks ${MEMORY_RULES_REL} — untrack it${this.memoryScope ? ' (or start the defragment from another project)' : ''}`);
+    }
+    // Register BEFORE anything touches the disk: a mount that fails half-way (EACCES, a Windows
+    // EBUSY past the retries) leaves files under the cwd, and only the §8.8 entry keeps them out
+    // of the commit and gets them removed at teardown. Idempotent, harmless on failure.
+    await this._registerMemoryMount(scope);
+    // The WRITABLE copy: a full copy of the mounted scopes (agents edit existing files in place;
+    // syncBack diffs it against this baseline). Outside git — no sentinel.
+    const m = await mountMemory({ root, mount, dirs, onError });
+    // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
+    // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
+    // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
+    // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
+    await mountMemory({ root, mount: rules, dirs, onError, gitIgnore: true });
+    this.memory = { root, mount, rules, dirs, baseline: m.baseline };
+    this.state.memoryMount = mount;
+    this.state.memoryRules = rules;
+    this._refreshMemoryBlock();
+    await this._writeMemoryLedger();
+    this._log('memory', 'info', `Memory mounted: ${m.files} file(s) across ${dirs.length} scope(s) — loaded from ${rules}, written to ${mount}`);
+  }
+
+  /**
+   * §8.8: the mount rides `injectedPaths[<scope>]` as a `kind:'memory'` entry — excluded from the
+   * commit, the intent-to-add staging and the three result diffs (_excludePathspecs), removed at
+   * teardown (removeInjectedPaths), never rescued (sync-back is its rescue). Idempotent: a resume
+   * re-assembly rewrites the map without it, so it is re-added here; persisted into run.json on
+   * detached runs so the boot sweep and pipeline-delete see the same set. Under legacy the map was
+   * always {} — the memory entry is the ONE legacy pathspec, and the legacy `git add -A` becomes
+   * `git add -A -- . :(exclude).claude/rules/worca` (§10's byte-identical contract, amended: memory
+   * has been mounted in both modes since P1, and an unexcluded mount would be committed).
+   */
+  async _registerMemoryMount(scope) {
+    const map = { ...(this.injectedPaths || {}) };
+    map[scope] = [...(map[scope] || []).filter((e) => e?.kind !== 'memory'), { ...MEMORY_INJECTED_ENTRY }];
+    this.injectedPaths = map;
+    if (this.runRoot) await updateRunManifest(this.runRoot, { injectedPaths: map }).catch(() => {});
+  }
+
+  /** The `## Worca memory` pointer block: heading, one-line intro, one `Label — /abs/dir:` line per
+   *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
+  _refreshMemoryBlock() {
+    if (!this.memory) { this.memoryBlock = ''; return; }
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })));
+  }
+
+  /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
+   *  as "cannot read" sends the user hunting a broken disk instead of renaming a file. */
+  _memoryReadWarn(p, err) {
+    if (err?.code === 'ENAME') this._memoryWarn(`memory: ignored ${p} (invalid name — not a memory file)`);
+    else this._memoryWarn(`memory: cannot read ${p}: ${err?.code || err?.message || err}`);
+  }
+
+  /** Record-once warnings: the pointer block is rendered once per mount. */
+  _memoryWarn(text) {
+    if (this._memoryWarned.has(text)) return;
+    this._memoryWarned.add(text);
+    this._log('memory', 'warn', text);
+  }
+
+  /** After ONE execution (orchestrator._afterExecution) — never rejects, and serialised per
+   *  run: the job reads `this.memory` when the PREVIOUS sync has published its baseline.
+   *  (Composite slices and parallel branches finish together; two syncs diffing against one
+   *  baseline would both write and both report the same files.) */
+  _syncMemory(nc, ctx) {
+    if (!this.memory) return Promise.resolve(null);
+    const job = async () => {
+      if (!this.memory) return null;
+      // Every frame of the execution has arrived (the runner resolved before _afterExecution); a
+      // null executionId is the run-end sync and drains what unfinished executions left behind.
+      const failed = this._takeFailedMemoryWrites(ctx.executionId ?? null);
+      try {
+        return await this._syncMemoryWith({ ...this.memory, nodeId: ctx.nodeId, executionId: ctx.executionId, agentKey: nc?.key ?? null, label: nc?.key || ctx.label || ctx.nodeId, failed });
+      } catch (err) {
+        this._log('memory', 'warn', `memory sync failed after ${ctx.executionId}: ${err?.message || err}`);
+        return null;
+      }
+    };
+    this._memoryTail = (this._memoryTail || Promise.resolve()).then(job, job);
+    return this._memoryTail;
+  }
+
+  async _syncMemoryWith({ mount, dirs, baseline, nodeId, executionId, agentKey, label, failed = [] }) {
+    const now = new Date().toISOString();
+    const res = await syncBack({
+      root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
+      caps: memoryCaps(), onWarn: (w) => this._log('memory', 'warn', w),
+      onError: (p, err) => this._memoryReadWarn(p, err),
+    });
+    // `mount` equals this.memory.mount for every in-run sync and for a same-process resume;
+    // an OLD instance can never race a resumed one because the scheduler drains in-flight
+    // executions before the run reports 'paused' (scheduler.mjs, the pause drain).
+    if (this.memory && this.memory.mount === mount) this.memory.baseline = res.baseline;
+    if (res.total || res.rejected.length || failed.length) {
+      this.memoryChanges.push({
+        executionId, nodeId, agentKey, at: now,
+        added: res.added, modified: res.modified, deleted: res.deleted, rejected: res.rejected, failed,
+      });
+      const head = `Memory: +${res.added.length} ~${res.modified.length} -${res.deleted.length}` +
+        `${res.rejected.length ? ` (${res.rejected.length} rejected)` : ''}${failed.length ? ` (${failed.length} failed)` : ''} by ${label}`;
+      const name = (r) => `${r.scope ? `${r.scope}/` : ''}${r.name}.md`;
+      const details = [
+        ...res.added.map((r) => `added ${name(r)}`), ...res.modified.map((r) => `updated ${name(r)}`),
+        ...res.deleted.map((r) => `deleted ${name(r)}`), ...res.rejected.map((r) => `rejected ${name(r)} — ${r.reason}`),
+        ...failed.map((r) => `failed ${name(r)} — ${r.reason}`),
+      ];
+      this._log('memory', 'info', `${head}: ${details.join('; ')}`, { nodeId, executionId });
+      // A failed write is the one memory outcome nobody asked for: warn, per file, so it is visible in
+      // the run log without opening the 300 KB transcript.
+      for (const r of failed) this._log('memory', 'warn', `memory: ${name(r)} written by ${label} never reached the store — ${r.reason}`, { nodeId, executionId });
+      await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
+      await this._recordFailedWrites(failed, now);
+    }
+    // The rules copy the NEXT execution loads must carry what this sync stored (the store is the
+    // authority: it also holds Ask/UI writes made mid-run). Non-destructive and per-file atomic, so
+    // a Task sub-agent spawning right now never reads a torn file; never touches the sentinel.
+    if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) {
+      try {
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs, onError: (p, err) => this._memoryReadWarn(p, err) }));
+        if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
+      } catch (err) {
+        this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
+      }
+    }
+    if (this.memory && this.memory.mount === mount) await this._writeMemoryLedger();
+    return res;
+  }
+
+  /** Bump the `.state` counters of every scope a failed write named (memory-write-split design D9).
+   *  A write beside the scope dirs (`scope: ''`, or a rel that is not mounted) is reported but counted
+   *  against no scope. Best-effort: a counter that cannot be written is a warn line, never a throw. */
+  async _recordFailedWrites(failed, now) {
+    if (!failed.length || !this.memory) return;
+    const byRel = new Map();
+    for (const f of failed) if (f.scope) byRel.set(f.scope, (byRel.get(f.scope) || 0) + 1);
+    for (const [rel, n] of byRel) {
+      const d = this.memory.dirs.find((x) => x.rel === rel);
+      if (!d) continue;
+      try {
+        await withStoreLock(memoryRoot(), async () => {
+          const st = await readScopeState(memoryRoot(), d.scope);
+          await bumpScopeState(memoryRoot(), d.scope, { failedWrites: (Number(st.failedWrites) || 0) + n, lastFailedAt: now, lastFailedRunId: this.pipeline.id });
+        });
+      } catch (err) {
+        this._log('memory', 'warn', `memory: failed-write counter not updated for ${rel}: ${err?.message || err}`);
+      }
+    }
+  }
+
+  /** Classify a tool call's target: `{ id, where, scope, name }` when it sits under the writable copy
+   *  (`where: 'memory'`) or the read-only rules copy (`where: 'rules'`), else null. `scope` is the
+   *  mounted rel the path starts with, else its dirname inside the copy ('' at the copy's root) — a
+   *  write beside the scope dirs is still reported. Relative paths resolve against the run cwd, which
+   *  is every spawn's cwd. */
+  _memoryWriteKey(p) {
+    if (typeof p !== 'string' || !p || !this.memory) return null;
+    const abs = resolve(this.runCwd || this.workDir || this.projectDir, p);
+    for (const [where, base] of [['memory', this.memory.mount], ['rules', this.memory.rules]]) {
+      if (!base || !(abs === base || abs.startsWith(base + sep))) continue;
+      const rel = relative(base, abs).split(sep).join('/');
+      const d = this.memory.dirs.find((x) => rel === x.rel || rel.startsWith(`${x.rel}/`));
+      const dn = dirname(rel);
+      return { id: `${where}:${rel}`, where, scope: d ? d.rel : (dn === '.' ? '' : dn), name: basename(rel).replace(/\.md$/i, '') };
+    }
+    return null;
+  }
+
+  _trackMemoryWrites(raw, attr) {
+    if (!this.memory) return;
+    const content = raw?.message?.content;
+    if (!Array.isArray(content)) return;
+    const exec = attr?.executionId ?? '(no execution)';
+    for (const b of content) {
+      if (b?.type === 'tool_use' && MEMORY_WRITE_TOOLS.has(b.name) && typeof b.id === 'string') {
+        const key = this._memoryWriteKey(b.input?.file_path || b.input?.path || b.input?.notebook_path);
+        if (!key) continue;
+        const rec = this._memoryWrites.get(exec) || { calls: new Map(), last: new Map() };
+        rec.calls.set(b.id, key);
+        this._memoryWrites.set(exec, rec);
+      } else if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') {
+        const rec = this._memoryWrites.get(exec);
+        const key = rec?.calls.get(b.tool_use_id);
+        if (!key) continue;
+        // 400: the CLI's refusal quotes the absolute path and ends with the cause ("… which is a
+        // sensitive file.") — a deep run-root path must not clip the cause away.
+        rec.last.set(key.id, { ...key, ok: !b.is_error, reason: b.is_error ? clip(toolResultText(b), 400) : '' });
+      }
+    }
+  }
+
+  /** The keys whose LAST write outcome in `executionId` was an error, as `[{ scope, name, reason }]`
+   *  (a retry that succeeded clears the failure); that execution's bookkeeping is dropped. `null`
+   *  drains EVERY pending execution — the run-end sync, so an execution the run never finished
+   *  (stop, error) still reports (design D13). A rules-copy write names its own cause first. */
+  _takeFailedMemoryWrites(executionId) {
+    const recs = executionId == null ? [...this._memoryWrites.values()] : [this._memoryWrites.get(executionId)].filter(Boolean);
+    if (executionId == null) this._memoryWrites.clear(); else this._memoryWrites.delete(executionId);
+    const out = [];
+    for (const rec of recs) for (const v of rec.last.values()) {
+      if (v.ok) continue;
+      out.push({ scope: v.scope, name: v.name, reason: v.where === 'rules' ? `written into the read-only rules copy — ${v.reason}` : v.reason });
+    }
+    return out;
+  }
+
+  /** `{ mount, rules, dirs, baseline, changes }` — best-effort, atomic via temp + rename. */
+  async _writeMemoryLedger({ neutralised = false } = {}) {
+    if (!this.pipeline?.dir || (!this.memory && !neutralised)) return;
+    const file = this._memoryLedgerPath();
+    // `neutralised` (after a mount failure) keeps the change history but writes no dirs and
+    // no baseline, so a later resume has nothing stale to diff against (a missing mount dir
+    // must never read as "the run deleted every file").
+    const payload = neutralised
+      ? { mount: null, rules: null, dirs: [], baseline: {}, changes: this.memoryChanges }
+      : { mount: this.memory.mount, rules: this.memory.rules, dirs: this.memory.dirs, baseline: this.memory.baseline, changes: this.memoryChanges };
+    const tmp = `${file}.tmp-${process.pid}-${++this._ledgerSeq}`;
+    try { await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8'); await rename(tmp, file); }
+    catch (err) { this._log('memory', 'warn', `memory ledger not written: ${err?.message || err}`); }
+  }
+
+  /** The `## Memory health` section a defragment run appends to its task document: the reasons the
+   *  scope is flagged and the budgets a finished defragment must meet — read from the STORE (what
+   *  Settings → Memory shows), which the mount mirrors at this point. '' on every other run.
+   *  Best-effort: a store read failure costs the agent its brief, never the run. */
+  async _defragBrief() {
+    if (!this.memoryScope || !this.memory?.dirs?.length) return '';
+    try {
+      const caps = memoryCaps();
+      const { health } = await memoryScopeReport(memoryRoot(), this.memory.dirs[0].scope, caps, { onError: (p, err) => this._memoryReadWarn(p, err) });
+      return renderDefragBrief(health, caps);
+    } catch (err) {
+      this._log('memory', 'warn', `memory: the defragment brief could not be built: ${err?.message || err}`);
+      return '';
+    }
+  }
+
+  /** A finished defragment run resets the scope's counters (spec §5, §7): called on the `done`
+   *  arms only, after _buildResults' final sync. `this.memory.dirs[0]` is the one mounted scope.
+   *  Amendment B31: a run whose ledger holds ANY rejected write did not produce the scope the
+   *  agent intended — leave the counters alone (health stays `due`) and say so, loudly.
+   *  `withStoreLock` is a per-process promise chain: it serialises this stamp against this
+   *  process's own syncs only, not against another worca process. */
+  async _stampDefrag() {
+    if (!this.memoryScope || !this.memory?.dirs?.length) return;
+    const d = this.memory.dirs[0];
+    const { rejected } = memoryTotals(this.memoryChanges);
+    if (rejected) {
+      this._log('memory', 'warn', `Memory: ${d.label} — ${rejected} write(s) were rejected during this defragment; counters NOT reset (see the rejections above)`);
+      await appendAudit(this.pipeline.dir, `Memory: ${d.label} defragment finished with ${rejected} rejected write(s) — counters not reset.`).catch(() => {});
+      return;
+    }
+    const now = new Date().toISOString();
+    try {
+      await withStoreLock(memoryRoot(), () => bumpScopeState(memoryRoot(), d.scope, { lastDefragAt: now, lastDefragRunId: this.pipeline.id, writesSinceDefrag: 0, failedWrites: 0, lastFailedAt: null, lastFailedRunId: null }));
+      this._log('memory', 'info', `Memory: ${d.label} defragmented — write counter reset`);
+      await appendAudit(this.pipeline.dir, `Memory: ${d.label} defragmented by this run.`).catch(() => {});
+    } catch (err) {
+      this._log('memory', 'warn', `memory: defrag stamp failed: ${err?.message || err}`);
+    }
+  }
+
+  /** The run-summary shape (§6). null when nothing changed, so results.json is unchanged for such runs. */
+  memorySummary() {
+    if (!this.memoryChanges.length) return null;
+    return { changes: this.memoryChanges, totals: memoryTotals(this.memoryChanges) };
   }
 
   /**
@@ -1961,7 +2612,12 @@ export class RunHarness extends EventEmitter {
     // branch carries no changes (the staging in _stageWorkingTree is intent-to-add
     // for the reviewer's diff only — it never creates a commit). On error/stop this
     // is what captures the partial work made up to that point.
-    const commit = await this._commitWork(info);
+    const key = this.members[0]?.projectKey ?? null;
+    const injected = key ? (this.injectedPaths?.[key] ?? []) : [];
+    const commit = await this._commitWork(info, this.state.branch, { excludePathspecs: this._excludePathspecs(key) });
+    // The memory mount (the one legacy injected path) was synced at _buildResults; remove it now
+    // so it rides neither the retained-work snapshot nor an outlived checkout.
+    await removeInjectedPaths(info.worktreeDir, injected);
     const retained = await this._recordCommitFailure(commit, { info, branchRecord: this.state.branch });
     if (retained) {
       await this._snapshotRetained(info);
@@ -2011,7 +2667,8 @@ export class RunHarness extends EventEmitter {
     for (const [projectKey_, info] of entries) {
       if (!info || !info.worktreeDir) continue;
       const branchRecord = (this.state.branches && this.state.branches[projectKey_]) || null;
-      const commit = await this._commitWork(info, branchRecord);
+      const commit = await this._commitWork(info, branchRecord, { excludePathspecs: this._excludePathspecs(projectKey_) });
+      await removeInjectedPaths(info.worktreeDir, this.injectedPaths?.[projectKey_] ?? []);
       if (await this._recordCommitFailure(commit, { key: projectKey_, info, branchRecord })) {
         anyRetained = true;
         await this._snapshotRetained(info, projectKey_);
@@ -2059,7 +2716,8 @@ export class RunHarness extends EventEmitter {
    * Still skipped entirely when the run paused (§8.13) — the caller guards.
    *
    * Under `legacy` this delegates to today's _teardownWorktree / _teardownWorktreeAll
-   * verbatim and does nothing else. Under `detached`, per member, in NORMATIVE order:
+   * verbatim, except that both now commit with the §8.8 exclusion set (the memory mount)
+   * and remove the mount after the commit attempt. Under `detached`, per member, in NORMATIVE order:
    *   1. modified-mount rescue (§8.20) — read-only, so it survives any later failure
    *   2. strip every claudeMdSection fenced block (must precede the commit — that
    *      file is deliberately NOT in the exclusion pathspecs)
@@ -2301,8 +2959,12 @@ export class RunHarness extends EventEmitter {
    *   (defaults to the scalar this.state.branch; a workspace member passes its own
    *   state.branches[projectKey] so per-member SHAs are recorded distinctly).
    * @param {{excludePathspecs?:string[]}} [opts] §8.8 exclusion set for this
-   *   worktree. With the DEFAULT empty array — every legacy run — the method keeps
-   *   today's bare `git add -A` byte-identically (§10 rollback contract).
+   *   worktree. Since the native-rules revision every run passes one (the memory mount),
+   *   so the argv is `git add -A -- . :(exclude).claude/rules/worca`, preceded by a
+   *   `git rm -r --cached --ignore-unmatch -- .claude/rules/worca` that unstages anything an
+   *   agent force-staged there (`git add -A` with an exclude never unstages); the DEFAULT empty
+   *   array (a refused mount) still reproduces the bare `git add -A`. The detached
+   *   `_teardownRunRoot` path commits through this same method, so it is covered too.
    * @returns {Promise<{ok:true,committed:boolean,sha:string|null}|
    *                   {ok:false,step:'status'|'add'|'commit',message:string,fromStderr:boolean}>}
    *   `fromStderr` records whether `message` embeds real stderr bytes (vs. the
@@ -2329,6 +2991,15 @@ export class RunHarness extends EventEmitter {
     if (!status.stdout.trim()) {
       this._log('git', 'info', 'No changes to commit (working tree clean).');
       return { ok: true, committed: false, sha: null };
+    }
+    // `git add -A -- . :(exclude)X` does not UNSTAGE what is already in the index: an agent that
+    // ran `git add -f .claude/rules/worca` (the one way past the mount's `.gitignore` sentinel)
+    // would otherwise put memory files on the kept branch, and on a resume the tracked guard would
+    // then refuse the mount for the rest of the run. Drop the exclusion set from the index first —
+    // a no-op (exit 0) when nothing under it is staged, thanks to --ignore-unmatch.
+    if (excludePathspecs.length) {
+      await this._git(['rm', '-r', '--cached', '-q', '--ignore-unmatch', '--',
+        ...excludePathspecs.map((s) => s.replace(/^:\(exclude\)/, ''))], gitOpts);
     }
     const add = excludePathspecs.length
       ? await this._git(['add', '-A', '--', '.', ...excludePathspecs], gitOpts)
@@ -2360,8 +3031,9 @@ export class RunHarness extends EventEmitter {
         gitOpts,
       );
     }
-    if (!commit.ok && excludePathspecs.length) {
-      // §8.8 (detached runs — the same scope as the exclusion set): a failing hook
+    if (!commit.ok && this.runRootMode === 'detached') {
+      // §8.8 (detached runs only — legacy keeps its verbatim commit even now that it carries an
+      // exclusion set): a failing hook
       // must never silently delete an agent's work. Teardown removeWorktree(force:true)s
       // the checkout right after a successful commit, so this commit is the ONLY thing
       // that carries the work onto the kept branch. A diff artifact does now survive
@@ -2370,7 +3042,9 @@ export class RunHarness extends EventEmitter {
       // rebase or push. Detached worktrees make hook failure MORE likely (§8.1:
       // husky/lint-staged resolve through an ancestor node_modules today and do not
       // detached). Retry ONCE with hooks disabled for that invocation only, logging
-      // both facts.
+      // both facts. The gate is the MODE, not the exclusion set: before the native-rules
+      // revision a detached default-workflow run recorded no injected path at all and was
+      // silently excluded from the retry — exactly the runs §8.1 is about.
       const hookErr = commit.stderr.trim() || `exit ${commit.code}`;
       this._log('git', 'warn', `commit failed with hooks enabled: ${hookErr}`, errStreamAttr(commit.stderr));
       const retry = await this._git(
@@ -2413,6 +3087,33 @@ export class RunHarness extends EventEmitter {
    * recoverable-error gate surfaces it cleanly.
    * @param {Iterable<string>} agentKeys the run's distinct agent keys, in launch order
    */
+  /**
+   * Credential-broker preflight (docs/credential-broker.md): the models in the manifest
+   * (plus the step defaults and the run's own model, which an empty node model falls back
+   * to) mapped to broker slots, checked against the paying person's keys. Throws a
+   * Preflight error naming every missing key; a broker it can't ask never blocks here
+   * (the first spawn reports that instead).
+   */
+  async _brokerPreflight(manifest, stepModels) {
+    if (!brokerEnabled() || mockEnabled({ mock: this.claude.mock })) return;
+    let info;
+    try { info = await brokerInfo(); } catch { return; }
+    const person = info.mode === 'multi' ? currentBillTo() : 'local';
+    if (info.mode === 'multi' && (!person || person === 'local') && !process.env.WORCA_BROKER_SYSTEM_BILL_TO) {
+      throw Object.assign(new Error('Preflight failed: this run has no signed-in person to charge. Start it from the web UI, or set WORCA_BROKER_SYSTEM_BILL_TO.'), { errorClass: 'auth' });
+    }
+    const models = manifestModels(manifest);
+    for (const m of Object.values(stepModels || {})) if (typeof m === 'string' && m.trim()) models.add(m.trim());
+    if (this.claude?.model) models.add(this.claude.model);
+    if (!models.size) models.add('claude-sonnet-5');   // nothing named: the CLI's own default is a Claude model
+    let status;
+    try { status = (await personSlots(person === 'local' || !person ? (process.env.WORCA_BROKER_SYSTEM_BILL_TO || 'local') : person)).slots || []; } catch { return; }
+    const r = missingCredentials([...models], modelSlot, status);
+    if (r.missing.length || r.errors.length) {
+      throw Object.assign(new Error(`Preflight failed: ${describeMissing(r, info.publicUrl)}`), { errorClass: 'auth' });
+    }
+  }
+
   _preflightAgentKeys(agentKeys) {
     const reg = this.registry || {};
     const missing = [];
@@ -2437,25 +3138,78 @@ export class RunHarness extends EventEmitter {
    *  raised limit or a window reset takes effect at the next step (F9). */
   _checkCostLimits() {
     if (!this.pipeline?.id) return;                    // pre-createPipeline: nothing to meter
-    const pipeLimit = pipelineCostLimitUsd();
+    this._persistPolicyState();                        // first boundary with a row: home/sha/deviations land
+    const teamFields = this.policyRun?.fields || {};
+    const home = this.policyRun?.home || null;
     // resume() rehydrates state.steps but not state.totalCostUsd, so the row
     // total reads $0 until the first cost event of the resumed run. Take the
     // larger of the two so a resumed over-cap pipeline cannot run one free step.
     const spentHere = Math.max(this.state.totalCostUsd || 0, sumStepCosts(this.state.steps));
-    if (pipeLimit != null && spentHere >= pipeLimit
-        && !readCostCapOverride(this.pipeline.id)) {
+    // Team policy (design §7): the tighter of the developer's cap and a soft team cap applies;
+    // a team default only starts the developer off. `binding` says whose number tripped.
+    const teamPipe = teamFields['cost.pipelineLimitUsd'] || null;
+    const pipe = effectiveCap({ local: pipelineCostLimitUsd(), team: teamPipe });
+    // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
+    // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
+    const ownCap = pipe.binding === 'team' ? null : pipe.cap;
+    if (ownCap != null && spentHere >= ownCap && !readCostCapOverride(this.pipeline.id)) {
       this._capReached(REASON.COST_PIPELINE,
-        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${pipeLimit.toFixed(2)})`);
+        `pipeline cost limit reached ($${spentHere.toFixed(2)} >= $${ownCap.toFixed(2)})`);
     }
-    const totalLimit = totalCostLimitUsd();
-    if (totalLimit != null) {
-      const period = costLimitResetPeriod();
-      const spent = totalWindowSpendUsd(costWindowStart(new Date(), period).getTime());
-      if (spent >= totalLimit) {
-        this._capReached(REASON.COST_TOTAL,
-          `total cost limit reached ($${spent.toFixed(2)} >= $${totalLimit.toFixed(2)} this ${period === 'weekly' ? 'week' : 'month'})`);
+    // The team SOFT cap, whether or not it is the tighter number: the local override never
+    // bypasses it — only the team override ("continue past team cap") does.
+    if (teamPipe && teamPipe.kind === 'soft' && spentHere >= teamPipe.value && !hasPipelineOverride(this.pipeline.id)) {
+      const detail = `team cost cap reached ($${spentHere.toFixed(2)} >= $${Number(teamPipe.value).toFixed(2)}, ${home})`;
+      this._teamCapBreach('pipeline', teamPipe, detail, REASON.COST_PIPELINE_POLICY);
+    }
+    const period = this._effectiveResetPeriod();
+    const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
+    if (tot.cap != null) {
+      const windowStartMs = costWindowStart(new Date(), period).getTime();
+      const spent = totalWindowSpendUsd(windowStartMs);
+      if (spent >= tot.cap) {
+        const w = period === 'weekly' ? 'week' : 'month';
+        if (tot.binding === 'team') {
+          const ack = readTotalAck(projectKey(this.policyRun.homeDir || this.projectDir), home, windowStartMs);
+          if (ack) {
+            // Acknowledged once for this window (design §7): the run proceeds and the record says so.
+            if (!this._policyWarned.has('total-ack')) { this._policyWarned.add('total-ack'); this._persistPolicyState({ overrides: ['total'], ...(ack.reason ? { reason: ack.reason } : {}) }); }
+          } else {
+            const detail = `team total cap reached ($${spent.toFixed(2)} >= $${tot.cap.toFixed(2)} this ${w}, ${home})`;
+            this._teamCapBreach('total', tot.team, detail, REASON.COST_TOTAL_POLICY);
+          }
+        } else {
+          this._capReached(REASON.COST_TOTAL,
+            `total cost limit reached ($${spent.toFixed(2)} >= $${tot.cap.toFixed(2)} this ${w})`);
+        }
       }
     }
+  }
+
+  /** The reset period: the developer's when stored, else a team default, else monthly. */
+  _effectiveResetPeriod() {
+    const stored = readRawSettings().costLimitResetPeriod;
+    if (stored === 'weekly' || stored === 'monthly') return stored;
+    const team = this.policyRun?.fields?.['cost.resetPeriod'];
+    return team && (team.value === 'weekly' || team.value === 'monthly') ? team.value : costLimitResetPeriod();
+  }
+
+  /**
+   * A soft team cap was hit and nobody has continued past it. `onBreach: warn`, and any
+   * unattended (--yes) run, log ONE line and go on with `exceeded` recorded; otherwise the
+   * run pauses on the policy reason so the resume flow can offer "continue past".
+   */
+  _teamCapBreach(which, team, detail, reason) {
+    const breach = team?.onBreach || 'pause';
+    if (breach === 'warn' || this.auto) {
+      if (this._policyWarned.has(which)) return;
+      this._policyWarned.add(which);
+      const why = breach === 'warn' ? 'the policy says warn' : 'unattended run, nobody can continue past a pause';
+      this._log('policy', 'warn', `${detail} — continuing: ${why}`);
+      this._persistPolicyState({ exceeded: [which] });
+      return;
+    }
+    this._capReached(reason, detail);
   }
 
   /** The BUDGET site (failure-policy.mjs): a cost cap was reached at a step
@@ -2491,7 +3245,9 @@ export class RunHarness extends EventEmitter {
     await appendAudit(this.pipeline.dir, `Recoverable **${cls}** error on ${node.key}: ${firstLine(err.message)}`).catch(() => {});
 
     if (verdict.outcome === 'retry') {
-      await this._backoff(attempt, this.pauseAbort.signal);
+      const delayMs = recoveryDelayMs({ cls, attempt, err });
+      this._log(node.key, 'warn', `${cls}: retrying in ${Math.round(delayMs / 100) / 10}s (retry ${attempt}/${RECOVERY_MAX_AUTO_ATTEMPTS})`);
+      await this._backoff(attempt, this.pauseAbort.signal, { cls, err, delayMs });
       return verdict;
     }
 
@@ -2530,23 +3286,11 @@ export class RunHarness extends EventEmitter {
     return next;
   }
 
-  /** Abort-aware backoff: base * 2^(attempt-1) ms, resolving early (and still
-   *  'retry') if the pause-only signal fires so a pause is not delayed. */
-  _backoff(attempt, signal) {
-    const base = (() => {
-      const n = Number(process.env.WORCA_RECOVERY_BACKOFF_MS);
-      return Number.isFinite(n) && n >= 0 ? n : 1000;
-    })();
-    const ms = base * Math.pow(2, Math.max(0, attempt - 1));
-    if (!ms) return Promise.resolve();
-    return new Promise((res) => {
-      const t = setTimeout(res, ms);
-      t.unref?.();
-      if (signal) {
-        if (signal.aborted) { clearTimeout(t); res(); }
-        else signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
-      }
-    });
+  /** Abort-aware backoff (recovery-backoff.mjs: base·2^(attempt-1), longer for a
+   *  rate limit, at least a retry-after hint, capped per wait), resolving early
+   *  (and still 'retry') if the pause-only signal fires so a pause is not delayed. */
+  _backoff(attempt, signal, { cls = null, err = null, delayMs } = {}) {
+    return sleepAbortable(delayMs ?? recoveryDelayMs({ cls, attempt, err }), signal);
   }
 
   /** Monotonic id source for recovery prompts (no Date.now/random — replay-safe). */
@@ -2597,7 +3341,8 @@ export class RunHarness extends EventEmitter {
    * Freezes the active-time clock while blocked on the user (active-time-only).
    * @returns {Promise<any>} the answer payload
    */
-  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow, validate }) {
+  async _ask({ id, kind, questions, issues, recovery, agent, nodeId, wireId, executionId, deliveryNo, holdNo, workflow,
+    askId, form, version, title, surface, data, layout, answerSchema, fileRefs, files, autoValues, validate }) {
     this._checkAbort();
     // No interactive prompt may OPEN on a pausing run. pause() rejects only the
     // prompt that is currently open; a queued ask (a parallel sibling's questions
@@ -2629,7 +3374,17 @@ export class RunHarness extends EventEmitter {
       ...(deliveryNo != null ? { deliveryNo } : {}),
       ...(holdNo != null ? { holdNo } : {}),
       ...(workflow !== undefined ? { workflow } : {}),
+      // The ask-form envelope (spec §4, ruling X1) rides the EXISTING 'question'
+      // frame — no new transport, no new slot. `id` (already emitted above) is the
+      // ANSWER token; `askId` is the route-safe file token and they are never
+      // interchangeable. `validate` and `autoValues` are arguments only and must
+      // never reach a socket.
+      ...(kind === 'form'
+        ? { askId, form, version, title, surface: surface || 'any', data, layout, answerSchema,
+            fileRefs: fileRefs || [], files: files || [] }
+        : {}),
     });
+    this._metricsIv.questions += 1;
 
     try {
       if (this.auto) {
@@ -2643,6 +3398,13 @@ export class RunHarness extends EventEmitter {
           // Auto workflow under --yes: the proposal is accepted as proposed (spec D3).
           this._log('orchestrator', 'info', `auto-accepting workflow proposal ${id}`);
           return { decision: 'accept' };
+        }
+        if (kind === 'form') {
+          // D10: a form ask is auto-answered with the form's AUTO ANSWER, which
+          // gate 1 proved passes gate 3 — so an unattended run neither hangs nor
+          // produces an invalid answer. No pending question is installed.
+          this._log('orchestrator', 'info', `auto-answering form ${id} (${form})`);
+          return { form, version, values: autoValues && typeof autoValues === 'object' ? autoValues : {} };
         }
         if (kind === 'clarify' || kind === 'questions') {
           this._log('orchestrator', 'info', `auto-answering ${kind} ${id}`);
@@ -2765,6 +3527,10 @@ export class RunHarness extends EventEmitter {
       // bound signal kills the staging before git can touch the index.
       // INSIDE the try: the stopped path calls _buildResults from run()'s catch, so
       // anything that escaped here would reject run() itself.
+      // The final sync runs BEFORE the two early returns below (`!members.length`,
+      // `noPatch && stage && !listed`), so results.json.memory is absent on those paths;
+      // the ledger (memory.json) is the durable carrier and History reads it.
+      if (this.memory) await this._syncMemory(null, { nodeId: 'final', executionId: null, label: 'the run end' }).catch(() => {});
       if (stage) await this._stageWorkingTree({ ignoreAbort: true });
       const reviews = readPipelineExtras(this.pipeline.id).reviews || [];
       // Unified iteration over workDirs + checkpointRefs — the ref map is filled in
@@ -2811,12 +3577,14 @@ export class RunHarness extends EventEmitter {
       // no-op run must not lose them (review of PR #376). The 0-byte
       // diff-patch.patch is still never written on any path.
       if (noPatch && stage && !listed) return;
+      const memory = this.memorySummary();
       if (members.length === 1 && !this.isWorkspace) {
+        if (memory) members[0].results.memory = memory;
         await persistResults(this.pipeline.dir, members[0].results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches[0].patch);
       } else {
         const perProject = buildPerProject(members);
-        const results = { summary: rollupSummary(perProject), perProject };
+        const results = { summary: rollupSummary(perProject), perProject, ...(memory ? { memory } : {}) };
         await persistResults(this.pipeline.dir, results);
         if (!noPatch) await persistDiffPatch(this.pipeline.dir, patches.map((p) => `# ${p.key}\n${p.patch}`).join('\n\n'));
       }
@@ -2853,6 +3621,19 @@ export class RunHarness extends EventEmitter {
       }
     } catch (err) {
       this._log('writeback', 'warn', `task-source write-back failed: ${err?.message || err}`);
+    }
+  }
+
+  /** Team metrics (team-metrics-design.md §4.5): one record per terminal run. Idempotent per
+   *  instance and fail-soft — a metrics failure is a log line, never a run failure. */
+  async _recordRunMetrics(status, error = null) {
+    if (this._metricsRecorded) return null;
+    this._metricsRecorded = true;
+    try {
+      return await recordRunMetrics(this, { status, error });
+    } catch (err) {
+      try { this._log('metrics', 'warn', `team metrics: ${err?.message || err}`); } catch { /* never */ }
+      return null;
     }
   }
 
@@ -2924,8 +3705,8 @@ export class RunHarness extends EventEmitter {
     // setup never ran, in which case staging must be a NO-OP — the old single arm
     // fell back to this.workDir, which pre-setup is the user's LIVE checkout.
     for (const [key, dir] of this.workDirs.entries()) {
-      // §8.8: an empty exclusion set (every legacy run) reproduces today's argv
-      // byte-identically — `--` with no trailing pathspec is a no-op for git add.
+      // §8.8: the exclusion set is the memory mount in both modes (and the skill mount under
+      // detached); an empty set (a refused mount) reproduces the bare argv.
       const ex = this._excludePathspecs(key);
       const args = ex.length ? ['add', '-A', '-N', '--', '.', ...ex] : ['add', '-A', '-N'];
       const res = await this._git(args, { cwd: dir, ignoreAbort });
@@ -2941,8 +3722,9 @@ export class RunHarness extends EventEmitter {
    * `kind:'claudeMdSection'` entries are deliberately EXCLUDED from the set — their
    * file is the user's tracked CLAUDE.md, and a blanket `:(exclude)CLAUDE.md` would
    * silently strip the agent's legitimate edits (teardown strips the fence instead).
-   * Returns [] under legacy and through Phase 2 (this.injectedPaths is always {}),
-   * which is what makes every legacy argv byte-identical.
+   * Under legacy the set holds exactly the memory mount (`_registerMemoryMount`), so
+   * `git add -A -- . :(exclude).claude/rules/worca` is the legacy argv since the
+   * native-rules revision.
    * @param {string} projectKey
    * @returns {string[]}
    */
@@ -2956,9 +3738,17 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Run a git command in the project dir. Never throws; returns
-   * { ok, code, stdout, stderr }. Honors the abort signal.
+   * { ok, code, stdout, stderr }. Honors the abort signal. Bounded by
+   * `timeoutMs` (default HARNESS_GIT_TIMEOUT_MS): the commands issued here are
+   * local (init/add/status/rev-parse/commit/diff --cached), and a git that does
+   * not come back in that time is stuck, not working — it is SIGKILLed and
+   * reported as `{ ok: false, stderr: 'git timed out' }`, which every caller
+   * already handles as a failed git step. Without this bound a wedged git on
+   * the stop/teardown path (which deliberately ignores the abort signal) held
+   * the whole process, and under `npm test` the runner, until the CI job's
+   * 30-minute limit killed it.
    */
-  _git(args, { cwd, ignoreAbort = false } = {}) {
+  _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS } = {}) {
     return new Promise((resolveP) => {
       let child;
       try {
@@ -2976,12 +3766,26 @@ export class RunHarness extends EventEmitter {
       }
       let stdout = '';
       let stderr = '';
+      let settled = false;
+      const done = (val) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolveP(val);
+      };
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+          // A grandchild (hook, alias, pager) that inherited the pipes would keep
+          // them — and this process's event loop — open after git itself is dead.
+          try { child.stdout?.destroy(); child.stderr?.destroy(); } catch { /* best effort */ }
+          done({ ok: false, code: -1, stdout, stderr: stderr ? `git timed out: ${stderr}` : 'git timed out' });
+        }, timeoutMs)
+        : null;
       child.stdout?.on('data', (d) => (stdout += d.toString()));
       child.stderr?.on('data', (d) => (stderr += d.toString()));
-      child.on('error', (err) =>
-        resolveP({ ok: false, code: -1, stdout, stderr: stderr || err.message }),
-      );
-      child.on('close', (code) => resolveP({ ok: code === 0, code: code ?? -1, stdout, stderr }));
+      child.on('error', (err) => done({ ok: false, code: -1, stdout, stderr: stderr || err.message }));
+      child.on('close', (code) => done({ ok: code === 0, code: code ?? -1, stdout, stderr }));
     });
   }
 
@@ -3004,6 +3808,12 @@ export class RunHarness extends EventEmitter {
     return prompts;
   }
 
+  /** The most recent answerer (single-prompt flows that do not know the question id). */
+  _lastAnsweredBy() {
+    const all = [...this._answeredBy.values()];
+    return all.length ? all[all.length - 1] : null;
+  }
+
   async _writeClarifyAnswers(questions, answers) {
     // M1: clarify answers live ONLY in the clarify DB row (the authoritative store).
     // The dead FS clarify-answers.json (never read back; the single-round loop passes
@@ -3015,7 +3825,8 @@ export class RunHarness extends EventEmitter {
       question: byId.get(a.id)?.question || '',
       choice: a.choice,
     }));
-    await writeClarify(this.pipeline.id, { answers: { answers: enriched } });
+    const by = this._lastAnsweredBy();
+    await writeClarify(this.pipeline.id, { answers: { answers: enriched, ...(by ? { answeredBy: by } : {}) } });
     return enriched;
   }
 
@@ -3143,7 +3954,7 @@ export class RunHarness extends EventEmitter {
   /**
    * @param {string} kind
    * @param {string} path
-   * @param {{nodeId?:string, executionId?:string, port?:string|null}|null} [attr]
+   * @param {{nodeId?:string, executionId?:string, port?:string|null, cycle?:number|null}|null} [attr]
    *   v2 attribution (§5.7). Omitted keys are omitted from the event, so every
    *   2-arg v1 call emits the byte-identical `{kind, path}` payload it always did.
    */
@@ -3153,15 +3964,19 @@ export class RunHarness extends EventEmitter {
       if (attr.nodeId != null) evt.nodeId = attr.nodeId;
       if (attr.executionId != null) evt.executionId = attr.executionId;
       if (attr.port != null) evt.port = attr.port;
+      if (attr.cycle != null) evt.cycle = attr.cycle;
     }
     this._emit('artifact', evt);
-    // Phase 3.9: ALSO index FS markdown/extra paths so pipeline-delete (Task 3.13)
-    // can unlink the EXACT files later (best-effort; never blocks a run). Skip the
-    // synthetic 'pipeline'/'clarify' kinds (clarify lives in the clarify table;
-    // 'pipeline' is the dir itself). plan/review markdown live under
-    // <store>/<key>/{plans,reviews} (store-root-relative); checklist/webui live in
-    // the pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify' || kind === 'questions') return;
+    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
+    // files later, per-step attribution rides along (best-effort; never blocks a
+    // run). Every kind with a durable on-disk relPath is recorded. Skipped:
+    // 'pipeline' (the run DIR itself, no single file) and 'questions' (a scratch
+    // file the orchestrator deletes once the round is answered — the Q&A lives in
+    // the step_questions table, so an index row would only ever 404). The WS
+    // event above still carries 'questions' for the live view. plan/review
+    // markdown live under <store>/<key>/{plans,reviews} (store-root-relative);
+    // prompt/checklist/webui live in the pipeline dir (dir-relative).
+    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'questions') return;
     let relPath = null;
     const pdir = this.pipeline.dir;
     if (path.startsWith(pdir + sep)) {
@@ -3175,7 +3990,13 @@ export class RunHarness extends EventEmitter {
     // Indexed with '/' on every OS: the row is a store-layout key, not a native
     // path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the store),
     // so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
-    if (relPath) recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'));
+    if (relPath) {
+      recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'), {
+        stepKey: attr?.executionId ?? null,
+        nodeId: attr?.nodeId ?? null,
+        cycle: attr?.cycle ?? null,
+      });
+    }
   }
 
   /** Translate a low-level claude/mock event into a pipeline 'log' event. */
@@ -3237,9 +4058,17 @@ export class RunHarness extends EventEmitter {
     // instead of once per node. Looked up ONCE and shared with observeModelCost
     // below: modelCostConfig re-reads settings.json on every call.
     const costCfg = isResult && attr?.model ? modelCostConfig(attr.model) : null;
-    const cost = costCfg
-      ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
-      : rawCost;
+    // A bridged node whose upstream reported what its calls cost (OpenRouter's
+    // usage.cost, booked per execution id) records that figure: the CLI prices an
+    // id it does not know at $0, and a pinned price is only an estimate of it.
+    // Read before _recordBridgeCalls forgets the tag.
+    const upstreamCost = isResult && attr?.executionId ? bridgeCostFor(attr.executionId) : null;
+    const cost = upstreamCost
+      ? upstreamCost.costUsd
+      : costCfg
+        ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
+        : rawCost;
+    if (isResult) this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
     else if (isResult && !this.claude.mock) {
       // A {perMtok} model prices from tokens alone, so a result with no usage is
@@ -3264,6 +4093,12 @@ export class RunHarness extends EventEmitter {
         }
       } catch { /* derived state — never fail the run over it */ }
     }
+
+    // Agent memory (memory-write-split design §4): pair every Write/Edit aimed at a memory directory
+    // with its tool_result, main stream and sub-agent frames alike (same cwd, same dirs), so a write
+    // the CLI refused — or that failed for any other reason — is reported at sync time instead of
+    // vanishing. Never throws; never mutates run state.
+    this._trackMemoryWrites(e.raw, attr);
 
     // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id
     // = the id of the parent's Task tool_use block; main-agent events carry null/
@@ -3640,6 +4475,32 @@ export class RunHarness extends EventEmitter {
    * carries the figure.
    * @param {number} costUsd
    */
+  /**
+   * Model bridge (model-bridge-design.md §7.2/§8.6): the premium-request-
+   * initiating calls a node made through the bridge, read off the bridge's
+   * per-execution counter when the node's terminal `result` arrives and
+   * stamped on the step (`bridgeCalls`; `bridgeContinued` the tool-loop
+   * continuations). Nothing for a non-bridged node, so the step shape is
+   * unchanged there. Persisted through exec_meta (artifacts.mjs).
+   */
+  _recordBridgeCalls(stepKey, executionId) {
+    if (!executionId) return;
+    const calls = bridgeCallsFor(executionId);
+    if (!calls.initiated && !calls.continued) return;
+    forgetBridgeTag(executionId);
+    const key = stepKey
+      || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase);
+    const step = this.state.steps.find((s) => s.key === key);
+    if (!step) return;
+    step.bridgeCalls = (step.bridgeCalls || 0) + calls.initiated;
+    step.bridgeContinued = (step.bridgeContinued || 0) + calls.continued;
+    // OpenRouter `:free` calls (continuations too): what the step spent of the day's allowance.
+    if (calls.free) step.bridgeFreeCalls = (step.bridgeFreeCalls || 0) + calls.free;
+    this.state.updatedAt = new Date().toISOString();
+    this._emit('state', this.getState());
+    this._persist().catch(() => {});
+  }
+
   _recordCost(costUsd, stepKey = null) {
     if (!Number.isFinite(costUsd) || costUsd < 0) return;
     const key = stepKey
@@ -3735,6 +4596,8 @@ export class RunHarness extends EventEmitter {
    *   is free to ignore it and keep the old fire-and-forget reading.
    */
   async _persist() {
+    const rpNow = this.state.resumePoint;
+    if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     try {
       await writeState(this.pipeline.dir, this.state);
@@ -3774,6 +4637,12 @@ export class RunHarness extends EventEmitter {
     // 'pausing') must replay that setup on resume; a completed setup never leaves a
     // stale stamp behind (resume() re-arms the consumed point, which may carry one).
     const rp = this.state.resumePoint;
+    // ABOVE the `if (rp …)` — a pause counts whether or not the engine produced a resume point.
+    this._metricsIv.pauses += 1;
+    this._metricsIv.pausedAt = new Date().toISOString();   // resume() measures the parked time from here
+    this._metricsIv.lastPauseReason = this.pauseReason || null;
+    // _setPauseReason (run-harness.mjs:820) always stores a string or null.
+    this._metricsIv.lastPauseDetail = this.pauseDetail == null ? null : String(this.pauseDetail).slice(0, 400);
     if (rp && typeof rp === 'object') {
       if (this._setupDone) { delete rp.setupIncomplete; delete rp.titleProvisional; }
       else {
@@ -3783,11 +4652,15 @@ export class RunHarness extends EventEmitter {
         // not a row column.
         rp.titleProvisional = this.state.titleProvisional === true;
       }
+      rp.interventions = { ...this._metricsIv };
+      // Who paused it survives a restart (rowToState reads it back).
+      if (this.state.lastAction && this.state.lastAction.kind === 'pause') rp.lastAction = { ...this.state.lastAction };
+      else delete rp.lastAction;
     }
     this._setStatus('paused');
     await this._persist();
     // A plain manual pause has no reason; every reasoned pause audited at its site.
-    if (!this.pauseReason) await appendAudit(this.pipeline.dir, `Pipeline **paused**.`).catch(() => {});
+    if (!this.pauseReason) await this._auditAction('pause', 'Pipeline **paused**').catch(() => {});
     // A FORCED pause (pauseReason set: usage limit, cost cap, auto-mode
     // auth/quota, exhausted recoverable retries, an error) parks the run with
     // nobody attached, so the task source must hear it NOW — statusToResult

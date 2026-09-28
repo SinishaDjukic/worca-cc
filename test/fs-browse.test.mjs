@@ -51,6 +51,27 @@ test('empty input lists the home directory', () => withHome(root, async () => {
   assert.equal(out.home, root);
 }));
 
+function withProjectsRoot(dir, fn) {
+  const prev = process.env.WORCA_PROJECTS_ROOT;
+  process.env.WORCA_PROJECTS_ROOT = dir;
+  return Promise.resolve(fn()).finally(() => {
+    if (prev === undefined) delete process.env.WORCA_PROJECTS_ROOT; else process.env.WORCA_PROJECTS_ROOT = prev;
+  });
+}
+
+test('empty input opens at the projects root; home stays the OS home', () => withHome(root, () =>
+  withProjectsRoot(join(root, 'beta'), async () => {
+    const out = await listFolders('');
+    assert.equal(out.path, join(root, 'beta'));
+    assert.equal(out.home, root);
+  })));
+
+test('empty input falls back to home when the projects root does not exist', () => withHome(root, () =>
+  withProjectsRoot(join(root, 'no-such-dir'), async () => {
+    const out = await listFolders('');
+    assert.equal(out.path, root);
+  })));
+
 test('tilde input expands to home', () => withHome(root, async () => {
   const out = await listFolders('~/beta');
   assert.equal(out.path, join(root, 'beta'));

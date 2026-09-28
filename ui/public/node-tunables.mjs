@@ -142,9 +142,13 @@ export function pruneNodeSelection(row, next = {}) {
   // the setters ("select a model before choosing an effort").
   const inheritPair = (eff.model || '') === (row.def.model || '')
     && (eff.effort || '') === (row.def.effort || '');
+  // A PINNED row (Settings › Memory owns the pair) never edits model/effort, and the setters
+  // REPLACE both on every save: re-send the project's own stored pick untouched, so saving
+  // another tunable cannot erase it — it applies again the moment the setting is cleared.
+  const kept = row.pinned && row.storedPair ? row.storedPair : null;
   return {
-    model: inheritPair ? '' : (eff.model || ''),
-    effort: inheritPair || !eff.model ? '' : eff.effort,
+    model: kept ? kept.model : (inheritPair ? '' : (eff.model || '')),
+    effort: kept ? kept.effort : (inheritPair || !eff.model ? '' : eff.effort),
     fanOut: !!eff.fanOut === !!row.def.fanOut ? null : !!eff.fanOut,
     askQuestions: row.askQuestions === null || row.questionsLocked
       ? undefined // no capability / locked: never persist a value for it
@@ -168,6 +172,25 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   // app.js hands its own panelPortsFn (falls back to the Composer's index for
   // agents the palette omits); the card and the tests use the registry alone.
   const portsFn = typeof opts.portsFn === 'function' ? opts.portsFn : portsFnFor(reg);
+  // Settings › Memory (the built-in Memory defragment workflow only): GET /api/workflows/:id
+  // stamps `pinnedAgentModel` when a valid pair is stored, and every run of the workflow then
+  // uses it for every agent node whatever the project picked (resolveGraph `agentPair`). So the
+  // rows SHOW the pair as the default and carry `pinned`; both renderers lock model and effort —
+  // an editable model the run ignores would be a control that lies.
+  const pin = tpl && tpl.pinnedAgentModel && typeof tpl.pinnedAgentModel.model === 'string' && tpl.pinnedAgentModel.model
+    ? tpl.pinnedAgentModel : null;
+  const withoutPair = ({ model: _m, effort: _e, ...rest }) => rest;
+  // A pinned row re-sends the project's hidden pick on every save (pruneNodeSelection), and the
+  // setter refuses a model that left the catalog or an effort it no longer offers — so heal the
+  // pick against the catalog the caller holds (`opts.models`), dropping exactly what an unpinned
+  // row's selects would drop. No catalog (not loaded yet) → the pick as stored.
+  const catalog = Array.isArray(opts.models) && opts.models.length ? opts.models : null;
+  const healPair = (model, effort) => {
+    if (!model || !catalog) return { model: model || '', effort: (model && effort) || '' };
+    const hit = catalog.find((m) => m && m.id === model);
+    if (!hit) return { model: '', effort: '' };
+    return { model, effort: effort && Array.isArray(hit.efforts) && hit.efforts.includes(effort) ? effort : '' };
+  };
   const order = classifyLoops(tpl, portsFn).launchOrder;
   const byId = new Map(tpl.nodes.map((n) => [n.id, n]));
   const rank = new Map(order.map((id, i) => [id, i]));
@@ -176,8 +199,12 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
   for (const node of agentNodes) {
     const meta = reg[node.key] || null;
     const role = legacySteps ? node.key : null;
-    const saved = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
-    const wfDef = (node.config && typeof node.config === 'object') ? node.config : {};
+    const stored = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
+    const authored = (node.config && typeof node.config === 'object') ? node.config : {};
+    const saved = pin ? withoutPair(stored) : stored;
+    const wfDef = pin
+      ? { ...withoutPair(authored), model: pin.model, ...(typeof pin.effort === 'string' && pin.effort ? { effort: pin.effort } : {}) }
+      : authored;
     const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
     const metaAsks = !!(meta && meta.asksQuestions);
     const metaLocked = !!(meta && meta.questionsLocked);
@@ -195,6 +222,8 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
       def: t.def, override: t.override,
       modified: modifiedFieldsOf(t, t.def,
         { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
+      // `storedPair`: the project's own pick the pin hides — pruneNodeSelection re-sends it.
+      ...(pin ? { pinned: 'settings', storedPair: healPair(stored.model, stored.effort) } : {}),
     });
   }
   return rows;

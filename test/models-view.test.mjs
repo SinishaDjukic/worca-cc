@@ -14,7 +14,7 @@ const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 const PREDEFINED = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: EFFORTS },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: EFFORTS },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'] },
 ];
 const GLOBAL = {
@@ -151,6 +151,9 @@ test('deleteRefsSummary wording', () => {
     steps: [{ projectKey: 'a', step: 'implementer' }],
   };
   assert.match(deleteRefsSummary('x', refs), /2 node selections and 1 role selection across 2 projects/);
+  assert.match(deleteRefsSummary('x', refs), /across 2 projects\.$/, 'no Memory ref: the sentence ends as before');
+  assert.match(deleteRefsSummary('x', { ...refs, memoryDefrag: true }), /across 2 projects, and the Memory defragment model \(Settings › Memory\)\.$/);
+  assert.match(deleteRefsSummary('x', { predefinedShadow: false, nodes: [], steps: [], memoryDefrag: true }), /^Delete model "x"\? Memory defragment runs use it \(Settings › Memory\) — that setting is cleared and they fall back to the default\.$/);
 });
 
 // ── plugin section + export wizard (design §9.5–§9.6) ────────────────────────
@@ -468,7 +471,8 @@ test('list (#422): the hide-built-ins checkbox sits at the top and mirrors the f
   const shown = renderModelsList({ globals: [GLOBAL], plugins: [], predefined: PREDEFINED, efforts: EFFORTS, hideBuiltin: false }, { doc });
   const cb = shown.querySelector('.mv-hide-builtin');
   assert.ok(cb && cb.type === 'checkbox' && cb.checked === false);
-  assert.equal(shown.firstElementChild.className, 'mv-hide-builtin-row', 'top of the pane, above Your models');
+  assert.equal(shown.firstElementChild.className, 'mv-toolbar', 'the toolbar tops the pane');
+  assert.equal(shown.children[1].className, 'mv-hide-builtin-row', 'then the flag, above Your models');
   assert.equal(shown.querySelectorAll('.mv-builtin').length, PREDEFINED.length);
   assert.ok(shown.querySelector('.mv-section.mv-builtins-shown'));
 
@@ -478,6 +482,47 @@ test('list (#422): the hide-built-ins checkbox sits at the top and mirrors the f
   const sec = hidden.querySelector('.mv-section.mv-builtins-hidden');
   assert.ok(sec, 'the section stays, collapsed');
   assert.match(sec.textContent, /Hidden from every picker \(2 built-ins\)/);
+});
+
+// The catalog runs to several screens once the built-ins, a plugin's models and a team policy's are
+// all listed, and the entry you came for is never the one on top.
+test('list: the toolbar searches and filters, groups fold with a count, and built-ins start folded', () => {
+  const plug = { id: 'pm', label: 'Plugin model', efforts: [], plugin: 'acme', env: {}, secrets: [] };
+  const args = { globals: [GLOBAL], plugins: [plug], predefined: PREDEFINED, efforts: EFFORTS };
+  const plain = renderModelsList({ ...args, collapsed: { builtin: true } }, { doc });
+  const sec = (key) => plain.querySelector(`.mv-section[data-section="${key}"]`);
+  assert.equal(sec('builtin').classList.contains('is-folded'), true, 'built-ins start folded');
+  assert.equal(sec('builtin').querySelector('.mv-sec-toggle').getAttribute('aria-expanded'), 'false');
+  // The same chevron as every other disclosure (New pipeline's Advanced, the model editor's Advanced).
+  const caret = sec('builtin').querySelector('.mv-sec-toggle .mv-sec-caret');
+  assert.ok(caret.classList.contains('adv-chev'), 'group caret is the shared disclosure chevron');
+  assert.equal(caret.getAttribute('aria-hidden'), 'true');
+  assert.equal(caret.textContent, '', 'a CSS chevron, not a text glyph');
+  assert.equal(sec('builtin').querySelector('.mv-sec-count').textContent, String(PREDEFINED.length), 'the count answers "is it in there?"');
+  assert.equal(sec('global').classList.contains('is-folded'), false);
+  assert.equal(plain.querySelectorAll('.mv-builtin').length, PREDEFINED.length, 'folded is CSS, not absent — search still finds them');
+  assert.deepEqual([...plain.querySelectorAll('.mv-filter')].map((c) => c.textContent), ['All', 'Yours', 'Built-in', 'Plugin', 'Team', 'Needs setup']);
+
+  // A search opens every group that still has a hit, and drops the groups that have none.
+  const hit = renderModelsList({ ...args, collapsed: { builtin: true }, query: PREDEFINED[0].id }, { doc });
+  assert.equal(hit.querySelector('.mv-search').value, PREDEFINED[0].id);
+  assert.equal(hit.querySelector(`.mv-section[data-section="builtin"]`).classList.contains('is-folded'), false, 'a match is never hidden in a fold');
+  assert.equal(hit.querySelectorAll('.mv-builtin').length, 1);
+  assert.equal(hit.querySelector(`.mv-section[data-section="global"]`).classList.contains('hidden'), true, 'a group with no hit drops out');
+
+  const none = renderModelsList({ ...args, query: 'zzz-nothing' }, { doc });
+  assert.match(none.querySelector('.mv-no-hits').textContent, /No model matches “zzz-nothing”/);
+
+  // The chips pick a layer; "Just imported" appears only when something just landed.
+  const onlyPlugin = renderModelsList({ ...args, filter: 'plugin' }, { doc });
+  assert.equal(onlyPlugin.querySelectorAll('.mv-card').length, 1);
+  assert.equal(onlyPlugin.querySelector('.mv-card').dataset.id, 'pm');
+  assert.equal(onlyPlugin.querySelector('.mv-filter[data-filter="plugin"]').getAttribute('aria-pressed'), 'true');
+  const imported = renderModelsList({ ...args, filter: 'imported', highlight: [GLOBAL.id] }, { doc });
+  assert.ok(imported.querySelector('.mv-filter[data-filter="imported"]'), 'the chip exists only with an import to show');
+  assert.deepEqual([...imported.querySelectorAll('.mv-card')].map((c) => c.dataset.id), [GLOBAL.id]);
+  const needs = renderModelsList({ globals: [{ ...GLOBAL, needsSignIn: true }, { ...GLOBAL, id: 'ok-one' }], predefined: PREDEFINED, efforts: EFFORTS, filter: 'needs-setup' }, { doc });
+  assert.deepEqual([...needs.querySelectorAll('.mv-card')].map((c) => c.dataset.id), [GLOBAL.id]);
 });
 
 test('list (#422): endpoint-routed badge on global + plugin cards whose env carries ANTHROPIC_BASE_URL, and only those', () => {

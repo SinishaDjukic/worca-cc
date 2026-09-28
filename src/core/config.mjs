@@ -16,9 +16,16 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, withTierModelEnv, isSubagentModelValue, subagentModelIssue } from './model-env.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels } from './settings.mjs';
+import { EFFORTS, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
+import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
+import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
+/** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
+const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
+// Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
+import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
+import { PREDEFINED_LIST_PRICES } from './list-prices.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -61,11 +68,15 @@ export { EFFORTS };
  * available for this subscription"). Fable 5.1 needs no `[1m]` suffix: its context
  * window is 1M by default (verified to resolve via `claude --model`, CLI 2.1.257).
  * It replaced Fable 5 (`claude-fable-5`) on 2026-09-01; db.mjs V26 moves every
- * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5
- * (`claude-opus-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
- * carry no `[1m]` twin.
+ * stored pin on the retired id to the successor, so nothing keeps it here. Opus 5.5
+ * (`claude-opus-5-5`) and Sonnet 5 (`claude-sonnet-5`) are likewise 1M-only and
+ * carry no `[1m]` twin. Opus 5.5 replaced Opus 5 (`claude-opus-5`) on 2026-09-22
+ * (verified to resolve via `claude --model`, CLI 2.1.280); db.mjs V35 moved the
+ * stored pins the same way. Opus 5 came back beside it on 2026-09-23 so both can
+ * be picked; V35 is shipped and stays, so pins it already moved stay on Opus 5.5.
  */
 export const PREDEFINED_MODELS = [
+  { id: 'claude-opus-5-5',        label: 'Opus 5.5',        efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-5',          label: 'Opus 5',          efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-fable-5-1',       label: 'Fable 5.1 (1M)',  efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-8',        label: 'Opus 4.8',        efforts: ['medium', 'high', 'xhigh', 'max'] },
@@ -134,7 +145,7 @@ function parseJson(text, fallback) {
  * @param {string} key
  * @returns {{steps:string,custom_models:string,active_workflow_id:(string|null),extra:string}|null}
  */
-function readConfigRow(key) {
+export function readConfigRow(key) {
   getDb();
   return prepare(
     'SELECT steps, custom_models, active_workflow_id, extra, human_in_loop FROM project_config WHERE project_key = ?'
@@ -175,7 +186,7 @@ export async function readConfig(projectDir) {
  * env objects already in scope here, NEVER by calling modelHasBaseUrlRouting per
  * entry (that re-reads settings + the plugins lock from disk on every row).
  */
-function composeCatalog(projectCustom = []) {
+function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const globals = listGlobalModels();
   const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
   const plugins = listPluginModels();
@@ -189,17 +200,40 @@ function composeCatalog(projectCustom = []) {
   // read by every picker. The entry stays in the catalog — hiding an id must
   // never stop it resolving, or a stored run / plugin reference that names it
   // would break — so pickers skip `hidden`, validators ignore it.
-  const hidden = hideBuiltinModels() ? { hidden: true } : {};
+  // A team-policy default applies only while the developer has not stored the flag themselves.
+  const teamHide = projectDir ? teamDefault(projectDir, 'models.hideBuiltins') : undefined;
+  const hideStored = readSettingsHideStored();
+  const hidden = (hideStored ? hideBuiltinModels() : (teamHide === true || hideBuiltinModels())) ? { hidden: true } : {};
+  // Bridged entries (model-bridge-design.md §8.5): `bridged` names the provider
+  // (false otherwise), `upstreamApi` the wire protocol, `needsSignIn` whether
+  // the provider is usable right now (pickers skip such entries unless they are
+  // the current selection), `capabilities` what the editor pinned. `routed` is
+  // true too: the CLI IS pointed at a custom endpoint (worca's own bridge).
+  // provider + the entry's own key/base URL -> readiness (both can decide it)
+  const readiness = new Map();
+  const bridgeShape = (m) => {
+    if (!m.upstream) return {};
+    const p = m.upstream.provider;
+    const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+    if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
+    const r = readiness.get(key);
+    return {
+      bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
+      needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
+      ...(m.upstream.capabilities ? { capabilities: { ...m.upstream.capabilities } } : {}),
+    };
+  };
+  const routedOrBridged = (m) => routedOf(m.env) || !!m.upstream;
   const pluginShape = (id, m, lc) => ({
     id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
-    hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc),
+    hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m),
   });
   for (const m of PREDEFINED_MODELS) {
     const lc = m.id.toLowerCase();
     const shadow = globalByIdLc.get(lc);
     const pshadow = pluginByIdLc.get(lc);
     out.push(shadow
-      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOf(shadow.env), ...unreliable(lc) }
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow
         ? pluginShape(m.id, pshadow, lc)
         : { ...m, custom: false, hasEnv: false, routed: false, ...hidden });
@@ -209,13 +243,22 @@ function composeCatalog(projectCustom = []) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue; // predefined shadow, already emitted
     seen.add(lc);
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOf(m.env), ...unreliable(lc) });
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of plugins) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue; // predefined/global shadow wins
     seen.add(lc);
     out.push(pluginShape(m.id, m, lc));
+  }
+  // Team-policy catalog entries (team-policy design §8): after global and plugin, before the
+  // legacy per-project ones. Read-only rows with a policy badge; `home` names the policy.
+  for (const m of policyCatalogModels()) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'policy', policy: m.home,
+      hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
@@ -239,11 +282,35 @@ function composeCatalog(projectCustom = []) {
 export function modelHasBaseUrlRouting(modelId) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return false;
+  // With the credential broker on, EVERY model is routed (to <broker>/p/<slot>), and the
+  // broker, not a CLI sign-in, authenticates it (claude-auth.mjs must never call a broker
+  // failure "signed out").
+  if (typeof process.env.WORCA_BROKER_URL === 'string' && process.env.WORCA_BROKER_URL.trim()) return true;
   const lc = id.toLowerCase();
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
-  if (entry) return !!(entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
+  if (entry) return !!entry.upstream || !!(entry.env && 'ANTHROPIC_BASE_URL' in entry.env);
   const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
-  return !!(pm && pm.env && 'ANTHROPIC_BASE_URL' in pm.env);
+  if (pm) return !!pm.upstream || !!(pm.env && 'ANTHROPIC_BASE_URL' in pm.env);
+  return !!findBridgedEntry(id);   // a team-policy entry with an upstream
+}
+
+/**
+ * The bridge facts for a model id (model-bridge-design.md §4.2/§8.5), or null
+ * when it is not a bridged entry: `{id, provider, api, upstreamModel,
+ * excludeTools, ready, reason?, message?}`. `excludeTools` are the CLI built-ins
+ * the runner must withhold (web tools have no chat/completions or Responses API equivalent);
+ * `ready` is the provider's sign-in state — a spawn fails fast on it instead
+ * of with an opaque 401 mid-run. Synchronous; never throws.
+ */
+export function bridgedModelInfo(modelId) {
+  const e = findBridgedEntry(modelId);
+  if (!e) return null;
+  const r = providerReadiness(e.upstream);
+  return {
+    id: e.id, provider: e.upstream.provider, api: e.upstream.api, upstreamModel: e.upstream.model,
+    excludeTools: bridgeExcludedTools(e.upstream),
+    ready: r.ok, ...(r.ok ? {} : { reason: r.reason, message: r.message }),
+  };
 }
 
 /** Lowercased ids currently flagged cost-unreliable. Never throws ({} on any
@@ -423,7 +490,8 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 
 // ── display-only list prices ──────────────────────────────────────────────────
 // USD per MILLION tokens for the built-in ids, from Anthropic's published
-// pricing (platform.claude.com/docs/en/pricing — snapshot 2026-06-24). DISPLAY
+// pricing (platform.claude.com/docs/en/pricing — snapshot 2026-06-24; Opus 5.5
+// added 2026-09-22). DISPLAY
 // APPROXIMATION ONLY: it feeds the chat footer's live "≈" estimate while a turn
 // streams (ask/events.mjs `estimatedCostUsd`). The CLI's result.total_cost_usd,
 // re-priced by resolveModelCost, stays the ONLY figure any message row, thread
@@ -431,19 +499,12 @@ export function resolveModelCost(modelId, cliCostUsd, usage, costCfg = undefined
 // Ids missing here get no estimate (null), which is the pre-existing behaviour;
 // `[1m]` twins and dated ids resolve to their base row (the long-context premium
 // is not modelled). cacheWrite = 1.25× input (5-minute TTL), cacheWrite1h = 2×
-// input, cacheRead = 0.1× input except Fable 5.1 (0.025×). Refresh by hand when
+// input, cacheRead = 0.1× input except Fable 5.1 (0.025×) and Opus 5.5 (0.05×). Refresh by hand when
 // Anthropic moves a price. PREDEFINED_MODELS itself stays untouched — its entry
-// shape is pinned (test/config-models-global.test.mjs:205).
-export const PREDEFINED_LIST_PRICES = Object.freeze({
-  'claude-fable-5-1':  { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5, cacheWrite1h: 20 },
-  'claude-opus-5':     { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
-  'claude-opus-4-8':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
-  'claude-opus-4-7':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
-  'claude-opus-4-6':   { input: 5,  output: 25, cacheRead: 0.5,  cacheWrite: 6.25, cacheWrite1h: 10 },
-  'claude-sonnet-5':   { input: 2,  output: 10, cacheRead: 0.2,  cacheWrite: 2.5,  cacheWrite1h: 4 },
-  'claude-sonnet-4-6': { input: 3,  output: 15, cacheRead: 0.3,  cacheWrite: 3.75, cacheWrite1h: 6 },
-  'claude-haiku-4-5':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25, cacheWrite1h: 2 },
-});
+// shape is pinned (test/config-models-global.test.mjs:205). The table itself lives
+// in the zero-import leaf list-prices.mjs (the credential broker prices budgets from
+// it too) and is re-exported here for existing importers.
+export { PREDEFINED_LIST_PRICES };
 
 const FREE_RATES = Object.freeze({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0 });
 
@@ -469,9 +530,9 @@ export function liveCostRates(modelId) {
  * raw id); global entries advertise their configured subset.
  */
 export async function listModels(projectDir) {
-  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global only
+  if (!projectDir) return composeCatalog([]); // project-less: predefined ⊕ global ⊕ plugin ⊕ policy
   const { customModels } = readRaw(projectDir);
-  return composeCatalog(customModels);
+  return composeCatalog(customModels, { projectDir });
 }
 
 /**
@@ -486,7 +547,7 @@ export async function listModels(projectDir) {
  * @param {string} modelId
  * @returns {Record<string,string>|undefined}
  */
-export function resolveModelEnv(modelId) {
+export function resolveModelEnv(modelId, { tag } = {}) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return undefined;
   const lc = id.toLowerCase();
@@ -494,6 +555,58 @@ export function resolveModelEnv(modelId) {
   let who;
   let canonicalId = id;
   const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  // A BRIDGED entry (model-bridge-design.md §4.2): the CLI talks to worca's
+  // own loopback bridge, which forwards to the entry's upstream. The routing
+  // keys are synthesized here — never user-editable beside `upstream` — and
+  // the entry's remaining env (a CLAUDE_CODE_* knob, say) still merges. Only
+  // the user's global layer and a plugin layer may be bridged; policy entries
+  // carry `upstream` too but ride the same lookup (registry.findBridgedEntry).
+  const bridged = findBridgedEntry(id);
+  if (bridged) {
+    // Fail fast (§8.5): a provider that is not signed in / not acknowledged
+    // would otherwise surface as an opaque 401 mid-run. This is the ONE case
+    // in which this resolver throws; every dispatch site already routes a
+    // runClaude failure to its error path, and the Test button's hint keys on
+    // `bridgeReason`. The error class is `auth` so recovery policy treats it
+    // like any credential failure (never retried blindly).
+    const ready = providerReadiness(bridged.upstream);
+    if (!ready.ok) {
+      const err = new Error(ready.message);
+      err.errorClass = 'auth';
+      err.bridgeReason = ready.reason;
+      err.bridgeProvider = bridged.upstream.provider;
+      throw err;
+    }
+    const base = bridged.source === 'global' && entry ? entry : null;
+    const { env: extra, dropped } = prepareModelEnv(base && base.env ? base.env : {});
+    for (const k of dropped) {
+      console.warn(`[worca] model ${JSON.stringify(bridged.id)}: dropping env key ${JSON.stringify(k)} (reserved or unresolvable \${VAR} ref)`);
+    }
+    // The bridge owns the CLI's transport too: an entry-level cloud switch would
+    // send the CLI past the loopback bridge, so it is dropped and forced off below.
+    for (const k of [...BRIDGE_ROUTING_KEYS, ...PROVIDER_MODE_ENV_KEYS]) delete extra[k];
+    const env = {
+      ...extra,
+      ANTHROPIC_BASE_URL: bridgeBaseUrl(bridged.id, { tag }),
+      ANTHROPIC_AUTH_TOKEN: bridgeSecret(),
+      ANTHROPIC_MODEL: bridged.id,
+    };
+    // The CLI turns tool search off for a non-Anthropic base URL and then sends
+    // every MCP tool schema in full — hundreds of KB with a few user MCP
+    // servers, far past a translated model's prompt limit (a local 32k model
+    // fails its first call). Its ToolSearch is client-side (schemas come back
+    // as tool_result text), so it works through the translation layer; the
+    // entry's own env may still turn it off.
+    if (isTranslatedApi(bridged.upstream.api) && !('ENABLE_TOOL_SEARCH' in env)) env.ENABLE_TOOL_SEARCH = 'true';
+    // A bridged id is never a model name the CLI knows, so it assumes a 200k
+    // window and compacts only once the upstream rejects a request — on a 32k
+    // local model that means turns whose reply is cut to a few hundred tokens
+    // long before any overflow. The pinned limits are the real window.
+    const caps = bridged.upstream.capabilities || {};
+    if (caps.maxPromptTokens && !('CLAUDE_CODE_MAX_CONTEXT_TOKENS' in env)) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(caps.maxPromptTokens);
+    if (caps.maxOutputTokens && !('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in env)) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(caps.maxOutputTokens);
+    return withProviderModesOff(withTierModelEnv(env, bridged.id));
+  }
   if (entry && entry.env) {
     rawEnv = entry.env;
     who = JSON.stringify(entry.id);
@@ -508,6 +621,15 @@ export function resolveModelEnv(modelId) {
       rawEnv = env;
       who = `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`;
       canonicalId = pm.id;
+    } else if (!pm) {
+      // A team-policy catalog entry, reached only when neither the user nor a plugin defines the
+      // id. Its env carries literals and ${VAR} refs only: the editor and the reader refuse secrets.
+      const tm = policyCatalogModels().find((m) => m.id.toLowerCase() === lc);
+      if (tm && tm.env) {
+        rawEnv = tm.env;
+        who = `${JSON.stringify(tm.id)} (team policy ${tm.home})`;
+        canonicalId = tm.id;
+      }
     }
   }
   if (!rawEnv) return undefined;
@@ -519,8 +641,10 @@ export function resolveModelEnv(modelId) {
   // Endpoint-routed entries also carry the CLI's internal tier keys, pointed at
   // this entry's own wire id (#422, model-env.mjs#withTierModelEnv) — so the
   // CLI's session-title / alias / probe calls never fall back to a first-party
-  // id the endpoint has never heard of. Keys the entry sets itself win.
-  return withTierModelEnv(env, canonicalId);
+  // id the endpoint has never heard of. They also turn the CLI's cloud
+  // transports off (withProviderModesOff), which would bypass the base URL.
+  // Keys the entry sets itself win.
+  return withProviderModesOff(withTierModelEnv(env, canonicalId));
 }
 
 /**
@@ -535,7 +659,8 @@ export function catalogHasModel(modelId) {
   const lc = id.toLowerCase();
   return PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)
     || listGlobalModels().some((m) => m.id.toLowerCase() === lc)
-    || listPluginModels().some((m) => m.id.toLowerCase() === lc);
+    || listPluginModels().some((m) => m.id.toLowerCase() === lc)
+    || policyCatalogModels().some((m) => m.id.toLowerCase() === lc);
 }
 
 /**
@@ -546,9 +671,12 @@ export function catalogHasModel(modelId) {
  */
 export async function resolveStepModels(projectDir, fallbackModel) {
   const cfg = readRaw(projectDir);
+  // Team policy `models.steps` (a default): starts a role the project has NOT configured.
+  const team = teamDefault(projectDir, 'models.steps') || {};
   const out = {};
   for (const { key } of agentSteps()) {
-    const sel = cfg.steps[key] || {};
+    const own = cfg.steps[key] || {};
+    const sel = own.model || own.effort ? own : (team[key] || {});
     out[key] = { model: sel.model || fallbackModel || undefined, effort: sel.effort || undefined };
   }
   return out;
@@ -827,17 +955,24 @@ export async function readRunConfig(projectDir) {
   const extra = row ? parseJson(row.extra, {}) : {};
   if (extra.webUiTesting && typeof extra.webUiTesting === 'object') out.webUiTesting = extra.webUiTesting;
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
+  // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && k !== TEAM_POLICY_KEY && k !== 'humanInLoopSet' && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
-  // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto.
-  out.activeWorkflowId = active || AUTO_WORKFLOW_ID;
+  // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto — unless a
+  // team policy names a default workflow (team-policy design §8), which starts it there instead.
+  const teamWf = active ? undefined : teamDefault(projectDir, 'workflows.default');
+  out.activeWorkflowId = active || (typeof teamWf === 'string' && teamWf ? teamWf : AUTO_WORKFLOW_ID);
+  if (!active && teamWf) out.activeWorkflowSource = 'team-policy';
   // Auto workflow (spec §6.1): the human-in-the-loop switch. ON is the default
   // and is NOT echoed — the key appears only when the project turned it off, so
   // every consumer reads `config.humanInLoop ?? true` and the config shape of a
-  // project that never touched it stays otherwise byte-identical.
+  // project that never touched it stays otherwise byte-identical. A team default applies only
+  // while the project has never set its own switch (setHumanInLoop stamps extra.humanInLoopSet).
   if (row && row.human_in_loop === 0) out.humanInLoop = false;
+  else if (!extra.humanInLoopSet && teamDefault(projectDir, 'run.humanInLoop') === false) out.humanInLoop = false;
+  delete out.humanInLoopSet;
   return out;
 }
 
@@ -1035,6 +1170,132 @@ export async function setActiveWorkflow(projectDir, workflowId) {
   });
 }
 
+// ── PR remote preferences (project_config.extra.prRemotes) ──────────────────
+// The History "Ship it?" dialog remembers which remote the branch was pushed to
+// and which repo the PR was opened in. Stored inside the free-form `extra` JSON
+// column — the FIRST runtime writer of that column: a read-modify-write of this
+// ONE key inside a tx, leaving every other top-level key of `extra` byte-identical
+// (test/config-db.test.mjs pins that for the sibling writers, which upsert only
+// their own columns and never touch `extra` on conflict).
+const PR_REMOTES_KEY = 'prRemotes';
+
+function sanitizeRemoteName(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s && s.length <= 200 ? s : null;
+}
+
+/**
+ * Remembered push/base remote names for a project, or null when none.
+ * @param {string} projectDir
+ * @returns {{ pushRemote:(string|null), baseRemote:(string|null) }|null}
+ */
+export function readPrRemotePrefs(projectDir) {
+  const row = readConfigRow(projectKey(projectDir));
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const p = extra[PR_REMOTES_KEY];
+  if (!p || typeof p !== 'object') return null;
+  const pushRemote = sanitizeRemoteName(p.pushRemote);
+  const baseRemote = sanitizeRemoteName(p.baseRemote);
+  return pushRemote || baseRemote ? { pushRemote, baseRemote } : null;
+}
+
+/** Remember the dialog's choice. Only `extra.prRemotes` changes; every other column/key is preserved. */
+export async function setPrRemotePrefs(projectDir, { pushRemote, baseRemote } = {}) {
+  const key = projectKey(projectDir);
+  const next = { pushRemote: sanitizeRemoteName(pushRemote), baseRemote: sanitizeRemoteName(baseRemote) };
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    extra[PR_REMOTES_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+}
+
+// ── Team-metrics preferences (project_config.extra.teamMetrics) ────────────
+// The discovery cache + local enable state for the team-metrics feature (§4.6).
+// Same read-modify-write pattern as prRemotes above, one key of the same `extra` blob.
+export const TEAM_METRICS_KEY = 'teamMetrics';
+
+/**
+ * NOTE THE PARAMETER. Unlike its siblings `readPrRemotePrefs(projectDir)` /
+ * `setPrRemotePrefs(projectDir, …)` above, which take a DIRECTORY and call
+ * `projectKey()` themselves, these two take the KEY. Passing a path is not a type error — it is a
+ * valid SQL parameter that matches no row, so the call silently returns null, which reads as
+ * "not enabled" and drops every record. `assertProjectKey` makes that a loud failure instead.
+ */
+function assertProjectKey(key) {
+  if (typeof key !== 'string' || !/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(key)) {
+    throw new TypeError(`team metrics prefs take a projectKey(), not ${JSON.stringify(key)} — did you pass a directory?`);
+  }
+  return key;
+}
+
+/** @returns {object|null} the cached team-metrics state for a project key */
+export function readTeamMetricsPrefs(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_METRICS_KEY];
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+/** Shallow-merge `patch` into extra.teamMetrics; returns the merged object. */
+export function writeTeamMetricsPrefs(key, patch) {
+  assertProjectKey(key);
+  let next = null;
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    const cur = extra[TEAM_METRICS_KEY] && typeof extra[TEAM_METRICS_KEY] === 'object' ? extra[TEAM_METRICS_KEY] : {};
+    next = { ...cur, ...patch };
+    extra[TEAM_METRICS_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return next;
+}
+
+// ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────
+// The discovery cache for the worca-policy branch (team-policy design §9): the last
+// verdict, the document read from origin, the delegate marker, and the per-window
+// total-cap acknowledgements. Same KEY-taking contract as the team-metrics pair.
+export const TEAM_POLICY_KEY = 'teamPolicy';
+
+/** @returns {object|null} the cached team-policy state for a project key */
+export function readTeamPolicyPrefs(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const extra = row ? parseJson(row.extra, {}) : {};
+  const v = extra[TEAM_POLICY_KEY];
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+/** Shallow-merge `patch` into extra.teamPolicy; returns the merged object. */
+export function writeTeamPolicyPrefs(key, patch) {
+  assertProjectKey(key);
+  let next = null;
+  tx(() => {
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    const cur = extra[TEAM_POLICY_KEY] && typeof extra[TEAM_POLICY_KEY] === 'object' ? extra[TEAM_POLICY_KEY] : {};
+    next = { ...cur, ...patch };
+    extra[TEAM_POLICY_KEY] = next;
+    prepare(`
+      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
+      VALUES (?, '{}', '[]', NULL, ?)
+      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
+    `).run(key, JSON.stringify(extra));
+  });
+  return next;
+}
+
 /**
  * Set the project's human-in-the-loop switch for Auto runs (spec D15/D20).
  * @param {string} projectDir
@@ -1049,6 +1310,13 @@ export async function setHumanInLoop(projectDir, value) {
       VALUES (?, '{}', '[]', NULL, '{}', ?)
       ON CONFLICT(project_key) DO UPDATE SET human_in_loop = excluded.human_in_loop
     `).run(key, v);
+    // The project now has its own switch: a team-policy default no longer applies (design §6).
+    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+    const extra = row ? parseJson(row.extra, {}) : {};
+    if (!extra.humanInLoopSet) {
+      extra.humanInLoopSet = true;
+      prepare('UPDATE project_config SET extra = ? WHERE project_key = ?').run(JSON.stringify(extra), key);
+    }
   });
 }
 
@@ -1090,18 +1358,25 @@ function allProjectConfigRows() {
 /**
  * Preview what removing a global catalog entry would clear, for the UI's
  * confirmation dialog. `predefinedShadow: true` means the removal only reverts
- * an override and clears nothing. Synchronous; never throws.
+ * an override and clears nothing. `memoryDefrag: true` (present only then) —
+ * Settings › Memory's defragment model is this id. Synchronous; never throws.
  * @param {string} id
  * @returns {{predefinedShadow: boolean,
  *            steps: Array<{projectKey:string, step:string}>,
- *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>}}
+ *            nodes: Array<{projectKey:string, workflowId:string, nodeId:string}>,
+ *            memoryDefrag?: true}}
  */
 export function globalModelRefs(id) {
   const lc = (typeof id === 'string' ? id : '').trim().toLowerCase();
   if (PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)) {
     return { predefinedShadow: true, steps: [], nodes: [] };
   }
-  return { predefinedShadow: false, ...refsForModelId(lc, allProjectConfigRows()) };
+  const defrag = memoryDefragModel().model;
+  return {
+    predefinedShadow: false,
+    ...refsForModelId(lc, allProjectConfigRows()),
+    ...(defrag && defrag.toLowerCase() === lc ? { memoryDefrag: true } : {}),
+  };
 }
 
 /** Cross-project step/node refs to one lowercased model id, minus projects
@@ -1160,8 +1435,10 @@ export function referencedPluginModels(pluginName) {
  * above). Ref purge and settings removal are not one transaction — a purge
  * that lands without the removal (or vice versa on a crash) is harmless, since
  * refs can be re-set and purging is idempotent.
+ * Settings › Memory's defragment model is a ref too: it is cleared with the entry
+ * (its effort with it) and the result says so with `clearedMemoryDefrag: true`.
  * @param {string} id
- * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean}>}
+ * @returns {Promise<{clearedSteps:number, clearedNodes:number, predefinedShadow:boolean, clearedMemoryDefrag?:true}>}
  * @throws {Error} on an unknown id (from removeGlobalModel)
  */
 export async function removeGlobalModelAndRefs(id) {
@@ -1214,6 +1491,7 @@ export async function removeGlobalModelAndRefs(id) {
       }
     });
   }
+  if (refs.memoryDefrag) await setMemoryDefragModel(null);   // idempotent, like the purge above
   await removeGlobalModel(id); // throws on unknown id — AFTER the idempotent purge
-  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow };
+  return { clearedSteps, clearedNodes, predefinedShadow: refs.predefinedShadow, ...(refs.memoryDefrag ? { clearedMemoryDefrag: true } : {}) };
 }

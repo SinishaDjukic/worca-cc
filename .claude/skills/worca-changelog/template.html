@@ -33,6 +33,7 @@
   h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
   h1{font-size:clamp(44px,7vw,92px)}
   h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
   .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
   .chips{display:flex;flex-wrap:wrap;gap:10px}
   .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
@@ -237,9 +238,9 @@
     <div class="sec-head rv">
       <span class="kicker"><span class="dot"></span>{{Area}}</span>
       <h2>{{Outcome headline, ≤ 7 words.}}</h2>
-      <p class="sub">{{One or two sentences: what changed and why it matters.}}</p>
+      <p class="sub"><b>{{The problem, as a question the reader recognises?}}</b><br>Now {{what Worca does and how, in plain words}}.</p>
       <div class="chips">
-        <span class="chip"><b>{{N}}</b> {{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span>
+        <span class="chip"><b>{{N}}</b> {{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span>
       </div>
     </div>
     <div class="grid2">
@@ -264,9 +265,9 @@
     <div class="sec-head rv">
       <span class="kicker"><span class="dot" style="background:var(--info)"></span>{{Area}}</span>
       <h2>{{Outcome headline.}}</h2>
-      <p class="sub">{{Sub.}}</p>
+      <p class="sub"><b>{{Problem?}}</b><br>Now {{answer}}.</p>
       <div class="chips">
-        <span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span>
+        <span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span>
       </div>
     </div>
     <div class="grid2">
@@ -291,9 +292,9 @@
     <div class="sec-head rv">
       <span class="kicker"><span class="dot" style="background:var(--warn)"></span>{{Area}}</span>
       <h2>{{Outcome headline.}}</h2>
-      <p class="sub">{{Sub.}}</p>
+      <p class="sub"><b>{{Problem?}}</b><br>Now {{answer}}.</p>
       <div class="chips">
-        <span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span>
+        <span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span>
       </div>
     </div>
     <div class="grid2">
@@ -334,9 +335,9 @@
     <div class="sec-head rv">
       <span class="kicker"><span class="dot" style="background:var(--bad)"></span>{{Area}}</span>
       <h2>{{Outcome headline.}}</h2>
-      <p class="sub">{{Sub.}}</p>
+      <p class="sub"><b>{{Problem?}}</b><br>Now {{answer}}.</p>
       <div class="chips">
-        <span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span>
+        <span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span>
       </div>
     </div>
     <div class="grid2 flip">
@@ -358,9 +359,9 @@
     <div class="sec-head rv">
       <span class="kicker"><span class="dot" style="background:var(--ok)"></span>{{Area}}</span>
       <h2>{{Outcome headline.}}</h2>
-      <p class="sub">{{Sub.}}</p>
+      <p class="sub"><b>{{Problem?}}</b><br>Now {{answer}}.</p>
       <div class="chips">
-        <span class="chip">{{fact}}</span><span class="chip">{{fact}}</span><span class="chip">{{fact}}</span>
+        <span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span><span class="chip">{{plain phrase}}</span>
       </div>
     </div>
     <div class="grid2 flip">

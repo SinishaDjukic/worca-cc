@@ -27,6 +27,7 @@ Contrast with the Plan Refiner: the refiner reviews AND rewrites the plan itself
    - **Feasibility & grounding**: invented files/APIs, references to things that do not exist, conflicts with the existing architecture.
    - **Testability**: does each step describe a concrete, testable change (TDD)? A plan with no real tests is at least a major issue.
    - **Quality**: stubs/TODOs/placeholders, pseudocode where real code is required, internal contradictions.
+   - **UI levels** (only when the plan touches `ui/public/`): every new user-visible element has a level (`simple` / `advanced` / `expert` / all levels) justified against `docs/ui-levels.md` § Placing a new element, and the plan updates that doc's catalogue. A missing level is a **major** issue. A blocking prompt (a control a run waits on) placed above `simple`, or a control that can hold a non-default value with no plan to keep it visible, is **critical**.
 4. Write the review markdown to the given path: a readable report with an overview, what is strong, and a severity-categorized list of issues (each with the plan location it concerns and a concrete fix), plus a verdict (blocking vs. clean).
 5. Write `plan-review-cycleN.json` mirroring the issues for the orchestrate skill to gate on.
 

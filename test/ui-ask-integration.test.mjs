@@ -18,7 +18,7 @@ const MID = 'askm_00000001';
 function askArms(url, opts) {
   const method = ((opts && opts.method) || 'GET').toUpperCase();
   if (url.includes('/api/ask/models')) {
-    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
     return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };
@@ -170,7 +170,7 @@ test('ui-ask-integration: ask frames reach the panel; runId frames do not', asyn
   const { window, recv } = await boot();
   await openSheet(window);
   await sendText(window, 'stream something');
-  recv({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'claude-opus-5', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
+  recv({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'claude-opus-5-5', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
   recv({ type: 'ask-delta', text: 'streamed!', threadId: TID, messageId: MID, seq: 2 });
   await settle(window);
   assert.match(window.document.querySelector('.ask-transcript').textContent, /streamed!/);
@@ -228,7 +228,7 @@ test('ui-ask-integration: the send body carries the resolved page context', asyn
   await openSheet(window);
   await sendText(window, 'context check one');
   const post1 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(post1.opts.body).context, { view: 'new', projectDir: '/repos/proj', pinned: false }); // #397: Auto declares itself
+  assert.deepEqual(JSON.parse(post1.opts.body).context, { view: 'new', projectDir: '/repos/proj', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }); // #397: Auto declares itself
   recv({ type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {}, threadId: TID, messageId: MID, seq: 1 });
   recv({ type: 'hello', runs: [RUN_ROW], ask: [] });
   await settle(window);
@@ -236,5 +236,5 @@ test('ui-ask-integration: the send body carries the resolved page context', asyn
   await settle(window);
   await sendText(window, 'context check two');
   const post2 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-  assert.deepEqual(JSON.parse(post2.opts.body).context, { view: 'running', runId: 'r1', projectDir: '/p', pinned: false }); // #397
+  assert.deepEqual(JSON.parse(post2.opts.body).context, { view: 'running', runId: 'r1', projectDir: '/p', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }); // #397
 });

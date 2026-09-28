@@ -8,16 +8,16 @@ import { join, resolve, isAbsolute } from 'node:path';
 import {
   buildAskSpawnOptions, buildMcpConfig, buildMockMarkers, MCP_FORWARD_ENV,
   ASK_DENY_RULES, ASK_SPAWN_ENV, SANDBOX_NOTE, ASK_PERMISSION_MODE, ASK_MCP_SERVER_PATH,
-  ASK_BUILTIN_TOOLS, askWorktreeAllowRules,
+  ASK_BUILTIN_TOOLS, askWorktreeAllowRules, webMcpEnv, webKeyVar, SANDBOX_NOTE_WEB,
 } from '../src/core/ask/spawn.mjs';
-import { buildClaudeArgs, runClaude } from '../src/core/claude-runner.mjs';
+import { buildClaudeArgs, runClaude, buildSpawnEnv } from '../src/core/claude-runner.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
 const FAKE_HOME = '/Users/zed/.worca-cc';
 const base = () => ({
   thread: { id: 'ask_00000001', sessionId: null },
-  turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'claude-opus-5', effort: 'high', modelEnv: undefined },
+  turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'claude-opus-5-5', effort: 'high', modelEnv: undefined },
   limits: { maxTurns: 40, maxBudgetUsd: 2 },
   mcpConfigPath: join(FAKE_HOME, 'tmp', 'ask', 'mcp-askm_00000001.json'),
   scratchDir: join(FAKE_HOME, 'tmp', 'ask'),
@@ -36,7 +36,7 @@ test('the recipe: cwd, dontAsk, Task + Read/Grep/Glob built-ins, worca grant, sc
   assert.ok(o.cwd.endsWith(join('tmp', 'ask')) && o.cwd !== FAKE_HOME, 'never the home itself');
   assert.equal(o.prompt, 'hello');
   assert.equal(o.systemPrompt, 'SYS');
-  assert.equal(o.model, 'claude-opus-5');
+  assert.equal(o.model, 'claude-opus-5-5');
   assert.equal(o.effort, 'high');
   assert.equal(o.permissionMode, 'dontAsk');
   assert.equal(ASK_PERMISSION_MODE, 'dontAsk');
@@ -48,6 +48,7 @@ test('the recipe: cwd, dontAsk, Task + Read/Grep/Glob built-ins, worca grant, sc
   assert.deepEqual(o.envAllowlist, ['SSH_AUTH_SOCK'], 'P4 §12 E3: ssh-remote fetch credentials (there is no Bash/sub-shell to leak the socket to)');
   assert.deepEqual(o.modelEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' }, 'probe F1: foreground Task sub-agents');
   assert.deepEqual(ASK_SPAWN_ENV, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
+  assert.equal(o.addDirs, undefined, 'no memory dir ⇒ no --add-dir and no env override');
   assert.equal(o.strictMcpConfig, true);
   assert.deepEqual(o.settingSources, ['project']);
   assert.equal(o.disableSlashCommands, true);
@@ -69,9 +70,9 @@ test('deny rules: spec list, every path rule // or ~/ anchored, the resolved hom
     'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
     'Read(//**/worca-cc.db*)', 'Read(//**/worca.db*)', 'Read(//**/secrets.json)', 'Read(//**/.env*)',
     'Read(//**/.worca-cc/settings.json)', 'Read(//**/.worca-cc/store/**)', 'Read(//**/.worca-cc/runs/**)',
-    'Read(//**/.worca-cc/plugins/**)', 'Read(//**/.worca-cc/tmp/**)',
+    'Read(//**/.worca-cc/plugins/**)', 'Read(//**/.worca-cc/tmp/**)', 'Read(//**/.worca-cc/logs/**)',
     'Read(~/.ssh/**)', 'Read(~/.aws/**)', 'Read(~/.gnupg/**)', 'Read(~/.kube/**)', 'Read(~/.docker/**)',
-    'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)',
+    'Read(~/.claude/**)', 'Read(~/.netrc)', 'Read(~/.npmrc)', 'Read(~/.config/gh/**)', 'Read(//proc/**)',
   ]);
   for (const rule of o.permissionRules.deny) {
     const m = /^\w+\((.*)\)$/.exec(rule);
@@ -140,7 +141,7 @@ test('mock markers go to the SYSTEM prompt only (never the user prompt)', () => 
   assert.ok(!buildMockMarkers({ a: 'x\ny' }).split('\n').some((l) => l.startsWith('MOCK_ASK_CARD') && !l.endsWith('}')), 'JSON.stringify keeps the card on one line');
 });
 
-test('buildClaudeArgs over the recipe carries every flag and never --add-dir', () => {
+test('buildClaudeArgs over the recipe carries every flag and --add-dir only with a memoryDir', () => {
   const args = buildClaudeArgs(buildAskSpawnOptions(base()));
   const has = (flag, value) => { const i = args.indexOf(flag); assert.ok(i > -1, `${flag} present`); if (value !== undefined) assert.equal(args[i + 1], value, `${flag} value`); };
   has('--permission-mode', 'dontAsk');
@@ -161,6 +162,19 @@ test('buildClaudeArgs over the recipe carries every flag and never --add-dir', (
   assert.deepEqual(settings.permissions.deny, [...ASK_DENY_RULES]);
   const noCap = buildClaudeArgs(buildAskSpawnOptions({ ...base(), limits: { maxTurns: 40, maxBudgetUsd: null } }));
   assert.ok(!noCap.includes('--max-budget-usd'));
+  const withMem = buildClaudeArgs(buildAskSpawnOptions({ ...base(), memoryDir: '/m/x' }));
+  assert.deepEqual(withMem.slice(-2), ['--add-dir', '/m/x']);
+});
+
+import { ASK_MEMORY_ENV } from '../src/core/ask/spawn.mjs';
+test('memoryDir: the mount rides --add-dir plus the CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 override (probes J/J2: the documented override; without it loading depends on the setting sources)', () => {
+  const o = buildAskSpawnOptions({ ...base(), memoryDir: join(FAKE_HOME, 'ask', 'memory', 'proj-00000001') });
+  assert.deepEqual(o.addDirs, [join(FAKE_HOME, 'ask', 'memory', 'proj-00000001')]);
+  assert.deepEqual(o.modelEnv, { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' });
+  assert.deepEqual(ASK_MEMORY_ENV, { CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' });
+  assert.equal(o.cwd, join(FAKE_HOME, 'tmp', 'ask'), 'the cwd is unchanged — one Claude Code project slug for every thread');
+  const without = buildAskSpawnOptions(base());
+  assert.deepEqual(Object.keys(without.modelEnv), ['CLAUDE_CODE_DISABLE_BACKGROUND_TASKS']);
 });
 
 test('fake bin: the whole recipe reaches the spawned argv through runClaude (five gates)', POSIX_SHIM, async () => {
@@ -198,7 +212,8 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
   const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
   assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
-  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL']);
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+  assert.ok(!MCP_FORWARD_ENV.some((k) => /TOKEN|KEY|SECRET|GH_/.test(k)), 'no credential is ever forwarded to the MCP child');
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
 });
@@ -227,4 +242,79 @@ test('fake bin env dump: the sandbox var reaches the SPAWNED env and every WORCA
   assert.equal(worcaLeaks.length, 0, `WORCA_* scrubbed (host-guard PID excepted): ${worcaLeaks}`);
   assert.ok(env.includes(`WORCA_HOST_PID=${process.pid}`), 'the host-guard PID deliberately rides scrubbed spawns (host-guard.mjs)');
   assert.ok(env.some((l) => l.startsWith('PATH=')) && env.some((l) => l.startsWith('HOME=')), 'base vars kept');
+});
+
+test('fake bin: a memoryDir puts CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the SPAWNED env and --add-dir in the spawned argv (the override is what makes an added dir load its rules — probes J/J2)', POSIX_SHIM, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'worca-ask-spawn-mem-'));
+  const envOut = join(dir, 'env.txt');
+  const argvOut = join(dir, 'argv.txt');
+  const bin = join(dir, 'fake-claude.sh');
+  await writeFile(bin, `#!/bin/sh\nenv > ${JSON.stringify(envOut)}\nfor a in "$@"; do printf '%s\\0' "$a" >> ${JSON.stringify(argvOut)}; done\nexit 0\n`, 'utf8');
+  await chmod(bin, 0o755);
+  const memoryDir = join(dir, 'mount');
+  const o = buildAskSpawnOptions({ ...base(), scratchDir: dir, mcpConfigPath: join(dir, 'mcp.json'), memoryDir });
+  await runClaude({ ...o, bin });
+  const env = (await readFile(envOut, 'utf8')).split('\n').filter(Boolean);
+  assert.ok(env.includes('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1'),
+    `the override reaches the spawned env: ${env.filter((l) => l.startsWith('CLAUDE_')).join(' ')}`);
+  const argv = (await readFile(argvOut, 'utf8')).split('\0'); argv.pop();
+  assert.deepEqual(argv.slice(-2), ['--add-dir', memoryDir], 'and --add-dir is the last pair of the argv');
+});
+
+test('regression guard: native WebFetch/WebSearch stay denied and never allowed', () => {
+  assert.ok(ASK_DENY_RULES.includes('WebFetch')); assert.ok(ASK_DENY_RULES.includes('WebSearch'));
+  const on = buildAskSpawnOptions({ ...base(), web: { enabled: true, allowedDomains: ['a.com'], search: null } });
+  for (const t of ['WebFetch', 'WebSearch']) { assert.ok(!on.allowedTools.includes(t)); assert.ok(!on.tools.includes(t)); assert.ok(on.permissionRules.deny.includes(t)); }
+  assert.deepEqual(on.mcpServerGrants, ['mcp__worca']);
+});
+
+test('sub-agent note: web variant only when web is on', () => {
+  assert.equal(buildAskSpawnOptions(base()).appendSubagentSystemPrompt, SANDBOX_NOTE);
+  const on = buildAskSpawnOptions({ ...base(), web: { enabled: true, allowedDomains: ['a.com'], search: null } }).appendSubagentSystemPrompt;
+  assert.equal(on, SANDBOX_NOTE_WEB); assert.notEqual(SANDBOX_NOTE_WEB, SANDBOX_NOTE);
+  assert.match(SANDBOX_NOTE_WEB, /network is reachable ONLY through the worca web tools/);
+  assert.ok(!SANDBOX_NOTE_WEB.includes('or use the network'));
+});
+
+test('buildMcpConfig: unchanged without web; WORCA_ASK_WEB with web, never the key value (M1: the json sits in the chat cwd)', () => {
+  const plain = buildMcpConfig({ homeBase: '/h', threadId: 't', serverPath: '/s.mjs', env: {} });
+  assert.ok(!('WORCA_ASK_WEB' in plain.mcpServers.worca.env));
+  const cfg = buildMcpConfig({ homeBase: '/h', threadId: 't', serverPath: '/s.mjs', env: { BRAVE_API_KEY: 'sekrit-key-value', OTHER_SECRET: 'x' },
+    web: { enabled: true, allowedDomains: ['a.com'], search: { url: 'https://s/?q={query}', keyVar: 'BRAVE_API_KEY', keyHeader: 'X-K', keyPrefix: '' } } });
+  const env = cfg.mcpServers.worca.env;
+  assert.deepEqual(JSON.parse(env.WORCA_ASK_WEB), { allowedDomains: ['a.com'], search: { url: 'https://s/?q={query}', keyHeader: 'X-K', keyPrefix: '', keyVar: 'BRAVE_API_KEY' } });
+  assert.ok(!('BRAVE_API_KEY' in env) && !('OTHER_SECRET' in env));
+  assert.ok(!JSON.stringify(cfg).includes('sekrit-key-value'), 'the written mcp json never carries the key value');
+});
+
+test('the search key var rides the claude process env allowlist (inherited by the MCP child), never the json', () => {
+  const web = { enabled: true, allowedDomains: ['a.com'], search: { url: 'https://s/?q={query}', keyVar: 'BRAVE_API_KEY', keyHeader: 'X-K', keyPrefix: '' } };
+  assert.equal(webKeyVar(web), 'BRAVE_API_KEY');
+  assert.deepEqual(buildAskSpawnOptions({ ...base(), web }).envAllowlist, ['SSH_AUTH_SOCK', 'BRAVE_API_KEY']);
+  assert.deepEqual(buildAskSpawnOptions({ ...base(), web: { ...web, enabled: false } }).envAllowlist, ['SSH_AUTH_SOCK']);
+  assert.deepEqual(buildAskSpawnOptions({ ...base(), web: { ...web, search: null } }).envAllowlist, ['SSH_AUTH_SOCK']);
+  assert.deepEqual(buildAskSpawnOptions({ ...base(), web: { ...web, allowedDomains: [] } }).envAllowlist, ['SSH_AUTH_SOCK', 'BRAVE_API_KEY'], 'on with an empty list is still on (hosts come through cards)');
+});
+
+// The last hop (claude hands its own env to a stdio MCP child, merged with the config's `env`) is
+// Claude Code behaviour, verified live against 2.1.282; this pins worca's side of the chain.
+test('the search key VALUE reaches the scrubbed claude env only through the web allowlist entry', (t) => {
+  t.after(() => { delete process.env.BRAVE_API_KEY; });
+  process.env.BRAVE_API_KEY = 'sekrit-key-value';
+  const web = { enabled: true, allowedDomains: ['a.com'], search: { url: 'https://s/?q={query}', keyVar: 'BRAVE_API_KEY', keyHeader: 'X-K', keyPrefix: '' } };
+  const on = buildAskSpawnOptions({ ...base(), web });
+  assert.equal(on.envScrub, true);
+  assert.equal(buildSpawnEnv(on.envScrub, on.envAllowlist).BRAVE_API_KEY, 'sekrit-key-value');
+  const off = buildAskSpawnOptions({ ...base(), web: { ...web, enabled: false } });
+  assert.ok(!('BRAVE_API_KEY' in buildSpawnEnv(off.envScrub, off.envAllowlist)));
+});
+
+test('webKeyVar refuses reserved and malformed key var names defensively (any case)', () => {
+  const w = (keyVar) => ({ enabled: true, allowedDomains: ['a.com'], search: { url: 'https://s/?q={query}', keyVar } });
+  for (const kv of ['ANTHROPIC_API_KEY', 'anthropic_api_key', 'Worca_x', 'PATH', 'path', '1BAD', 'A-B', '', null]) assert.equal(webKeyVar(w(kv)), null, String(kv));
+  assert.deepEqual(Object.keys(webMcpEnv(w('ANTHROPIC_API_KEY'), { ANTHROPIC_API_KEY: 'x' })), ['WORCA_ASK_WEB']);
+});
+
+test('the web request log is denied to Read', () => {
+  assert.ok(ASK_DENY_RULES.includes('Read(//**/.worca-cc/logs/**)'));
 });

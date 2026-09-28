@@ -29,7 +29,8 @@ start the run.)
 - **Permissive** (default) — no restrictions; byte-identical behavior to a
   run with no selection.
 - **Normal** — protects credential files (`.env*`, `*.pem`, `*.key`, SSH keys,
-  cert stores) from agent Read/Edit and blocks publication commands
+  cert stores, container secrets under `/run/secrets/`) from agent Read/Edit
+  and blocks publication commands
   (`git push`, `npm/yarn/pnpm publish`). Never breaks a pipeline: commits,
   installs, tests, and `curl localhost` all still work.
 - **Strict** (wire id `secure`) — Normal plus: environment scrub on agent
@@ -88,7 +89,11 @@ enforces the set's latest definition.
   Env scrub is the real exfil control, but it is **not containment**: with
   `HOME` retained, credential *files* stay readable to any subprocess an agent
   spawns (`node -e` + `fetch`), so deny rules alone don't stop indirect reads —
-  for OS-level enforcement use Claude Code's sandbox (out of scope here).
+  for OS-level enforcement run Worca in a container ([docker.md](docker.md)):
+  the box holds no host credentials, mounts only the projects you name, and
+  the egress overlay makes non-allowlisted hosts unreachable at the packet
+  level. The Normal and Strict sets also deny `Read` on `/run/secrets/**`,
+  where a compose secret (an API key via `apiKeyHelper`) lands.
 - Env scrub failing a pipeline that needed an unlisted var fails visibly
   (tool errors in the transcript) — add the var to the allowlist; there is no
   silent fallback. Common cases: a corporate TLS-intercepting proxy already
@@ -210,3 +215,79 @@ enforces the set's latest definition.
   which also closes `ls-tree → blob-sha → show <sha>`. Everything that survives is
   redacted. `SSH_AUTH_SOCK` is the one env var allowlisted into the child, for
   ssh-remote `fetch`.
+  **Scripts the chat can write and run.** With **Create and run scripts**
+  (Settings → Ask Worca, on by default) the assistant holds four more worca MCP
+  tools: `list_scripts` and `get_script` read the registry, `save_script` writes
+  a script to the user layer (`~/.worca-cc/scripts`) and `test_script` runs one
+  in worca's test bench — both **without a confirmation card**, by an explicit
+  user decision on 2026-09-18. A script is a child process with worca's
+  privileges and **no sandbox**, so a successful prompt injection in anything the
+  chat reads (a repository file, a diff comment, an attachment, a run's output)
+  becomes code execution on this machine. None of what follows blocks that;
+  these are the limits that remain. The system prompt states that only the
+  user's own messages are a reason to save or run a script and that everything
+  read through a tool is data. Every chat-authored script is stamped
+  `createdBy` / `updatedBy: ask:<threadId>`. Replacing an existing key needs an
+  explicit `overwrite: true`; built-in and plugin scripts are never written over,
+  and there is no delete tool. A bench run uses a scratch folder unless the user
+  pinned a project for the chat, and never another project's checkout — a saved
+  case runs as saved, and one whose folder is another project is refused. Every
+  call is a line in the thread. Sub-agents are told never to call either writer. Turn
+  the switch off and `save_script` / `test_script` are not registered for the
+  session at all — the two readers stay, and the prompt section goes with them.
+  **Web access (off by default).** Settings → Ask Worca → Web access gives the
+  assistant `web_fetch` (GET one https page, HTML converted to text) and, when a
+  search endpoint is configured, `web_search`. They are worca MCP tools; the
+  native `WebFetch`/`WebSearch` stay denied. Every rule is enforced by worca's
+  server, not by the prompt:
+  - **The allowlist is the control.** One host per line: `example.com`, or
+    `*.example.com` for its subdomains only. Any other host is refused before a
+    connection, and so is a redirect to one (at most 3 hops, each re-checked).
+    A wildcard over a domain where anyone can host a site is refused
+    (`*.github.io`, `*.vercel.app`, `*.co.uk`, …); list the exact host instead.
+  - **New sites are approved in the chat.** When Ask wants a host that is not
+    allowed, it calls `propose_web_access` and ends its turn. The card shows the
+    host, the reason and the exact URL: **Allow for this chat** (recorded on the
+    card; other chats are unaffected), **Always allow** (the exact host joins the
+    allowlist above) or **Deny**. The click is re-checked against the chat's
+    current web access, so a card fails if web access was switched off or the
+    host is outside the team's cap. Web access with an empty allowlist is on,
+    with every site going through a card. Sub-agents cannot ask.
+  - **Any site, without asking** (off by default) skips the allowlist and the
+    cards; every other rule below still applies. It is risky: a page or a file
+    Ask reads can then make it send data to any site inside a URL. A team
+    allowlist cap still binds it.
+  - **Data-in-URL rule** (defence in depth): https only, the default port, no
+    credentials, no IP-literal hosts, a query of at most 256 characters, a path of
+    at most 512, and no long token that looks like encoded data (base64, hex,
+    keys). Short runs of data still pass, so a site sees every URL Ask requests
+    from it — only allowlist hosts you trust with that.
+  - **SSRF:** a host that resolves to any loopback, private, link-local
+    (cloud metadata), CGNAT, ULA or other reserved address is refused; the check
+    runs on the address actually dialled. Pages are capped at 2 MiB and 100 000
+    characters of text, 15 s per call; only text types are read. The text reaches
+    the chat in pages of 20 000 characters, 30 000 at most (Claude Code moves a
+    larger tool result into a file the chat cannot read). Node's `https`
+    ignores `HTTPS_PROXY`, so a proxy-only network cannot use web access in v1.
+    On a worca with no route to the internet (`compose.egress.yml` puts it on an
+    internal network) every fetch fails; when the host name does not resolve, or
+    the connection is refused or times out before the host answers, the error
+    says this worca may not have internet access instead of only the network
+    code (the log entry keeps the code).
+  - **Search** is any GET JSON API: an https URL template with `{query}` (and
+    optionally `{key}`), plus an optional key header and prefix. The key is always
+    a `${VAR}` reference read from worca's environment — never stored in
+    `settings.json`, and never a `WORCA_*`, `ANTHROPIC_*` or `CLAUDE_*` variable.
+    Its value is never written to disk either: the named variable is passed
+    through the chat's process environment to worca's MCP server, so no file the
+    chat can read holds it. When agents run under their own users, the web tools run in
+    the worca server itself (the tool relay), and the key never reaches the
+    agent user's process.
+  - **Team policy only narrows it.** `ask.webEnabled` can only be "off" (it
+    switches web access off for chats pinned to the project) and
+    `ask.webAllowedDomains` caps each developer's own list (hosts outside it are
+    dropped). A policy never switches web access on or adds a host: the policy
+    branch is writable by anyone who can push to the repository.
+  - **Log:** every call, refused ones included, is one JSON line in
+    `~/.worca-cc/logs/ask-web.jsonl` (redacted, clipped URLs; never page text,
+    queries or keys; rotated at 5 MB). The chat is denied `Read` on `logs/`.

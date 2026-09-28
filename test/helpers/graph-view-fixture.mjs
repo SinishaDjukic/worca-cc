@@ -44,6 +44,7 @@ const BASE = {
   },
   end: { inputs: [{ id: 'result', type: 'any', required: true }], outputs: [] },
   and: { inputs: [], outputs: [{ id: 'out', type: 'void', when: 'always' }] },
+  script: { inputs: [{ id: 'done', type: 'void', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always' }] },
 };
 
 /** Mirrors the engine's portsFn: agents gain the synthesized `await` input LAST
@@ -56,10 +57,8 @@ export function portsFn(node) {
     for (let i = 1; i <= n; i += 1) inputs.push({ id: `in${i}`, type: 'any', required: true });
   }
   const out = { inputs, outputs: base.outputs.map((p) => ({ ...p })), known: true, ported: true };
-  if (node.kind === 'agent') {
-    inputs.push({ id: 'await', type: 'any', required: false, synthetic: true });
-    out.verdict = { filename: 'review-cycle{cycle}.json' };
-  }
+  if (node.kind === 'agent' || node.kind === 'script') inputs.push({ id: 'await', type: 'any', required: false, synthetic: true });
+  if (node.kind === 'agent') out.verdict = { filename: 'review-cycle{cycle}.json' };
   return out;
 }
 
@@ -72,3 +71,13 @@ export function boot() {
 }
 
 export const AGENTS = { planner: { key: 'planner', displayName: 'Plan', color: 'violet', icon: '<path d="M4 4h8"/>', origin: 'builtin' } };
+
+/** fixture() + a script card gated on the agent through its await port. */
+export function scriptFixture() {
+  const tpl = fixture();
+  tpl.nodes.push({ id: 'n_sh', kind: 'script', key: 'shell', x: 400, y: 400, config: { params: { command: 'npm test' } } });
+  tpl.wires.push({ id: 'w5', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_sh', port: 'await' } });
+  return tpl;
+}
+export const SCRIPTS = { shell: { key: 'shell', displayName: 'Shell', color: 'amber', runtime: 'shell', icon: '' },
+  gitDiff: { key: 'gitDiff', displayName: 'Git diff', color: 'green', runtime: 'node', icon: '<path d="M1 1"/>', origin: 'builtin' } };

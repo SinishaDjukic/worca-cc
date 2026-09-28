@@ -30,6 +30,10 @@ const ROWS = [
   ['node', 'quota', false, 1, undefined, { outcome: 'prompt' }],
   ['node', 'auth',  false, 1, 'retry',   { outcome: 'retry' }],
   ['node', 'auth',  false, 1, 'giveup',  PAUSE_ERR],
+  // node / model: the model id itself was refused — never retried (a backoff
+  // cannot fix an id); parks as an error, resumable once the model is fixed
+  ['node', 'model', true,  1, undefined, PAUSE_ERR],
+  ['node', 'model', false, 1, undefined, PAUSE_ERR],
   // node / network, rate_limit: auto retries MAX times, then pauses; interactive prompts
   ['node', 'network',    true, 1,       undefined, { outcome: 'retry' }],
   ['node', 'network',    true, MAX,     undefined, { outcome: 'retry' }],

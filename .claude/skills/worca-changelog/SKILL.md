@@ -159,10 +159,10 @@ fixed; only the words and the demo change:
 | Slot | Rule |
 | --- | --- |
 | kicker | 1–2 words naming the area: `Budget`, `Routing`, `Team`. Dot colour from the palette table. |
-| h2 | ≤ 7 words, a full sentence with a period, states the outcome not the feature: *Spend caps that pause, not kill.* |
-| sub | 1–2 sentences, ≤ 52ch measure. What changed, why it matters. No "we", no "now supports". |
-| chips | 3–4 facts. Numbers go in `<b>` (`<b>11</b> built-ins`). No sentences. |
-| demo | A 10–20 line CSS/JS loop that shows the *mechanism* — precedence, masking, a flag appearing. Reuse a recipe from `DESIGN.md` before inventing one. |
+| h2 | ≤ 7 words, a full sentence with a period. Obvious before clever: a reader must know what the feature is from the headline alone (*New to Worca? Follow the checklist.*), never a riddle that needs the sub to decode. |
+| sub | **Problem first, in bold, then the answer.** Line 1 is one plain question or pain the reader recognises, wrapped in `<b>…</b>` and followed by `<br>`. Line 2 starts with *Now …* and says what Worca does and how, in words a first-time user understands. ≤ 52ch measure, no "we". |
+| chips | 2–4 plain phrases a user understands at a glance, and only ones that matter (`highlights the real button`, `stored in your git remote`). Numbers go in `<b>`. No tool names, flags, schema versions, internal terms, or shorthand a reader would have to decode. |
+| demo | A 10–20 line CSS/JS loop that shows the *mechanism* — precedence, masking, a flag appearing. Reuse a recipe from `DESIGN.md` before inventing one. Its label, steps and note follow the same plain-words rule as the chips. |
 | shot | The screenshot in a `.shot` frame with a one-line `.shot-cap` that says what the reader is looking at. |
 
 Build the page:
@@ -242,3 +242,36 @@ Changelog entry ready
   Artifact:   <url>   |   not published (--no-publish)
   Files:      uncommitted on <branch> — 9 files under docs/changelog/
 ```
+
+Then, always, print a **release announcement** in one fenced block the user
+can copy straight into a team chat:
+
+````
+```
+Worca <VERSION> released
+
+Changes:
+1. <one sentence per section, in the page's order>
+2. …
+
+npm install -g @worca/app@<VERSION>
+
+<artifact url>
+```
+````
+
+- One numbered item per feature section (not the receipts), in page order.
+  Fold the small changes that only got a chip into the closest item or one
+  last "also" item, never a list of their own.
+- Each item is one sentence (two at most) that says what a teammate can do now
+  and why it matters, in the same plain words as the page: *Your team can
+  share one hosted Worca while each person's runs are charged to their own
+  key or Claude subscription. Keys are kept in a separate key service, so
+  neither Worca nor its agents can read them, which is a strong protection
+  against prompt injection.* No PR numbers, internal names or flags. A
+  command the reader types, such as `worca runs`, stays in backticks.
+- The install line pins the exact version, even for an RC:
+  `npm install -g @worca/app@1.2.0-rc.3`.
+- With `--no-publish`, leave out the link line and say below the block that
+  the page is not published. When it is published, note below the block that
+  the Artifact is private until it is shared from the page's Share menu.

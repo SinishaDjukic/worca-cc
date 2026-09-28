@@ -2,7 +2,7 @@
 // The editable v2 template: normalize/serialize, the node/wire factory and the
 // drop-legality check the composer runs on the POINTER PATH (so it must stay a
 // Map lookup plus a type check — never a Tarjan walk).
-import { TEMPLATE_VERSION } from './constants.mjs';
+import { TEMPLATE_VERSION, KEYED_KINDS } from './constants.mjs';
 import { portsOf, findPort, resolveOrOutType, inboundWires } from './ports.mjs';
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
@@ -34,7 +34,7 @@ export function serializeTemplate(template) {
 
 function normalizeNode(node) {
   const out = { id: String(node.id ?? ''), kind: String(node.kind ?? '') };
-  if (out.kind === 'agent' && node.key !== undefined) out.key = String(node.key);
+  if (KEYED_KINDS.includes(out.kind) && node.key !== undefined) out.key = String(node.key);
   out.x = Number(node.x);
   out.y = Number(node.y);
   out.config = isObject(node.config) ? { ...node.config } : {};
@@ -71,10 +71,10 @@ export function mintId(prefix, taken) {
   return `${prefix}${Date.now().toString(36).slice(-8)}`;   // unreachable in practice
 }
 
-/** @param {'agent'|'task'|'end'|'and'|'or'|'combine'} kind @param {string|null} key */
+/** @param {'agent'|'script'|'task'|'end'|'and'|'or'|'combine'} kind @param {string|null} key */
 export function newNode(kind, key, x = 0, y = 0, taken) {
   const node = { id: mintId('n_', taken), kind };
-  if (kind === 'agent' && key) node.key = String(key);      // V3: only agent nodes carry a key
+  if (KEYED_KINDS.includes(kind) && key) node.key = String(key);   // V3: only keyed kinds carry a key
   node.x = Number(x) || 0;
   node.y = Number(y) || 0;
   node.config = ARITY_SET.has(kind) ? { arity: 2 } : {};

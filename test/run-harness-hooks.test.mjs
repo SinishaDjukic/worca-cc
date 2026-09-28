@@ -160,7 +160,9 @@ test('run(): a pause requested during preflight lands on _enginePrePausePoint an
   const res = await orch.run();
   assert.equal(res.status, 'paused');
   assert.equal(orch.calls.prePause, 1, 'the engine decided the pre-engine resume point');
-  assert.deepEqual(orch.state.resumePoint, { version: 99, kind: 'stub-boundary' });
+  const { interventions, ...rp } = orch.state.resumePoint;
+  assert.deepEqual(rp, { version: 99, kind: 'stub-boundary' });
+  assert.equal(interventions.pauses, 1);
   const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get(orch.state.id);
   assert.equal(row.status, 'paused');
   assert.equal(JSON.parse(row.resume_point).kind, 'stub-boundary', 'persisted through _completePaused');

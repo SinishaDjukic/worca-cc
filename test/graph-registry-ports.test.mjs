@@ -16,10 +16,20 @@ test('registryPortsFn resolves builtin ports and synthesizes the await gate', ()
 
 test('the real-sidecar helper mirrors the registry', () => {
   const metas = realAgentMetas();
-  assert.equal(metas.length, 11);
+  assert.equal(metas.length, 12);
   const a = realPortsFn()({ id: 'n', kind: 'agent', key: 'reviewer', x: 0, y: 0, config: {} });
   const b = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }))(
     { id: 'n', kind: 'agent', key: 'reviewer', x: 0, y: 0, config: {} });
   assert.deepEqual(a.inputs, b.inputs);
   assert.deepEqual(a.outputs, b.outputs);
+});
+
+test('registryPortsFn takes a second, script registry (object or list)', () => {
+  const scripts = { echo: { key: 'echo', metaVersion: 2, runtime: 'node', inputs: [], outputs: [{ id: 'out', type: 'md', when: 'always', filename: 'o.md' }] } };
+  for (const s of [scripts, Object.values(scripts)]) {
+    const p = registryPortsFn(loadAgentRegistry(undefined, { userAgentsDir: null }), s)({ id: 'n', kind: 'script', key: 'echo', x: 0, y: 0, config: {} });
+    assert.deepEqual(p.inputs.map((i) => i.id), ['await']);
+    assert.deepEqual(p.outputs.map((o) => o.id), ['out']);
+  }
+  assert.equal(registryPortsFn({})({ kind: 'script', key: 'echo' }), undefined);
 });

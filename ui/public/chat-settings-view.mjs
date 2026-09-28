@@ -2,7 +2,8 @@
 // Pure DOM renderers for the Settings "Chat notifications" card
 // (chat-connectivity-design.md §4.8). Same contract as plugins-view.mjs:
 // detached elements, no fetch, no listeners — app.js owns I/O and mounting;
-// node:test drives these via jsdom.
+// node:test drives these via jsdom. (One exception: the Ask web fields keep their own
+// dirty flag with input/change listeners on their detached wrapper — no I/O.)
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -90,4 +91,78 @@ export function collectChatSettings(root) {
     channels[cb.dataset.channelKey] = { enabled: cb.checked };
   }
   return { notify, channels };
+}
+
+/**
+ * The Settings → Ask Worca "Create and run scripts" row (scripts-workbench W20). Lives here
+ * with the other chat-pref controls because the value is one of `chatPrefs()`; it is mounted
+ * in the Ask Worca card, not in Chat notifications, and saves with that card's Save button.
+ * Default ON: only a stored `false` switches the chat's save_script / test_script off.
+ */
+export function renderScriptToolsToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const row = h(doc, 'label', 'check-row');
+  row.setAttribute('for', 'askScriptTools');
+  const cb = h(doc, 'input', 'ask-script-tools');
+  cb.type = 'checkbox';
+  cb.id = 'askScriptTools';
+  cb.checked = prefs?.scriptTools !== false;
+  row.appendChild(cb);
+  row.appendChild(doc.createTextNode(' Create and run scripts'));
+  return row;
+}
+
+/** collectScriptToolsToggle(root) -> the POST /api/settings {chat} patch of the Ask Worca card. */
+export function collectScriptToolsToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-script-tools') : null;
+  return { scriptTools: cb ? cb.checked : true };
+}
+
+/** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */
+export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document } = {}) {
+  const w = askWeb || { enabled: false, anyHost: false, allowedDomains: [], search: null };
+  const wrap = h(doc, 'div', 'ask-web');
+  wrap.append(h(doc, 'div', 'label-row', 'Web access'));
+  const row = h(doc, 'label', 'check-row'); row.setAttribute('for', 'askWebEnabled');
+  const cb = h(doc, 'input'); cb.type = 'checkbox'; cb.id = 'askWebEnabled'; cb.checked = w.enabled === true;
+  row.append(cb, doc.createTextNode(' Let Ask Worca read web pages'));
+  const anyRow = h(doc, 'label', 'check-row'); anyRow.setAttribute('for', 'askWebAnyHost');
+  const any = h(doc, 'input'); any.type = 'checkbox'; any.id = 'askWebAnyHost'; any.checked = w.anyHost === true;
+  anyRow.append(any, doc.createTextNode(' Any site, without asking'));
+  const anyHint = h(doc, 'small', 'hint', 'Risky: a web page or a file Ask reads can then make it send data to any site in a URL. Leave off to approve each new site from the chat.');
+  const domains = h(doc, 'textarea', 'input'); domains.id = 'askWebDomains'; domains.rows = 4;
+  domains.placeholder = 'docs.python.org\n*.mozilla.org'; domains.value = (w.allowedDomains || []).join('\n');
+  const dHint = h(doc, 'small', 'hint', 'Sites Ask may read without asking. One host per line: example.com, or *.example.com for its subdomains. For any other site Ask shows a card in the chat: allow it for that chat, always (it is added here), or deny. https only. A site sees every URL Ask requests from it, so only allow sites you trust.');
+  const field = (id, label, placeholder, value) => {
+    const box = h(doc, 'div', 'field');
+    const l = h(doc, 'label', null, label); l.setAttribute('for', id);
+    const i = h(doc, 'input', 'input'); i.id = id; i.placeholder = placeholder; i.value = value || '';
+    box.append(l, i); return box;
+  };
+  const s = w.search || {};
+  // Dirty flag: the card posts askWeb only after the user touched a web field, so saving the other
+  // Ask limits never rewrites the stored web settings.
+  const markDirty = () => { wrap.dataset.dirty = '1'; };
+  wrap.addEventListener('input', markDirty);
+  wrap.addEventListener('change', markDirty);
+  wrap.append(row, anyRow, anyHint, domains, dHint,
+    field('askWebSearchUrl', 'Search endpoint (optional)', 'https://api.search.brave.com/res/v1/web/search?q={query}', s.url),
+    field('askWebSearchKey', 'Search key variable', '${BRAVE_API_KEY}', s.key),
+    field('askWebSearchHeader', 'Key header', 'X-Subscription-Token', s.keyHeader),
+    field('askWebSearchPrefix', 'Key prefix', 'Bearer ', s.keyPrefix),
+    h(doc, 'small', 'hint', 'Any GET search API that returns JSON. Use {query} (and optionally {key}) in the URL; the key is always a ${VAR} read from worca\'s environment.'));
+  return wrap;
+}
+
+/** The askWeb POST value, or null when the user did not touch the web fields (nothing to send). */
+export function collectAskWebFields(root) {
+  if (root.querySelector('.ask-web')?.dataset.dirty !== '1') return null;
+  const q = (id) => root.querySelector(`#${id}`);
+  const val = (id) => (q(id) ? q(id).value.trim() : '');
+  const url = val('askWebSearchUrl');
+  return {
+    enabled: !!q('askWebEnabled')?.checked,
+    anyHost: !!q('askWebAnyHost')?.checked,
+    allowedDomains: (q('askWebDomains')?.value || '').split('\n').map((x) => x.trim()).filter(Boolean),
+    search: url ? { url, key: val('askWebSearchKey'), keyHeader: val('askWebSearchHeader'), keyPrefix: q('askWebSearchPrefix') ? q('askWebSearchPrefix').value : '' } : null,
+  };
 }

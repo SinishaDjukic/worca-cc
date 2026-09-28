@@ -51,7 +51,7 @@ before saving a row. The recipe guide (`src/core/auto/recipes.mjs`) is an additi
 ladder — implementer only, + reviewer, + clarify/planner, + refiner — with the web
 test pair, the decomposer and the plan reviewer as signal-gated modifiers.
 
-Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md)
+Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md) · [Scheduled runs](scheduled-runs.md)
 
 <!--
   The diagram is rendered from the self-contained page docs/architecture.html.

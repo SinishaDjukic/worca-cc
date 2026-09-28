@@ -7,9 +7,10 @@
 // labels read the manifest's port metadata (`loop: true`), statuses read the
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
+import { levelAtLeast } from '../ui-level.mjs';
 import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { NO_DISPATCH_STATUS, nodeBusy } from '../../../src/shared/graph/retune-gate.mjs';
-import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
+import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 
 /** The run-level warning a run that drained without binding End carries. */
@@ -117,7 +118,9 @@ export function tuneByNode(stepper) {
 export function manifestAgents(stepper) {
   const out = {};
   for (const n of manifestNodes(stepper)) {
-    if (n.kind === 'agent' && n.key && !out[n.key]) out[n.key] = { displayName: n.label || n.key, color: n.color || '', icon: n.icon || '' };
+    if (KEYED_KINDS.includes(n.kind) && n.key && !out[n.key]) {
+      out[n.key] = { displayName: n.label || n.key, color: n.color || '', icon: n.icon || '', ...(n.kind === 'script' ? { runtime: n.runtime || '' } : {}) };
+    }
   }
   return out;
 }
@@ -201,7 +204,7 @@ export function statusOf(node, rows, ctx) {
  * @param {object} st                 { stepper, status, steps, active, endReached, result, warnings, wireDeliveries, tokens, gate }
  * @param {{live?:boolean, now?:number, subsOf?:(nodeId:string)=>Array}} opts
  */
-export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, tuneText = null } = {}) {
+export function decorFromState(st, { live = true, now = Date.now(), subsOf = null, tuneText = null, lastLines = null } = {}) {
   const state = st || {};
   const stepper = state.stepper || null;
   const nodes = manifestNodes(stepper);
@@ -245,9 +248,9 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
   const tune = tuneByNode(stepper);
   if (tuneText) for (const t of Object.values(tune)) t.text = tuneText(t);
 
-  // Progress = done AGENT nodes / AGENT nodes (D15: a number, never a bar).
-  const agents = nodes.filter((n) => n.kind === 'agent');
-  const progress = { done: agents.filter((n) => status[n.id] === 'done').length, total: agents.length };
+  // Progress = done KEYED nodes / keyed nodes (D15: a number, never a bar). A script is a keyed card.
+  const keyed = nodes.filter((n) => KEYED_KINDS.includes(n.kind));
+  const progress = { done: keyed.filter((n) => status[n.id] === 'done').length, total: keyed.length };
 
   // Active nodes, most recently started FIRST (the compact row and the pill name
   // the newest one; two or more collapse to "N agents running").
@@ -285,7 +288,7 @@ export function decorFromState(st, { live = true, now = Date.now(), subsOf = nul
     executions: rows.length, loopDeliveries,
     nodeIds: nodes.map((n) => n.id), wireIds: wires.map((w) => w.id), expanded: null,
   };
-  decorateExecutions(decor, { stepper, nodes, wires, grouped, rows, activeList, rowFor, stepByExec, state, now, live, subsOf });
+  decorateExecutions(decor, { stepper, nodes, wires, grouped, rows, activeList, rowFor, stepByExec, state, now, live, subsOf, lastLines, status });
   return decor;
 }
 
@@ -348,26 +351,29 @@ export function execBandLayout(label, right) {
 }
 
 function decorateExecutions(decor, ctx) {
-  const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf } = ctx;
+  const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf, lastLines, status } = ctx;
 
   for (const node of nodes) {
     const list = grouped.get(node.id) || [];
     // A FLOW node (task/and/or/combine/end) executes instantly and for free: its
     // rows carry no duration and no cost pill, and its card no header totals.
-    const flow = node.kind !== 'agent';
+    const flow = !KEYED_KINDS.includes(node.kind);
+    // A SCRIPT runs a child process: real duration, no cost pill — an exit code where an agent shows cost (S5).
+    const script = node.kind === 'script';
     const rows = list.map((row) => {
       // A flow node executes instantly and for free: the NUMBERS are zeroed with
       // the pill texts, so `durMs`/`costUsd` never contradict `dur`/`cost` (a
       // consumer that sums the numbers must not pick up a flow row's real ms).
       const durMs = flow ? 0 : rowMs(row, now, live);
-      const costUsd = flow ? 0 : round2(row.costUsd);
+      const costUsd = flow || script ? 0 : round2(row.costUsd);
       return {
         executionId: row.executionId, nodeId: node.id,
         kind: row.kind === 'task' ? 'task' : 'cycle',
         ordinal: Number(row.ordinal ?? row.cycle) || 1,
         label: rowLabel(node, row), led: ledOf(row.status),
         dur: !flow && row.activeMs != null ? fmtDur(durMs) : '',
-        cost: flow ? '' : fmtUsd(costUsd),
+        cost: flow || script ? '' : fmtUsd(costUsd),
+        exit: script && row.exitCode != null ? `exit ${row.exitCode}` : '',
         durMs, costUsd, flow,
       };
     });
@@ -380,11 +386,17 @@ function decorateExecutions(decor, ctx) {
     if (rows.length || fan) {
       decor.footers[node.id] = { rows, summary: stripText(rows), leds: rows.map((r) => r.led), fan };
     }
+    // S4: the last captured line of a RUNNING script, when the page has one.
+    const liveLine = script && live && status[node.id] === 'active' && lastLines && typeof lastLines.get === 'function' ? lastLines.get(node.id) : null;
+    if (liveLine) {
+      if (!decor.footers[node.id]) decor.footers[node.id] = { rows: [], summary: '', leds: [], fan: null };
+      decor.footers[node.id].live = String(liveLine);
+    }
     if (rows.length && !flow) {
       const durMs = rows.reduce((a, r) => a + r.durMs, 0);
       const costUsd = sumUsd(rows);
       decor.totals[node.id] = {
-        durMs, dur: fmtDur(durMs), costUsd, cost: fmtUsd(costUsd),
+        durMs, dur: fmtDur(durMs), costUsd, cost: script ? '' : fmtUsd(costUsd),
         hasStep: rows.some((r) => r.dur !== ''),
       };
     }
@@ -442,14 +454,18 @@ export function applyDecor(view, decor) {
   // view, and probing one call while calling ten others bare only hides the first
   // symptom of a wrong one.
   view.setCardsOpenPanel(decor.opensPanel === true);
-  const expanded = decor.expanded || null;
+  // Interface mode (docs/ui-levels.md): status colours, the gate pip, the End result and live wires
+  // are for everyone; per-node totals, the fan and execution strips and loop-count badges are
+  // expert detail. Gated HERE, not in CSS — a footer band sets the card's height.
+  const full = decor.detail !== undefined ? !!decor.detail : levelAtLeast('expert');
+  const expanded = full ? (decor.expanded || null) : null;
   for (const nodeId of decor.nodeIds || []) {
     view.setStatus(nodeId, decor.status[nodeId] || 'pending');
     view.setNodeChrome(nodeId, {
       color: decor.colors[nodeId] || '',
       gate: decor.gate && decor.gate.nodeId === nodeId
         ? { wireId: decor.gate.wireId, title: 'waiting on a loop gate — open the question panel' } : null,
-      totals: decor.totals[nodeId] || null,
+      totals: full ? (decor.totals[nodeId] || null) : null,
     });
     // MONITOR hosts only. `.ntune` hangs at `bottom:-9px`, outside `view.bounds()`
     // so the fit reserves no room for it, and the Running-list card's wrap is a
@@ -457,7 +473,7 @@ export function applyDecor(view, decor) {
     // That card already prints the same words in its step label, so there is
     // nothing to lose. History and the run detail both mount 'monitor'.
     view.setNodeTune(nodeId, (decor.mode !== 'static' && decor.tune && decor.tune[nodeId]) || null);
-    const foot = decor.footers[nodeId] || null;
+    const foot = full ? (decor.footers[nodeId] || null) : null;
     const bands = [];
     if (foot && foot.fan) {
       bands.push({ kind: 'fan', leds: foot.fan.leds, count: foot.fan.count, lines: fanLines(foot.fan.leds.length) });
@@ -466,17 +482,18 @@ export function applyDecor(view, decor) {
       bands.push({ kind: 'strip', leds: foot.leds.slice(0, STRIP_LED_CAP), summary: foot.summary, expanded: expanded === nodeId });
       if (expanded === nodeId) {
         for (const r of foot.rows) {
-          const right = [r.dur, r.cost].filter(Boolean).join(' · ');
+          const right = [r.dur, r.cost || r.exit].filter(Boolean).join(' · ');
           bands.push({ kind: 'exec', executionId: r.executionId, led: r.led, label: r.label,
             right, ...execBandLayout(r.label, right) });
         }
       }
     }
+    if (foot && foot.live) bands.push({ kind: 'live', text: foot.live });
     if (decor.endResult && decor.endResult.nodeId === nodeId) {
       bands.push({ kind: 'result', text: decor.endResult.text, path: decor.endResult.path });
     }
     view.setFooter(nodeId, bands);
   }
-  for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, decor.loopBadges[wireId] || null);
+  for (const wireId of decor.wireIds || []) view.setWireBadge(wireId, full ? (decor.loopBadges[wireId] || null) : null);
   view.setWireLive(decor.liveWireIds || []);
 }

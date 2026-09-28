@@ -12,9 +12,11 @@
 //
 // Markup reuses the inspector's field skin: the panel carries `ins-panel` so the
 // existing `.ins-panel .ins-select` rules apply unchanged, and the field builders
-// are IMPORTED from inspector.mjs rather than re-declared.
+// are IMPORTED from ../script-forms.mjs — the ONE copy the composer's inspector
+// dresses its own panel with (C3) — rather than re-declared.
 
-import { h, field as insField, offeredModels, fillOptions } from './inspector.mjs';
+import { h, field as insField, fillOptions } from '../script-forms.mjs';
+import { offeredModels } from './inspector.mjs';
 import { armFor, retuneArm } from '../../../src/shared/graph/retune-gate.mjs';
 
 const GAP = 8;
@@ -25,7 +27,7 @@ function field(doc, cls, name, label) {
   const sel = h(doc, 'select', 'ins-select');
   sel.dataset.field = name;
   sel.setAttribute('aria-label', label);
-  // Through `.ins-select-wrap`, the same shell inspector.mjs builds: the chevron
+  // Through `.ins-select-wrap`, the same shell script-forms.mjs builds: the chevron
   // is a token-coloured ::after on the WRAPPER, so a select appended straight to
   // the field would sit in this panel without one.
   const shell = h(doc, 'span', 'ins-select-wrap');

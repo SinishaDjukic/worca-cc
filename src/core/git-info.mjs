@@ -6,13 +6,17 @@
 // never shell out to real git/gh/GitHub. Nothing here ever throws.
 
 import { spawn } from 'node:child_process';
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, isAbsolute } from 'node:path';
+import { githubEnv, readGithubCredentials } from './github-credentials.mjs';
 
 /** Default runner: spawn `cmd args` in `cwd`, resolve { ok, stdout, stderr, code }. */
-function defaultRun(cmd, args, { cwd, timeout = 0 } = {}) {
+function defaultRun(cmd, args, { cwd, timeout = 0, env = null } = {}) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}) });
     } catch (err) {
       resolve({ ok: false, stdout: '', stderr: err.message, code: -1 });
       return;
@@ -157,30 +161,175 @@ export async function hasGh() {
   return _ghCache;
 }
 
-/** Push the branch and set upstream. Idempotent; surfaces stderr on failure. */
-export async function pushBranch(projectDir, branch) {
-  const r = await _run('git', ['push', '-u', 'origin', branch], { cwd: projectDir });
-  return { ok: r.ok, stderr: (r.stderr || '').trim() };
+/** "owner/name" of `remote` on github.com in App mode (helps the App find its installation), else null. */
+async function githubRepoOf(projectDir, remote) {
+  if (readGithubCredentials().mode !== 'app') return null;
+  const r = await _run('git', ['remote', 'get-url', remote], { cwd: projectDir });
+  const p = r.ok ? parseRemoteUrl(r.stdout.trim()) : null;
+  return p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null;
+}
+
+/** "owner/name" of a github.com PR URL, or null. */
+const ownerRepoOfPrUrl = (url) => { const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(String(url || '')); return m ? m[1] : null; };
+
+/** "owner/name" from gh's `[HOST/]OWNER/REPO`, or null. */
+const ownerRepo = (repo) => (repo ? String(repo).split('/').slice(-2).join('/') : null);
+
+/**
+ * The remote could not read the pack we sent ("remote: error: inflate: data stream error",
+ * "pack has bad object at offset N", "unpack failed: index-pack failed"). git streams stored
+ * objects to a remote without re-checking them, so this surfaces only there. Seen once on a
+ * hosted worca (a blob:none partial clone, 2026-09-27) while other git writers were busy in
+ * the same object store — a background `gc --auto` repacking ~12,500 loose objects and the
+ * team-metrics flush; the same push rebuilt afterwards was clean. Pure.
+ */
+export function isRemotePackFailure(stderr) {
+  return /unpack failed|index-pack (?:failed|abnormal exit)|pack has bad object|inflate: data stream error|bad pack header|unpacker error|did not receive expected object/i.test(String(stderr || ''));
+}
+
+/** A `git gc` running in this repository right now (its gc.pid names a live process here). */
+async function gcRunning(projectDir) {
+  const r = await _run('git', ['rev-parse', '--git-common-dir'], { cwd: projectDir });
+  if (!r.ok) return false;
+  const common = r.stdout.trim();
+  let text;
+  try { text = await readFile(join(isAbsolute(common) ? common : join(projectDir, common), 'gc.pid'), 'utf8'); } catch { return false; }
+  const pid = Number.parseInt(String(text).trim().split(/\s+/)[0], 10);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
+}
+
+/** Wait (up to `maxMs`) for a running `git gc` in the repository to finish. */
+async function waitForGc(projectDir, { maxMs = 120_000, stepMs = 2_000, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  const until = Date.now() + maxMs;
+  while (Date.now() < until && await gcRunning(projectDir)) await sleep(stepMs);
 }
 
 /**
- * Open a PR with `gh pr create`. On "already exists", recover the open PR's URL
- * via `gh pr view` so the button is still useful. Returns { ok, url, existed } |
- * { ok:false, error }.
+ * Push the branch to `remote` (default origin) and set upstream. Idempotent; surfaces stderr.
+ * A pack the remote could not read (isRemotePackFailure) is pushed once more, after any running
+ * `git gc` in the repository finished, as a self-contained pack (--no-thin: no delta against
+ * objects the remote has, which a partial clone may not hold).
  */
-export async function createPr({ projectDir, base, head, title, body = '' }) {
-  const args = ['pr', 'create', '--base', base, '--head', head, '--title', title || head, '--body', body || title || head];
-  const r = await _run('gh', args, { cwd: projectDir });
+export async function pushBranch(projectDir, branch, remote = 'origin', { gcWait = {} } = {}) {
+  const r0 = remote || 'origin';
+  const cred = await githubEnv('write', { repo: await githubRepoOf(projectDir, r0) });
+  if (cred.error) return { ok: false, stderr: cred.error };
+  const r = await _run('git', ['push', '-u', r0, branch], { cwd: projectDir, env: cred.env });
+  if (r.ok || !isRemotePackFailure(r.stderr)) return { ok: r.ok, stderr: (r.stderr || '').trim() };
+  await waitForGc(projectDir, gcWait);
+  const again = await _run('git', ['push', '--no-thin', '-u', r0, branch], { cwd: projectDir, env: cred.env });
+  if (again.ok) return { ok: true, stderr: (again.stderr || '').trim(), retried: true };
+  return {
+    ok: false,
+    retried: true,
+    stderr: `${(again.stderr || '').trim()}\n(the remote could not read the pack git sent, twice — a second push waited for ` +
+      'any running git gc and sent a self-contained pack. Check the local repository with `git fsck --full`.)',
+  };
+}
+
+/**
+ * Open a PR with `gh pr create`. `repo` ([HOST/]OWNER/REPO) targets the base
+ * repository explicitly — gh's non-interactive default prefers a remote named
+ * `upstream` over `origin`, so an omitted --repo can land a PR in the wrong repo.
+ * `headOwner` (the push remote's owner) selects the cross-repo `owner:branch`
+ * head; leave it null when the branch lives in `repo` itself — gh matches PRs by
+ * head LABEL, so the form must agree with where the branch actually is.
+ * On "already exists", recover the open PR's URL via `gh pr view` with the same
+ * selector + repo, else from the URL gh prints on the last stderr line.
+ * Returns { ok, url, existed } | { ok:false, error }.
+ */
+export async function createPr({ projectDir, base, head, title, body = '', repo = null, headOwner = null }) {
+  const headRef = prHeadRef(head, headOwner);
+  const repoArgs = repo ? ['--repo', repo] : [];
+  const args = ['pr', 'create', ...repoArgs, '--base', base, '--head', headRef,
+    '--title', title || head, '--body', body || title || head];
+  const cred = await githubEnv('write', { repo: ownerRepo(repo) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', args, { cwd: projectDir, env: cred.env });
   if (r.ok) {
     // gh prints the PR URL as the last stdout line.
     const url = (r.stdout.trim().split(/\r?\n/).pop() || '').trim();
     return { ok: true, url, existed: false };
   }
   if (/already exists/i.test(r.stderr || '')) {
-    const v = await _run('gh', ['pr', 'view', head, '--json', 'url', '-q', '.url'], { cwd: projectDir });
+    const v = await _run('gh', ['pr', 'view', headRef, ...repoArgs, '--json', 'url', '-q', '.url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepo(repo) })).env });
     if (v.ok && v.stdout.trim()) return { ok: true, url: v.stdout.trim(), existed: true };
+    // gh's message ends with the existing PR's URL ("… already exists:\n<url>");
+    // use it when the view selector cannot resolve (e.g. a PR opened from another fork).
+    const m = /https?:\/\/\S+\/pull\/\d+/.exec(r.stderr || '');
+    if (m) return { ok: true, url: m[0], existed: true };
   }
   return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+
+// ── gh issue create ───────────────────────────────────────────────────────────
+// The run reporter's one write to GitHub. The body is a whole JSON report (40 KB on
+// the largest run measured), so it rides a FILE: --body argv would be at the mercy of
+// the platform's argument limit, and every backtick and newline in it would depend on
+// spawn's quoting. --body-file has neither problem and is byte-exact.
+
+/** Applied to every filed report. `bug` exists upstream; `ai` marks the filer. */
+export const ISSUE_LABELS = Object.freeze(['bug', 'ai']);
+
+// gh resolves label NAMES through the API and fails the whole create when one is
+// missing — and a reporter with no triage permission on the target repo cannot add
+// labels at all. Both read like this, and both are recoverable by dropping them.
+const LABEL_REJECTED = /could not add label|label .*not found|must have (?:admin|push|triage)/i;
+
+/** gh's own failures, split so the UI can say something actionable. */
+function ghFailureKind(stderr) {
+  const s = String(stderr || '');
+  if (/gh auth login|not logged in|authentication|HTTP 401|bad credentials/i.test(s)) return 'auth';
+  return 'failed';
+}
+
+/**
+ * Open a GitHub issue with `gh issue create`. `repo` (OWNER/REPO) is REQUIRED and
+ * always explicit: gh would otherwise resolve the target from the cwd's remotes and
+ * file a worca bug report in whatever repository the user happens to be standing in.
+ *
+ * Labels are best effort — on a label rejection the issue is filed again without
+ * them rather than lost. Any OTHER failure is returned as-is and never retried: a
+ * retried create that actually succeeded the first time files the report twice.
+ *
+ * @returns {{ok:true, url:string, labeled:boolean} | {ok:false, kind:'no-repo'|'no-gh'|'auth'|'failed', error:string}}
+ */
+export async function createIssue({ repo, title, body = '', labels = ISSUE_LABELS }) {
+  if (!repo) return { ok: false, kind: 'no-repo', error: 'no GitHub repository is configured' };
+  if (!(await hasGh())) {
+    return { ok: false, kind: 'no-gh', error: 'the GitHub CLI (gh) is not installed' };
+  }
+
+  let dir = null;
+  try {
+    dir = await mkdtemp(join(tmpdir(), 'worca-issue-'));
+    const file = join(dir, 'body.md');
+    await writeFile(file, String(body), 'utf8');
+
+    const base = ['issue', 'create', '--repo', repo, '--title', title || 'Run report',
+      '--body-file', file];
+    const withLabels = [...base, ...labels.flatMap((l) => ['--label', l])];
+
+    let labeled = labels.length > 0;
+    let r = labeled ? await _run('gh', withLabels) : await _run('gh', base);
+    if (!r.ok && labeled && LABEL_REJECTED.test(r.stderr || '')) {
+      labeled = false;
+      r = await _run('gh', base);
+    }
+    if (r.ok) {
+      // gh prints the issue URL as the last stdout line, after its progress chatter.
+      const url = ((r.stdout || '').trim().split(/\r?\n/).pop() || '').trim();
+      return { ok: true, url, labeled };
+    }
+    return { ok: false, kind: ghFailureKind(r.stderr),
+             error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  } catch (err) {
+    // mkdtemp/writeFile only: a read-only temp dir must not throw through the route.
+    return { ok: false, kind: 'failed', error: err && err.message ? err.message : String(err) };
+  } finally {
+    if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** Normalize gh's `mergeable` / `mergeStateStatus` to MERGEABLE | CONFLICTING | UNKNOWN. */
@@ -191,23 +340,57 @@ export function normalizeMergeable(raw) {
   return 'UNKNOWN';
 }
 
-/** Read mergeability for the PR whose head is `head`. UNKNOWN on any failure. */
-export async function prMergeable({ projectDir, head }) {
-  const r = await _run('gh', ['pr', 'view', head, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir });
+/**
+ * Read mergeability. A `prUrl` is repo-agnostic (a fork PR lives in the BASE
+ * repo, which need not be the cwd's default) and wins; else the head selector
+ * (`owner:branch` when `headOwner`) scoped by `repo`. UNKNOWN on any failure.
+ */
+export async function prMergeable({ projectDir, head, repo = null, headOwner = null, prUrl = null }) {
+  const selector = prUrl || (head ? prHeadRef(head, headOwner) : '');
+  if (!selector) return 'UNKNOWN';
+  const repoArgs = !prUrl && repo ? ['--repo', repo] : [];
+  const r = await _run('gh', ['pr', 'view', selector, ...repoArgs, '--json', 'mergeable', '-q', '.mergeable'], { cwd: projectDir, env: (await githubEnv('read', { repo: prUrl ? ownerRepoOfPrUrl(prUrl) : ownerRepo(repo) })).env });
   if (!r.ok) return 'UNKNOWN';
   return normalizeMergeable(r.stdout.trim());
 }
 
+const normalizePr = (pr) => ({
+  state: String(pr?.state || '').toUpperCase(),
+  url: String(pr?.url || ''),
+  number: Number(pr?.number) || null,
+});
+
 /**
- * Look up an existing PR for `head` via `gh pr list`, so the History UI can hide
- * the Create-PR button when a PR is already open or merged. Scans the matches and
- * selects by priority OPEN > MERGED, so a newer closed PR never masks an older
- * merged one; a closed-but-not-merged PR is ignored (treated as "no active PR").
- * Returns { state, url, number } with state ∈ { OPEN, MERGED }, or null when there
- * is no open/merged PR / on any gh failure. Never throws.
+ * Look up an existing PR for `head`, so the History UI can hide the Create-PR
+ * button when a PR is already open or merged. Returns { state, url, number } with
+ * state ∈ { OPEN, MERGED }, or null when there is no open/merged PR / on any gh
+ * failure. Never throws.
+ *
+ * With a persisted `prUrl` (spec: later lookups use pr_url) the PR is read
+ * directly via `gh pr view <url>` — repo-agnostic, so a cross-repo PR is found
+ * even though `gh pr list` in the cwd would search the wrong repository. The
+ * view answers a JSON OBJECT (the list answers an array — parsed separately).
+ * The branch search runs for rows with no PR yet, when gh cannot read the URL
+ * (deleted PR, network, unparseable output), or when the PR behind the URL is
+ * CLOSED (unmerged) — a newer PR may exist for the branch. The list keeps the
+ * BARE branch: `gh pr list --head owner:branch` matches nothing. It scans the
+ * matches and selects by priority OPEN > MERGED, so a newer closed PR never
+ * masks an older merged one; a closed-but-not-merged PR is ignored.
  */
-export async function findPrForBranch({ projectDir, head } = {}) {
+export async function findPrForBranch({ projectDir, head, prUrl = null } = {}) {
   if (!projectDir || !head) return null;
+  if (prUrl) {
+    const v = await _run('gh', ['pr', 'view', prUrl, '--json', 'number,state,url'], { cwd: projectDir, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+    if (v.ok) {
+      let obj = null;
+      try { obj = JSON.parse(v.stdout || 'null'); } catch { obj = null; }
+      if (obj && typeof obj === 'object' && !Array.isArray(obj) && obj.url) {
+        const pr = normalizePr(obj);
+        if (pr.state === 'OPEN' || pr.state === 'MERGED') return pr;
+        // CLOSED: fall through to the branch search below.
+      }
+    }
+  }
   const r = await _run(
     'gh',
     ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,url', '--limit', '30'],
@@ -218,17 +401,127 @@ export async function findPrForBranch({ projectDir, head } = {}) {
   try { arr = JSON.parse(r.stdout || '[]'); } catch { return null; }
   if (!Array.isArray(arr) || arr.length === 0) return null;
   // Keep only the states the UI acts on; closed/declined PRs are deliberately dropped.
-  const norm = arr
-    .map((pr) => ({
-      state: String(pr?.state || '').toUpperCase(),
-      url: String(pr?.url || ''),
-      number: Number(pr?.number) || null,
-    }))
-    .filter((pr) => pr.state === 'OPEN' || pr.state === 'MERGED');
+  const norm = arr.map(normalizePr).filter((pr) => pr.state === 'OPEN' || pr.state === 'MERGED');
   if (norm.length === 0) return null;
   // Requirement is binary: hide the button if any OPEN or MERGED PR exists. After
   // the filter, norm[0] is necessarily a MERGED entry when there is no OPEN one.
   return norm.find((p) => p.state === 'OPEN') || norm[0];
+}
+
+// ── Remotes (fork support) ──────────────────────────────────────────────────
+
+/**
+ * Parse a git remote URL into { host, owner, repo } or null when it is not a
+ * hosted owner/repo URL (local paths, file://, bare hosts). Accepts
+ *   https://github.com/owner/repo.git   https://user@host/owner/repo
+ *   ssh://git@github.com/owner/repo.git ssh://git@host:2222/owner/repo
+ *   git@github.com:owner/repo.git       (scp-style, cf. marketplaces.mjs:31)
+ *   git@github.com:/owner/repo.git      host:owner/repo
+ *   git://host/owner/repo.git
+ * Trailing `.git` / `/` are dropped; owner/repo are the LAST two path segments.
+ * GitHub's SSH-over-443 alias host (`ssh.github.com`) is folded into `github.com`:
+ * it names the same repository, and gh's --repo form only knows the real host.
+ * Pure; never throws.
+ */
+const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
+
+export function parseRemoteUrl(url) {
+  const s = String(url || '').trim();
+  if (!s) return null;
+  let host = '';
+  let pathPart = '';
+  let m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/i.exec(s);
+  if (m) {
+    host = m[1]; pathPart = m[2];
+  } else if ((m = /^(?:([^@/\s]+)@)?([^:/\s]+):(.+)$/.exec(s))) {
+    // scp-style [user@]host:path. Without a user@ prefix a leading `/` is
+    // indistinguishable from a Windows drive path (C:/repos/x) → not hosted.
+    if (!m[1] && m[3].startsWith('/')) return null;
+    host = m[2]; pathPart = m[3];
+  } else {
+    return null;
+  }
+  const segs = pathPart.replace(/\/+$/, '').replace(/\.git$/i, '').split('/').filter(Boolean);
+  if (segs.length < 2) return null;
+  const owner = segs[segs.length - 2];
+  const repo = segs[segs.length - 1];
+  if (!owner || !repo) return null;
+  const h = host.toLowerCase();
+  return { host: HOST_ALIASES[h] || h, owner, repo };
+}
+
+/** gh's `[HOST/]OWNER/REPO` form for --repo; the host is omitted for github.com. */
+export function remoteRepoSlug(parsed) {
+  if (!parsed || !parsed.owner || !parsed.repo) return null;
+  const base = `${parsed.owner}/${parsed.repo}`;
+  return parsed.host && parsed.host !== 'github.com' ? `${parsed.host}/${base}` : base;
+}
+
+/** True when two parsed remotes name the same repository (GitHub is case-insensitive). */
+export function sameRepo(a, b) {
+  if (!a || !b || !a.owner || !b.owner || !a.repo || !b.repo) return false;
+  return String(a.host || '').toLowerCase() === String(b.host || '').toLowerCase()
+    && a.owner.toLowerCase() === b.owner.toLowerCase()
+    && a.repo.toLowerCase() === b.repo.toLowerCase();
+}
+
+/** gh's PR selector for a head branch: `owner:branch` for a cross-repo head, else bare. */
+export function prHeadRef(head, headOwner) {
+  return headOwner ? `${headOwner}:${head}` : head;
+}
+
+/**
+ * The repo's git remotes from `git remote -v`, in git's (alphabetical) order.
+ * Each entry is { name, fetchUrl, pushUrl, host, owner, repo, slug } with
+ * host/owner/repo/slug null when the URL is not a hosted owner/repo URL. The
+ * push URL is what the branch lands on, so it is parsed first; the fetch URL is
+ * the fallback. Never throws: { ok:true, remotes } | { ok:false, remotes:[], error }.
+ * Lives here (not in worktree.mjs) so it shares the `_run` seam the tests stub.
+ */
+export async function listRemotes(projectDir) {
+  if (!projectDir) return { ok: false, remotes: [], error: 'projectDir is required' };
+  const r = await _run('git', ['remote', '-v'], { cwd: projectDir });
+  if (!r.ok) return { ok: false, remotes: [], error: (r.stderr || '').trim() || `git exited ${r.code}` };
+  const byName = new Map();
+  for (const raw of (r.stdout || '').split(/\r?\n/)) {
+    const m = /^(\S+)\t(.+?)\s+\((fetch|push)\)$/.exec(raw.trim());
+    if (!m) continue;
+    const [, name, url, kind] = m;
+    const e = byName.get(name) || { name, fetchUrl: null, pushUrl: null };
+    if (kind === 'fetch') e.fetchUrl = url; else e.pushUrl = url;
+    byName.set(name, e);
+  }
+  const remotes = [...byName.values()].map((e) => {
+    const parsed = parseRemoteUrl(e.pushUrl || e.fetchUrl);
+    return {
+      ...e,
+      host: parsed?.host ?? null, owner: parsed?.owner ?? null, repo: parsed?.repo ?? null,
+      slug: remoteRepoSlug(parsed),
+    };
+  });
+  return { ok: true, remotes };
+}
+
+/**
+ * The branches each named remote has, from the LOCAL remote-tracking refs
+ * (`refs/remotes/<remote>/*` — no network, as fresh as the last fetch). A remote
+ * name may itself hold a slash, so the longest matching name owns a ref; the
+ * symbolic `HEAD` is dropped. Never throws:
+ * { ok:true, byRemote:{ [name]: string[] } } | { ok:false, byRemote:{}, error }.
+ */
+export async function listRemoteBranches(projectDir, remoteNames = []) {
+  if (!projectDir) return { ok: false, byRemote: {}, error: 'projectDir is required' };
+  const r = await _run('git', ['for-each-ref', '--format=%(refname)', 'refs/remotes/'], { cwd: projectDir });
+  if (!r.ok) return { ok: false, byRemote: {}, error: (r.stderr || '').trim() || `git exited ${r.code}` };
+  const names = [...remoteNames].sort((a, b) => b.length - a.length);
+  const byRemote = Object.fromEntries(remoteNames.map((n) => [n, []]));
+  for (const raw of (r.stdout || '').split(/\r?\n/)) {
+    const rest = raw.trim().startsWith('refs/remotes/') ? raw.trim().slice('refs/remotes/'.length) : '';
+    const name = rest && names.find((n) => rest.startsWith(`${n}/`));
+    const branch = name ? rest.slice(name.length + 1) : '';
+    if (branch && branch !== 'HEAD') byRemote[name].push(branch);
+  }
+  return { ok: true, byRemote };
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.

@@ -10,6 +10,8 @@
 // using the run-id wildcard-suffix convention the command router resolves.
 
 import { pauseConsequences, describePauseReason, giveUpOption } from '../failure-policy.mjs';
+import { projectForm } from '../../shared/forms/project.mjs';
+import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -120,6 +122,27 @@ export function renderQuestion(meta, payload = {}) {
     return mdMsg(parts.join('\n'), 'warning');
   }
 
+  if (kind === 'form') {
+    // A form ask (spec §8). The projection is P1's — display widgets as text, files
+    // as `rel (mime, size)` — capped so one message fits the tightest shipped
+    // platform (Discord: 2000 chars); the cap drops display text only and never the
+    // prompts or the reply command. A surface:'web' form stays OPEN here: a chat run
+    // lives in ui/server.mjs's runs Map, so a browser really can answer it.
+    parts.push(`   **Status:** waiting on a form${payload.agent ? ` from ${payload.agent}` : ''}`);
+    const webOnly = payload.surface === 'web';
+    let projection;
+    try {
+      projection = projectForm(payload, { ...(webOnly ? {} : { ref }), maxChars: CHAT_PROJECTION_MAX });
+    } catch {
+      // A junk envelope must still NOTIFY — the notifier's guard would otherwise
+      // swallow the throw and the user would never learn a run is waiting.
+      projection = `${String(payload.title || payload.form || 'form')}${payload.agent ? ` — ${payload.agent}` : ''}`;
+    }
+    for (const line of projection.split('\n')) parts.push(line ? `   ${line}` : '');
+    if (webOnly) parts.push('   Answer this form in the worca web UI.');
+    return mdMsg(parts.join('\n'), 'warning');
+  }
+
   parts.push(`   **Status:** has questions${payload.agent ? ` from ${payload.agent}` : ''}`);
   const questions = Array.isArray(payload.questions) ? payload.questions : [];
   questions.forEach((q, qi) => {
@@ -134,6 +157,18 @@ export function renderQuestion(meta, payload = {}) {
 }
 
 /** Canned message for the "Test" button / `worca plugin channel` smoke. */
+/**
+ * A scheduled-run notification (src/core/notifications.mjs row). Run OUTCOMES are
+ * not rendered here — the run's own done/error events already went out.
+ */
+export function renderSchedule(n = {}) {
+  const icon = n.severity === 'info' ? '\u{1F552}' : '\u{26A0}\u{FE0F}';
+  const title = String(n.title || 'Scheduled run').trim();
+  const name = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+  const msg = String(n.message || '');
+  return mdMsg(`${icon} **Schedule:** ${name}\n   ${msg.length > 300 ? `${msg.slice(0, 300)}…` : msg}`, n.severity === 'info' ? 'info' : 'warning');
+}
+
 export function renderTest() {
   return {
     title: 'worca-cc test message',

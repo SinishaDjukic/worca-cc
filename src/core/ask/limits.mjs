@@ -2,7 +2,9 @@
 // Fixed limits of the Ask Worca chat (ask-worca-design.md §6.9) plus the two
 // operator-configurable per-turn guards, read fresh on every turn (D12). Pure
 // apart from the settings readers, which are injectable for tests.
-import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd } from '../settings.mjs';
+import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd, readSettings } from '../settings.mjs';
+import { cachedPolicyForKey } from '../policy/cache.mjs';
+import { fieldsForRun } from '../policy/effective.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS } from './attachment-kind.mjs';
 
 export const ASK_LIMITS = Object.freeze({
@@ -29,13 +31,36 @@ export const ASK_LIMITS = Object.freeze({
   runsScanLimit: 200,                      // listAllPipelines({limit}) before JS filtering
   diffDefaultBytes: 60_000,
   diffMaxBytes: 200_000,
+  // web_fetch pages: Claude Code refuses an MCP result over its token limit and moves it into a file the chat
+  // may not read (seen live: a 62 107-character result refused, 30 000-character pages fine), so a page is
+  // returned in slices of the converted text (at most WEB_LIMITS.maxTextChars in all).
+  webPageDefaultChars: 20_000,
+  webPageMaxChars: 30_000,
   gitOutputMaxBytes: 200_000,              // per `git` tool call (P4 §8), sliceBytes window
   gitCaptureMaxBytes: 8_000_000,           // stdout CAPTURE cap per spawn — past it the child is killed and the output marked capped
   worktreesPerThread: 5,                   // P4 D9
   worktreesGlobal: 15,                     // P4 D9
   attachmentReadDefaultBytes: 32_000,
   attachmentReadMaxBytes: 200_000,
+  artifactsListMaxLimit: 200,
+  artifactReadDefaultBytes: 60_000,
+  artifactReadMaxBytes: 200_000,
+  // Scripts in the chat (scripts-workbench-design.md §9.1). The store's own caps (source
+  // 256 KiB, 32 cases) are NOT repeated here: script-store / script-cases own those.
+  scriptListMaxRows: 200,                  // list_scripts rows (= artifactsListMaxLimit)
+  scriptSourceDefaultBytes: 60_000,        // get_script page (= diffDefaultBytes)
+  scriptSourceMaxBytes: 200_000,           // get_script page cap (= diffMaxBytes)
+  scriptLogMaxLines: 200,                  // test_script: the LAST N streamed lines…
+  scriptLogMaxBytes: 16 * 1024,            // …and their byte cap (the tail is kept: a failure ends the log)
+  scriptOutputMaxBytes: 16 * 1024,         // test_script: per output port (the head is kept)
+  scriptTestDefaultTimeoutSec: 120,        // test_script timeoutSec default
+  scriptTestMaxTimeoutSec: 600,            // …and its ceiling (= the engine's 10-minute default)
+  scriptVerdictMaxIssues: 50,              // test_script: verdict issues sent (the rest is counted, not sent)
+  scriptResultFieldMaxChars: 2000,         // test_script: per verdict field / warning / diff / error line (chars)
   briefMaxChars: 8000,
+  metricsRunsDefaultLimit: 20,             // list_team_metrics_runs page (= listRunsDefaultLimit)
+  metricsRunsMaxLimit: 100,                // list_team_metrics_runs page cap (= listRunsMaxLimit)
+  metricsBreakdownMaxRows: 20,             // get_team_metrics rows per breakdown dimension
   workflowTaskMaxChars: 32_000,            // propose_workflow task text (= classify.mjs TASK_TEXT_CAP)
   workflowNoteMaxChars: 200,               // propose_workflow note shown on the card
   proposalNoteMaxChars: 200,               // propose_run note ("why this shape") shown on the run card
@@ -46,7 +71,7 @@ export const ASK_LIMITS = Object.freeze({
   headerAttachments: 5,
   deltaBatchMs: 50,
   deltaBatchChars: 256,
-  defaultModel: 'claude-opus-5',           // D8
+  defaultModel: 'claude-opus-5-5',         // D8
   defaultEffort: 'high',
 });
 
@@ -55,6 +80,20 @@ export const ASK_LIMITS = Object.freeze({
  * applies to the next turn without a restart.
  * @returns {{maxTurns:number, maxBudgetUsd:number|null}}
  */
-export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = readAskMaxBudgetUsd } = {}) {
-  return { maxTurns: readMaxTurns(), maxBudgetUsd: readMaxBudgetUsd() };
+export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = readAskMaxBudgetUsd, projectKey = null, readStored = readSettings } = {}) {
+  const out = { maxTurns: readMaxTurns(), maxBudgetUsd: readMaxBudgetUsd() };
+  // Team policy defaults (team-policy design §5 `ask.*`): start a thread pinned to a governed
+  // project off the team's numbers, but only where the developer has stored nothing of their own.
+  if (projectKey) {
+    const p = cachedPolicyForKey(projectKey);
+    if (p) {
+      const f = fieldsForRun(p.doc);
+      const stored = readStored() || {};
+      const t = f['ask.maxTurns'];
+      if (t && t.kind === 'default' && stored.askMaxTurns === undefined) out.maxTurns = t.value;
+      const b = f['ask.maxBudgetUsd'];
+      if (b && b.kind === 'default' && stored.askMaxBudgetUsd === undefined) out.maxBudgetUsd = b.value;
+    }
+  }
+  return out;
 }

@@ -144,7 +144,7 @@ test('comment threads: surface cards, the sidebar rail recipe, quiet buttons, a 
   const card = bodyAfter('.hd-cmt-card{');
   assert.match(card, /background:var\(--surface\)/);
   assert.match(card, /border:1px solid var\(--line\)/);
-  assert.match(card, /border-radius:14px/);
+  assert.match(card, /border-radius:var\(--r-card\)/);
   assert.match(card, /box-shadow:var\(--shadow-soft\)/);
   assert.match(bodyAfter('.hd-cmt-thread{'), /max-width:720px/);
   // The rail is .nav-child's connector, card-sized: same stroke, token and radius.

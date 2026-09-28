@@ -13,7 +13,7 @@
 import { readPluginConfig } from '../plugin-config.mjs';
 import { parseIdList } from './allowlist.mjs';
 import { createRateLimiter } from './rate-limiter.mjs';
-import { renderDone, renderError, renderQuestion } from './renderers.mjs';
+import { renderDone, renderError, renderQuestion, renderSchedule } from './renderers.mjs';
 import { pauseConsequences } from '../failure-policy.mjs';
 
 /**
@@ -101,6 +101,19 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
       function getPrefsSafe() {
         try { return getPrefs(); } catch { return { notify: {} }; }
       }
+    },
+
+    /**
+     * A scheduled-run notification. Run outcomes are skipped: the fired run's own
+     * done/error events already reached chat through attach().
+     */
+    notifySchedule(notification) {
+      try {
+        if (!notification || ['completed', 'run_error', 'run_paused', 'retrying'].includes(notification.kind)) return;
+        let prefs; try { prefs = getPrefs(); } catch { prefs = { notify: {} }; }
+        if (prefs.notify?.schedule === false) return;
+        deliver(renderSchedule(notification));
+      } catch (err) { logger('error', `chat notifier: ${err?.message || err}`); }
     },
 
     /** The Test button / smoke path: send one message to one channel's

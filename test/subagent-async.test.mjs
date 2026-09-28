@@ -159,7 +159,7 @@ test('a foreground finish fills durationMs/tokens from the frame tool_use_result
   const orch = fresh();
   orch._onAgentEvent('planner', spawnEvt('toolu_A'), ATTR);
   orch._onAgentEvent('planner', syncEvt('toolu_A', {
-    agentId: 'a1', agentType: 'Explore', resolvedModel: 'claude-opus-5',
+    agentId: 'a1', agentType: 'Explore', resolvedModel: 'claude-opus-5-5',
     totalDurationMs: 225000, totalTokens: 48213, usage: { input_tokens: 40000, output_tokens: 8213 },
   }));
   const r = orch.state.subAgents[0];
@@ -184,7 +184,7 @@ test('resolvedModel fills a null runModel on the ack (frontmatter-model gap) and
 test('resolvedModel never overwrites a runModel the spawn already set', () => {
   const orch = fresh();
   orch._onAgentEvent('planner', spawnEvt('toolu_A', 'opus'), ATTR); // Task input names model:'opus'
-  orch._onAgentEvent('planner', ackEvt('toolu_A', { isAsync: true, resolvedModel: 'claude-opus-5[1m]' }));
+  orch._onAgentEvent('planner', ackEvt('toolu_A', { isAsync: true, resolvedModel: 'claude-opus-5-5[1m]' }));
   assert.equal(orch.state.subAgents[0].runModel, 'opus', 'clean alias kept for the UI pill');
 });
 

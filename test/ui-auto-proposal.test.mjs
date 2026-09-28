@@ -59,9 +59,9 @@ test('chips, fingerprint, loops (through the OR valve), match line, meta; name e
   assert.match(h.parts.match.textContent, /"Theme switch"/);
   h.parts.name.querySelector('.ask-wfcard-edit').click(); field.value = 'zzz'; field.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(h.getName(), 'Theme switch', 'Esc reverts');
-  h.setNodeTunables(p.order[1], { model: 'claude-opus-5', effort: 'max', askQuestions: true });
+  h.setNodeTunables(p.order[1], { model: 'claude-opus-5-5', effort: 'max', askQuestions: true });
   const band = h.graph.nodeEl(p.order[1]).querySelector('.nband');
-  assert.deepEqual([...band.querySelectorAll('.bchip')].map((c) => c.textContent).slice(0, 3), ['Opus 5', 'max', 'asks']);
+  assert.deepEqual([...band.querySelectorAll('.bchip')].map((c) => c.textContent).slice(0, 3), ['Opus 5.5', 'max', 'asks']);
   h.destroy();
 });
 
@@ -113,8 +113,8 @@ test('pick: renderAutoProposal({pick:true}) renders button chips; setNodeTunable
   const h = renderAutoProposal(proposalFor(), { doc, width: 702, pick: true });
   const first = h.graph.nodeEl(h.graph.flowLayout().order[1]);          // flow order[0] is the Task card; [1] the first agent
   assert.equal(first.querySelector('.bchip.model').tagName, 'BUTTON');
-  h.setNodeTunables(h.graph.flowLayout().order[1], { model: 'claude-opus-5', effort: 'high' });
-  assert.equal(first.querySelector('.bchip.model').tagName, 'BUTTON'); assert.equal(first.querySelector('.bchip.model').textContent, 'Opus 5');
+  h.setNodeTunables(h.graph.flowLayout().order[1], { model: 'claude-opus-5-5', effort: 'high' });
+  assert.equal(first.querySelector('.bchip.model').tagName, 'BUTTON'); assert.equal(first.querySelector('.bchip.model').textContent, 'Opus 5.5');
   h.destroy();
   const ro = renderAutoProposal(proposalFor(), { doc, width: 702 });
   assert.equal(ro.graph.nodeEl(ro.graph.flowLayout().order[1]).querySelector('.bchip.model').tagName, 'SPAN', 'default: read-only spans');

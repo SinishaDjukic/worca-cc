@@ -262,3 +262,12 @@ test('doctor prunes leftover legacy worktrees per registered project (detached) 
   const branches = spawnSync('git', ['-C', repo, 'branch', '--format=%(refname:short)']).stdout.toString();
   assert.match(branches, /worca-cc\/clidone1/);
 });
+
+test('workflow list prepends the graph built-ins (Default, then Memory defragment) before the stored rows', async () => {
+  const home = await freshHome();
+  const r = await run(['workflow', 'list'], { home });
+  assert.equal(r.code, 0, r.stderr);
+  const ids = r.stdout.trim().split('\n').filter(Boolean).map((l) => l.split('\t')[0]);
+  assert.deepEqual(ids.slice(0, 2), ['wf_default', 'wf_memory_defrag'], r.stdout);
+  assert.match(r.stdout, /wf_memory_defrag\tMemory defragment\tshared/);
+});

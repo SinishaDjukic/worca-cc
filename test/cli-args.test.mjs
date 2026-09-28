@@ -7,7 +7,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -111,6 +111,18 @@ test('MIN-51: a strict prefix of a subcommand is refused too', () => {
     r.stderr.trim(),
     'worca: unknown subcommand "plug" — did you mean "plugin"? (to run a prompt, use --prompt "…")',
   );
+});
+
+test('MIN-51: a typo of `metrics` is refused, not run as a prompt', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  const r = runCli(['metrcs'], repo);
+  assert.equal(r.status, 2, `expected the fail() exit code\n${r.stdout}\n${r.stderr}`);
+  assert.equal(
+    r.stderr.trim(),
+    'worca: unknown subcommand "metrcs" — did you mean "metrics"? (to run a prompt, use --prompt "…")',
+  );
+  assert.equal(pipelineCount(), before, 'no pipeline row');
 });
 
 test('MIN-51: a multi-word bare positional is still a prompt', () => {
@@ -221,4 +233,53 @@ test('MIN-51: a typo of `help` itself is refused, not run as a prompt', () => {
   );
   assert.equal(pipelineCount(), before, 'no pipeline row');
   assert.equal(branchesOf(repo).trim(), 'main', 'no feature branch');
+});
+
+test('--memory-scope: enum-checked, workflow-checked, documented; the prompt is synthesised so no --prompt is needed', () => {
+  const repo = freshRepo();
+  const before = pipelineCount();
+  let r = runCli(['--memory-scope', 'both', '--workflow', 'wf_memory_defrag'], repo);
+  assert.equal(r.status, 2, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /--memory-scope must be one of global, project, got: both/);
+  r = runCli(['--memory-scope', 'global', '--prompt', 'x'], repo);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /memoryScope is only valid with the Memory defragment workflow/);
+  r = runCli(['--workflow', 'wf_memory_defrag', '--prompt', 'x'], repo);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /needs memoryScope/);
+  assert.equal(pipelineCount(), before, 'no pipeline row for any refusal');
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.match(help.stdout, /--memory-scope <s>\s+Memory defragment workflow only: global \| project/);
+});
+
+test('--memory-scope global with --workflow wf_memory_defrag runs a mock defragment to done without a prompt', () => {
+  const repo = freshRepo();
+  const r = runCli(['--project', repo, '--workflow', 'wf_memory_defrag', '--memory-scope', 'global', '--mock', '--yes'], repo);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Memory mounted: \d+ file\(s\) across 1 scope\(s\) — loaded from .*[\\/]\.claude[\\/]rules[\\/]worca, written to .*[\\/]memory/, 'one scope mounted: the rules copy in the cwd, the writable copy under the pipeline dir');
+  const row = getDb().prepare('SELECT prompt, status FROM pipelines ORDER BY started_at DESC LIMIT 1').get();
+  assert.equal(row.prompt, 'Defragment global memory.');
+  assert.equal(row.status, 'done');
+});
+
+// Settings › Memory: the CLI start path constructs the same orchestrator, so the defragment pair is
+// resolved there too — no CLI-side code. --model is the pair named at start and wins.
+test('a CLI defragment run picks up the Settings › Memory pair; --model named at start wins and drops the setting\'s effort', () => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-cc-cliargs-dmhome-'));
+  scratch.push(home);
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ memory: { defrag: { model: 'claude-haiku-4-5', effort: 'high' } } }));
+  // settings.json lives under HOME: sandbox it and lift the test runner's HOME guard for the child.
+  const env = { ...process.env, WORCA_MOCK: '1', HOME: home, USERPROFILE: home, WORCA_TEST_ALLOW_HOME_FALLBACK: '1', WORCA_PROJECTS_ROOT: home };
+  const run = (extra) => spawnSync(process.execPath, [CLI, '--project', freshRepo(), '--workflow', 'wf_memory_defrag', '--memory-scope', 'global', '--mock', '--yes', ...extra], { env, encoding: 'utf8' });
+  const nDefrag = () => JSON.parse(getDb().prepare('SELECT stepper FROM pipelines ORDER BY started_at DESC LIMIT 1').get().stepper)
+    .graph.nodes.find((n) => n.id === 'n_defrag');
+  let r = run([]);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Memory defragment model: claude-haiku-4-5 · high \(Settings › Memory\)/);
+  assert.deepEqual([nDefrag().model, nDefrag().effort], ['claude-haiku-4-5', 'high']);
+  r = run(['--model', 'claude-opus-5-5']);
+  assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /Memory defragment model: claude-opus-5-5 \(named at start\)/);
+  assert.deepEqual([nDefrag().model, nDefrag().effort], ['claude-opus-5-5', '']);
 });

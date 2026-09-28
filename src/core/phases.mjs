@@ -14,7 +14,7 @@
 // prompt so the system prompt is never empty. Interface is locked by docs/ARCHITECTURE.md §3.5.
 
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, bridgedModelInfo } from './config.mjs';
 import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, effectiveSubagentModel } from './model-env.mjs';
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
@@ -26,6 +26,9 @@ import { join } from 'node:path';
 export const READ_WRITE_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'Skill'];
 // Implementer additionally gets MultiEdit for larger, multi-hunk edits.
 export const IMPLEMENTER_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'Bash', 'Grep', 'Glob', 'Skill'];
+// A memory agent (sideEffect 'memory', agent-memory-design.md §7.1) edits files under the
+// run's memory mount and nothing else: no Bash, no Skill, no MultiEdit.
+export const MEMORY_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 
 /**
  * Effective `--allowedTools` for a node: the role's baseline file/exec tools UNION
@@ -80,6 +83,22 @@ export function ctxFanOut(ctx) {
  * ctx — from modelHasBaseUrlRouting(effective model), so this stays pure.
  * A present node wins, mirroring ctxFanOut. Pure + exported for testing.
  */
+/**
+ * The model env for a dispatched node: resolveModelEnv tagged with the
+ * execution id (the bridge books its calls per tag). A bridged model whose
+ * provider is not usable makes resolveModelEnv throw (fail fast, model-bridge
+ * design §8.5) — except under the offline mock, which spawns nothing and must
+ * keep running for a catalog that names a Copilot model nobody signed in to.
+ */
+function resolveDispatchModelEnv(c, ctx) {
+  try {
+    return resolveModelEnv(c.model, { tag: ctx.executionId });
+  } catch (err) {
+    if (c.mock && err && err.bridgeReason) return undefined;
+    throw err;
+  }
+}
+
 export function ctxEndpointRouted(ctx) {
   if (!ctx || typeof ctx !== 'object') return false;
   return !!(ctx.node ? ctx.node.endpointRouted : ctx.endpointRouted);
@@ -371,14 +390,20 @@ export function workspaceFanOutDirective(strategy, ws, { relative = false, endpo
  * sensible inline fallback when the body is missing/empty). The optional 4th
  * `workspace` arg is the read-only workspace metadata; absent it,
  * workspaceContextBlock returns '' and the prompt is byte-identical to today's
- * single-project prompt. Exported for testing.
+ * single-project prompt. The optional 5th `memoryBlock` arg is the rendered
+ * `## Worca memory` pointer block ('' when the run has no mount). Exported for testing.
  */
-export function buildSystemPrompt(toolInstruction, agentBody, role, workspace) {
+export function buildSystemPrompt(toolInstruction, agentBody, role, workspace, memoryBlock = '') {
   const parts = [];
   const tool = (toolInstruction || '').trim();
   if (tool) parts.push(tool);
   const ws = workspaceContextBlock(workspace); // '' when not a workspace run
   if (ws) parts.push(ws);
+  // Agent memory (§4.3): the pointer block — the files themselves load natively from the
+  // cwd's .claude/rules/worca. Between the workspace preamble and the role body so the body
+  // (the contract) stays last. Trimmed: the renderer ends with one newline.
+  const mem = (typeof memoryBlock === 'string' ? memoryBlock : '').trim();
+  if (mem) parts.push(mem);
   const body = (agentBody || '').trim();
   // The agent's .md body IS the contract (spec §1: the engine is generic). The v1
   // per-role FALLBACK_PROMPTS table died with the v1 engine; a missing body now
@@ -421,6 +446,55 @@ export const RESUME_HEADER =
   'ORIGINAL task below to completion. Do not redo work that is already done.\n\n';
 
 /**
+ * The per-agent forms section (spec §4): every form the agent may ask with, its
+ * data schema, its answer schema and its example. Returns '' for an agent that
+ * declares none, which is what keeps every prompt that exists today byte-identical.
+ * `path` is the file to write the payload to; omitted for a clarifier, whose
+ * Ports block already names its answers port. PURE.
+ * @param {Record<string, object>|null|undefined} forms
+ * @param {{path?: string}} [opts]
+ */
+export function askFormsBlock(forms, { path: askPath } = {}) {
+  const entries = Object.entries(forms || {});
+  if (!entries.length) return '';
+  const body = entries.map(([id, def]) => (
+    `### \`${id}\` — ${def.title || id} (version ${Number.isInteger(def.version) ? def.version : 1})\n\n` +
+    'data you must supply:\n```json\n' + JSON.stringify(def.data, null, 2) + '\n```\n\n' +
+    'answer you will receive:\n```json\n' + JSON.stringify(def.answer, null, 2) + '\n```\n\n' +
+    'example data:\n```json\n' + JSON.stringify(def.example, null, 2) + '\n```\n'
+  )).join('\n');
+  return (
+    '## Forms you may ask with\n\n' +
+    (askPath ? `Instead of the questions shape, write {"form":"<id>","data":{…}} to: ${askPath}\n` : '') +
+    'A `file` value is a path relative to your working directory or the pipeline dir. ' +
+    'You will be resumed with {"form","version","values"}.\n\n' +
+    body
+  );
+}
+
+/**
+ * The one repair round a refused form ask gets (spec §5 gate 2): the exact error
+ * list plus the data schema, and the SAME file to rewrite. Rendered by runOpts
+ * for BOTH engines — a clarifier never has questionsEnabled, so it could not
+ * ride questionsPromptBlock. '' when nothing is being repaired, which is what
+ * keeps every other prompt byte-identical. PURE.
+ * @param {{formRepair?: {form: string, errors: Array, schema: object|null, file: string}}} ctx
+ */
+export function formRepairBlock(ctx) {
+  const r = ctx && ctx.formRepair;
+  if (!r) return '';
+  const lines = (Array.isArray(r.errors) ? r.errors : [])
+    .map((e) => `- ${e && e.path ? `${e.path}: ` : ''}${(e && e.message) || 'invalid'}`)
+    .join('\n');
+  return (
+    '\n\n## Your form ask was refused\n\n' +
+    `Form \`${r.form}\`:\n${lines || '- invalid'}\n\n` +
+    (r.schema ? 'data schema:\n```json\n' + JSON.stringify(r.schema, null, 2) + '\n```\n\n' : '') +
+    `Write a corrected {"form","data"} to: ${r.file}\n`
+  );
+}
+
+/**
  * Ask-then-resume prompt block for a questions-enabled node (spec 2026-07-11).
  * Appended by runOpts, so EVERY producer/verifier runner inherits it with no
  * per-runner edits. ctx fields (set by the orchestrator per attempt):
@@ -438,16 +512,28 @@ export function questionsPromptBlock(ctx) {
   const answered = prior.length
     ? '## Already answered — DO NOT ask these again\n\n' + renderAnswers(prior) + '\n'
     : '';
+  // Form answers already collected for this node, in the exact shape the agent
+  // receives them (spec §4). '' when there are none, so the legacy block is
+  // byte-identical.
+  const priorForms = Array.isArray(ctx.formAnswers) ? ctx.formAnswers : [];
+  const formAnswered = priorForms.length
+    ? '## Your form answers\n\n' + priorForms
+      .map((f) => '```json\n' + JSON.stringify({ form: f.form, version: f.version, values: f.values }, null, 2) + '\n```')
+      .join('\n\n') + '\n\n'
+    : '';
+  const forms = askFormsBlock(ctx.askForms, { path: ctx.questionsFile });
   if (!ctx.questionsFile) {
     return (
-      '\n\n' + answered +
+      '\n\n' + answered + formAnswered +
       '## Asking the user\n\n' +
       'No more question rounds are available this run — proceed with reasonable assumptions.\n'
     );
   }
-  const mock = prior.length ? '' : mockMarkers({ MOCK_ASK: ctx.questionsFile }) + '\n';
+  // MOCK_ASK only while NOTHING has been answered yet — legacy OR form: a resume that
+  // re-emitted it would make the offline mock re-ask every round until the cap.
+  const mock = (prior.length || priorForms.length) ? '' : mockMarkers({ MOCK_ASK: ctx.questionsFile }) + '\n';
   return (
-    '\n\n' + answered +
+    '\n\n' + answered + formAnswered +
     '## Asking the user (enabled)\n\n' +
     'If a decision materially shapes the outcome and you cannot resolve it from the task, ' +
     'the inputs, or the codebase — including anything material you are about to silently ' +
@@ -457,6 +543,7 @@ export function questionsPromptBlock(ctx) {
     '2. STOP immediately — do no further work. You will be resumed with the answers.\n' +
     'Assume freely on minor choices; on material ones, ask instead of assuming. Never pad, ' +
     'and never re-ask an answered question.\n\n' +
+    (forms ? forms + '\n' : '') +
     mock
   );
 }
@@ -486,7 +573,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   return {
     cwd: ctx.projectDir,
     systemPrompt,
-    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt) + questionsPromptBlock(ctx),
+    prompt: (ctx.resumeSessionId ? RESUME_HEADER + prompt : prompt)
+      + questionsPromptBlock(ctx) + formRepairBlock(ctx),
     resumeSessionId: ctx.resumeSessionId,
     // Grant the role's baseline tools PLUS whatever the agent declared in its
     // frontmatter (e.g. the Playwright MCP browser_* tools). ctx.node is present
@@ -506,6 +594,12 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // by the real runner (it is never a spawn flag).
     workspaceWriteTargets: workspaceWriteTargetsFor(ctx),
     permissionMode: c.permissionMode || 'acceptEdits',
+    // Agent memory (memory-write-split design D4): the writable copy lives OUTSIDE the cwd, so it
+    // rides --add-dir — acceptEdits auto-approves edits "inside your working directory or
+    // additionalDirectories" (documented), nothing else about the spawn changes, and the CLI loads
+    // nothing from that dir (CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD is never set here).
+    // undefined when the run has no mount ⇒ buildClaudeArgs emits nothing and the argv is byte-identical.
+    addDirs: typeof ctx.memoryMount === 'string' && ctx.memoryMount ? [ctx.memoryMount] : undefined,
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
     // Per-model routing env (design §4.4), resolved HERE — the one funnel every
@@ -515,7 +609,15 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // env byte-identical. The sub-agent model policy deliberately does NOT
     // touch this env: its only wire is the prompt block (subagentModelDirective),
     // and CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key.
-    modelEnv: resolveModelEnv(c.model),
+    modelEnv: resolveDispatchModelEnv(c, ctx),
+    // Model bridge (model-bridge-design.md §5.3): a translated model has no
+    // server-side web tools, so the runner withholds them. undefined for every
+    // non-bridged model ⇒ nothing emitted ⇒ argv byte-identical.
+    disallowedTools: bridgedModelInfo(c.model)?.excludeTools,
+    // Agent memory (§4.3): Task-tool sub-agents inherit the rules natively but not
+    // --append-system-prompt, so the pointer block rides the sub-agent flag. undefined when the
+    // run has no mount ⇒ buildClaudeArgs emits nothing and legacy argv stays byte-identical.
+    appendSubagentSystemPrompt: typeof ctx.memoryBlock === 'string' && ctx.memoryBlock.trim() ? ctx.memoryBlock : undefined,
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical
@@ -523,6 +625,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     permissionRules: c.permissionRules,
     envScrub: c.envScrub,
     envAllowlist: c.envAllowlist,
+    // Every role and node is a pipeline agent: under WORCA_AGENT_USER when the container has one.
+    asAgent: true,
     bin: c.bin,
     mock: c.mock,
     signal: ctx.signal,
@@ -791,7 +895,7 @@ export async function runWorkspaceScan(ctx, opts = {}) {
   const outPath = opts.outPath || joinPipeline(ctx.pipelineDir, 'workspace-description.md');
   // The scanner IS the source of the workspace description, so it does NOT receive
   // an injected workspace block (4th arg undefined). The body is the contract (C10).
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined);
+  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, 'workspaceScanner'), role, undefined, ctx.memoryBlock);
 
   const memberLines = projects.map((p) =>
     `- **${p.projectName || p.projectKey}** (\`${p.projectKey}\`): investigate \`${p.scanDir || p.projectDir}\`` +

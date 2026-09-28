@@ -39,6 +39,7 @@ If (and only if) you had to deviate, append a brief, factual note so it survives
 - Match the project's existing style and structure exactly.
 - Only the files the plan (implement) or the review (fix) require should change.
 - All tests green before you finish.
+- **Web UI (`ui/public/`)**: every element a user can see gets the interface-mode level the plan names (see `docs/ui-levels.md` § How to implement it). Static markup: `data-min-level="…"`. Built in JS: `tagLevel(el, '…')` from `ui-level.mjs`. A control that can hold a non-default value: `keepVisible(el, isNonDefault)`. Option lists, default tabs and layout-sizing renderers: `levelAtLeast()` plus an `onLevelChange` repaint. New pages, Settings tabs and detail tabs also go into `VIEW_MIN_LEVEL` / `SETTINGS_TAB_MIN_LEVEL` / the tab table's `level:`. Update the catalogue in `docs/ui-levels.md`. If the plan names no level, pick the higher one per the doc and record it as a deviation.
 
 After finishing, emit a concise assistant note summarizing: mode, which plan steps or review issues you handled, the tests you added/ran and their result, and any deviations (or "No deviations"). This summary is returned to the orchestrate skill.
 

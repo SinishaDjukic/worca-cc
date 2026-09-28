@@ -1,6 +1,6 @@
 // test/fixtures/plugins/mock-source/connector/index.mjs
 // Deterministic offline task source used across the plugin test suite and
-// scripts/smoke-plugin.mjs. No network, no deps. Its observables mirror the
+// tools/smoke-plugin.mjs. No network, no deps. Its observables mirror the
 // WORCA_MOCK canned frames (plugin-shim.mjs): two tasks, markdown bodies,
 // and reportResult recorded under state key 'lastReport' — so assertions hold
 // whether the real child ran (shim tests) or the canned frame served (smoke).

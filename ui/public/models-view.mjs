@@ -7,6 +7,9 @@
 // mv-promote, mv-save, mv-cancel, mv-env-add, mv-env-rm) so app.js wires ONE
 // delegated listener on the list container.
 
+import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
+import { credentialBadge } from './credential-badges.mjs';
+
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -15,6 +18,15 @@ function h(doc, tag, cls, text) {
 }
 
 /** "medium · high" or "all efforts" (the full set carries no signal). */
+/** Credential broker: "your key / no key" for the signed-in person, after a model's name. */
+function keyBadge(parent, m, doc) {
+  const b = credentialBadge(m.id);
+  if (!b) return;
+  const el = h(doc, 'span', `badge ${b.tone} mv-key-badge`, b.text);
+  el.title = b.title;
+  parent.appendChild(el);
+}
+
 export function effortsSummary(efforts, allEfforts) {
   const list = Array.isArray(efforts) ? efforts : [];
   if (!list.length || (allEfforts && list.length === allEfforts.length)) return 'all efforts';
@@ -77,15 +89,57 @@ export function suggestDuplicateId(id, takenIds = []) {
  * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
  * built-ins currently overridden by a global entry.
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '' } = {}, { doc = globalThis.document } = {}) {
+/**
+ * The catalog. `query` / `filter` narrow it and `collapsed` folds a group away: with the built-ins,
+ * a plugin's models and a team policy's all listed at once the page ran to several screens, and the
+ * entry you came for was never the one on top.
+ * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
+ */
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
+  const q = String(query || '').trim().toLowerCase();
+  const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
+  const searching = !!q || filter !== 'all';
 
-  const section = (title, hint) => {
+  /** Does this entry survive the search box and the chip? */
+  const keep = (m, source) => {
+    if (filter === 'imported' && !hi.has(String(m.id).toLowerCase())) return false;
+    if (filter === 'needs-setup' && !m.needsSignIn) return false;
+    if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
+    if (!q) return true;
+    return [m.id, m.label, m.plugin, m.home, m.upstream && m.upstream.model].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+  };
+
+  // Each group can fold: the header is the control, and its count is the answer to "is my model
+  // in there?" without opening it.
+  const sections = [];
+  const section = (title, hint, key = '') => {
     const s = h(doc, 'div', 'mv-section');
-    s.appendChild(h(doc, 'h3', 'mv-section-title', title));
-    if (hint) s.appendChild(h(doc, 'small', 'hint', hint));
+    s.dataset.section = key;
+    const head = h(doc, 'div', 'mv-section-head');
+    const btn = h(doc, 'button', 'mv-sec-toggle');
+    btn.type = 'button';
+    btn.dataset.section = key;
+    // The shared disclosure chevron (style.css .adv-chev), turned down while the group is open.
+    const caret = h(doc, 'span', 'mv-sec-caret adv-chev');
+    caret.setAttribute('aria-hidden', 'true');
+    btn.appendChild(caret);
+    btn.appendChild(h(doc, 'h3', 'mv-section-title', title));
+    btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
+    head.appendChild(btn);
+    s.appendChild(head);
+    if (hint) s.appendChild(h(doc, 'small', 'hint mv-sec-hint', hint));
+    const body = h(doc, 'div', 'mv-sec-body');
+    s.appendChild(body);
+    // Searching opens every group that still has a hit — a match hidden inside a fold is a bug.
+    const folded = !searching && !!collapsed[key];
+    s.classList.toggle('is-folded', folded);
+    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    sections.push({ el: s, body, btn, key });
+    // The rows go into the body; every caller appends to the section, so proxy it.
+    s.appendChild = (node) => body.appendChild(node);
     return s;
   };
 
@@ -99,6 +153,26 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     b.title = "worca points Claude Code's internal haiku/sonnet/opus/fable lookups at this model, so it never falls back to the Anthropic API.";
     return b;
   };
+
+  // ── Toolbar: search + the chip that says which layer you are looking at ──
+  const bar = h(doc, 'div', 'mv-toolbar');
+  const search = h(doc, 'input', 'input mv-search');
+  search.type = 'search';
+  search.placeholder = 'Search models by id, label or upstream…';
+  search.value = query || '';
+  search.setAttribute('aria-label', 'Search models');
+  bar.appendChild(search);
+  const chips = h(doc, 'div', 'mv-filters');
+  const CHIPS = [['all', 'All'], ['global', 'Yours'], ['builtin', 'Built-in'], ['plugin', 'Plugin'], ['policy', 'Team'], ['needs-setup', 'Needs setup']];
+  if (highlight.length) CHIPS.push(['imported', 'Just imported']);
+  for (const [id, label] of CHIPS) {
+    const c = h(doc, 'button', `mv-filter${filter === id ? ' on' : ''}`, label);
+    c.type = 'button'; c.dataset.filter = id;
+    c.setAttribute('aria-pressed', filter === id ? 'true' : 'false');
+    chips.appendChild(c);
+  }
+  bar.appendChild(chips);
+  root.appendChild(bar);
 
   // ── Hide built-in models (#422) — one checkbox, top of the pane ──
   const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
@@ -114,28 +188,37 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
   root.appendChild(hideRow);
 
   // ── Your models (global) ──
-  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.');
+  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.', 'global');
   if (!globals.length) {
     yours.appendChild(h(doc, 'div', 'hist-empty', 'No global models yet — Add model to define one.'));
   }
-  for (const m of globals) {
+  for (const m of globals.filter((x) => keep(x, 'global'))) {
     const card = h(doc, 'section', 'card mv-card');
     card.dataset.id = m.id;
     const body = h(doc, 'div', 'mv-body');
     const head = h(doc, 'div', 'mv-head');
     head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+    keyBadge(head, m, doc);
     if (predefLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides built-in'));
     else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadow', 'overrides plugin'));
     const rb = routedBadge(m);
     if (rb) head.appendChild(rb);
+    // Model bridge (model-bridge-design.md §8.5): the provider badge, and the
+    // blocking "needs sign-in" pill when that provider is not usable yet.
+    const bb = bridgedBadge(m, { doc });
+    if (bb) head.appendChild(bb);
+    const ns = needsSignInPill(m, { doc });
+    if (ns) head.appendChild(ns);
     // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
     // model's spend — and the backend only lifts the stored flag on the model's
     // next result event, so suppress it here the moment pricing is pinned.
     if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
     if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
     body.appendChild(head);
-    const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
+    const bits = [m.id, effortsSummary(m.efforts, efforts), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
     body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+    const deg = degradationLine(m);
+    if (deg) body.appendChild(h(doc, 'small', 'mv-degradation hint', deg));
     body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
     card.appendChild(body);
     const del = h(doc, 'button', 'btn-ghost mv-delete', 'Delete');
@@ -169,6 +252,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
       const body = h(doc, 'div', 'mv-body');
       const head = h(doc, 'div', 'mv-head');
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+    keyBadge(head, m, doc);
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', 'project (legacy)'));
       body.appendChild(head);
       body.appendChild(h(doc, 'small', 'mv-summary hint', m.id));
@@ -185,25 +269,32 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
   const globalLc = new Set(globals.map((m) => m.id.toLowerCase()));
   if (plugins.length) {
     const plug = section('From plugins',
-      'Installed by plugins — read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.');
-    for (const m of plugins) {
+      'Installed by plugins — read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.', 'plugin');
+    for (const m of plugins.filter((x) => keep(x, 'plugin'))) {
       const card = h(doc, 'section', 'card mv-card mv-plugin');
       card.dataset.id = m.id;
       card.dataset.plugin = m.plugin;
       const body = h(doc, 'div', 'mv-body');
       const head = h(doc, 'div', 'mv-head');
       head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+    keyBadge(head, m, doc);
       head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
       if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
       const prb = routedBadge(m);
       if (prb) head.appendChild(prb);
+      const pbb = bridgedBadge(m, { doc });
+      if (pbb) head.appendChild(pbb);
+      const pns = needsSignInPill(m, { doc });
+      if (pns) head.appendChild(pns);
       // Same rule as a global card: a manifest-pinned price governs the spend,
       // so the §4.6 "unreliable" flag says nothing about it.
       if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
       if (m.cost) head.appendChild(h(doc, 'span', 'badge violet mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
       body.appendChild(head);
-      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), costSummary(m.cost)].filter(Boolean);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
       body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+      const pdeg = degradationLine(m);
+      if (pdeg) body.appendChild(h(doc, 'small', 'mv-degradation hint', pdeg));
       for (const s of m.secrets || []) {
         body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
           s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET — configure it in the plugin's settings`));
@@ -226,15 +317,46 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     root.appendChild(plug);
   }
 
+  // ── From team policy (read-only; team-policy design §8) ──
+  if (policy.length) {
+    const pol = section('From team policy',
+      'Shipped by a team policy — read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.', 'policy');
+    for (const m of policy.filter((x) => keep(x, 'policy'))) {
+      const card = h(doc, 'section', 'card mv-card mv-policy');
+      card.dataset.id = m.id;
+      const body = h(doc, 'div', 'mv-body');
+      const head = h(doc, 'div', 'mv-head');
+      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
+    keyBadge(head, m, doc);
+      const badge = h(doc, 'span', 'badge blue mv-origin', 'policy');
+      badge.title = `Team policy on ${m.home}`;
+      head.appendChild(badge);
+      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden by your copy'));
+      const rb = routedBadge(m);
+      if (rb) head.appendChild(rb);
+      body.appendChild(head);
+      const bits = [m.id, effortsSummary(m.efforts, efforts), envSummary(m.env), m.home ? `policy ${m.home}` : ''].filter(Boolean);
+      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join(' — ')));
+      body.appendChild(h(doc, 'small', 'mv-test-result hint'));
+      card.appendChild(body);
+      const tst = h(doc, 'button', 'btn-ghost mv-test', 'Test');
+      tst.type = 'button'; tst.dataset.id = m.id;
+      card.appendChild(tst);
+      pol.appendChild(card);
+    }
+    root.appendChild(pol);
+  }
+
   // ── Built-ins (read-only) ──
   const builtins = section('Built-in models', hideBuiltin
     ? `Hidden from every picker (${predefined.length} built-in${predefined.length === 1 ? '' : 's'}) — untick the box above to show them.`
-    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.');
+    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.', 'builtin');
   builtins.classList.add(hideBuiltin ? 'mv-builtins-hidden' : 'mv-builtins-shown');
-  for (const m of hideBuiltin ? [] : predefined) {
+  for (const m of (hideBuiltin ? [] : predefined).filter((x) => keep(x, 'builtin'))) {
     const row = h(doc, 'div', 'mv-builtin');
     row.dataset.id = m.id;
     row.appendChild(h(doc, 'b', 'mv-name', m.label));
+    keyBadge(row, m, doc);
     if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
       row.appendChild(h(doc, 'span', 'badge violet mv-shadowed', 'overridden'));
     }
@@ -242,6 +364,18 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], pred
     builtins.appendChild(row);
   }
   root.appendChild(builtins);
+
+  // Counts on every header, and a group with nothing left drops out while a search is on.
+  let shown = 0;
+  for (const sec of sections) {
+    const n = sec.body.querySelectorAll('.mv-card, .mv-builtin').length;
+    shown += n;
+    sec.btn.querySelector('.mv-sec-count').textContent = String(n);
+    if (searching && !n) sec.el.classList.add('hidden');
+  }
+  if (searching && !shown) {
+    root.appendChild(h(doc, 'div', 'hist-empty mv-no-hits', q ? `No model matches “${query}”.` : 'No model in this group.'));
+  }
   return root;
 }
 
@@ -278,7 +412,7 @@ function envRow(doc, key = '', value = '') {
  * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
  * mv-env-rm and calls collectModelEditor on save.
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document } = {}) {
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [] } = {}) {
   const editing = !!model;
   const root = h(doc, 'section', 'card mv-editor');
   root.dataset.mode = editing ? 'edit' : 'create';
@@ -313,6 +447,11 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   labelInput.value = editing ? (model.label === model.id ? '' : model.label) : '';
   grid.appendChild(field('Label', labelInput));
 
+  // ── Connection (model-bridge-design.md §8.3): direct / env / provider ──
+  // Rendered first among the routing controls: it decides whether the env
+  // rows below carry the routing or Worca's own bridge does.
+  grid.appendChild(field('Connection', renderConnectionSection(model, { doc, providers, copilotModels })));
+
   const effWrap = h(doc, 'div', 'mv-efforts');
   const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : efforts);
   for (const e of efforts) {
@@ -323,7 +462,9 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
     lab.appendChild(h(doc, 'span', null, e));
     effWrap.appendChild(lab);
   }
-  grid.appendChild(field('Supported efforts', effWrap, 'All checked = every effort (the default).'));
+  const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
+  effField.querySelector('.hint').classList.add('mv-efforts-hint');   // applyConnectionMode rewrites it
+  grid.appendChild(effField);
 
   const envWrap = h(doc, 'div', 'mv-env');
   const rows = editing && model.env ? Object.entries(model.env) : [];
@@ -331,7 +472,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
   const add = h(doc, 'button', 'btn-ghost mv-env-add', '+ env var');
   add.type = 'button';
   grid.appendChild(field('Routing env (merged into the claude spawn for this model)', envWrap,
-    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved.'));
+    'e.g. ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN. ANTHROPIC_MODEL sets the wire id sent to --model (the id above stays worca’s handle). Stored values show masked; leave masked to keep. WORCA_* and process keys are reserved. Through a provider, the bridge owns ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY / ANTHROPIC_MODEL — setting them here is refused.'));
   const envBtns = h(doc, 'div', 'mv-env-btns');
   envBtns.appendChild(add);
   if (rows.length) {
@@ -386,6 +527,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document } 
 
   root.appendChild(grid);
   setModelCost(root, editing ? model.cost : null); // grid is attached now — the block is reachable from root
+  applyConnectionModeIn(root);                       // efforts hint + collapse follow the Connection (now reachable)
   const msg = h(doc, 'p', 'form-msg mv-editor-msg');
   msg.setAttribute('aria-live', 'polite');
   root.appendChild(msg);
@@ -486,6 +628,10 @@ export function collectModelEditor(rootEl) {
     cost = { perMtok };   // empty -> the server rejects it by name, surfaced in the form
   }
 
+  // Connection (model-bridge-design.md §8.3): the object to store, or null to
+  // clear — like 'cli' for pricing, the form shows the truth.
+  const { upstream } = collectConnection(rootEl);
+
   const body = {
     ...(editing ? {} : { id }),
     label,
@@ -493,8 +639,18 @@ export function collectModelEditor(rootEl) {
     efforts: efforts.length === allCount ? [] : efforts,
     env,
     cost,
+    // Create mode has nothing to clear, so a null upstream is simply omitted
+    // and the POST body stays byte-identical for a non-bridged entry.
+    ...(upstream === undefined || (!editing && upstream === null) ? {} : { upstream }),
   };
   return { id: editing ? id : null, body };
+}
+
+/** applyConnectionMode over an editor root (re-exported here so app.js's one
+ *  delegated `change` handler for the editor needs a single import). */
+export function applyConnectionModeIn(rootEl) {
+  const conn = rootEl && rootEl.querySelector && rootEl.querySelector('.mv-conn');
+  if (conn) applyConnectionMode(conn);
 }
 
 // ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────
@@ -620,7 +776,14 @@ export function deleteRefsSummary(id, refs) {
     ...((refs && refs.nodes) || []).map((n) => n.projectKey),
     ...((refs && refs.steps) || []).map((s) => s.projectKey),
   ]).size;
-  if (!nodes && !steps) return `Delete model "${id}"? No pipeline configuration references it.`;
+  // Settings › Memory's defragment model is the one GLOBAL ref (globalModelRefs `memoryDefrag`).
+  const defrag = !!(refs && refs.memoryDefrag);
+  if (!nodes && !steps) {
+    return defrag
+      ? `Delete model "${id}"? Memory defragment runs use it (Settings › Memory) — that setting is cleared and they fall back to the default.`
+      : `Delete model "${id}"? No pipeline configuration references it.`;
+  }
   return `Delete model "${id}"? This also clears ${nodes} node selection${nodes === 1 ? '' : 's'} and ` +
-    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}.`;
+    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}` +
+    (defrag ? ', and the Memory defragment model (Settings › Memory).' : '.');
 }

@@ -76,6 +76,29 @@ This runs the full `node:test` suite (`test/*.mjs`) against an isolated
 script if you touched the engine, workspace, or plugin paths) locally before
 opening or updating a PR, and say so in the PR description.
 
+### In a container
+
+The container image ([`docs/docker.md`](docs/docker.md)) is built from the
+`npm pack` tarball, so it is a test of the *package*, not the source tree:
+
+```bash
+npm run docker:build        # packs this checkout, builds ghcr.io/sinishadjukic/worca:dev
+npm run docker:smoke        # offline: CLI mock run, UI health + Host guard, SIGTERM, volume
+```
+
+Touch `docker/**`, `package.json` `files`, or anything the CLI needs at runtime,
+and run both. To hack on Worca *inside* the box (a Linux `claude`, your edits
+live):
+
+```bash
+cd docker
+docker compose -f compose.yml -f compose.dev.yml up               # server from this checkout
+docker compose -f compose.yml -f compose.dev.yml run --rm worca npm test
+```
+
+The Claude Code version baked into the image is pinned in
+`docker/CLAUDE_CODE_VERSION`; bump it by PR.
+
 ## Project structure
 
 ```
@@ -86,7 +109,8 @@ ui/              server.mjs (express + ws) + public/ (vanilla single-page UI)
 agents/          data-driven agent set: prompt (worca-cc-<role>.md)
                  + metadata sidecar (<key>.meta.json) per agent
 skills/          worca/SKILL.md — the installable /worca skill
-scripts/         install.mjs (copy agents + skill into a project), smoke runners
+scripts/         built-in script cards: <key>.meta.json + the program it names (see agents/)
+tools/           install.mjs (copy agents + skill into a project), smoke runners, CDP verifiers
 test/            node:test suite
 docs/            RELEASING.md and other docs
 ```
@@ -94,6 +118,17 @@ docs/            RELEASING.md and other docs
 Note: `agents/` (the shipped, data-driven agent set) is **not** the same thing
 as `.claude/agents/` (Claude Code agents used to develop this repo). Changes to
 pipeline agent behavior belong in `agents/`.
+
+## UI levels
+
+The web UI has an interface mode — **Simple**, **Advanced**, **Expert** — that
+decides how much is on screen. Anything you add to `ui/public/` that a user can
+see needs a level. [`docs/ui-levels.md`](docs/ui-levels.md) has the questions
+that decide it, the few rules the mode never breaks (a blocking prompt is never
+hidden; a non-default value stays visible; the mode is a view preference, not a
+permission), how to tag an element, and the catalogue to update.
+`test/ui-levels.test.mjs` fails on a nav item, Settings tab or card, or detail
+tab with no level.
 
 ## Pull request workflow
 
@@ -106,6 +141,8 @@ pipeline agent behavior belong in `agents/`.
   (`--base feat/<parent>`) and retarget it to `dev` after the parent merges.
 - Run the tests locally first (see [Testing](#testing)) — there is no CI
   safety net on PRs.
+- A PR that adds UI names the level of each new element and updates the
+  catalogue in [`docs/ui-levels.md`](docs/ui-levels.md).
 
 ## Releasing
 

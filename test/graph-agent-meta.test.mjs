@@ -107,7 +107,9 @@ test('runner obligations and verdict shape', () => {
 });
 
 test('capability fields', () => {
-  assert.ok(errs(base({ sideEffect: 'files' })).includes('sideEffect must be "code" when present'));
+  assert.ok(errs(base({ sideEffect: 'files' })).includes('sideEffect must be one of code, memory'));
+  assert.deepEqual(errs(base({ sideEffect: 'memory' })), [], 'the memory side effect is a legal value');
+  assert.equal(normalizeAgentMeta(base({ sideEffect: 'memory' })).meta.sideEffect, 'memory', 'and it is written through');
   assert.ok(errs(base({ workspaceStrategy: 'ponder' }))
     .includes('workspaceStrategy must be one of explore, task, review'));
   assert.ok(errs(base({ workspaceVariantOf: '9x' })).includes('workspaceVariantOf must be an agent key'));
@@ -170,4 +172,18 @@ test('agentFile is a path field: plain basename only (C-1)', () => {
   assert.deepEqual(errs(base({ agentFile: 'worca-cc-docs.md' })), []);
   assert.deepEqual(errs(base({ agentFile: undefined })), []);
   assert.equal(normalizeAgentMeta(base({ agentFile: 'worca-cc-docs.md' })).meta.agentFile, 'worca-cc-docs.md');
+});
+
+test('the port readers are exported for script-meta; noPromptFields refuses as/directive/expands and sets no default `as`', async () => {
+  const { readInputs, readOutputs, readVerdict } = await import('../src/shared/graph/agent-meta.mjs');
+  const errors = [];
+  const err = (m) => errors.push(m);
+  const ins = readInputs([{ id: 'plan', type: 'md' }, { id: 'x', type: 'md', as: 'file' }], err, () => {}, { noPromptFields: true });
+  assert.deepEqual(ins[0], { id: 'plan', type: 'md', required: true });
+  assert.deepEqual(errors, ['inputs.x: as is a prompt-side field — a script input does not take it']);
+  assert.deepEqual(readOutputs([], false, err, { allowEmptyOutputs: true }), []);
+  assert.equal(errors.length, 1);
+  readOutputs([], false, err, {});
+  assert.equal(errors.at(-1), 'at least one output port is required');
+  assert.deepEqual(readVerdict({ filename: 'v.json' }, err), { filename: 'v.json' });
 });

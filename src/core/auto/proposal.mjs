@@ -5,7 +5,7 @@
 import { buildGraphManifest } from '../../shared/graph/manifest.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
 import { slugify } from '../artifacts.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID } from '../workflows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID } from '../workflows.mjs';
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -125,7 +125,7 @@ export function sanitizeProposalAnswer(payload, { proposal, models = [], registr
 /** `wf_<slug>` that no row owns; reserved / empty slugs become wf_auto-workflow. */
 export async function mintAutoWorkflowId(name, exists) {
   let stem = `wf_${slugify(name)}`;
-  if (stem === GRAPH_DEFAULT_WORKFLOW.id || stem === AUTO_WORKFLOW_ID || stem === 'wf_untitled') stem = 'wf_auto-workflow';
+  if (stem === GRAPH_DEFAULT_WORKFLOW.id || stem === AUTO_WORKFLOW_ID || stem === MEMORY_DEFRAG_WORKFLOW_ID || stem === 'wf_untitled') stem = 'wf_auto-workflow';
   let id = stem;
   for (let n = 2; await exists(id); n += 1) id = `${stem}-${n}`;
   return id;

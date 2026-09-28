@@ -22,6 +22,8 @@ jobs:
     permissions:
       contents: read
       id-token: write # required for npm Trusted Publishing (OIDC)
+    outputs:
+      dist_tag: ${{ steps.dist-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
 
@@ -80,8 +82,22 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public --provenance --tag ${{ steps.dist-tag.outputs.tag }}
 
-  release:
+  # The container image (docs/docker.md) ships from the same tag: built from
+  # this checkout's `npm pack` output (the bytes npm just published), pushed to
+  # GHCR with the tags docker-image.yml derives from the npm dist-tag, signed.
+  image:
     needs: build-and-publish
+    uses: ./.github/workflows/docker-image.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    with:
+      ref: ${{ github.ref_name }}
+      channel: ${{ needs.build-and-publish.outputs.dist_tag }}
+
+  release:
+    needs: [build-and-publish, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write

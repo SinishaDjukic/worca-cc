@@ -131,3 +131,25 @@ test('plugin init --with workflows no longer requires agents: the scaffold runs 
   assert.equal(tpl.nodes.find((n) => n.kind === 'agent').key, 'planner');
   assert.equal(existsSync(join(dir, 'agents')), false);
 });
+
+test('workflow import refuses a workflow with script commands until --accept-scripts, printing every command', async () => {
+  const dir = await freshDir('worca-cc-wfs-scr-');
+  const base = JSON.parse((await run(['workflow', 'export', 'wf_default', '--format', 'json'])).stdout);
+  const withShell = {
+    ...base, name: 'CLI Shell',
+    nodes: [...base.nodes, { id: 'n_sh', kind: 'script', key: 'shell', x: 900, y: 300, config: { params: { command: 'npm run lint' },
+      ports: { inputs: [{ id: 'in', type: 'md', required: false }], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'shell-cycle{cycle}.md' }] } } }],
+    wires: [...base.wires, { id: 'w_sh', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'in' } }],
+  };
+  const file = join(dir, 'shell.json');
+  await writeFile(file, JSON.stringify(withShell));
+  const refused = await run(['workflow', 'import', file]);
+  assert.equal(refused.code, 2, refused.stderr);
+  assert.match(refused.stderr, /These commands run on this machine with worca's privileges when the workflow runs\./);
+  assert.match(refused.stderr, /- Shell \(n_sh, shell\) command:\n    npm run lint\n/);
+  assert.match(refused.stderr, /re-run with --accept-scripts to import a workflow that runs these commands/);
+  assert.equal((await run(['workflow', 'list'])).stdout.includes('CLI Shell'), false, 'nothing was imported');
+  const ok = await run(['workflow', 'import', file, '--accept-scripts']);
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.match(ok.stdout, /^imported\twf_cli-shell\tCLI Shell\n/);
+});

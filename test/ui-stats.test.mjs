@@ -87,7 +87,7 @@ test('nav: sidebar + topnav carry data-nav="stats"; #stats opens the view and fe
   // real budgetState reads the monthly fixture.
   assert.ok(calls.some((u) => u.includes('range=month')), 'default range is month');
   assert.ok(window.document.querySelector('#stats-body .stat-row'), 'KPI row painted');
-  assert.equal(window.document.querySelectorAll('#stats-body .stat-tile').length, 6);
+  assert.equal(window.document.querySelectorAll('#stats-body .stat-tile').length, 7);
 });
 
 test('range seg: clicking All time refetches range=all and moves .on', async () => {

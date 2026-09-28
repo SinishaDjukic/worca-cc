@@ -22,6 +22,7 @@ import {
   installPlugin, buildInstallInventory, runSetup, updatePlugin, uninstallPlugin,
   setPluginEnabled, listInstalledPlugins, doctorPlugin, linkPlugin, reimportPlugin,
   listOrphanPluginData, purgePluginData,
+  scriptsSummary, pythonNoticeFor, pythonProbeOrNull, PYTHON_MISSING_NOTICE,
 } from '../src/core/plugin-store.mjs';
 
 useTempHome(after);
@@ -96,6 +97,12 @@ const V2_TEMPLATE = {
 const V1_SIDECAR = { key: 'demoAgent', order: 90 };
 const V1_TEMPLATE = { name: 'Demo Flow', steps: [[{ id: 's0', key: 'demoAgent' }]], feedbacks: [] };
 
+/** A shipped shell script: a sidecar command, no program file. Script keys share ONE
+ *  namespace across every installed plugin (first wins), so a fixture names its own. */
+const SHELL_SCRIPT = (key) => ({
+  key, metaVersion: 2, displayName: key, runtime: 'shell', command: 'npm run tidy',
+  inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }],
+});
 const PLUGIN_FILES = (name) => ({
   'worca-cc-plugin.json': JSON.stringify({
     name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' },
@@ -127,11 +134,11 @@ async function installLocal(name, files = {}) {
   return dir;
 }
 
-async function makeOriginRepo(dirName, name) {
+async function makeOriginRepo(dirName, name, extra = {}) {
   const root = join(scratch, dirName);
   mkdirSync(root, { recursive: true });
   await git(root, 'init', '-q', '-b', 'main');
-  writeTree(root, PLUGIN_FILES(name));
+  writeTree(root, { ...PLUGIN_FILES(name), ...extra });
   await git(root, 'add', '-A');
   await git(root, 'commit', '-qm', 'c1');
   return { root, sha: await git(root, 'rev-parse', 'HEAD') };
@@ -141,7 +148,7 @@ const NAME = 'demo-plugin';
 let origin; // { root, sha } shared across the sequential tests below
 
 test('installPlugin: happy path — export, setup, precheck, symlink swap, lock, inventory', async () => {
-  origin = await makeOriginRepo('origin', NAME);
+  origin = await makeOriginRepo('origin', NAME, { 'scripts/tidy.meta.json': JSON.stringify(SHELL_SCRIPT('tidy')) });
   const { calls, exec } = makeExec();
   const r = await installPlugin({ repoUrl: origin.root, subdir: '', name: NAME, sha: origin.sha }, { exec });
   assert.equal(r.ok, true);
@@ -165,7 +172,8 @@ test('installPlugin: happy path — export, setup, precheck, symlink swap, lock,
   assert.match(entry.lockfileHash, /^[0-9a-f]{64}$/);
 
   // "Will install" inventory (spec §6.1)
-  assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+  assert.deepEqual(r.inventory.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
+  assert.deepEqual(r.inventory.scripts, [{ key: 'tidy', runtime: 'shell', file: null, command: 'npm run tidy', cases: 0 }]);
   assert.deepEqual(r.inventory.taskSources, [{ id: 'demo', displayName: 'Demo', secrets: ['token'] }]);
   assert.deepEqual(r.inventory.skills, ['demo-skill']);
   assert.deepEqual(r.inventory.workflows, ['demo-flow']);
@@ -186,7 +194,7 @@ test('setPluginEnabled toggles the lock flag; listInstalledPlugins reflects it',
     { enabled: row.enabled, linked: row.linked, version: row.version, pinnedSha: row.pinnedSha },
     { enabled: true, linked: false, version: '0.1.0', pinnedSha: origin.sha },
   );
-  assert.deepEqual(row.contributions, { agents: 1, taskSources: 1, chatChannels: 0, models: 0, skills: 1, workflows: 1 });
+  assert.deepEqual(row.contributions, { agents: 1, scripts: 1, taskSources: 1, chatChannels: 0, models: 0, skills: 1, workflows: 1 });
   assert.throws(() => setPluginEnabled('ghost-plugin', true), /not installed/);
 });
 
@@ -298,7 +306,7 @@ test('buildInstallInventory works directly against any version dir', () => {
   const dir = join(scratch, 'inv');
   writeTree(dir, PLUGIN_FILES('inv-plugin'));
   const inv = buildInstallInventory(dir);
-  assert.deepEqual(inv.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+  assert.deepEqual(inv.agents, [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
   assert.equal(inv.depCount, 1);
   assert.equal(inv.setupCommands.length, 1);
 });
@@ -470,7 +478,7 @@ test('listInstalledPlugins reports apiMismatch for v1-shaped data, and null when
   });
   const p = listInstalledPlugins().find((x) => x.name === 'legacy-data');
   assert.deepEqual(p.apiMismatch, {
-    builtFor: 1, host: 3, agents: 1, workflows: 1,
+    builtFor: 1, host: 4, agents: 1, workflows: 1,
     message: 'built for plugin API 1; this version of worca requires plugin API 3 for agents and pipeline templates \u2014 update or reinstall the plugin (1 agent(s), 1 template(s) ignored)',
   });
   assert.equal(p.broken, false, 'an outdated data contract is not a broken install');
@@ -555,7 +563,7 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
     'agents/real.md': '---\ntools: Bash, Write, WebFetch\n---\nthe prompt actually used at run time\n',
   });
   assert.deepEqual(buildInstallInventory(dir).agents,
-    [{ key: 'demoAgent', tools: ['Bash', 'Write', 'WebFetch'] }]);
+    [{ key: 'demoAgent', tools: ['Bash', 'Write', 'WebFetch'], forms: [], fileTypes: [] }]);
 
   // No agentFile at all -> the <key>.md fallback is unchanged.
   const plain = join(scratch, 'inv-agentfile-none');
@@ -564,7 +572,7 @@ test('buildInstallInventory reads the tools of the file agentFile names (C-1)', 
     'agents/demoAgent.meta.json': JSON.stringify({ ...V2_SIDECAR, agentFile: undefined }),
   });
   assert.deepEqual(buildInstallInventory(plain).agents,
-    [{ key: 'demoAgent', tools: ['Read', 'Bash'] }]);
+    [{ key: 'demoAgent', tools: ['Read', 'Bash'], forms: [], fileTypes: [] }]);
 });
 
 // ── MAJ-12: the refusal message names the real cause ────────────────────────
@@ -777,4 +785,140 @@ test('reimportPlugin re-runs the importer for a LINKED plugin whose dir was edit
   const row = (await listWorkflows()).find((w) => w.id === 'wfp_reimport-plugin_demo-flow');
   assert.equal(row.name, 'Renamed Demo Flow', 'the live edit reached the row');
   await assert.rejects(() => reimportPlugin('no-such-plugin'), /is not installed/);
+});
+
+test('a script sidecar the registry drops is reported under scripts/, a clean one is not', async () => {
+  const dir = await installLocal('script-drops', { 'scripts/dropsClean.meta.json': JSON.stringify(SHELL_SCRIPT('dropsClean')) });
+  // A LINKED dir is read live: add a sidecar validatePluginDir would have refused.
+  writeTree(dir, { 'scripts/dropsBad.meta.json': JSON.stringify({ ...SHELL_SCRIPT('dropsBad'), runtime: 'ruby' }) });
+  const row = listInstalledPlugins().find((p) => p.name === 'script-drops');
+  assert.equal(row.contributions.scripts, 2, 'the file-derived count counts what the plugin SHIPS');
+  const bad = row.ignored.find((i) => i.file === 'scripts/dropsBad.meta.json');
+  assert.ok(bad, JSON.stringify(row.ignored));
+  assert.match(bad.reason, /runtime must be one of node, shell, python/);
+  assert.equal(row.ignored.some((i) => i.file === 'scripts/dropsClean.meta.json'), false);
+});
+
+const GUARD_AGENT_FILES = {
+  'agents/guardAgent.md': '# guardAgent\n',
+  'agents/guardAgent.meta.json': JSON.stringify({
+    metaVersion: 2, key: 'guardAgent', displayName: 'Guard Agent', agentFile: 'guardAgent.md',
+    runnerType: 'producer', inputs: [{ id: 'task', type: 'md' }],
+    outputs: [{ id: 'plan', type: 'md', filename: '{base}.md' }],
+  }),
+};
+// Keyed per test: every test in this file shares ONE WORCA_HOME, so a workflow row
+// an earlier test saved is still there — two plugins shipping the same script key
+// would both be "referenced" by it.
+const guardScriptFiles = (key) => ({
+  [`scripts/${key}.mjs`]: 'export default async () => ({});\n',
+  [`scripts/${key}.meta.json`]: JSON.stringify({
+    metaVersion: 2, key, displayName: key, runtime: 'node',
+    file: `${key}.mjs`, inputs: [],
+    outputs: [{ id: 'out', type: 'md', when: 'always', filename: `${key}-cycle{cycle}.md` }],
+  }),
+});
+const manifestFor = (name) => JSON.stringify({ name, version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } });
+
+test('uninstall guard: a plugin that ships ONLY scripts is blocked by a script node', async () => {
+  const dev = join(scratch, 'dev-scriptonly');
+  writeTree(dev, { 'worca-cc-plugin.json': manifestFor('scriptonly-plugin'), ...guardScriptFiles('soloScript') });
+  await linkPlugin('scriptonly-plugin', dev);
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  await writeGraphWorkflow({
+    id: 'wf_so', name: 'Script Only', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'soloScript', x: 200, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('scriptonly-plugin'), (err) => {
+    assert.equal(err.code, 'REFERENCED');
+    assert.equal(err.message,
+      'plugin "scriptonly-plugin" scripts are referenced by: Script Only — remove those references first');
+    assert.deepEqual(err.references, [{ workflowId: 'wf_so', name: 'Script Only', keys: ['soloScript'] }]);
+    return true;
+  });
+  assert.ok(readPluginsLock()['scriptonly-plugin'], 'nothing uninstalled');
+});
+
+test('uninstall guard: agents-only keeps its sentence; both kinds merge into ONE row per workflow', async () => {
+  const dev = join(scratch, 'dev-guarded');
+  writeTree(dev, { 'worca-cc-plugin.json': manifestFor('guarded-plugin'), ...GUARD_AGENT_FILES, ...guardScriptFiles('guardScript') });
+  await linkPlugin('guarded-plugin', dev);
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+
+  await writeGraphWorkflow({
+    id: 'wf_g1', name: 'Agent Only', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'guardAgent', x: 200, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('guarded-plugin'), (err) => {
+    assert.equal(err.message,
+      'plugin "guarded-plugin" agents are referenced by: Agent Only — remove those references first');
+    return true;
+  });
+
+  await writeGraphWorkflow({
+    id: 'wf_g2', name: 'Agent And Script', domain: 'general',
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'guardAgent', x: 200, y: 0, config: {} },
+      { id: 'n_s', kind: 'script', key: 'guardScript', x: 400, y: 0, config: {} }],
+    wires: [],
+  });
+  await assert.rejects(() => uninstallPlugin('guarded-plugin'), (err) => {
+    assert.match(err.message, /^plugin "guarded-plugin" agents and scripts are referenced by: /);
+    assert.deepEqual(err.references.map((r) => r.workflowId).sort(), ['wf_g1', 'wf_g2']);
+    const both = err.references.find((r) => r.workflowId === 'wf_g2');
+    assert.deepEqual(both.keys, ['guardAgent', 'guardScript'], 'one row per workflow, both keys');
+    return true;
+  });
+});
+
+test('scriptsSummary: a count per runtime and the case total; empty for no scripts', () => {
+  assert.equal(scriptsSummary([]), '');
+  assert.equal(scriptsSummary(null), '');
+  assert.equal(scriptsSummary([{ key: 'a', runtime: 'node', cases: 2 }]), '1 script (node 1) · 2 cases');
+  assert.equal(scriptsSummary([
+    { key: 'a', runtime: 'node', cases: 2 },
+    { key: 'b', runtime: 'node', cases: 0 },
+    { key: 'c', runtime: 'python', cases: 3 },
+  ]), '3 scripts (node 2, python 1) · 5 cases');
+  assert.equal(scriptsSummary([{ key: 'a', runtime: 'shell', cases: 0 }]), '1 script (shell 1)');
+});
+
+test('pythonNoticeFor: only a python script + a failed probe; an ABSENT probe says nothing', async () => {
+  const nodeOnly = [{ key: 'a', runtime: 'node' }];
+  const py = [{ key: 'a', runtime: 'python' }];
+  const failing = async () => ({ ok: false, reason: 'no interpreter' });
+  assert.equal(await pythonNoticeFor(nodeOnly, { probe: failing }), null);
+  assert.equal(await pythonNoticeFor(py, { probe: failing }), PYTHON_MISSING_NOTICE);
+  assert.equal(await pythonNoticeFor(py, { probe: async () => ({ ok: true, version: '3.12.0' }) }), null);
+  assert.equal(await pythonNoticeFor(py, { probe: async () => null }), null, 'P2 absent: no notice, never a claim');
+  assert.equal(PYTHON_MISSING_NOTICE, 'python not found');
+  // The DEFAULT probe on this host: P2 may or may not be installed — either way
+  // the call resolves and never throws.
+  await pythonNoticeFor(py);
+  await pythonProbeOrNull();
+});
+
+test('buildInstallInventory: shipped script rows carry their case count; the row exposes scriptRuntimes', async () => {
+  const dev = join(scratch, 'dev-cases');
+  writeTree(dev, {
+    'worca-cc-plugin.json': JSON.stringify({ name: 'cases-plugin', version: '0.1.0', engines: { 'worca-cc-api': '>=3 <4' } }),
+    'scripts/tidy.mjs': 'export default async () => ({});\n',
+    'scripts/tidy.meta.json': JSON.stringify({
+      metaVersion: 2, key: 'tidy', displayName: 'Tidy', runtime: 'node', file: 'tidy.mjs', inputs: [], outputs: [],
+    }),
+    'scripts/tidy.tests.json': JSON.stringify({ version: 1, cases: [
+      { id: 'one', name: 'one', cwd: { kind: 'scratch' }, inputs: {} },
+      { id: 'two', name: 'two', cwd: { kind: 'scratch' }, inputs: {} },
+    ] }),
+  });
+  assert.deepEqual(buildInstallInventory(dev).scripts,
+    [{ key: 'tidy', runtime: 'node', file: 'tidy.mjs', command: null, cases: 2 }]);
+  await linkPlugin('cases-plugin', dev);
+  const row = listInstalledPlugins().find((p) => p.name === 'cases-plugin');
+  assert.equal(row.contributions.scripts, 1);
+  assert.deepEqual(row.scriptRuntimes, { node: 1 });
 });

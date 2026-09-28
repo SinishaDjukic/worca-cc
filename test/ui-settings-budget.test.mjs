@@ -91,7 +91,7 @@ test('save posts exactly the three keys; success message; readout refresh', asyn
   await tick();
   assert.equal(posts.length, 1, 'exactly one POST');
   assert.deepEqual(posts[0],
-    { pipelineCostLimitUsd: 25, totalCostLimitUsd: 50, costLimitResetPeriod: 'weekly' });
+    { pipelineCostLimitUsd: 25, totalCostLimitUsd: 50, costLimitResetPeriod: 'weekly', humanRateUsdPerHour: null });
   assert.match($('#budgetMsg').textContent, /Saved/);
   // refreshBudget() re-ran, so the readout is still live after the save.
   assert.match($('#budgetReadout').textContent, /Spent \$41\.23 of \$50\.00/);
@@ -135,4 +135,18 @@ test('Clear limits posts nulls for both limits and leaves the period untouched',
   assert.deepEqual(posts[0], { pipelineCostLimitUsd: null, totalCostLimitUsd: null });
   assert.equal($('#budgetPerPipeline').value, '');
   assert.equal($('#budgetTotal').value, '');
+});
+
+test('Save posts the developer rate; Clear limits leaves it alone', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  $('#budgetHumanRate').value = '95';
+  posts.length = 0;
+  $('#budgetSave').click();
+  await tick();
+  assert.equal(posts[0].humanRateUsdPerHour, 95);
+  posts.length = 0;
+  $('#budgetReset').click();
+  await tick();
+  assert.deepEqual(Object.keys(posts[0]).sort(), ['pipelineCostLimitUsd', 'totalCostLimitUsd']);
 });

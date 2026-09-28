@@ -15,7 +15,9 @@ import { app } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
-import { writeStoreMeta } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, persistPrState } from '../src/core/artifacts.mjs';
+import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
+import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
 let srv, base, home, prevHome, betaKey, betaId, betaRepo;
@@ -50,6 +52,41 @@ beforeEach(() => gitInfo.reset());
 const post = (body) => fetch(`${base}/api/pr`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
+
+const REMOTES_V = [
+  'origin\thttps://github.com/me/repo.git (fetch)',
+  'origin\thttps://github.com/me/repo.git (push)',
+  'upstream\tgit@github.com:up/repo.git (fetch)',
+  'upstream\tgit@github.com:up/repo.git (push)',
+].join('\n') + '\n';
+
+// gh present; git remotes = origin (the fork) + upstream; every argv lands in `seen`.
+function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', view = 'MERGEABLE\n', remotesOk = true, refs = REFS } = {}) {
+  gitInfo.setRunner((cmd, args) => {
+    seen.push([cmd, ...args]);
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'remote') {
+      return remotesOk
+        ? Promise.resolve({ ok: true, stdout: REMOTES_V, stderr: '', code: 0 })
+        : Promise.resolve({ ok: false, stdout: '', stderr: 'fatal: not a git repository', code: 128 });
+    }
+    if (cmd === 'git' && args[0] === 'for-each-ref') return Promise.resolve({ ok: true, stdout: refs, stderr: '', code: 0 });
+    if (cmd === 'git' && args[0] === 'push') return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') return Promise.resolve({ ok: true, stdout: create, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: view, stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+}
+const getRemotes = (q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
+const postMergeable = (body) => fetch(`${base}/api/pr/mergeable`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+});
+const FEATURE = 'worca-cc/my-feature-pp';
+// `git for-each-ref refs/remotes/` as git prints it (sorted): HEAD and the run's own branch included.
+const REFS = [
+  'refs/remotes/origin/HEAD', 'refs/remotes/origin/main', 'refs/remotes/origin/release', `refs/remotes/origin/${FEATURE}`,
+  'refs/remotes/upstream/dev', 'refs/remotes/upstream/main',
+].join('\n') + '\n';
 
 test('POST /api/pr -> 400 when id is missing', async () => {
   assert.equal((await post({ projectKey: betaKey })).status, 400);
@@ -170,4 +207,192 @@ test('POST /api/pr/mergeable requires id -> 400 (the one hard error)', async () 
     body: JSON.stringify({ projectKey: betaKey }),   // no id
   });
   assert.equal(r.status, 400);
+});
+
+test('GET /api/pr/remotes lists parsed remotes with upstream-preferred base defaults', async () => {
+  await setPrRemotePrefs(betaRepo, {});          // isolation: nothing remembered
+  stubForkRepo([]);
+  const r = await getRemotes({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.deepEqual(j.remotes.map((x) => [x.name, x.slug, x.owner]), [['origin', 'me/repo', 'me'], ['upstream', 'up/repo', 'up']]);
+  assert.deepEqual(j.defaults, { pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.equal(j.remembered, null);
+});
+
+test('GET /api/pr/remotes -> 400 without id, 404 on a malformed key, 500 when git fails', async () => {
+  stubForkRepo([]);
+  assert.equal((await getRemotes({ projectKey: betaKey })).status, 400);
+  assert.equal((await getRemotes({ projectKey: 'nope', id: betaId })).status, 404);
+  stubForkRepo([], { remotesOk: false });
+  const r = await getRemotes({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 500);
+  assert.match((await r.json()).error, /git remote failed/);
+});
+
+test('POST /api/pr rejects a remote name that is not in the repo (nothing pushed)', async () => {
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'evil; rm -rf /' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /unknown push remote/);
+  assert.ok(!seen.some((c) => c[0] === 'git' && c[1] === 'push'), 'nothing was pushed');
+  assert.equal((await post({ projectKey: betaKey, id: betaId, baseRemote: 42 })).status, 400);
+});
+
+test('POST /api/pr -> 500 (git error, not "unknown remote") when a remote is named but git remote -v fails', async () => {
+  const seen = [];
+  stubForkRepo(seen, { remotesOk: false });
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'origin' });
+  assert.equal(r.status, 500);
+  assert.match((await r.json()).error, /git remote failed/);
+  assert.ok(!seen.some((c) => c[0] === 'git' && c[1] === 'push'), 'nothing was pushed');
+});
+
+test('POST /api/pr cross-repo: pushes to the fork, opens the PR in the base repo with owner:branch', async () => {
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.url, 'https://github.com/up/repo/pull/7');
+  assert.deepEqual(Object.keys(j).sort(), ['existed', 'mergeable', 'ok', 'url'], 'the response shape is unchanged');
+  assert.deepEqual(seen.find((c) => c[1] === 'push'), ['git', 'push', '-u', 'origin', FEATURE]);
+  assert.deepEqual(seen.find((c) => c[2] === 'create'),
+    ['gh', 'pr', 'create', '--repo', 'up/repo', '--base', 'main', '--head', `me:${FEATURE}`, '--title', 'My feature', '--body', 'My feature']);
+  // Mergeability is read back through the PR url (repo-agnostic), not the head.
+  assert.deepEqual(seen.find((c) => c[2] === 'view'),
+    ['gh', 'pr', 'view', 'https://github.com/up/repo/pull/7', '--json', 'mergeable', '-q', '.mergeable']);
+  // The choice is remembered for the project and becomes the dialog default.
+  const g = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  assert.deepEqual(g.remembered, { pushRemote: 'origin', baseRemote: 'upstream' });
+  assert.deepEqual(g.defaults, { pushRemote: 'origin', baseRemote: 'upstream' });
+});
+
+test('POST /api/pr same-repo: still passes --repo, the head stays bare', async () => {
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'upstream', baseRemote: 'upstream' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(seen.find((c) => c[1] === 'push'), ['git', 'push', '-u', 'upstream', FEATURE]);
+  assert.deepEqual(seen.find((c) => c[2] === 'create').slice(0, 9),
+    ['gh', 'pr', 'create', '--repo', 'up/repo', '--base', 'main', '--head', FEATURE]);
+});
+
+test('POST /api/pr without remote fields follows the remembered choice', async () => {
+  await setPrRemotePrefs(betaRepo, { pushRemote: 'upstream', baseRemote: 'origin' });
+  const seen = [];
+  stubForkRepo(seen);
+  assert.equal((await post({ projectKey: betaKey, id: betaId })).status, 200);
+  assert.deepEqual(seen.find((c) => c[1] === 'push'), ['git', 'push', '-u', 'upstream', FEATURE]);
+  assert.deepEqual(seen.find((c) => c[2] === 'create').slice(3, 5), ['--repo', 'me/repo']);
+  assert.deepEqual(seen.find((c) => c[2] === 'create').slice(7, 9), ['--head', `up:${FEATURE}`], 'cross-repo the other way round');
+});
+
+test('POST /api/pr/mergeable re-reads through the persisted pr_url', async () => {
+  persistPrState(betaId, { url: 'https://github.com/up/repo/pull/7', number: 7, state: 'OPEN' });
+  const seen = [];
+  stubForkRepo(seen, { view: 'CONFLICTING\n' });
+  const r = await postMergeable({ projectKey: betaKey, id: betaId });
+  assert.equal((await r.json()).mergeable, 'CONFLICTING');
+  assert.deepEqual(seen.find((c) => c[2] === 'view'),
+    ['gh', 'pr', 'view', 'https://github.com/up/repo/pull/7', '--json', 'mergeable', '-q', '.mergeable']);
+});
+
+test('POST /api/pr/mergeable -> 200 UNKNOWN on a malformed key (best-effort, never a hard error)', async () => {
+  // Pins the branch at server.mjs:2351-2353 that /api/pr/remotes deliberately does NOT share.
+  stubForkRepo([]);
+  const r = await postMergeable({ projectKey: 'nope', id: betaId });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).mergeable, 'UNKNOWN');
+});
+
+// ---------------------------------------------------------------------------
+// Base branch: the dialog picks it; a run chain defaults to the chain's ROOT.
+// ---------------------------------------------------------------------------
+
+test('GET /api/pr/remotes lists each remote\'s branches (local refs, no HEAD, no feature) and defaults to the run\'s source', async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = [];
+  stubForkRepo(seen);
+  const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  assert.deepEqual(j.chain, ['main'], 'a run outside a chain offers its own source');
+  assert.equal(j.defaultBase, 'main');
+  assert.deepEqual(j.branches, { origin: ['main', 'release'], upstream: ['dev', 'main'] });
+  assert.ok(seen.some((c) => c[1] === 'for-each-ref'), 'read from the local remote-tracking refs');
+  assert.ok(!seen.some((c) => c[1] === 'fetch' || c[1] === 'ls-remote'), 'never the network');
+  // Refs that cannot be read are no reason to fail the dialog: no branches, same chain.
+  gitInfo.setRunner((cmd, args) => (cmd === 'git' && args[0] === 'for-each-ref'
+    ? Promise.resolve({ ok: false, stdout: '', stderr: 'fatal: bad', code: 128 })
+    : Promise.resolve({ ok: true, stdout: cmd === 'git' && args[0] === 'remote' ? REMOTES_V : '', stderr: '', code: 0 })));
+  const k = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  assert.deepEqual([k.branches, k.chain, k.defaultBase], [{}, ['main'], 'main']);
+});
+
+test('POST /api/pr baseBranch reaches gh pr create --base; the response shape and the remembered remotes are unchanged', async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = [];
+  stubForkRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'origin', baseRemote: 'upstream', baseBranch: 'dev' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(await r.json()).sort(), ['existed', 'mergeable', 'ok', 'url']);
+  assert.deepEqual(seen.find((c) => c[2] === 'create'),
+    ['gh', 'pr', 'create', '--repo', 'up/repo', '--base', 'dev', '--head', `me:${FEATURE}`, '--title', 'My feature', '--body', 'My feature']);
+  assert.deepEqual(readPrRemotePrefs(betaRepo), { pushRemote: 'origin', baseRemote: 'upstream' }, 'the base branch is per run, never remembered');
+});
+
+test('POST /api/pr refuses a bad baseBranch with 400 before anything is pushed', async () => {
+  for (const baseBranch of ['-x', '--upload-pack=evil', 'a..b', 'bad ref', 'x.lock', '', '   ', 42, FEATURE]) {
+    const seen = [];
+    stubForkRepo(seen);
+    const r = await post({ projectKey: betaKey, id: betaId, baseBranch });
+    assert.equal(r.status, 400, JSON.stringify(baseBranch));
+    assert.match((await r.json()).error, /base branch/, JSON.stringify(baseBranch));
+    assert.ok(!seen.some((c) => c[1] === 'push' || c[2] === 'create'), `nothing pushed or created for ${JSON.stringify(baseBranch)}`);
+  }
+  // null is "not given": the run's source, as before.
+  const seen = [];
+  stubForkRepo(seen);
+  assert.equal((await post({ projectKey: betaKey, id: betaId, baseBranch: null })).status, 200);
+  assert.deepEqual(seen.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'main']);
+});
+
+test('a chained run: GET offers the chain root first as the default; POST without baseBranch still targets its source', async () => {
+  // dev -> nb1 -> nb2 -> nb3, each started from the previous run's feature branch.
+  const run = async (title, source, feature) => (await seedPipeline(betaRepo, { title, status: 'done',
+    startedAt: '2026-06-02T00:00:00Z', branch: { source, feature, branchKept: true } })).id;
+  const nb1 = await run('Nb1', 'dev', 'worca-cc/nb1');
+  const nb2 = await run('Nb2', 'worca-cc/nb1', 'worca-cc/nb2');
+  const nb3 = await run('Nb3', 'worca-cc/nb2', 'worca-cc/nb3');
+  const req = { projectDir: betaRepo, prompt: 'next' };
+  const chainOn = (after, pipelineId) => {
+    const t = createTicket({ projectDir: betaRepo, title: 'next', request: req, after, sourceFromPrevious: true });
+    markTicketFired(t.id, { pipelineId });
+    return t;
+  };
+  const t2 = chainOn({ kind: 'pipeline', id: nb1 }, nb2);
+  chainOn({ kind: 'ticket', id: t2.id }, nb3);
+
+  const seen = [];
+  stubForkRepo(seen, { refs: `${REFS}refs/remotes/origin/worca-cc/nb2\nrefs/remotes/origin/worca-cc/nb3\n` });
+  const j = await (await getRemotes({ projectKey: betaKey, id: nb3 })).json();
+  assert.deepEqual(j.chain, ['dev', 'worca-cc/nb1', 'worca-cc/nb2']);
+  assert.equal(j.defaultBase, 'dev', 'the chain ROOT, not the direct source');
+  assert.deepEqual(j.branches.origin, ['main', 'release', FEATURE, 'worca-cc/nb2'], 'nb3\'s own branch is dropped');
+
+  // The chain survives a remote list that cannot be read, so the dialog can still offer it.
+  stubForkRepo([], { remotesOk: false });
+  const bad = await getRemotes({ projectKey: betaKey, id: nb3 });
+  assert.equal(bad.status, 500);
+  const b = await bad.json();
+  assert.deepEqual([b.chain, b.defaultBase], [['dev', 'worca-cc/nb1', 'worca-cc/nb2'], 'dev']);
+
+  const s1 = [];
+  stubForkRepo(s1);
+  assert.equal((await post({ projectKey: betaKey, id: nb3 })).status, 200);
+  assert.deepEqual(s1.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'worca-cc/nb2'], 'absent -> today\'s behaviour');
+  const s2 = [];
+  stubForkRepo(s2);
+  assert.equal((await post({ projectKey: betaKey, id: nb3, baseBranch: 'dev' })).status, 200);
+  assert.deepEqual(s2.find((c) => c[2] === 'create').slice(5, 7), ['--base', 'dev']);
 });

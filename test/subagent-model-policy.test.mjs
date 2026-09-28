@@ -64,7 +64,7 @@ test('the vocabulary is the CLI alias enum minus haiku, plus "agent picks" and a
   assert.deepEqual(SUBAGENT_MODELS, ['sonnet', 'opus', 'fable']);
   assert.deepEqual(SUBAGENT_MODEL_VALUES, ['sonnet', 'opus', 'fable', 'auto', 'inherit']);
   for (const v of SUBAGENT_MODEL_VALUES) assert.ok(isSubagentModelValue(v), `${v} is storable`);
-  for (const v of ['haiku', 'claude-opus-5', '', null, undefined, 'AUTO']) {
+  for (const v of ['haiku', 'claude-opus-5-5', '', null, undefined, 'AUTO']) {
     assert.equal(isSubagentModelValue(v), false, `${String(v)} is not storable`);
   }
 });
@@ -82,7 +82,7 @@ test('subagentModelIssue: one message for every writer; silence for empty/valid'
     assert.equal(subagentModelIssue(v), '', `${String(v)} is acceptable`);
   }
   assert.equal(subagentModelIssue('haiku'), 'unknown sub-agent model "haiku"');
-  assert.match(subagentModelIssue('claude-opus-5'), /unknown sub-agent model/);
+  assert.match(subagentModelIssue('claude-opus-5-5'), /unknown sub-agent model/);
 });
 
 test('CLAUDE_CODE_SUBAGENT_MODEL is a reserved model-env key: a catalog entry cannot smuggle a floor', () => {
@@ -194,7 +194,7 @@ test('a write that omits subagentModel preserves it (an older client must not wi
 test('setStep rejects a model outside the alias enum', async () => {
   await assert.rejects(() => setStep(proj, 'planner', { subagentModel: 'haiku' }),
     /unknown sub-agent model "haiku"/);
-  await assert.rejects(() => setStep(proj, 'planner', { subagentModel: 'claude-opus-5' }),
+  await assert.rejects(() => setStep(proj, 'planner', { subagentModel: 'claude-opus-5-5' }),
     /unknown sub-agent model/);
 });
 

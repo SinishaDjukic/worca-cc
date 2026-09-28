@@ -17,7 +17,7 @@ const META = {
   fanOut: true, asksQuestions: false, questionsLocked: false, questionsDefault: false,
   wantsRequest: true, workspaceFanOut: true, workspaceStrategy: 'review',
   workspaceVariantOf: 'reviewer', requiresSkills: ['mock-skill'], promptHints: 'be terse',
-  mockRole: 'generic-verifier', sideEffect: 'code', placeable: false,
+  mockRole: 'generic-verifier', sideEffect: 'memory', placeable: false,
   // One AGENT-level field this worca does not surface (a newer worca's, or a
   // hand-authored extension): it must ride through the host dataset.extra, not
   // vanish on the next save. Without it the host-level ride-through is UNTESTED

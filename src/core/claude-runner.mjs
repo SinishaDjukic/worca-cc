@@ -25,6 +25,11 @@
 //                          question there and STOPS (no role side effects); the
 //                          resumed prompt carries no MOCK_ASK, so the role arm
 //                          runs then.
+//   MOCK_ASK_FORM: <json>  a ONE-LINE {"form","data"} payload. When present it is
+//                          written verbatim instead of the canned {questions}
+//                          body — to MOCK_ASK for a producer, to MOCK_OUT for the
+//                          clarify role. Lets an offline mock agent exercise the
+//                          ask-form protocol end to end.
 //
 // Markers are matched leniently: "KEY: value" anywhere at the start of a line,
 // case-sensitive keys, value trimmed. Missing markers degrade gracefully.
@@ -34,19 +39,28 @@
 
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { prepareModelEnv, envFlag, describeModelEnv } from './model-env.mjs';
+import { prepareModelEnv, envFlag, describeModelEnv, withProviderModesOff } from './model-env.mjs';
 import { effectiveDebugSpawn } from './settings.mjs';
 import { classifyError, strongestClass } from './recoverable-error.mjs';
+import { bridgeEvents } from './bridge/telemetry.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from './preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from './host-guard.mjs';
 // The offline classifier and the shape normalizer the mock ask role answers
 // propose_workflow with — both pure (no DB, no spawn).
 import { mockShapeFor } from './auto/recipes.mjs';
 import { normalizeShape } from '../shared/graph/assemble.mjs';
-import { writeFile, mkdir, appendFile, readFile, access } from 'node:fs/promises';
+import { writeFile, mkdir, appendFile, readFile, access, readdir } from 'node:fs/promises';
 import { constants as FS, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stripGithubCredentials } from './github-credentials.mjs';
+import { agentIdentity, agentSpawn, killAgentGroup, shareWithAgent } from './agent-user.mjs';
+import { agentIdentityFor } from './agent-pool.mjs';
+import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, slotOfBaseUrl } from './broker-client.mjs';
+import { resolveBillTo, normalizeBillTo, currentOwner } from './billing.mjs';
+import { redactSecrets, redactDeep } from './redact.mjs';
+import { MODEL_CREDENTIAL_ENV_KEYS } from './broker-guard.mjs';
+import { modelSlot } from './broker-routing.mjs';
 
 const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -155,6 +169,39 @@ function spawnFailure(bin, err, prefix) {
 // does NOT ride on the capped message: recovery markers are classified line-by-
 // line as stderr streams (see rlErr) and stamped on the error as `errorClass`.
 const STDERR_DETAIL_MAX = 2000;
+
+// stderr lines the CLI prints on spawns that go on to succeed, which are never
+// the cause of a failure. `[claude-code:unrecognized_model]` fires on EVERY spawn
+// whose model id the CLI does not know — every bridged or endpoint-routed catalog
+// id — so as exit detail it masked the real cause (a 429 carried on the stdout
+// result) and classified null, which kept the rate-limit retry from running.
+// Such a line is still streamed as a stderr event; it only stops being evidence.
+export const BENIGN_STDERR_PATTERNS = Object.freeze([
+  /^\[claude-code:unrecognized_model\]/,
+]);
+
+/** Whether a stderr line is a known-benign CLI notice (BENIGN_STDERR_PATTERNS). */
+export function isBenignStderrLine(line) {
+  const t = String(line ?? '').trim();
+  return !!t && BENIGN_STDERR_PATTERNS.some((re) => re.test(t));
+}
+
+// A bridged spawn's base URL names its catalog id and run tag (bridge/server.mjs
+// bridgeBaseUrl: …/m/<id>[/r/<tag>]). Null for any other endpoint.
+const BRIDGE_PATH_RE = /\/m\/([^/?#]+)(?:\/r\/([^/?#]+))?\/?$/;
+function bridgeSpawnKey(modelEnv) {
+  const url = modelEnv && typeof modelEnv.ANTHROPIC_BASE_URL === 'string' ? modelEnv.ANTHROPIC_BASE_URL : '';
+  const m = /^https?:\/\/127\.0\.0\.1:\d+\//.test(url) ? BRIDGE_PATH_RE.exec(url) : null;
+  if (!m) return null;
+  try {
+    return { catalogId: decodeURIComponent(m[1]).toLowerCase(), tag: m[2] ? decodeURIComponent(m[2]) : '' };
+  } catch { return null; }
+}
+
+// The CLI reports an upstream API failure as an assistant text block ("API Error:
+// Request rejected (429) · …"), usually repeated in the is_error result. The
+// assistant copy is kept as the fallback detail for an exit without a result.
+const API_ERROR_TEXT_RE = /^API Error\b/;
 
 /**
  * Translate a pipeline "effort" level into claude CLI argv additions. This is
@@ -346,8 +393,11 @@ export function mockEnabled(opts) {
  * @param {number} [o.maxTurns]             --max-turns <n> (positive safe integer; else omitted)
  * @param {number|null} [o.maxBudgetUsd]    --max-budget-usd <n> (finite > 0; null/else omitted)
  * @param {string} [o.appendSubagentSystemPrompt] --append-subagent-system-prompt <text> (Task children only)
- *   All eight are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
+ * @param {string[]} [o.addDirs]            --add-dir <dir> per entry (Ask Worca's memory mount and every pipeline spawn's writable memory copy; the CLI loads <dir>/.claude/rules only with CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 in the env — memory-deps.mjs / spawn.mjs set it)
+ *   All nine are Ask Worca sandbox options (ask-worca-design.md §6.3) and default-off.
  * @param {number} [o.argvInlineLimit]     override ARGV_INLINE_LIMIT (GH #380; tests force the staged path)
+ * @param {string[]} [o.disallowedTools]   --disallowedTools <list>: built-ins withheld from this spawn
+ *   (model bridge §5.3: WebSearch/WebFetch for a translated model). Absent/empty ⇒ flag omitted.
  * @returns {Promise<{text:string, exitCode:number}>}
  */
 export async function runClaude(o = {}) {
@@ -372,6 +422,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    disallowedTools,
     workspaceWriteTargets,
     resumeSessionId,
     // Ask Worca sandbox hardening (ask-worca-design.md §6.3/§6.8). All default-off:
@@ -384,7 +435,18 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
+    // A pipeline agent (phases.mjs): runs as WORCA_AGENT_USER when the container set one
+    // up (agent-user.mjs). Server-side helpers and Ask Worca leave it unset.
+    asAgent,
+    // Credential broker (broker-client.mjs): who pays for this spawn, what kind it is (sets
+    // its token's lifetime), and the run/thread it belongs to. All optional: the person
+    // otherwise comes from the async context (billing.mjs). Ignored with the broker off.
+    billTo,
+    spawnKind,
+    runId,
+    threadId,
     bin = DEFAULT_BIN,
   } = o;
 
@@ -402,7 +464,7 @@ export async function runClaude(o = {}) {
     return runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
-  return runReal({
+  return (brokerEnabled() ? runViaBroker : runReal)({
     cwd,
     systemPrompt,
     prompt,
@@ -420,6 +482,7 @@ export async function runClaude(o = {}) {
     envScrub,
     envAllowlist,
     modelEnv,
+    disallowedTools,
     tools,
     strictMcpConfig,
     settingSources,
@@ -428,8 +491,121 @@ export async function runClaude(o = {}) {
     maxTurns,
     maxBudgetUsd,
     appendSubagentSystemPrompt,
+    addDirs,
     argvInlineLimit,
+    asAgent,
+    billTo,
+    spawnKind,
+    runId,
+    threadId,
   });
+}
+
+// ── Credential broker ────────────────────────────────────────────────────────
+// With WORCA_BROKER_URL set (plans/credential-broker-design.html §5.2), worca holds
+// no model credential. Each spawn gets its own short-lived token from the broker and
+// talks to `<broker>/p/<slot>`; the broker adds the paying person's key on the way
+// out. The token is revoked when the process exits, and never survives in anything
+// worca stores: events and error text pass through redactSecrets.
+
+/** Error in the recovery classes the orchestrator already knows (auth pauses, never retries blindly). */
+function brokerSpawnError(message, errorClass = 'auth') {
+  const err = new Error(`worca-broker: ${message}`);
+  err.errorClass = errorClass;
+  return err;
+}
+
+function isLoopbackUrl(v) {
+  try {
+    const h = new URL(v).hostname.replace(/^\[|\]$/g, '');
+    return h === '127.0.0.1' || h === 'localhost' || h === '::1';
+  } catch { return false; }
+}
+
+/** Which broker slot a spawn's model env routes to: {slot}, {bridge:true}, or {error}. */
+export function brokerRouteFor(modelEnv, env = process.env) {
+  const base = modelEnv && typeof modelEnv.ANTHROPIC_BASE_URL === 'string' ? modelEnv.ANTHROPIC_BASE_URL.trim() : '';
+  if (!base) return { slot: 'anthropic' };
+  const slot = slotOfBaseUrl(base, env);
+  if (slot) return { slot };
+  // worca's own in-process bridge (bridge/server.mjs): it reaches a keyless local
+  // endpoint itself; the broker guard refuses any bridged entry that holds a key.
+  if (isLoopbackUrl(base)) return { bridge: true };
+  let host = base;
+  try { host = new URL(base).host; } catch { /* keep the raw value */ }
+  return { error: `this model routes to ${host} directly; with the credential broker on, a model must use a broker slot (set its credential in Settings › Models)` };
+}
+
+const SPAWN_TTL_SEC = { aux: 600, test: 600, ask: 7200, phase: 86400 };
+
+async function runViaBroker(opts) {
+  const route = brokerRouteFor(opts.modelEnv);
+  if (route.error) throw brokerSpawnError(route.error);
+  const onEvent = opts.onEvent;
+  const redactingOnEvent = (e) => onEvent(redactDeep(e));
+
+  let info;
+  try { info = await brokerInfo(); }
+  catch (err) { throw brokerSpawnError(err.message, 'network'); }
+
+  // A bridged model (OpenAI, OpenRouter, Copilot, a gateway): the CLI still talks to worca's
+  // loopback bridge, which translates, but it presents THIS spawn's broker token and the
+  // bridge forwards it to the model's slot. A keyless local endpoint needs no token.
+  let bridgeSlot = null;
+  if (route.bridge) {
+    const ms = modelSlot(opts.model);
+    if (ms && ms.error) throw brokerSpawnError(ms.error);
+    if (!ms || ms.keyless) {
+      try {
+        const r = await runReal({ ...opts, onEvent: redactingOnEvent });
+        return { ...r, text: redactSecrets(r.text) };
+      } catch (err) { if (err && typeof err.message === 'string') err.message = redactSecrets(err.message); throw err; }
+    }
+    bridgeSlot = ms.slot;
+  }
+  let billTo = resolveBillTo(opts.billTo);
+  if (info.mode === 'multi' && (!billTo || billTo === 'local')) {
+    billTo = normalizeBillTo(process.env.WORCA_BROKER_SYSTEM_BILL_TO);
+    if (!billTo) throw brokerSpawnError('this action has no signed-in person to bill it to. Start it from the web UI, or set WORCA_BROKER_SYSTEM_BILL_TO for work nobody in particular starts');
+  }
+  const kind = ['aux', 'test', 'ask', 'phase'].includes(opts.spawnKind) ? opts.spawnKind
+    : (opts.permissionMode === 'dontAsk' ? 'ask' : 'phase');
+  // Whether this spawn runs where no other person's agent can read it: an agent spawn under
+  // the paying person's own pool user (not a resumed run's starter's), or a server-side spawn
+  // when agents run under their own users (they can't read the server's processes). The
+  // broker uses a personal Claude subscription only for such spawns.
+  const owner = normalizeBillTo(currentOwner()) || billTo;
+  const isolated = opts.asAgent
+    ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
+    : !!agentIdentity();
+  let minted;
+  try {
+    minted = await mintSpawnToken({
+      billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
+      runId: opts.runId || null, threadId: opts.threadId || null, isolated,
+    });
+  } catch (err) {
+    throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');
+  }
+  const modelEnv = bridgeSlot
+    // Bridged: keep the bridge URL (and the rest of the resolved env); swap the bridge's own
+    // secret for the spawn token.
+    ? { ...opts.modelEnv, ANTHROPIC_AUTH_TOKEN: minted.token }
+    : withProviderModesOff({
+      ENABLE_TOOL_SEARCH: 'true',
+      ...(opts.modelEnv || {}),
+      ANTHROPIC_BASE_URL: slotBaseUrl(route.slot),
+      ANTHROPIC_AUTH_TOKEN: minted.token,
+    });
+  try {
+    const r = await runReal({ ...opts, modelEnv, onEvent: redactingOnEvent });
+    return { ...r, text: redactSecrets(r.text) };
+  } catch (err) {
+    if (err && typeof err.message === 'string') err.message = redactSecrets(err.message);
+    throw err;
+  } finally {
+    revokeSpawnToken(minted.spawnId);
+  }
 }
 
 // ── Real execution ───────────────────────────────────────────────────────────
@@ -450,8 +626,10 @@ export async function runClaude(o = {}) {
  *                        (docs/run-root-verification.md, branch (a); argv-attested
  *                        transcript phase0/out/v1a-rerun.jsonl, with a no-grant
  *                        negative control proving the grant is load-bearing).
- *  `--add-dir` is deliberately absent: it needs an env override to carry memory at
- *  all (E2) and no shipped feature uses it (§5.3 / §8.18). */
+ *  `--add-dir` carries Ask Worca's memory mount (with the
+ *  CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 override, which is what makes the CLI LOAD rules
+ *  from it) and, since the memory write split, every pipeline spawn's writable memory copy (no
+ *  override: nothing is loaded from it, it is only made editable under acceptEdits). */
 export function buildClaudeArgs({
   prompt, systemPrompt, permissionMode, model, effort, allowedTools, resumeSessionId,
   mcpConfigPath, mcpServerGrants, permissionRules,
@@ -459,7 +637,7 @@ export function buildClaudeArgs({
   // way in because the legacy body below already owns a local `tools` (the
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard,
+  maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
@@ -491,6 +669,12 @@ export function buildClaudeArgs({
   if (tools.length) {
     args.push('--allowedTools', tools.join(','));
   }
+  // Model bridge (model-bridge-design.md §5.3): a translated (openai-chat / openai-responses)
+  // model has no server-side web tools, so the runner withholds them outright —
+  // a deny outranks any allow, frontmatter grant included. Absent/empty ⇒
+  // nothing emitted, so every other argv stays byte-identical.
+  const denied = Array.isArray(disallowedTools) ? disallowedTools.filter((s) => typeof s === 'string' && s) : [];
+  if (denied.length) args.push('--disallowedTools', denied.join(','));
   // ── Ask Worca hardening flags (ask-worca-design.md §6.3 / §6.8) ──────────────
   // Every one is default-off: absent / false / invalid ⇒ NOTHING is emitted, so
   // every legacy argv stays byte-identical (test/spawn-args.test.mjs). Appended
@@ -520,6 +704,9 @@ export function buildClaudeArgs({
   if (typeof appendSubagentSystemPrompt === 'string' && appendSubagentSystemPrompt) {
     args.push('--append-subagent-system-prompt', appendSubagentSystemPrompt);
   }
+  // Native-rules revision (2026-09-13): Ask Worca's memory mount. LAST, so every earlier argv
+  // stays a prefix; absent / [] / non-strings ⇒ nothing (the `names` filter above).
+  for (const d of names(addDirs)) args.push('--add-dir', d);
   return args;
 }
 
@@ -572,7 +759,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, argvInlineLimit }) {
+function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   return new Promise((resolveP, rejectP) => {
     // Per-model routing env (design §4.4), prepared BEFORE argv: reserved keys
     // are re-dropped here defensively — the write path already rejects them, so
@@ -651,7 +838,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         permissionMode, model: wireModel, effort, allowedTools, resumeSessionId,
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
-        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt,
+        maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -681,6 +868,18 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
     if (guardOn) spawnEnv = { ...(spawnEnv ?? process.env), WORCA_HOST_PID: String(process.pid) };
 
+    // No GitHub credential reaches claude, in any guardrail tier, from a per-project allowlist or a
+    // model env alike (src/core/github-credentials.mjs): pushes and PRs are worca's own calls.
+    spawnEnv = stripGithubCredentials(spawnEnv ?? process.env);
+    // The broker's own secret never reaches an agent. With the broker on, neither does any
+    // ambient model credential (the boot guard refuses them; this is the second line): the
+    // spawn's broker token is the only one it holds, and it wins over nothing.
+    delete spawnEnv.WORCA_BROKER_SECRET;
+    delete spawnEnv.WORCA_BROKER_SECRET_FILE;
+    if (brokerEnabled()) {
+      for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
+    }
+
     // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
     // path when unset). Everything here is derived from values already computed above
     // (safeModelEnv is null or non-empty, so the routing field is either the described
@@ -700,10 +899,20 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: summary });
     }
 
+    // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
+    // own process group so a stuck agent can still be SIGKILLed through sudo.
+    const agentId = asAgent ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
     let child;
     try {
-      child = spawn(resolved.bin, args, {
+      let file = resolved.bin;
+      let argv = args;
+      if (agentId) {
+        if (plan.dir) shareWithAgent(plan.dir, agentId);
+        ({ file, args: argv, env: spawnEnv } = agentSpawn(resolved.bin, args, spawnEnv, agentId));
+      }
+      child = spawn(file, argv, {
         cwd, stdio: [plan.stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(spawnEnv ? { env: spawnEnv } : {}),
+        ...(agentId ? { detached: true } : {}),
       });
     } catch (err) {
       cleanupStaged();
@@ -728,6 +937,19 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
     // non-zero exit surfaces the real cause instead of an opaque "no stderr".
     let errorDetail = '';
+    let apiErrorText = '';   // the last "API Error: …" assistant text (API_ERROR_TEXT_RE)
+    // A bridged spawn: the in-process bridge records the upstream's own reason
+    // (bridge/telemetry.mjs 'failure'), matched on this spawn's catalog id + tag
+    // as model-test.mjs does. The last fallback before the CLI's bare notice, so
+    // a CLI that exits without an API Error line still names the real cause.
+    let bridgeFailureText = '';
+    const bridgeKey = bridgeSpawnKey(modelEnv);
+    const onBridgeFailure = (e) => {
+      if (e && e.message && String(e.catalogId || '').toLowerCase() === bridgeKey.catalogId && (e.tag || '') === bridgeKey.tag) {
+        bridgeFailureText = String(e.message);
+      }
+    };
+    if (bridgeKey) bridgeEvents.on('failure', onBridgeFailure);
     let settled = false;
 
     const onAbort = () => {
@@ -738,11 +960,14 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       }
       // Escalate if it ignores SIGTERM.
       setTimeout(() => {
+        // Only a sudo still running holds the group: after it exits the pid may be reused.
+        const stuck = child.exitCode === null && child.signalCode === null;
         try {
           child.kill('SIGKILL');
         } catch {
           /* ignore */
         }
+        if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();
     };
     if (signal) {
@@ -754,6 +979,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       if (settled) return;
       settled = true;
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
       cleanupStaged();
       fn(arg);
     };
@@ -776,7 +1002,10 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
         safeEmit(onEvent, { type: 'session', sessionId: evt.session_id });
       }
-      if (evt?.type === 'assistant' && text) assistantText += text;
+      if (evt?.type === 'assistant' && text) {
+        assistantText += text;
+        if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
+      }
       if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
       // Remember the most specific error text we see, for the non-zero-exit path.
       if (evt?.type === 'result' && evt.is_error) {
@@ -821,7 +1050,7 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
       // Classify BEFORE buffering: the class must see every line ever printed —
       // an early 401 or session-limit notice followed by hundreds of KB of MCP
       // chatter would otherwise scroll past both the trim and the tail cap.
-      stderrClass = strongestClass(stderrClass, classifyError(line));
+      if (!isBenignStderrLine(line)) stderrClass = strongestClass(stderrClass, classifyError(line));
       stderrBuf += line + '\n';        // still the source of the exit-code detail
       // Rolling tail: bound memory against chatty MCP servers. Trim at 4x the
       // cap down to 2x — amortized, and the kept tail always exceeds
@@ -847,8 +1076,12 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         return;
       }
       if (code !== 0) {
-        const fromStderr = stderrBuf.trim();
-        const raw = fromStderr || errorDetail || 'no stderr';
+        // Benign notices are not evidence (BENIGN_STDERR_PATTERNS): stderr feeds
+        // the detail only when something else is left, else the stream's own
+        // error wins. A notice alone still beats the opaque "no stderr".
+        const fromStderr = stderrBuf.split('\n').filter((l) => !isBenignStderrLine(l)).join('\n').trim();
+        const streamDetail = errorDetail || apiErrorText || bridgeFailureText;
+        const raw = fromStderr || streamDetail || stderrBuf.trim() || 'no stderr';
         // Tail, not head: the terminal cause sits at the END of a long stderr.
         const detail = raw.length > STDERR_DETAIL_MAX ? `… ${raw.slice(-STDERR_DETAIL_MAX)}` : raw;
         const err = new Error(`${bin} exited with code ${code}: ${detail}`);
@@ -857,7 +1090,11 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
         // stdout errorDetail. classifyError() returns this stamp verbatim, so
         // the tail cap above can never starve recovery — or flip an early auth
         // failure into 'network' because connection chatter filled the tail.
-        err.errorClass = fromStderr ? stderrClass : classifyError(raw);
+        // A stream-borne API error (a 429 in the result) counts even when real
+        // stderr chatter fed the message.
+        err.errorClass = fromStderr
+          ? strongestClass(stderrClass, streamDetail ? classifyError(streamDetail) : null)
+          : classifyError(raw);
         // Mark the origin channel so the orchestrator can tag its `error` log
         // line with stream:'err' without sniffing the message. Absent when the
         // detail came from the stdout `result` envelope (the common case — see
@@ -939,6 +1176,17 @@ function parseMarkers(prompt, systemPrompt) {
   return markers;
 }
 
+/** Parse a MOCK_*_FORM marker's one-line JSON, or null. A malformed marker must
+ *  degrade to the canned body, never throw inside the mock. */
+function tryParseMockJson(raw) {
+  try {
+    const v = JSON.parse(String(raw));
+    return v && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureDir(filePath) {
   await mkdir(dirname(filePath), { recursive: true });
 }
@@ -969,13 +1217,17 @@ async function emitLog(onEvent, text) {
  */
 export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
-  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing',
+  'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
 export const MOCK_ROLE_CLARIFY = 'clarify';
 export const MOCK_ROLE_DECOMPOSER = 'decomposer';
+
+/** The memory defragmenter's role, exported like the other two named roles (the switch below
+ *  still uses the literal string: mock-writer-roles.test.mjs parses the switch arms). */
+export const MOCK_ROLE_MEMORY_DEFRAG = 'memory-defrag';
 
 /**
  * The mock-fan-out roles (mirror the orchestrator's FANOUT_ELIGIBLE intent): the
@@ -1072,16 +1324,53 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   // P3 (PD11): a workflow-card EVENT is matched first — it contains the words "workflow" and, when thenRun, "run",
   // which would otherwise trip the two arms below. Then the workflow trigger, then the run proposal.
   const wfEvent = /^\s*\[worca event\] workflow card (card_[0-9a-f]{8}) (?:(declined)|saved as (\S+) "([^"]*)"; thenRun=(true|false))/.exec(userText);
-  const workflow = !wfEvent && /\bworkflow\b/i.test(userText);
-  const agents = !wfEvent && /\bagents?\b/i.test(userText);
-  const propose = !wfEvent && !workflow && /\b(propose|start|run)\b/i.test(userText);
+  // A metrics-card EVENT, then the metrics trigger — both before the run arm, whose \brun\b would otherwise fire on
+  // "include my runs"-style prose (it does not, \b stops at the s, but "propose" would).
+  const tmEvent = /^\s*\[worca event\] (?:metrics|policy|model) card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
+  // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
+  const metrics = !wfEvent && !tmEvent && /\bmetrics\b/i.test(userText)
+    && /\b(?:stop|start|turn|toggle|switch|record\w*|route|change|enable|disable|set)\b/i.test(userText);
+  // Scheduled runs (docs/scheduled-runs.md "Ask Worca"): a schedule-card EVENT; a CHANGE to an existing schedule
+  // (its id in the text); or a new run to schedule ("schedule …"). All before the run arm, whose \brun\b would fire.
+  const scEvent = /^\s*\[worca event\] schedule card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
+  const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
+  const scChange = !wfEvent && !tmEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
+  const scNew = !wfEvent && !tmEvent && !scEvent && !scChange && /\bschedul/i.test(userText);
+  // The team-policy arm, the metrics rule: "policy" plus a verb of intent ("raise the policy cap to $30").
+  // It proposes an edit of the context project's per-pipeline cap: `$<n>` in the text, else $30.
+  const policy = !wfEvent && !tmEvent && !metrics && !scEvent && !scNew && !scChange && /\bpolicy\b/i.test(userText)
+    && /\b(?:raise|lower|set|change|edit|make|cap)\b/i.test(userText);
+  // A tracker task named by key ("fix jira bug PROJ-123"): the run's task is the issue (mock-source's
+  // fixture plugin), and "auto" asks for the Auto workflow. Folds into the schedule and run arms.
+  const taskKey = !wfEvent && !tmEvent && !scEvent && /\b(?:issue|ticket|bug|task)\b/i.test(userText) ? /\b([A-Z][A-Z0-9]+-\d+)\b/.exec(userText) : null;
+  const wantsAuto = /\bauto\b/i.test(userText);
+  const workflow = !wfEvent && !tmEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
+  const agents = !wfEvent && !tmEvent && /\bagents?\b/i.test(userText);
+  // Models (docs/models.md "Ask Worca"): "add a local llama model" proposes a keyless llama.cpp entry; "remove model
+  // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
+  const modelAdd = !wfEvent && !tmEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
+  const modelRemove = !wfEvent && !tmEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
+  const propose = !wfEvent && !tmEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  // The proposal both arms send: a brief, or the task reference instead of one.
+  const proposal = () => {
+    if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
+    const { brief: _brief, ...rest } = card;
+    return { ...rest, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}), source: { plugin: 'mock-source', sourceId: 'mock', taskId: taskKey[1] }, note: 'mock: the run reads the issue when it starts' };
+  };
+  const taskFrames = (MSG) => (taskKey ? [
+    atool(MSG, 'toolu_mock_sources', 'mcp__worca__list_task_sources', {}),
+    uresult('toolu_mock_sources', JSON.stringify({ sources: [{ plugin: 'mock-source', sourceId: 'mock', displayName: 'Mock Tasks' }] })),
+    atool(MSG, 'toolu_mock_find', 'mcp__worca__find_tasks', { plugin: 'mock-source', sourceId: 'mock', search: taskKey[1] }),
+    uresult('toolu_mock_find', JSON.stringify({ tasks: [{ id: taskKey[1], title: 'Mock task' }] })),
+  ] : []);
 
   const SID = resumeSessionId || 'mock-session-ask-1';
   const USAGE = { input_tokens: 10, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
   const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
-    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow'],
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change', 'mcp__worca__propose_policy_change'],
     mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
   const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
   const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
@@ -1128,6 +1417,53 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
           warnings: [], summary: '', shape, costUsd: 0, fingerprint: 'top-level: (mock)\nhints: mock', note: '', thenRun: wfInput.thenRun })));
       answerMsg = MSG2;
     }
+    if (metrics) {
+      // The MCP child's validation result (metrics-proposal.mjs): the parent re-validates the INPUT and mints the card,
+      // so a mock card always targets the context project's "Include my runs" switch (no git involved when applied).
+      const tmInput = { kind: 'record', projectKey: card.projectKey || null, record: false, note: 'mock: stop recording my runs here' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a metrics change'), atext(MSG1, 'Proposing a metrics change card.'),
+        atool(MSG1, 'toolu_mock_metrics', 'mcp__worca__propose_metrics_change', tmInput),
+        uresult('toolu_mock_metrics', JSON.stringify({ ok: true, card: { type: 'metrics', ...tmInput } })));
+      answerMsg = MSG2;
+    }
+    if (policy) {
+      const usd = Number((/\$\s*(\d+(?:\.\d+)?)/.exec(userText) || [])[1] || 30);
+      const tpInput = { kind: 'edit', projectKey: card.projectKey || null, set: [{ key: 'cost.pipelineLimitUsd', value: usd, kind: 'soft' }], note: 'mock: change the team per-pipeline cap' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a policy change'), atext(MSG1, 'Proposing a policy change card.'),
+        atool(MSG1, 'toolu_mock_policy', 'mcp__worca__propose_policy_change', tpInput),
+        uresult('toolu_mock_policy', JSON.stringify({ ok: true, card: { type: 'policy', ...tpInput } })));
+      answerMsg = MSG2;
+    }
+    if (scNew) {
+      // The parent re-validates the INPUT with the real validator: "every" in the text makes a weekday series,
+      // anything else a one-off two minutes out (short enough to watch the server start it).
+      const every = /\bevery\b/i.test(userText);
+      const input = { ...proposal(), ...(every ? { every: 'weekdays 02:00' } : { when: '+2m' }) };
+      frames.push(...taskFrames(MSG1));
+      frames.push(delta('[mock] '), delta('scheduling '), delta('a run'), atext(MSG1, every ? 'Scheduling it every weekday at 02:00.' : 'Scheduling it two minutes from now.'),
+        atool(MSG1, 'toolu_mock_preview', 'mcp__worca__preview_schedule', every ? { every: 'weekdays 02:00' } : { when: '+2m' }),
+        uresult('toolu_mock_preview', JSON.stringify({ ok: true, kind: every ? 'repeat' : 'once' })),
+        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', input), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (scChange) {
+      const t = userText.toLowerCase();
+      const action = /run now/.test(t) ? 'run_now' : /\bmove\b/.test(t) ? 'move' : /\bdelete\b/.test(t) ? 'delete' : /\bcancel\b/.test(t) ? 'cancel' : 'edit';
+      const input = { id: scId[1], action, ...(action === 'move' ? { when: '+5m' } : action === 'edit' ? { every: 'weekdays 03:00' } : {}), note: 'mock: as asked' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a schedule change'), atext(MSG1, 'Proposing a schedule change card.'),
+        atool(MSG1, 'toolu_mock_sched', 'mcp__worca__propose_schedule_change', input), uresult('toolu_mock_sched', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
+    if (scEvent) {
+      const line = scEvent[2] === 'declined' ? 'Declined — nothing changed.' : scEvent[2] === 'failed' ? 'The change failed; check the error and try again.' : 'Done.';
+      frames.push(delta('[mock] '), delta(scEvent[2]), atext(MSG1, line));
+      answerMsg = MSG2;
+    }
+    if (tmEvent) {
+      const line = tmEvent[2] === 'declined' ? 'Declined — nothing changed.' : tmEvent[2] === 'failed' ? 'The change failed; check the error and try again.' : 'Applied.';
+      frames.push(delta('[mock] '), delta(tmEvent[2]), atext(MSG1, line));
+      answerMsg = MSG2;
+    }
     if (wfEvent) {
       // Every event arm answers on MSG2: a second atext on MSG1 would REPLACE the first reply's text.
       if (wfEvent[2] === 'declined') {
@@ -1141,9 +1477,17 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
       }
       answerMsg = MSG2;
     }
+    if (modelAdd || modelRemove) {
+      const mInput = modelAdd
+        ? { kind: 'add_model', model: { id: 'local-llama', label: 'Local llama', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen', baseUrl: 'http://127.0.0.1:8080/v1', capabilities: { maxPromptTokens: 65536, maxOutputTokens: 8192 } } }, note: 'mock: a local llama.cpp server' }
+        : { kind: 'remove_model', id: modelRemove[1], note: 'mock: as asked' };
+      frames.push(delta('[mock] '), delta('proposing '), delta('a model change'), atext(MSG1, 'Proposing a model change card.'),
+        atool(MSG1, 'toolu_mock_model', 'mcp__worca__propose_model_change', mInput), uresult('toolu_mock_model', JSON.stringify({ ok: true })));
+      answerMsg = MSG2;
+    }
     if (propose) {
-      frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'),
-        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', card), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
+      frames.push(delta('[mock] '), delta('preparing '), delta('a run'), atext(MSG1, 'Preparing a run card.'), ...taskFrames(MSG1),
+        atool(MSG1, 'toolu_mock_propose', 'mcp__worca__propose_run', proposal()), uresult('toolu_mock_propose', JSON.stringify({ ok: true })));
       answerMsg = MSG2;
     }
     if (answerMsg !== MSG1) frames.push(mstart(answerMsg));
@@ -1214,12 +1558,17 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
   // session event above already fired, so the resume has a session id.
   if (m.MOCK_ASK && permissionMode !== 'dontAsk') {   // belt and braces: dontAsk already took the ask arm above
     await ensureDir(m.MOCK_ASK);
-    await writeFile(m.MOCK_ASK, JSON.stringify({
+    // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written
+    // verbatim. Unparseable => the canned questions body, so a typo degrades to
+    // today's behaviour instead of writing garbage the gate then refuses.
+    const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+    const body = formBody || {
       questions: [{ id: 'q1', question: `Mock question from ${role}?`, options: ['Option A', 'Option B'], allowFreeText: true }],
-    }, null, 2) + '\n', 'utf8');
+    };
+    await writeFile(m.MOCK_ASK, JSON.stringify(body, null, 2) + '\n', 'utf8');
     safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_ASK}`, raw: { mock: true, file: m.MOCK_ASK } });
     safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
-    await emitLog(onEvent, `[mock] questions written; stopping for answers (role=${role})`);
+    await emitLog(onEvent, `[mock] ${formBody ? 'form ask' : 'questions'} written; stopping for answers (role=${role})`);
     return { text: '[mock] asked questions', exitCode: 0 };
   }
 
@@ -1260,6 +1609,9 @@ async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessi
       break;
     case 'manual-web-ui-testing':
       text = await mockManualWebUiTesting(m, cycle, onEvent);
+      break;
+    case 'memory-defrag':
+      text = await mockMemoryDefrag(m, systemPrompt, onEvent);
       break;
     case 'generic-producer':
       text = await mockGenericProducer(m, onEvent);
@@ -1309,7 +1661,11 @@ async function mockClarify(m, cycle, onEvent) {
   // orchestrator's clarify loop terminates naturally. This mirrors the real fix:
   // the loop converges because answers are returned to the planner.
   const hasPrior = Number(m.MOCK_PRIOR || '0') > 0;
-  const payload = hasPrior
+  // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written VERBATIM
+  // to the answers port instead of the canned questions — the clarifier's half of the
+  // marker (the producer's half is the MOCK_ASK arm in runMock). Unparseable => canned.
+  const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+  const payload = formBody || (hasPrior
     ? { questions: [] }
     : {
         questions: [
@@ -1332,10 +1688,10 @@ async function mockClarify(m, cycle, onEvent) {
             allowFreeText: true,
           },
         ],
-      };
+      });
   await emitLog(
     onEvent,
-    hasPrior
+    formBody ? '[mock] clarifier asking with a form' : hasPrior
       ? '[mock] planner has no further questions'
       : '[mock] planner asking one clarifying question',
   );
@@ -1360,6 +1716,61 @@ async function mockGenericProducer(m, onEvent) {
   await writeFile(out, body, 'utf8');
   safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
   return `[mock] generic artifact written to ${out}`;
+}
+
+/** The scope dirs the `## Worca memory` block of a system prompt names (memory-store.mjs
+ *  renderMemoryBlock: `<label> — <abs dir>:` lines under the heading; the block is contiguous,
+ *  so the first blank line ends it). The mock defragmenter finds its mount exactly the way the
+ *  real agent is told to — from its system prompt — so no MOCK marker is needed. Exported for
+ *  the parity test against a real renderMemoryBlock output. Both captures are greedy: a project
+ *  LABEL may itself contain ` — ` (the renderer's separator is the last one on the line), and a
+ *  Windows dir carries a drive colon while the line still ends with `:`. */
+export function memoryDirsFromPrompt(systemPrompt) {
+  const text = String(systemPrompt || '');
+  const at = text.indexOf('## Worca memory');
+  if (at === -1) return [];
+  const out = [];
+  for (const line of text.slice(at).split(/\r?\n/).slice(1)) {
+    if (!line.trim()) break;
+    const m = line.match(/^(?:Global|Project .*) — (.+):$/);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Memory defragment mock (agent-memory-design.md §7.1): in the FIRST scope dir the system
+ *  prompt names, fold the second (sorted) file's body into the first and EMPTY it (amendment
+ *  B19 — the memory tool set cannot unlink, so this is the path the real agent takes), then
+ *  write the report to MOCK_OUT. A defrag run mounts exactly ONE scope dir. */
+async function mockMemoryDefrag(m, systemPrompt, onEvent) {
+  const out = m.MOCK_OUT;
+  const dir = memoryDirsFromPrompt(systemPrompt)[0] || null;
+  await emitLog(onEvent, '[mock] memory defragmenter restructuring the mounted scope');
+  const lines = ['# Memory defragment report', ''];
+  let merged = null;
+  if (dir) {
+    const files = (await readdir(dir, { withFileTypes: true })).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name).sort();
+    if (files.length < 2) {
+      lines.push(`- ${dir}: ${files.length} file(s), nothing to merge`);
+    } else {
+      const [a, b] = files;
+      const bodyB = (await readFile(join(dir, b), 'utf8')).replace(/^---\n[\s\S]*?\n---\n/, '');
+      const text = `${await readFile(join(dir, a), 'utf8')}\n## Merged from ${b.slice(0, -3)}\n\n${bodyB}`;
+      await writeFile(join(dir, a), text, 'utf8');
+      await writeFile(join(dir, b), '', 'utf8');            // B19: an EMPTIED mount file is a deletion request
+      merged = [a, b];
+      lines.push(`- ${dir}: merged ${b} into ${a}; emptied ${b} (worca removes it at sync-back)`);
+      safeEmit(onEvent, { type: 'tool_use', text: `merged ${join(dir, b)} into ${join(dir, a)}`, raw: { mock: true, file: join(dir, a) } });
+    }
+  } else {
+    lines.push('- no memory scope in the system prompt: nothing to defragment');
+  }
+  if (out) {
+    await ensureDir(out);
+    await writeFile(out, `${lines.join('\n')}\n`, 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${out}`, raw: { mock: true, file: out } });
+  }
+  return merged ? `[mock] memory defragment: merged ${merged[1]} into ${merged[0]}` : '[mock] memory defragment: nothing to merge';
 }
 
 async function mockPlannerPlan(m, onEvent) {

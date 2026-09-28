@@ -41,6 +41,7 @@ import { contextMaxBytesPerFile, contextMaxBytesTotal, skillMount, defaultRoot }
 import { readRunManifest, updateRunManifest } from './run-manifest.mjs';
 import { isValidSkillName } from './skills.mjs';
 import { mergePermissionRules } from './guardrails.mjs';
+import { screenMcpSecrets, mcpSecretsMode } from './mcp-secrets.mjs';
 
 /**
  * The `--allowedTools` grant shape this build emits for merged MCP servers.
@@ -1138,6 +1139,11 @@ export async function assembleRunContext({
     members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null, homeDir, isWorkspace, platform,
   });
   for (const w of mcp.warnings) warnings.push(w);
+  // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
+  // credential broker on they are left out by default, otherwise named.
+  const screened = screenMcpSecrets(mcp.servers, { mode: mcpSecretsMode() });
+  for (const w of screened.warnings) warnings.push(w);
+  mcp.servers = screened.servers;
   const written = Object.keys(mcp.servers).sort();
   let mcpConfigPath = null;
   if (written.length) {

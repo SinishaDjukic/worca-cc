@@ -256,12 +256,12 @@ function ctxFor(key, { only = null, workspace = null, extras = [], slice = null,
 
 const promptFor = (key, opts) => buildAgentPrompt(ctxFor(key, opts));
 
-// ── the 11 ────────────────────────────────────────────────────────────────────
+// ── the 12 ────────────────────────────────────────────────────────────────────
 
-test('the pin covers exactly the 11 shipped builtins, all v2-ported', () => {
+test('the pin covers exactly the 12 shipped builtins, all v2-ported', () => {
   assert.deepEqual(BUILTIN_KEYS, [
     'clarify', 'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting',
-    'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
+    'memoryDefragmenter', 'planReviewer', 'planner', 'refiner', 'reviewer', 'workspaceReviewer', 'workspaceScanner',
   ]);
   for (const key of BUILTIN_KEYS) {
     assert.equal(REGISTRY[key].metaVersion, 2, `${key} is metaVersion 2`);
@@ -392,6 +392,7 @@ const MOCK_ROLES = {
   implementer: 'implementer', reviewer: 'reviewer', planReviewer: 'plan-review',
   workspaceReviewer: 'workspace-reviewer', manualTestsChecklist: 'manual-tests-checklist',
   manualWebUiTesting: 'manual-web-ui-testing', workspaceScanner: 'workspace-scan',
+  memoryDefragmenter: 'memory-defrag',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {

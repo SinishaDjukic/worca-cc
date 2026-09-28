@@ -276,6 +276,48 @@ test('meta omits day/clock when nothing carries a timestamp (deep link)', async 
   assert.match(meta.textContent, /Done/, 'the status word still paints');
 });
 
+test('a terminal run with a recorded team-metrics entry shows the "recorded" line', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, teamMetrics: { state: 'recorded', slug: 'acme/billing-api' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run');
+  assert.equal(tm.textContent, 'recorded to team metrics ✓');
+  assert.ok(tm.classList.contains('st-ok'));
+});
+
+test('a pending team-metrics entry shows the pending-push wording', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL, teamMetrics: { state: 'pending', slug: 'acme/billing-api' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run');
+  assert.equal(tm.textContent, 'team metrics · pending push');
+  assert.ok(tm.classList.contains('st-warn'));
+});
+
+test('omitting teamMetrics entirely renders "not enabled"', async () => {
+  const detail = { ...DETAIL };
+  delete detail.teamMetrics;
+  const ctx = await bootDetail({ detail });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tm = doc.querySelector('#hist-detail .hd-tm');
+  assert.ok(tm, 'the .hd-tm span renders for a terminal run even with no teamMetrics field');
+  assert.equal(tm.textContent, 'team metrics · not enabled');
+  assert.ok(tm.classList.contains('st-muted'));
+});
+
+test('a non-terminal (paused) run renders no .hd-tm line', async () => {
+  const ctx = await bootDetail({
+    rows: [{ ...ROW, status: 'paused' }],
+    detail: { ...PAUSED_DETAIL, teamMetrics: { state: 'recorded', slug: 'acme/billing-api' } },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-tm'), null);
+});
+
 test('branch row copies the feature branch and flags .copied', async () => {
   const ctx = await bootDetail();
   await openDetail(ctx);
@@ -736,6 +778,77 @@ test('tabs render with badges; default = Diff when results exist, else Overview'
   assert.ok(bareDoc.querySelector('#hist-detail .hd-tab[data-sec="overview"]').classList.contains('active'));
   assert.equal(secOf(bareDoc, 'overview').hidden, false);
   assert.equal(badgeOf(bareDoc, 'agents'), null, 'an empty sub-agent list carries no badge');
+});
+
+// The saved detail payload's `artifacts` (listArtifacts' [{kind, relPath}]) carries
+// no step attribution, so the Artifacts tab must fetch the ATTRIBUTED plural
+// endpoint before rendering. This proves that wiring, not just the pure grouping.
+test('the Artifacts tab fetches GET /api/runs/:id/artifacts and renders per-node groups', async () => {
+  const detail = {
+    ...DETAIL,
+    state: { ...DETAIL.state, stepper: null, steps: [], subAgents: [] },
+    // A non-live-log indexed artifact gates the tab's visibility.
+    artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }],
+  };
+  let asked = null;
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        asked = url;
+        return ok({ runId: ROW.id, artifacts: [
+          { kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 0, relPath: 'plans/plan.md', bytes: 42, createdAt: ROW.startedAt },
+        ] });
+      }
+      return null;
+    },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  const tab = doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]');
+  assert.ok(tab, 'the Artifacts tab is visible for a run with an indexed artifact');
+  click(ctx.window, tab);
+  await settle(ctx.window, 6);
+  assert.ok(asked, 'buildHdArtifacts fetched the attributed plural endpoint');
+  const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
+  const rows = [...sec.querySelectorAll('.artifact-row')];
+  assert.equal(rows.length, 1, 'the fetched artifact renders as a row');
+  assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+  assert.equal(sec.querySelector('.artifact-group-head b').textContent, 'plan',
+    'grouped under its producing node');
+});
+
+// 'questions' rows are indexed with attribution but the orchestrator deletes the
+// scratch file once the round is answered, so a persisted questions row would 404
+// when clicked. isDisplayableArtifact excludes it (like 'live-log'/'pipeline'), so
+// the Artifacts tab neither counts nor renders it.
+test('the Artifacts tab drops transient questions rows (deleted file would 404)', async () => {
+  const detail = {
+    ...DETAIL,
+    state: { ...DETAIL.state, stepper: null, steps: [], subAgents: [] },
+    artifacts: [{ kind: 'plan', relPath: 'plans/plan.md' }],
+  };
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => {
+      if (url.endsWith(`/api/runs/${ROW.id}/artifacts`)) {
+        return ok({ runId: ROW.id, artifacts: [
+          { kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 0, relPath: 'plans/plan.md', bytes: 42, createdAt: ROW.startedAt },
+          { kind: 'questions', stepKey: 'clarify#1', nodeId: 'clarify', cycle: 0, relPath: 'questions-x-clarify-c1-r1.json', bytes: 0, createdAt: ROW.startedAt },
+        ] });
+      }
+      return null;
+    },
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]'));
+  await settle(ctx.window, 6);
+  const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
+  const rows = [...sec.querySelectorAll('.artifact-row')];
+  assert.equal(rows.length, 1, 'only the durable plan row renders; questions is dropped');
+  assert.equal(rows[0].querySelector('.artifact-name').textContent, 'plan.md');
+  assert.doesNotMatch(sec.textContent, /questions-x-clarify/, 'no questions row is shown');
 });
 
 test('clicking a tab switches the visible section and lazy-builds exactly once', async () => {
@@ -2416,4 +2529,189 @@ test('a History run frozen while Auto was still deciding: the still line, no orb
   assert.ok(host.classList.contains('auto-deciding-host'), 'the placeholder, not an empty graph');
   assert.equal(host.querySelector('.auto-deciding-label').textContent, 'Auto did not decide a workflow');
   assert.equal(host.querySelector('.ask-orb'), null, 'no orb on a frozen run');
+});
+
+// ---------------------------------------------------------------------------
+// The overflow menu — Archive + Report this run live behind one ⋯ trigger
+// ---------------------------------------------------------------------------
+// The two buttons keep their own classes inside it, so every gate, busy-label swap
+// and assertion above still addresses them directly; only their PLACEMENT moved.
+
+const hdMore = (doc) => doc.querySelector('#hist-detail .hd-more');
+const hdMenu = (doc) => doc.querySelector('#hist-detail .hd-menu');
+
+test('the ⋯ trigger opens and closes the header menu', async () => {
+  const ctx = await bootDetail();
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+
+  const more = hdMore(doc);
+  const menu = hdMenu(doc);
+  assert.ok(more && menu, 'the trigger and its menu are in the detail template');
+  assert.equal(menu.hidden, true, 'the menu starts closed');
+  assert.equal(more.getAttribute('aria-expanded'), 'false');
+  assert.equal(more.getAttribute('aria-haspopup'), 'menu');
+
+  click(ctx.window, more);
+  await settle(ctx.window);
+  assert.equal(menu.hidden, false, 'clicking opens it');
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.ok(menu.contains(doc.querySelector('#hist-detail .hd-archive')), 'Archive lives inside');
+  const report = doc.querySelector('#hist-detail .hd-report');
+  assert.ok(menu.contains(report), 'so does Report this run');
+  assert.ok(report.querySelector('svg'), 'Report carries a warning-triangle icon, like Archive carries a bin');
+  assert.equal(report.querySelector('.hd-btn-label').textContent, 'Report this run',
+    'and its label lives in the same span Archive uses, so the two rows line up');
+  assert.equal(menu.contains(doc.querySelector('#hist-detail .hd-resume')), false,
+    'Resume is the primary action and stays in the row');
+
+  click(ctx.window, more);
+  await settle(ctx.window);
+  assert.equal(menu.hidden, true, 'clicking again closes it');
+});
+
+test('the menu closes on an outside click, on Escape, and on choosing an item', async () => {
+  const ctx = await bootDetail();
+  await openDetail(ctx);
+  const { window: w } = ctx;
+  const doc = w.document;
+  const open = async () => { click(w, hdMore(doc)); await settle(w); };
+
+  await open();
+  click(w, doc.querySelector('#hist-detail .hd-meta'));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'a click anywhere else dismisses it');
+
+  await open();
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'Escape dismisses it');
+  assert.equal(doc.activeElement, hdMore(doc), 'and hands focus back to the trigger');
+
+  await open();
+  click(w, doc.querySelector('#hist-detail .hd-report'));
+  await settle(w);
+  assert.equal(hdMenu(doc).hidden, true, 'choosing an item dismisses it');
+  assert.equal(doc.getElementById('report-modal').classList.contains('hidden'), false,
+    'and the item still does its job');
+});
+
+test('the ⋯ trigger hides when it would open an empty menu', async () => {
+  // A live run can be neither archived nor reported. An always-present trigger that
+  // opens onto nothing is worse than no trigger.
+  const live = { ...ROW, status: 'running', survived: false };
+  const ctx = await bootDetail({ rows: [live],
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } } });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+
+  assert.equal(doc.querySelector('#hist-detail .hd-archive').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-report').hidden, true);
+  assert.equal(hdMore(doc).hidden, true, 'so the trigger goes too');
+
+  // The gate is set once per visit (setupHdActions) — refreshHdFromRow re-runs only
+  // the DISABLED gate, so a run going terminal under an open screen offers the
+  // trigger on the next visit, exactly as Archive and Report already do.
+  const done = await bootDetail();
+  await openDetail(done);
+  assert.equal(hdMore(done.window.document).hidden, false,
+    'a finished run opens the screen with the trigger in place');
+});
+
+// ---------------------------------------------------------------------------
+// Clarify tab — a kind:'form' ask (ask-forms design §9): the SAME renderer, in
+// readonly mode, seeded with the stored values. Legacy rows are untouched.
+// ---------------------------------------------------------------------------
+
+const FORM_ASK = {
+  kind: 'form', askId: 'questions-x_1-r1', form: 'review-mockups', version: 1,
+  title: 'Review mockups', surface: 'any',
+  data: { summary: 'Two directions.', images: [{ id: 'a', caption: 'Option A', file: 'mockups/a.png' }] },
+  layout: [
+    { widget: 'markdown', bind: 'data.summary' },
+    { widget: 'gallery', field: 'picked', bind: 'data.images', captionKey: 'caption', fileKey: 'file' },
+    { widget: 'select', field: 'verdict', label: 'Verdict' },
+    { widget: 'textarea', field: 'notes', label: 'What should change?', when: { verdict: 'changes' } },
+  ],
+  answerSchema: { type: 'object', required: ['verdict'], properties: {
+    verdict: { type: 'string', enum: ['approve', 'changes'] },
+    picked: { type: 'string', enum: ['a'] },
+    notes: { type: 'string' },
+  } },
+  fileRefs: [{ path: 'data.images[0].file', rel: 'mockups/a.png' }],
+  files: [{ index: 0, rel: 'mockups/a.png', name: 'a.png', mime: 'image/png', bytes: 2048, sha256: 'z' }],
+  // X3: the reader merges the stored `values` into `ask` and puts the raw answer in
+  // `formAnswer`; the legacy arrays stay empty for a form round.
+  values: { verdict: 'changes', picked: 'a', notes: 'tighten the spacing' },
+};
+const FORM_ANSWER = { kind: 'form', form: 'review-mockups', version: 1, values: FORM_ASK.values };
+const FORM_DETAIL = { ...DETAIL,
+  clarify: { questions: [], answers: [], ask: FORM_ASK, formAnswer: FORM_ANSWER } };
+
+test('Clarify: a form ask renders readonly with its stored answer', async () => {
+  const ctx = await bootDetail({ detail: FORM_DETAIL });
+  const sec = await openTab(ctx, 'clarify');
+  const card = sec.querySelector('.hd-cl-form');
+  assert.ok(card, 'the form ask gets its own card');
+  assert.match(card.querySelector('.hd-cl-caption').textContent, /review-mockups/);
+  const form = card.querySelector('.af-form');
+  assert.ok(form.classList.contains('af-readonly'));
+  assert.equal(form.querySelector('textarea').value, 'tighten the spacing');
+  assert.equal(form.querySelector('textarea').closest('.af-fld').hidden, false,
+    '`when` is evaluated against the STORED values');
+  const picked = [...form.querySelectorAll('.af-choice[aria-pressed="true"]')];
+  assert.equal(picked.length, 1);
+  for (const n of form.querySelectorAll('button, input, textarea, select')) assert.equal(n.disabled, true);
+});
+
+test('Clarify: a form file URL uses the History twin, not the live run route', async () => {
+  const ctx = await bootDetail({ detail: FORM_DETAIL });
+  const sec = await openTab(ctx, 'clarify');
+  const img = sec.querySelector('.af-gal-card img');
+  assert.equal(img.getAttribute('src'),
+    `/api/history/${encodeURIComponent(KEY)}/${encodeURIComponent(ROW.id)}/ask-files/questions-x_1-r1/0`);
+});
+
+test('Clarify: a workspace record uses the /api/workspaces arm for ask files', async () => {
+  // A workspace row opens at #history/workspaces/<wid>/<id> and its detail comes from
+  // GET /api/workspaces/<wid>/runs/<id> (test/ui-history-workspace.test.mjs pins both),
+  // so this case routes itself instead of openTab's project-keyed hash.
+  const wsRow = { ...ROW, target: 'workspace', workspaceName: 'IoT', projectName: 'svc', projectKey: 'workspaces/wk1' };
+  const ctx = await bootDetail({ rows: [wsRow], detail: FORM_DETAIL,
+    arms: (url) => (new URL(url, 'http://localhost:4317').pathname === `/api/workspaces/wk1/runs/${ROW.id}` ? ok(FORM_DETAIL) : null) });
+  go(ctx.window, `history/workspaces/wk1/${ROW.id}`);
+  await settle(ctx.window);
+  const doc = ctx.window.document;
+  const tab = doc.querySelector('#hist-detail .hd-tab[data-sec="clarify"]');
+  if (!tab.classList.contains('active')) click(ctx.window, tab);
+  await settle(ctx.window);
+  const sec = secOf(doc, 'clarify');
+  assert.equal(sec.querySelector('.af-gal-card img').getAttribute('src'),
+    `/api/workspaces/wk1/runs/${encodeURIComponent(ROW.id)}/ask-files/questions-x_1-r1/0`);
+});
+
+test('Clarify: the badge counts a form ask, and legacy rows still render as ASK/ANS', async () => {
+  const mixed = { ...DETAIL,
+    clarify: { questions: [{ id: 'q1', question: 'Which DB?' }], answers: [{ id: 'q1', choice: 'Postgres' }] },
+    stepQuestions: [{ stepKey: 'impl#1', round: 1, nodeId: 'impl', agentKey: 'implementer',
+      questions: [], answers: [],
+      ask: { ...FORM_ASK, askId: 'questions-x_2-r1', form: 'pick-approach' },
+      formAnswer: { ...FORM_ANSWER, form: 'pick-approach' } }] };
+  const ctx = await bootDetail({ detail: mixed });
+  const sec = await openTab(ctx, 'clarify');
+  assert.equal(badgeOf(ctx.window.document, 'clarify'), '2', 'one legacy question + one form ask');
+  assert.equal(sec.querySelectorAll('.hd-cl-card').length, 1);
+  assert.equal(sec.querySelector('.hd-cl-q').textContent, 'ASKWhich DB?');
+  assert.equal(sec.querySelector('.hd-cl-a').textContent, 'ANSPostgres');
+  assert.equal(sec.querySelectorAll('.hd-cl-form').length, 1);
+  assert.match(sec.querySelector('.hd-cl-form .hd-cl-caption').textContent, /implementer/);
+  assert.match(sec.querySelector('.hd-cl-form .hd-cl-caption').textContent, /pick-approach/);
+});
+
+test('Clarify: a run with ONLY legacy rows is byte-for-byte what it was', async () => {
+  const ctx = await bootDetail({ detail: { ...DETAIL,
+    clarify: { questions: [{ id: 'q1', question: 'Which DB?' }], answers: [] } } });
+  const sec = await openTab(ctx, 'clarify');
+  assert.equal(sec.querySelectorAll('.hd-cl-form').length, 0);
+  assert.equal(sec.querySelector('.hd-cl-a').textContent, 'ANS(none)');
 });

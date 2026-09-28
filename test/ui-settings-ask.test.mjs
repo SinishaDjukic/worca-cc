@@ -28,26 +28,28 @@ const okBudget = () => ({
   remainingUsd: 8.77, blocked: false,
 });
 
-// GET /api/settings: the ask keys at their defaults, no budget limits.
+// GET /api/settings: the ask keys at their defaults (400 turns, no cost cap), no budget limits.
 const GET_BODY = () => ({
   root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {},
   pipelineCostLimitUsd: null, totalCostLimitUsd: null, costLimitResetPeriod: 'monthly',
-  askMaxTurns: 40, askMaxBudgetUsd: 2,
+  askMaxTurns: 400, askMaxBudgetUsd: null,
+  askWeb: { enabled: false, allowedDomains: [], search: null },
 });
 
-// The server's storage semantics: '' clears to the default, null stays null
-// ("no cap"), anything else is stored as posted.
+// The server's storage semantics: '' clears to the default (400 turns / no cap),
+// null stays null ("no cap"), anything else is stored as posted.
 const resolveAsk = (body) => {
   const out = {};
-  if ('askMaxTurns' in body) out.askMaxTurns = body.askMaxTurns === '' ? 40 : body.askMaxTurns;
-  if ('askMaxBudgetUsd' in body) out.askMaxBudgetUsd = body.askMaxBudgetUsd === '' ? 2 : body.askMaxBudgetUsd;
+  if ('askMaxTurns' in body) out.askMaxTurns = body.askMaxTurns === '' ? 400 : body.askMaxTurns;
+  if ('askMaxBudgetUsd' in body) out.askMaxBudgetUsd = body.askMaxBudgetUsd === '' ? null : body.askMaxBudgetUsd;
   return out;
 };
 
 // GET /api/ask/history: the counts the "Delete all chat history" flow quotes.
 // `history` is MUTABLE — the DELETE arm zeroes it the way the server would, so
 // the refetch after a delete paints the empty state.
-async function boot({ postResponse, history = { threads: 3, worktrees: 2, attachments: 5, inFlight: 0 }, deleteResponse } = {}) {
+// `get` overrides keys of the GET /api/settings body (and of the save response built from it).
+async function boot({ postResponse, history = { threads: 3, worktrees: 2, attachments: 5, inFlight: 0 }, deleteResponse, get = {} } = {}) {
   const dom = new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' });
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -74,9 +76,9 @@ async function boot({ postResponse, history = { threads: 3, worktrees: 2, attach
         const body = JSON.parse(opts.body);
         posts.push(body);
         return Promise.resolve(postResponse
-          || { ok: true, status: 200, json: async () => ({ ...GET_BODY(), ...resolveAsk(body) }) });
+          || { ok: true, status: 200, json: async () => ({ ...GET_BODY(), ...get, ...resolveAsk(body) }) });
       }
-      return Promise.resolve({ ok: true, status: 200, json: async () => GET_BODY() });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...GET_BODY(), ...get }) });
     }
     if (u.includes('/api/budget'))
       return Promise.resolve({ ok: true, status: 200, json: async () => okBudget() });
@@ -100,25 +102,45 @@ async function boot({ postResponse, history = { threads: 3, worktrees: 2, attach
   return { window, posts, historyGets, deletes, tick, $, openSettings };
 }
 
-test('ui-settings-ask: GET paints the card (defaults, no-cap unchecked)', async () => {
+test('ui-settings-ask: GET paints the card (defaults: 400 turns, No cap ticked)', async () => {
   const { $, openSettings } = await boot();
   await openSettings();
-  assert.equal($('#askMaxTurns').value, '40');
-  assert.equal($('#askMaxBudgetUsd').value, '2');
-  assert.equal($('#askNoCap').checked, false);
-  assert.equal($('#askMaxBudgetUsd').disabled, false);
+  assert.equal($('#askMaxTurns').value, '400');
+  assert.equal($('#askMaxBudgetUsd').value, '');
+  assert.equal($('#askNoCap').checked, true, 'no cost cap by default');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
 });
+
+const untickNoCap = ($) => {
+  $('#askNoCap').checked = false;
+  $('#askNoCap').dispatchEvent(new window.Event('change', { bubbles: true }));
+};
 
 test('ui-settings-ask: Save posts exactly the two ask keys', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  untickNoCap($);
+  assert.equal($('#askMaxBudgetUsd').disabled, false, 'unticking No cap opens the amount field');
   $('#askMaxTurns').value = '55';
   $('#askMaxBudgetUsd').value = '3.5';
   $('#askLimitsSave').click();
   await tick();
   assert.equal(posts.length, 1, 'exactly one POST');
-  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5 });
+  assert.deepEqual(posts[0], { askMaxTurns: 55, askMaxBudgetUsd: 3.5, chat: { scriptTools: true } });
   assert.match($('#askLimitsMsg').textContent, /Saved/);
+  assert.equal($('#askNoCap').checked, false, 'an amount turns the guard on');
+  assert.equal($('#askMaxBudgetUsd').value, '3.5');
+});
+
+test('ui-settings-ask: No cap unticked with the amount left empty posts the clear value and paints No cap back', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  untickNoCap($);
+  $('#askLimitsSave').click();
+  await tick();
+  assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: '', chat: { scriptTools: true } });
+  assert.equal($('#askNoCap').checked, true, 'an empty amount is the default: no cap');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
 });
 
 test('ui-settings-ask: client validation short-circuits the POST', async () => {
@@ -129,7 +151,8 @@ test('ui-settings-ask: client validation short-circuits the POST', async () => {
   await tick();
   assert.equal(posts.length, 0, 'out-of-range turns never reaches the server');
   assert.ok($('#askLimitsMsg').classList.contains('err'));
-  $('#askMaxTurns').value = '40';
+  $('#askMaxTurns').value = '400';
+  untickNoCap($);
   $('#askMaxBudgetUsd').value = '0.05';
   $('#askLimitsSave').click();
   await tick();
@@ -150,21 +173,39 @@ test('ui-settings-ask: a server 400 lands verbatim', async () => {
 test('ui-settings-ask: the No-cap checkbox disables the field and posts null', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  untickNoCap($);
+  assert.equal($('#askMaxBudgetUsd').disabled, false);
   $('#askNoCap').checked = true;
   $('#askNoCap').dispatchEvent(new window.Event('change', { bubbles: true }));
   assert.equal($('#askMaxBudgetUsd').disabled, true);
   $('#askLimitsSave').click();
   await tick();
-  assert.deepEqual(posts[0], { askMaxTurns: 40, askMaxBudgetUsd: null });
+  assert.deepEqual(posts[0], { askMaxTurns: 400, askMaxBudgetUsd: null, chat: { scriptTools: true } });
 });
 
 test('ui-settings-ask: Use defaults posts empty strings (the clear-to-default wire value)', async () => {
   const { $, posts, tick, openSettings } = await boot();
   await openSettings();
+  $('#askMaxTurns').value = '55';
+  untickNoCap($);
+  $('#askMaxBudgetUsd').value = '3';
   $('#askLimitsReset').click();
   await tick();
   assert.deepEqual(posts[0], { askMaxTurns: '', askMaxBudgetUsd: '' });
-  assert.equal($('#askMaxTurns').value, '40', 'painted back from the response defaults');
+  assert.equal($('#askMaxTurns').value, '400', 'painted back from the response defaults');
+  assert.equal($('#askNoCap').checked, true, 'the default is no cap');
+  assert.equal($('#askMaxBudgetUsd').disabled, true);
+  assert.equal($('#askMaxBudgetUsd').value, '');
+});
+
+test('ui-settings-ask: the help text and placeholders state the defaults', async () => {
+  const { $ } = await boot();
+  const tip = (id) => $(`label[for="${id}"]`).parentElement.querySelector('.tip-content').textContent.replace(/\s+/g, ' ').trim();
+  assert.equal($('#askMaxTurns').getAttribute('placeholder'), '400');
+  assert.match(tip('askMaxTurns'), /Leave empty to restore the default of 400\.$/);
+  assert.equal($('#askMaxBudgetUsd').getAttribute('placeholder'), 'No cap');
+  assert.match(tip('askMaxBudgetUsd'), /no cap by default/i);
+  assert.doesNotMatch(tip('askMaxBudgetUsd'), /\$2/);
 });
 
 // ---- Chat history block ("Delete all chat history") ------------------------
@@ -265,4 +306,56 @@ test('ui-settings-ask: a failed bulk DELETE lands its error in the hint', async 
   await tick();
   assert.equal($('#askHistoryMsg').textContent, 'database is locked');
   assert.ok($('#askHistoryMsg').classList.contains('err'));
+});
+
+test('ui-settings-ask: the script toggle paints from chat prefs and rides the card\'s Save', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  const cb = $('#askScriptTools');
+  assert.ok(cb, 'the toggle is mounted in the Ask Worca card');
+  assert.equal(cb.checked, true, 'an absent pref is ON');
+  assert.equal($('#ask-script-tools-host').textContent.trim(), 'Create and run scripts');
+  cb.checked = false;
+  $('#askLimitsSave').click();
+  await tick();
+  assert.deepEqual(posts[0].chat, { scriptTools: false });
+});
+
+test('ui-settings-ask: web fields paint, and a touched card posts askWeb (trimmed, blank lines dropped)', async () => {
+  const { window, $, posts, tick, openSettings } = await boot({ get: { askWeb: { enabled: true, allowedDomains: ['docs.example.com', '*.mdn.io'], search: { url: 'https://s.example/?q={query}', key: '${BRAVE_API_KEY}', keyVar: 'BRAVE_API_KEY', keyHeader: 'X-Subscription-Token', keyPrefix: '' } } } });
+  await openSettings();
+  assert.equal($('#askWebEnabled').checked, true);
+  assert.equal($('#askWebDomains').value, 'docs.example.com\n*.mdn.io');
+  assert.equal($('#askWebSearchKey').value, '${BRAVE_API_KEY}');
+  $('#askWebDomains').value = 'docs.example.com\n\n  new.example.org ';
+  $('#askWebDomains').dispatchEvent(new window.Event('input', { bubbles: true }));
+  $('#askWebSearchUrl').value = '';
+  $('#askWebSearchUrl').dispatchEvent(new window.Event('input', { bubbles: true }));
+  $('#askLimitsSave').click(); await tick();
+  assert.deepEqual(posts[0].askWeb, { enabled: true, anyHost: false, allowedDomains: ['docs.example.com', 'new.example.org'], search: null });
+});
+
+test('ui-settings-ask: an untouched web section is not posted', async () => {
+  const { $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  $('#askLimitsSave').click(); await tick();
+  assert.ok(!('askWeb' in posts[0]));
+});
+
+test('ui-settings-ask: toggling web off posts an explicit off', async () => {
+  const { window, $, posts, tick, openSettings } = await boot();
+  await openSettings();
+  $('#askWebEnabled').checked = true; $('#askWebEnabled').dispatchEvent(new window.Event('change', { bubbles: true }));
+  $('#askWebEnabled').checked = false; $('#askWebEnabled').dispatchEvent(new window.Event('change', { bubbles: true }));
+  $('#askLimitsSave').click(); await tick();
+  assert.deepEqual(posts[0].askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
+});
+
+test('ui-settings-ask: "Any site, without asking" paints and posts anyHost', async () => {
+  const { window, $, posts, tick, openSettings } = await boot({ get: { askWeb: { enabled: true, anyHost: true, allowedDomains: [], search: null } } });
+  await openSettings();
+  assert.equal($('#askWebAnyHost').checked, true);
+  $('#askWebAnyHost').checked = false; $('#askWebAnyHost').dispatchEvent(new window.Event('change', { bubbles: true }));
+  $('#askLimitsSave').click(); await tick();
+  assert.equal(posts[0].askWeb.anyHost, false);
 });

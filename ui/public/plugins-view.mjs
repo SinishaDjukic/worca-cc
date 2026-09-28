@@ -34,7 +34,7 @@ function iconBtn(doc, cls, icon, label) {
 function contribSummary(c) {
   const n = (v) => (Array.isArray(v) ? v.length : (Number.isFinite(v) ? v : 0));
   const parts = [
-    [n(c && c.agents), 'agent'], [n(c && c.taskSources), 'source'],
+    [n(c && c.agents), 'agent'], [n(c && c.scripts), 'script'], [n(c && c.taskSources), 'source'],
     [n(c && c.chatChannels), 'chat channel'], [n(c && c.models), 'model'],
     [n(c && c.skills), 'skill'], [n(c && c.workflows), 'workflow'],
   ].filter(([k]) => k > 0).map(([k, w]) => `${k} ${w}${k > 1 ? 's' : ''}`);
@@ -59,6 +59,8 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     if (p.linked) head.appendChild(h(doc, 'span', 'badge waiting pl-linked', 'linked'));
     if (p.apiMismatch) head.appendChild(h(doc, 'span', 'badge amber pl-api-mismatch', 'needs update'));
     else if (p.broken) head.appendChild(h(doc, 'span', 'badge red pl-broken', 'broken'));
+    // A shipped python script on a host without python: a chip, never a block.
+    if (p.pythonMissing) head.appendChild(h(doc, 'span', 'badge amber pl-python-missing', 'python not found'));
     // Enabling a plugin acts on a live system the moment it flips, so it reads
     // as a switch. `.switch` MUST be the input's immediate next sibling — the
     // `.sw-input:checked + .switch` rule is what paints the on state.
@@ -100,6 +102,7 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
       const b = h(doc, 'button', `btn-ghost ${cls}`, label);
       b.type = 'button';
       b.dataset.name = p.name;
+      if (cls === 'pl-doctor') b.dataset.minLevel = 'expert';   // diagnostics (docs/ui-levels.md)
       actions.appendChild(b);
     }
     card.appendChild(actions);
@@ -126,6 +129,7 @@ export function channelBadge(doc, c) {
 // listener. Empty/nullish input -> childless container (app.js skips mounting).
 export function renderOrphanList(orphans, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'pl-orphans');
+  root.dataset.minLevel = 'expert';                       // purge of leftover data (docs/ui-levels.md)
   if (!orphans || !orphans.length) return root;
   root.appendChild(h(doc, 'h3', 'pl-orphans-title', 'Leftover data'));
   for (const o of orphans) {
@@ -159,6 +163,24 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
   for (const a of inv.agents || []) {
     agents.appendChild(h(doc, 'div', 'pl-consent-row mono',
       `${a.key} — tools: ${(a.tools || []).join(', ') || 'none declared'}`));
+    // Ask forms (spec §10): how many question forms this agent can put on
+    // screen, and which file types they may display from the run folder. An
+    // older snapshot has neither key, so both are read defensively.
+    const forms = Array.isArray(a.forms) ? a.forms : [];
+    if (forms.length) {
+      const types = Array.isArray(a.fileTypes) ? a.fileTypes : [];
+      agents.appendChild(h(doc, 'div', 'pl-consent-row pl-consent-forms',
+        `${forms.length} form${forms.length === 1 ? '' : 's'}: ${forms.join(', ')}`
+        + (types.length ? ` · may display ${types.join(', ')} from the run folder` : '')));
+    }
+  }
+  if ((inv.scripts || []).length) {
+    const scripts = section(`Scripts (${inv.scripts.length})`);
+    for (const s of inv.scripts) {
+      scripts.appendChild(h(doc, 'div', 'pl-consent-row mono',
+        `${s.key} — ${s.runtime}${s.command ? ` · ${s.command}` : s.file ? ` · ${s.file}` : ''}`
+        + `${s.cases ? ` · ${s.cases} case${s.cases === 1 ? '' : 's'}` : ''}`));
+    }
   }
   const sources = section(`Task sources (${(inv.taskSources || []).length})`);
   for (const s of inv.taskSources || []) {

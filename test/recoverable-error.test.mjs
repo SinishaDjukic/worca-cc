@@ -1,7 +1,7 @@
 // test/recoverable-error.test.mjs — pure classifier unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyError } from '../src/core/recoverable-error.mjs';
+import { classifyError, isSharedPoolRateLimit, rateLimitHint } from '../src/core/recoverable-error.mjs';
 
 test('classifies the reported headless auth failure as auth', () => {
   const e = new Error('claude exited with code 1: Failed to authenticate. API Error: 401 Invalid authentication credentials');
@@ -62,6 +62,57 @@ test('classifies HTTP 500 errors as network', () => {
   assert.equal(classifyError(new Error('API Error: 500 Internal Server Error')), 'network');
   assert.equal(classifyError(new Error('HTTP request failed with status 500')), 'network');
   assert.equal(classifyError(new Error('Error: Request failed: Internal Server Error')), 'network');
+});
+
+// OpenRouter's `:free` models run on a donated provider pool every OpenRouter user
+// shares; a 429 there says nothing about worca's own request rate.
+const POOL_429 = 'claude exited with code 1: API Error: Request rejected (429) · openai: rate limited (429) — qwen/qwen3.8-27b:free is temporarily rate-limited upstream. Please retry shortly, or add your own key';
+
+test('a shared-pool 429 stays rate_limit and is recognized as the shared pool', () => {
+  assert.equal(classifyError(new Error(POOL_429)), 'rate_limit');
+  assert.equal(isSharedPoolRateLimit(new Error(POOL_429)), true);
+  assert.equal(isSharedPoolRateLimit('{"limit_source":"upstream_provider_shared_pool"}'), true);
+  assert.equal(isSharedPoolRateLimit(new Error('API Error: 429 rate_limit_error')), false);
+  assert.equal(isSharedPoolRateLimit(null), false);
+});
+
+test('rateLimitHint names the shared pool (not max-concurrent) only for a shared-pool 429', () => {
+  const hint = rateLimitHint(new Error(POOL_429));
+  assert.match(hint, /shared/i);
+  assert.match(hint, /not worca's max.concurrent/i);
+  assert.match(hint, /paid/i);
+  assert.match(hint, /own key|BYOK/i);
+  assert.match(hint, /fallback/i);
+  assert.equal(rateLimitHint(new Error('API Error: 429 rate_limit_error')), '');
+});
+
+test('classifies the model id itself being refused as model', () => {
+  // The API's refusal when the endpoint does not serve the id, and the CLI's
+  // catalog-miss wording.
+  assert.equal(classifyError(new Error('claude exited with code 1: API Error: 403 No access to this model: claude-opus-5-5')), 'model');
+  assert.equal(
+    classifyError(new Error('"claude-opus-5-5" isn\'t described by this version\'s model catalog; update Claude Code')),
+    'model',
+  );
+  assert.equal(classifyError(new Error('the endpoint replied: model not found')), 'model');
+  // The stderr notice `[claude-code:unrecognized_model]` is a BENIGN notice
+  // (claude-runner BENIGN_STDERR_PATTERNS): it fires on every spawn whose id the
+  // CLI does not know and never states the cause, so alone it stays unclassified.
+  assert.equal(
+    classifyError(new Error('[claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}')),
+    null,
+  );
+});
+
+test('model classification does not swallow neighbouring classes or ordinary mentions', () => {
+  // An ordinary message that merely mentions a model stays unclassified.
+  assert.equal(classifyError(new Error('the agent edited model.ts and broke the build')), null);
+  // A 401 credential failure stays auth even though a model may be named.
+  assert.equal(classifyError(new Error('claude exited with code 1: API Error: 401 for model claude-opus-5-5')), 'auth');
+  // A connection drop stays network even when the request named a model.
+  assert.equal(classifyError(new Error('connection error while sending model claude-opus-5-5')), 'network');
+  // A rate limit stays rate_limit.
+  assert.equal(classifyError(new Error('API Error: 429 rate_limit_error')), 'rate_limit');
 });
 
 test('returns null for a plain bug and accepts a raw string / nullish', () => {

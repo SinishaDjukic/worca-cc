@@ -19,7 +19,7 @@ const MID = 'askm_00000001';
 const WF_DEFAULT_TPL = { id: 'wf_default', name: 'Default', version: 2,
   nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
           { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
-          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5', effort: 'high' } },
+          { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: { model: 'claude-opus-5-5', effort: 'high' } },
           { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: {} },
           { id: 'n_end', kind: 'end', x: 1200, y: 0, config: {} }],
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
@@ -42,7 +42,7 @@ const AGENTS = [
     outputs: [{ id: 'review', type: 'md', when: 'blocking' }, { id: 'pass', type: 'void', when: 'clean' }] },
 ];
 const MODELS = [
-  { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-fable-5-1', label: 'Fable 5.1 (1M)', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
 ];
@@ -59,7 +59,7 @@ function askArms(url, opts) {
     return { ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode('hello').buffer, json: async () => ({}) };
   }
   if (url.includes('/api/ask/models')) {
-    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
+    return { ok: true, status: 200, json: async () => ({ models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false }, { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false }], efforts: ['medium', 'high', 'xhigh', 'max'] }) };
   }
   if (url.includes(`/api/ask/threads/${TID}/messages`) && method === 'POST') {
     return { ok: true, status: 202, json: async () => ({ userMessageId: 'askm_u0000001', assistantMessageId: MID }) };

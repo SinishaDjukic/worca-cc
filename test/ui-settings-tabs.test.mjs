@@ -20,19 +20,23 @@ test('the three nav entries are gone from BOTH menus', () => {
     assert.equal(html.includes(`data-nav="${v}"`), false, `data-nav=${v} still present`);
 });
 
-test('settings holds a .seg tab strip with the four tabs, General preselected', () => {
+test('settings holds a .seg tab strip with the eight tabs in mode order, General preselected', () => {
   const seg = settingsView().querySelector('#settings-tabs');
   assert.ok(seg, '#settings-tabs missing');
   assert.ok(seg.classList.contains('seg'), 'reuses the .seg segmented control');
   const btns = [...seg.querySelectorAll('button[data-tab]')];
-  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'guardrails', 'models', 'plugins']);
-  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false]);
+  assert.deepEqual(btns.map((b) => b.dataset.tab), ['general', 'runs', 'ask', 'guardrails', 'memory', 'plugins', 'models', 'providers']);
+  assert.deepEqual(btns.map((b) => b.classList.contains('on')), [true, false, false, false, false, false, false, false]);
+  // Simple, then Advanced, then Expert: every mode sees a gap-free prefix of the strip.
+  const rank = { simple: 0, advanced: 1, expert: 2 };
+  const ranks = btns.map((b) => rank[b.dataset.minLevel]);
+  assert.deepEqual(ranks, [...ranks].sort((a, b) => a - b), 'tabs ordered by level');
 });
 
-test('four panes live inside settings; only General starts visible', () => {
+test('eight panes live inside settings, in tab order; only General starts visible', () => {
   const panes = [...settingsView().querySelectorAll('.settings-pane')];
-  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'guardrails', 'models', 'plugins']);
-  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true]);
+  assert.deepEqual(panes.map((p) => p.dataset.tab), ['general', 'runs', 'ask', 'guardrails', 'memory', 'plugins', 'models', 'providers']);
+  assert.deepEqual(panes.map((p) => p.classList.contains('hidden')), [false, true, true, true, true, true, true, true]);
   // A pane must NOT be a routed view: showView's views.forEach would force
   // .hidden back on it at every navigation.
   for (const p of panes) {
@@ -54,7 +58,7 @@ test('every relocated id and action button survives the move, inside settings', 
 
 test('each tab keeps its own heading + sub-title in its own topbar', () => {
   const view = settingsView();
-  for (const [tab, h1] of [['general', 'Settings'], ['guardrails', 'Guardrails'], ['models', 'Models'], ['plugins', 'Plugins']]) {
+  for (const [tab, h1] of [['general', 'Settings'], ['runs', 'Runs'], ['ask', 'Ask Worca'], ['guardrails', 'Guardrails'], ['models', 'Models'], ['plugins', 'Plugins'], ['memory', 'Memory']]) {
     const bar = view.querySelector(`.settings-pane[data-tab="${tab}"] > .topbar`);
     assert.ok(bar, `${tab} pane has no .topbar`);
     assert.equal(bar.querySelector('h1').textContent.trim(), h1);
@@ -120,8 +124,8 @@ test('bare #settings shows General and nothing else', async () => {
   const { window } = await boot();
   await go(window, 'settings');
   assert.equal(window.document.querySelector('[data-view="settings"]').classList.contains('hidden'), false);
-  assert.deepEqual(['general', 'guardrails', 'models', 'plugins'].map((t) => shown(window, t)),
-    [true, false, false, false]);
+  assert.deepEqual(['general', 'guardrails', 'models', 'plugins', 'memory'].map((t) => shown(window, t)),
+    [true, false, false, false, false]);
   assert.ok(window.document.querySelector('#settings-tabs button[data-tab="general"]').classList.contains('on'));
   assert.ok(window.document.querySelector('#settingsRoot'), 'General still owns #settingsRoot');
 });
@@ -203,4 +207,66 @@ test('in-app jumps point at the tabs, not at the retired views', () => {
   // Nothing may still navigate to a retired top-level view.
   assert.equal(/location\.hash = '(plugins|models|guardrails)'/.test(js), false);
   assert.equal(/showView\('(plugins|models|guardrails)'\)/.test(js), false);
+});
+
+// ── General split (Runs, Ask Worca, helper models on Models) ─────────────────
+const cardIds = (view, tab) =>
+  [...view.querySelectorAll(`.settings-pane[data-tab="${tab}"] section.card.settings-card`)].map((c) => c.id);
+
+test('General keeps the machine cards; Runs, Ask Worca and Models hold the moved ones', () => {
+  const view = settingsView();
+  assert.deepEqual(cardIds(view, 'general'), [
+    'appearance-card', 'credentials-card', 'mode-settings-card', 'root-settings-card',
+    'debug-spawn-settings-card', 'getting-started-card', 'about-card',
+  ]);
+  assert.deepEqual(cardIds(view, 'runs'), ['budget-settings-card', 'schedule-settings-card', 'chat-settings-card']);
+  assert.deepEqual(cardIds(view, 'ask'), ['ask-settings-card']);
+  assert.deepEqual(cardIds(view, 'models'), ['title-model-settings-card', 'auto-model-settings-card']);
+  // Nothing got lost or duplicated in the move: the thirteen cards are all still here, once.
+  const all = [...view.querySelectorAll('section.card.settings-card')].map((c) => c.id);
+  assert.equal(all.length, 13);
+  assert.equal(new Set(all).size, 13);
+});
+
+test('each moved card keeps its level; Runs is a Simple tab, Ask Worca an Advanced one', () => {
+  const view = settingsView();
+  const lv = (id) => view.querySelector(`#${id}`).dataset.minLevel;
+  assert.equal(lv('budget-settings-card'), 'simple');
+  assert.equal(lv('schedule-settings-card'), 'advanced');
+  assert.equal(lv('chat-settings-card'), 'advanced');
+  assert.equal(lv('ask-settings-card'), 'simple', 'the Advanced tab gates it; a deep link must not open on an empty page');
+  assert.equal(lv('title-model-settings-card'), 'expert');
+  assert.equal(lv('auto-model-settings-card'), 'expert');
+  const tab = (t) => view.querySelector(`#settings-tabs button[data-tab="${t}"]`).dataset.minLevel;
+  assert.equal(tab('runs'), 'simple');
+  assert.equal(tab('ask'), 'advanced');
+  // The Ask card's heading no longer repeats the tab's h1.
+  assert.equal(view.querySelector('#ask-settings-card h2').textContent.trim(), 'Limits & access');
+  // The helper pair sits above the catalog, in its own grid.
+  const grid = view.querySelector('.settings-pane[data-tab="models"] .models-helpers');
+  assert.ok(grid, 'helper grid on Models');
+  assert.ok(grid.compareDocumentPosition(view.querySelector('#models-list')) & 4, 'grid precedes the catalog');
+});
+
+test('the Settings tab strip is no longer hidden in Simple (Runs is a Simple tab)', () => {
+  const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+  assert.equal(/data-level="simple"\] #settings-tabs/.test(css), false);
+});
+
+test('opening Runs or Ask Worca loads the settings payload; Models repaints its helper cards', async () => {
+  for (const tab of ['runs', 'ask', 'models']) {
+    const { window, calls } = await boot();
+    await go(window, `settings/${tab}`);
+    await tick(); await tick();
+    assert.equal(shown(window, tab), true, `${tab} pane shown`);
+    assert.equal(window.location.hash, `#settings/${tab}`);
+    assert.ok(calls.some((u) => u.includes('/api/settings')), `${tab} fetched /api/settings`);
+  }
+});
+
+test('the cost-pause banners open the Runs tab, where the budget now lives', () => {
+  const js = readFileSync(appPath, 'utf8');
+  assert.equal((js.match(/\.cb-settings'\)\) \{ location\.hash = 'settings\/runs'; return; \}/g) || []).length, 2);
+  assert.match(js, /settingsBtn\.addEventListener\('click', \(\) => \{ location\.hash = 'settings\/runs'; \}\)/);
+  assert.equal(/location\.hash = 'settings';/.test(js), false, 'no bare #settings jump left for the budget');
 });

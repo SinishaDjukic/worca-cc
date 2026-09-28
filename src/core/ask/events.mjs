@@ -46,6 +46,18 @@ const COMMENT_WRITE_TOOLS = new Set([
 // only when its subcommand is one noteNav acts on; a `log`/`status` never pokes.
 const WORKTREE_TOOLS = new Set(['mcp__worca__open_worktree', 'mcp__worca__remove_worktree', 'mcp__worca__git']);
 const GIT_NAV_SUBCOMMANDS = new Set(['checkout', 'switch', 'fetch']);
+// The memory writers (agent-memory-design.md §9.1): a successful remember/forget in the CHILD
+// becomes the same `memory-changed` broadcast the REST routes emit (ui/server.mjs emitMemoryChanged).
+// The scope key rides the tool RESULT (`scopeKey`), like pokeCommentWrite reads `comment.runId`.
+const MEMORY_WRITE_TOOLS = new Set(['mcp__worca__remember', 'mcp__worca__forget']);
+// …and the script writer (scripts-workbench-design.md §3.3, §9.1): save_script writes a file
+// under ~/.worca-cc/scripts in the CHILD, so the parent turns a successful call into the same
+// `scripts-changed` broadcast the REST routes emit — a script the chat saved shows up in an
+// open Scripts tab. There is no delete tool, and test_script writes nothing outside the bench.
+const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
+// The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
+const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
+  'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -114,12 +126,19 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
   const id = typeof input?.id === 'string' ? input.id : '';
   switch (n) {
     case 'list_runs': return 'Finding runs';
+    case 'list_people': return 'Looking up who ran what';
     case 'get_run':
     case 'get_run_diff': return id ? `Reading run ${id.slice(0, 12)}` : 'Reading run';
     case 'list_workflows': return 'Looking at workflows';
     case 'list_projects': return 'Looking at projects';
     case 'propose_run': return 'Preparing a run';
     case 'propose_workflow': return 'Building a workflow';
+    case 'propose_metrics_change': return 'Proposing a metrics change';
+    case 'get_team_metrics': return 'Reading team metrics';
+    case 'list_team_metrics_runs': return 'Listing team runs';
+    case 'push_team_metrics': return 'Pushing team metrics';
+    case 'get_team_policy': return 'Reading team policy';
+    case 'propose_policy_change': return 'Proposing a policy change';
     case 'track_run': return 'Tracking a run';
     case 'read_attachment': return `Reading ${(attachmentNames && attachmentNames[id]) || 'attachment'}`;
     case 'list_diff_comments': return id ? `Reading comments on ${id.slice(0, 12)}` : 'Reading diff comments';
@@ -127,6 +146,35 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'reply_to_diff_comment': return 'Replying to a diff comment';
     case 'resolve_diff_comment': return 'Updating a diff comment';
     case 'delete_diff_comment': return 'Deleting a diff comment';
+    case 'list_memory': return 'Reading memory';
+    case 'read_memory': return input?.name ? `Reading memory: ${input.name}` : 'Reading memory';
+    case 'remember': return input?.name ? `Saving memory: ${input.name}` : 'Saving memory';
+    case 'forget': return input?.name ? `Removing memory: ${input.name}` : 'Removing memory';
+    case 'list_scripts': return 'Looking at scripts';
+    case 'get_script': return input?.key ? `Reading script: ${input.key}` : 'Reading a script';
+    case 'save_script': return input?.key ? `Saving script: ${input.key}` : 'Saving a script';
+    case 'test_script': return input?.key ? `Testing script: ${input.key}` : 'Testing a script';
+    case 'list_schedules': return 'Looking at schedules';
+    case 'get_schedule': return 'Reading a schedule';
+    case 'list_schedule_activity': return 'Reading schedule activity';
+    case 'preview_schedule': return 'Working out the dates';
+    case 'propose_schedule_change': return 'Proposing a schedule change';
+    case 'pause_schedule': return 'Pausing a schedule';
+    case 'resume_schedule': return 'Resuming a schedule';
+    case 'skip_next_run': return 'Skipping the next run';
+    case 'mark_schedule_activity_read': return 'Marking activity read';
+    case 'list_task_sources': return 'Looking at task sources';
+    case 'find_tasks': return input?.search ? `Searching tasks: ${String(input.search).slice(0, 40)}` : 'Searching tasks';
+    case 'get_task': return input?.id ? `Reading task ${String(input.id).slice(0, 40)}` : 'Reading a task';
+    case 'list_models': return 'Looking at models';
+    case 'get_providers': return 'Looking at providers';
+    case 'test_provider': return input?.provider ? `Testing ${String(input.provider).slice(0, 20)}` : 'Testing a provider';
+    case 'list_copilot_models': return 'Listing Copilot models';
+    case 'propose_model_change': return 'Proposing a model change';
+    case 'propose_clone_project': return 'Proposing a project clone';
+    case 'web_fetch': { let host = ''; try { host = new URL(String(input?.url ?? '')).hostname; } catch { /* label only */ } return host ? `Reading ${host}` : 'Reading a web page'; }
+    case 'web_search': return 'Searching the web';
+    case 'propose_web_access': return 'Asking to read a new site';
     default: return `Using ${n}`;
   }
 }
@@ -136,6 +184,40 @@ const resultText = (content) => {
   if (Array.isArray(content)) return content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('');
   return '';
 };
+
+// ── script tools on the thread row (scripts-workbench-design.md §9.3) ─────────
+const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
+
+/**
+ * The key a script tool was called with, stamped on the block at the CALL: a save_script input
+ * is a whole program, so past blockIoMaxChars the persisted input is the { _truncated, preview }
+ * stub and input.key is gone. '' for a script tool with no key, null for every other tool.
+ */
+export function scriptToolKey(name, input = {}) {
+  if (!SCRIPT_TOOL_NAMES.has(short(name))) return null;
+  return typeof input?.key === 'string' ? input.key.trim().slice(0, 64) : '';
+}
+
+/**
+ * What a script tool's RESULT adds to its thread row: `save script runTests → created`,
+ * `test script runTests → blocking, exit 1`. Pure, tiny and enum-shaped on purpose — it is
+ * merged into the persisted block.script, so nothing free-text (which would need redaction)
+ * rides along. null = the row keeps its ordinary shape.
+ */
+export function scriptResultNote(name, text, isError = false) {
+  const n = short(name);
+  if (isError || (n !== 'save_script' && n !== 'test_script')) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (n === 'save_script') return { saved: parsed.ok === true ? (parsed.created === true ? 'created' : 'updated') : 'not saved' };
+  const r = parsed.ok === true && parsed.result && typeof parsed.result === 'object' ? parsed.result : null;
+  if (!r) return { status: 'not run' };
+  return {
+    status: typeof r.status === 'string' ? r.status.slice(0, 16) : null,
+    exitCode: Number.isInteger(r.exitCode) ? r.exitCode : null,
+  };
+}
 
 /**
  * @param {object} o
@@ -165,9 +247,18 @@ export function createTurnReducer({
   onProposal = null,
   onWorkflowStart = null,
   onWorkflowResult = null,
+  onMetricsProposal = null,      // propose_metrics_change RESULT (team metrics card; the parent re-validates the input)
+  onPolicyProposal = null,       // propose_policy_change RESULT (team policy card; same split)
+  onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
+  onModelProposal = null,        // propose_model_change RESULT (model card; same split)
+  onCloneProposal = null,        // propose_clone_project RESULT (clone card; same split)
+  onWebProposal = null,          // propose_web_access RESULT (web card; same split)
+  onScheduleMutation = null,     // a direct schedule write succeeded in the MCP child
   onTrackRun = null,
   onCommentMutation = null,
   onWorktreeMutation = null,
+  onMemoryMutation = null,
+  onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -200,6 +291,7 @@ export function createTurnReducer({
   let lastResult = null;
   let reducerErrors = 0;
   let summary = null;
+  let cliErrorText = '';          // what a <synthetic> CLI message said (its API-error line)
   const pendingHooks = [];         // promises returned by onProposal — settle() awaits them
 
   // ── helpers ──
@@ -329,7 +421,18 @@ export function createTurnReducer({
     const content = Array.isArray(msg.content) ? msg.content : [];
     if (isMain) {
       sawAssistant = true;
-      if (id) {
+      // A `<synthetic>` message is the CLI speaking for itself — the API-refusal
+      // line it fabricates when a call fails (model: "<synthetic>"). It is not
+      // the model's answer: it must never enter the answer text (it would read
+      // as a reply above the failure notice), so it is kept aside for the error
+      // notice's detail instead.
+      if (msg.model === '<synthetic>') {
+        const t = content
+          .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
+          .map((c) => c.text)
+          .join('');
+        if (t) cliErrorText = cliErrorText ? `${cliErrorText}\n${t}` : t;
+      } else if (id) {
         if (messages.has('__main__') && !messages.has(id)) {              // deltas arrived before any message_start: adopt them
           messages.set(id, messages.get('__main__'));
           messages.delete('__main__');
@@ -354,7 +457,9 @@ export function createTurnReducer({
         } else {
           fullInputs.set(c.id, input);
           label(labelForTool(c.name, input, attachmentNames));
-          upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null });
+          const scriptKey = scriptToolKey(c.name, input);
+          upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null,
+            ...(scriptKey === null ? {} : { script: { key: scriptKey } }) });          // §9.3: the row's key, whatever the clip does
           // P3: the workflow card exists from the tool_use on (state 'building' — the four-step trace), so the
           // START is a hook too. Sync: the block must precede any frame the tool result produces.
           if (c.name === 'mcp__worca__propose_workflow' && typeof onWorkflowStart === 'function') {
@@ -399,6 +504,37 @@ export function createTurnReducer({
     try { onWorktreeMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
   }
 
+  // And for memory: a remember/forget succeeded in the CHILD, so the parent broadcasts the same
+  // `memory-changed` frame the REST writes emit. Note the asymmetry with the worktree poke — that
+  // one reads the call INPUT, this one the result TEXT, because the scope key rides the result.
+  function pokeMemoryWrite(name, text, isError) {
+    if (isError || !MEMORY_WRITE_TOOLS.has(name) || typeof onMemoryMutation !== 'function') return;
+    try {
+      const parsed = JSON.parse(text);
+      const scope = typeof parsed?.scopeKey === 'string' ? parsed.scopeKey : null;
+      if (scope) onMemoryMutation({ scope, tool: short(name) });
+    } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
+  // And for scripts: save_script REFUSES by returning { ok: false, errors } with no is_error
+  // flag (that is what lets the model correct itself), so the result body — not the flag — is
+  // what decides whether anything was written.
+  function pokeScriptWrite(name, text, isError) {
+    if (isError || !SCRIPT_WRITE_TOOLS.has(name) || typeof onScriptMutation !== 'function') return;
+    try {
+      const parsed = JSON.parse(text);
+      if (!parsed || parsed.ok !== true || typeof parsed.key !== 'string' || !parsed.key) return;
+      onScriptMutation({ key: parsed.key, action: parsed.created === true ? 'created' : 'updated' });
+    } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
+  // And for schedules: pause / resume / skip / mark-read succeeded in the CHILD, so the parent
+  // broadcasts the same schedules-changed / notifications-changed frames the REST routes emit.
+  function pokeScheduleWrite(name, isError) {
+    if (isError || !SCHEDULE_WRITE_TOOLS.has(name) || typeof onScheduleMutation !== 'function') return;
+    try { onScheduleMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
+  }
+
   function onUser(raw, ptu, isMain) {
     const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
     for (const c of content) {
@@ -412,6 +548,9 @@ export function createTurnReducer({
         if (agent) appendLog(agent, c.is_error ? `← error: ${clipStr(text, 120)}` : `← ok ${((now() - ct.t0) / 1000).toFixed(1)}s`);
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
+        pokeMemoryWrite(ct.name, text, c.is_error);
+        pokeScriptWrite(ct.name, text, c.is_error);
+        pokeScheduleWrite(ct.name, c.is_error);
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -438,6 +577,8 @@ export function createTurnReducer({
       b.status = c.is_error ? 'error' : 'done';
       b.durationMs = elapsed(b.id);
       if (c.is_error) b.error = redact(clipStr(text, limits.blockIoMaxChars));
+      const note = scriptResultNote(b.name, text, c.is_error);
+      if (note) b.script = { ...(b.script || {}), ...note };                       // §9.3: the row shows what came back
       upsertBlock(b);
       if (b.name === 'mcp__worca__propose_run' && typeof onProposal === 'function') {
         let childOk = null;
@@ -455,6 +596,49 @@ export function createTurnReducer({
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
+      if (b.name === 'mcp__worca__propose_metrics_change' && typeof onMetricsProposal === 'function') {
+        // The parent re-validates from the tool INPUT (metrics-proposal.mjs is pure over the real readers);
+        // the raw result text only says whether the child accepted it.
+        try {
+          const ret = onMetricsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_policy_change' && typeof onPolicyProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates from the INPUT (policy-proposal.mjs).
+        try {
+          const ret = onPolicyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_schedule_change' && typeof onScheduleProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates the INPUT against the live rows.
+        try {
+          const ret = onScheduleProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_model_change' && typeof onModelProposal === 'function') {
+        // Same split as the metrics card: the parent re-validates the INPUT over the real catalog (model-proposal.mjs).
+        try {
+          const ret = onModelProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_web_access' && typeof onWebProposal === 'function') {
+        // Same split as the clone card: the parent re-validates the INPUT against this turn's web access (web-proposal.mjs).
+        try {
+          const ret = onWebProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_clone_project' && typeof onCloneProposal === 'function') {
+        // Same split as the model card: the parent re-validates the INPUT and adds how GitHub is reached (clone-proposal.mjs).
+        try {
+          const ret = onCloneProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
       if (b.name === 'mcp__worca__track_run' && typeof onTrackRun === 'function') {
         // The parent owns the runs Map, the link rows and the followers: it re-resolves the id itself (D4).
         try {
@@ -464,6 +648,9 @@ export function createTurnReducer({
       }
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
+      pokeMemoryWrite(b.name, text, c.is_error);
+      pokeScriptWrite(b.name, text, c.is_error);
+      pokeScheduleWrite(b.name, c.is_error);
     }
   }
 
@@ -535,7 +722,7 @@ export function createTurnReducer({
       return {
         text: mainText(), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: blocks.filter((b) => b.kind === 'agent').length,
-        runningAgents, labels: [...labels], reducerErrors,
+        runningAgents, labels: [...labels], reducerErrors, cliErrorText: cliErrorText || null,
       };
     },
     finish() {
@@ -561,10 +748,13 @@ export function createTurnReducer({
           a.costUsd = est[i].costUsd == null ? null : Math.round(est[i].costUsd * scale * 1e6) / 1e6;
         });
       }
-      const text = mainText() || (lastResult && typeof lastResult.result === 'string' ? lastResult.result : '');
+      // The result-text fallback only speaks for a REAL answer: an is_error
+      // result carries the API's refusal line, never the model's reply.
+      const text = mainText() || (lastResult && !lastResult.is_error && typeof lastResult.result === 'string' ? lastResult.result : '');
       summary = {
         text: redact(text), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: agents.length, labels: [...labels], reducerErrors,
+        cliErrorText: cliErrorText || null,
       };
       return summary;
     },

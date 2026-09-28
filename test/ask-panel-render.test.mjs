@@ -42,7 +42,7 @@ async function openThread(ctx) {
 }
 
 const userRow = (id, seq, text, blocks = []) => ({ id, threadId: TID, seq, role: 'user', text, blocks, status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });
-const asstRow = (id, seq, over = {}) => ({ id, threadId: TID, seq, role: 'assistant', text: 'the answer', blocks: [], status: 'done', reason: null, model: 'claude-opus-5', effort: 'high', usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0, ctx: 2000 }, costUsd: 0.14, durationMs: 6400, createdAt: 't', ...over });
+const asstRow = (id, seq, over = {}) => ({ id, threadId: TID, seq, role: 'assistant', text: 'the answer', blocks: [], status: 'done', reason: null, model: 'claude-opus-5-5', effort: 'high', usage: { input: 900, output: 1100, cacheRead: 0, cacheCreation: 0, ctx: 2000 }, costUsd: 0.14, durationMs: 6400, createdAt: 't', ...over });
 
 test('ask-panel-render (#398): an image attachment block renders as a thumbnail served by the download route; pdf stays a pill', async () => {
   const snap = snapBody([
@@ -180,6 +180,74 @@ test('ask-panel-render: error rows show the red line with a fallback text', asyn
   assert.match(ctx.doc.querySelector('.ask-error-line').textContent, /This turn ended with an error\./);
 });
 
+test('ask-panel-render: an error turn with no (or a ~0 s) duration says Stopped, not a dangling "Stopped after"', async () => {
+  for (const durationMs of [null, 0, 20]) {
+    const snap = snapBody([
+      asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], durationMs, errorMessage: 'claude exited with code 1: boom' }),
+    ]);
+    const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+    await openThread(ctx);
+    assert.equal(ctx.doc.querySelector('.ask-activity-label').textContent, 'Stopped', `durationMs ${durationMs}`);
+    assert.equal(ctx.doc.querySelector('.ask-activity-elapsed').textContent, '');
+  }
+});
+
+test('ask-panel-render: a signed-out Claude error shows one line whose Sign in… link opens Connect Claude Code', async () => {
+  const snap = snapBody([
+    asstRow('askm_00000001', 1, { status: 'error', text: '', blocks: [], errorMessage: 'claude exited with code 1: Not logged in · Please run /login', errorCode: 'claude-signed-out' }),
+  ]);
+  let opened = 0;
+  const ctx = makePanel({ fetchHandler: handlerFor(snap), deps: { openClaudeSetup: () => { opened += 1; } } });
+  await openThread(ctx);
+  const line = ctx.doc.querySelector('.ask-error-line');
+  assert.equal(line.textContent, "Claude Code isn't signed in. Sign in…");
+  line.querySelector('a').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(opened, 1);
+});
+
+test('ask-panel-render: a classified notice renders the human line, raw detail expert-only', async () => {
+  const detail = 'claude exited with code 1: [claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}';
+  const snap = snapBody([
+    asstRow('askm_00000001', 1, {
+      status: 'error',
+      text: 'partial',
+      errorMessage: undefined,
+      blocks: [{
+        kind: 'notice',
+        text: "This model isn't available in your environment — try another model.",
+        errorClass: 'model',
+        detail,
+      }],
+    }),
+  ]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  // No raw red line: the classified notice IS the explanation.
+  assert.equal(ctx.doc.querySelector('.ask-error-line'), null);
+  const notice = ctx.doc.querySelector('.ask-notice');
+  assert.ok(notice, 'the classified notice renders');
+  const det = notice.querySelector('details.ask-error-details');
+  assert.equal(det.dataset.minLevel, 'expert', 'the raw detail is gated to expert');
+  assert.match(det.querySelector('.ask-error-detail-text').textContent, /unrecognized_model/);
+  assert.equal(notice.querySelector('.ask-error-action'), null, 'no inline action hijacks the notice');
+});
+
+test('ask-panel-render: a classified notice survives a reload untouched (persisted block)', async () => {
+  const snap = snapBody([
+    asstRow('askm_00000001', 1, {
+      status: 'error',
+      blocks: [{ kind: 'notice', text: 'The endpoint was unreachable — check your connection and retry.', errorClass: 'network', detail: 'connection reset' }],
+    }),
+  ]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  // openThread already IS the reload path (GET → load(snapshot) → render), so
+  // this asserts the re-derived render from the persisted block alone.
+  assert.ok(ctx.doc.querySelector('.ask-notice'));
+  assert.equal(ctx.doc.querySelector('.ask-error-action'), null);
+  assert.equal(ctx.doc.querySelector('.ask-error-line'), null);
+});
+
 test('ask-panel-render: notice with href renders an in-app link', async () => {
   const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [{ kind: 'notice', text: 'Run started — "Fix login"', href: '#running/abc-123' }] })]);
   const ctx = makePanel({ fetchHandler: handlerFor(snap) });
@@ -296,4 +364,33 @@ test('ask-panel-render: scroll pinning still drives the jump pill inside a resiz
   assert.ok(removed.includes('resize'), 'destroy() unbinds the window resize listener');
   ctx2.window.dispatchEvent(new ctx2.window.Event('resize'));
   assert.equal(sheet.style.height, '800px', 'nothing runs after destroy');
+});
+
+test('ask-panel-render: the script tools show the key and what came back (§9.3)', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1, {
+    blocks: [
+      { kind: 'tool', id: 't1', name: 'mcp__worca__save_script', input: { _truncated: true, preview: '{"key":"runTests","meta":{},"source":"npm test' }, status: 'done', durationMs: 120, script: { key: 'runTests', saved: 'created' } },
+      { kind: 'tool', id: 't2', name: 'mcp__worca__test_script', input: { key: 'runTests' }, status: 'done', durationMs: 4200, script: { key: 'runTests', status: 'blocking', exitCode: 1 } },
+      { kind: 'tool', id: 't3', name: 'mcp__worca__list_scripts', input: {}, status: 'running', durationMs: null, script: { key: '' } },
+      { kind: 'tool', id: 't4', name: 'mcp__worca__get_script', input: { key: 'runTests' }, status: 'error', durationMs: 30, error: 'no script' },
+    ],
+  })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const rows = [...ctx.doc.querySelectorAll('.ask-tool-row')];
+  assert.equal(rows.length, 4);
+  // The op column is a fixed 38 px uppercase cell (style.css .ask-tool-op): the verb stays
+  // there, the key and the outcome go in the target column.
+  assert.equal(rows[0].querySelector('.ask-tool-op').textContent, 'save');
+  assert.equal(rows[0].querySelector('.ask-tool-target').textContent, 'script runTests → created');
+  assert.equal(rows[0].querySelector('.ask-tool-target').textContent.includes('npm test'), false, 'the source preview is not the row');
+  assert.equal(rows[1].querySelector('.ask-tool-op').textContent, 'test');
+  assert.equal(rows[1].querySelector('.ask-tool-target').textContent, 'script runTests → blocking, exit 1');
+  assert.equal(rows[1].querySelector('.ask-tool-note').textContent, '4.2s');
+  assert.equal(rows[2].querySelector('.ask-tool-op').textContent, 'list');
+  assert.equal(rows[2].querySelector('.ask-tool-target').textContent, 'scripts', 'no key, nothing back yet');
+  assert.equal(rows[2].querySelector('.ask-tool-note').textContent, '…');
+  assert.equal(rows[3].querySelector('.ask-tool-target').textContent, 'script runTests', 'a call without a stamp still reads the key off the input');
+  assert.equal(rows[3].querySelector('.ask-tool-note').textContent, 'error');
+  for (const r of rows) assert.equal(r.dataset.minLevel, 'advanced', 'tool rows stay an Advanced-level detail');
 });

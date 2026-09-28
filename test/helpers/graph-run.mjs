@@ -8,31 +8,33 @@ import {
   runExecution, allocateOutputs, allocateVerdict, expandsOutputPort,
   readDecomposition, publishable,
 } from '../../src/core/graph/executor.mjs';
+import { scriptNodeCtx } from '../../src/shared/graph/script-meta.mjs';
 
 /**
  * @param {object} o
  * @param {object} o.template   a v2 template
  * @param {Function} o.portsFn  node -> ports
  * @param {Record<string,object>} o.registry  agent key -> normalized meta
+ * @param {Record<string,object>} [o.scripts] script key -> normalized script meta
  * @param {(ask:object) => any} [o.answer]    answers clarify asks and gates
  * @returns {Promise<{result:string, state:object, events:object[], execSeq:string[], calls:object[]}>}
  */
 export async function runGraphOffline({
-  template, portsFn, registry = {}, projectDir, pipelineDir,
+  template, portsFn, registry = {}, scripts = {}, projectDir, pipelineDir,
   answer = (a) => (a.kind === 'gate' ? 'continue' : { answers: [] }),
-  taskText = '# Task\n\nBUILD IT\n', maxParallel = 4,
+  taskText = '# Task\n\nBUILD IT\n', maxParallel = 4, maxParallelScripts = 2,
 }) {
   const events = [];
   const calls = [];
   let planVersion = 0;
   const keyCount = new Map();
   for (const n of template.nodes || []) {
-    if (n.kind === 'agent') keyCount.set(n.key, (keyCount.get(n.key) || 0) + 1);
+    if (n.kind === 'agent' || n.kind === 'script') keyCount.set(n.key, (keyCount.get(n.key) || 0) + 1);
   }
 
   const execute = async (args) => {
     const node = args.node;
-    const meta = registry[node.key] || {};
+    const meta = (node.kind === 'script' ? scripts[node.key] : registry[node.key]) || {};
     const ports = portsFn(node) || {};          // for an agent this spreads the meta (ports.verdict rides along)
     const runCtx = {
       pipelineDir, projectDir, baseName: 'feature', datePrefix: '01-01-26',
@@ -74,12 +76,17 @@ export async function runGraphOffline({
       extras: [], workspace: null, agentPrompts: {}, checkpointRef: 'abc1234',
       claudeOpts: { mock: true },
       ask: async (a) => answer(a),
+      // A script card's contract, the way _execCtx builds it (D12: cwd = projectDir).
+      script: node.kind === 'script'
+        ? (({ runtime, file, command, params, paramsPort, timeoutMs, mock }) => ({ meta, runtime, file, command, params, paramsPort, timeoutMs, mock }))(scriptNodeCtx(node, meta))
+        : undefined,
+      onEvent: (e) => events.push({ name: 'agent', nodeId: node.id, event: e }),
     };
     return runExecution(ctx);
   };
 
   const scheduler = createScheduler({
-    template, portsFn, execute, maxParallel,
+    template, portsFn, execute, maxParallel, maxParallelScripts,
     onEvent: (name, payload) => events.push({ name, ...payload }),
     onAsk: async (a) => answer(a),
   });
