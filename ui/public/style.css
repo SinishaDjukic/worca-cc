@@ -4027,7 +4027,10 @@ body.view-running .topnav{margin:12px 32px 0;flex:0 0 auto;}
 .rd-graph.settled .run-flow .run-node.is-paused{animation:none;}
 .rd-graph.settled .run-flow .run-node .fan .sq.on{animation:none;}
 
-.rd-history-link{flex:0 0 auto;font:600 12.5px var(--sans);color:var(--blue-ink);text-decoration:none;}
+/* --blue-ink-strong, not --blue-ink: this is inline link text at a small size, and
+   the token exists for exactly that (5.9:1 on white vs 3.8:1). The light contrast
+   gate flags it once a terminal run actually paints the link. */
+.rd-history-link{flex:0 0 auto;font:600 12.5px var(--sans);color:var(--blue-ink-strong);text-decoration:none;}
 .rd-history-link:hover{text-decoration:underline;}
 .rd-history-link[hidden]{display:none;}
 .rd-history-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
