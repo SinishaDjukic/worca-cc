@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updatedAt": "2026-09-30T09:36:39Z",
+  "updatedAt": "2026-09-30T10:00:11Z",
   "updatedBy": "SinishaDjukic",
   "title": "Worca OSS Contributor Policy",
   "notes": "Starter policy for contributors developing worca with worca. Defaults (workflow, guardrails, human-in-the-loop) only preselect things; your own settings win. Please keep \"Include my runs\" on so team metrics stay meaningful. Ask Worca web access is opt-in per developer and cannot be enabled by policy.",
@@ -8,6 +8,21 @@
     "guardrails.default": {
       "kind": "default",
       "value": "normal"
+    },
+    "plugins.marketplaces": {
+      "kind": "default",
+      "value": [
+        "https://github.com/SinishaDjukic/worca-cc"
+      ]
+    },
+    "plugins.required": {
+      "kind": "soft",
+      "value": [
+        {
+          "name": "github-source",
+          "marketplace": "github.com-SinishaDjukic-worca-cc-c6d2fe9f"
+        }
+      ]
     },
     "workflows.default": {
       "kind": "default",
