@@ -1,10 +1,31 @@
 {
   "schema": 1,
-  "updatedAt": "2026-09-21T06:15:51Z",
-  "updatedBy": "Denislav Prinov",
-  "title": "sinishadjukic/worca-cc team policy",
-  "notes": "",
-  "fields": {},
+  "updatedAt": "2026-09-30T09:36:39Z",
+  "updatedBy": "SinishaDjukic",
+  "title": "Worca OSS Contributor Policy",
+  "notes": "Starter policy for contributors developing worca with worca. Defaults (workflow, guardrails, human-in-the-loop) only preselect things; your own settings win. Please keep \"Include my runs\" on so team metrics stay meaningful. Ask Worca web access is opt-in per developer and cannot be enabled by policy.",
+  "fields": {
+    "guardrails.default": {
+      "kind": "default",
+      "value": "normal"
+    },
+    "workflows.default": {
+      "kind": "default",
+      "value": "wf_auto"
+    },
+    "run.humanInLoop": {
+      "kind": "default",
+      "value": true
+    },
+    "metrics.record": {
+      "kind": "soft",
+      "value": true
+    },
+    "worca.minVersion": {
+      "kind": "soft",
+      "value": "1.6.0"
+    }
+  },
   "workspaceRuns": {},
   "catalogs": {
     "guardrailSets": [],
