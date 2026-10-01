@@ -27,6 +27,7 @@ import {
   readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
+  persistMemberPrState, readMemberPrStates,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
@@ -209,7 +210,8 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody } from '../src/core/git-info.mjs';
+import { workspaceMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { archivePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
 import {
@@ -4825,6 +4827,29 @@ function defaultPrRemotes(remotes, remembered) {
   return { pushRemote, baseRemote };
 }
 
+// A PR route's store key: a project key (PROJECT_KEY_RE, already imported from
+// store.mjs — the same literal the route inlined), or a workspace composite
+// `workspaces/<wks-…>` (the key the History UI carries for workspace rows;
+// readPipelineByKey accepts it).
+function isPrStoreKey(key) {
+  return PROJECT_KEY_RE.test(key)
+    || (key.startsWith('workspaces/') && WORKSPACE_KEY_RE.test(key.slice('workspaces/'.length)));
+}
+
+// The ONE repo a PR route acts on: the run's own project, or — for a workspace run —
+// the member named by `memberKey` (required: a workspace row is also reachable through
+// its primary member's project key, see lookupPipelineRow, and must never silently
+// ship the primary). Returns { repoDir, feature, source, memberKey, memberName } or
+// { error } (the caller maps it: 400 for create/remotes, UNKNOWN for mergeable).
+function prTargetFor(state, memberKey) {
+  if (state.target !== 'workspace') {
+    return { repoDir: state.projectDir || null, feature: state.branch?.feature || null,
+      source: state.branch?.source || null, memberKey: null, memberName: null };
+  }
+  const t = memberPrTarget(state, memberKey);
+  return t.ok ? t.target : { error: t.error };
+}
+
 // Resolve a pipeline for the PR routes (store key first, else project dir) from a
 // body or a query object. Writes the error response itself and returns null.
 // (/api/pr/mergeable keeps its own copy: its bad-key/not-found cases answer 200
@@ -4835,11 +4860,12 @@ async function resolvePrPipeline(src, res) {
   let state = null;
   try {
     if (typeof src.projectKey === 'string' && src.projectKey.trim()) {
-      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(src.projectKey)) {
+      const key = src.projectKey.trim();
+      if (!isPrStoreKey(key)) {
         res.status(404).json({ error: 'pipeline not found' });
         return null;
       }
-      const data = await readPipelineByKey(src.projectKey, id);
+      const data = await readPipelineByKey(key, id);
       state = data && data.state;
     } else {
       const projectDir = resolveProjectDir(src.projectDir);
@@ -4874,10 +4900,12 @@ async function resolvePrPipeline(src, res) {
 app.get('/api/pr/remotes', async (req, res) => {
   const resolved = await resolvePrPipeline(req.query || {}, res);
   if (!resolved) return;
-  const repoDir = resolved.state.projectDir;          // null when store_meta is missing
+  const target = prTargetFor(resolved.state, req.query && req.query.memberKey);
+  if (target.error) return badRequest(res, target.error);
+  const repoDir = target.repoDir;                     // null when store_meta is missing
   if (!repoDir) return badRequest(res, 'pipeline has no project directory');
-  const feature = resolved.state.branch && resolved.state.branch.feature;
-  const source = resolved.state.branch && resolved.state.branch.source;
+  const { feature, source } = target;
+  // chainBaseBranchesOf answers [] for a workspace row, so a member's chain is its own source.
   const walked = chainBaseBranchesOf(resolved.state.id || resolved.id);
   const chain = (walked.length ? walked : (source ? [source] : [])).filter((b) => b !== feature);
   const defaultBase = chain[0] || null;
@@ -4910,7 +4938,9 @@ app.get('/api/pr/remotes', async (req, res) => {
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
 // against its source branch (or the dialog's `baseBranch`) via the GitHub CLI.
 // Mergeability is read back only here (never during list rendering).
-// body: { id, projectDir?, projectKey?, pushRemote?, baseRemote?, baseBranch?, body? } —
+// body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, body? } —
+// a workspace run (projectKey 'workspaces/<wks-…>') REQUIRES memberKey (the member repo
+// to ship; its PR is recorded per member and the response echoes memberKey) —
 // remote names are validated against the repo's real remote list (never trusted
 // from the body); baseBranch must be a well-formed ref other than the feature
 // branch (whether the base repo has it is gh's call, its error surfaces as usual).
@@ -4934,9 +4964,9 @@ app.post('/api/pr', async (req, res) => {
   if (!resolved) return;
   const { id, state } = resolved;
 
-  const repoDir = state.projectDir;
-  const feature = state.branch && state.branch.feature;
-  const source = state.branch && state.branch.source;
+  const target = prTargetFor(state, body.memberKey);
+  if (target.error) return badRequest(res, target.error);
+  const { repoDir, feature, source, memberKey } = target;
   if (!repoDir || !feature || !source) {
     return badRequest(res, 'pipeline has no branch info to open a PR');
   }
@@ -5003,10 +5033,14 @@ app.post('/api/pr', async (req, res) => {
   const parsePrNumber = (u) => Number((/\/pull\/(\d+)/.exec(u) || [])[1]) || null;
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   if (pipelineIdForPr) {
-    persistPrState(pipelineIdForPr, { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' });
+    const facts = { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' };
+    // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
+    if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
+    else persistPrState(pipelineIdForPr, facts);
     // Who clicked Create PR (the footer names who STARTED the run; this names who shipped it).
     const prBy = actorOf(req);
-    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : 'opened'}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
+    const where = memberKey ? ` in \`${target.memberName}\`` : '';
+    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : 'opened'}${where}${byActor(prBy)}: ${pr.url}`, { actor: prBy });
   }
   // Remember the choice for this project (only once a PR was actually created).
   if (remotes.length) {
@@ -5014,7 +5048,8 @@ app.post('/api/pr', async (req, res) => {
   }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null });
-  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
+  // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, ...(memberKey ? { memberKey } : {}) });
 });
 
 // ---------------------------------------------------------------------------
@@ -5071,10 +5106,9 @@ app.post('/api/pr/mergeable', async (req, res) => {
     // Resolve the pipeline state (by store key, else by project dir) — mirrors /api/pr.
     let state = null;
     if (typeof body.projectKey === 'string' && body.projectKey.trim()) {
-      if (!/^[a-z0-9][a-z0-9-]*-[0-9a-f]{8}$/.test(body.projectKey)) {
-        return res.json({ ok: true, mergeable: 'UNKNOWN' });
-      }
-      const data = await readPipelineByKey(body.projectKey, id);
+      const key = body.projectKey.trim();
+      if (!isPrStoreKey(key)) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+      const data = await readPipelineByKey(key, id);
       state = data && data.state;
     } else {
       const projectDir = resolveProjectDir(body.projectDir);
@@ -5083,19 +5117,64 @@ app.post('/api/pr/mergeable', async (req, res) => {
       state = data && data.state;
     }
 
-    const repoDir = state && state.projectDir;
-    const feature = state && state.branch && state.branch.feature;
-    if (!repoDir || !feature) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+    if (!state) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+    // A workspace run needs its member (no memberKey -> UNKNOWN, the never-fail contract).
+    const target = prTargetFor(state, body.memberKey);
+    if (target.error || !target.repoDir || !target.feature) return res.json({ ok: true, mergeable: 'UNKNOWN' });
 
     // A persisted pr_url is repo-agnostic (a fork PR lives in the base repo, which
     // need not be gh's default for this checkout); the head selector is only the
-    // fallback for rows that never recorded a PR.
-    const prUrl = readPrState(state.id || id)?.url || null;
-    const mergeable = await prMergeable({ projectDir: repoDir, head: feature, prUrl });
+    // fallback for rows that never recorded a PR. A member reads its own PR's url.
+    const pid = state.id || id;
+    const prUrl = (target.memberKey ? readMemberPrStates(pid)[target.memberKey]?.url : readPrState(pid)?.url) || null;
+    const mergeable = await prMergeable({ projectDir: target.repoDir, head: target.feature, prUrl });
     res.json({ ok: true, mergeable });
   } catch {
     res.json({ ok: true, mergeable: 'UNKNOWN' });   // best-effort: never error the refresh
   }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pr/crosslink -> a workspace run's member PRs reference each other: every
+// OPEN member PR's body gets (or has replaced) a marker-delimited block listing its
+// siblings' URLs. Human text outside the markers survives; a rerun (after a retried
+// batch picked up another PR) rewrites only that block, and an unchanged block is not
+// re-sent. Merged PRs are left alone. Best-effort per PR: failures come back per member.
+// body: { id, projectKey:'workspaces/<wks-…>' } -> { ok, edited:[memberKey], failed:[{memberKey,error}] }
+// ---------------------------------------------------------------------------
+app.post('/api/pr/crosslink', async (req, res) => {
+  const body = req.body || {};
+  if (!(typeof body.id === 'string' && body.id.trim())) return badRequest(res, 'id is required');
+  if (!(await hasGh())) return res.status(409).json({ error: 'GitHub CLI (gh) is not available' });
+  const resolved = await resolvePrPipeline(body, res);
+  if (!resolved) return;
+  const { id, state } = resolved;
+  if (state.target !== 'workspace') return badRequest(res, 'cross-linking applies to workspace runs only');
+  const pipelineId = state.id || id;
+  const known = readMemberPrStates(pipelineId);
+  const linked = workspaceMembers(state).filter((m) => known[m.memberKey]).map((m) => ({ ...m, pr: known[m.memberKey] }));
+  const edited = [];
+  const failed = [];
+  if (linked.length >= 2) {
+    for (const m of linked) {
+      if (String(m.pr.state || '').toUpperCase() !== 'OPEN') continue;   // a merged PR's body is history
+      const cur = await readPrBody({ projectDir: m.projectDir, prUrl: m.pr.url });
+      if (!cur.ok) { failed.push({ memberKey: m.memberKey, error: cur.error }); continue; }
+      const block = relatedPrsBlock({
+        workspaceName: state.workspaceName || null,
+        siblings: linked.filter((x) => x.memberKey !== m.memberKey).map((x) => ({ name: x.name, url: x.pr.url, state: x.pr.state })),
+      });
+      const next = withRelatedPrsBlock(cur.body, block);
+      if (next === cur.body) continue;
+      const r = await editPrBody({ projectDir: m.projectDir, prUrl: m.pr.url, body: next });
+      if (r.ok) edited.push(m.memberKey); else failed.push({ memberKey: m.memberKey, error: r.error });
+    }
+  }
+  if (edited.length) {
+    const by = actorOf(req);
+    appendAuditById(pipelineId, `Cross-linked ${edited.length} pull request${edited.length === 1 ? '' : 's'} to their siblings${byActor(by)}.`, { actor: by });
+  }
+  res.json({ ok: true, edited, failed });
 });
 
 // ---------------------------------------------------------------------------

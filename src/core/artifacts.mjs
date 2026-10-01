@@ -16,8 +16,9 @@ import { realpathSync, existsSync, statSync, constants as fsConstants } from 'no
 import { hostname } from 'node:os';
 import { projectKey, projectStorePath, canonicalProjectRoot, workspaceStorePath } from './store.mjs';
 import { listProjects } from './projects.mjs';
-import { branchExists, diffShortstat, hasGh, findPrForBranch } from './git-info.mjs';
+import { branchExists, diffShortstat, hasGh, findPrForBranch, commitsAhead } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
+import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
 import { RUN_LOG_FILE } from './run-log.mjs';
 import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
@@ -1517,6 +1518,48 @@ export function readPrState(pipelineId) {
 }
 
 /**
+ * Record one workspace MEMBER's PR and refresh the pipelines row's pr_* rollup in
+ * the SAME transaction (rollupMemberPrs: MERGED as soon as any member PR is, else
+ * OPEN) — so stats/metrics, which read the row, count the run once. Positive
+ * observations only, like persistPrState; never touches updated_at. Best-effort.
+ * (tx() does not nest, so the rollup UPDATE is inlined rather than calling persistPrState.)
+ * @param {string} pipelineId
+ * @param {string} memberKey  the member's projectKey
+ * @param {{url:string, number?:number|null, state?:string}} pr
+ */
+export function persistMemberPrState(pipelineId, memberKey, pr) {
+  if (!pipelineId || !memberKey || !pr || !pr.url) return;
+  const now = new Date().toISOString();
+  try {
+    tx(() => {
+      getDb().prepare(`
+        INSERT INTO pipeline_member_prs (pipeline_id, member_key, pr_url, pr_number, pr_state, pr_checked_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(pipeline_id, member_key) DO UPDATE SET
+          pr_url = excluded.pr_url, pr_number = excluded.pr_number,
+          pr_state = excluded.pr_state, pr_checked_at = excluded.pr_checked_at
+      `).run(pipelineId, memberKey, pr.url, pr.number ?? null, String(pr.state || 'OPEN').toUpperCase(), now);
+      const rollup = rollupMemberPrs(readMemberPrStates(pipelineId));
+      if (rollup) {
+        getDb().prepare('UPDATE pipelines SET pr_url = ?, pr_number = ?, pr_state = ?, pr_checked_at = ? WHERE id = ?')
+          .run(rollup.url, rollup.number, rollup.state, now, pipelineId);
+      }
+    });
+  } catch { /* best-effort */ }
+}
+
+/** A workspace run's member PRs as { [memberKey]: { url, number, state } } ({} on none/any failure). */
+export function readMemberPrStates(pipelineId) {
+  if (!pipelineId) return {};
+  try {
+    const rows = getDb().prepare(
+      'SELECT member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs WHERE pipeline_id = ? ORDER BY member_key',
+    ).all(pipelineId);
+    return Object.fromEntries(rows.map((r) => [r.member_key, { url: r.pr_url, number: r.pr_number ?? null, state: r.pr_state || 'OPEN' }]));
+  } catch { return {}; }
+}
+
+/**
  * The status a stale (crashed/killed) run is reconciled to. Distinct from a user
  * 'stopped' and a real 'error': the owning process died before Orchestrator.run()'s
  * catch/finally could write a terminal status, so the row was frozen at 'running'.
@@ -1901,6 +1944,51 @@ async function readResultsJson(dir) {
 }
 
 /**
+ * Per-member facts of a WORKSPACE history row — the eligibility the UI decides on
+ * (the row's own branch/survived describe the PRIMARY member only):
+ *  - affected: the member's frozen results.json summary (perProject[key]) when it has
+ *    one, else live `rev-list --count source..feature` > 0 while the branch exists;
+ *  - survived: its feature branch still exists in the member's REAL repo dir;
+ *  - pr (only with withPr): its OPEN/MERGED PR, pr_url-first from pipeline_member_prs.
+ * @returns {Promise<Array<object>>}
+ */
+async function workspaceMemberFacts(row, results, opts = {}) {
+  const wm = j(row.workspace_meta, null) || {};
+  const members = workspaceMembers({ projects: wm.projects, branches: wm.branches });
+  if (!members.length) return [];
+  const perProject = results && results.perProject && typeof results.perProject === 'object' ? results.perProject : null;
+  const known = opts.withPr ? readMemberPrStates(row.id) : null;
+  const gh = opts.withPr ? await hasGh() : false;
+  return Promise.all(members.map(async (m) => {
+    const out = {
+      memberKey: m.memberKey, name: m.name, projectDir: m.projectDir,
+      branch: m.feature, sourceBranch: m.source,
+      survived: false, affected: false, added: 0, removed: 0, diffFrozen: false,
+    };
+    if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
+    const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
+    if (sum) {
+      out.diffFrozen = true;
+      out.affected = changedFileCount(sum) > 0;
+      out.added = sum.linesAdded | 0;
+      out.removed = sum.linesRemoved | 0;
+    } else if (out.survived && m.source) {
+      out.affected = ((await commitsAhead(m.projectDir, m.source, m.feature)) || 0) > 0;
+      if (out.affected) {
+        const d = await diffShortstat(m.projectDir, m.source, m.feature);
+        out.added = d.added; out.removed = d.removed;
+      }
+    }
+    if (opts.withPr) {
+      out.pr = gh && m.projectDir && m.feature
+        ? await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null })
+        : null;
+    }
+    return out;
+  }));
+}
+
+/**
  * A run's frozen line counts from its results summary (a workspace run's summary is the
  * rollup across its members). Null when the summary lacks numeric counts.
  * @param {object|null} res parsed results.json (readResultsJson)
@@ -1951,6 +2039,12 @@ export function resultsFilesCount(res) {
  *    live three-dot diff. Otherwise (a run still going, a legacy run) they are the
  *    live source...feature counts while the branch survives. `survived` is always
  *    the live "branch exists" fact. `lite` skips the file read like the git work.
+ *  - `members` (additive; WORKSPACE rows only, omitted in `lite`): one entry per member
+ *    repo, [{ memberKey, name, projectDir, branch, sourceBranch, survived, affected,
+ *    added, removed, diffFrozen[, pr] }] (workspaceMemberFacts). `members[].pr` follows
+ *    the row's `pr` tri-state: ABSENT = not looked up (pending), null = looked/none,
+ *    object = OPEN/MERGED. A legacy workspace row (empty workspace_meta.projects) gets
+ *    `members: []` and keeps its primary-only `pr`.
  *  - `checks` / `files` (additive): the review's things-to-check count and the files
  *    changed, from the same results.json — the finished headline's inputs (the Runs
  *    list word = the glance headline). null until results exist, and for `lite`.
@@ -2003,11 +2097,20 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     totalActiveMs: active,
     mtime: row.updated_at ? (Date.parse(row.updated_at) || 0) : 0,
   };
+  // Workspace rows: eligibility is decided across EVERY member, never the primary alone.
+  // Computed BEFORE the PR lookup so a row WITH members skips the primary-only search.
+  if (row.target === 'workspace' && !opts.lite) {
+    entry.members = await workspaceMemberFacts(row, results, opts);
+  }
+  const hasMembers = Array.isArray(entry.members) && entry.members.length > 0;
   // Live PR state (opt-in; only the UI history endpoints request it). When gh is
   // unavailable we still set pr:null (the field is present whenever requested), so
   // callers can distinguish "looked, none" from "did not look".
-  if (opts.withPr && repoDir && feature) {
-    // pr_url first (repo-agnostic view); the branch search only for rows with no PR yet.
+  if (hasMembers && opts.withPr) {
+    entry.pr = rollupMemberPrs(Object.fromEntries(entry.members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+  } else if (opts.withPr && repoDir && feature) {
+    // Single-project runs AND legacy workspace rows (empty workspace_meta.projects):
+    // the unchanged primary-only lookup, pr_url first — never overwritten with null.
     entry.pr = (await hasGh())
       ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null })
       : null;
@@ -2080,7 +2183,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
  *  projectName, workspaceName, projectDir:primaryPath, target:'workspace'}.
  *  `opts.limit` (positive integer) bounds the rows in SQL; `opts.lite` skips ALL git
  *  enrichment (survived/added/removed stay false/0/0). Both default off, so existing
- *  callers see exactly what they saw before. */
+ *  callers see exactly what they saw before. Workspace rows also carry `members[]`
+ *  (per-member facts, tri-state `pr`; omitted in `lite`) — see rowToHistoryEntry. */
 export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
@@ -2181,16 +2285,34 @@ export function countPipelines() {
  * findPrForBranch already distinguishes merged-vs-open. We do NOT compute live
  * mergeability (no prMergeable call). `onBatch(items, isFinal)` is awaited so a
  * caller can broadcast incrementally; the FINAL call always carries isFinal=true
- * (even with no gh / no targets) so a client spinner provably clears.
+ * (even with no gh / no targets) so a client spinner provably clears. A workspace
+ * item (a row WITH member facts) also carries `members: [{ memberKey, pr }]`; its
+ * `pr` is the rollup of those.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await hasGh())) { await onBatch([], true); return; } // no gh: one empty final batch
   const rows = await listAllPipelines();                     // skeleton (no withPr), parallelized
-  const targets = rows.filter((r) => r.projectDir && r.branch);
+  // The member arm only for workspace rows WITH member facts; a legacy workspace row
+  // (members: []) keeps today's primary-only arm, so its pr_url is never dropped.
+  const isWs = (r) => r.target === 'workspace' && Array.isArray(r.members) && r.members.length > 0;
+  const targets = rows.filter((r) => isWs(r) || (r.projectDir && r.branch));
   if (targets.length === 0) { await onBatch([], true); return; }
   for (let i = 0; i < targets.length; i += batchSize) {
     const slice = targets.slice(i, i + batchSize);
     const items = await Promise.all(slice.map(async (r) => {
+      if (isWs(r)) {
+        // Per member: pr_url-first lookup, positive observations persisted (+ rollup).
+        const known = readMemberPrStates(r.id);
+        const members = await Promise.all(r.members.map(async (m) => {
+          const pr = m.projectDir && m.branch
+            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null })) || null
+            : null;
+          if (pr) persistMemberPrState(r.id, m.memberKey, pr);
+          return { memberKey: m.memberKey, pr };
+        }));
+        const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        return { projectKey: r.projectKey, id: r.id, pr, members };
+      }
       const prUrl = readPrState(r.id)?.url || null;
       const pr = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl })) || null;
       if (pr) persistPrState(r.id, pr);   // positive observations only (null never clears)

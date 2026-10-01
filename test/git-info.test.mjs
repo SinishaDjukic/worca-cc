@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   parseShortstat, normalizeMergeable, diffShortstat, branchExists,
-  findPrForBranch, _testing as gitInfo,
+  findPrForBranch, commitsAhead, readPrBody, editPrBody, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 
 test('parseShortstat handles all four shortstat shapes', () => {
@@ -124,5 +124,33 @@ test('findPrForBranch returns null on no match, gh failure, bad JSON, or missing
 
   assert.equal(await findPrForBranch({ projectDir: '', head: 'b' }), null);
   assert.equal(await findPrForBranch({ projectDir: '/r', head: '' }), null);
+  gitInfo.reset();
+});
+
+test('commitsAhead counts source..feature; null on failure', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, opts) => { seen.push([cmd, ...args, opts.cwd]);
+    return Promise.resolve({ ok: true, stdout: '3\n', stderr: '', code: 0 }); });
+  assert.equal(await commitsAhead('/r/api', 'main', 'f-api'), 3);
+  assert.deepEqual(seen[0], ['git', 'rev-list', '--count', 'main..f-api', '/r/api']);
+  gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'bad rev', code: 128 }));
+  assert.equal(await commitsAhead('/r/api', 'main', 'f-api'), null);
+  assert.equal(await commitsAhead(null, 'main', 'f'), null);
+  gitInfo.reset();
+});
+
+test('readPrBody / editPrBody use gh pr view --json body / gh pr edit --body', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]);
+    if (args[1] === 'view') return Promise.resolve({ ok: true, stdout: 'hello\n', stderr: '', code: 0 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 }); });
+  assert.deepEqual(await readPrBody({ prUrl: 'https://github.com/o/r/pull/1' }), { ok: true, body: 'hello' });
+  assert.deepEqual(await editPrBody({ prUrl: 'https://github.com/o/r/pull/1', body: 'new' }), { ok: true });
+  assert.deepEqual(seen, [
+    ['gh', 'pr', 'view', 'https://github.com/o/r/pull/1', '--json', 'body', '-q', '.body'],
+    ['gh', 'pr', 'edit', 'https://github.com/o/r/pull/1', '--body', 'new'],
+  ]);
+  gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 404', code: 1 }));
+  assert.deepEqual(await editPrBody({ prUrl: 'https://github.com/o/r/pull/1', body: 'x' }), { ok: false, error: 'HTTP 404' });
   gitInfo.reset();
 });

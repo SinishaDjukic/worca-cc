@@ -2886,6 +2886,9 @@ if (typeof window !== 'undefined') {
     runStatusMeta,
     histStatusMeta,
     histPrEligible,
+    histWsShippable, histWsPrChipText, wsRollupPr, histCanShip, wsMemberNote,
+    // Test seam: the live list-model row (the object the detail screen re-resolves to).
+    historyRow: (projectKey, id) => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null,
     pauseRun,
     upsertRun,
     onHello,
@@ -17210,7 +17213,9 @@ function readHistoryCache() {
 function writeHistoryCache(pipelines, ghAvailable) {
   try {
     const slim = pipelines.slice(0, HISTORY_CACHE_MAX)
-      .map(({ pr, retainedWork, ...rest }) => rest); // never persist live PR or retention facts
+      .map(({ pr, retainedWork, ...rest }) => (Array.isArray(rest.members)
+        ? { ...rest, members: rest.members.map(({ pr: _memberPr, ...m }) => m) }   // live per-member PRs too
+        : rest)); // never persist live PR or retention facts
     localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(
       { v: HISTORY_CACHE_VER, ts: Date.now(), ghAvailable: !!ghAvailable, pipelines: slim }));
   } catch { /* quota / serialization: skip cache, never throw */ }
@@ -17329,11 +17334,18 @@ function cssEscape(s) {
   return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/["\\\]]/g, '\\$&');
 }
 
-function patchHistoryPr({ projectKey, id, pr }) {
+// Apply a batch item's per-member PRs onto a workspace row (by memberKey).
+function applyWsMemberPrs(row, members) {
+  if (!row || !Array.isArray(row.members) || !Array.isArray(members)) return;
+  const byKey = new Map(members.filter((m) => m && m.memberKey).map((m) => [m.memberKey, m.pr || null]));
+  for (const m of row.members) if (byKey.has(m.memberKey)) m.pr = byKey.get(m.memberKey);
+}
+
+function patchHistoryPr({ projectKey, id, pr, members }) {
   // 1) Update the in-memory model (by id AND projectKey): the Runs row's word and a
-  //    later repaint read it from here.
+  //    later repaint read it from here. A workspace item also carries its per-member PRs.
   const row = state.historyAll.find((r) => r && r.id === id && r.projectKey === projectKey);
-  if (row) row.pr = pr || null;
+  if (row) { row.pr = pr || null; applyWsMemberPrs(row, members); }
 
   // 2) Keep an OPEN detail screen for this run in step.
   hdSyncPr(projectKey, id, row);
@@ -17347,11 +17359,18 @@ function patchHistoryPr({ projectKey, id, pr }) {
 // still unresolved (pr === undefined) is treated as "no PR" so its word settles.
 // Without this an eligible entry the server never sent a batch for — or a load where
 // enrichment failed entirely — would stay pending forever. Callers already gate on
-// the load token.
+// the load token. Workspace rows' members are resolved the same way, independently of
+// the row: a row whose rollup landed can still have a member no batch named.
 function finalizeHistoryPr() {
   for (const row of state.historyAll) {
-    if (!row || row.pr !== undefined) continue;        // already resolved (object or null)
-    row.pr = null;                                      // resolved: no open/merged PR
+    if (!row) continue;
+    // Workspace rows carry a per-member tri-state too (members[].pr); resolve it on its
+    // own — a row whose rollup landed can still have a member the batch never named.
+    const members = Array.isArray(row.members) ? row.members : [];
+    const memberPending = members.some((m) => m && m.pr === undefined);
+    if (row.pr !== undefined && !memberPending) continue;  // already resolved (object or null)
+    if (row.pr === undefined) row.pr = null;                // resolved: no open/merged PR
+    for (const m of members) if (m && m.pr === undefined) m.pr = null;
     // A deep-linked eligible run must not keep `pr === undefined` and never offer Create PR.
     hdSyncPr(row.projectKey, row.id, row);
   }
@@ -18046,7 +18065,7 @@ let histDetailState = null; // { key, id, record, data, screen } while open
 let hdCommentState = null; // { key, id, reload }
 // One-shot "open the Ship it? modal on arrival" intent, consumed by
 // openHistDetail unconditionally so it can never strand across visits.
-let pendingShipIt = null;   // { id, projectKey } | null
+let pendingShipIt = null;   // { id, projectKey, memberPrs? } | null — memberPrs: workspace click-time { [memberKey]: pr|null }
 // Spec §11. The Runs row the saved page belongs to, by DATA STAMPS rather than by
 // node: a repaint between open and close replaces the element, so closeHistDetail
 // re-queries (slide layout only; side by side focus never left the list).
@@ -18255,21 +18274,33 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   paintHdGlance(screen, rec, data);
 
   if (ship && ship.id === parsed.id && ship.projectKey === parsed.projectKey) {
-    // The list button's click already proved "no PR" — but the history CACHE strips
-    // `pr` from persisted rows, so after the hop the matched record may read
-    // pr === undefined again. Honor the click-time fact instead of re-deriving
-    // (else the intent is dropped on essentially every cache-warm navigation).
-    if (rec.pr === undefined) rec.pr = null;
+    // The history CACHE strips `pr` (and every workspace member's `pr`) from persisted
+    // rows, so after the hop the matched record may read them as undefined again.
+    // Honor the click-time facts instead of re-deriving (else the intent is dropped on
+    // essentially every cache-warm navigation).
+    if (rec.target === 'workspace' && hasWsMembers(rec)) {
+      // The card's click proved per-member facts, not "no PR": a workspace card offers
+      // Create PR while SOME members already have OPEN/MERGED PRs. Restore exactly what
+      // it saw for members the cache stripped; anything it did not see stays pending.
+      const seen = ship.memberPrs && typeof ship.memberPrs === 'object' ? ship.memberPrs : {};
+      for (const m of histWsMembers(rec)) {
+        if (m.pr === undefined && Object.prototype.hasOwnProperty.call(seen, m.memberKey)) m.pr = seen[m.memberKey];
+      }
+      if (rec.pr === undefined && !histWsMembers(rec).some((m) => m.pr === undefined)) rec.pr = wsRollupPr(rec);
+    } else if (rec.pr === undefined) {
+      // Single run: the list button's click already proved "no PR".
+      rec.pr = null;
+    }
     paintHdPr(screen, rec, data);
     paintHdAfter(screen, rec);
-    // Two belts, both load-bearing:
-    //  - `!rec.pr` — the stale-button -> double-POST race is fixed at the source
-    //    (the ship path calls patchHistoryPr); this is the backstop.
-    //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run
-    //    whose own detail button paintHdPr just deliberately hid (workspace runs,
-    //    gh gone, branch deleted between paint and click), and confirming fires a
-    //    POST /api/pr that 404s.
-    if (!rec.pr && histPrEligible(rec)) openShipItModal(rec, data);
+    // histCanShip carries both old belts plus the workspace rule:
+    //  - `!rec.pr` (single runs) — the stale-button -> double-POST race is fixed at the
+    //    source (the ship path calls patchHistoryPr); this is the backstop.
+    //  - `histPrEligible(rec)` — MANDATORY. Without it the modal opens for a run whose
+    //    own detail button paintHdPr just deliberately hid (gh gone, branch deleted
+    //    between paint and click), and confirming fires a POST /api/pr that fails.
+    //  - a workspace run never auto-opens while any member PR is unresolved.
+    if (histCanShip(rec)) openShipItModal(rec, data);
   }
 }
 
@@ -18361,15 +18392,19 @@ function fillShipItBaseSelect(select, chain, remoteName, remoteBranches, fallbac
 }
 
 // Hint under the selects: names the cross-repo head when the two remotes point at
-// different repositories ("me:branch → up/repo main"); empty otherwise.
-function paintShipItRemotesHint(modal, remotes, record) {
-  const byName = (sel) => remotes.find((r) => r.name === modal.querySelector(sel).value);
-  const push = byName('.shipit-push-remote');
-  const base = byName('.shipit-base-remote');
+// different repositories ("me:branch → up/repo main"); empty otherwise. Pure, so the
+// single modal and each workspace row share it.
+function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
+  const push = remotes.find((r) => r.name === pushName);
+  const base = remotes.find((r) => r.name === baseName);
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
-  modal.querySelector('.shipit-remotes-hint').textContent = cross
-    ? `Cross-repo: ${push.owner}:${record.branch || ''} → ${base.slug} ${shipItChosenBase(modal, record)}`
-    : '';
+  return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
+}
+
+function paintShipItRemotesHint(modal, remotes, record) {
+  modal.querySelector('.shipit-remotes-hint').textContent = crossRepoHint(remotes,
+    modal.querySelector('.shipit-push-remote').value, modal.querySelector('.shipit-base-remote').value,
+    record.branch, shipItChosenBase(modal, record));
 }
 
 function setShipItRemotesDisabled(modal, on) {
@@ -18487,6 +18522,8 @@ function openShipItModal(record, data) {
   if (!modal) return;
   if (!modal.classList.contains('hidden')) return;  // double-open guard: a second open
                                                     // would stack a second onOk -> two POSTs
+  if (record.target === 'workspace') { openShipItWsModal(record, data); return; }
+  modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
   q('.shipit-sub').textContent =
     `This opens a pull request for ${record.title || record.id} and puts it up for review.`;
@@ -18665,16 +18702,6 @@ function openShipItModal(record, data) {
   loadShipItRemotes(modal, record, gen, () => closed);
 }
 
-// THE single PR-eligibility predicate. Every caller uses it: paintHdPr (below),
-// glancePrInput and the pendingShipIt consumer.
-//
-// `target !== 'workspace'` is MANDATORY and is the ONE clause the existing list
-// gate (app.js:8571) is missing. POST /api/pr has NO workspace arm and its key
-// regex (ui/server.mjs:1637) rejects a `workspaces/...` composite with a 404 — yet
-// workspace rows DO satisfy the other three clauses, because listAllPipelines hands
-// rowToHistoryEntry the workspace's primary member dir as repoDir
-// (artifacts.mjs:1549-1556), so `survived`/`branch`/`sourceBranch` are all really
-// computed for them.
 // A finished run on the Running page reads its PR from History's rows, and gets no live
 // frames of its own: repaint its glance when those rows (or one row's PR) arrive.
 // `pipelineId` narrows it to that run; omitted, whatever run is open.
@@ -18685,9 +18712,403 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
+// --- Ship-it, workspace mode: one row per affected member repo --------------
+
+// One Ship-it row per member repo. `row` is the mutable record the batch drives:
+// { el, member, pick, done, failed, busy, statusEl, remotesBox, pushSel, baseSel, branchWrap,
+//   branchSel, baseLabel, hint, remotes, mergeable }. `failed`: the last round's POST failed.
+function buildShipItRepoRow(member, summary, canShip) {
+  const el = document.createElement('div');
+  el.className = 'shipit-repo';
+  el.dataset.memberKey = member.memberKey;
+  const row = { el, member, pick: null, done: false, failed: false, busy: false, statusEl: null, remotesBox: null,
+    pushSel: null, baseSel: null, branchWrap: null, branchSel: null, baseLabel: null, hint: null, remotes: [], mergeable: null };
+  const head = document.createElement('label');
+  head.className = 'shipit-repo-head';
+  if (canShip) {
+    row.pick = document.createElement('input');
+    row.pick.type = 'checkbox';
+    row.pick.className = 'shipit-repo-pick';
+    row.pick.checked = true;                                   // default: every affected repo
+    row.pick.setAttribute('aria-label', `Open a pull request in ${member.name || member.memberKey}`);
+    head.appendChild(row.pick);
+  }
+  const name = document.createElement('b');
+  name.className = 'shipit-repo-name';
+  name.textContent = member.name || member.memberKey;
+  const stat = document.createElement('span');
+  stat.className = 'shipit-repo-stat mono';
+  const nFiles = summary ? (summary.filesNew || 0) + (summary.filesChanged || 0) : null;   // 'D' is inside filesChanged
+  const added = summary ? summary.linesAdded : member.added;
+  const removed = summary ? summary.linesRemoved : member.removed;
+  stat.textContent = [nFiles != null ? `${nFiles} file${nFiles === 1 ? '' : 's'}` : '',
+    `+${added || 0} −${removed || 0}`].filter(Boolean).join(' · ');   // U+2212, as the single summary
+  head.append(name, stat);
+  el.appendChild(head);
+  row.statusEl = document.createElement('div');
+  row.statusEl.className = 'shipit-repo-status hint';
+  row.statusEl.hidden = true;
+  if (!canShip) {                                               // shown for context, never offered
+    row.done = true;
+    if (prLive(member.pr)) setShipItRowOpened(row, member.pr);
+    else setShipItRowStatus(row, `${wsMemberNote(member)} — no PR can be opened.`, '');   // the exact cause
+    el.appendChild(row.statusEl);
+    return row;
+  }
+  const line = document.createElement('div');
+  line.className = 'shipit-repo-branch mono';
+  const b = document.createElement('b');
+  b.textContent = member.branch || '';
+  const arrow = document.createElement('span');
+  arrow.textContent = '→';
+  row.baseLabel = document.createElement('span');
+  row.baseLabel.textContent = member.sourceBranch || '';
+  row.branchWrap = document.createElement('span');
+  row.branchWrap.className = 'select-wrap shipit-repo-base-wrap';
+  row.branchWrap.hidden = true;
+  row.branchSel = document.createElement('select');
+  row.branchSel.className = 'select shipit-repo-base-branch';
+  row.branchSel.setAttribute('aria-label', `Base branch for ${member.name || member.memberKey}`);
+  row.branchWrap.appendChild(row.branchSel);
+  line.append(b, arrow, row.baseLabel, row.branchWrap);
+  el.appendChild(line);
+  row.remotesBox = document.createElement('div');
+  row.remotesBox.className = 'shipit-repo-remotes';
+  row.remotesBox.hidden = true;
+  const field = (label, cls) => {
+    const f = document.createElement('div');
+    f.className = 'shipit-remote-field';                        // reuses `.shipit-remote-field label`
+    const l = document.createElement('label');
+    l.textContent = label;
+    const w = document.createElement('div');
+    w.className = 'select-wrap';
+    const sel = document.createElement('select');
+    sel.className = `select ${cls}`;
+    sel.setAttribute('aria-label', `${label} (${member.name || member.memberKey})`);
+    w.appendChild(sel);
+    f.append(l, w);
+    row.remotesBox.appendChild(f);
+    return sel;
+  };
+  row.pushSel = field('Push branch to', 'shipit-repo-push-remote');
+  row.baseSel = field('Open PR in', 'shipit-repo-base-remote');
+  row.hint = document.createElement('small');
+  row.hint.className = 'shipit-remotes-hint hint';               // :empty hides it (style.css)
+  row.remotesBox.appendChild(row.hint);
+  el.append(row.remotesBox, row.statusEl);
+  return row;
+}
+
+function setShipItRowStatus(row, text, kind) {
+  row.statusEl.replaceChildren();
+  row.statusEl.textContent = text;
+  row.statusEl.classList.toggle('err', kind === 'err');
+  row.statusEl.hidden = !text;
+}
+
+function setShipItRowOpened(row, pr) {
+  row.statusEl.replaceChildren();
+  row.statusEl.classList.remove('err');
+  const merged = prStateOf(pr) === 'MERGED';
+  const a = document.createElement('a');
+  a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
+  a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
+  a.textContent = merged ? 'Merged' : 'View PR';
+  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', a);
+  row.statusEl.hidden = false;
+}
+
+function setShipItRowDisabled(row, on) {
+  for (const n of [row.pick, row.pushSel, row.baseSel, row.branchSel]) if (n) n.disabled = on;
+}
+
+const shipItRowBase = (row) => (row.branchWrap.hidden ? (row.member.sourceBranch || '') : row.branchSel.value);
+
+function shipItRowPayload(record, row) {
+  const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: row.member.memberKey };
+  if (!row.remotesBox.hidden) { payload.pushRemote = row.pushSel.value; payload.baseRemote = row.baseSel.value; }
+  if (!row.branchWrap.hidden) payload.baseBranch = row.branchSel.value;
+  return payload;
+}
+
+// The single-repo loadShipItRemotes, per member row (GET /api/pr/remotes … &memberKey=).
+async function loadShipItRowRemotes(record, row, gen, isClosed) {
+  const qs = new URLSearchParams({ id: record.id, memberKey: row.member.memberKey });
+  if (record.projectKey) qs.set('projectKey', record.projectKey);
+  try {
+    const res = await fetch(`/api/pr/remotes?${qs}`);
+    const data = await safeJson(res);
+    if (gen !== shipItRemotesGen || isClosed()) return;
+    const remotes = res.ok && Array.isArray(data.remotes) ? data.remotes.filter((r) => r && r.name) : [];
+    const names = (list) => (Array.isArray(list) ? list.filter((x) => typeof x === 'string' && x) : []);
+    const chain = names(data.chain);
+    row.remotes = remotes;
+    if (remotes.length) {
+      const d = data.defaults || {};
+      fillRemoteSelect(row.pushSel, remotes, d.pushRemote);
+      fillRemoteSelect(row.baseSel, remotes, d.baseRemote);
+      row.remotesBox.hidden = false;
+    }
+    const byRemote = data.branches && typeof data.branches === 'object' ? data.branches : {};
+    const paintBranches = () => fillShipItBaseSelect(row.branchSel, chain, row.remotesBox.hidden ? null : row.baseSel.value,
+      row.remotesBox.hidden ? [] : names(byRemote[row.baseSel.value]), data.defaultBase);
+    if (chain.length) { paintBranches(); row.branchWrap.hidden = false; row.baseLabel.textContent = ''; }
+    const paintHint = () => { row.hint.textContent = crossRepoHint(row.remotes, row.pushSel.value, row.baseSel.value, row.member.branch, shipItRowBase(row)); };
+    paintHint();
+    row.pushSel.onchange = paintHint;
+    row.baseSel.onchange = () => { if (chain.length) paintBranches(); paintHint(); };
+    row.branchSel.onchange = paintHint;
+    setShipItRowDisabled(row, row.done || row.busy);         // a batch may already be running
+  } catch { /* remotes unavailable: the row POSTs without the fields (server defaults) */ }
+}
+
+// Best-effort sibling cross-linking; resolves to a user-facing note ('' = fine).
+async function crossLinkWsPrs(record) {
+  try {
+    const res = await fetch('/api/pr/crosslink', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectKey: record.projectKey, id: record.id }),
+    });
+    const dd = await safeJson(res);
+    if (!res.ok) return `The pull requests were opened but could not be cross-linked: ${(dd && dd.error) || `HTTP ${res.status}`}`;
+    const failed = Array.isArray(dd.failed) ? dd.failed : [];
+    return failed.length ? `Could not cross-link ${failed.length} pull request${failed.length === 1 ? '' : 's'} (${failed.map((f) => f.memberKey).join(', ')}).` : '';
+  } catch (e) {
+    return `The pull requests were opened but could not be cross-linked: ${e.message}`;
+  }
+}
+
+// List card + header in step after a (partial) batch: the rollup + every member's PR.
+// patchHistoryPr already repaints the OPEN detail through hdSyncPr, which is keyed on
+// histDetailState.id/key — so no explicit repaint here (an unkeyed one would paint this
+// run's repos onto whatever run the user had navigated to mid-batch). When the record
+// is not in state.historyAll (a deep link before the list landed), hdSyncPr's keyed
+// guard still repaints it from histDetailState.record.
+function syncWsPrs(record) {
+  const pr = wsRollupPr(record);
+  record.pr = pr;
+  patchHistoryPr({ projectKey: record.projectKey, id: record.id, pr,
+    members: histWsMembers(record).map((m) => ({ memberKey: m.memberKey, pr: m.pr || null })) });
+}
+
+// Is the open detail screen THIS run's? (The same key hdSyncPr uses.)
+const hdShowsRun = (record) => !!(histDetailState && histDetailState.screen
+  && histDetailState.id === record.id && histDetailState.key === record.projectKey);
+
+// After a ship, each opened repo's header line gets its mergeability pill (+ one recheck).
+// Only on THIS run's screen: another run of the same workspace carries the same
+// data-member-key values, so an unguarded selector would paint its pills.
+function paintWsMergePills(record, rows) {
+  if (!hdShowsRun(record)) return;
+  const screen = histDetailState.screen;
+  for (const r of rows) {
+    if (!r.mergeable) continue;
+    const pill = screen.querySelector(`.hd-pr-repo[data-member-key="${cssEscape(r.member.memberKey)}"] .hist-merge`);
+    if (!pill) continue;
+    setMergePill(pill, r.mergeable);
+    if (String(r.mergeable).toUpperCase() === 'UNKNOWN') {
+      scheduleMergeRecheck(pill, { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: r.member.memberKey });
+    }
+  }
+}
+
+// The workspace Ship-it dialog. Its shell mirrors openShipItModal: the double-open
+// guard, shipItClose, the `closed` flag, backdrop/Escape.
+function openShipItWsModal(record, data) {
+  const modal = document.getElementById('shipit-modal');
+  if (!modal || !modal.classList.contains('hidden')) return;
+  const q = (sel) => modal.querySelector(sel);
+  const list = q('#shipit-repos');
+  const members = histWsMembers(record);
+  const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
+  const skipped = members.filter((m) => !m.affected && !prLive(m.pr));
+  const perProject = (data && data.results && data.results.perProject) || {};
+  q('.shipit-sub').textContent =
+    `This opens a pull request in each repository ${record.title || record.id} changed and puts them up for review.`;
+  q('.shipit-summary').hidden = true;                 // the single-repo summary/remotes stay out of the way
+  q('.shipit-remotes').hidden = true;
+  list.replaceChildren();
+  const rows = [];
+  for (const m of members) {
+    if (!m.affected && !prLive(m.pr)) continue;       // unchanged repos are only named below
+    const row = buildShipItRepoRow(m, perProject[m.memberKey]?.summary || null, shippable.has(m.memberKey));
+    list.appendChild(row.el);
+    rows.push(row);
+  }
+  if (skipped.length) {
+    const p = document.createElement('p');
+    p.className = 'shipit-skipped hint';
+    p.textContent = `No changes in ${skipped.map((m) => m.name || m.memberKey).join(', ')} — skipped.`;
+    list.appendChild(p);
+  }
+  list.hidden = false;
+  const err = q('.shipit-err');
+  err.hidden = true; err.textContent = '';
+  const okBtn = q('.shipit-ok');
+  let openedHere = false;
+  const picked = () => rows.filter((r) => r.pick && r.pick.checked && !r.done);
+  const paintOk = () => {
+    const sel = picked();
+    const n = sel.length;
+    if (n === 0 && openedHere) { okBtn.disabled = false; okBtn.textContent = 'Close'; return; }
+    okBtn.disabled = n === 0;
+    // "Retry" only when the pick is exactly failed rows: re-ticking a repo that was never
+    // tried (the user unticked it before the first round) makes it a plain "Open".
+    okBtn.textContent = n > 0 && sel.every((r) => r.failed)
+      ? `Retry ${n} failed` : `Open ${n} pull request${n === 1 ? '' : 's'}`;
+  };
+  for (const r of rows) if (r.pick) r.pick.onchange = paintOk;
+  paintOk();
+  modal.classList.remove('hidden');
+  okBtn.focus();
+  const gen = ++shipItRemotesGen;
+
+  let closed = false;
+  const done = () => {
+    if (closed) return;
+    closed = true;
+    modal.classList.add('hidden');
+    list.hidden = true;
+    if (shipItClose === done) shipItClose = null;
+    okBtn.removeEventListener('click', onOk);
+    q('.shipit-cancel').removeEventListener('click', onCancel);
+    modal.removeEventListener('click', onBackdrop);
+    document.removeEventListener('keydown', onKey);
+  };
+  shipItClose = done;
+  const onCancel = () => done();
+  const onBackdrop = (e) => { if (e.target === modal) done(); };
+  const onKey = (e) => { if (e.key === 'Escape') done(); };
+
+  // Sequential per repo. A failure never rolls back an opened PR; the failed rows stay
+  // ticked, so the next click retries exactly those. Cancel stops before the next repo.
+  const onOk = async () => {
+    const batch = picked();
+    if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
+    okBtn.disabled = true;
+    okBtn.textContent = 'Opening…';
+    err.hidden = true; err.textContent = '';
+    for (const r of rows) { r.busy = true; setShipItRowDisabled(r, true); }
+    const opened = [];
+    const failedRows = [];
+    for (const r of batch) {
+      if (closed) break;
+      setShipItRowStatus(r, 'Opening…', '');
+      try {
+        const res = await fetch('/api/pr', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(shipItRowPayload(record, r)),
+        });
+        const dd = await safeJson(res);
+        if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+        const pr = { state: 'OPEN', url: dd.url || '#', number: null };
+        r.member.pr = pr;
+        r.done = true;
+        r.failed = false;
+        r.mergeable = dd.mergeable || null;
+        r.pick.checked = false;
+        opened.push(r);
+        if (!closed) setShipItRowOpened(r, pr);
+      } catch (e2) {
+        r.failed = true;
+        failedRows.push(r);
+        if (!closed) setShipItRowStatus(r, `Could not open PR: ${e2.message}`, 'err');
+      }
+    }
+    // Deliberately NOT guarded on `closed`: a cancel mid-batch stops further POSTs, but
+    // the PRs that did open are real, so their bodies still get the sibling list (the
+    // crosslink route is idempotent and best-effort; its note is simply not shown).
+    const note = opened.length ? await crossLinkWsPrs(record) : '';
+    if (opened.length) { syncWsPrs(record); paintWsMergePills(record, opened); }
+    if (closed) return;                                // cancelled mid-batch: model synced, modal untouched
+    for (const r of rows) { r.busy = false; setShipItRowDisabled(r, r.done); }
+    openedHere = openedHere || opened.length > 0;
+    if (!failedRows.length && !note) { done(); return; }
+    const msgs = [];
+    if (failedRows.length) {
+      msgs.push(`${failedRows.length} of ${batch.length} pull request${batch.length === 1 ? '' : 's'} could not be opened. ` +
+        'Opened ones stay open — fix the cause and retry the rest.');
+    }
+    if (note) msgs.push(note);
+    err.textContent = msgs.join(' ');
+    err.hidden = false;
+    paintOk();
+  };
+  okBtn.addEventListener('click', onOk);
+  q('.shipit-cancel').addEventListener('click', onCancel);
+  modal.addEventListener('click', onBackdrop);
+  document.addEventListener('keydown', onKey);
+  for (const r of rows) if (r.pick) loadShipItRowRemotes(record, r, gen, () => closed);
+}
+
+// ── Workspace PRs: one PR per AFFECTED member repo ───────────────────────────
+// A workspace history row carries `members` ([{ memberKey, name, projectDir, branch,
+// sourceBranch, survived, affected, added, removed, pr? }], artifacts.mjs
+// workspaceMemberFacts). Its own survived/branch/sourceBranch describe the PRIMARY
+// member only, so eligibility is decided across the members, never from those.
+const prStateOf = (pr) => (pr && typeof pr === 'object' && pr.url ? String(pr.state || '').toUpperCase() : '');
+const prLive = (pr) => { const s = prStateOf(pr); return s === 'OPEN' || s === 'MERGED'; };
+function histWsMembers(p) {
+  return p && p.target === 'workspace' && Array.isArray(p.members) ? p.members.filter((m) => m && m.memberKey) : [];
+}
+// A workspace row the per-member UI applies to. A LEGACY workspace row (empty
+// workspace_meta.projects -> members: []) and a deep link's minimal record fall back
+// to the single-PR paths (link swap when a PR exists; histPrEligible keeps Create PR off).
+const hasWsMembers = (p) => histWsMembers(p).length > 0;
+// Tri-state per member, like p.pr: a member whose `pr` is still undefined has not been
+// resolved yet (enrichment in flight, or stripped by the history cache).
+const wsPrPending = (p) => p.pr === undefined || histWsMembers(p).some((m) => m.pr === undefined);
+// Members a PR can be opened for right now: changed, branch info recorded, branch still
+// local, no OPEN/MERGED PR.
+function histWsShippable(p) {
+  return histWsMembers(p).filter((m) => m.affected && m.survived && m.branch && m.sourceBranch && !prLive(m.pr));
+}
+// Why a member without a live PR cannot be (or has not been) shipped — ONE wording for
+// the header list and the dialog's context rows ("branch gone" is not the same as
+// "no branch info").
+function wsMemberNote(m) {
+  if (!m.affected) return 'No changes — skipped';
+  if (!m.branch || !m.sourceBranch) return 'No branch recorded';
+  if (!m.survived) return 'Branch no longer exists';
+  return 'No PR yet';
+}
+// The card chip (clarification: an aggregate on the card, per-repo links in the header).
+function histWsPrChipText(p) {
+  const ms = histWsMembers(p);
+  const withPr = ms.filter((m) => prLive(m.pr));
+  if (!withPr.length) return '';
+  const total = ms.filter((m) => m.affected || prLive(m.pr)).length;
+  const merged = withPr.filter((m) => prStateOf(m.pr) === 'MERGED').length;
+  return `PRs ${withPr.length}/${total}${merged ? ` · ${merged} merged` : ''}`;
+}
+// The run-level PR a workspace row reports (mirrors workspace-prs.mjs rollupMemberPrs).
+function wsRollupPr(p) {
+  const live = histWsMembers(p).filter((m) => prLive(m.pr))
+    .sort((a, b) => (a.memberKey < b.memberKey ? -1 : a.memberKey > b.memberKey ? 1 : 0));
+  if (!live.length) return null;
+  const merged = live.find((m) => prStateOf(m.pr) === 'MERGED');
+  const pick = (merged || live[0]).pr;
+  return { state: merged ? 'MERGED' : 'OPEN', url: pick.url, number: pick.number ?? null };
+}
+
+// THE single PR-eligibility predicate. Every caller uses it: paintHdPr (the saved
+// run's Create-PR control) and the pendingShipIt consumer. A workspace run is eligible when at
+// least one MEMBER can still get a PR (histWsShippable) — POST /api/pr's workspace arm
+// takes that member's `memberKey`. A single-project run keeps its three clauses.
 function histPrEligible(p) {
-  return !!(state.ghAvailable && p && p.survived && p.branch && p.sourceBranch
-    && p.target !== 'workspace');
+  if (!(state.ghAvailable && p)) return false;
+  if (p.target === 'workspace') return histWsShippable(p).length > 0;
+  return !!(p.survived && p.branch && p.sourceBranch);
+}
+// "Should the detail screen open Ship-it now?" A workspace run may already have some
+// PRs (rec.pr = the rollup) and still have repos to ship; a single run may not. A
+// workspace run with ANY unresolved member PR never auto-opens: histWsShippable reads
+// `undefined` as "no PR", so guessing here would tick (and re-POST) a repo that
+// already has an OPEN or MERGED PR.
+function histCanShip(p) {
+  if (!p) return false;
+  if (p.target === 'workspace' && hasWsMembers(p)) return !wsPrPending(p) && histPrEligible(p);
+  return !p.pr && histPrEligible(p);
 }
 
 // Keep the OPEN detail's PR control in step with the two PR-resolution paths
@@ -18837,8 +19258,7 @@ function splitGlanceResume(screen, acts) {
 
 // Detail-header PR control from the record's tri-state (undefined = enrichment
 // pending -> hidden; null = resolved/none -> Create when eligible; object = link).
-// Link-first, matching setupPrButton's order (app.js:8552-8569): a merged-but-
-// branch-gone run still shows "Merged".
+// Link-first: a merged-but-branch-gone run still shows "Merged".
 // Run chains: every pipeline can be waited for — the button deep-links to New pipeline with the pick made.
 function paintHdAfter(screen, record) {
   const btn = screen.querySelector('.hd-after');
@@ -18854,6 +19274,10 @@ function paintHdPr(screen, record, data) {
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
+  const repos = screen.querySelector('.hd-pr-repos');
+  if (repos) { repos.hidden = true; repos.replaceChildren(); }
+  // Legacy workspace rows / minimal deep-link records (no members) keep the single path.
+  if (record.target === 'workspace' && hasWsMembers(record)) { paintHdWsPr(record, data, btn, repos); return; }
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
@@ -18870,6 +19294,50 @@ function paintHdPr(screen, record, data) {
   // REPLACES histDetailState.record — a one-time bound listener would keep the stale
   // first record in its closure; reassigning onclick always captures the current one.
   btn.onclick = () => openShipItModal(record, data);
+}
+
+// Workspace header: every member repo on its own line (clarification: per-repo links
+// live here, the card shows the aggregate), plus Create PR while any can still ship.
+function paintHdWsPr(record, data, btn, repos) {
+  const members = histWsMembers(record);
+  if (wsPrPending(record)) return;                   // enrichment pending (row or any member)
+  if (repos && members.length) {
+    for (const m of members) repos.appendChild(hdWsRepoItem(m));
+    repos.hidden = false;
+  }
+  if (!histPrEligible(record)) return;
+  btn.hidden = false;
+  btn.onclick = () => openShipItModal(record, data);  // property, not listener (see single path)
+}
+
+function hdWsRepoItem(m) {
+  const li = document.createElement('li');
+  li.className = 'hd-pr-repo';
+  li.dataset.memberKey = m.memberKey;
+  const name = document.createElement('b');
+  name.textContent = m.name || m.memberKey;
+  // A real text node between name and status: the flex `gap` spaces them visually, but
+  // textContent (screen readers' fallback, copy/paste, the tests) would read "apiMerged".
+  li.append(name, ' ');
+  if (prLive(m.pr)) {
+    const merged = prStateOf(m.pr) === 'MERGED';
+    const a = document.createElement('a');
+    a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
+    a.href = m.pr.url; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = merged ? 'Merged' : 'View PR';
+    li.appendChild(a);
+    const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
+    pill.className = 'hist-merge';
+    pill.dataset.minLevel = 'expert';
+    pill.hidden = true;
+    li.appendChild(pill);
+  } else {
+    const note = document.createElement('span');
+    note.className = 'hd-pr-repo-note';
+    note.textContent = wsMemberNote(m);
+    li.appendChild(note);
+  }
+  return li;
 }
 
 // --- detail header: meta line, branch copy, Resume, Archive, banners --------

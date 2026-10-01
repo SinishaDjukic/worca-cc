@@ -150,6 +150,10 @@ test('open PR: the row reads "In review" and links to the saved run', async () =
   assert.equal(row.getAttribute('href'), `#history/${OPEN.projectKey}/po`, 'the row opens the run, not GitHub');
 });
 
+// A workspace run never offers Create PR from the list — the Runs list shows only a
+// word, and PR eligibility (members vs primary-only) is asserted for the saved-run
+// detail screen in ui-history-shipit.test.mjs.
+
 test('merged PR: the row reads "Merged"', async () => {
   const MERGED = { ...DONE, id: 'pm', pr: { state: 'MERGED', url: 'https://gh/x/pull/9', number: 9 } };
   assert.equal(word(await rowFor(MERGED)), 'Merged');
