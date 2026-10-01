@@ -418,6 +418,7 @@ export function createAskTools(deps) {
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
         engine: SCHEMA.s('claude | codex | copilot | cursor — only when the user asked for that engine; omit for the default. codex, copilot and cursor are beta: never pick one on your own'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
+        sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),
         attachmentIds: { type: 'array', items: { type: 'string' },
           description: 'attachment ids of this conversation the run should receive as extra files — copied into the run\'s extras/ folder when the user starts it' },

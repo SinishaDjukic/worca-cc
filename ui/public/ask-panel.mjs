@@ -3969,6 +3969,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
 
+    // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
+    const sameSrc = doc.createElement('input');
+    sameSrc.type = 'checkbox';
+    sameSrc.className = 'ask-card-same-source';
+    sameSrc.checked = card.sameAsSource === true;
+    sameSrc.setAttribute('aria-label', 'Run on the source branch');
+    feature.disabled = sameSrc.checked;
+    // updateTargetSub is a function declaration further down in this same scope (hoisted).
+    sameSrc.addEventListener('change', () => { feature.disabled = sameSrc.checked; updateTargetSub(); });
+    // The card header names the feature branch: never a typed name the run will ignore.
+    const featureWord = () => (sameSrc.checked ? 'none (source branch)' : (feature.value.trim() || 'auto'));
+
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
 
@@ -4056,12 +4068,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
-        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`;
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
         const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
         const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
-        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${featureWord()}`;
       }
     }
     feature.addEventListener('input', updateTargetSub);
@@ -4088,7 +4100,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           updateTargetSub();
         });
         grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch));
+          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
+          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
@@ -4129,7 +4142,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
       grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
-        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch));
+        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
+        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {
@@ -4219,7 +4233,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       };
     }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
-    if (feature) body.featureBranch = feature;
+    const same = rootEl.querySelector('.ask-card-same-source');
+    if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
+    else if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {
       body.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -4345,6 +4361,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
+    if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');

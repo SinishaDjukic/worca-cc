@@ -1961,6 +1961,31 @@ export function totalsFor(row) {
   return { cost, active };
 }
 
+/** [[projectKey, branchRecord]] of a pipelines row: every workspace member's, else the single run's own.
+ *  Exported for pipeline-delete's same-branch guard. */
+export function branchRecordsOf(row) {
+  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
+  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
+  const workspaceBranches = wm?.branches || row.branches;
+  const isWorkspace = row.target === 'workspace' && workspaceBranches && typeof workspaceBranches === 'object';
+  return isWorkspace ? Object.entries(workspaceBranches) : [[row.project_key ?? row.projectKey ?? null, branch]];
+}
+
+/** Run on the source branch (branch.sameAsSource): each member's merge back of its hidden branch into
+ *  its source. `merged: null` = not attempted yet (the run, or its teardown, is still going). null for
+ *  every other run, so their history entries keep today's shape. */
+export function mergeBackFor(row) {
+  if (!row || typeof row !== 'object') return null;
+  const members = [];
+  for (const [projectKey_, br] of branchRecordsOf(row)) {
+    if (!br || br.sameAsSource !== true) continue;
+    const mb = br.mergeBack && typeof br.mergeBack === 'object' ? br.mergeBack : null;
+    members.push({ projectKey: projectKey_ || null, source: br.source || null, branch: br.feature || null,
+      merged: mb ? mb.merged === true : null, kind: mb?.kind || null, reason: mb?.reason || null, sha: mb?.sha || null });
+  }
+  return members.length ? { merged: members.every((m) => m.merged === true), members } : null;
+}
+
 /**
  * Return the still-live worktrees retained after a teardown commit failure.
  * The DB stores single-project metadata in `branch` and workspace metadata in
@@ -1969,15 +1994,8 @@ export function totalsFor(row) {
  */
 export function retainedWorkFor(row) {
   if (!row || typeof row !== 'object') return null;
-  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
-  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const workspaceBranches = wm?.branches || row.branches;
-  const isWorkspace = row.target === 'workspace' && workspaceBranches && typeof workspaceBranches === 'object';
-  const candidates = isWorkspace
-    ? Object.entries(workspaceBranches)
-    : [[row.project_key ?? row.projectKey ?? null, branch]];
   const members = [];
-  for (const [projectKey_, br] of candidates) {
+  for (const [projectKey_, br] of branchRecordsOf(row)) {
     const failure = br?.commitFailed;
     const worktreeDir = br?.worktreeDir;
     if (!failure || !worktreeDir || !existsSync(worktreeDir)) continue;
@@ -1998,13 +2016,8 @@ export function retainedWorkFor(row) {
 /** Checked-out members of a finished run (issue #529) — never an error, unlike retainedWorkFor. */
 export function checkoutRecordsFor(row) {
   if (!row || typeof row !== 'object') return null;
-  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
-  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
-  const wsBranches = wm?.branches || row.branches;
-  const isWorkspace = row.target === 'workspace' && wsBranches && typeof wsBranches === 'object';
-  const candidates = isWorkspace ? Object.entries(wsBranches) : [[row.project_key ?? row.projectKey ?? null, branch]];
   const members = [];
-  for (const [pk, br] of candidates) {
+  for (const [pk, br] of branchRecordsOf(row)) {
     const c = br?.checkout;
     // A linked folder (checkout.external) lives at checkout.dir; br.worktreeDir is the run's own path.
     const dir = c?.external ? c.dir : br?.worktreeDir;
@@ -2163,6 +2176,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     }
   }
   const { cost, active } = totalsFor(row);
+  const mergeBack = mergeBackFor(row);
   const entry = {
     id: row.id,
     dir: row.dir,
@@ -2180,6 +2194,8 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     runEngine: row.run_engine || 'claude',
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
+    // Only a run on its source branch carries these two keys (history shape unchanged otherwise).
+    ...(mergeBack ? { sameAsSource: true, mergeBack } : {}),
     survived,
     added,
     removed,

@@ -249,3 +249,13 @@ test('engine: omitted keeps the card shape, a known engine rides the card, an un
   assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gemini' })), [PROPOSAL_ERRORS.unknownEngine('gemini')]);
   assert.match(PROPOSAL_ERRORS.unknownEngine('gemini'), /one of claude, codex, copilot, cursor/);
 });
+
+test('sameAsSource: a card carries it only when true; a non-boolean is an error', async () => {
+  const on = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: true }, { cardId: 'card_3f2a9c01' }));
+  assert.equal(on.sameAsSource, true);
+  const off = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' }, { cardId: 'card_3f2a9c01' }));
+  assert.equal('sameAsSource' in off, false, 'the pinned key set is unchanged');
+  const bad = await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: 'yes' }, { cardId: 'card_3f2a9c01' });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((e) => /sameAsSource/.test(e)));
+});
