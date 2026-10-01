@@ -1801,6 +1801,10 @@ const startRunHandler = async (req, res) => {
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
     }
 
+    // Run on the source branch: an explicit boolean, validated before a schedule stores it.
+    if (body.sameAsSource !== undefined && body.sameAsSource !== null && typeof body.sameAsSource !== 'boolean') {
+      return badRequest(res, 'sameAsSource must be true or false');
+    }
     // Scheduled runs: `scheduledFor` (one-shot) and/or `repeat` (recurring) turn this
     // request into a TICKET instead of a run. Parsed here so a bad time is a clean 400
     // before anything else; everything below still validates the request, so a schedule
@@ -1940,11 +1944,16 @@ const startRunHandler = async (req, res) => {
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
       : (sched ? [] : await writeExtras(runId, body.extras));
 
+    // Run on the source branch (explicit flag — never inferred from feature === source): the run
+    // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
+    // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
+    const sameAsSource = body.sameAsSource === true && !scanTarget && !memoryScope;
     const branch = {
       source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
         ? body.sourceBranch.trim() : null,
-      feature: typeof body.featureBranch === 'string' && body.featureBranch.trim()
+      feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
+      ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
       before: typeof body.syncBeforeStart === 'boolean' ? body.syncBeforeStart : null,         // null = project default
@@ -2240,7 +2249,8 @@ const startRunHandler = async (req, res) => {
         entry.status = 'error';
         entry.events.push(event);
         broadcast(event);
-      });
+      })
+      .finally(() => afterRunSettled(orch));
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -2514,6 +2524,8 @@ async function fireTicket(ticket) {
     if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
     if (ticket.sourceFromPrevious) {
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
+      if (prev && prev.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
       if (!prev) return { ok: false, error: 'the run before it left no branch to start from', transient: false };
       if (prev.sourceBranch) {
         if (!(await isValidSourceRef(ticket.projectDir, prev.sourceBranch))) return { ok: false, error: `branch ${prev.sourceBranch} no longer exists`, transient: false };
@@ -2531,8 +2543,9 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  // Every occurrence of a series needs its own feature branch.
-  if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
+  // Every occurrence of a series needs its own feature branch — except a run on its source branch,
+  // which has none of its own (the server ignores featureBranch for it).
+  if (ticket.scheduleId && body.sameAsSource !== true && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
     const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
     body.featureBranch = `${body.featureBranch.trim()}-${day}`;
@@ -2552,6 +2565,18 @@ async function fireTicket(ticket) {
 function liveProbe({ id, pipelineId }) {
   const e = liveRunEntry(id) || (pipelineId ? liveRunEntry(pipelineId) : null);
   return !!e && !SETTLED_RUN.has(String(e.status || ''));
+}
+
+// Run on the source branch: the merge back happens in teardown, AFTER `done` — the history row a client
+// fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
+// orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
+const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
+function afterRunSettled(orch) {
+  try {
+    if (!ranMergeBack(orch.getState())) return;
+    emitChanged('pipelines-changed', 'updated');
+    setTimeout(() => { void schedulerTick(); }, 0);
+  } catch { /* a refresh hint only */ }
 }
 
 let _schedulerBusy = false;
@@ -2870,7 +2895,11 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
   if (verb === 'run-now') {
     if (found.kind === 'once' && found.item.after && found.item.sourceFromPrevious) {
       const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
-      if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+      const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      if (!prev) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+      // A run on its source branch is still merging back: a forced ticket would skip the gate and hit fireTicket's
+      // transient backstop, i.e. a retry_at of ≥ 1 min. Say so now instead.
+      if (prev.pending) return out(409, { error: `‘${p.title || 'the run before it'}’ is still merging its work back — try again in a moment` });
     }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id, { by: by || undefined }) : requestRunNow(found.item.id, { by: by || undefined });
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
@@ -3470,7 +3499,8 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.status = 'error';
       entry.events.push(event);
       broadcast(event);
-    });
+    })
+    .finally(() => afterRunSettled(orch));
 
   return { ok: true, runId, pipelineId };
 }
@@ -4919,6 +4949,10 @@ app.post('/api/pr', async (req, res) => {
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
   const { id, state } = resolved;
+  // A run on its source branch has no PR: its work is ON the base (head == base). It ships with Push.
+  if (state.branch && state.branch.sameAsSource === true) {
+    return res.status(409).json({ error: 'this run committed onto its source branch — push it instead of opening a pull request' });
+  }
 
   const repoDir = state.projectDir;
   const feature = state.branch && state.branch.feature;
@@ -5001,6 +5035,33 @@ app.post('/api/pr', async (req, res) => {
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null });
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/push { projectKey | projectDir, id } -> { ok, remote, branch }
+// The shipping action of a run on its source branch (branch.sameAsSource): no PR (head == base), so
+// push the source — which the run fast-forwarded onto its work — to the remote it syncs from.
+// Single-project runs only (a workspace run's state.branch is just its primary member).
+app.post('/api/push', async (req, res) => {
+  const resolved = await resolvePrPipeline(req.body || {}, res);
+  if (!resolved) return;
+  const { id, state } = resolved;
+  const b = state.branch || {};
+  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here — open a pull request instead' });
+  if (state.target === 'workspace') return res.status(409).json({ error: 'a workspace run is pushed per project by hand (see its merge-back banner)' });
+  // isSafeBranchName: setup already refused any other source; this keeps an edited record out of git's argv.
+  if (!state.projectDir || !b.source || !isSafeBranchName(b.source)) return badRequest(res, 'pipeline has no branch info to push');
+  if (!(b.mergeBack && b.mergeBack.merged === true)) {
+    return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back) — merge it by hand first` });
+  }
+  // The run's sync remote — validated like the branch (the record's value ends up in git's argv).
+  const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote
+    : (effectiveSyncSettings(projectKey(state.projectDir)).remote || 'origin');
+  const pushed = await pushBranch(state.projectDir, b.source, remote);
+  if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
+  const by = actorOf(req);
+  appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  res.json({ ok: true, remote, branch: b.source });
 });
 
 // ---------------------------------------------------------------------------

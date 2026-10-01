@@ -60,3 +60,27 @@ test('--branch <name> actually reaches the orchestrator (kept on success)', asyn
   const branches = spawnSync('git', ['-C', repo, 'branch', '--format=%(refname:short)']).stdout.toString();
   assert.match(branches, /feat\/cli-plumbed/);
 });
+
+test('--help advertises --on-source-branch', () => {
+  const out = spawnSync(process.execPath, [CLI, '--help']).stdout.toString();
+  assert.match(out, /--on-source-branch/);
+});
+
+test('--on-source-branch with --branch exits 2', () => {
+  const r = spawnSync(process.execPath, [CLI, '--prompt', 'x', '--on-source-branch', '--branch', 'feat/x']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr.toString(), /--on-source-branch and --branch cannot both be given/);
+});
+
+test('--on-source-branch: the run lands on main (checked out + clean), no run branch is left', async () => {
+  const repo = await freshRepo();
+  const before = spawnSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).stdout.trim();
+  const r = spawnSync(process.execPath, [CLI, '--project', repo, '--prompt', 'demo', '--mock', '--yes', '--on-source-branch'],
+    { env: { ...process.env, WORCA_MOCK: '1' }, encoding: 'utf8' });
+  assert.equal(r.status, 0, `cli failed: ${r.stderr}`);
+  const branches = spawnSync('git', ['-C', repo, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' }).stdout;
+  assert.match(branches, /^main$/m);
+  assert.doesNotMatch(branches, /worca-cc\//, 'the hidden branch is deleted after the merge back');
+  assert.notEqual(spawnSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).stdout.trim(), before, 'main moved');
+  assert.equal(spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', before, 'main']).status, 0, 'main only moved forward');
+});

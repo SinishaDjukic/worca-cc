@@ -256,3 +256,20 @@ test('a remote-started run diffs from its recorded baseSha; without startRef it 
     await rm(r2, { recursive: true, force: true });
   }
 });
+
+test('rowToHistoryEntry: a same-branch run carries sameAsSource + mergeBack; other runs keep their shape', async () => {
+  const { listPipelines } = await import('../src/core/artifacts.mjs');
+  const same = await seedPipeline(repo, { title: 'Same', status: 'done', startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1', sameAsSource: true,
+      mergeBack: { merged: false, kind: 'dirty', reason: 'main is checked out in /x with 1 uncommitted change(s)', at: 't' } } });
+  const plain = await seedPipeline(repo, { title: 'Plain', status: 'done', startedAt: '2026-06-01T00:00:00Z',
+    branch: { source: 'main', feature: 'worca-cc/feat-1' } });
+  const rows = await listPipelines(repo);
+  const s = rows.find((r) => r.id === same.id);
+  assert.equal(s.sameAsSource, true);
+  assert.equal(s.mergeBack.merged, false);
+  assert.deepEqual(s.mergeBack.members.map((m) => [m.source, m.branch, m.merged, m.kind]), [['main', 'worca-cc/feat-1', false, 'dirty']]);
+  const p = rows.find((r) => r.id === plain.id);
+  assert.equal('sameAsSource' in p, false);
+  assert.equal('mergeBack' in p, false);
+});

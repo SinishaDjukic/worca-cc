@@ -174,3 +174,51 @@ test('merged PR with branch gone (survived=false) still reads "Merged"', async (
 // The two merge-pill re-check tests moved to test/ui-history-shipit.test.mjs:
 // the pill is detail-only now (`.hd .hist-merge`), and the PR is opened from the
 // detail screen's ship-it modal rather than from the list card.
+
+const SAME_MEMBER = { projectKey: DONE.projectKey, source: 'main', branch: 'worca-cc/feat-ps' };
+// pr: null = "gh answered: no PR yet". DONE has no `pr` key, and paintHdPr returns early on
+// pr === undefined (app.js:18309), which would make every "no Create PR" assertion below vacuous.
+const SAME_MERGED = { ...DONE, id: 'ps', pr: null, branch: 'worca-cc/feat-ps', survived: false, sameAsSource: true,
+  mergeBack: { merged: true, members: [{ ...SAME_MEMBER, merged: true, kind: null, reason: null, sha: 'a'.repeat(40) }] } };
+const SAME_NOT = { ...SAME_MERGED, id: 'pn2', survived: true,
+  mergeBack: { merged: false, members: [{ ...SAME_MEMBER, merged: false, kind: 'dirty', reason: 'main is checked out in /x/proj with 2 uncommitted change(s)', sha: null }] } };
+const sameArms = (rows, pushes) => (url, opts) => {
+  if (url.endsWith('/api/push')) { pushes.push(JSON.parse(opts.body)); return ok({ ok: true, remote: 'origin', branch: 'main' }); }
+  return armsFor(rows)(url);
+};
+
+test('same-branch, merged back: Push replaces Create PR and posts /api/push; the header arrow points into the source', async () => {
+  const pushes = [];
+  const ctx = await boot({ fetchHandler: sameArms([SAME_MERGED], pushes) });
+  ctx.showDetails(SAME_MERGED);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, true);
+  const push = doc.querySelector('#hist-detail .hd-push');
+  assert.equal(push.hidden, false);
+  assert.equal(push.textContent, 'Push main');
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main ←');
+  push.click();
+  await ctx.settle();
+  assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });
+  assert.equal(push.textContent, 'Pushed to origin');
+});
+
+test('same-branch, not merged back: no Push, no Create PR, a banner with the reason and the manual commands', async () => {
+  const ctx = await boot({ fetchHandler: sameArms([SAME_NOT], []) });
+  ctx.showDetails(SAME_NOT);
+  await ctx.settle();
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-push').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-pr').hidden, true, 'no PR for a run on its source branch, even though its branch survived');
+  // histPrEligible's `!p.sameAsSource` term, through glancePrInput (:24899): the branch survived, gh is
+  // available and pr is null, so WITHOUT the term the headline would invite a PR ("…before you open a
+  // pull request"). Red first: drop the term and see this fail.
+  const glance = doc.querySelector('#hist-detail .hd-glance').textContent;
+  assert.match(glance, /Review the changes in Diff/);
+  assert.doesNotMatch(glance, /pull request|Ready to ship/);
+  const banner = doc.querySelector('#hist-detail .merge-back-banner');
+  assert.equal(banner.hidden, false);
+  assert.match(banner.textContent, /uncommitted change/);
+  assert.match(banner.querySelector('code').textContent, /git switch 'main'\ngit merge 'worca-cc\/feat-ps'\ngit branch -d 'worca-cc\/feat-ps'/);
+});

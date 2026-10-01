@@ -558,3 +558,35 @@ test('POST /api/pr/describe: a request the client abandons aborts the model call
   for (let i = 0; i < 200 && !aborted; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(aborted, true);
 });
+
+const postTo = (path, body) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const SAME = (mergeBack) => ({ source: 'main', feature: 'worca-cc/same-pp', sameAsSource: true, ...(mergeBack ? { mergeBack } : {}) });
+const MERGED = { merged: true, sha: 'a'.repeat(40), commits: 1, at: 't' };
+
+test('POST /api/pr: a run on its source branch is refused (409) — it ships with Push', async () => {
+  const s = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME(MERGED) });
+  gitInfo.setRunner((cmd, args) => Promise.resolve({ ok: true, stdout: cmd === 'gh' && args[0] === '--version' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+  const r = await postTo('/api/pr', { projectKey: s.key, id: s.id });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /source branch/);
+});
+
+test('POST /api/push: pushes the SOURCE branch of a merged-back same-branch run to its sync remote', async () => {
+  const s = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME(MERGED) });
+  const seen = [];
+  gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 }); });
+  const r = await postTo('/api/push', { projectKey: s.key, id: s.id });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, remote: 'origin', branch: 'main' });
+  assert.ok(seen.some((c) => c[0] === 'git' && c[1] === 'push' && c.includes('origin') && c.at(-1) === 'main'), JSON.stringify(seen));
+});
+
+test('POST /api/push: 409 when not merged back, and 409 for a normal run (open a PR instead)', async () => {
+  const notMerged = await seedPipeline(betaRepo, { title: 'Same', status: 'done', branch: SAME({ merged: false, kind: 'dirty', reason: 'x', at: 't' }) });
+  let r = await postTo('/api/push', { projectKey: notMerged.key, id: notMerged.id });
+  assert.equal(r.status, 409);
+  assert.match((await r.json()).error, /not merged back/);
+  const plain = await seedPipeline(betaRepo, { title: 'Plain', status: 'done', branch: { source: 'main', feature: 'worca-cc/plain-pp' } });
+  r = await postTo('/api/push', { projectKey: plain.key, id: plain.id });
+  assert.equal(r.status, 409);
+});

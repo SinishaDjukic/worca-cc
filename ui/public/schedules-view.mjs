@@ -132,7 +132,8 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       item.after ? row('After', `${(item.after.title || item.after.id.slice(0, 8))} · ${afterWord(item.after)}`) : null,
       item.after ? row('If it fails', item.after.policy === 'any' ? 'Start anyway' : 'Do not start') : null,
       item.sourceFromPrevious ? row('Source branch', 'the run before it') : null,
-      row('Feature branch', item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : ''),
+      row('Feature branch', item.summary.sameAsSource ? 'none — commits onto the source branch'
+        : (item.summary.featureBranch ? (item.kind === 'recurring' ? `${item.summary.featureBranch}-<date>` : item.summary.featureBranch) : '')),
       row('Guardrails', item.summary.guardrailsId && item.summary.guardrailsId !== 'permissive' ? item.summary.guardrailsId : ''),
       row('Extra files', item.summary.extras ? String(item.summary.extras) : ''),
       item.after ? null : row('If Worca is not running', item.ifMissed === 'skip' ? 'Skip it' : `Start it late, at most ${item.graceMin >= 60 && item.graceMin % 60 === 0 ? `${item.graceMin / 60} h` : `${item.graceMin} min`}`),

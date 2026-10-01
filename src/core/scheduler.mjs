@@ -92,6 +92,7 @@ export function summarizeRequest(req) {
     memoryScope: r.memoryScope || null,
     mock: !!r.mock,
     extras: Array.isArray(r.internal?.extrasPaths) ? r.internal.extrasPaths.length : 0,
+    ...(r.sameAsSource === true ? { sameAsSource: true } : {}),
   };
 }
 
@@ -429,7 +430,26 @@ export function afterRefOf(id) {
     projectKey: p.target === 'project' ? p.project_key : null, workspaceId: p.workspace_key || null, scheduleId: null };
 }
 
-function pipelineGate(row, { policy, isLive }) {
+// Run on the source branch (branch.sameAsSource): the work lands on the source in teardown, AFTER the row
+// reads `done` (run-harness persists `done`, emits it, then tears down). Pending = a DONE row (only a done
+// run merges back; an interrupted one gets no teardown until it is resumed) with a member record that has
+// a worktree and no mergeBack yet; a record without a worktreeDir (a setup failure) never gets a teardown.
+// Bounded from the row's last write: a host killed mid-teardown must not hold its dependents forever.
+const MERGE_BACK_WAIT_MS = 10 * 60_000;
+function mergeBackPending(row, now = Date.now()) {
+  if (!row || row.status !== 'done') return false;
+  const records = row.target === 'workspace'
+    ? Object.values(parseJson(row.workspace_meta, null)?.branches || {})
+    : [parseJson(row.branch, null)];
+  if (!records.some((b) => b && b.sameAsSource === true && b.worktreeDir && !b.mergeBack)) return false;
+  const age = now - Date.parse(row.updated_at);
+  return !(age >= MERGE_BACK_WAIT_MS);   // no updated_at (NaN) → still within the bound
+}
+/** The branch a finished run's work is on: its feature branch — or, for a run on its source branch,
+ *  its source once the work was merged back (its hidden branch otherwise). */
+const workBranchOf = (b) => (b && b.sameAsSource === true && b.mergeBack && b.mergeBack.merged === true ? b.source : b && b.feature);
+
+function pipelineGate(row, { policy, isLive, now = Date.now() }) {
   const base = { pipelineId: row.id, title: row.title, status: row.status };
   // Archive (DELETE /api/runs/:id -> pipeline-delete.mjs) never DELETEs the row: it stamps archived_at and
   // removes the branch, the worktree and the artifacts. For a chain that IS spec D9's removed predecessor:
@@ -437,6 +457,9 @@ function pipelineGate(row, { policy, isLive }) {
   // start them — or fail them on a vanished ref. Archive refuses a live run, so this sits above isLive.
   if (row.archived_at) return { state: 'gone', reason: 'was archived', ...base };
   if ((isLive && isLive({ id: row.id, pipelineId: row.id })) || OPEN_PIPELINE.includes(row.status)) return { state: 'waiting', ...base };
+  // A run on its source branch is not finished until its merge back is: a dependent started now would
+  // branch off the source before that run's work lands on it.
+  if (mergeBackPending(row, now)) return { state: 'waiting', ...base };
   if (row.status === 'done') return { state: 'ok', ...base };
   if (BAD_PIPELINE_REASON[row.status]) return policy === 'any' ? { state: 'ok', ...base } : { state: 'bad', reason: BAD_PIPELINE_REASON[row.status], ...base };
   return { state: 'waiting', ...base };   // an unknown status: keep waiting rather than guess
@@ -462,27 +485,33 @@ export function predecessorState(after, { policy = 'done', now = Date.now(), isL
     }
     const row = pipelineRefRow(t.pipelineId);
     if (!row) return { state: 'gone', reason: 'was removed', ...base };
-    return { ...pipelineGate(row, { policy, isLive: isLive ? (q) => isLive({ id: t.id, pipelineId: q.pipelineId }) : null }), title: t.title || row.title };
+    return { ...pipelineGate(row, { policy, isLive: isLive ? (q) => isLive({ id: t.id, pipelineId: q.pipelineId }) : null, now }), title: t.title || row.title };
   }
   const row = pipelineRefRow(after.id);
   if (!row) return { state: 'gone', reason: 'was removed', pipelineId: null, title: null, status: null };
-  return pipelineGate(row, { policy, isLive });
+  return pipelineGate(row, { policy, isLive, now });
 }
 
-/** The feature branch(es) a finished pipeline left, in POST /api/run's own field names. */
-export function previousBranchesOf(pipelineId) {
+/** The feature branch(es) a finished pipeline left, in POST /api/run's own field names. `{ pending: true }`
+ *  while a run on its source branch is still merging back (the gate waits on that; this is the backstop
+ *  for a forced ticket, which skips the gate). */
+export function previousBranchesOf(pipelineId, { now = Date.now() } = {}) {
   const row = pipelineRefRow(pipelineId);
   if (!row) return null;
+  if (mergeBackPending(row, now)) return { pending: true };
   if (row.target === 'workspace') {
     const meta = parseJson(row.workspace_meta, null);
     const branches = meta && meta.branches && typeof meta.branches === 'object' ? meta.branches : null;
     if (!branches) return null;
     const byKey = {};
-    for (const [key, b] of Object.entries(branches)) if (b && typeof b.feature === 'string' && b.feature) byKey[key] = b.feature;
+    for (const [key, b] of Object.entries(branches)) {
+      const br = workBranchOf(b);
+      if (typeof br === 'string' && br) byKey[key] = br;
+    }
     return Object.keys(byKey).length ? { sourceBranchByKey: byKey } : null;
   }
-  const b = parseJson(row.branch, null);
-  return b && typeof b.feature === 'string' && b.feature ? { sourceBranch: b.feature } : null;
+  const br = workBranchOf(parseJson(row.branch, null));
+  return typeof br === 'string' && br ? { sourceBranch: br } : null;
 }
 
 /** Open tickets that wait for the given run — what a cancel or an archive would strand. */

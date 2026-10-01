@@ -19,7 +19,7 @@ import { join, isAbsolute } from 'node:path';
 
 import { projectKey, projectStorePath } from './store.mjs';
 import {
-  listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor,
+  listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, branchRecordsOf,
   recordArtifact, appendAudit, findRunDir,
 } from './artifacts.mjs';
 import { worcaHome } from './projects.mjs';
@@ -34,6 +34,19 @@ import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
 
 // Statuses for which deletion is refused (the entry is or may be live).
+// Run on the source branch (branch.sameAsSource): archive never `git branch -D`s
+//  (a) a same-branch run's own source, whatever its record says (D1: its `feature` is its hidden branch), nor
+//  (b) a branch ANOTHER live (non-archived) same-branch run in the same project committed onto — a chain
+//      after a normal run, or a "Run branches" source pick: after its merge back that run's work lives ONLY there.
+const keepsSource = (br, name) => !!br && br.sameAsSource === true && name === br.source;
+// ponytail: a LIKE prefilter + JS check per archive; index a sameAsSource column if archives ever get hot.
+function heldBySameSourceRun(rowId, pk, name) {
+  const rows = getDb().prepare(`SELECT id, target, project_key, branch, workspace_meta FROM pipelines
+    WHERE archived_at IS NULL AND id != ? AND (branch LIKE '%sameAsSource%' OR workspace_meta LIKE '%sameAsSource%')`).all(rowId);
+  const holder = rows.find((r) => branchRecordsOf(r).some(([k, b]) => k === pk && keepsSource(b, name)));
+  return holder ? holder.id : null;
+}
+
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
 function err(message, code) { return Object.assign(new Error(message), { code }); }
 
@@ -208,7 +221,9 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
       const wt = br?.worktreeDir || null;
       if (!repoDir || (!feature && !wt)) continue;
       const liveWt = wt && existsSync(wt) ? wt : null;
-      const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null;
+      const heldBy = feature && !keepsSource(br, feature) ? heldBySameSourceRun(row.id, pk, feature) : null;
+      if (heldBy) report.warnings.push(`${pk}: kept ${feature}: run ${heldBy} committed onto it (run on the source branch)`);
+      const liveBranch = feature && !keepsSource(br, feature) && !heldBy && (await branchExists(repoDir, feature)) ? feature : null;
       if (!liveWt && !liveBranch) continue;
       const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
       for (const stp of res.steps.filter((x) => !x.ok)) {
@@ -221,7 +236,9 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     const wt = state?.branch?.worktreeDir || null;
     if (repoDir && (feature || wt)) {
       const liveWt = wt && existsSync(wt) ? wt : null;                 // skip already-removed worktrees
-      const liveBranch = feature && (await branchExists(repoDir, feature)) ? feature : null; // skip merged/deleted
+      const heldBy = feature && !keepsSource(state?.branch, feature) ? heldBySameSourceRun(row.id, row.project_key, feature) : null;
+      if (heldBy) report.warnings.push(`kept ${feature}: run ${heldBy} committed onto it (run on the source branch)`);
+      const liveBranch = feature && !keepsSource(state?.branch, feature) && !heldBy && (await branchExists(repoDir, feature)) ? feature : null; // skip merged/deleted
       if (liveWt || liveBranch) {
         const res = await removeWorktree({ projectDir: repoDir, worktreeDir: liveWt, branch: liveBranch, force: true });
         report.branch = liveBranch;

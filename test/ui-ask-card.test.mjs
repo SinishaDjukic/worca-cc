@@ -424,3 +424,15 @@ test('ui-ask-card: a proposed workflowId no list serves fails loudly — inline 
   assert.equal(ctx.runBodies.length, 1);
   assert.equal(ctx.runBodies[0].workflowId, 'wf_review', 'Start posts the id the USER picked, never a fallback');
 });
+
+test('ui-ask-card: a sameAsSource card shows the checkbox on, disables the feature input, and Start posts the flag', async () => {
+  const ctx = await boot();
+  await openCard(ctx, { ...CARD, sameAsSource: true });
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('.ask-card-same-source').checked, true);
+  assert.equal(doc.querySelector('.ask-card-feature').disabled, true);
+  doc.querySelector('[data-ask-card-start]').click();
+  await settle(ctx.window, 6);
+  assert.equal(ctx.runBodies[0].sameAsSource, true);
+  assert.equal('featureBranch' in ctx.runBodies[0], false);
+});

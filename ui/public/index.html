@@ -338,6 +338,11 @@
                     <label for="featureBranch">Feature branch <span class="opt">(optional)</span></label>
                     <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
                     <small class="hint">Leave empty and Worca will propose one.</small>
+              <label class="switch-row same-src-row">
+                <input id="sameAsSource" class="sw-input" type="checkbox" aria-describedby="sameAsSourceHint">
+                <span class="switch switch-sm"></span><span class="txt">Run on the source branch</span>
+              </label>
+              <small class="hint" id="sameAsSourceHint" hidden>The run's commits land on the source branch when it finishes (fast-forward only). No feature branch is kept.</small>
                   </div>
                 </div>
 
@@ -697,6 +702,7 @@
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
+                    <div class="merge-back-banner" role="status" hidden></div>
                     <button type="button" class="hist-discard btn-ghost" hidden>Discard worktree</button>
                   </div>
                   <div class="rd-facts"></div>
@@ -712,6 +718,7 @@
                   <span class="hist-merge" hidden data-min-level="expert"></span>
                   <button type="button" class="hd-pr" hidden data-min-level="advanced">Create PR</button>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-push" hidden data-min-level="advanced"></button>
                   <button type="button" class="hd-after btn-ghost" hidden data-min-level="advanced">Schedule a run after this</button>
                 </div>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon

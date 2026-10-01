@@ -251,6 +251,8 @@ export function createProposalValidator({
       const m = typeof cardId === 'string' ? CARD_HEX_RE.exec(cardId) : null;
       featureBranch = suggestBranchName({ prompt: brief || title, title, pipelineId: m ? m[1] : '' });
     }
+    if (inp.sameAsSource !== undefined && inp.sameAsSource !== null && typeof inp.sameAsSource !== 'boolean') errors.push('sameAsSource must be true or false');
+    const sameAsSource = inp.sameAsSource === true;
 
     // ── schedule (docs/scheduled-runs.md "Ask Worca"): when | every, read in the user's zone ──
     const spec = resolveScheduleSpec({ ...inp, projectKey: target.projectKey || '', workspaceId: target.workspaceId || '' }, { nowMs, timeZone, defaults: scheduleDefaults, afterRef });
@@ -284,7 +286,9 @@ export function createProposalValidator({
         ...(runSource ? { source: runSource } : {}),
         ...(sourceWarning ? { sourceWarning } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
-        ...(sourceRef ? { sourceRef } : {}) },
+        ...(sourceRef ? { sourceRef } : {}),
+        // Only a card proposing a run on its source branch carries the key (run cards are pinned).
+        ...(sameAsSource ? { sameAsSource: true } : {}) },
     };
   }
   return { validateProposal };

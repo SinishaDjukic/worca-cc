@@ -457,3 +457,77 @@ test('GET /api/branches lists the run branches that still exist, newest first', 
   assert.equal(data.runs.some((r) => r.pipelineId === '2b3c4d5e'), false, 'a branch that no longer exists is not offered');
   assert.ok(data.branches.includes('worca/keep-1a2b3c4d'), 'the plain list is unchanged');
 });
+
+const headOf = (d) => execFileSync('git', ['-C', d, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
+const branchesOf = (d) => execFileSync('git', ['-C', d, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' });
+const branchRow = (pipelineId) => JSON.parse(getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(pipelineId).branch || 'null');
+
+test('sameAsSource: 400 when not a boolean', async () => {
+  const r = await post('/api/run', { projectDir: dir, prompt: 'x', mock: true, sameAsSource: 'yes' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /sameAsSource must be true or false/);
+});
+
+test('sameAsSource: an immediate run ignores the typed feature, merges back onto the source, leaves no branch', async () => {
+  const d = gitDir('same-src');
+  const main = headOf(d);
+  const r = await post('/api/run', { projectDir: d, prompt: 'same', mock: true, sourceBranch: main, featureBranch: 'typed', sameAsSource: true });
+  assert.equal(r.status, 200);
+  const e = await untilSettled((await r.json()).runId);
+  assert.equal(e.status, 'done');
+  // `done` lands BEFORE teardown: wait for the merge back on the row.
+  const b = await until(() => { const x = branchRow(e.pipelineId); return x && x.mergeBack ? x : null; });
+  assert.equal(b.sameAsSource, true);
+  assert.notEqual(b.feature, 'typed');
+  assert.equal(b.mergeBack.merged, true, JSON.stringify(b.mergeBack));
+  assert.doesNotMatch(branchesOf(d), /worca-cc\//);
+});
+
+test('flag OFF: featureBranch === sourceBranch is NOT switched to same-branch mode server-side', async () => {
+  const d = gitDir('same-off');
+  const main = headOf(d);
+  const before = execFileSync('git', ['-C', d, 'rev-parse', main], { encoding: 'utf8' }).trim();
+  const r = await post('/api/run', { projectDir: d, prompt: 'x', mock: true, sourceBranch: main, featureBranch: main });
+  assert.equal(r.status, 200, 'today: accepted, refused by the harness');
+  const e = await untilSettled((await r.json()).runId);
+  assert.ok(['error', 'paused'].includes(e.status), `today's refusal (must differ) still applies: ${e.status}`);
+  const b = e.pipelineId ? branchRow(e.pipelineId) : null;
+  assert.equal(b?.sameAsSource, undefined);
+  assert.equal(b?.mergeBack, undefined);
+  assert.equal(execFileSync('git', ['-C', d, 'rev-parse', main], { encoding: 'utf8' }).trim(), before);
+});
+
+test('sameAsSource on a repeating schedule: Run now never date-suffixes, the flag reaches the run', async () => {
+  const d = gitDir('same-rep');
+  const rule = { freq: 'weekly', weekdays: ['mo', 'tu', 'we', 'th', 'fr'], time: '02:00', tz: 'Europe/Berlin' };
+  const made = await (await post('/api/run', { projectDir: d, prompt: 'nightly', title: 'Nightly', mock: true,
+    featureBranch: 'nightly', sameAsSource: true, repeat: { rule, overlap: 'queue', maxFailures: 2 } })).json();
+  const now = await (await post(`/api/schedules/${made.scheduleId}/run-now`)).json();
+  assert.equal(now.status, 'fired');
+  const e = await untilSettled(now.runId);
+  assert.equal(e.status, 'done');
+  const b = branchRow(e.pipelineId);
+  assert.equal(b.sameAsSource, true);
+  assert.doesNotMatch(b.feature, /^nightly/, 'no `${featureBranch}-<date>` in same-branch mode');
+  assert.equal((await call('DELETE', `/api/schedules/${made.scheduleId}`)).status, 200);
+});
+
+test('chain: B (sameAsSource + sourceFromPrevious) after a same-branch A commits onto A\'s source', async () => {
+  const d = gitDir('same-chain');
+  const main = headOf(d);
+  const a = await (await post('/api/run', { projectDir: d, prompt: 'A', title: 'A', mock: true, sameAsSource: true, sourceBranch: main, scheduledFor: inFuture(1500) })).json();
+  const b = await (await post('/api/run', { projectDir: d, prompt: 'B', title: 'B', mock: true, sameAsSource: true, after: { kind: 'ticket', id: a.runId }, sourceFromPrevious: true })).json();
+  await new Promise((r) => setTimeout(r, 1600));
+  await schedulerTick();
+  const ea = await untilSettled(a.runId);
+  assert.equal(ea.status, 'done');
+  await until(async () => { await schedulerTick(); return runs.get(b.runId); }, 30000);
+  // A's `done` nudge ticked while A was still merging back: B waited at the GATE. No transient fireTicket
+  // error means no retry_at (≥ 1 min) and no "Worca will retry" feed item.
+  assert.equal(getDb().prepare('SELECT attempts FROM scheduled_runs WHERE id = ?').get(b.runId).attempts, 0);
+  const eb = await untilSettled(b.runId);
+  assert.equal(eb.status, 'done');
+  const bb = await until(() => { const x = branchRow(eb.pipelineId); return x && x.mergeBack ? x : null; });
+  assert.equal(bb.source, main, 'A merged back, so "A\'s branch" is A\'s source');
+  assert.equal(bb.mergeBack.merged, true);
+});

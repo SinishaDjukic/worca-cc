@@ -695,3 +695,38 @@ test('cancelResumeTicketsFor cancels only that pipeline’s open tickets and aud
   assert.match(note.message, /resumed by hand/);
   assert.match(note.message, /ada/);
 });
+
+test('a same-branch predecessor: the gate waits while its merge back is pending (bounded); previousBranchesOf → source once merged, hidden branch otherwise', () => {
+  const pk = projectKey(DIR);
+  const fresh = new Date().toISOString();
+  const seed = (id, branch, updatedAt = fresh, status = 'done') => { seedPipelineRow({ id, projectKey: pk, status, updatedAt, branch }); return id; };
+  const merged = seed('sab-merged', { source: 'main', feature: 'worca-cc/h-1', worktreeDir: '/w/1', sameAsSource: true, mergeBack: { merged: true, sha: 'a'.repeat(40) } });
+  const failed = seed('sab-failed', { source: 'main', feature: 'worca-cc/h-2', worktreeDir: '/w/2', sameAsSource: true, mergeBack: { merged: false, kind: 'dirty' } });
+  const tearing = seed('sab-tearing', { source: 'main', feature: 'worca-cc/h-3', worktreeDir: '/w/3', sameAsSource: true });
+  const crashed = seed('sab-crashed', { source: 'main', feature: 'worca-cc/h-4', worktreeDir: '/w/4', sameAsSource: true },
+    new Date(Date.now() - 11 * 60_000).toISOString());   // its host died between `done` and teardown
+  const setupFailed = seed('sab-setup', { source: 'main', sync: { result: 'remote-start' }, sameAsSource: true });
+  const plain = seed('sab-plain', { source: 'main', feature: 'worca-cc/p-5' });
+  // Resumable, so it gets no teardown until a resume: only a `done` run merges back.
+  const interrupted = seed('sab-interrupted', { source: 'main', feature: 'worca-cc/h-6', worktreeDir: '/w/6', sameAsSource: true }, fresh, 'interrupted');
+  assert.deepEqual(previousBranchesOf(merged), { sourceBranch: 'main' });
+  assert.deepEqual(previousBranchesOf(failed), { sourceBranch: 'worca-cc/h-2' });
+  assert.deepEqual(previousBranchesOf(tearing), { pending: true });
+  assert.deepEqual(previousBranchesOf(crashed), { sourceBranch: 'worca-cc/h-4' }, 'bounded: past MERGE_BACK_WAIT_MS the hidden branch is the answer');
+  assert.equal(previousBranchesOf(setupFailed), null, 'no worktree → nothing to wait for: "left no branch", never a wait forever');
+  assert.deepEqual(previousBranchesOf(plain), { sourceBranch: 'worca-cc/p-5' }, 'unchanged for every other run');
+  assert.deepEqual(previousBranchesOf(interrupted), { sourceBranch: 'worca-cc/h-6' }, 'never pending: an interrupted run merges nothing back');
+  const gate = (id) => predecessorState({ kind: 'pipeline', id }).state;
+  assert.equal(gate(tearing), 'waiting', 'a done same-branch run still merging back holds EVERY dependent (no attempt, no retry_at)');
+  assert.equal(gate(merged), 'ok');
+  assert.equal(gate(failed), 'ok');
+  assert.equal(gate(crashed), 'ok');
+  assert.equal(gate(setupFailed), 'ok');
+  assert.equal(gate(plain), 'ok', 'unchanged for every other run');
+  assert.equal(gate(interrupted), 'bad', 'answered at once, as for any interrupted predecessor today (BAD_PIPELINE_REASON)');
+});
+
+test('summarizeRequest: sameAsSource only when set', () => {
+  assert.equal(summarizeRequest({ sameAsSource: true }).sameAsSource, true);
+  assert.equal('sameAsSource' in summarizeRequest({}), false);
+});

@@ -837,3 +837,117 @@ test('workspace members snapshot to distinct retained-work-<key>.patch files', a
   assert.ok(existsSync(join(dir, 'retained-work-proj-0000abcd.patch')),
     'member patches must not collide on one filename');
 });
+
+// ── Run on the source branch (branch.sameAsSource) ───────────────────────────
+const git = (dir, ...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).stdout.trim();
+/** A same-branch run whose "agent" also writes agent-output.txt into the worktree once it exists. */
+function sameRun(repo, { source = 'main', onWorktree = null, ...extra } = {}) {
+  const orch = createOrchestrator({ projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true },
+    branch: { source, sameAsSource: true }, ...extra });
+  let wrote = false;
+  orch.on('state', (s) => {
+    const wt = s.branch?.worktreeDir;
+    if (!wrote && wt && existsSync(wt)) { wrote = true; writeFileSync(join(wt, 'agent-output.txt'), 'work\n'); onWorktree?.(); }
+  });
+  return orch;
+}
+
+for (const mode of ['detached', 'legacy']) {
+  test(`${mode}: same-branch + main checked out here + clean → main fast-forwarded, hidden branch deleted`, async () => {
+    const repo = await freshRepo();
+    await withMode(mode, async () => {
+      const orch = sameRun(repo);
+      const res = await orch.run();
+      assert.equal(res.status, 'done', JSON.stringify(res));
+      const b = orch.getState().branch;
+      assert.equal(b.mergeBack.merged, true, JSON.stringify(b.mergeBack));
+      assert.equal(git(repo, 'rev-parse', 'main'), b.mergeBack.sha);
+      assert.equal(git(repo, 'show', 'main:agent-output.txt'), 'work');
+      assert.ok(existsSync(join(repo, 'agent-output.txt')), 'the main checkout itself moved (merge --ff-only)');
+      assert.ok(!branchList(repo).includes(b.feature), 'the hidden branch is gone after a successful merge back');
+      assert.equal(b.branchKept, false);
+    });
+  });
+}
+
+test('detached: same-branch + dirty main checkout → not merged back, hidden branch kept, user edit untouched', async () => {
+  const repo = await freshRepo();
+  writeFileSync(join(repo, 'seed.txt'), 'my local edit\n');
+  const mainBefore = git(repo, 'rev-parse', 'main');
+  await withMode('detached', async () => {
+    const orch = sameRun(repo);
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const b = orch.getState().branch;
+    assert.deepEqual([b.mergeBack.merged, b.mergeBack.kind], [false, 'dirty']);
+    assert.equal(b.branchKept, true);
+    assert.equal(git(repo, 'rev-parse', 'main'), mainBefore);
+    assert.ok(branchList(repo).includes(b.feature), 'the work stays on the hidden branch');
+    assert.equal(git(repo, 'show', `${b.feature}:agent-output.txt`), 'work');
+    assert.equal(git(repo, 'diff', '--name-only'), 'seed.txt', 'the user edit is still there');
+  });
+});
+
+test('detached: same-branch + main moved during the run → not merged back (diverged)', async () => {
+  const repo = await freshRepo();
+  await withMode('detached', async () => {
+    const orch = sameRun(repo, { onWorktree: () => {
+      writeFileSync(join(repo, 'mate.txt'), 'x\n'); git(repo, 'add', 'mate.txt'); git(repo, 'commit', '-qm', 'moved');
+    } });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    const b = orch.getState().branch;
+    assert.deepEqual([b.mergeBack.merged, b.mergeBack.kind], [false, 'diverged']);
+    assert.ok(branchList(repo).includes(b.feature));
+  });
+});
+
+test('detached: same-branch + main checked out nowhere → update-ref; the project checkout is untouched', async () => {
+  const repo = await freshRepo();
+  git(repo, 'checkout', '-q', '-b', 'elsewhere');
+  await withMode('detached', async () => {
+    const orch = sameRun(repo);
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    assert.equal(orch.getState().branch.mergeBack.merged, true);
+    assert.equal(git(repo, 'show', 'main:agent-output.txt'), 'work');
+    assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD'), 'elsewhere');
+    assert.ok(!existsSync(join(repo, 'agent-output.txt')));
+  });
+});
+
+test('detached: same-branch + stopped → never merged back, hidden branch kept with the partial work', async () => {
+  const repo = await freshRepo();
+  const mainBefore = git(repo, 'rev-parse', 'main');
+  await withMode('detached', async () => {
+    const orch = sameRun(repo);
+    let asked = false;
+    orch.on('state', (s) => { if (!asked && s.branch?.feature) { asked = true; orch.stop(); } });
+    const res = await orch.run();
+    assert.equal(res.status, 'stopped', JSON.stringify(res));
+    const b = orch.getState().branch;
+    assert.deepEqual([b.mergeBack.merged, b.mergeBack.kind], [false, 'not-done']);
+    assert.equal(git(repo, 'rev-parse', 'main'), mainBefore);
+    assert.ok(branchList(repo).includes(b.feature));
+  });
+});
+
+test('detached workspace: same-branch → every member fast-forwards ITS OWN source; no suffixed branch remains', async () => {
+  const a = await freshRepo('worca-cc-rrt-wsa-');
+  const b = await freshRepo('worca-cc-rrt-wsb-');
+  git(b, 'branch', '-m', 'main', 'dev');                 // member b's source is dev
+  await withMode('detached', async () => {
+    const opts = workspaceOpts([a, b], { branch: { source: 'main', sameAsSource: true } });
+    opts.workspace.projects = opts.workspace.projects.map((p) => (p.projectDir === b ? { ...p, branch: { source: 'dev' } } : p));
+    const orch = createOrchestrator({ projectDir: a, prompt: 'x', auto: true, claude: { mock: true }, ...opts });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    for (const rec of Object.values(orch.getState().branches)) {
+      assert.equal(rec.sameAsSource, true);
+      assert.equal(rec.mergeBack.merged, true, JSON.stringify(rec.mergeBack));
+    }
+    assert.deepEqual(branchList(a).filter((x) => x.startsWith('worca-cc/')), []);
+    assert.deepEqual(branchList(b).filter((x) => x.startsWith('worca-cc/')), []);
+    assert.ok(branchList(b).includes('dev'));
+  });
+});

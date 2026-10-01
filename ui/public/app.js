@@ -248,6 +248,8 @@ const el = {
   title: $('#title'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  sameAsSource: $('#sameAsSource'),
+  sameAsSourceHint: $('#sameAsSourceHint'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
   markdownPane: $('#markdown-pane'),
@@ -6887,6 +6889,50 @@ if (el.sourceBranch) {
     void refreshSyncStatusQuiet();
   });
 }
+
+// "Run on the source branch" (branch.sameAsSource): the feature input is disabled and names what the run
+// commits onto; a committed feature name equal to the source switches the toggle on (the ONLY place the
+// mode is inferred — the server never does).
+function sameSourceLabel() {
+  if (state.runTarget === 'workspace') return 'each project’s source branch';
+  if (el.sourceBranch && el.sourceBranch.value === PREVIOUS_BRANCH) return 'the branch of the run before it';
+  return effectiveBase() || 'the source branch';   // HEAD's name is unknown until /api/branches answers
+}
+function paintSameAsSource() {
+  if (!el.sameAsSource || !el.featureBranch) return;
+  const on = el.sameAsSource.checked;
+  if (on && !el.featureBranch.disabled) {
+    // Kept for switching off again — but never the name that collides with the source.
+    const v = el.featureBranch.value;
+    el.featureBranch.dataset.typed = v.trim() === effectiveBase() ? '' : v;
+  }
+  if (!on && el.featureBranch.disabled) {
+    el.featureBranch.value = el.featureBranch.dataset.typed || '';
+    delete el.featureBranch.dataset.typed;
+  }
+  el.featureBranch.disabled = on;
+  if (on) el.featureBranch.value = sameSourceLabel();
+  if (el.sameAsSourceHint) el.sameAsSourceHint.hidden = !on;
+  // Programmatic callers (Ask prefill, the "run before it" option) fire no form event, and Simple mode keeps
+  // #branch-fields visible only while the feature input is non-empty: re-run it so a checked toggle stays seen.
+  paintHiddenSettings();
+}
+// On a COMMITTED name (change / a source change / submit), never per keystroke: `input` would switch on at
+// the prefix of any name that starts with the source (dev → develop), and that name could never be typed.
+function autoSameAsSource() {
+  if (!el.sameAsSource || !el.featureBranch || el.sameAsSource.checked || el.featureBranch.disabled) return;
+  if (state.runTarget === 'workspace') return;
+  // effectiveBase() answers HEAD's branch for "the run before it" too, which is not that run's branch.
+  if (el.sourceBranch && el.sourceBranch.value === PREVIOUS_BRANCH) return;
+  const typed = el.featureBranch.value.trim();
+  if (typed && typed === effectiveBase()) { el.sameAsSource.checked = true; paintSameAsSource(); }
+}
+el.sameAsSource?.addEventListener('change', paintSameAsSource);
+el.featureBranch?.addEventListener('change', autoSameAsSource);
+el.sourceBranch?.addEventListener('change', () => { autoSameAsSource(); paintSameAsSource(); });
+// The auto source's label is HEAD's name: the first branch fetch sets it with no event; this event
+// follows the second, fresh fetch, so the label catches up then.
+el.sourceBranch?.addEventListener('branches-fresh', paintSameAsSource);
 /** After an accepted start: Auto-sync was a choice for that run only. */
 function resetSyncChoice() {
   if (!el.syncAuto) return;
@@ -11355,6 +11401,7 @@ el.form.addEventListener('submit', async (e) => {
   // guardrails the API wrappers use unless the user deliberately picked another set.
   const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
+  autoSameAsSource();   // Enter-to-submit, or a click before the feature input's `change`, must not skip the switch
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
@@ -11373,6 +11420,8 @@ el.form.addEventListener('submit', async (e) => {
     // Only this workflow carries it: every other run body stays byte-identical to the legacy one.
     memoryScope: isDefragRun ? state.memoryScope : undefined,
   };
+  // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
+  if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
     // Per-project source branches: { [projectKey]: branch }. Omit empties (the
@@ -11638,6 +11687,7 @@ function syncPreviousBranchEverywhere() {
   // member re-renders and target switches, and the FRESH member selects follow whichever it is — every
   // renderWorkspaceSourceBranches() rebuilds them enabled, so this is the one place that re-applies it.
   if (el.wsSourcePrevious) setWsSourcePrevious(wsPick && el.wsSourcePrevious.dataset.off !== '1');
+  paintSameAsSource();
 }
 function setWsSourcePrevious(on) {
   if (!el.wsSourcePrevious) return;
@@ -16894,6 +16944,35 @@ function shellSingleQuote(value) {
   return `'${String(value == null ? '' : value).replaceAll("'", "'\"'\"'")}'`;
 }
 
+// Run on the source branch (branch.sameAsSource): which members' hidden branch could NOT be fast-forwarded
+// into their source, why, and the commands to merge by hand. textContent only: git stderr and branch
+// names are data, never markup.
+function renderMergeBack(node, p) {
+  const banner = node.querySelector('.merge-back-banner');
+  if (!banner) return;
+  const failed = (Array.isArray(p?.mergeBack?.members) ? p.mergeBack.members : []).filter((m) => m && m.merged === false);
+  banner.hidden = !failed.length;
+  banner.innerHTML = '';
+  if (!failed.length) return;
+  const title = document.createElement('h4');
+  title.textContent = 'Not merged back into the source branch';
+  const intro = document.createElement('p');
+  intro.textContent = 'The run’s work is safe on its own branch. Merge it by hand, then the branch can go:';
+  const list = document.createElement('ul');
+  for (const m of failed) {
+    const li = document.createElement('li');
+    const label = document.createElement('strong');
+    label.textContent = m.projectKey || m.source || 'Project';
+    const detail = document.createElement('span');
+    detail.textContent = ` — ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
+    const command = document.createElement('code');
+    command.textContent = `git switch ${shellSingleQuote(m.source)}\ngit merge ${shellSingleQuote(m.branch)}\ngit branch -d ${shellSingleQuote(m.branch)}`;
+    li.append(label, detail, command);
+    list.appendChild(li);
+  }
+  banner.append(title, intro, list);
+}
+
 // Paint both the collapsed warning badge and the expanded manual-recovery
 // instructions. Every value is assigned through textContent: git stderr and
 // repository paths are data, never markup.
@@ -18128,9 +18207,44 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
+// A run on its source branch never opens a PR (head == base): this one gate covers Create PR, the "Ready to
+// ship" glances, the Running page CTA and the ship-it deep link.
 function histPrEligible(p) {
   return !!(state.ghAvailable && p && p.survived && p.branch && p.sourceBranch
-    && p.target !== 'workspace');
+    && p.target !== 'workspace' && !p.sameAsSource);
+}
+
+// Run on the source branch (branch.sameAsSource): no PR. Once the work was merged back, the one shipping
+// action pushes the source to its remote (POST /api/push). Returns true for such a run, so paintHdPr
+// skips the PR controls; workspace runs have no ship action (the banner names the commands).
+function paintHdPush(screen, record) {
+  const btn = screen.querySelector('.hd-push');
+  if (btn) btn.hidden = true;
+  if (!record || !record.sameAsSource) return false;
+  if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
+  btn.hidden = false;
+  btn.disabled = false;
+  btn.textContent = `Push ${record.sourceBranch}`;
+  btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
+    btn.disabled = true;
+    btn.textContent = 'Pushing…';
+    try {
+      const res = await fetch('/api/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+        // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+        body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+      });
+      const dd = await safeJson(res);
+      if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+      btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = `Push ${record.sourceBranch}`;
+      btn.title = err && err.message ? err.message : String(err);
+    }
+  };
+  return true;
 }
 
 // Keep the OPEN detail's PR control in step with the two PR-resolution paths
@@ -18218,6 +18332,7 @@ function paintHdGlance(screen, record, data) {
   mirror('.hd-resume', 'Resume', 'hd-g-resume', 'resume');
   splitGlanceResume(screen, acts);
   mirror('.hd-pr', 'Create pull request', 'hd-g-pr', 'pr-create');
+  mirror('.hd-push', 'Push the source branch', 'hd-g-push', 'pr-create');   // mirror() skips a hidden source: inert for every other run
   mirror('.hd-pr-link', 'View pull request', `hd-g-pr-link${pr === 'MERGED' ? ' alt' : ''}`, pr === 'MERGED' ? 'merged' : 'pr-open');
   mirror('.hd-after', finished ? 'Start a follow-up run' : 'Schedule a run after this', 'alt hd-g-after', finished ? 'follow-up' : 'schedule');
   if (acts.childNodes.length) host.appendChild(acts);
@@ -18297,6 +18412,7 @@ function paintHdPr(screen, record, data) {
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
+  if (paintHdPush(screen, record)) return;   // a run on its source branch ships by Push, never a PR
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
@@ -18445,7 +18561,8 @@ function paintHdHeaderMeta(screen, record, data) {
   const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
   const feature = br.feature || (typeof st.branch === 'string' ? st.branch : '') || record.branch || '';
   const source = br.source || record.sourceBranch || '';
-  base.textContent = source ? `${source} →` : '';
+  const same = br.sameAsSource === true || record.sameAsSource === true;
+  base.textContent = source ? `${source} ${same ? '←' : '→'}` : '';   // ← : the run's branch flows INTO the source
   base.hidden = !source;
   copyBtn.hidden = !feature;
   if (feature) {
@@ -18745,6 +18862,7 @@ function paintHdBanners(screen, record, data) {
   // renderRetainedWork only READS `p.retainedWork`, so a provisional paint may use
   // a throwaway carrier; every MUTATING helper below is handed `record` itself.
   renderRetainedWork(screen, provisional ? { ...record, retainedWork: retained } : record);
+  renderMergeBack(screen, record);
   let dbtn = screen.querySelector('.hist-discard');
   if (retained && !provisional) {
     // Keyed on BOTH screen and record: a new visit builds a fresh screen from the
@@ -25449,7 +25567,7 @@ function paintRdHeader(screen, r) {
   const source = br.source || '';
   const base = screen.querySelector('.rd-base');
   // #527: the start commit rides inside the existing span (no new themed element).
-  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} →` : '';
+  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} ${br.sameAsSource ? '←' : '→'}` : '';
   base.title = br.baseSha ? `Started from ${br.baseSha}${br.startRef ? ' (the remote tip; the local branch was left untouched)' : ''}` : '';
   base.hidden = !source;
   const syncBtn = screen.querySelector('.rd-sync');
@@ -26991,6 +27109,7 @@ async function applyAskPrefill() {
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;
+  if (el.sameAsSource && el.sameAsSource.checked) { el.sameAsSource.checked = false; paintSameAsSource(); }
   if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
   if (p.target === 'workspace') {
     // the per-member selects are rebuilt asynchronously on the change above
@@ -27014,6 +27133,7 @@ async function applyAskPrefill() {
       el.sourceBranch.value = p.sourceBranch;
     }
   }
+  if (p.sameAsSource && el.sameAsSource) { el.sameAsSource.checked = true; paintSameAsSource(); }
 }
 
 // ---------------------------------------------------------------------------

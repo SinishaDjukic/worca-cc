@@ -583,3 +583,60 @@ test('deleteWorkspace refuses while a member pipeline has retained uncommitted w
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }
 });
+
+const gitIn = (dir, ...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
+
+// Shape/regression check, NOT a guard test: `feature` is the hidden branch, so this passes with or
+// without Step 5. It pins that a same-branch row archives like any run (hidden branch gone, source kept).
+// The two tests after it are the guard tests: each fails without the change.
+test('archive of a same-branch run never deletes the source; its own hidden branch goes like any run branch', async () => {
+  const repo = await freshRepo();
+  const prev = process.env.WORCA_HOME;
+  const { worktreeDir, branch } = await createWorktree({ projectDir: repo, pipelineId: 'same01', sourceBranch: 'main', featureBranch: 'worca-cc/same-same01' });
+  await freshStore(repo, { id: 'same01', base: 'same', datePrefix: '04-06-26', status: 'done', title: 'Same',
+    branch: { source: 'main', feature: branch, worktreeDir, sameAsSource: true, mergeBack: { merged: false, kind: 'dirty', reason: 'x', at: 't' } } });
+  try {
+    const report = await deletePipeline({ key: 'proj-00000001', id: 'same01' });
+    assert.ok(report && report.ok);
+    const branches = await listLocalBranches(repo);
+    assert.ok(branches.includes('main'), 'the source branch survives archive');
+    assert.ok(!branches.includes(branch), 'the hidden branch is removed with the run');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('archive guard: a (corrupt) same-branch record whose feature names the source keeps the source', async () => {
+  const repo = await freshRepo();
+  gitIn(repo, 'checkout', '-q', '-b', 'other');   // main checked out NOWHERE: without the guard, `git branch -D main` would succeed
+  const prev = process.env.WORCA_HOME;
+  await freshStore(repo, { id: 'same02', base: 'same', datePrefix: '04-06-26', status: 'done', title: 'Same',
+    branch: { source: 'main', feature: 'main', sameAsSource: true } });
+  try {
+    const report = await deletePipeline({ key: 'proj-00000001', id: 'same02' });
+    assert.ok(report && report.ok);
+    assert.ok((await listLocalBranches(repo)).includes('main'), 'git branch -D main never ran');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
+test('archive keeps a run branch that another live same-branch run committed onto (its work lives only there)', async () => {
+  const repo = await freshRepo();
+  gitIn(repo, 'branch', 'worca-cc/a-feat');       // A's feature branch, NOT checked out: `git branch -D` would succeed
+  const prev = process.env.WORCA_HOME;
+  await freshStore(repo, { id: 'same03', base: 'a', datePrefix: '04-06-26', status: 'done', title: 'A',
+    branch: { source: 'main', feature: 'worca-cc/a-feat' } });
+  // B ran on A's branch (a chain after A, or a "Run branches" pick) and merged back into it.
+  seedPipelineRow({ id: 'same04', projectKey: 'proj-00000001', title: 'B', status: 'done',
+    branch: { source: 'worca-cc/a-feat', feature: 'worca-cc/b-hidden', worktreeDir: '/gone', sameAsSource: true,
+      mergeBack: { merged: true, sha: 'a'.repeat(40), commits: 1, at: 't' } } });
+  try {
+    const report = await deletePipeline({ key: 'proj-00000001', id: 'same03' });
+    assert.ok(report && report.ok);
+    assert.ok((await listLocalBranches(repo)).includes('worca-cc/a-feat'), 'B\'s work survives A\'s archive');
+    assert.ok(report.warnings.some((w) => /same04/.test(w)), JSON.stringify(report.warnings));
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});

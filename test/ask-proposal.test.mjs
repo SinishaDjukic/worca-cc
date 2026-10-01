@@ -228,3 +228,13 @@ test('#527 sourceBranch: never resolved for a failing card, a workspace, or with
   // The default is null: a fake-dir card is not resolved against git.
   assert.equal('sourceRef' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sourceBranch: 'main' })), false);
 });
+
+test('sameAsSource: a card carries it only when true; a non-boolean is an error', async () => {
+  const on = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: true }, { cardId: 'card_3f2a9c01' }));
+  assert.equal(on.sameAsSource, true);
+  const off = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' }, { cardId: 'card_3f2a9c01' }));
+  assert.equal('sameAsSource' in off, false, 'the pinned key set is unchanged');
+  const bad = await validateProposal({ projectKey: 'demo-00000001', brief: 'x', sameAsSource: 'yes' }, { cardId: 'card_3f2a9c01' });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.some((e) => /sameAsSource/.test(e)));
+});

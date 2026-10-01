@@ -1303,15 +1303,17 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* ---------- Retained-work banner (the saved run's page) ---------- */
 .retained-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
   border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;line-height:1.55;}
-.retained-banner[hidden]{display:none;}
-.retained-banner h4{margin:0 0 6px;font-size:14px;color:var(--amber-ink);}
-.retained-banner p{margin:5px 0;}
-.retained-banner ul{margin:9px 0;padding-left:20px;}
-.retained-banner li+li{margin-top:8px;}
-.retained-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:8px;
+.merge-back-banner{margin:0 0 18px;padding:16px 18px;border:1.5px solid var(--amber);
+  border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:12.5px;line-height:1.55;}
+.retained-banner[hidden],.merge-back-banner[hidden]{display:none;}
+.retained-banner h4,.merge-back-banner h4{margin:0 0 6px;font-size:14px;color:var(--amber-ink);}
+.retained-banner p,.merge-back-banner p{margin:5px 0;}
+.retained-banner ul,.merge-back-banner ul{margin:9px 0;padding-left:20px;}
+.retained-banner li+li,.merge-back-banner li+li{margin-top:8px;}
+.retained-banner code,.merge-back-banner code{display:block;margin-top:4px;padding:7px 9px;border-radius:8px;
   background:var(--panel-wash);color:var(--ink);font-family:var(--mono);font-size:11.5px;
   white-space:pre-wrap;word-break:break-all;}
-.retained-banner a{color:var(--amber-ink);font-weight:700;}
+.retained-banner a,.merge-back-banner a{color:var(--amber-ink);font-weight:700;}
 .hist-empty{color:var(--ink-3);font-size:13px;padding:22px 4px;text-align:center;}
 
 /* ---------- Started-by filter pills (the Runs list's .runs-people row) ---------- */
@@ -3166,7 +3168,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    `.retained-banner{margin:0 0 18px}` (714) and `.cost-banner{margin-top:12px}`
    (1505) — which double up with this column's own `gap:12px`. Zero them here
    rather than editing the shared rules. */
-.hd-banners .retained-banner,.hd-banners .cost-banner{align-self:stretch;margin:0;}
+.hd-banners .retained-banner,.hd-banners .cost-banner,.hd-banners .merge-back-banner{align-self:stretch;margin:0;}
 /* NOT `.hd-banners:empty` — the container always holds three template children
    (badge, banner, discard button), just hidden, so :empty never matches and the
    top margin would always apply. Key the margin off "has a visible child". */
@@ -3627,10 +3629,10 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* Detail-header PR controls (spec §5.2: black pill). `.hd-pr-link` carries no rule
    of its own — its colour, its removed underline and the MERGED grey all come from
    the `.hist-pr-link` selector lists at :848-:850, extended in place. */
-.hd-pr{padding:9px 18px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
+.hd-pr,.hd-push{padding:9px 18px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
   font:600 12.5px var(--sans);color:var(--on-ink);cursor:pointer;flex:0 0 auto;}
-.hd-pr[hidden]{display:none;}
-.hd-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
+.hd-pr[hidden],.hd-push[hidden]{display:none;}
+.hd-pr:hover,.hd-push:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
 .hd-pr-link{flex:0 0 auto;font:600 12.5px var(--sans);}
 .hd-pr-link[hidden]{display:none;}
 .hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
@@ -3782,7 +3784,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-tab:focus-visible,.hd-back:focus-visible,.hd-resume:focus-visible,.pd-tab:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-remove:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-more:focus-visible,.hd-report:focus-visible,
-.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-pr-link:focus-visible,.hd-after:focus-visible,
+.hd-archive:focus-visible,.hd-pr:focus-visible,.hd-push:focus-visible,.hd-pr-link:focus-visible,.hd-after:focus-visible,
 .hd-branch-copy:focus-visible,.hd-sec:focus-visible,.shipit-ok:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -7187,3 +7189,7 @@ input.gv-name:focus-visible{outline:none;}
 
 /* Team metrics: an actor may be a full email (attribution) — clip it to the column, full name in the tooltip. */
 .tm-person{display:inline-block;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;}
+
+.same-src-row{margin-top:8px;}   /* `.field > label.switch-row` already gives it flex + margin-bottom:0 */
+#sameAsSourceHint[hidden]{display:none;}   /* .hint{display:block} beats the UA [hidden] rule */
+#featureBranch:disabled{opacity:.65;cursor:not-allowed;}   /* no global .input:disabled rule exists */

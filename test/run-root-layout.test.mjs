@@ -893,3 +893,36 @@ test('legacySweepLookups: a real DB failure PROPAGATES instead of reading as "no
     _resetForTests();
   }
 });
+
+test('same-branch: the worktree sits on an auto-named hidden branch, never the source; the flag rides state.branch', async () => {
+  const repo = await freshRepo();
+  await withMode('detached', async () => {
+    const orch = createOrchestrator({ projectDir: repo, prompt: 'Add login flow', auto: true, claude: { mock: true },
+      branch: { source: 'main', feature: 'typed-name', sameAsSource: true } });
+    let live = null;
+    orch.on('state', (s) => { if (!live && s.branch?.worktreeDir) live = { ...s.branch }; });
+    const res = await orch.run();
+    assert.equal(res.status, 'done', JSON.stringify(res));
+    assert.equal(live.sameAsSource, true);
+    assert.equal(live.source, 'main');
+    assert.match(live.feature, /^worca-cc\/.+-[0-9a-f]{8}$/, 'the suggested name, not the typed one');
+    assert.notEqual(live.feature, 'main');
+  });
+});
+
+// `fix+1` is a valid git branch name (it resolves as a source today), but isSafeBranchName rejects it, so the
+// merge back's syncStatus would refuse it as bad-base only after the whole run. Refuse it before any work.
+for (const [what, ref, make] of [['a tag', 'v1', ['tag', 'v1']], ['a branch name the merge back would refuse', 'fix+1', ['branch', 'fix+1']]]) {
+  test(`same-branch: ${what} as the source is refused up front (terminal), nothing created`, async () => {
+    const repo = await freshRepo();
+    spawnSync('git', ['-C', repo, ...make]);
+    await withMode('detached', async () => {
+      const orch = createOrchestrator({ projectDir: repo, prompt: 'x', auto: true, claude: { mock: true },
+        branch: { source: ref, sameAsSource: true } });
+      const res = await orch.run();
+      assert.equal(res.status, 'error', JSON.stringify(res));
+      assert.match(res.error, /needs a local branch/);
+      assert.equal(orch.getState().branch?.worktreeDir, undefined, 'no worktree was created');
+    });
+  });
+}

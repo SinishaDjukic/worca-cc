@@ -211,6 +211,7 @@ async function requestFromFlags(flags, { projectDir, extras, promptText, stageId
     ...(flags.mock ? { mock: true } : {}),
     ...(flags.sourceBranch ? { sourceBranch: flags.sourceBranch } : {}),
     ...(flags.featureBranch ? { featureBranch: flags.featureBranch } : {}),
+    ...(flags.onSourceBranch ? { sameAsSource: true } : {}),
     ...(flags.memoryScope ? { memoryScope: flags.memoryScope } : {}),
     ...(flags.humanInLoop === false ? { humanInLoop: false } : {}),
   };
