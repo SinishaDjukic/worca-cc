@@ -3,8 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "docs.worca.dev — static site built from the repo's docs/ folder",
+  "description": "docs.worca.dev — VitePress site built from the repo's docs/ folder",
   "scripts": {
+    "dev": "vitepress dev",
     "build": "node build.mjs",
     "preview": "npm run build && npx wrangler dev",
     "deploy": "npm run build && npx wrangler deploy"
@@ -13,6 +14,7 @@
     "node": ">=22.13.0"
   },
   "devDependencies": {
+    "vitepress": "^1.6.4",
     "wrangler": "^4.95.0"
   }
 }
