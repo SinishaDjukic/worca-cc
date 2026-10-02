@@ -9,7 +9,7 @@
 	"assets": {
 		"directory": "./dist",
 		// Unknown paths (including the 0.x page slugs the old in-app help badges
-		// still link to) get dist/404.html — the same landing page, with a 404
+		// still link to) get dist/404.html — the VitePress not-found page, with a 404
 		// status so search engines drop the stale URLs.
 		"not_found_handling": "404-page"
 	}
