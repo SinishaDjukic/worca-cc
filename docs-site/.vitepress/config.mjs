@@ -110,6 +110,12 @@ export default defineConfig({
     // sets to srcDir (../docs), where nothing resolves; it would then bundle
     // vue's CommonJS build into the server bundle, which fails to load.
     ssr: { external: ['vue', 'vue/server-renderer', '@vue/server-renderer', '@vue/shared'] },
+    resolve: {
+      alias: [
+        // The navbar's search, imported only by VPNavBar.vue: see theme/NavBarSearch.vue.
+        { find: /^\.\/VPNavBarSearch\.vue$/, replacement: path.join(here, 'theme', 'NavBarSearch.vue') },
+      ],
+    },
   },
   themeConfig: {
     // The wordmark is painted by custom.css (a mask, as in the app).

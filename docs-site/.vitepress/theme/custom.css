@@ -67,3 +67,130 @@
 .VPFeatures .VPFeature {
   background-color: var(--vp-c-bg-elv);
 }
+
+/* --- Navbar: the menu on the left, next to the wordmark ------------------ */
+
+/* Menu items are tabs: ink, not brand; the current section is a soft pill. */
+.VPNavBarMenu {
+  --vp-c-brand-1: var(--vp-c-text-1);
+  align-items: center;
+  gap: 2px;
+}
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink {
+  border-radius: 8px;
+  line-height: 32px;
+}
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink:not(.active):not(:hover) {
+  color: var(--vp-c-text-2);
+}
+.VPNavBar .VPNavBarMenu .VPNavBarMenuLink.active {
+  background-color: var(--vp-c-bg-alt);
+}
+
+@media (min-width: 768px) {
+  .VPNavBar .content-body {
+    justify-content: flex-start;
+  }
+  .VPNavBar .VPNavBarMenu {
+    order: -1;
+    margin-right: auto;
+    padding-left: 20px;
+  }
+  /* Only the home page has a navbar search (NavBarSearch.vue): a field on the right. */
+  .VPNavBar .VPNavBarSearch {
+    flex-grow: 0;
+    padding: 0 8px 0 0;
+  }
+}
+
+/* --- Sidebar: search on top, groups without rules, current page as a pill -- */
+
+:root {
+  --vp-sidebar-bg-color: var(--vp-c-bg);
+}
+
+.VPSidebar {
+  /* Active and hovered entries in ink, not brand colour. */
+  --vp-c-brand-1: var(--vp-c-text-1);
+}
+@media (min-width: 960px) {
+  .VPSidebar {
+    border-right: 1px solid var(--vp-c-divider);
+  }
+}
+
+.VPSidebar .nav .group + .group {
+  border-top: 0;
+}
+
+.VPSidebar .VPSidebarItem.level-1 > .item {
+  margin: 0 -10px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+.VPSidebar .VPSidebarItem.level-1.is-active > .item {
+  background-color: var(--vp-c-bg-alt);
+}
+
+.worca-sidebar-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -32px 8px;
+  padding: 0 32px 12px;
+  background-color: var(--vp-sidebar-bg-color);
+}
+@media (min-width: 960px) {
+  /* Sticky offsets count from inside the sidebar's padding, which already clears the navbar. */
+  .worca-sidebar-search {
+    padding-top: 20px;
+  }
+}
+.worca-sidebar-search .VPNavBarSearch {
+  padding: 0;
+}
+.worca-sidebar-search .VPNavBarSearch > * {
+  flex-grow: 1;
+}
+/* The phone drawer shows the field too, not just the icon. */
+.worca-sidebar-search .DocSearch-Button-Placeholder {
+  display: inline-block;
+}
+
+/* --- Search field: an input with the keys on the right ------------------- */
+/* The sidebar's at every width; the home navbar's from 768px (an icon below). */
+
+.worca-sidebar-search .DocSearch-Button {
+  justify-content: space-between;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  padding: 0 8px 0 12px;
+  width: 100%;
+  height: 36px;
+  background-color: var(--vp-c-bg-elv);
+}
+.worca-sidebar-search .DocSearch-Button:hover {
+  border-color: var(--vp-c-text-3);
+  background-color: var(--vp-c-bg-elv);
+}
+.worca-sidebar-search .DocSearch-Search-Icon {
+  margin-right: 8px;
+  width: 14px;
+  height: 14px;
+  color: var(--vp-c-text-2);
+}
+
+@media (min-width: 768px) {
+  .VPNavBar .VPNavBarSearch .DocSearch-Button {
+    justify-content: space-between;
+    border: 1px solid var(--vp-c-divider);
+    padding: 0 8px 0 12px;
+    width: 200px;
+    height: 36px;
+    background-color: var(--vp-c-bg-elv);
+  }
+  .VPNavBar .VPNavBarSearch .DocSearch-Button:hover {
+    border-color: var(--vp-c-text-3);
+    background-color: var(--vp-c-bg-elv);
+  }
+}

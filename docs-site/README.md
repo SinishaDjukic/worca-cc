@@ -7,7 +7,10 @@ The pages are the repo's own `docs/*.md`, rendered by
 so a doc reads the same on GitHub and on the site. Only the top level of
 `docs/` is the site; `superpowers/`, `plans/`, `changelog/`, `why-worca/` and
 `ui-primitives/` are excluded. The home page is `docs/index.md`, the sidebar is
-in the config, and the brand theme is `.vitepress/theme/custom.css`.
+in the config, and the brand theme is `.vitepress/theme/custom.css`. The navbar
+menu sits on the left and search at the top of the sidebar
+(`.vitepress/theme/index.mjs`); `.vitepress/theme/NavBarSearch.vue` drops the
+navbar's own search on those pages, so only the home page keeps it there.
 
 `build.mjs` runs the VitePress build, then adds the pages that are not
 markdown; the changelog half is `changelog.mjs`:
