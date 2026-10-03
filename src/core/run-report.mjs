@@ -48,6 +48,7 @@ import { readGuardrailSet, isBuiltinGuardrailSetId } from './guardrail-store.mjs
 import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME }
   from './graph/builtin-workflows.mjs';
 import { SEED_TEMPLATES } from './graph/seed-templates.mjs';
+import { modelForEngine } from './config.mjs';
 import { describePauseReason } from './failure-policy.mjs';
 import { REPORT_REASON_IDS, reasonById, normalizeInclude } from '../shared/report-reasons.mjs';
 
@@ -344,7 +345,7 @@ async function guardrailFacts(guardrailsId) {
 // ── evidence blocks ───────────────────────────────────────────────────────────
 
 function costEvidence({ row, steps, subAgents, workflow }) {
-  const budget = budgetStatus();
+  const budget = budgetStatus(new Date(), { scope: row && !row.workspace_key && row.project_key ? { projectKey: row.project_key } : null });
   const totals = subAgents.reduce((acc, s) => ({
     count: acc.count + 1,
     tokens: acc.tokens + (Number(s.tokens) || 0),
@@ -498,6 +499,10 @@ export async function buildRunReport(pipelineId, opts = {}) {
   const wallClockMs = (startedMs && endedMs) ? Math.max(0, endedMs - startedMs) : null;
 
   const workflow = workflowShape(parseJson(row.stepper), cyclesByNode(steps));
+  const runEngine = (state && state.runEngine) || 'claude';
+  for (const n of workflow?.nodes || []) {
+    if (n.model && !modelForEngine(n.model, runEngine, { projectDir: state?.projectDir })) { delete n.model; delete n.effort; }
+  }
   const tools = toolFacts(parseJson(row.tools));
   const review = reviewFacts(extras.reviews);
   const files = fileFacts(results);
@@ -522,6 +527,7 @@ export async function buildRunReport(pipelineId, opts = {}) {
       cycle: Number(row.cycle) || 0,
       sourceType: row.source_type || 'prompt',
       engine: state && state.engine === 2 ? 2 : 1,
+      runEngine,
       startedAt: row.started_at || null,
       updatedAt: row.updated_at || null,
       wallClockMs,

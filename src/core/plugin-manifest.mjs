@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, readlinkSync, existsSync, statSync } from 'n
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API, WORCA_MCP_API } from './plugin-api.mjs';
-import { EFFORTS, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict } from './model-env.mjs';
+import { EFFORTS, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
@@ -81,7 +81,7 @@ const KNOWN_CHANNEL = new Set(['id', 'displayName', 'platform', 'module', 'ingre
 const CHANNEL_INGRESS = new Set(['connect', 'webhook']);
 const KNOWN_FIELD = new Set(['key', 'type', 'label', 'secret', 'required', 'default', 'help', 'options']);
 const KNOWN_INPUT = new Set(['key', 'type', 'label', 'default', 'optionsFrom', 'options']);
-const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost', 'upstream']);
+const KNOWN_MODEL = new Set(['id', 'label', 'efforts', 'env', 'cost', 'upstream', 'engine']);
 const KNOWN_MODEL_SECRET = new Set(['key', 'label']);
 /** A manifest env value that defers to the plugin's secrets store (design §9.1). */
 const isSecretRef = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -478,13 +478,19 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       collectUnknown(m, KNOWN_MODEL, at, warnings);
       const id = str(m.id);
       if (!id) { errors.push(`${at}: "id" is required`); return; }
+      if (m.engine !== undefined && m.engine !== 'claude' && m.engine !== 'codex') {
+        errors.push(`${at} ("${id}"): "engine" must be "claude" or "codex"`);
+        return;
+      }
+      const engine = m.engine === 'codex' ? 'codex' : 'claude';
+      const allowedEfforts = effortsForEngine(engine);
       const efforts = [];
       if (m.efforts !== undefined) {
         if (!Array.isArray(m.efforts)) { errors.push(`${at} ("${id}"): "efforts" must be an array`); return; }
         for (const e of m.efforts) {
-          if (!EFFORTS.includes(e)) { errors.push(`${at} ("${id}"): unknown effort ${JSON.stringify(e)} — must be one of ${EFFORTS.join(' | ')}`); return; }
+          if (!allowedEfforts.includes(e)) { errors.push(`${at} ("${id}"): unknown effort ${JSON.stringify(e)} — must be one of ${allowedEfforts.join(' | ')}`); return; }
         }
-        efforts.push(...EFFORTS.filter((e) => m.efforts.includes(e))); // canonical order, deduped
+        efforts.push(...allowedEfforts.filter((e) => m.efforts.includes(e))); // canonical order, deduped
       }
       const env = {};
       const envRaw = m.env && typeof m.env === 'object' && !Array.isArray(m.env) ? m.env : {};
@@ -537,9 +543,15 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): ${e.message}`);
         return;
       }
+      // §3.1a: codex ignores routing env and signs in with its own credentials.
+      if (engine === 'codex' && (Object.keys(env).length || upstream)) {
+        errors.push(`${at} ("${id}"): a codex model takes no env or upstream — codex ignores routing env`);
+        return;
+      }
       models.push({
         id, label: str(m.label) || id,
-        efforts: efforts.length ? efforts : [...EFFORTS],
+        ...(engine === 'codex' ? { engine } : {}),
+        efforts: efforts.length ? efforts : [...allowedEfforts],
         ...(Object.keys(env).length ? { env } : {}),
         ...(cost ? { cost } : {}),
         ...(upstream ? { upstream } : {}),

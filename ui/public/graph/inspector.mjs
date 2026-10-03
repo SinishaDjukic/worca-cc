@@ -64,10 +64,19 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     // Hidden built-ins (#422) leave the list unless one is THIS node's stored
     // pick — it still resolves at run time and must stay visible here.
     const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
-    body.appendChild(select(doc, 'ins-model', 'model', 'Model',
-      [{ value: '', text: 'inherit' }, ...offered.map((m) => ({ value: m.id, text: m.label || m.id }))], node.config.model));
+    // D10: a node knows no run engine, so with Codex models in the catalog the list is grouped
+    // Claude / Codex; a pick of the other engine is skipped at run time (§4.2).
+    const itemsOf = (engine) => offered.filter((m) => (m.engine || 'claude') === engine).map((m) => ({ value: m.id, text: m.label || m.id }));
+    const codexItems = itemsOf('codex');
+    const modelItems = codexItems.length
+      ? [{ group: 'Claude', items: itemsOf('claude') }, { group: 'Codex', items: codexItems }]
+      : itemsOf('claude');
+    body.appendChild(select(doc, 'ins-model', 'model', 'Model', [{ value: '', text: 'inherit' }, ...modelItems], node.config.model));
+    // Efforts are per engine: the picked model's own list, else the catalog-wide one.
+    const picked = node.config.model ? offered.find((m) => m.id === node.config.model) : null;
+    const effortList = picked && Array.isArray(picked.efforts) && picked.efforts.length ? picked.efforts : efforts;
     body.appendChild(select(doc, 'ins-effort', 'effort', 'Effort',
-      [{ value: '', text: 'default' }, ...efforts.map((e) => ({ value: e, text: e }))], node.config.effort));
+      [{ value: '', text: 'default' }, ...effortList.map((e) => ({ value: e, text: e }))], node.config.effort));
     if (meta && meta.fanOut) {
       body.appendChild(lv(toggle(doc, 'ins-fanout', 'fanOut', 'Research fan-out', 'parallel research sub-agents',
         { checked: node.config.fanOut === true }), 'expert', node.config.fanOut === true));

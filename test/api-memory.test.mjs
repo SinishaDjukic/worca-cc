@@ -383,7 +383,7 @@ test('the REST writers take the store lock every other in-process writer takes',
   // source dumps the whole file): the race needs two real concurrent writers to reproduce.
   const src = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
   assert.ok(/import \{ validateMemoryScope, withStoreLock \} from '\.\.\/src\/core\/memory-sync\.mjs';/.test(src), 'withStoreLock is imported next to validateMemoryScope');
-  assert.ok(/await withStoreLock\(memoryRoot\(\), \(\) => writeMemory\(memoryRoot\(\), scope, name, text, \{ source: 'user', caps: memoryCaps\(\) \}\)\)/.test(src), 'the PUT writes under the lock');
+  assert.ok(/await withStoreLock\(memoryRoot\(\), \(\) => writeMemory\(memoryRoot\(\), scope, name, text, \{ source: 'user', caps: memoryCaps\([^)]*\) \}\)\)/.test(src), 'the PUT writes under the lock');
   assert.ok(/await withStoreLock\(memoryRoot\(\), \(\) => removeMemory\(memoryRoot\(\), scope, name, \{ source: 'user' \}\)\)/.test(src), 'the DELETE removes under the lock');
   assert.ok(/await withStoreLock\(memoryRoot\(\), \(\) => restoreSnapshot\(memoryRoot\(\), scope, String\(req\.params\.id \|\| ''\), \{ source: 'user' \}\)\)/.test(src), 'the restore runs under the lock');
 });

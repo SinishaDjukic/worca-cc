@@ -9,6 +9,7 @@ import { resolve as pathResolve } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createAskTurn, humanErrorText } from '../src/core/ask/turn.mjs';
+import { normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
   updateThread, setThreadTitle, deleteThread,
@@ -104,6 +105,25 @@ test('happy path: frames ordered, session stored immediately, row + totals persi
   const done = frames.at(-1);
   assert.equal(done.status, 'done');
   assert.deepEqual(done.threadTotals, totals);
+});
+
+test('session: the init frame\'s session event does not store the id a second time', async () => {
+  const s = seed();
+  const writes = [];
+  const { turn } = makeTurn(s, {}, {
+    store: { updateThread: (id, patch) => { if ('sessionId' in patch) writes.push(patch.sessionId); updateThread(id, patch); } },
+    runClaudeImpl: async (opts) => {
+      // What the Claude adapter delivers per spawn: its own session event, then the init frame's.
+      opts.onEvent({ type: 'session', sessionId: 'sess-1' });
+      opts.onEvent({ type: 'session', sessionId: 'sess-1', model: 'claude-opus-5-5', init: true });
+      say(opts.onEvent, 'msg_1', 'answer');
+      push(opts.onEvent, RESULT());
+      return { text: 'answer', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.deepEqual(writes, ['sess-1']);
+  assert.equal(getThread(s.thread.id).sessionId, 'sess-1');
 });
 
 test('conversation chips: the answer\'s refs are resolved, merged as chat chips and ride ask-done', async () => {
@@ -630,6 +650,7 @@ test('title: fires on the first turn with the R-D + dontAsk option set; rename g
   assert.deepEqual(o.envAllowlist, []);
   assert.equal(o.permissionMode, 'dontAsk');
   assert.equal(o.runModel, 'claude-opus-5-5', '#422: the chat\'s own model is the title default');
+  assert.equal(o.engine, undefined, 'a Claude chat\'s title spawn carries no engine option (D8/D12: titles follow the chat\'s engine; Claude chats stay byte-identical)');
   assert.equal(typeof o.onError, 'function', '#422: a failed title is reported, not swallowed');
   assert.equal(o.signal, undefined, 'no signal — fires after ANY terminal, incl. a stop that aborted the controller');
   assert.equal(getThread(s.thread.id).title, 'Fable Title');
@@ -1499,15 +1520,17 @@ test('MCP §10 Ask: one muted line per copy the CLI could not start (failed, nee
   const { turn } = makeTurn(s, { mcp: MCP(['jira', 'pg', 'gh', 'linear', 'slow', 'odd']), resumeSessionId: 'dead-sid' }, {
     runClaudeImpl: async (opts) => {
       n += 1;
-      push(opts.onEvent, { ...INIT({}), parent_tool_use_id: 'toolu_sub' });   // a sub-agent's init is not the turn's
-      push(opts.onEvent, { type: 'system', subtype: 'init', session_id: 'sess-2', parent_tool_use_id: null });   // no list: says nothing (never "absent")
-      push(opts.onEvent, INIT(statuses));
-      push(opts.onEvent, INIT(statuses));                     // a second init in the same attempt adds nothing
+      // What runClaude delivers: the adapter's normalized events, one normalizer per spawn.
+      const emit = normalizingOnEvent(opts.onEvent);
+      push(emit, { ...INIT({}), parent_tool_use_id: 'toolu_sub' });   // a sub-agent's init is not the turn's
+      push(emit, { type: 'system', subtype: 'init', session_id: 'sess-2', parent_tool_use_id: null });   // no list: says nothing (never "absent")
+      push(emit, INIT(statuses));
+      push(emit, INIT(statuses));                     // a second init in the same attempt adds nothing
       if (n === 1) {
-        push(opts.onEvent, RESULT({ subtype: 'error_during_execution', is_error: true, total_cost_usd: 0, errors: ['No conversation found with session ID: dead-sid'] }));
+        push(emit, RESULT({ subtype: 'error_during_execution', is_error: true, total_cost_usd: 0, errors: ['No conversation found with session ID: dead-sid'] }));
         throw new Error('claude exited with code 1: No conversation found with session ID: dead-sid');
       }
-      push(opts.onEvent, RESULT());
+      push(emit, RESULT());
       return { text: '', exitCode: 0 };
     },
   });

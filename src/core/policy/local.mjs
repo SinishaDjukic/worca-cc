@@ -8,6 +8,7 @@ import { createRequire } from 'node:module';
 import {
   readSettings, pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod, humanRateUsdPerHour, askMaxTurns, askMaxBudgetUsd, hideBuiltinModels, askWeb,
 } from '../settings.mjs';
+import { hasProjectSetting } from '../settings-cascade.mjs';
 import { readConfigRow, readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
@@ -34,15 +35,18 @@ const parseJson = (s, fallback) => { try { const v = JSON.parse(s); return v ?? 
 export function localSnapshot(projectDir = null) {
   const raw = readSettings();
   const has = (k) => raw[k] !== undefined && raw[k] !== null && raw[k] !== '';
-  const web = askWeb();
+  const proj = (id) => !!projectDir && hasProjectSetting(id, projectDir);
+  const web = askWeb(projectDir);
+  const pipeCap = pipelineCostLimitUsd(projectDir);
+  const rate = humanRateUsdPerHour(projectDir);
   const out = {
-    'cost.pipelineLimitUsd': { value: pipelineCostLimitUsd(), set: pipelineCostLimitUsd() != null },
+    'cost.pipelineLimitUsd': { value: pipeCap, set: pipeCap != null },
     'cost.totalLimitUsd': { value: totalCostLimitUsd(), set: totalCostLimitUsd() != null },
     'cost.resetPeriod': { value: costLimitResetPeriod(), set: has('costLimitResetPeriod') },
-    'cost.humanRateUsd': { value: humanRateUsdPerHour(), set: humanRateUsdPerHour() != null },
-    'ask.maxTurns': { value: askMaxTurns(), set: has('askMaxTurns') },
-    'ask.maxBudgetUsd': { value: askMaxBudgetUsd(), set: raw.askMaxBudgetUsd !== undefined },   // literal null = "no cap", a choice
-    'ask.webEnabled': { value: web.enabled, set: typeof raw.askWeb?.enabled === 'boolean' },
+    'cost.humanRateUsd': { value: rate, set: rate != null },
+    'ask.maxTurns': { value: askMaxTurns(projectDir), set: has('askMaxTurns') || proj('askMaxTurns') },
+    'ask.maxBudgetUsd': { value: askMaxBudgetUsd(projectDir), set: raw.askMaxBudgetUsd !== undefined || proj('askMaxBudgetUsd') },
+    'ask.webEnabled': { value: web.enabled, set: typeof raw.askWeb?.enabled === 'boolean' || proj('askWeb') },
     'ask.webAllowedDomains': { value: web.allowedDomains, set: web.allowedDomains.length > 0 },
     'models.hideBuiltins': { value: hideBuiltinModels(), set: has('hideBuiltinModels') || raw.hideBuiltinModelsChosen === true },
     'plugins.marketplaces': { value: Object.values(readMarketplaces().marketplaces).map((m) => m.url), set: true },

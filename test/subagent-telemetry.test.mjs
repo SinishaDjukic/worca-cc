@@ -27,20 +27,28 @@ test('buildHookArgs is [] when off and the two flags when on', () => {
   assert.ok(si >= 0, 'adds --settings');
   const settings = JSON.parse(a[si + 1]);
   assert.equal(settings.hooks.PostToolUse[0].matcher, 'Agent', 'PostToolUse matched to Agent');
-  assert.equal(settings.hooks.PostToolUse[0].hooks[0].command, 'true');
+  // The payload reaches the stream only as the hook's echoed stdout: `cat`, synchronous.
+  assert.deepEqual(settings.hooks.PostToolUse[0].hooks, [{ type: 'command', command: 'cat' }]);
 });
+
+// The CLI's hook line (see test/fixtures/hooks/): the PostToolUse payload rides
+// inside the envelope as the hook command's echoed stdout.
+const hookResponse = (payload) => {
+  const out = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Agent', ...payload });
+  return { type: 'hook-event', raw: { type: 'system', subtype: 'hook_response',
+    hook_name: 'PostToolUse:Agent', hook_event: 'PostToolUse', output: out, stdout: out,
+    stderr: '', exit_code: 0, outcome: 'success' } };
+};
 
 test('a hook-event for a tracked sub-agent fills duration/tokens/cost (keyed by tool_use_id)', () => {
   const orch = createOrchestrator({ projectDir: '/tmp/proj' });
   const spawn = (id) => ({ type: 'assistant', raw: { type: 'assistant', message: { content: [
     { type: 'tool_use', id, name: 'Agent', input: { description: 'd' } } ] } } });
   orch._onAgentEvent('planner', spawn('toolu_A'), { nodeId: 'n', stepIndex: 0, cycle: 1, stepKey: '0:n' });
-  orch._onAgentEvent('planner', {
-    type: 'hook-event',
-    raw: { type: 'hook-event', hook_event_name: 'PostToolUse', tool_name: 'Agent',
-      tool_use_id: 'toolu_A',
-      tool_response: { totalDurationMs: 4200, totalTokens: 1536, usage: { cost_usd: 0.012 } } },
-  });
+  orch._onAgentEvent('planner', hookResponse({
+    tool_use_id: 'toolu_A',
+    tool_response: { totalDurationMs: 4200, totalTokens: 1536, usage: { cost_usd: 0.012 } },
+  }));
   const r = orch.state.subAgents.find((s) => s.id === 'toolu_A');
   assert.equal(r.durationMs, 4200);
   assert.equal(r.tokens, 1536);
@@ -49,8 +57,7 @@ test('a hook-event for a tracked sub-agent fills duration/tokens/cost (keyed by 
 
 test('a hook-event for an unknown id is ignored (no crash, no record)', () => {
   const orch = createOrchestrator({ projectDir: '/tmp/proj' });
-  orch._onAgentEvent('planner', { type: 'hook-event', raw: { type: 'hook-event',
-    tool_use_id: 'ghost', tool_response: { totalDurationMs: 1 } } });
+  orch._onAgentEvent('planner', hookResponse({ tool_use_id: 'ghost', tool_response: { totalDurationMs: 1 } }));
   assert.equal(orch.state.subAgents.length, 0);
 });
 

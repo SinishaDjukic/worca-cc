@@ -253,6 +253,18 @@
                   </div>
                 </div>
 
+                <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
+                     the default and adds nothing to the run body; on Codex the run's titles, classifier, overview and PR description run on Codex too. Per run, never remembered. -->
+                <div class="field field-compact" id="engine-row">
+                  <label>Engine</label>
+                  <div class="seg" id="engine-seg" role="group" aria-label="Engine">
+                    <button type="button" data-engine="claude" class="on" aria-pressed="true">Claude</button>
+                    <button type="button" data-engine="codex" aria-pressed="false">Codex</button>
+                  </div>
+                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
+                  <small class="hint" id="engine-default-hint" hidden></small>
+                </div>
+
                 <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
                 <div class="field field-compact" id="memory-scope-row" data-min-level="expert" hidden>
                   <label>Memory scope</label>
@@ -448,6 +460,15 @@
                 <div id="policyLine" hidden></div>
 
                 <!-- Actions -->
+                <!-- The engine gate's refusal (409 engine-refused). The checkbox shows only when the
+                     consent lifts it; it is for this attempt only. -->
+                <div id="engineRefusal" hidden>
+                  <div class="hint err" id="engineRefusalText"></div>
+                  <label class="check-row" id="engineAllowRow" hidden>
+                    <input type="checkbox" id="engineAllowUnguarded" />
+                    Allow unguarded: run without the rules this engine cannot enforce
+                  </label>
+                </div>
                 <div class="hint err" id="newBlockedNote" hidden></div>
                 <!-- OpenRouter free requests left today vs what a run here takes (openrouter-free-view.mjs). -->
                 <div class="hint warn" id="newFreeNote" hidden></div>
@@ -587,17 +608,21 @@
                   </button>
                   <!-- One control for Pause/Resume. The label lives in its own span so a busy
                        state swaps only the word and the inline SVG survives. -->
-                  <!-- Split Resume: the caret (Advanced, paused only) opens "Resume at…", like #start-split. -->
+                  <!-- Split Resume: the caret (Advanced, paused only) opens the engine choice ("Resume on
+                       <saved engine>" / "Resume on <other engine>", app.js#paintResumeEngineItems) and
+                       "Resume at…", like #start-split. -->
                   <div class="btn-split mini rd-resume-split">
                     <button type="button" class="rd-pause" data-action="pause" hidden>
                       <svg class="ico-pause" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
                       <svg class="ico-play" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                       <span class="rd-btn-label">Pause</span>
                     </button>
-                    <button type="button" class="btn-split-more rd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="Schedule the resume" aria-label="Schedule the resume" hidden>
+                    <button type="button" class="btn-split-more rd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume" hidden>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
+                      <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -739,13 +764,21 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
                       <span class="hd-btn-label">Resume</span>
                     </button>
-                    <button type="button" class="btn-split-more hd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="Schedule the resume" aria-label="Schedule the resume">
+                    <button type="button" class="btn-split-more hd-resume-more" data-min-level="advanced" aria-haspopup="menu" aria-expanded="false" title="More ways to resume" aria-label="More ways to resume">
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
+                      <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
+                  <!-- A usage limit the engine hit: continue now on the other engine. Every interface level
+                       (the split's caret is Advanced only); paintHdLive shows it and names the engine. -->
+                  <button type="button" class="hd-resume-switch" hidden>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
+                    <span class="hd-btn-label">Resume on another engine</span>
+                  </button>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
                   <button type="button" class="hd-pause" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
@@ -1868,6 +1901,14 @@
               </div>
             </div>
 
+            <!-- Ask Worca's engine (cascading-settings-design.md D17): user-only — the engine new chats start on and
+                 each engine's chat model. Rendered by engine-settings-view.mjs renderAskEngineSection. -->
+            <section class="card settings-card" id="ask-engine-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Engine &amp; models</h2></div></div>
+              <div id="ask-engine-root"></div>
+              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
+              <small class="hint" id="askEngineMsg"></small>
+            </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
                  budget means "no cap". Posted ALONE — never with root/budget keys. -->
@@ -2035,6 +2076,12 @@
                 </button>
               </div>
             </div>
+            <section class="card settings-card" id="engine-settings-card" data-min-level="expert">
+              <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
+              <div id="engine-settings-root"></div>
+              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
+              <small class="hint" id="engineSettingsMsg"></small>
+            </section>
             <!-- The models Worca's own helper calls use (titles, the Auto classifier, PR descriptions). Two
                  columns on a wide screen so the catalog below is not pushed a screen down. -->
             <div class="models-helpers" data-min-level="expert">

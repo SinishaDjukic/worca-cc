@@ -8,6 +8,7 @@ import { getDb } from '../src/core/db.mjs';
 import { upsertSubAgent, writeReview } from '../src/core/artifacts.mjs';
 import { persistResults, OVERVIEW_FILE } from '../src/core/results.mjs';
 import { writeGuardrailSet } from '../src/core/guardrail-store.mjs';
+import { addCustomModel } from '../src/core/config.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
@@ -216,6 +217,32 @@ test('the workflow shape is whitelisted, and keys + labels ship verbatim', async
     'a STOCK workflow id is fixed vocabulary, so its identity ships whole');
   assert.equal('subagentModel' in p.workflow.nodes[0], false,
     'an empty subagentModel is omitted, not shipped as ""');
+});
+
+test('the report names the run\'s engine and drops a node model that engine did not run', async () => {
+  const STEPPER_CX = { ...STEPPER_V2, graph: { ...STEPPER_V2.graph, nodes: STEPPER_V2.graph.nodes.map((n) => (n.id === 'n_plan' ? { ...n, model: 'claude-opus-5-5', effort: 'high' } : n)) } };
+  const cx = await seedPipeline(join(home, 'proj-cx'), { status: 'done', phase: 'done', title: 'codex run', engine: 2, runEngine: 'codex', stepper: STEPPER_CX });
+  const p = await buildRunReport(cx.id, { reason: 'too-expensive' });
+  assert.equal(p.run.runEngine, 'codex');
+  const node = p.workflow.nodes.find((n) => n.id === 'n_plan');
+  assert.equal('model' in node, false, 'a Claude model never ran on codex');
+  assert.equal('effort' in node, false);
+  const base = await buildRunReport(id, { reason: 'too-expensive' });
+  assert.equal(base.run.runEngine, 'claude');
+  assert.equal(base.workflow.nodes[0].model, 'claude-opus-5-5');
+});
+
+test('the report drops a project-local Claude model on Codex (Review Focus 10)', async () => {
+  const projectDir = join(home, 'proj-cx-local');
+  await addCustomModel(projectDir, { id: 'my-project-proxy' });
+  const stepper = { ...STEPPER_V2, graph: { ...STEPPER_V2.graph, nodes: STEPPER_V2.graph.nodes.map((n) => (
+    n.id === 'n_plan' ? { ...n, model: 'my-project-proxy', effort: 'max' } : n
+  )) } };
+  const cx = await seedPipeline(projectDir, { status: 'done', phase: 'done', engine: 2, runEngine: 'codex', stepper });
+  const report = await buildRunReport(cx.id, { reason: 'too-expensive' });
+  const node = report.workflow.nodes.find((n) => n.id === 'n_plan');
+  assert.equal('model' in node, false);
+  assert.equal('effort' in node, false);
 });
 
 test('each reason attaches its own evidence block', async () => {

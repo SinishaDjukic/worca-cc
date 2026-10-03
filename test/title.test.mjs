@@ -2,6 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fakeCodex } from './helpers/fake-codex.mjs';
+import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -144,4 +149,36 @@ test('generateTitle honors opts.mock without WORCA_MOCK — no spawn even with a
   } finally {
     if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
   }
+});
+
+test('generateTitle on codex: one codex spawn, read-only, codex\'s default model and no Claude title model', POSIX_SHIM, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-title-codex-'));
+  const codex = fakeCodex(dir, 'Add Billing Export');
+  const prev = process.env.WORCA_TITLE_MODEL;
+  process.env.WORCA_TITLE_MODEL = 'claude-haiku-4-5';   // a Claude override must not reach codex
+  const errors = [];
+  try {
+    const title = await generateTitle('add a billing export to the admin page', { engine: 'codex', bin: codex.bin, cwd: dir, onError: (e) => errors.push(e) });
+    assert.equal(title, 'Add Billing Export');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_TITLE_MODEL; else process.env.WORCA_TITLE_MODEL = prev;
+  }
+  assert.deepEqual(errors, []);
+  const args = codex.args();
+  assert.equal(args[0], 'exec');
+  assert.deepEqual(args.slice(args.indexOf('--sandbox'), args.indexOf('--sandbox') + 2), ['--sandbox', 'read-only']);
+  assert.equal(args[args.indexOf('-m') + 1], CODEX_DEFAULT_MODEL, 'no title model on codex: its own default, named so it is priced');
+  assert.equal(args.includes('--add-dir'), false);
+  assert.ok(args.includes('model_reasoning_effort="low"'), 'the aux effort travels');
+});
+
+test('a failing codex title keeps the provisional title and says which engine failed', POSIX_SHIM, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-title-codex-fail-'));
+  const codex = fakeCodex(dir, null, { fail: '401 Unauthorized' });
+  const errors = [];
+  const title = await generateTitle('fix the login form', { engine: 'codex', bin: codex.bin, cwd: dir, onError: (e) => errors.push(e) });
+  assert.equal(title, '');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].error.message, /401 Unauthorized/);
+  assert.equal(errors[0].model, "codex's default model");
 });

@@ -1,0 +1,20 @@
+{
+  "args": [
+    "-p",
+    "<PROMPT>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--append-system-prompt",
+    "<SYSTEM_PROMPT>",
+    "--allowedTools",
+    "Read,Write,Edit,Bash,Grep,Glob,Skill,Task,Agent"
+  ],
+  "stdin": "",
+  "files": {},
+  "envAdded": {
+    "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8"
+  }
+}

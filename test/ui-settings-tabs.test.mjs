@@ -225,12 +225,12 @@ test('General keeps the machine cards; Runs, Ask Worca and Models hold the moved
     'debug-spawn-settings-card', 'getting-started-card', 'about-card',
   ]);
   assert.deepEqual(cardIds(view, 'runs'), ['budget-settings-card', 'night-settings-card', 'sync-settings-card', 'schedule-settings-card', 'actions-settings-card', 'ws-scan-models-card', 'chat-settings-card']);
-  assert.deepEqual(cardIds(view, 'ask'), ['ask-settings-card']);
-  assert.deepEqual(cardIds(view, 'models'), ['title-model-settings-card', 'auto-model-settings-card', 'pr-description-model-settings-card']);
-  // Nothing got lost or duplicated in the move: the eighteen cards (dev's thirteen + Workspaces + PR description model + Sync before run + Actions + Away mode) are all still here, once.
+  assert.deepEqual(cardIds(view, 'ask'), ['ask-engine-card', 'ask-settings-card']);
+  assert.deepEqual(cardIds(view, 'models'), ['engine-settings-card', 'title-model-settings-card', 'auto-model-settings-card', 'pr-description-model-settings-card']);
+  // Nothing got lost or duplicated in the move: the twenty cards (dev's thirteen + Workspaces + PR description model + Sync before run + Actions + Away mode + Engines + Ask engine) are all still here, once.
   const all = [...view.querySelectorAll('section.card.settings-card')].map((c) => c.id);
-  assert.equal(all.length, 18);
-  assert.equal(new Set(all).size, 18);
+  assert.equal(all.length, 20);
+  assert.equal(new Set(all).size, 20);
 });
 
 test('each moved card keeps its level; Runs is a Simple tab, Ask Worca an Advanced one', () => {

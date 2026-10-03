@@ -48,6 +48,7 @@ export function allPluginModels() {
         .map((v) => v.secret);
       out.push({
         plugin: name, id: m.id, label: m.label, efforts: [...m.efforts],
+        ...(m.engine ? { engine: m.engine } : {}),   // a Codex model (§3.1a); Claude's carry none
         ...(m.env ? { env: m.env } : {}),
         ...(m.cost ? { cost: m.cost } : {}),   // manifest-pinned pricing (config.mjs modelCostConfig)
         ...(m.upstream ? { upstream: m.upstream } : {}),   // bridged entry (bridge/registry.mjs)

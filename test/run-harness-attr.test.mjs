@@ -8,7 +8,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 useTempHome(after);
 
 const TELEMETRY = [
-  '_onAgentEvent', '_recordSubAgentSpawns', '_recordSubAgentFinishes',
+  '_onAgentEvent', '_recordSubAgentSpawn', '_recordSubAgentAck', '_recordSubAgentClose',
   '_recordSubAgentTelemetry', '_recordSkills', '_recordGraphify',
   '_upsertSubAgent', '_subAgentTransition', '_recordCost',
 ];

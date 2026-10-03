@@ -53,11 +53,12 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
 } from './model-env.mjs';
+import { CODEX_PRICES } from './list-prices.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 
@@ -279,12 +280,14 @@ function readByteCap(key, fallback) {
 }
 
 /** Per-source-file inlining cap for generated run context (§5.4). */
-export function contextMaxBytesPerFile() {
+export function contextMaxBytesPerFile(scope) {
+  const p = projectOverride('contextMaxBytesPerFile', scope); if (p !== undefined) return p;
   return readByteCap('contextMaxBytesPerFile', DEFAULT_CONTEXT_MAX_BYTES_PER_FILE);
 }
 
 /** Total memory budget for generated run context (§5.4). */
-export function contextMaxBytesTotal() {
+export function contextMaxBytesTotal(scope) {
+  const p = projectOverride('contextMaxBytesTotal', scope); if (p !== undefined) return p;
   return readByteCap('contextMaxBytesTotal', DEFAULT_CONTEXT_MAX_BYTES_TOTAL);
 }
 
@@ -334,17 +337,17 @@ function readDefragThreshold(key, fallback, { pct = false } = {}) {
 
 /** The caps every memory reader/writer takes (memory-store.mjs, memory-sync.mjs). Read fresh per call.
  *  `defrag` is the health threshold block (agent-memory-design.md §8 / §12). */
-export function memoryCaps() {
+export function memoryCaps(scope) {
   return {
-    softBytesPerFile: readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
-    hardBytesPerFile: readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
-    maxFilesPerScope: readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
-    hookMaxChars: readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    softBytesPerFile: projectOverride('memory.softBytesPerFile', scope) ?? readMemoryCap('softBytesPerFile', DEFAULT_MEMORY_SOFT_BYTES_PER_FILE),
+    hardBytesPerFile: projectOverride('memory.maxBytesPerFile', scope) ?? readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
+    maxFilesPerScope: projectOverride('memory.maxFilesPerScope', scope) ?? readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
+    hookMaxChars: projectOverride('memory.hookMaxChars', scope) ?? readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
     defrag: {
-      writes: readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
-      files: readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
-      bytesPct: readDefragThreshold('bytesPct', DEFAULT_MEMORY_DEFRAG_BYTES_PCT, { pct: true }),
-      alwaysOnBytes: readDefragThreshold('alwaysOnBytes', DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES),
+      writes: projectOverride('memory.defrag.writes', scope) ?? readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
+      files: projectOverride('memory.defrag.files', scope) ?? readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
+      bytesPct: projectOverride('memory.defrag.bytesPct', scope) ?? readDefragThreshold('bytesPct', DEFAULT_MEMORY_DEFRAG_BYTES_PCT, { pct: true }),
+      alwaysOnBytes: projectOverride('memory.defrag.alwaysOnBytes', scope) ?? readDefragThreshold('alwaysOnBytes', DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES),
     },
   };
 }
@@ -516,7 +519,8 @@ export async function setWorkspaceScanModels(input, { models = null } = {}) {
 }
 
 /** Skill delivery mechanism (§5.6): 'copy' (default, isolated) | 'symlink' (write-through). */
-export function skillMount() {
+export function skillMount(scope) {
+  const p = projectOverride('skillMount', scope); if (p !== undefined) return p;
   const v = readSettings().skillMount;
   if (v === undefined) return DEFAULT_SKILL_MOUNT;
   if (SKILL_MOUNTS.includes(v)) return v;
@@ -580,7 +584,7 @@ function readUsdCap(key) {
 }
 
 /** Per-pipeline lifetime spend cap in USD, or null (no limit). */
-export function pipelineCostLimitUsd() { return readUsdCap('pipelineCostLimitUsd'); }
+export function pipelineCostLimitUsd(scope) { return projectOverride('pipelineCostLimitUsd', scope) ?? readUsdCap('pipelineCostLimitUsd'); }
 /** Windowed all-pipelines spend cap in USD, or null (no limit). */
 export function totalCostLimitUsd() { return readUsdCap('totalCostLimitUsd'); }
 
@@ -650,7 +654,8 @@ const isAskMaxTurns = (v) => Number.isSafeInteger(v) && v >= 1 && v <= 500;
 const isAskMaxBudget = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 100;
 
 /** --max-turns for one chat turn: integer 1..500; absent/invalid ⇒ the default (loudly). */
-export function askMaxTurns() {
+export function askMaxTurns(scope) {
+  const p = projectOverride('askMaxTurns', scope); if (p !== undefined) return p;
   const v = readSettings().askMaxTurns;
   if (v === undefined) return DEFAULT_ASK_MAX_TURNS;
   if (isAskMaxTurns(v)) return v;
@@ -659,7 +664,8 @@ export function askMaxTurns() {
 }
 
 /** --max-budget-usd for one chat turn: number 0.1..100, or null = no cap; absent/invalid ⇒ the default, no cap (loudly). */
-export function askMaxBudgetUsd() {
+export function askMaxBudgetUsd(scope) {
+  const p = projectOverride('askMaxBudgetUsd', scope); if (p !== undefined) return p;
   const v = readSettings().askMaxBudgetUsd;
   if (v === undefined) return DEFAULT_ASK_MAX_BUDGET_USD;
   if (v === null) return null;
@@ -747,8 +753,9 @@ export function assertAskWebInput(input) {
 
 let askWebWarned = null;
 /** The local Ask web settings; invalid stored data falls back to off (never throws). */
-export function askWeb() {
-  const raw = readSettings().askWeb;
+export function askWeb(scope) {
+  const p = projectOverride('askWeb', scope);
+  const raw = p !== undefined ? p : readSettings().askWeb;
   const off = { enabled: false, anyHost: false, allowedDomains: [], search: null };
   if (raw === undefined || raw === null) return off;
   try { return assertAskWebInput(isObj(raw) ? { enabled: raw.enabled, anyHost: raw.anyHost ?? false, allowedDomains: raw.allowedDomains ?? [], search: raw.search ?? null } : raw); }
@@ -759,17 +766,21 @@ export function askWeb() {
   }
 }
 
-/** Stores exactly what the user saved; `null` clears the key (back to "unset" = off). */
-export async function setAskWeb(input) {
-  const settings = readSettings();
-  if (input === null) { delete settings.askWeb; await persistSettings(settings); return { askWeb: askWeb() }; }
-  const next = assertAskWebInput(input);
-  settings.askWeb = {
+/** The stored shape shared by the user and project layers. */
+export function askWebStoreShape(next) {
+  return {
     enabled: next.enabled,
     ...(next.anyHost ? { anyHost: true } : {}),
     allowedDomains: next.allowedDomains,
     ...(next.search ? { search: { url: next.search.url, key: next.search.key, keyHeader: next.search.keyHeader, keyPrefix: next.search.keyPrefix } } : {}),
   };
+}
+
+/** Stores exactly what the user saved; `null` clears the key (back to "unset" = off). */
+export async function setAskWeb(input) {
+  const settings = readSettings();
+  if (input === null) { delete settings.askWeb; await persistSettings(settings); return { askWeb: askWeb() }; }
+  settings.askWeb = askWebStoreShape(assertAskWebInput(input));
   await persistSettings(settings);
   return { askWeb: askWeb() };
 }
@@ -866,7 +877,7 @@ export const setTotalCostLimitUsd = (input) => setUsdCap('totalCostLimitUsd', in
 export const DEFAULT_HUMAN_RATE_USD = 35;
 
 /** Stored developer rate in USD per hour, or null when unset (→ policy → 35). */
-export function humanRateUsdPerHour() { return readUsdCap('humanRateUsdPerHour'); }
+export function humanRateUsdPerHour(scope) { return projectOverride('humanRateUsdPerHour', scope) ?? readUsdCap('humanRateUsdPerHour'); }
 
 /** @throws {Error} unless a positive finite number, or '' / null / undefined (clear). */
 export function assertHumanRateInput(input) { assertUsdCapInput('humanRateUsdPerHour', input); }
@@ -1051,7 +1062,160 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'nightModeToggle',                         // night mode live switch: auto | on | off
   'sync',                                    // sync before run (#527) { beforeRun, remote, refreshMinutes, onDiverged }
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
+  'runEngine', 'stepModels', 'utilityModels',
+  'askEngine', 'askModels',                  // Ask Worca's engine for new chats and its model per engine (user-only, D17)
 ]);
+
+let projectLayerReader = null;
+export function setProjectLayerReader(fn) { projectLayerReader = typeof fn === 'function' ? fn : null; }
+function projectOverride(id, scope) {
+  if (!scope || !projectLayerReader) return undefined;
+  try { return projectLayerReader(id, scope); } catch { return undefined; }
+}
+
+export const UTILITY_JOBS = Object.freeze(['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan']);
+const MODEL_PAIR_MAX_LEN = 200;
+const homeGuarded = () => !!process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK;
+export function runEngineSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().runEngine;
+  return value === null ? undefined : value;
+}
+export function stepModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().stepModels;
+  return isObj(value) ? value : {};
+}
+export function utilityModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().utilityModels;
+  return isObj(value) ? value : {};
+}
+/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat keeps the engine it started on. */
+export function askEngineSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().askEngine;
+  return value === null ? undefined : value;
+}
+/** The Ask model slot per engine, { claude?: {model, effort}, codex?: {model, effort} } (D17). */
+export function askModelsSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().askModels;
+  return isObj(value) ? value : {};
+}
+export function assertAskEngineInput(input) {
+  if (input === null || input === undefined || input === '') return null;
+  if (!MODEL_ENGINES.includes(input)) throw new Error(`askEngine must be one of ${MODEL_ENGINES.join(' | ')}`);
+  return input;
+}
+export async function setAskEngineSetting(input) {
+  const value = assertAskEngineInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.askEngine; else settings.askEngine = value;
+  await persistSettings(settings);
+  return { askEngine: askEngineSetting() ?? null };
+}
+export function assertAskModelsInput(input) {
+  if (!isObj(input)) throw new Error('askModels must be { <engine>: { model, effort } | null }');
+  const out = {};
+  for (const [engine, value] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`askModels: unknown engine "${engine}"`);
+    out[engine] = normalizeModelPair(engine, value, `askModels.${engine}`);
+  }
+  return out;
+}
+export async function setAskModels(input) {
+  const patch = assertAskModelsInput(input);
+  const settings = readSettings();
+  const all = isObj(settings.askModels) ? { ...settings.askModels } : {};
+  for (const [engine, pair] of Object.entries(patch)) { if (pair === null) delete all[engine]; else all[engine] = pair; }
+  if (Object.keys(all).length) settings.askModels = all; else delete settings.askModels;
+  await persistSettings(settings);
+  return { askModels: askModelsSetting() };
+}
+export function assertRunEngineInput(input) {
+  if (input === null || input === undefined || input === '') return null;
+  if (!MODEL_ENGINES.includes(input)) throw new Error(`runEngine must be one of ${MODEL_ENGINES.join(' | ')}`);
+  return input;
+}
+export async function setRunEngineSetting(input) {
+  const value = assertRunEngineInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.runEngine; else settings.runEngine = value;
+  await persistSettings(settings);
+  return { runEngine: runEngineSetting() ?? null };
+}
+const ROLE_KEY_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export function assertStepModelsInput(input) {
+  if (!isObj(input)) throw new Error('stepModels must be { <engine>: { <role>: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`stepModels: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`stepModels.${engine} must be an object of role → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!ROLE_KEY_RE.test(role)) throw new Error(`stepModels.${engine}: invalid role "${role}"`);
+      out[engine][role] = normalizeModelPair(engine, value, `stepModels.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+export async function setStepModels(input) {
+  const patch = assertStepModelsInput(input); const settings = readSettings();
+  const all = isObj(settings.stepModels) ? { ...settings.stepModels } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const current = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) pair === null ? delete current[role] : current[role] = pair;
+    if (Object.keys(current).length) all[engine] = current; else delete all[engine];
+  }
+  if (Object.keys(all).length) settings.stepModels = all; else delete settings.stepModels;
+  await persistSettings(settings); return { stepModels: stepModelsSetting() };
+}
+export function assertUtilityModelsInput(input) {
+  if (!isObj(input)) throw new Error('utilityModels must be { codex: { <job>: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, jobs] of Object.entries(input)) {
+    if (engine === 'claude') throw new Error("utilityModels.claude: Claude's helper models are the titleModel, autoWorkflowModel, prDescriptionModel and memoryDefrag settings");
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`utilityModels: unknown engine "${engine}"`);
+    if (!isObj(jobs)) throw new Error(`utilityModels.${engine} must be an object of job → { model, effort } | null`);
+    out[engine] = {};
+    for (const [job, value] of Object.entries(jobs)) {
+      if (!UTILITY_JOBS.includes(job)) throw new Error(`utilityModels.${engine}: unknown job "${job}" (one of ${UTILITY_JOBS.join(', ')})`);
+      out[engine][job] = normalizeModelPair(engine, value, `utilityModels.${engine}.${job}`);
+    }
+  }
+  return out;
+}
+export async function setUtilityModels(input) {
+  const patch = assertUtilityModelsInput(input); const settings = readSettings();
+  const all = isObj(settings.utilityModels) ? { ...settings.utilityModels } : {};
+  for (const [engine, jobs] of Object.entries(patch)) {
+    const current = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [job, pair] of Object.entries(jobs)) pair === null ? delete current[job] : current[job] = pair;
+    if (Object.keys(current).length) all[engine] = current; else delete all[engine];
+  }
+  if (Object.keys(all).length) settings.utilityModels = all; else delete settings.utilityModels;
+  await persistSettings(settings); return { utilityModels: utilityModelsSetting() };
+}
+export function normalizeModelPair(engine, input, label = 'model') {
+  if (input === null || input === undefined || input === '') return null;
+  if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
+  const model = input.model == null ? '' : (typeof input.model === 'string' ? input.model.trim() : null);
+  if (model === null || model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model must be a model id`);
+  const effort = input.effort == null ? '' : (typeof input.effort === 'string' ? input.effort.trim() : null);
+  if (effort === null) throw new Error(`${label}.effort must be a string`);
+  const efforts = effortsForEngine(engine);
+  if (effort && !efforts.includes(effort)) throw new Error(`${label}.effort must be one of ${efforts.join(' | ')}`);
+  if (!model && !effort) return null;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
+export const SETTING_CHECKS = Object.freeze({
+  usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
+  pct: (value) => isByteCap(value) && value <= 100,
+  askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
+  skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value),
+});
 
 // ── Title-generation model + hidden built-ins (#422) ─────────────────────────
 // `titleModel` is the catalog id every run/chat title is written with; absent
@@ -1286,7 +1450,8 @@ export async function setDebugSpawnEnabled(input) {
 // ---------------------------------------------------------------------------
 
 /** Order-normalize an efforts subset to EFFORTS order, deduplicated. */
-const orderEfforts = (list) => EFFORTS.filter((e) => list.includes(e));
+const orderEfforts = (list, engine = 'claude') => effortsForEngine(engine).filter((e) => list.includes(e));
+const CLAUDE_MODEL_ID_RE = /^(claude-|opus|sonnet|haiku|fable)/i;
 
 /**
  * Sanitize one raw catalog entry to its EFFECTIVE shape, or null when it is
@@ -1299,7 +1464,8 @@ function sanitizeGlobalModel(raw) {
   const id = typeof raw.id === 'string' ? raw.id.trim() : '';
   if (!id) return null;
   const label = (typeof raw.label === 'string' && raw.label.trim()) || id;
-  const efforts = Array.isArray(raw.efforts) ? orderEfforts(raw.efforts) : [];
+  const engine = raw.engine === 'codex' ? 'codex' : 'claude';
+  const efforts = Array.isArray(raw.efforts) ? orderEfforts(raw.efforts, engine) : [];
   const env = {};
   const rawEnv = raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env) ? raw.env : {};
   for (const [k, v] of Object.entries(rawEnv)) {
@@ -1314,7 +1480,11 @@ function sanitizeGlobalModel(raw) {
     env[k] = t;
   }
   const cost = sanitizeModelCost(raw.cost, id);
-  const upstream = sanitizeModelUpstream(raw.upstream, id);
+  let upstream = sanitizeModelUpstream(raw.upstream, id);
+  if (engine === 'codex') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a codex model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a codex model takes no connection`); upstream = undefined; }
+  }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
     // hand-edited file carrying both is degraded, not rejected: the bridge wins.
@@ -1327,7 +1497,8 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: efforts.length ? efforts : [...EFFORTS],
+    efforts: efforts.length ? efforts : [...effortsForEngine(engine)],
+    ...(engine === 'codex' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
     ...(upstream ? { upstream } : {}),
@@ -1405,14 +1576,19 @@ function assertModelId(id) {
 }
 
 /** @throws {Error} unless every member is a known effort; returns EFFORTS-ordered subset ([] = default/full). */
-function assertEfforts(input) {
+function assertEfforts(input, engine = 'claude') {
+  const allowed = effortsForEngine(engine);
   if (isClearInput(input) || (Array.isArray(input) && input.length === 0)) return [];
-  if (!Array.isArray(input)) throw new Error(`efforts must be an array drawn from ${EFFORTS.join(' | ')}`);
+  if (!Array.isArray(input)) throw new Error(`efforts must be an array drawn from ${allowed.join(' | ')}`);
   for (const e of input) {
-    if (!EFFORTS.includes(e)) throw new Error(`unknown effort ${JSON.stringify(e)} — must be one of ${EFFORTS.join(' | ')}`);
+    if (!allowed.includes(e)) throw new Error(`unknown effort ${JSON.stringify(e)} — must be one of ${allowed.join(' | ')}`);
   }
-  return orderEfforts(input);
+  return orderEfforts(input, engine);
 }
+
+function assertModelEngine(input) { if (isClearInput(input) || input === 'claude') return 'claude'; if (input === 'codex') return input; throw new Error('engine must be one of claude | codex'); }
+function assertCodexFields(engine, env, upstream) { if (engine !== 'codex') return; if (Object.keys(env || {}).length) throw new Error('a codex model takes no env'); if (upstream) throw new Error('a codex model takes no upstream'); }
+function assertIdForEngine(id, engine) { if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id`); if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is a Codex built-in`); }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
  *  the PATCH delete marker (env: {KEY: null}). Returns entries as given. */
@@ -1439,11 +1615,12 @@ function assertTestSettingsAccess() {
 }
 
 /** The MINIMAL stored shape for validated parts (see section comment). */
-function storedModelShape(id, label, efforts, env, cost, upstream) {
+function storedModelShape(id, label, efforts, env, cost, upstream, engine = 'claude') {
   return {
     id,
     ...(label && label !== id ? { label } : {}),
-    ...(efforts.length && efforts.length !== EFFORTS.length ? { efforts } : {}),
+    ...(engine === 'codex' ? { engine } : {}),
+    ...(efforts.length && efforts.length !== effortsForEngine(engine).length ? { efforts } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
     ...(upstream ? { upstream } : {}),
@@ -1480,21 +1657,23 @@ function rawModels(settings) {
  * @returns {Promise<{id:string,label:string,efforts:string[],env?:object,cost?:object}>} the effective entry
  * @throws {Error} on invalid input or a case-insensitively duplicate id
  */
-export async function addGlobalModel({ id, label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
+export async function addGlobalModel({ id, label, efforts, env, cost, upstream, engine } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
-  const vefforts = assertEfforts(efforts);
+  const vengine = assertModelEngine(engine); assertIdForEngine(vid, vengine);
+  const vefforts = assertEfforts(efforts, vengine);
   const venv = assertEnvPairs(env);
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
+  assertCodexFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
   if (findModelIndex(models, vid) !== -1) throw new Error(`a model with id ${JSON.stringify(vid)} already exists`);
   const vlabel = (typeof label === 'string' && label.trim()) || vid;
-  if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream));
-  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream)];
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream, vengine));
+  settings.models = [...models, storedModelShape(vid, vlabel, vefforts, venv, vcost, vupstream, vengine)];
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }
@@ -1508,7 +1687,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream }
  * @returns {Promise<object>} the effective entry
  * @throws {Error} on an unknown id or invalid input
  */
-export async function updateGlobalModel(id, { label, efforts, env, cost, upstream } = {}, { dryRun = false } = {}) {
+export async function updateGlobalModel(id, { label, efforts, env, cost, upstream, engine } = {}, { dryRun = false } = {}) {
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   const settings = readSettings();
@@ -1516,6 +1695,8 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   const idx = findModelIndex(models, vid);
   if (idx === -1) throw new Error(`unknown model id ${JSON.stringify(vid)}`);
   const current = sanitizeGlobalModel(models[idx]);
+  const curEngine = current.engine === 'codex' ? 'codex' : 'claude';
+  if (engine !== undefined && assertModelEngine(engine) !== curEngine) throw new Error("a model's engine cannot change — delete it and add it again");
 
   let nextLabel = current.label;
   if (label !== undefined) {
@@ -1523,8 +1704,8 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
     nextLabel = (typeof label === 'string' && label.trim()) || current.id;
   }
   const nextEfforts = efforts === undefined
-    ? orderEfforts(current.efforts)
-    : assertEfforts(efforts);
+    ? orderEfforts(current.efforts, curEngine)
+    : assertEfforts(efforts, curEngine);
   let nextEnv = { ...(current.env || {}) };
   if (env === null) {
     nextEnv = {};
@@ -1546,10 +1727,11 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   let nextUpstream = current.upstream;
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
+  assertCodexFields(curEngine, nextEnv, nextUpstream);
 
-  if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream));
+  if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();
-  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream);
+  settings.models[idx] = storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine);
   await persistSettings(settings);
   return listGlobalModels().find((m) => m.id.toLowerCase() === vid.toLowerCase());
 }

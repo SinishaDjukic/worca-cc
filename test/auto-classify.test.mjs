@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   classifyTask, ClassifierError, buildClassifierSystemPrompt, buildClassifierUserPrompt, parseShapeReply, checkShapeModels,
   agentVocabulary, summarizeTools, renderAgentCards, shapeForPrompt, withCardsSignal, TASK_TEXT_CAP, EXTRA_TEXT_CAP,
@@ -275,4 +276,72 @@ test('the agent-card signal survives the cap: it takes the LAST slot, never the 
   assert.equal(capped.signals.at(-1), '9 agent cards read');
   assert.deepEqual(capped.signals.slice(0, 7), eight.slice(0, 7));
   assert.deepEqual(withCardsSignal(capped, 9).signals, capped.signals, 'idempotent: a second stamp replaces, never appends');
+});
+
+test('a runner that emits the normalized vocabulary is read the same way (turn cap, usage, cost)', async () => {
+  const capped = (o) => {
+    o.onEvent?.({ type: 'result', text: '', costUsd: 0.01, subtype: 'error_max_turns', isError: true, terminalReason: 'max_turns', usage: { input_tokens: 10, output_tokens: 5 } });
+    throw new Error('claude exited with code 1: no stderr');
+  };
+  const ok = (o) => {
+    o.onEvent?.({ type: 'result', text: '', costUsd: 0.01, isError: false, usage: { input_tokens: 10, output_tokens: 5 } });
+    return { text: reply(GOOD), exitCode: 0 };
+  };
+  const { run } = fakeRun([capped, ok]);
+  const r = await classifyTask(base({ repoLook: true }), { run });
+  assert.equal(r.attempts, 2);
+  assert.equal(r.costUsd, 0.02);
+  assert.deepEqual(r.usage, { input_tokens: 20, output_tokens: 10 });
+  assert.match(r.warnings[0].message, /ran out of turns/);
+});
+
+test('on codex the classifier runs on codex: read-only, its repo look through worca\'s file tools, no Claude routing env, Codex models only', async () => {
+  const CODEX = [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['minimal', 'low', 'medium', 'high'], engine: 'codex' }];
+  const shape = { name: 'Plan and build', taskKind: 'prompt', reasoning: 'r', stages: [{ agent: 'planner', model: 'gpt-5.5', effort: 'low' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
+  let cfg = null;
+  const { run, calls } = fakeRun([(o) => {
+    cfg = JSON.parse(readFileSync(o.mcpConfigPath, 'utf8'));
+    o.onEvent?.({ type: 'result', costUsd: 0.01, usage: { input_tokens: 10, output_tokens: 5 } });
+    return { text: reply(shape), exitCode: 0 };
+  }]);
+  const r = await classifyTask(base({ models: CODEX, model: '', engine: 'codex', repoLook: true }), { run });
+  assert.equal(r.shape.stages[0].tunables.model, 'gpt-5.5');
+  const o = calls[0];
+  assert.equal(o.engine, 'codex');
+  assert.equal(o.sandbox, 'read-only');
+  assert.equal(o.modelEnv, undefined);
+  assert.equal(o.maxTurns, 10, 'the adapter caps the look\'s tool calls');
+  // The file tools serve the checkout (the cwd) and nothing else; the config is gone once the call ends.
+  const srv = cfg.mcpServers.worca_files;
+  assert.ok(srv.args.some((a) => a.endsWith('codex-files-mcp.mjs')));
+  assert.deepEqual(srv.args.slice(-2), ['--root', process.cwd()]);
+  assert.equal(existsSync(o.mcpConfigPath), false);
+  assert.ok(o.systemPrompt.includes('## Repository'));
+  assert.ok(o.systemPrompt.includes(`${process.cwd()} is a read-only checkout`));
+  assert.ok(o.systemPrompt.includes('read_file, grep and glob'));
+  assert.ok(o.systemPrompt.includes('- gpt-5.5 (GPT-5.5): efforts minimal/low/medium/high'));
+  assert.equal(/^- claude-/m.test(o.systemPrompt), false, 'no Claude model is offered');
+});
+
+test('on codex without a repo look the classifier gets no file tools and no turn cap', async () => {
+  const { run, calls } = fakeRun([reply(GOOD)]);
+  await classifyTask(base({ model: '', engine: 'codex' }), { run });
+  assert.equal('mcpConfigPath' in calls[0], false);
+  assert.equal('maxTurns' in calls[0], false);
+  assert.equal(calls[0].systemPrompt.includes('## Repository'), false);
+});
+
+test('on codex a tripped turn cap is one failed attempt, retried once like Claude\'s', async () => {
+  const cap = Object.assign(new Error('codex: stopped after 10 tool calls (the turn cap)'), { turnCap: true });
+  const { run, calls } = fakeRun([cap, reply(GOOD)]);
+  const r = await classifyTask(base({ model: '', engine: 'codex', repoLook: true }), { run });
+  assert.equal(calls.length, 2);
+  assert.match(r.warnings[0].message, /ran out of turns/);
+});
+
+test('on Claude the classifier spawn is unchanged: no engine, no sandbox', async () => {
+  const { run, calls } = fakeRun([reply(GOOD)]);
+  await classifyTask(base(), { run });
+  assert.equal('engine' in calls[0], false);
+  assert.equal('sandbox' in calls[0], false);
 });

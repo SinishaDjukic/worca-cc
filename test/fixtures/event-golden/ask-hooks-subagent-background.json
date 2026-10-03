@@ -1,0 +1,141 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-label",
+   "label": "Running 1 sub-agent"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent ping",
+    "type": "general-purpose",
+    "model": "haiku",
+    "tokens": null,
+    "ctx": null,
+    "usage": null,
+    "costUsd": null,
+    "estimated": true,
+    "status": "running",
+    "durationMs": null,
+    "log": []
+   }
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent ping",
+    "type": "general-purpose",
+    "model": "haiku",
+    "tokens": null,
+    "ctx": null,
+    "usage": null,
+    "costUsd": null,
+    "estimated": true,
+    "status": "running",
+    "durationMs": null,
+    "log": []
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 18,
+    "output": 364,
+    "cacheRead": 53450,
+    "cacheCreation": 9564,
+    "ctx": 31814,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.07543725,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 10,
+    "output": 67,
+    "cacheRead": 31802,
+    "cacheCreation": 612,
+    "ctx": 32425,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.08018644999999999,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent ping",
+    "type": "general-purpose",
+    "model": "haiku",
+    "tokens": null,
+    "ctx": null,
+    "usage": null,
+    "costUsd": null,
+    "estimated": true,
+    "status": "error",
+    "durationMs": "<T>",
+    "log": [],
+    "error": "interrupted"
+   }
+  }
+ ],
+ "summary": {
+  "text": "The agent is running in the background. Once it completes, I'll get a notification and can tell you what it returned.\n\npong",
+  "blocks": [
+   {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent ping",
+    "type": "general-purpose",
+    "model": "haiku",
+    "tokens": null,
+    "ctx": null,
+    "usage": null,
+    "costUsd": null,
+    "estimated": true,
+    "status": "error",
+    "durationMs": "<T>",
+    "log": [],
+    "error": "interrupted"
+   }
+  ],
+  "usage": {
+   "input": 10,
+   "output": 67,
+   "cacheRead": 31802,
+   "cacheCreation": 612,
+   "ctx": 32425,
+   "ctxWindow": 200000
+  },
+  "costUsd": 0.08018644999999999,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "status": "done",
+  "reason": null,
+  "resultSubtype": "success",
+  "isError": false,
+  "errors": [],
+  "numTurns": 1,
+  "durationMs": "<T>",
+  "sawInit": true,
+  "sawAssistant": true,
+  "sawResult": true,
+  "agents": 1,
+  "labels": [
+   "Thinking",
+   "Running 1 sub-agent"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

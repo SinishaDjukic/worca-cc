@@ -24,6 +24,8 @@
 //    The LAST result wins (two arrive in background mode).
 import { redactAskText } from './redact.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { isNormalized } from '../engines/events.mjs';
+import { createClaudeNormalizer } from '../engines/claude-events.mjs';
 import { parseMcpToolName } from '../../shared/mcp-tool-name.mjs';
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -194,12 +196,6 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
   }
 }
 
-const resultText = (content) => {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('');
-  return '';
-};
-
 // ── script tools on the thread row (scripts-workbench-design.md §9.3) ─────────
 const SCRIPT_TOOL_NAMES = new Set(['list_scripts', 'get_script', 'save_script', 'test_script']);
 
@@ -252,6 +248,7 @@ export function scriptResultNote(name, text, isError = false) {
  *   of config/DB dependencies. Default: trust the CLI. A non-finite return, or a
  *   throw, falls back to the CLI figure.
  * @param {object} [o.limits]
+ * @param {boolean} [o.emitWholeMessages]  Codex (D15): a message that arrives whole, with no deltas, still streams as one ask-delta
  */
 export function createTurnReducer({
   onFrame,
@@ -282,13 +279,13 @@ export function createTurnReducer({
   attachmentNames = {},
   resolveCost = null,
   limits = ASK_LIMITS,
+  emitWholeMessages = false,
 } = {}) {
   const startedAt = now();
   const emit = (type, payload) => { try { onFrame({ type, ...payload }); } catch { /* a UI/WS failure never breaks the stream */ } };
 
   // ── state ──
   const messages = new Map();      // main-stream message id → { deltas, blocks } (insertion order)
-  const streams = new Map();       // stream key ('main' | parent tool id) → { messageId }
   let currentMainMsg = null;
   const usageByMsg = new Map();    // message id → { usage, final }
   let lastMainUsageMsg = null;     // the LAST main message with usage — its per-call total is the context fill
@@ -354,7 +351,7 @@ export function createTurnReducer({
     return u;
   };
   /** What the CLI itself reported for this turn — null until the `result` frame lands. */
-  const cliCost = () => (lastResult && typeof lastResult.total_cost_usd === 'number' && Number.isFinite(lastResult.total_cost_usd) ? lastResult.total_cost_usd : null);
+  const cliCost = () => (lastResult && typeof lastResult.costUsd === 'number' && Number.isFinite(lastResult.costUsd) ? lastResult.costUsd : null);
   // The AUTHORITATIVE turn cost: cliCost() re-priced by the injected override, if
   // any. Memoized on lastResult — resolveCost reads the model catalog off disk, and
   // this is read by every ask-usage frame as well as finish()/snapshot(). null
@@ -419,97 +416,132 @@ export function createTurnReducer({
   const elapsed = (id) => { const t0 = startAt.get(id); return t0 === undefined ? null : Math.max(0, now() - t0); };
 
   // ── handlers ──
-  function onStreamEvent(raw, ptu, isMain) {
-    const e = raw.event;
-    if (!e || typeof e !== 'object') return;
-    const key = ptu ?? 'main';
-    if (e.type === 'message_start') {
-      const id = e.message && typeof e.message.id === 'string' ? e.message.id : null;
-      streams.set(key, { messageId: id });
-      if (isMain) { sawAssistant = true; currentMainMsg = id; if (id) msgEntry(id); noteUsage(id, e.message?.usage, false, true); }
+  // A main-stream message: the answer text accumulates per message id. Deltas
+  // that arrived before any message id are adopted by the first id seen.
+  function mainMessage(id) {
+    sawAssistant = true;
+    if (!id) return null;
+    if (messages.has('__main__') && !messages.has(id)) {                // deltas arrived before any message_start: adopt them
+      messages.set(id, messages.get('__main__'));
+      messages.delete('__main__');
+      currentMainMsg = id;
+    }
+    return msgEntry(id);
+  }
+
+  function onUsage(evt, isMain) {
+    if (evt.phase === 'start') {
+      if (isMain) { sawAssistant = true; currentMainMsg = evt.messageId; if (evt.messageId) msgEntry(evt.messageId); noteUsage(evt.messageId, evt.usage, false, true); }
       return;
     }
-    if (e.type === 'message_delta') {
-      noteUsage(streams.get(key)?.messageId, e.usage, true, isMain);
+    if (evt.phase === 'delta') {
+      noteUsage(evt.messageId, evt.usage, true, isMain);
       if (isMain) { emitUsage(); return; }
-      const agent = byId.get(ptu);
-      if (agent && agent.kind === 'agent' && e.usage && typeof e.usage === 'object') {
-        agent.ctx = ctxOf(normalizeUsage(e.usage));                       // the child's per-call total; last call wins
+      const agent = byId.get(evt.parentId);
+      if (agent && agent.kind === 'agent' && evt.usage && typeof evt.usage === 'object') {
+        agent.ctx = ctxOf(normalizeUsage(evt.usage));                     // the child's per-call total; last call wins
         upsertBlock(agent);
       }
       return;
     }
-    if (!isMain) return;                                                  // child deltas never become the answer
-    if (e.type === 'content_block_delta' && e.delta && e.delta.type === 'text_delta' && typeof e.delta.text === 'string') {
+    if (isMain && mainMessage(evt.messageId)) noteUsage(evt.messageId, evt.usage, false, true);
+  }
+
+  // The CLI speaking for itself (a `<synthetic>` message: the API-refusal line it
+  // fabricates when a call fails). It is not the model's answer: it must never enter
+  // the answer text (it would read as a reply above the failure notice), so it is
+  // kept aside for the error notice's detail instead.
+  function onCliText(evt, isMain) {
+    if (!isMain) return;
+    sawAssistant = true;
+    cliErrorText = cliErrorText ? `${cliErrorText}\n${evt.text}` : evt.text;
+  }
+
+  function onAssistantText(evt, isMain) {
+    if (!isMain) return;                                                  // child text never becomes the answer
+    if (evt.delta) {
       const id = currentMainMsg ?? '__main__';
       const entry = msgEntry(id);
       const first = !entry.deltas && !entry.blocks.length;
       if (first && [...messages.values()].some((x) => x !== entry && messageText(x))) queueDelta('\n\n');
-      entry.deltas += e.delta.text;
+      entry.deltas += evt.text;
       if (anyToolRan) label('Writing');
-      queueDelta(e.delta.text);
+      queueDelta(evt.text);
+      return;
     }
-  }
-
-  function onAssistant(raw, ptu, isMain) {
-    const msg = raw.message && typeof raw.message === 'object' ? raw.message : {};
-    const id = typeof msg.id === 'string' ? msg.id : null;
-    const content = Array.isArray(msg.content) ? msg.content : [];
-    if (isMain) {
-      sawAssistant = true;
-      // A `<synthetic>` message is the CLI speaking for itself — the API-refusal
-      // line it fabricates when a call fails (model: "<synthetic>"). It is not
-      // the model's answer: it must never enter the answer text (it would read
-      // as a reply above the failure notice), so it is kept aside for the error
-      // notice's detail instead.
-      if (msg.model === '<synthetic>') {
-        const t = content
-          .filter((c) => c && c.type === 'text' && typeof c.text === 'string')
-          .map((c) => c.text)
-          .join('');
-        if (t) cliErrorText = cliErrorText ? `${cliErrorText}\n${t}` : t;
-      } else if (id) {
-        if (messages.has('__main__') && !messages.has(id)) {              // deltas arrived before any message_start: adopt them
-          messages.set(id, messages.get('__main__'));
-          messages.delete('__main__');
-          currentMainMsg = id;
-        }
-        const entry = msgEntry(id);
-        noteUsage(id, msg.usage, false, true);
-        for (const c of content) if (c && c.type === 'text' && typeof c.text === 'string') entry.blocks.push(c.text);
+    const entry = mainMessage(evt.messageId);
+    if (!entry) return;
+    // D15: an engine without text deltas (Codex) delivers each message whole — stream it once, as Claude's deltas are.
+    if (emitWholeMessages && !entry.deltas && !entry.blocks.length) {
+      const whole = (evt.blocks || []).join('');
+      if (whole) {
+        if ([...messages.values()].some((x) => x !== entry && messageText(x))) queueDelta('\n\n');
+        if (anyToolRan) label('Writing');
+        queueDelta(whole);
       }
     }
-    for (const c of content) {
-      if (!c || c.type !== 'tool_use' || typeof c.id !== 'string') continue;
+    for (const t of evt.blocks || []) entry.blocks.push(t);
+  }
+
+  function onToolCalls(evt, isMain) {
+    if (isMain) sawAssistant = true;
+    for (const c of evt.calls) {
+      if (typeof c.toolUseId !== 'string') continue;
       const input = c.input && typeof c.input === 'object' ? c.input : {};
       if (isMain) {
+        if (isAgentTool(c.name)) continue;                                // arrives as a `subagent` spawn
         flushDeltas();                                                    // the text before a tool reaches the client before its block (voice speaks it then)
         anyToolRan = true;
-        startAt.set(c.id, now());
-        if (isAgentTool(c.name)) {
-          runningAgents += 1;
-          label(agentsLabel());                                           // label first, then the block (the client shows both)
-          upsertBlock({ kind: 'agent', id: c.id, label: clipStr(input.description || input.subagent_type || c.name, 80), type: typeof input.subagent_type === 'string' ? input.subagent_type : null,
-            model: typeof input.model === 'string' ? input.model : null, tokens: null, ctx: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
-        } else {
-          fullInputs.set(c.id, input);
-          label(labelForTool(c.name, input, attachmentNames));
-          const scriptKey = scriptToolKey(c.name, input);
-          upsertBlock({ kind: 'tool', id: c.id, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null,
-            ...(scriptKey === null ? {} : { script: { key: scriptKey } }) });          // §9.3: the row's key, whatever the clip does
-          // P3: the workflow card exists from the tool_use on (state 'building' — the four-step trace), so the
-          // START is a hook too. Sync: the block must precede any frame the tool result produces.
-          if (c.name === 'mcp__worca__propose_workflow' && typeof onWorkflowStart === 'function') {
-            try { onWorkflowStart({ toolUseId: c.id, input }); } catch { reducerErrors += 1; }
-          }
+        startAt.set(c.toolUseId, now());
+        fullInputs.set(c.toolUseId, input);
+        label(labelForTool(c.name, input, attachmentNames));
+        const scriptKey = scriptToolKey(c.name, input);
+        upsertBlock({ kind: 'tool', id: c.toolUseId, name: c.name, input: clipJson(input, limits.blockIoMaxChars), status: 'running', durationMs: null,
+          ...(scriptKey === null ? {} : { script: { key: scriptKey } }) });          // §9.3: the row's key, whatever the clip does
+        // P3: the workflow card exists from the tool_use on (state 'building' — the four-step trace), so the
+        // START is a hook too. Sync: the block must precede any frame the tool result produces.
+        if (c.name === 'mcp__worca__propose_workflow' && typeof onWorkflowStart === 'function') {
+          try { onWorkflowStart({ toolUseId: c.toolUseId, input }); } catch { reducerErrors += 1; }
         }
       } else {
-        const agent = byId.get(ptu);
+        const agent = byId.get(evt.parentId);
         if (!agent || agent.kind !== 'agent') continue;
-        childTools.set(c.id, { agentId: ptu, t0: now(), name: c.name, input });
+        childTools.set(c.toolUseId, { agentId: evt.parentId, t0: now(), name: c.name, input });
         appendLog(agent, isAgentTool(c.name) ? `→ Task ${clipStr(input.description || '', 60)}` : `→ ${short(c.name)} ${clipStr(safeJson(input), 120)}`);
       }
     }
+  }
+
+  // Main-stream sub-agents (the Task/Agent tool). A background task's
+  // task_notification is not read here: finish() closes a still-running agent.
+  function onSubAgent(evt, isMain) {
+    if (!isMain || evt.via === 'notification') return;
+    if (evt.event === 'spawn') {
+      sawAssistant = true;
+      flushDeltas();                                                      // the text before a tool reaches the client before its block (voice speaks it then)
+      anyToolRan = true;
+      startAt.set(evt.toolUseId, now());
+      runningAgents += 1;
+      label(agentsLabel());                                               // label first, then the block (the client shows both)
+      upsertBlock({ kind: 'agent', id: evt.toolUseId, label: clipStr(evt.description || evt.subagentType || evt.name, 80), type: evt.subagentType ?? null,
+        model: evt.model ?? null, tokens: null, ctx: null, usage: null, costUsd: null, estimated: true, status: 'running', durationMs: null, log: [] });
+      return;
+    }
+    const b = byId.get(evt.toolUseId);
+    if (!b || b.kind !== 'agent') return;
+    if (evt.event === 'ack') { upsertBlock(b); return; }                  // background mode: finish() closes it
+    runningAgents = Math.max(0, runningAgents - 1);
+    if (typeof evt.resolvedModel === 'string') b.model = evt.resolvedModel;
+    if (evt.usage && typeof evt.usage === 'object') b.usage = normalizeUsage(evt.usage);
+    if (Number.isFinite(evt.tokens)) b.tokens = evt.tokens;
+    else if (b.usage) b.tokens = b.usage.input + b.usage.output + b.usage.cacheRead + b.usage.cacheCreation;
+    if (!b.type && typeof evt.agentType === 'string') b.type = evt.agentType;
+    if (Number.isFinite(evt.durationMs)) b.durationMs = evt.durationMs;
+    if (b.durationMs === null) b.durationMs = elapsed(b.id);
+    b.status = evt.event === 'error' ? 'error' : 'done';
+    if (evt.event === 'error') b.error = redact(clipStr(evt.errorText ?? '', limits.blockIoMaxChars));
+    label(agentsLabel());                                                 // label first, then the block — same order as the spawn path
+    upsertBlock(b);
   }
 
   // A comment write happened in the MCP CHILD process, so nothing in this
@@ -572,11 +604,11 @@ export function createTurnReducer({
     try { onScheduleMutation({ tool: short(name) }); } catch { /* a broken sink never breaks the stream */ }
   }
 
-  function onUser(raw, ptu, isMain) {
-    const content = Array.isArray(raw.message?.content) ? raw.message.content : [];
-    for (const c of content) {
-      if (!c || c.type !== 'tool_result' || typeof c.tool_use_id !== 'string') continue;
-      const text = resultText(c.content);
+  function onToolResults(evt, isMain) {
+    for (const r of evt.results) {
+      if (typeof r.toolUseId !== 'string') continue;
+      const c = { tool_use_id: r.toolUseId, is_error: r.isError };
+      const text = r.text;
       if (!isMain) {
         const ct = childTools.get(c.tool_use_id);
         if (!ct) continue;
@@ -592,25 +624,7 @@ export function createTurnReducer({
       }
       const b = byId.get(c.tool_use_id);
       if (!b || (b.kind !== 'tool' && b.kind !== 'agent')) continue;
-      if (b.kind === 'agent') {
-        const tur = raw.tool_use_result;
-        const obj = tur && typeof tur === 'object' && !Array.isArray(tur) ? tur : null;
-        if (obj && (obj.isAsync === true || obj.status === 'async_launched')) { upsertBlock(b); continue; }   // background mode: finish() closes it
-        runningAgents = Math.max(0, runningAgents - 1);
-        if (obj) {
-          if (typeof obj.resolvedModel === 'string') b.model = obj.resolvedModel;
-          if (obj.usage && typeof obj.usage === 'object') b.usage = normalizeUsage(obj.usage);
-          b.tokens = Number.isFinite(obj.totalTokens) ? obj.totalTokens : (b.usage ? b.usage.input + b.usage.output + b.usage.cacheRead + b.usage.cacheCreation : null);
-          if (!b.type && typeof obj.agentType === 'string') b.type = obj.agentType;
-          if (Number.isFinite(obj.totalDurationMs)) b.durationMs = obj.totalDurationMs;
-        }
-        if (b.durationMs === null) b.durationMs = elapsed(b.id);
-        b.status = c.is_error ? 'error' : 'done';
-        if (c.is_error) b.error = redact(clipStr(text, limits.blockIoMaxChars));
-        label(agentsLabel());                                             // label first, then the block — same order as the spawn path
-        upsertBlock(b);
-        continue;
-      }
+      if (b.kind === 'agent') continue;                                  // arrives as a `subagent` finish/error
       b.status = c.is_error ? 'error' : 'done';
       b.durationMs = elapsed(b.id);
       if (c.is_error) b.error = redact(clipStr(text, limits.blockIoMaxChars));
@@ -717,34 +731,38 @@ export function createTurnReducer({
     }
   }
 
-  function onResult(raw) {
+  function onResult(evt) {
     sawResult = true;
-    lastResult = raw;                                                     // the LAST result wins; never sum
-    if (typeof raw.session_id === 'string') sessionId = raw.session_id;
+    lastResult = evt;                                                     // the LAST result wins; never sum
+    if (typeof evt.sessionId === 'string') sessionId = evt.sessionId;
     emitUsage();
   }
 
+  const normalize = createClaudeNormalizer();
+
   function handle(evt) {
     if (!evt || typeof evt !== 'object') return;
+    if (!isNormalized(evt)) { for (const n of normalize(evt)) handle(n); return; }
     if (!labels.length) label('Thinking');
-    if (evt.type === 'session' && typeof evt.sessionId === 'string') { sessionId = evt.sessionId; return; }
-    const raw = evt.raw;
-    if (!raw || typeof raw !== 'object') return;                          // stderr / log / hook envelopes
-    const ptu = raw.parent_tool_use_id ?? null;
-    const isMain = ptu === null;
-    switch (raw.type) {
-      case 'system':
-        if (raw.subtype === 'init') {
+    const isMain = (evt.parentId ?? null) === null;
+    switch (evt.type) {
+      case 'session':
+        if (typeof evt.sessionId === 'string') sessionId = evt.sessionId;
+        if (evt.init) {
           sawInit = true;
-          if (typeof raw.session_id === 'string') sessionId = raw.session_id;
-          if (typeof raw.model === 'string' && raw.model) mainModel = raw.model;
+          if (typeof evt.model === 'string' && evt.model) mainModel = evt.model;
         }
-        return;                                                           // status, thinking_tokens, task_*, background_tasks_changed, hook_*
-      case 'stream_event': return onStreamEvent(raw, ptu, isMain);
-      case 'assistant': return onAssistant(raw, ptu, isMain);
-      case 'user': return onUser(raw, ptu, isMain);
-      case 'result': return onResult(raw);
-      default: return;                                                    // rate_limit_event, unknown
+        return;
+      case 'usage': return onUsage(evt, isMain);
+      case 'text':
+        if (evt.from === 'assistant') return onAssistantText(evt, isMain);
+        if (evt.from === 'cli') return onCliText(evt, isMain);
+        return;
+      case 'tool': return onToolCalls(evt, isMain);
+      case 'subagent': return onSubAgent(evt, isMain);
+      case 'toolResult': return onToolResults(evt, isMain);
+      case 'result': return onResult(evt);
+      default: return;                                                    // hook, stderr, log
     }
   }
 
@@ -755,10 +773,10 @@ export function createTurnReducer({
       status: reason ? 'stopped' : 'done',
       reason,
       resultSubtype: subtype,
-      isError: !!(lastResult && lastResult.is_error),
+      isError: !!(lastResult && lastResult.isError),
       errors: Array.isArray(lastResult?.errors) ? lastResult.errors.map(String) : [],
-      numTurns: Number.isFinite(lastResult?.num_turns) ? lastResult.num_turns : null,
-      durationMs: Number.isFinite(lastResult?.duration_ms) ? lastResult.duration_ms : Math.max(0, now() - startedAt),
+      numTurns: Number.isFinite(lastResult?.numTurns) ? lastResult.numTurns : null,
+      durationMs: Number.isFinite(lastResult?.durationMs) ? lastResult.durationMs : Math.max(0, now() - startedAt),
     };
   };
 
@@ -824,7 +842,7 @@ export function createTurnReducer({
       }
       // The result-text fallback only speaks for a REAL answer: an is_error
       // result carries the API's refusal line, never the model's reply.
-      const text = mainText() || (lastResult && !lastResult.is_error && typeof lastResult.result === 'string' ? lastResult.result : '');
+      const text = mainText() || (lastResult && !lastResult.isError && typeof lastResult.text === 'string' ? lastResult.text : '');
       summary = {
         text: redact(text), blocks: blocks.map(clone), usage: currentUsage(), costUsd: currentCost(), sessionId,
         ...terminal(), sawInit, sawAssistant, sawResult, agents: agents.length, labels: [...labels], reducerErrors,

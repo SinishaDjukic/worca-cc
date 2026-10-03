@@ -515,7 +515,7 @@ export function buildAgentPrompt(ctx) {
     (hints ? hints + '\n\n' : '') +
     modeBlock(selectMode({ ports, bindings, freshPorts: trigger.freshPorts })) +
     fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: relative, subagentModel: ctxSubagentModel(ctx), endpointRouted: routed, investigator: !!ctxSubagentEffort(ctx) }) +
-    workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed }) +
+    workspaceFanOutDirective(meta.workspaceStrategy, ctx.workspace, { relative, endpointRouted: routed, serial: node?.noSubagents === true }) +
     (siblings ? siblings + '\n' : '') +
     portIoBlock({ node, ports, bindings, outputs, verdict, ctx }) +
     decompositionContractBlock(expandsPort, runCtx) +

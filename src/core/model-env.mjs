@@ -16,6 +16,10 @@
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+export const MODEL_ENGINES = ['claude', 'codex'];
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : EFFORTS; }
+export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -149,7 +153,7 @@ export function isReservedModelEnvKey(key) {
     || RESERVED_MODEL_ENV_PREFIXES.some((p) => typeof key === 'string' && key.startsWith(p));
 }
 
-// A registry spawn's own env names (MCP registry §5.5.6): runReal merges the model env over the run env, so a
+// A registry spawn's own env names (MCP registry §5.5.6): composeSpawnEnv (engines/spawn.mjs) merges the model env over the run env, so a
 // model entry that set one would replace a copy's secret. Refused by prepareModelEnv and the plugin manifest —
 // deliberately NOT reserved: cleanRunEnv shares isReservedModelEnvKey and must keep the registry env.
 export function isMcpRegistryEnvKey(key) {

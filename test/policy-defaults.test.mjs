@@ -44,7 +44,11 @@ const DOC = {
   workspaceRuns: {},
   catalogs: {
     guardrailSets: [{ id: 'gateway-normal', name: 'Gateway normal', protectedPaths: ['.env*'], deny: ['Bash(git push)'] }],
-    models: [{ id: 'acme-proxy-opus', label: 'Opus via Acme gateway', efforts: ['medium', 'high'], env: { ANTHROPIC_BASE_URL: 'https://llm.acme.internal', ANTHROPIC_AUTH_TOKEN: '${ACME_LLM_TOKEN}' } }],
+    models: [
+      { id: 'acme-proxy-opus', label: 'Opus via Acme gateway', efforts: ['medium', 'high'], env: { ANTHROPIC_BASE_URL: 'https://llm.acme.internal', ANTHROPIC_AUTH_TOKEN: '${ACME_LLM_TOKEN}' } },
+      // A Claude-engine gateway model whose id is also a Codex built-in (review finding #1).
+      { id: 'gpt-5.5', label: 'GPT-5.5 via Acme gateway', efforts: ['medium'], env: { ANTHROPIC_BASE_URL: 'https://llm.acme.internal' } },
+    ],
   },
 };
 
@@ -91,7 +95,8 @@ test('model catalog: a policy row with its routing env; hide built-ins is a defa
   const cat = await listModels(home);
   const pol = cat.find((x) => x.id === 'acme-proxy-opus');
   assert.equal(pol.custom, 'policy'); assert.equal(pol.policy, 'acme/gateway'); assert.equal(pol.routed, true);
-  assert.ok(cat.filter((x) => !x.custom).every((x) => x.hidden === true), 'team default hides the built-ins');
+  assert.ok(cat.filter((x) => !x.custom && x.engine === 'claude').every((x) => x.hidden === true), 'team default hides the Claude built-ins');
+  assert.ok(cat.filter((x) => x.engine === 'codex').every((x) => !x.hidden), 'Codex built-ins are never hidden (§3.1a)');
   assert.ok((await listModels(bare)).filter((x) => !x.custom).every((x) => !x.hidden), 'not for an ungoverned project');
   await setHideBuiltinModels(false);
   assert.ok((await listModels(home)).filter((x) => !x.custom).every((x) => !x.hidden), 'the developer\'s stored choice wins');
@@ -121,4 +126,13 @@ test('Ask Worca limits: team defaults for a pinned governed project, never over 
   await setAskMaxTurns(30);
   assert.equal(askLimits({ projectKey: projectKey(home) }).maxTurns, 30);
   assert.equal(askLimits({ projectKey: projectKey(bare) }).maxTurns, 30);
+});
+
+test('a team-policy model with a Codex built-in id is the team\'s Claude row, in the catalog and for engineOfModel', async () => {
+  const { engineOfModel } = await import('../src/core/config.mjs');
+  const rows = (await listModels(home)).filter((m) => m.id.toLowerCase() === 'gpt-5.5');
+  assert.equal(rows.length, 1, 'one row per id');
+  assert.equal(rows[0].custom, 'policy');
+  assert.equal(rows[0].engine, 'claude');
+  assert.equal(engineOfModel('gpt-5.5', { projectDir: home }), 'claude', 'the owner agrees with the catalog row');
 });

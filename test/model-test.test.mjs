@@ -3,7 +3,7 @@
 // binary is ever spawned; hintFor is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { testModel, hintFor, CLAUDE_SIGNED_OUT_HINT } from '../src/core/model-test.mjs';
+import { testModel, hintFor, CLAUDE_SIGNED_OUT_HINT, CODEX_SIGNED_OUT_HINT } from '../src/core/model-test.mjs';
 
 // Never ask the real CLI whether it is signed in (the failure paths would).
 const notSignedOut = async () => false;
@@ -136,4 +136,30 @@ test('testModel: when the Test times out while the CLI retries a failure the bri
   const cancelled = await testModel('cp', { signedOut: notSignedOut, signal: ctrl.signal, run: async () => { bridgeEvents.emit('failure', { tag: '', catalogId: 'cp', message: unreachable }); throw aborted(); } });
   assert.equal(cancelled.errorClass, 'timeout');
   assert.equal(bridgeEvents.listenerCount('failure'), listeners);
+});
+
+test('testModel on a Codex model: the codex adapter, read-only, no Claude routing; a failure names the codex sign-in', async () => {
+  let seen = null;
+  const ok = await testModel('gpt-5.5', { signedOut: notSignedOut, run: async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; } });
+  assert.deepEqual(ok, { ok: true, text: 'OK' });
+  assert.equal(seen.engine, 'codex');
+  assert.equal(seen.sandbox, 'read-only');
+  assert.equal(seen.model, 'gpt-5.5');
+  assert.equal(seen.modelEnv, undefined);
+  let probed = false;
+  const bad = await testModel('gpt-5.5', {
+    run: async () => { throw Object.assign(new Error('codex: 401 Unauthorized'), { errorClass: 'auth' }); },
+    signedOut: async () => { probed = true; return true; },
+  });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.errorClass, 'auth');
+  assert.equal(bad.hint, CODEX_SIGNED_OUT_HINT);
+  assert.equal(probed, false, 'the Claude sign-in is never asked about a Codex model');
+});
+
+test('testModel on a Claude model: no engine, no sandbox (unchanged spawn)', async () => {
+  let seen = null;
+  await testModel('claude-haiku-4-5', { signedOut: notSignedOut, run: async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; } });
+  assert.equal('engine' in seen, false);
+  assert.equal('sandbox' in seen, false);
 });

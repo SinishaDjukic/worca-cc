@@ -1,0 +1,120 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-label",
+   "label": "Finding runs"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "running",
+    "durationMs": null
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 10,
+    "output": 91,
+    "cacheRead": 10205,
+    "cacheCreation": 1099,
+    "ctx": 11405
+   },
+   "costUsd": null,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  },
+  {
+   "type": "ask-label",
+   "label": "Writing"
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 20,
+    "output": 163,
+    "cacheRead": 21509,
+    "cacheCreation": 1408,
+    "ctx": 11695
+   },
+   "costUsd": null,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 20,
+    "output": 163,
+    "cacheRead": 21509,
+    "cacheCreation": 1408,
+    "ctx": 11695,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.006771900000000001,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-delta",
+   "text": "1"
+  }
+ ],
+ "summary": {
+  "text": "1",
+  "blocks": [
+   {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  ],
+  "usage": {
+   "input": 20,
+   "output": 163,
+   "cacheRead": 21509,
+   "cacheCreation": 1408,
+   "ctx": 11695,
+   "ctxWindow": 200000
+  },
+  "costUsd": 0.006771900000000001,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "status": "done",
+  "reason": null,
+  "resultSubtype": "success",
+  "isError": false,
+  "errors": [],
+  "numTurns": 2,
+  "durationMs": "<T>",
+  "sawInit": true,
+  "sawAssistant": true,
+  "sawResult": true,
+  "agents": 0,
+  "labels": [
+   "Thinking",
+   "Finding runs",
+   "Writing"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

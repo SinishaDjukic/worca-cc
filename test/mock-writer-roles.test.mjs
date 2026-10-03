@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { MOCK_WRITER_ROLES, MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER, MOCK_ROLE_MEMORY_DEFRAG } from '../src/core/claude-runner.mjs';
 
-const SRC = readFileSync(fileURLToPath(new URL('../src/core/claude-runner.mjs', import.meta.url)), 'utf8');
+const SRC = readFileSync(fileURLToPath(new URL('../src/core/engines/mock.mjs', import.meta.url)), 'utf8');
 const CONSTS = { MOCK_ROLE_CLARIFY, MOCK_ROLE_DECOMPOSER };
 
 test('the 20 mock writer roles are exported as a Set', () => {

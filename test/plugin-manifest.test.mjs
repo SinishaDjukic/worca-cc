@@ -886,3 +886,21 @@ test('validatePluginDir: <key>.tests.json is validated as a SHIPPED case set', (
   assert.match(problems, /scripts\/broken\.tests\.json: no broken\.meta\.json beside it/);
   assert.match(problems, /scripts\/orphan\.tests\.json: no orphan\.meta\.json beside it/);
 });
+
+test('models: a Codex model names its engine, takes Codex efforts and refuses routing env', () => {
+  const ok = normalizeManifest({ name: 'p', models: [{ id: 'acme-codex', engine: 'codex', efforts: ['high', 'low'] }, { id: 'acme-codex-2', engine: 'codex' }] });
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  const [a, b] = ok.manifest.models;
+  assert.equal(a.engine, 'codex');
+  assert.deepEqual(a.efforts, ['low', 'high'], 'Codex effort order');
+  assert.deepEqual(b.efforts, ['minimal', 'low', 'medium', 'high'], 'absent efforts -> the full Codex set');
+  const claude = normalizeManifest({ name: 'p', models: [{ id: 'bare' }] });
+  assert.equal('engine' in claude.manifest.models[0], false, 'a Claude model carries no engine key');
+  const env = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', env: { ANTHROPIC_BASE_URL: 'https://x' } }] });
+  assert.equal(env.ok, false);
+  assert.ok(env.errors.some((e) => /"cx".*a codex model takes no env or upstream/.test(e)), JSON.stringify(env.errors));
+  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude" or "codex"/.test(e)), JSON.stringify(bad.errors));
+  const eff = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', efforts: ['max'] }] });
+  assert.ok(eff.errors.some((e) => /unknown effort "max" — must be one of minimal \| low \| medium \| high/.test(e)), JSON.stringify(eff.errors));
+});

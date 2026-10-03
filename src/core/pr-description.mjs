@@ -9,12 +9,14 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv, resolveModelCost, listModels } from './config.mjs';
+import { normalizingOnEvent } from './engines/claude-events.mjs';
+import { resolveModelEnv, resolveModelCost, listModels, modelForEngine } from './config.mjs';
+import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
-  lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras,
+  lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
 } from './artifacts.mjs';
 import { RESULTS_FILE, DIFF_PATCH_FILE } from './results.mjs';
 
@@ -121,10 +123,15 @@ export async function generatePrDescription(key, id, {
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
+  const engine = runEngineOfRow(row);
+  const onClaude = engine === 'claude';
 
-  let model = typeof explicitModel === 'string' ? explicitModel.trim() : '';
-  if (!model) {
-    const r = resolvePrDescriptionModel(await listModels(''), setting === undefined ? undefined : { setting });
+  const slot = utilityModelFor(engine, 'prDescription', scopeForRunKey(key));
+  let model = modelForEngine(typeof explicitModel === 'string' ? explicitModel.trim() : '', engine) || '';
+  if (!model && !onClaude) model = slot.model || '';
+  if (!model && onClaude) {
+    const pick = setting !== undefined ? setting : (slot.source === 'project' ? slot.model : undefined);
+    const r = resolvePrDescriptionModel(await listModels(''), pick === undefined ? undefined : { setting: pick });
     if (r.stale) console.warn(`[worca] prDescriptionModel ${JSON.stringify(r.stale)} is no longer in the catalog — PR descriptions use ${r.model || 'the CLI default'}`);
     model = r.model;
   }
@@ -144,20 +151,23 @@ export async function generatePrDescription(key, id, {
     systemPrompt: PR_DESCRIPTION_SYSTEM_PROMPT,
     prompt,
     allowedTools: [],                 // pure writing over the prompt; no tools needed
-    // The diff and the prompt are untrusted: no built-in tool (`--tools ""`) and no
+    // The diff and the prompt are untrusted. On Claude: no built-in tool (`--tools ""`) and no
     // MCP server (strict config, none given), so an injected instruction has nothing to act with.
+    // Codex ignores both: it gets a read-only sandbox (no writes, no network) and a scrubbed env
+    // (engines/codex.mjs), but its shell can still READ files, so the draft is reviewed before use.
     tools: [],
     strictMcpConfig: true,
     model: model || undefined,
-    modelEnv: resolveModelEnv(model), // catalog routing env travels with the id (design §4.8)
-    effort: AUX_EFFORT,
+    modelEnv: onClaude ? resolveModelEnv(model) : undefined,
+    ...(onClaude ? {} : { engine, sandbox: 'read-only' }),
+    effort: (!onClaude && slot.effort && model === slot.model) ? slot.effort : AUX_EFFORT,
     spawnKind: 'aux',                 // credential broker: a short-lived token (broker-client.mjs)
     signal,
-    onEvent: (e) => {
-      if (e.costUsd == null) return;
+    onEvent: normalizingOnEvent((e) => {
+      if (e.type !== 'result' || e.costUsd == null) return;
       costUsd = e.costUsd;
-      usage = e.raw && typeof e.raw === 'object' ? e.raw.usage ?? null : null;
-    },
+      usage = e.usage ?? null;
+    }),
   });
 
   // Cost parity with the overview agent, including the per-model cost override.

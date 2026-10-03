@@ -99,7 +99,7 @@ test('generatePrDescription: one tool-less aux call over the run artifacts, no c
     const seen = [];
     const fake = async (o) => {
       seen.push(o);
-      o.onEvent({ type: 'result', costUsd: 0.0123, raw: { usage: null } });
+      o.onEvent({ type: 'result', text: '', costUsd: 0.0123, isError: false });
       return { text: '```markdown\n## Summary\nRetries fetch.\n```' };
     };
     const first = await generatePrDescription(key, id, { model: 'claude-sonnet-5', baseBranch: 'main', runClaudeImpl: fake });

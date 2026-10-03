@@ -21,7 +21,7 @@ test('producer arm: MOCK_ASK + MOCK_ASK_FORM writes the form payload verbatim an
     prompt: `Do the work.\n\nMOCK_ASK: ${file}\nMOCK_ASK_FORM: ${JSON.stringify(FORM)}\n`, onEvent: (e) => logs.push(e) });
   assert.deepEqual(out, { text: '[mock] asked questions', exitCode: 0 }, 'the resolved text the ask-mock pins read is unchanged');
   assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), FORM);
-  assert.ok(logs.some((e) => e.type === 'assistant' && /form ask written/.test(e.text)), 'the log line names the form arm');
+  assert.ok(logs.some((e) => e.type === 'text' && /form ask written/.test(e.text)), 'the log line names the form arm');
 });
 
 test('producer arm: WITHOUT the form marker the canned questions body is byte-identical to today', async () => {
@@ -50,7 +50,7 @@ test('clarify arm: MOCK_ROLE clarify + MOCK_OUT + MOCK_ASK_FORM writes the form 
     prompt: `MOCK_ROLE: clarify\nMOCK_OUT: ${out}\nMOCK_PRIOR: 0\n`, onEvent: (e) => logs.push(e) });
   assert.equal(r.exitCode, 0);
   assert.deepEqual(JSON.parse(await readFile(out, 'utf8')), FORM);
-  assert.ok(logs.some((e) => e.type === 'assistant' && /asking with a form/.test(e.text)));
+  assert.ok(logs.some((e) => e.type === 'text' && /asking with a form/.test(e.text)));
 });
 
 test('clarify arm: without the form marker the canned two questions are written as today', async () => {

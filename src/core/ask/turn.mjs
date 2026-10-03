@@ -44,6 +44,9 @@ import { effectiveTimeZone } from './schedule-spec.mjs';
 import { scheduleDefaults } from '../settings.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
+import { codexPreflight, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+import { codexMemoryLine } from './prompt.mjs';
+import { resolveSetting } from '../settings-cascade.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
@@ -59,6 +62,15 @@ const TERMINAL = new Set(['done', 'stopped', 'error']);
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
 // non-runner error paths so a huge message can never bloat the persisted block.
 const ERROR_DETAIL_MAX = 2000;
+// Ask Worca on Codex (cascading-settings-design.md §4.6, D13, D14).
+export const CODEX_NOT_READY_CODE = 'codex-not-ready';
+export const CODEX_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex';
+export const CODEX_NO_LOCKDOWN_MESSAGE = "Ask on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
+export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
+export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
+/** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
+export const codexToolTrippedMessage = (what) => `Codex used ${what}, which a chat must not have — worca stopped the turn.`;
+const askSlotOf = (engine) => { try { return resolveSetting(`models.${engine}.ask`).value; } catch { return undefined; } };
 
 // MCP registry §10 (Ask column): what a registry copy's `system/init` status reads as (connected/pending: nothing).
 const MCP_UNAVAILABLE = Object.freeze({
@@ -95,10 +107,18 @@ class AskTurn extends EventEmitter {
     reader = null,
     web = null,
     mcp = null,
+    engine = 'claude', images = [], mcpCodexNote = false,
     deps = {},
   } = {}) {
     super();
     this.threadId = threadId;
+    // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
+    this.engine = engine === 'codex' ? 'codex' : 'claude';
+    this.images = Array.isArray(images) ? images.filter((p) => typeof p === 'string' && p) : [];   // D16: this turn's images (-i)
+    this.mcpCodexNote = this.engine === 'codex' && mcpCodexNote === true;
+    this._cap = null;                 // Task 10: the watchdog's verdict ('max_turns' | 'max_budget' | 'shell')
+    this._toolCalls = 0;
+    this._spentUsd = 0;
     // MCP registry §9.2: resolveRegistry()'s result for this turn; null (or no copies) keeps the spawn byte-identical.
     this.mcp = mcp && Array.isArray(mcp.copies) && mcp.copies.length ? mcp : null;
     this._mcpNoted = new Set();       // §10: copies already given a muted line by THIS attempt's reducer
@@ -137,6 +157,10 @@ class AskTurn extends EventEmitter {
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
+      codexPreflight: deps.codexPreflight ?? (() => codexPreflight()),
+      codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
+      codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
+      askSlot: deps.askSlot ?? askSlotOf,
       memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       store: {
         finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments,
@@ -630,6 +654,7 @@ class AskTurn extends EventEmitter {
       setTimeout: d.setTimeout,
       clearTimeout: d.clearTimeout,
       attachmentNames: this.attachmentNames,
+      ...(this.engine === 'codex' ? { emitWholeMessages: true } : {}),
       // MCP registry §5.5.3: the persisted text is redacted whole with this turn's registry values (the runner redacts
       // per event, and a value split across stream deltas is only whole here). Without secrets: the default redactor.
       ...(this._mcpRedact ? { redact: this._mcpRedact } : {}),
@@ -731,7 +756,7 @@ class AskTurn extends EventEmitter {
    * per-frame ask-usage costUsd:null (:51); the R-C stop test in THIS file is
    * the end-to-end pin of the summary rule.
    */
-  async _complete({ kind, status, reason = null, message = null, errorClass = undefined }) {
+  async _complete({ kind, status, reason = null, message = null, errorClass = undefined, code = undefined }) {
     if (this._completed) return { status: this.status };
     this._completed = true;
     const d = this.deps;
@@ -811,14 +836,15 @@ class AskTurn extends EventEmitter {
       // `code` lets the panel swap the CLI's raw error for a Sign in… line. Signed
       // out, the CLI may not even say so (`unrecognized_model` on a first-party id),
       // so claude-auth asks `claude auth status` instead of trusting the text.
-      const signedOut = await d.failedBecauseSignedOut({ message, model: this.model }).catch(() => false);
+      // A Codex chat never asks `claude auth status`: its readiness is codexPreflight (code codex-not-ready).
+      const signedOut = this.engine === 'claude' ? await d.failedBecauseSignedOut({ message, model: this.model }).catch(() => false) : false;
       // The persisted blocks ride along, mirroring ask-done: the live client
       // must render the same classified notice a reload re-derives — an
       // ask-error frame without them shows the raw message until refresh.
       this._frame({
         type: 'ask-error', message: message || 'unknown error', blocks: summary.blocks,
         ...(errorClass !== undefined ? { errorClass } : {}),
-        ...(signedOut ? { code: CLAUDE_SIGNED_OUT_CODE } : {}),
+        ...(code ? { code } : signedOut ? { code: CLAUDE_SIGNED_OUT_CODE } : {}),
       });
       this._emit('error', { message: message || 'unknown error' });
     } else {
@@ -856,11 +882,78 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * D14: codex has no --max-turns / --max-budget-usd, so worca watches the stream. Tool calls are counted against
+   * askMaxTurns (the call PAST the cap trips it, as the CLI lets the capped turn finish its own last step); each
+   * `result` cost is summed against askMaxBudgetUsd (codex reports usage per turn — plans/ask-on-codex-spike.md (e′) —
+   * so on Codex the cap is checked when a reply ends). D13 fail-closed: ANY shell item (the adapter names it Bash), any
+   * other tool that is not worca's own, or a sub-agent spawn means the lockdown did not hold, and the turn stops as an error.
+   */
+  _watch(e, limitsNow) {
+    if (this._cap || !e || typeof e !== 'object') return;
+    if (e.type === 'subagent' && e.event === 'spawn') { this._trip('tool', 'a sub-agent'); return; }
+    if (e.type === 'tool' && Array.isArray(e.calls)) {
+      if (e.calls.some((c) => c && c.name === 'Bash')) { this._trip('shell'); return; }
+      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either.
+      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__'));
+      if (foreign) { this._trip('tool', String(foreign.name || 'an unknown tool')); return; }
+      if ((e.parentId ?? null) !== null) return;
+      this._toolCalls += e.calls.length;
+      if (Number.isInteger(limitsNow.maxTurns) && this._toolCalls > limitsNow.maxTurns) this._trip('max_turns');
+      return;
+    }
+    if (e.type === 'result' && Number.isFinite(e.costUsd)) {
+      this._spentUsd += e.costUsd;
+      this._lastUsage = e.usage ?? null;
+      if (limitsNow.maxBudgetUsd != null && this._spentUsd > limitsNow.maxBudgetUsd) this._trip('max_budget');
+    }
+  }
+
+  _trip(kind, what = null) {
+    this._cap = kind;
+    this._capWhat = what;
+    if (kind === 'max_turns' || kind === 'max_budget') {
+      // The same result subtype the Claude CLI reports, so the reducer, the notice and the stored reason are unchanged.
+      this.reducer.push({ type: 'result', subtype: kind === 'max_turns' ? 'error_max_turns' : 'error_max_budget_usd', isError: false, text: '',
+        ...(this._lastUsage ? { usage: this._lastUsage } : {}), ...(this._spentUsd > 0 ? { costUsd: this._spentUsd } : {}) });
+    }
+    try { this.abort.abort(); } catch { /* already aborted */ }
+  }
+
+  /** The error a fail-closed trip ends the turn with, or null for a cap (a stop, not an error). */
+  _trippedMessage() {
+    if (this._cap === 'shell') return CODEX_SHELL_TRIPPED_MESSAGE;
+    if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat);
+    return null;
+  }
+
+  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14) and a ready codex (§4.6). Returns
+   *  the completed result when it refuses, else null. The mock never asks the real binary. */
+  async _codexGate(limitsNow) {
+    const d = this.deps;
+    if (!d.codexLockdown()) return this._complete({ kind: 'error', message: CODEX_NO_LOCKDOWN_MESSAGE });
+    if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
+      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
+    }
+    // A relayed turn runs codex as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a check
+    // run here would ask about the server user's codex instead. Its sign-in failure surfaces from the turn itself.
+    if (this.mock || this.relay) return null;
+    let pf = null;
+    try { pf = await d.codexPreflight(); } catch (err) { pf = { warning: err?.message || String(err) }; }
+    if (pf && pf.refusal) {
+      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${pf.refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
+      return this._complete({ kind: 'error', message: pf.refusal, code: CODEX_NOT_READY_CODE });
+    }
+    return null;
+  }
+
   async run() {
     if (this.status !== 'created') return { status: this.status };
     this.status = 'running';
     const d = this.deps;
     this._makeReducer();
+    // §4.6: a Codex chat names the registry servers it does not get, once per chat (the server decides "once").
+    if (this.mcpCodexNote) this.reducer.addBlock({ kind: 'notice', text: CODEX_MCP_NOTE, mcpCodex: true });
     this._frame({
       type: 'ask-start', userMessageId: this.userMessageId,
       model: this.model, effort: this.effort, startedAt: new Date(d.now()).toISOString(),
@@ -877,8 +970,9 @@ class AskTurn extends EventEmitter {
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires
-      // after ANY terminal status of the first turn" stays true.
-      this._kickoffTitle();
+      // after ANY terminal status of the first turn" stays true. A Codex chat's
+      // title is a codex spawn too, so it waits for the gate below.
+      if (this.engine !== 'codex') this._kickoffTitle();
       // Native-rules revision: refresh the chat's memory mount for this turn's scope set and hand
       // it to the spawn as --add-dir. A store failure never breaks a turn — the turn carries no
       // memory and says so on the server log (the rules are additive; the chat is unaffected).
@@ -895,7 +989,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -909,7 +1003,13 @@ class AskTurn extends EventEmitter {
       timer = d.setTimeout(() => { this.timedOut = true; try { this.abort.abort(); } catch { /* ignore */ } }, d.limits.turnTimeoutMs);
       // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
       const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
-      out = await this._attempts(limitsNow, mcpConfigPath, scratchDir);
+      if (this.engine === 'codex') {
+        out = await this._codexGate(limitsNow);
+        // A refused turn never starts codex — not even for the title, which falls back to the prompt's own words.
+        if (out) this._titleOffline = true;
+        else this._kickoffTitle();
+      }
+      out = out || await this._attempts(limitsNow, mcpConfigPath, scratchDir);
     } catch (err) {
       // Backstop for a deps failure (mkdir/write) — _attempts itself never throws.
       out = await this._complete({ kind: 'error', message: err?.message || String(err) });
@@ -935,29 +1035,37 @@ class AskTurn extends EventEmitter {
         // recorded in the Clarifications Q&A.
         this.reducer.addBlock({ kind: 'notice', text: 'Context restored from history' });
         this._persistBlocks();
+        // The watchdog's counts start over with the fresh codex process, as the Claude CLI's own caps do per process.
+        this._toolCalls = 0;
+        this._spentUsd = 0;
+        this._lastUsage = null;
       }
       const options = buildAskSpawnOptions({
         thread: { id: this.threadId, sessionId: isRetry ? null : this.resumeSessionId }, // B-7: the only no-resume lever
         turn: {
           prompt: isRetry ? this.restoredPrompt : this.prompt,
-          systemPrompt: this.systemPrompt,
+          // A Codex chat reads its memory rules itself (no --add-dir rules loading, D13); Claude's prompt is unchanged.
+          systemPrompt: this.engine === 'codex' ? this.systemPrompt + codexMemoryLine(this.memoryDir) : this.systemPrompt,
           model: this.model,
           effort: this.effort,
-          modelEnv: d.resolveModelEnv(this.model),
+          modelEnv: this.engine === 'claude' ? d.resolveModelEnv(this.model) : undefined,   // routing env is Claude's (§4.3)
+          ...(this.images.length ? { images: this.images } : {}),
           mock: this.mock, // R-F: markers on EVERY attempt
           signal: this.abort.signal,
           onEvent: (e) => {
-            if (e && e.type === 'session' && typeof e.sessionId === 'string' && e.sessionId) {
+            // The adapter's own session event; the init frame's copy (`init`) repeats it.
+            if (e && e.type === 'session' && !e.init && typeof e.sessionId === 'string' && e.sessionId) {
               // §6.2.4: stored on the thread immediately, not at turn end.
               this.sessionId = e.sessionId;
               try { d.store.updateThread(this.threadId, { sessionId: e.sessionId }); } catch { /* deleted thread */ }
             }
             this.reducer.push(e);
-            const raw = e && e.raw;
-            // §10: the turn's own init only, and only with a list — an init without `mcp_servers` says nothing (never
-            // "absent"). After the push, so a failing note can never cost the reducer its init.
-            if (this.mcp && raw && raw.type === 'system' && raw.subtype === 'init' && raw.parent_tool_use_id == null && Array.isArray(raw.mcp_servers)) {
-              try { this._noteMcpInit(raw.mcp_servers); } catch { /* a muted line never breaks the stream */ }
+            if (this.engine === 'codex') this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
+            // §10: the turn's own init only (the normalizer sets mcpServers on a main-stream init only), and only with
+            // a list — an init without one says nothing (never "absent"). After the push, so a failing note can never
+            // cost the reducer its init.
+            if (this.mcp && e && e.type === 'session' && e.init && Array.isArray(e.mcpServers)) {
+              try { this._noteMcpInit(e.mcpServers); } catch { /* a muted line never breaks the stream */ }
             }
           },
         },
@@ -968,6 +1076,7 @@ class AskTurn extends EventEmitter {
         web: this.web,
         relayed: !!this.relay,
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
+        ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
       });
       // With the relay, the chat's claude runs as the person's agent user (agent-pool.mjs).
       if (this.relay) options.asAgent = true;
@@ -976,6 +1085,7 @@ class AskTurn extends EventEmitter {
         // Resolve path. Future-proofing: if a later CLI exits 0 on a limit,
         // the reducer still computed status/reason from the result subtype.
         await this._settle();
+        if (this._trippedMessage()) return await this._complete({ kind: 'error', message: this._trippedMessage() });
         const s = this.reducer.snapshot();
         if (/max_turns|max_budget/.test(s.resultSubtype ?? '')) this._limitNotice(s.reason, limitsNow);
         return await this._complete({ kind: 'done', status: s.reason ? 'stopped' : 'done', reason: s.reason ?? null });
@@ -983,6 +1093,12 @@ class AskTurn extends EventEmitter {
         const s = this.reducer.snapshot();
         // R-C, literal order. (1) The abort branch FIRST — B-4: a pre-aborted
         // runClaude throws before any init, so this must precede the resume test.
+        if (err?.name === 'AbortError' && this._cap) {
+          // The watchdog aborted (Codex only): a cap is a stop with the limit notice, a shell item an error.
+          if (this._trippedMessage()) return await this._complete({ kind: 'error', message: this._trippedMessage() });
+          this._limitNotice(this._cap, limitsNow);
+          return await this._complete({ kind: 'done', status: 'stopped', reason: this._cap });
+        }
         if (err?.name === 'AbortError') {
           // costUsd falls out of the reducer: no `result` seen ⇒ summary.costUsd
           // is null (spec §6.2.8); a result that DID land before the abort keeps
@@ -1000,7 +1116,8 @@ class AskTurn extends EventEmitter {
         // (3) The narrow resume-fallback predicate (F9): only a session that
         // never produced an init or said "No conversation found".
         if (!isRetry && this.resumeSessionId
-          && (!s.sawInit || s.errors.some((m) => /No conversation found/.test(m)))) {
+          && (!s.sawInit || s.errors.some((m) => /No conversation found/.test(m))
+            || (this.engine === 'codex' && codexResumeNotFound(err)))) {   // §4.6: codex's own "no rollout found"
           continue;
         }
         // (4) Everything else is a turn failure.
@@ -1028,7 +1145,7 @@ class AskTurn extends EventEmitter {
     // NO signal: a user stop aborts this.abort mid-turn and would kill the call
     // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
     this.titlePromise = Promise.resolve()
-      .then(() => d.generateTitle(this.firstText, {
+      .then(() => (this._titleOffline ? '' : d.generateTitle(this.firstText, {
         cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
@@ -1036,9 +1153,11 @@ class AskTurn extends EventEmitter {
         // The chat's own model is the title default (#422) — a chat on a
         // custom endpoint titles itself there, not on a first-party Haiku.
         runModel: this.model,
+        // §4.6: a Codex chat titles itself on Codex, read-only (D11), with the Ask slot's model or the chat's own.
+        ...(this.engine === 'codex' ? { engine: 'codex', model: d.askSlot('codex')?.model || this.model } : {}),
         onError: ({ model, error }) => console.warn(
           `[worca-ask] thread ${this.threadId}: title generation failed (model ${model}): ${error?.message || error} — keeping the fallback title`),
-      }))
+      })))
       .then((generated) => {
         // The route stamps NOTHING before the 202 (the header reads "Ask Worca"
         // until this frame lands), so an empty result — generateTitle swallows

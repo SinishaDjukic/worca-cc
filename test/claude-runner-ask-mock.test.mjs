@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runClaude, mockEnabled } from '../src/core/claude-runner.mjs';
 import { createTurnReducer } from '../src/core/ask/events.mjs';
+import { runMock } from '../src/core/engines/mock.mjs';
 
 let prevMock, prevOrch;
 beforeEach(() => { prevMock = process.env.WORCA_MOCK; prevOrch = process.env.ORCH_MOCK; delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK; });
@@ -39,10 +40,16 @@ async function run(prompt, extra = {}) {
 const rawTypes = (events) => events.filter((e) => e.raw && typeof e.raw === 'object').map((e) => e.raw.type + (e.raw.subtype ? `/${e.raw.subtype}` : ''));
 
 test('default: echo answer in the real envelope; session + init first; reducer agrees', async () => {
-  const r = await run('[worca context]\nview: history\n[/worca context]\n\nhello there\nsecond line');
+  const PROMPT = '[worca context]\nview: history\n[/worca context]\n\nhello there\nsecond line';
+  const r = await run(PROMPT);
   assert.deepEqual(r.resolved, { text: '[mock] hello there', exitCode: 0 });
   assert.equal(r.events[0].type, 'session');
   assert.equal(r.events[0].sessionId, 'mock-session-ask-1');
+  assert.ok(r.events.some((e) => e.type === 'text' && e.delta), 'runClaude delivers the text deltas as normalized text events');
+  // The mock's own stream-json frames (what the Claude normalizer reads) keep the probed shapes.
+  const rawEvents = [];
+  await runMock({ cwd: r.dir, systemPrompt: SYS, prompt: PROMPT, onEvent: (e) => rawEvents.push(e) });
+  r.events = rawEvents;
   const types = rawTypes(r.events);
   assert.equal(types[0], 'system/init');
   assert.equal(types[1], 'stream_event');

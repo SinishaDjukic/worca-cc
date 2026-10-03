@@ -247,7 +247,7 @@ export function guardrailsToPermissionRules(g) {
   // Read + Edit ONLY. Claude Code consults only Read/Edit path rules for file
   // permissions (Edit covers all file-editing tools: Write/NotebookEdit); a
   // Write() rule is never consulted AND prints a stderr warning per rule per
-  // spawn on CLI 2.1.210+ (which runReal folds into the failure message). Read
+  // spawn on CLI 2.1.210+ (which runClaudeProcess folds into the failure message). Read
   // is the load-bearing secret guard; a Read deny also blocks Edit (≥2.1.208).
   for (const p of gg.protectedPaths) { push(`Read(${p})`); push(`Edit(${p})`); }
   for (const r of gg.deny) push(r);

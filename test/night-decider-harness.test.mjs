@@ -53,7 +53,8 @@ function recordingRun() {
   const seen = [];
   const run = async (o) => {
     seen.push(o);
-    o.onEvent({ type: 'result', costUsd: 0.05, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    // The engine adapters emit the normalized vocabulary (claude-events.mjs): a result carries its own usage.
+    o.onEvent({ type: 'result', text: '', costUsd: 0.05, isError: false, usage: { input_tokens: 3, output_tokens: 2 } });
     return { text: '{"decisions":[{"id":"a","choice":"y","confidence":90,"rationale":"fits","reversible":true,"scores":{}}]}' };
   };
   return { run, seen };
@@ -158,4 +159,30 @@ test('mock mode is unchanged: no spawn, the recommended-else-first answer, $0', 
   assert.deepEqual(await answerOne(orch, clock, 'c6'), { answers: [{ id: 'a', choice: 'x' }] });
   assert.equal(seen.length, 0, 'the mock branch never spawns');
   assert.deepEqual(booked, [0]);
+});
+
+test('a Codex run: the decider runs on Codex — a Codex Decided by pick is used, read-only, with the file tools over the checkout', async () => {
+  await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderModel: 'gpt-5.5' });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const { run, seen } = recordingRun();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-dm-codex', nightClock: clock, nightRunClaude: run, claude: { model: 'gpt-5.6-sol', engine: 'codex' } });
+  await answerOne(orch, clock, 'cx1');
+  assert.equal(seen[0].model, 'gpt-5.5');
+  assert.equal(seen[0].engine, 'codex');
+  assert.equal(seen[0].sandbox, 'read-only');
+  assert.equal(seen[0].modelEnv, undefined, 'no Claude routing env');
+  assert.ok(seen[0].mcpConfigPath, 'its repo look is worca\'s read_file/grep/glob');
+  assert.match(seen[0].systemPrompt, /read_file, grep and glob/);
+});
+
+test('a Codex run: a Claude Decided by pick reads as stale, and the run\'s Codex model weighs the options', async () => {
+  await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderModel: 'claude-sonnet-5' });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const { run, seen } = recordingRun();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-dm-codex2', nightClock: clock, nightRunClaude: run, claude: { model: 'gpt-5.6-sol', engine: 'codex' } });
+  await answerOne(orch, clock, 'cx2');
+  assert.equal(seen[0].model, 'gpt-5.6-sol');
+  assert.equal(seen[0].engine, 'codex');
 });

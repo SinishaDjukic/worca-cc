@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { worcaHome } from './projects.mjs';
 import { runClaude } from './claude-runner.mjs';
+import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv } from './config.mjs';
 import { normalizeMeta } from './agent-registry.mjs';
 import { validateMetaV2 } from '../shared/graph/agent-meta.mjs';
@@ -133,7 +134,7 @@ class AgentGen extends EventEmitter {
       bin: this.claude.bin,
       mock: this.claude.mock,
       signal: this.abort.signal,
-      onEvent: (e) => this._onAgentEvent(e),
+      onEvent: normalizingOnEvent((e) => this._onAgentEvent(e)),
     });
   }
 
@@ -207,7 +208,7 @@ class AgentGen extends EventEmitter {
   }
 
   _onAgentEvent(e) {
-    const text = typeof e?.text === 'string' ? e.text : '';
+    const text = (e.type === 'text' || e.type === 'result' || e.type === 'log') && typeof e.text === 'string' ? e.text : '';
     const m = text.match(/DRAFTING\s+(.{0,80})/i);
     if (m) this._progress(`drafting ${m[1].trim()}…`);
   }

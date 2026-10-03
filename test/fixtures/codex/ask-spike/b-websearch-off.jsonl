@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I can’t access live web prices in this session."}}
+{"type":"turn.completed","usage":{"input_tokens":11153,"cached_input_tokens":6144,"cache_write_input_tokens":0,"output_tokens":121,"reasoning_output_tokens":104}}

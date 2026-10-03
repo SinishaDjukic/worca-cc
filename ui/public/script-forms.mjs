@@ -17,17 +17,29 @@ import { createCodeEditor } from './code-editor.mjs';
 export const h = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 export const field = (doc, cls, label) => { const w = h(doc, 'div', `ins-f ${cls}`); w.appendChild(h(doc, 'label', 'ins-label', label)); return w; };
 
+// items: {value, text} | {group, items: [{value, text}]}
 export function select(doc, cls, name, label, items, value, { disabled = false, title = '' } = {}) {
   const wrap = field(doc, cls, label);
   if (title) wrap.title = title;
   const sel = h(doc, 'select', 'ins-select');
   sel.dataset.field = name;
   sel.disabled = Boolean(disabled);
-  for (const opt of items) {
+  const optionEl = (opt) => {
     const o = doc.createElement('option');
     o.value = opt.value; o.textContent = opt.text;
     if (opt.value === (value == null ? '' : String(value))) o.selected = true;
-    sel.appendChild(o);
+    return o;
+  };
+  for (const opt of items) {
+    // `{ group, items }` renders as an <optgroup> (the composer's models by engine, D10).
+    if (opt && Array.isArray(opt.items)) {
+      const og = doc.createElement('optgroup');
+      og.label = opt.group;
+      for (const o2 of opt.items) og.appendChild(optionEl(o2));
+      sel.appendChild(og);
+      continue;
+    }
+    sel.appendChild(optionEl(opt));
   }
   const shell = h(doc, 'span', 'ins-select-wrap');   // the product's .select-wrap idea: the chevron is a token-coloured ::after on a wrapper
   shell.appendChild(sel);

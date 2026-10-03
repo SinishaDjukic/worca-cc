@@ -174,3 +174,21 @@ test('the Away mode rows use the plain labels (src/shared/away-mode/labels.mjs)'
   }
   assert.equal(fieldMeta('night.graceMinutes').label, 'Marked runs by day');
 });
+
+test('catalog models: a Codex entry keeps its engine and Codex efforts; routing env drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'acme-codex', engine: 'codex', efforts: ['low', 'max'] },
+      { id: 'acme-codex-env', engine: 'codex', env: { ANTHROPIC_BASE_URL: 'https://x' } },
+      { id: 'acme-odd', engine: 'gemini' },
+      { id: 'acme-claude', efforts: ['high'] },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [
+    { id: 'acme-codex', label: 'acme-codex', efforts: ['low'], engine: 'codex' },
+    { id: 'acme-claude', label: 'acme-claude', efforts: ['high'] },
+  ]);
+  assert.ok(warnings.some((w) => w.includes('acme-codex-env') && w.includes('a codex model takes no env or upstream')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-odd') && w.includes('engine')), warnings.join('\n'));
+});

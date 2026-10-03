@@ -695,3 +695,15 @@ test('cancelResumeTicketsFor cancels only that pipeline’s open tickets and aud
   assert.match(note.message, /resumed by hand/);
   assert.match(note.message, /ada/);
 });
+
+test('a paused usage limit an engine hit says it can continue now on the other engine', async () => {
+  const { schedule } = createSchedule({ title: 'U', projectDir: DIR, request: REQ, rule: nightly, now: T0 });
+  const fire = async (day) => (await runDueTickets({ now: Date.parse(`2026-09-${day}T00:00:05Z`), start: okStart() })).fired[0];
+  recordOutcome(await fire('19'), { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
+  recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
+  const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
+  assert.deepEqual(msgs, [
+    "paused (usage limit): You've hit your usage limit — resume on Claude to continue now.",
+    'paused (usage limit): free requests used up',
+  ]);
+});

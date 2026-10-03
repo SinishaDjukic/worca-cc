@@ -1,0 +1,51 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 0,
+    "output": 0,
+    "cacheRead": 0,
+    "cacheCreation": 0,
+    "ctx": null
+   },
+   "costUsd": 0,
+   "estimatedCostUsd": null
+  }
+ ],
+ "summary": {
+  "text": "",
+  "blocks": [],
+  "usage": {
+   "input": 0,
+   "output": 0,
+   "cacheRead": 0,
+   "cacheCreation": 0,
+   "ctx": null
+  },
+  "costUsd": 0,
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "status": "done",
+  "reason": null,
+  "resultSubtype": "error_during_execution",
+  "isError": true,
+  "errors": [
+   "No conversation found with session ID: 00000000-0000-0000-0000-000000000000"
+  ],
+  "numTurns": 0,
+  "durationMs": "<T>",
+  "sawInit": false,
+  "sawAssistant": false,
+  "sawResult": true,
+  "agents": 0,
+  "labels": [
+   "Thinking"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

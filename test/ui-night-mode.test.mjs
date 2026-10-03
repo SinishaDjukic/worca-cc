@@ -553,8 +553,8 @@ test('project card: Away mode for this project, its summary, and Save re-reads G
   const ctx = await boot({ away: (u) => (u.includes('projectDir=') ? body : { ...body, inherited: resolveNightConfig({}) }) });
   ctx.window.location.hash = 'projects/proj-1/away';
   await settle(12);
-  const card = ctx.window.document.querySelector('.pd-sec[data-sec="away"] .pd-night-card');
-  assert.ok(card, 'the card is on the project\'s Away mode tab');
+  const card = ctx.window.document.querySelector('.pd-sec[data-sec="settings"] .pd-night-card');
+  assert.ok(card, 'the card is on the project\'s Settings tab (the old away route lands there)');
   assert.equal(card.querySelector('.card-head b').textContent, 'Away mode for this project');
   assert.match(card.querySelector('.card-head').textContent, /Anything left as "Same as my settings" uses your Settings page/);
   assert.match(card.querySelector('.away-summary').textContent, /^For proj: /);
@@ -659,20 +659,25 @@ test('run view: no note when Away mode never answered', async () => {
   assert.equal(screen.querySelector('.rd-sheet .rd-away-note').hidden, true);
 });
 
-test('project page: Away mode is its own tab after Memory, and the Overview no longer carries it', async () => {
+test('project page: Settings is the tab after Memory and holds the Away mode card; the old away route lands on it', async () => {
   const body = { config: { ...NIGHT_DEFAULTS }, sources: {}, inherited: resolveNightConfig({}), toggle: 'auto', user: {}, project: {} };
   const ctx = await boot({ away: () => body });
   ctx.window.location.hash = 'projects/proj-1';
   await settle(12);
   const doc = ctx.window.document;
   const pills = [...doc.querySelectorAll('#proj-detail .pd-tab')].map((b) => b.dataset.sec);
-  assert.ok(pills.indexOf('away') === pills.indexOf('memory') + 1, `away right after memory: ${pills.join(',')}`);
-  assert.equal(doc.querySelector('#proj-detail .pd-tab[data-sec="away"]').textContent.trim(), 'Away mode');
+  assert.ok(pills.indexOf('settings') === pills.indexOf('memory') + 1, `settings right after memory: ${pills.join(',')}`);
+  assert.ok(!pills.includes('away'), 'Away mode is a card on Settings now (D4)');
+  assert.equal(doc.querySelector('#proj-detail .pd-tab[data-sec="settings"]').textContent.trim(), 'Settings');
   assert.equal(doc.querySelector('.pd-sec[data-sec="overview"] .pd-night-card'), null, 'not on the Overview');
-  doc.querySelector('#proj-detail .pd-tab[data-sec="away"]').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
+  doc.querySelector('#proj-detail .pd-tab[data-sec="settings"]').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await settle(8);
-  assert.equal(ctx.window.location.hash, '#projects/proj-1/away', 'the pill writes its own route');
-  assert.ok(doc.querySelector('.pd-sec[data-sec="away"] .pd-night-card'));
+  assert.equal(ctx.window.location.hash, '#projects/proj-1/settings', 'the pill writes its own route');
+  assert.ok(doc.querySelector('.pd-sec[data-sec="settings"] .pd-night-card'));
+  assert.ok(doc.querySelector('.pd-sec[data-sec="settings"] .pd-settings'), 'the cascadable cards sit on the same tab');
+  ctx.window.location.hash = 'projects/proj-1/away';
+  await settle(8);
+  assert.equal(ctx.window.location.hash, '#projects/proj-1/settings', 'an old link is rewritten to the Settings tab');
 });
 
 // "Decided by" + "Effort" (How worca picks an answer) and the answers card's "Decided by" line.
@@ -792,7 +797,7 @@ test('project card: an empty "Decided by" reads the inherited model and is sent 
   const ctx = await boot({ models: DM_MODELS, away: () => body });
   ctx.window.location.hash = 'projects/proj-1/away';
   await settle(12);
-  const card = ctx.window.document.querySelector('.pd-sec[data-sec="away"] .pd-night-card');
+  const card = ctx.window.document.querySelector('.pd-sec[data-sec="settings"] .pd-night-card');
   assert.equal(card.querySelector('.night-decider-model').options[0].textContent, 'Same as my settings (Opus 5.5)');
   card.querySelector('.pd-night-save').dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
   await settle(8);

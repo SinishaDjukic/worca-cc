@@ -51,7 +51,7 @@ after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true 
 /** The `case` labels of runMock's writer switch, read straight off the source — the
  *  only way to prove the export has not drifted from the switch it mirrors. */
 function writerSwitchRoles() {
-  const src = readFileSync(join(REPO, 'src/core/claude-runner.mjs'), 'utf8');
+  const src = readFileSync(join(REPO, 'src/core/engines/mock.mjs'), 'utf8');
   const start = src.indexOf('switch (role) {');
   assert.notEqual(start, -1, 'runMock still dispatches on `switch (role)`');
   const end = src.indexOf('default:', start);

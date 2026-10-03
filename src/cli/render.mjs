@@ -17,6 +17,7 @@
 // executions render nothing; `token` events are never rendered.
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { awayAnswersSummary } from '../shared/away-mode/labels.mjs';
+import { usageLimitSwitch, engineLabel } from '../shared/engine-switch.mjs';
 
 const nodesOf = (m) => ((m && m.graph && m.graph.nodes) || []).filter(Boolean);
 const wiresOf = (m) => ((m && m.graph && m.graph.wires) || []).filter(Boolean);
@@ -116,6 +117,18 @@ export function formatResultLine(result) {
   if (r.path) return `Result: ${r.path}`;
   if (r.value != null && r.value !== '') return `Result: ${String(r.value)}`;
   return 'Result: completed';
+}
+
+/**
+ * How to pick a paused run up again: the resume command, and for a session/usage limit an
+ * engine hit, the command that continues it now on the other engine.
+ * @param {{reason?: string|null, limitEngine?: string|null}} result the paused run's done payload
+ */
+export function formatResumeHints(result, pipelineId, { color = (n, s) => s } = {}) {
+  const lines = [`Resume with: ${color('bold', `worca resume ${pipelineId}`)}`];
+  const other = usageLimitSwitch(result || {});
+  if (other) lines.push(`Or continue now on ${engineLabel(other)}: ${color('bold', `worca resume ${pipelineId} --engine ${other}`)}`);
+  return lines;
 }
 
 /** `9 executions · 12m00s active · $1.23`. */

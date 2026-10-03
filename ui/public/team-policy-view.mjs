@@ -505,6 +505,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       const row = h(doc, 'div', 'tp-cat-row');
       const main = h(doc, 'div', 'tp-cat-main');
       main.append(h(doc, 'b', null, m.label || m.id), ' ', code(doc, m.id));
+      if (m.engine === 'codex') main.append(' ', h(doc, 'span', 'badge violet tp-engine', 'Codex'));
       const envKeys = Object.keys(m.env || {});
       main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
       row.append(main, h(doc, 'span', 'badge blue', 'policy'));
@@ -544,6 +545,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
 // ---- Team policy page: edit mode (board 5) --------------------------------------------------
 const KIND_LABEL = { default: 'Default', soft: 'Soft', hard: 'Hard' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 
 function listChips(doc, row, items, labelOf) {
   const list = row.querySelector('.tp-list');
@@ -610,14 +612,14 @@ function catalogItem(doc, cat, item) {
       chipField(doc, 'Deny rules', 'deny', item?.deny, 'Bash(git push)'),
       chipField(doc, 'Env allowlist', 'envAllowlist', item?.envAllowlist, 'HOME'));
   } else {
-    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), rm);
+    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine === 'codex' ? [h(doc, 'span', 'badge violet tp-engine', 'Codex')] : []), rm);
     grid.append(
       textField(doc, 'Id', 'tp-cat-id', item?.id, 'acme-proxy-opus', true),
       textField(doc, 'Label', 'tp-cat-label', item?.label, 'Opus via Acme gateway'),
     );
     const eff = h(doc, 'div', 'tp-cat-field tp-cat-efforts'); eff.append(h(doc, 'label', null, 'Efforts'));
     const row = h(doc, 'div', 'tp-cat-effort-row');
-    for (const e of EFFORTS) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
+    for (const e of (item?.engine === 'codex' ? CODEX_EFFORTS : EFFORTS)) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
     eff.append(row);
     const env = h(doc, 'div', 'tp-cat-field tp-cat-env'); env.append(h(doc, 'label', null, 'Env'));
     const rows = h(doc, 'div', 'tp-env-rows');

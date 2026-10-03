@@ -219,6 +219,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     for (const m of inv.models) {
       const row = h(doc, 'div', 'pl-consent-row', `${m.label || m.id} `);
       row.appendChild(h(doc, 'span', 'mono', `(${m.id})`));
+      if (m.engine === 'codex') row.appendChild(h(doc, 'span', 'badge blue pl-engine', 'Codex'));
       if (m.baseUrl) row.appendChild(h(doc, 'span', 'pl-secret pl-baseurl', ` routes to: ${m.baseUrl}`));
       if ((m.envKeys || []).length) row.appendChild(h(doc, 'small', 'hint', ` env: ${m.envKeys.join(', ')}`));
       models.appendChild(row);

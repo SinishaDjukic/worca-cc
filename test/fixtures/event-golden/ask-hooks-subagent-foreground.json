@@ -1,0 +1,124 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-label",
+   "label": "Running 1 sub-agent"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "type": "general-purpose",
+    "model": "haiku",
+    "tokens": null,
+    "ctx": null,
+    "usage": null,
+    "costUsd": null,
+    "estimated": true,
+    "status": "running",
+    "durationMs": null,
+    "log": []
+   }
+  },
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "type": "general-purpose",
+    "model": "claude-haiku-4-5-20251001",
+    "tokens": 20479,
+    "ctx": null,
+    "usage": {
+     "input": 10,
+     "output": 74,
+     "cacheRead": 0,
+     "cacheCreation": 20395
+    },
+    "costUsd": null,
+    "estimated": true,
+    "status": "done",
+    "durationMs": "<T>",
+    "log": []
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 18,
+    "output": 226,
+    "cacheRead": 30445,
+    "cacheCreation": 30873,
+    "ctx": 30883,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.09181225,
+   "estimatedCostUsd": null
+  }
+ ],
+ "summary": {
+  "text": "The agent returned: **pong**",
+  "blocks": [
+   {
+    "kind": "agent",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "type": "general-purpose",
+    "model": "claude-haiku-4-5-20251001",
+    "tokens": 20479,
+    "ctx": null,
+    "usage": {
+     "input": 10,
+     "output": 74,
+     "cacheRead": 0,
+     "cacheCreation": 20395
+    },
+    "costUsd": 0.0346,
+    "estimated": true,
+    "status": "done",
+    "durationMs": "<T>",
+    "log": [],
+    "ctxWindow": 200000
+   }
+  ],
+  "usage": {
+   "input": 18,
+   "output": 226,
+   "cacheRead": 30445,
+   "cacheCreation": 30873,
+   "ctx": 30883,
+   "ctxWindow": 200000
+  },
+  "costUsd": 0.09181225,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "status": "done",
+  "reason": null,
+  "resultSubtype": "success",
+  "isError": false,
+  "errors": [],
+  "numTurns": 2,
+  "durationMs": "<T>",
+  "sawInit": true,
+  "sawAssistant": true,
+  "sawResult": true,
+  "agents": 1,
+  "labels": [
+   "Thinking",
+   "Running 1 sub-agent",
+   "Thinking"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

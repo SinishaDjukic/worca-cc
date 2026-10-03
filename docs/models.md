@@ -362,6 +362,36 @@ A plugin never ships a credential: a `copilot` entry resolves against each
 user's own sign-in, and an `apiKey` must be a `${VAR}` reference. A team policy
 may ship `upstream` models under the same rule.
 
+## Codex
+
+worca can run pipelines and Ask Worca chats on OpenAI's Codex CLI.
+
+1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment.
+2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
+3. Pick Codex per run on New pipeline, or as a default in Settings › Models (Engines). For Ask Worca, Settings › Ask Worca › Engine & models.
+
+On a Codex run the helper jobs (titles, the run overview, the PR description, the Auto workflow classifier, and Away mode's night decider) run on Codex too, read-only with codex's shell switched off, because they read text worca did not write. These jobs need a codex that knows `--disable shell_tool` and `--disable unified_exec` (`codex-cli 0.146` does).
+
+- **The classifier and the night decider still look into the repository.** With no shell, they read it through worca's own `read_file`, `grep` and `glob`, limited to the run's checkout (and, for the night decider, its plan files), under the same protected-file rules as Ask Worca. Their tool calls are capped as on Claude: 10 for the classifier, 12 for the night decider.
+- **The night decider uses Codex models on a Codex run.** Away mode's "Decided by" model is used when it is a Codex model; otherwise the run's own Codex model, otherwise Codex's default.
+- **Every Codex call is priced.** When no Codex model is set, worca runs Codex's own default, GPT-5.6 Sol, by name, so its cost shows instead of $0.00.
+
+**MCP servers on Codex.** A pipeline's MCP servers attach to its Codex nodes, with these limits:
+
+- Codex takes stdio servers only. A remote (HTTP/SSE) server from the MCP registry refuses the run; one from a project's `.mcp.json` is skipped with a warning.
+- Servers Claude Code loads on its own (user scope, plugins) are not attached on Codex, and the run says which.
+- Codex gives all of a run's servers one shared environment, so two servers may not declare the same variable with different values.
+
+> **Ask Worca on Codex is not available yet.** A chat on Codex starts only when worca can switch off every Codex tool that reaches the disk or other agents. `codex-cli 0.146` cannot switch off `view_image` (it reads any image file) or its sub-agents, so on that version Codex models are not offered in Ask Worca and a Codex chat refuses to start. Pipelines on Codex are unaffected.
+
+What an Ask chat on Codex will be able to do, and what it cannot do, once a codex version can be locked down:
+
+- It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell and no Codex web search; web access goes through worca's web tools as in any chat.
+- A chat keeps the engine it started on. To switch, start a new chat.
+- Images are sent with the message that carries them. PDFs need a Claude chat. Your MCP servers are available in Claude chats.
+- The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
+- If Codex is not installed or not signed in, the chat says "Codex isn't ready" with the reason. It never falls back to Claude.
+
 ## Ask Worca
 
 Ask Worca can read the catalog and the providers, explain why a model is not

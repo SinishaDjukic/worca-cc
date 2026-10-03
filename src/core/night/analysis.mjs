@@ -1,13 +1,18 @@
 // src/core/night/analysis.mjs
-// The nightDecider: ONE headless, read-only claude call that scores each option of an ask
-// on weighted criteria. Inline prompt (like the Auto classifier), NOT a registered agent,
+// The nightDecider: ONE headless, read-only call on the run's engine that scores each option of
+// an ask on weighted criteria. Inline prompt (like the Auto classifier), NOT a registered agent,
 // so it never appears in the workflow/step catalogs.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
+import { normalizingOnEvent } from '../engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost } from '../config.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { memoryRoot, GLOBAL_SCOPE, projectScope, listMemory, readMemory } from '../memory-store.mjs';
 import { NIGHT_CRITERIA } from './config.mjs';
-import { ASK_DENY_RULES } from '../ask/spawn.mjs';
+import { RUN_READ_DENY_RULES } from '../ask/deny-rules.mjs';
+import { rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { worcaHome } from '../projects.mjs';
+import { writeFilesMcpConfig } from '../engines/codex-files-mcp.mjs';
 import { redactAskText } from '../ask/redact.mjs';
 
 export const NIGHT_DECIDER_SYSTEM_PROMPT = `You are worca's nightDecider. The developer is away and a run is waiting on a question they would normally answer.
@@ -22,6 +27,14 @@ Score EVERY option of EVERY question on each criterion from 0 (worst) to 10 (bes
 Reply with ONLY this JSON (no prose, no fences):
 {"decisions":[{"id":"<question id>","choice":"<one option, verbatim>","confidence":<0-100>,"rationale":"<2-3 sentences>","reversible":<true|false>,"scores":{"<option>":{"matchesMemory":n,"reversible":n,"smallestScope":n,"codebaseConventions":n,"cost":n}}}]}`;
 
+/** The decider's system prompt on `engine`. On Codex the repository is read through worca's file tools
+ *  (engines/codex-files-mcp.mjs), which take absolute paths. */
+export function nightDeciderSystemPrompt(engine = 'claude', cwd = '') {
+  if (!engine || engine === 'claude') return NIGHT_DECIDER_SYSTEM_PROMPT;
+  return NIGHT_DECIDER_SYSTEM_PROMPT.replace('You may read the repository (Read, Grep, Glob) to check conventions and scope; never modify anything.',
+    `You may read the repository at ${cwd} and the plan files with the read_file, grep and glob tools (absolute paths) to check conventions and scope; never modify anything.`);
+}
+
 const MEMORY_MAX_BYTES = 24_000;
 // The task is inlined for orientation; task.md (a plan path) holds all of it.
 const TASK_MAX_BYTES = 16_000;
@@ -30,7 +43,7 @@ const MAX_TURNS = 12;
 const TOOLS = ['Read', 'Grep', 'Glob'];
 // Ask Worca's secret-path denies, minus the run store and checkouts: the decider's cwd is the
 // run's checkout (under .worca-cc/runs) and its plan files live in the store.
-export const NIGHT_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => !/\.worca-cc\/(store|runs)\//.test(r)));
+export const NIGHT_DENY_RULES = RUN_READ_DENY_RULES;
 
 /** Cut `text` to `max` UTF-8 bytes (never mid-character) and say so with `note`. */
 export function capText(text, max, note) {
@@ -99,13 +112,18 @@ export function normalizeAnalysis(parsed) {
  * @returns {Promise<{byId:Record<string,object>, costUsd:number, usage:object, peakContextTokens:number}>}
  */
 export async function runNightAnalysis({ questions, cwd, task, planPaths, memory, criteria, context, model = null, effort = 'medium',
-  run = runClaude, bin, mock = false, envScrub, envAllowlist, signal } = {}) {
+  engine = 'claude', run = runClaude, bin, mock = false, envScrub, envAllowlist, signal } = {}) {
   if (mockEnabled({ mock })) {
     // Offline mock (claude.mock / WORCA_MOCK, like the Auto classifier): deterministic, $0 — recommended else first, confident enough to pass 60.
     const byId = {};
     for (const q of questions) byId[q.id] = { choice: q.recommended || q.options[0], confidence: 70, rationale: '[mock] night analysis', reversible: true, scores: {} };
     return { byId, costUsd: 0, usage: {}, peakContextTokens: 0 };
   }
+  const onClaude = !engine || engine === 'claude';
+  // On Codex: a read-only spawn with its shell off, reading the checkout and the plan folders through worca's
+  // file tools under the same deny rules (NIGHT_DENY_RULES); maxTurns caps its tool calls (codex.mjs).
+  const roots = onClaude ? [] : [...new Set([cwd, ...(planPaths || []).map((p) => dirname(p))].filter(Boolean))];
+  const mcpConfigPath = onClaude ? null : writeFilesMcpConfig({ dir: join(worcaHome(), 'tmp', 'night'), roots, name: 'night' });
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   if (signal?.aborted) ctrl.abort(); else signal?.addEventListener?.('abort', onAbort, { once: true });
@@ -113,29 +131,34 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
   let costUsd = 0; let peakContextTokens = 0; const usage = { input_tokens: 0, output_tokens: 0 };
   try {
     const res = await run({
-      cwd, systemPrompt: NIGHT_DECIDER_SYSTEM_PROMPT,
+      cwd, systemPrompt: nightDeciderSystemPrompt(engine, cwd),
       prompt: buildAnalysisPrompt({ questions, task, planPaths, memory, criteria: criteria || {}, context }),
       // `model` / `effort` = the RESOLVED decider pair (night/decider-model.mjs): env and cost follow it.
-      model, modelEnv: resolveModelEnv(model), effort,
+      model, modelEnv: onClaude ? resolveModelEnv(model) : undefined, effort,
+      ...(onClaude ? {} : { engine, sandbox: 'read-only', mcpConfigPath }),
       // The prompt carries agent-written question text, so the spawn is sandboxed like Ask Worca's:
       // no MCP servers, user hooks/plugins or slash commands, no edit mode, secret paths denied.
       permissionMode: 'dontAsk', strictMcpConfig: true, settingSources: ['project'], disableSlashCommands: true,
       permissionRules: { deny: [...NIGHT_DENY_RULES] },
       allowedTools: [...TOOLS], tools: [...TOOLS], maxTurns: MAX_TURNS,
       signal: ctrl.signal, bin, envScrub, envAllowlist, spawnKind: 'aux',
-      onEvent: (e) => {
-        const mu = e?.type === 'assistant' && !e.raw?.parent_tool_use_id ? e.raw?.message?.usage : null;
+      onEvent: normalizingOnEvent((e) => {
+        // A main-stream message's own usage (`phase: 'message'`: the completed assistant
+        // message, not a partial-message start/delta); sub-agent turns do not count.
+        const mu = e.type === 'usage' && e.phase === 'message' && (e.parentId ?? null) === null ? e.usage : null;
         if (mu) {
           const ctx = (Number(mu.input_tokens) || 0) + (Number(mu.cache_read_input_tokens) || 0) + (Number(mu.cache_creation_input_tokens) || 0);
           if (ctx > peakContextTokens) peakContextTokens = ctx;
         }
-        if (e?.type !== 'result') return;
-        const u = e.raw?.usage;
+        if (e.type !== 'result') return;
+        const u = e.usage;
+        // Codex streams no per-message usage: its one turn's prompt is the fullest the context got.
+        if (!onClaude && u) peakContextTokens = Math.max(peakContextTokens, (Number(u.input_tokens) || 0) + (Number(u.cache_read_input_tokens) || 0) + (Number(u.cache_creation_input_tokens) || 0));
         if (u) { usage.input_tokens += Number(u.input_tokens) || 0; usage.output_tokens += Number(u.output_tokens) || 0; }
         if (e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), u);
         if (Number.isFinite(c)) costUsd += c;
-      },
+      }),
     });
     return { byId: normalizeAnalysis(safeParseJson(String(res?.text || ''))), costUsd, usage, peakContextTokens };
   } catch (err) {
@@ -145,5 +168,6 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener?.('abort', onAbort);
+    if (mcpConfigPath) rmSync(mcpConfigPath, { force: true });
   }
 }

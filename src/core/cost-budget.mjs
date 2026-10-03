@@ -108,9 +108,9 @@ export function setCostCapOverride(pipelineId) {
 }
 
 /** One shared truth for gates, CLI, and every UI badge (spec §6.1). */
-export function budgetStatus(now = new Date()) {
+export function budgetStatus(now = new Date(), { scope = null } = {}) {
   const resetPeriod = costLimitResetPeriod();
-  const pipelineLimitUsd = pipelineCostLimitUsd();
+  const pipelineLimitUsd = pipelineCostLimitUsd(scope);
   const totalLimitUsd = totalCostLimitUsd();
   const windowStartMs = costWindowStart(now, resetPeriod).getTime();
   const windowEndMs = costWindowEnd(now, resetPeriod).getTime();

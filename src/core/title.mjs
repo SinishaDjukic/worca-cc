@@ -29,7 +29,7 @@ const MAX_LEN = 70;
  * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean}} [deps]
  * @returns {{model:string, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
  */
-export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = catalogHasModel } = {}) {
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }) } = {}) {
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const explicit = str(opts.model);
   if (explicit) return { model: explicit, source: 'explicit', stale: null };
@@ -116,17 +116,20 @@ export function isRefusalTitle(t) {
  * an abort (a spawn failure, a refusal, an empty reply) — the caller logs it on
  * its own channel; the return value stays '' so every existing caller is unchanged.
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, runModel?:string, onError?:(info:{model:string, error:Error})=>void, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, runModel?:string, storedTitle?:string, effort?:string, onError?:(info:{model:string, error:Error})=>void, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string}} opts
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}) {
   const text = String(prompt || '').trim();
   if (!text) return '';
-  const { model, stale } = resolveTitleModel(opts);
+  const engine = typeof opts.engine === 'string' && opts.engine && opts.engine !== 'claude' ? opts.engine : null;
+  const { model, stale } = engine
+    ? { model: (typeof opts.model === 'string' && opts.model.trim()) || undefined, stale: null }
+    : resolveTitleModel(opts, typeof opts.storedTitle === 'string' && opts.storedTitle.trim() ? { stored: () => opts.storedTitle.trim() } : undefined);
   if (stale) console.warn(`[worca] titleModel ${JSON.stringify(stale)} is no longer in the catalog — titles use ${model}`);
   const report = (error) => {
     if (typeof opts.onError !== 'function') return;
-    try { opts.onError({ model, error }); } catch { /* a logging sink must never fail the caller */ }
+    try { opts.onError({ model: model || `${engine}'s default model`, error }); } catch { /* a logging sink must never fail the caller */ }
   };
   try {
     // A provider 429 (a shared free pool) is retried with the recovery backoff;
@@ -140,8 +143,9 @@ export async function generateTitle(prompt, opts = {}) {
       // Aux calls keep their model choice but still route through the catalog's
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
-      modelEnv: resolveModelEnv(model),
-      effort: AUX_EFFORT,
+      modelEnv: engine ? undefined : resolveModelEnv(model),
+      ...(engine ? { engine, sandbox: 'read-only' } : {}),
+      effort: (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,

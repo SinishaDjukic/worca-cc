@@ -308,3 +308,14 @@ test('renderDone: a run Away mode answered says so, with how many to check', () 
   assert.match(renderError({ ...META, night: { decisions: 1, flagged: 1 } }, { message: 'x' }).body[0].value, /\*\*Away mode:\*\* 1 answer while you were away — 1 to check/);
   assert.doesNotMatch(renderDone(META, { status: 'done' }).body[0].value, /Away mode/);
 });
+
+test('renderDone: a usage limit an engine hit also offers /resume on the other engine', () => {
+  const limit = renderDone(META, { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
+  assert.equal(isValidMessage(limit), true);
+  assert.match(limit.body[0].value, /reply: \/resume \*2951\n/);
+  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude/);
+  for (const payload of [
+    { status: 'paused', reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" },
+    { status: 'paused', reason: 'error', detail: 'disk full', limitEngine: 'codex' },
+  ]) assert.doesNotMatch(renderDone(META, payload).body[0].value, /continue now on/, payload.reason);
+});

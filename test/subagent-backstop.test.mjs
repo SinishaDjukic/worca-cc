@@ -63,3 +63,15 @@ test('the backstop only touches THIS step’s subs and never re-closes a termina
   assert.equal(orch.state.subAgents.find((s) => s.id === 'toolu_B').status, 'running');
   assert.equal(evts.filter((m) => m.transition === 'finish').length, 1, 'exactly one forced finish');
 });
+
+test("an execution's terminal marker drops its legacy-envelope normalizer; a start keeps it", () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/proj' });
+  const attr = (ctx) => ({ nodeId: ctx.nodeId, stepIndex: null, cycle: 1, stepKey: ctx.executionId, executionId: ctx.executionId });
+  const other = execCtx('n2');
+  orch._onAgentEvent('planner', spawnEvt('toolu_A'), attr(NODE));
+  orch._onAgentEvent('planner', spawnEvt('toolu_B'), attr(other));
+  orch._execStep(NODE, 'start');
+  assert.deepEqual([...orch._legacyNormalizers.keys()], [NODE.executionId, other.executionId]);
+  orch._execStep(NODE, 'done');
+  assert.deepEqual([...orch._legacyNormalizers.keys()], [other.executionId], 'only the finished execution is pruned');
+});

@@ -21,6 +21,7 @@ import { openRepoLook } from '../auto/repo-look.mjs';
 import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { utilityModelFor } from '../settings-cascade.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -142,8 +143,10 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  *             the classifier honours it, so a Stop in the chat no longer leaves a nested claude running for up to 4 × 90 s (v7)
  *   classify  test seam for the classifier (defaults to classifyTask); tests inject a thrower / a recorder, never a spawn
  */
-export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask } = {}) {   // eslint-disable-line no-unused-vars
+export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
+  // A Codex chat's classifier runs on Codex too: a Codex chat makes no Claude call (D8).
+  const chatEngine = env && env.WORCA_ASK_ENGINE === 'codex' ? 'codex' : null;
   return {
     workflow: {
       /**
@@ -159,7 +162,8 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
         const project = await projectByKey(projectKey);
         if (!project) throw new Error(`unknown projectKey "${flat(projectKey, 120)}" — call list_projects`);
         const registry = loadAgentRegistry();
-        const models = await listModels('');
+        const all = await listModels('');
+        const models = chatEngine ? all.filter((m) => m && m.engine === chatEngine) : all;
         const fingerprint = await fingerprintProject(project.path);
         const warnings = [];
         let picked;
@@ -171,10 +175,13 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
-          const look = mockEnabled({}) ? null : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
+          // A Codex chat's classifier runs on codex with its shell off (classify.mjs): no look to borrow.
+          const look = mockEnabled({}) || chatEngine === 'codex' ? null : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
-            humanInLoop: true, feedback: [], priorShape: null, model: resolveAutoModel(models), cwd: look ? look.cwd : cwd, repoLook: !!look,
+            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || '') : resolveAutoModel(models),
+            ...(chatEngine ? { engine: chatEngine } : {}),
+            cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
           };
           // Every failure AFTER money may have been spent resolves {ok:false, costUsd} (v7): ClassifierError carries what its

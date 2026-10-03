@@ -13,6 +13,7 @@ import { pauseConsequences, describePauseReason, giveUpOption } from '../failure
 import { projectForm } from '../../shared/forms/project.mjs';
 import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
+import { usageLimitSwitch, engineLabel } from '../../shared/engine-switch.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -48,7 +49,8 @@ function head(icon, meta) {
 
 
 /**
- * done event: status done|stopped|paused (+reason for limit pauses).
+ * done event: status done|stopped|paused (+reason for limit pauses, +limitEngine for a
+ * usage limit an engine hit).
  * meta may carry {title, totalCostUsd, totalActiveMs} for the summary line.
  */
 export function renderDone(meta, payload = {}) {
@@ -68,6 +70,9 @@ export function renderDone(meta, payload = {}) {
     }
     pushAway(parts, meta);
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
+    // A usage limit the engine hit: the other engine has its own allowance.
+    const other = usageLimitSwitch(payload);
+    if (other) parts.push(`   Or continue now on ${engineLabel(other)}: /resume ${runRef(meta.runId)} ${other}`);
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {

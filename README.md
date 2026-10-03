@@ -411,8 +411,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   on the sidebar's *I'm here | I'm away* switch, Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
-  read-only review (Read, Grep and Glob only) scores each option against your Worca memory, how
-  easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
+  read-only review (it can only read files), on the run's engine, scores each option against your
+  Worca memory, how easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
   still given, but flagged *please check*.
 - **You choose when and where** — **Settings › Runs › Away mode** (Advanced level) sets the away
   hours and time zone, *Only runs I marked* or *All runs*, the method, the model and effort that

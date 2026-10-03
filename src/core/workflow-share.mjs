@@ -18,7 +18,7 @@
 //   ID_TAKEN (+ .id) | NOT_FOUND | UNSUPPORTED | SCRIPTS_UNCONFIRMED (+ .scriptNodes)
 
 import { listModels } from './config.mjs';
-import { EFFORTS, subagentModelIssue } from './model-env.mjs';
+import { EFFORTS, ALL_EFFORTS, subagentModelIssue } from './model-env.mjs';
 import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
@@ -82,7 +82,7 @@ export function nodeDefaultsError(raw, models, where) {
   const subIssue = subagentModelIssue(raw.subagentModel);
   if (subIssue) return subIssue;
   if (!effort) return '';
-  if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
+  if (!ALL_EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
   if (!entry) return 'select a model before choosing an effort';
   if (!entry.efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
   return '';

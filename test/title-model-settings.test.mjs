@@ -84,10 +84,10 @@ test('composeCatalog: hideBuiltinModels marks UNSHADOWED built-ins hidden — a 
   assert.equal(shadowed.custom, 'global');
   assert.equal(shadowed.hidden, undefined, 'the user OWNS this entry');
   assert.equal(cat.find((m) => m.id === 'own-model').hidden, undefined);
-  const builtins = cat.filter((m) => m.custom === false);
+  const builtins = cat.filter((m) => m.custom === false && m.engine === 'claude');
   assert.equal(builtins.length, PREDEFINED_MODELS.length - 1);
   assert.ok(builtins.every((m) => m.hidden === true), 'every other built-in is hidden');
-  assert.equal(cat.length, PREDEFINED_MODELS.length + 1, 'hidden entries are STILL in the catalog (they must resolve)');
+  assert.equal(cat.filter((m) => m.engine === 'claude').length, PREDEFINED_MODELS.length + 1, 'hidden entries are STILL in the catalog (they must resolve)');
 });
 
 test('catalogHasModel: built-in, global, plugin-less; case-insensitive; hidden built-ins still count', async () => {

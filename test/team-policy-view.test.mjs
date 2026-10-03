@@ -531,3 +531,11 @@ test('editor: a night.criteria row renders five weight inputs and reads back the
   inputs[1].value = '7';
   assert.deepEqual(docFromEditor(root, { registry }).fields['night.criteria'].value, { matchesMemory: 4, reversible: 7, cost: 2 });
 });
+
+test('Catalog tab and editor show a Codex model\'s engine', () => {
+  const payload = { policy: { doc: { catalogs: { models: [{ id: 'acme-codex', label: 'Acme Codex', efforts: ['low'], engine: 'codex' }] } } } };
+  const root = renderPolicyCatalogPanel(payload, { doc });
+  assert.equal(root.querySelector('.tp-catalog-models .tp-engine').textContent, 'Codex');
+  const plain = renderPolicyCatalogPanel(PAYLOAD, { doc });
+  assert.equal(plain.querySelector('.tp-catalog-models .tp-engine'), null);
+});

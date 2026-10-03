@@ -19,9 +19,9 @@
 // tool call through db.mjs (WAL, busy_timeout, open-retry — second-process
 // access is designed for).
 import { createInterface } from 'node:readline';
-import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { createAskTools, AskToolError } from './tools.mjs';
+import { createAskTools } from './tools.mjs';
+import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
 import { defaultMemoryDeps } from './memory-deps.mjs';
@@ -38,11 +38,11 @@ import { defaultCloneDeps } from './clone-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
+import { defaultFileDeps } from './file-deps.mjs';
 import { defaultBranchDeps } from './branch-deps.mjs';
 
-const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
-const DEFAULT_PROTOCOL = '2025-06-18';
-const PKG_VERSION = createRequire(import.meta.url)('../../../package.json').version;
+// The JSON-RPC server itself lives in rpc-server.mjs (re-exported: tests and the Codex file tools use it).
+export { createRpcServer } from './rpc-server.mjs';
 
 /** `--home <base> --thread <id> [--relay <url>]`; a flag without a value is ignored. */
 export function parseArgv(argv) {
@@ -71,7 +71,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       // ending or being stopped also stops a bench run still going.
       ...defaultScriptDeps({ threadId, signal }),
       ...defaultCommentDeps(),
-      ...defaultWorkflowDeps({ threadId, signal }),
+      ...defaultWorkflowDeps({ threadId, signal, env }),
       ...defaultMetricsDeps({ threadId }),
       ...defaultPolicyDeps({ threadId }),
       ...defaultAwayDeps(),
@@ -87,6 +87,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
       // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
       ...defaultWebDeps({ threadId, signal, env }),
+      // Codex chats only (WORCA_ASK_ENGINE=codex): read_file / grep / glob under the shared deny rules (D13).
+      ...defaultFileDeps({ threadId, env, signal }),
       // Readers only the host process can supply (relay mode: ui/server.mjs passes
       // readLiveDiff, which needs the live runs). Absent in the classic child.
       ...extraDeps,
@@ -126,74 +128,6 @@ async function relayMain({ url, token, stdin, stdout, fetchImpl = globalThis.fet
   await new Promise((resolve) => rl.on('close', resolve));
   await chain;
   await new Promise((resolve) => stdout.write('', resolve));
-}
-
-/**
- * @param {{tools:{list:Function, call:Function}, write:(s:string)=>void, log?:(s:string)=>void, serverVersion?:string}} opts
- * @returns {{feed:(line:string)=>Promise<void>, idle:()=>Promise<void>}}
- */
-export function createRpcServer({ tools, write, log = (s) => process.stderr.write(`${s}\n`), serverVersion = PKG_VERSION }) {
-  const send = (msg) => write(`${JSON.stringify(msg)}\n`);
-  const result = (id, res) => send({ jsonrpc: '2.0', id, result: res });
-  const error = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
-  const toolNames = () => new Set(tools.list().map((t) => t.name));
-
-  async function handle(msg) {
-    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return error(null, -32600, 'Invalid Request');
-    const { id, method, params } = msg;
-    const isNotification = id === undefined || id === null;
-    if (typeof method !== 'string') return isNotification ? undefined : error(id, -32600, 'Invalid Request');
-    if (isNotification) return undefined;                       // notifications/* — never answered
-    switch (method) {
-      case 'initialize': {
-        const requested = params && typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
-        return result(id, {
-          protocolVersion: SUPPORTED_PROTOCOLS.includes(requested) ? requested : DEFAULT_PROTOCOL,
-          capabilities: { tools: {} },
-          serverInfo: { name: 'worca', version: serverVersion },
-        });
-      }
-      case 'ping':
-        return result(id, {});
-      case 'tools/list':
-        return result(id, { tools: tools.list() });
-      case 'tools/call': {
-        const name = params && typeof params.name === 'string' ? params.name : '';
-        const args = params && params.arguments !== undefined ? params.arguments : {};
-        if (!name || !toolNames().has(name)) return error(id, -32602, `Invalid params: unknown tool ${JSON.stringify(name)}`);
-        if (args === null || typeof args !== 'object' || Array.isArray(args)) return error(id, -32602, 'Invalid params: arguments must be an object');
-        try {
-          const out = await tools.call(name, args);
-          return result(id, { content: [{ type: 'text', text: JSON.stringify(out ?? null) }] });   // never `undefined` → invalid JSON text
-        } catch (err) {
-          const message = err && err.message ? err.message : String(err);
-          if (!(err instanceof AskToolError)) log(`[ask-mcp] ${name} failed: ${err && err.stack ? err.stack : message}`);
-          return result(id, { content: [{ type: 'text', text: `error: ${message}` }], isError: true });
-        }
-      }
-      default:
-        return error(id, -32601, `Method not found: ${method}`);
-    }
-  }
-
-  // One sequential chain: responses leave in request order, a slow tool never reorders them.
-  let chain = Promise.resolve();
-  return {
-    feed(line) {
-      const trimmed = String(line).trim();
-      if (!trimmed) return chain;
-      let msg;
-      try { msg = JSON.parse(trimmed); } catch {
-        chain = chain.then(() => error(null, -32700, 'Parse error'));   // through the chain: order preserved
-        return chain;
-      }
-      for (const m of Array.isArray(msg) ? msg : [msg]) {
-        chain = chain.then(() => handle(m)).catch((e) => log(`[ask-mcp] handler crashed: ${e && e.stack ? e.stack : e}`));
-      }
-      return chain;
-    },
-    idle: () => chain,
-  };
 }
 
 export async function main({ argv = process.argv.slice(2), env = process.env, stdin = process.stdin, stdout = process.stdout } = {}) {

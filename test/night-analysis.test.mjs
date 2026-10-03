@@ -35,7 +35,7 @@ test('runNightAnalysis parses the reply and reports cost', async () => {
   let seen = null;
   const run = async (o) => {
     seen = o;
-    o.onEvent({ type: 'result', costUsd: 0.02, raw: { usage: { input_tokens: 10, output_tokens: 5 } } });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.02, isError: false, usage: { input_tokens: 10, output_tokens: 5 } });
     return { text: '```json\n{"decisions":[{"id":"q1","choice":"Redis","confidence":70,"rationale":"r","reversible":true,"scores":{}}]}\n```' };
   };
   const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['Redis'] }], cwd: '/tmp', run, memory: '', task: 't' });
@@ -96,13 +96,27 @@ test('memory: project rules come before global ones, so a cut drops global rules
 
 test('runNightAnalysis reports the fullest its own context got (sub-agent turns do not count)', async () => {
   const run = async (o) => {
-    const turn = (usage, parent = null) => o.onEvent({ type: 'assistant', raw: { type: 'assistant', parent_tool_use_id: parent, message: { usage } } });
+    const turn = (usage, parent = null) => o.onEvent({ type: 'usage', messageId: null, parentId: parent, usage, phase: 'message' });
     turn({ input_tokens: 1000, cache_read_input_tokens: 500, cache_creation_input_tokens: 200 });
     turn({ input_tokens: 300, cache_read_input_tokens: 2700 });
     turn({ input_tokens: 99_999 }, 'toolu_sub');
-    o.onEvent({ type: 'result', costUsd: 0.01, raw: { usage: { input_tokens: 1300, output_tokens: 40 } } });
+    // A partial-message start repeats the call's prompt usage; only completed messages count.
+    o.onEvent({ type: 'usage', messageId: 'msg_x', parentId: null, usage: { input_tokens: 88_888 }, phase: 'start' });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.01, isError: false, usage: { input_tokens: 1300, output_tokens: 40 } });
     return { text: '{"decisions":[]}' };
   };
   const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['a'] }], cwd: '/tmp', run, memory: '', task: 't' });
   assert.equal(r.peakContextTokens, 3000);
+});
+
+test('runNightAnalysis normalizes a raw Claude envelope handed to its onEvent (a test seam)', async () => {
+  const run = async (o) => {
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', usage: { input_tokens: 700, cache_read_input_tokens: 300 } } } });
+    o.onEvent({ type: 'result', costUsd: 0.01, raw: { type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 700, output_tokens: 9 } } });
+    return { text: '{"decisions":[]}' };
+  };
+  const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['a'] }], cwd: '/tmp', run, memory: '', task: 't' });
+  assert.equal(r.peakContextTokens, 1000);
+  assert.deepEqual(r.usage, { input_tokens: 700, output_tokens: 9 });
+  assert.ok(r.costUsd > 0);
 });

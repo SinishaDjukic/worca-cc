@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
   effortsSummary, envSummary, costSummary, suggestDuplicateId, renderModelsList, renderModelEditor,
-  collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary,
+  collectModelEditor, makeEnvRow, applyCostMode, setModelCost, deleteRefsSummary, setModelEngine,
   renderExportWizard, collectExportWizard,
 } from '../ui/public/models-view.mjs';
 
@@ -501,7 +501,7 @@ test('list: the toolbar searches and filters, groups fold with a count, and buil
   assert.equal(sec('builtin').querySelector('.mv-sec-count').textContent, String(PREDEFINED.length), 'the count answers "is it in there?"');
   assert.equal(sec('global').classList.contains('is-folded'), false);
   assert.equal(plain.querySelectorAll('.mv-builtin').length, PREDEFINED.length, 'folded is CSS, not absent — search still finds them');
-  assert.deepEqual([...plain.querySelectorAll('.mv-filter')].map((c) => c.textContent), ['All', 'Yours', 'Built-in', 'Plugin', 'Team', 'Needs setup']);
+  assert.deepEqual([...plain.querySelectorAll('.mv-filter')].map((c) => c.textContent), ['All', 'Yours', 'Built-in', 'Codex', 'Plugin', 'Team', 'Needs setup']);
 
   // A search opens every group that still has a hit, and drops the groups that have none.
   const hit = renderModelsList({ ...args, collapsed: { builtin: true }, query: PREDEFINED[0].id }, { doc });
@@ -534,4 +534,62 @@ test('list (#422): endpoint-routed badge on global + plugin cards whose env carr
   assert.equal(badgeOf('plain'), null, 'no base url → no badge');
   assert.ok(badgeOf('pm'), 'routed plugin');
   assert.match(badgeOf('glm-4.7').title, /haiku\/sonnet\/opus\/fable/);
+});
+
+const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+
+test('list: Codex built-ins have their own group; a Codex custom model carries a Codex badge', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low', 'high'], engine: 'codex' }],
+    predefined: PREDEFINED, efforts: EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+  }, { doc });
+  const sec = el.querySelector('.mv-section[data-section="codex"]');
+  assert.ok(sec);
+  assert.equal(sec.querySelector('.mv-section-title').textContent, 'Codex built-in models');
+  assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
+  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5 — all efforts/);
+  const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
+  assert.equal(card.querySelector('.mv-engine').textContent, 'Codex');
+  assert.match(card.querySelector('.mv-summary').textContent, /low · high/);
+  assert.equal(el.querySelectorAll('.mv-builtin:not(.mv-codex)').length, 2);
+});
+
+test('editor: the engine swaps the efforts and hides env and connection for Codex; collect sends it', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const engine = el.querySelector('.mv-engine');
+  assert.equal(engine.value, 'claude');
+  assert.equal(engine.disabled, false);
+  setModelEngine(el, 'codex');
+  assert.equal(engine.value, 'codex');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-conn').closest('.mv-field').hidden, true);
+  el.querySelector('.mv-id').value = 'gpt-5.5-tuned';
+  el.querySelector('.mv-effort-cb[value="minimal"]').checked = false;
+  const { id, body } = collectModelEditor(el);
+  assert.equal(id, null);
+  assert.equal(body.engine, 'codex');
+  assert.deepEqual(body.efforts, ['low', 'medium', 'high']);
+  assert.deepEqual(body.env, {});
+  assert.equal('upstream' in body, false);
+  setModelEngine(el, 'claude');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
+  assert.equal(collectModelEditor(el).body.engine, undefined, 'a Claude create body is unchanged');
+  const edit = renderModelEditor({ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low'], engine: 'codex' }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  assert.equal(edit.querySelector('.mv-engine').disabled, true, 'the engine is fixed once created');
+  assert.deepEqual([...edit.querySelectorAll('.mv-effort-cb')].filter((c) => c.checked).map((c) => c.value), ['low']);
+  assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
+});
+
+test('list: a Codex built-in shadowed by a same-id model of any engine says overridden', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'gpt-5.5', label: 'GPT via proxy', efforts: ['medium'] }],
+    predefined: PREDEFINED, efforts: EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+    policy: [{ id: 'gpt-5.6-sol', label: 'Sol via Acme', efforts: ['medium'], home: 'acme/gateway' }],
+  }, { doc });
+  const badge = (id) => !!el.querySelector(`.mv-builtin.mv-codex[data-id="${id}"] .mv-shadowed`);
+  assert.equal(badge('gpt-5.5'), true, 'a Claude global of the same id owns it');
+  assert.equal(badge('gpt-5.6-sol'), true, 'a team-policy model of the same id owns it');
 });

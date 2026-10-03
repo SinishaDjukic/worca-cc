@@ -692,7 +692,7 @@ test('rule 1 enumerates the script readers; the sandbox note keeps sub-agents ou
   assert.equal(ASK_SYSTEM_RULES.includes('save_script'), false, 'the writers are named by the SECTION, which W20 can remove');
   assert.ok(SANDBOX_NOTE.includes('Never call save_script or test_script'), 'a sub-agent never writes or runs a script');
   const server = readFileSync(new URL('../ui/server.mjs', import.meta.url), 'utf8');
-  assert.match(server, /askBuildSystemPrompt\(catalog, \{ scripts: await askScriptPromptInput\(\), deployment: DEPLOYMENT, web, mcp \}\)/, 'the turn gets the gated sections');
+  assert.match(server, /askBuildSystemPrompt\(catalog, \{ scripts: await askScriptPromptInput\(\), deployment: DEPLOYMENT, web, mcp(?:, \.\.\.\(engine === 'codex' \? \{ engine \} : \{\}\))? \}\)/, 'the turn gets the gated sections');
 });
 
 // ── where worca runs (src/core/deployment.mjs, docs/deploy-railway.md) ──────

@@ -6,10 +6,12 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv, resolveModelCost } from './config.mjs';
+import { normalizingOnEvent } from './engines/claude-events.mjs';
+import { resolveModelEnv, resolveModelCost, modelForEngine } from './config.mjs';
+import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { safeParseJson } from './protocol.mjs';
 import {
-  lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras,
+  lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
 } from './artifacts.mjs';
 import { RESULTS_FILE, DIFF_PATCH_FILE, OVERVIEW_FILE } from './results.mjs';
 
@@ -83,6 +85,13 @@ export async function generateOverview(key, id, { model, signal, force = false, 
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
+  const engine = runEngineOfRow(row);
+  const onClaude = engine === 'claude';
+  const slot = utilityModelFor(engine, 'overview', scopeForRunKey(key));
+  // The caller's model, else the engine's overview slot; else none — a Claude overview keeps the
+  // CLI default it always had (cascading-settings-design.md: a Claude run is unchanged).
+  const runModel = modelForEngine(model, engine) || slot.model || undefined;
+  const slotEffort = slot.effort && runModel === slot.model ? slot.effort : undefined;
 
   if (!force) {
     try { return JSON.parse(await readFile(join(dir, OVERVIEW_FILE), 'utf8')); } catch { /* none cached */ }
@@ -101,14 +110,16 @@ export async function generateOverview(key, id, { model, signal, force = false, 
     systemPrompt: OVERVIEW_SYSTEM_PROMPT,
     prompt,
     allowedTools: [],                 // pure reasoning over the prompt; no tools needed
-    model,
-    modelEnv: resolveModelEnv(model), // catalog routing env travels with the id (design §4.8)
+    model: runModel,
+    ...(slotEffort ? { effort: slotEffort } : {}),
+    modelEnv: onClaude ? resolveModelEnv(runModel) : undefined,
+    ...(onClaude ? {} : { engine, sandbox: 'read-only' }),
     signal,
-    onEvent: (e) => {
-      if (e.costUsd == null) return;
+    onEvent: normalizingOnEvent((e) => {
+      if (e.type !== 'result' || e.costUsd == null) return;
       costUsd = e.costUsd;
-      usage = e.raw && typeof e.raw === 'object' ? e.raw.usage ?? null : null;
-    },
+      usage = e.usage ?? null;
+    }),
   });
 
   const overview = normalizeOverview(safeParseJson(text));
@@ -119,7 +130,7 @@ export async function generateOverview(key, id, { model, signal, force = false, 
   // endpoint doesn't display the CLI's by-name figure. Unpriceable ({perMtok}
   // with no usage) → NaN → leave it null rather than show a made-up number.
   if (costUsd != null) {
-    const resolved = resolveModelCost(model, Number(costUsd), usage);
+    const resolved = resolveModelCost(runModel, Number(costUsd), usage);
     costUsd = Number.isFinite(resolved) ? resolved : null;
   }
   upsertSubAgent(row.id, {

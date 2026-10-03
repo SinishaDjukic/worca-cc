@@ -1057,7 +1057,7 @@ export function generateClaudeMd({
 export async function assembleRunContext({
   runRoot, members = [], projectsRoot, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
-  platform = process.platform, agentIsolated = false, registry = null,
+  platform = process.platform, agentIsolated = false, registry = null, settingsScope = null,
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1067,9 +1067,9 @@ export async function assembleRunContext({
   const pipelineId = basename(resolve(runRoot));
   // Each cap is read ONCE per assembly: a malformed persisted value warns on every
   // read, so a per-source read would print the same warning N times (Phase 2 note).
-  const maxBytesPerFile = contextMaxBytesPerFile();
-  const maxBytesTotal = contextMaxBytesTotal();
-  const mount = skillMount();
+  const maxBytesPerFile = contextMaxBytesPerFile(settingsScope);
+  const maxBytesTotal = contextMaxBytesTotal(settingsScope);
+  const mount = skillMount(settingsScope);
 
   const sorted = [...members].sort(byProjectKey);
   await mkdir(runRoot, { recursive: true });
