@@ -78,7 +78,10 @@ test('the implementer, the reviewer and the planner each carry a short `## Worca
 // absolute, that rule reads as a prohibition on the very write the section asks for, so it must
 // name the memory directory as its one exception.
 const WRITE_SCOPE_RULES = [
-  ['worca-cc-planner.md', /Never write outside the pipeline dir/],
+  // Narrowed to the execution's own step folder by run-folder artifacts (D13):
+  // "outside the pipeline dir" would still permit writing anywhere else under the
+  // run, which per-execution step folders exist to prevent.
+  ['worca-cc-planner.md', /Never write outside your step folder/],
   ['worca-cc-code-reviewer.md', /two absolute paths given/],
   ['worca-cc-implementer.md', /Only the files the plan \(implement\) or the review \(fix\) require should change/],
 ];

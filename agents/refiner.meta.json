@@ -12,8 +12,8 @@
     { "id": "revise", "type": "md", "required": false, "loop": true }
   ],
   "outputs": [
-    { "id": "plan", "type": "md", "when": "clean", "filename": "{base}{vsuffix}.md", "store": "project" },
-    { "id": "revise", "type": "md", "when": "blocking", "filename": "{base}{vsuffix}.md", "store": "project", "artifactKind": "plan" }
+    { "id": "plan", "type": "md", "when": "clean", "filename": "plan{vsuffix}.md" },
+    { "id": "revise", "type": "md", "when": "blocking", "filename": "plan{vsuffix}.md", "artifactKind": "plan" }
   ],
   "domain": "coding",
   "displayName": "Refine Plan",

@@ -279,6 +279,21 @@ test('the review reads task.md and only the newest plan from the store, never su
   await rm(projectDir, { recursive: true, force: true });
 });
 
+test('the review finds the newest plan in the run folder (steps/<node>-cN/), not only in the store', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'night-steps-'));
+  const { id, dir } = await seedPipeline(projectDir, { title: 'steps' });
+  await writeFile(join(dir, 'task.md'), '# task');
+  for (const rel of ['steps/n_plan-c1/plan.md', 'steps/n_refine-c1/plan-v2.md']) {   // run-dir-relative rows
+    await mkdir(join(dir, rel, '..'), { recursive: true });
+    await writeFile(join(dir, rel), rel);
+    recordArtifact(id, 'plan', rel);
+  }
+  const orch = createOrchestrator({ projectDir });
+  orch.pipeline = { id, dir };
+  assert.deepEqual(await orch._nightPlanPaths(), [join(dir, 'task.md'), join(dir, 'steps', 'n_refine-c1', 'plan-v2.md')]);
+  await rm(projectDir, { recursive: true, force: true });
+});
+
 // ── Robustness: errors, stop, switching off, resume (review cycle 1: M1-M4) ────────────
 
 test('a night-owned --yes run never hangs when the decider throws: the --yes answer, flagged', async () => {

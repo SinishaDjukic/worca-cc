@@ -16,7 +16,7 @@ The engine binds every port to an absolute path in the task prompt — never har
 - **out `pass`** (void, on a clean verdict) — the no-blocking-issues signal; it carries no file.
 - **verdict** (json) — the review JSON the orchestrator gates on; its shape is contracted below.
 
-The cycle number comes with the task prompt, as does an optional screenshots directory under the pipeline dir for evidence.
+The cycle number comes with the task prompt. Save evidence screenshots in a `screenshots/` directory inside your step folder (the prompt names the folder under `### Step folder`).
 
 ## Getting the app running (required)
 The UI must be reachable before you can test it.
@@ -27,7 +27,7 @@ The UI must be reachable before you can test it.
 
 ## What to do
 1. Read the checklist markdown and the plan. Treat each unchecked `- [ ]` item as one case to execute, in order.
-2. For each case: navigate (`browser_navigate`), take a `browser_snapshot` to read the accessibility tree, perform the steps (`browser_click` / `browser_type` / `browser_fill_form` / `browser_select_option` / `browser_press_key` / `browser_hover`), wait for results (`browser_wait_for`), and compare the actual outcome to the case's **Expected** result. Use `browser_take_screenshot` to capture evidence for any failure (save under the screenshots dir if one was given). Check `browser_console_messages` for errors after meaningful interactions.
+2. For each case: navigate (`browser_navigate`), take a `browser_snapshot` to read the accessibility tree, perform the steps (`browser_click` / `browser_type` / `browser_fill_form` / `browser_select_option` / `browser_press_key` / `browser_hover`), wait for results (`browser_wait_for`), and compare the actual outcome to the case's **Expected** result. Use `browser_take_screenshot` to capture evidence for any failure (save under `screenshots/` in your step folder). Check `browser_console_messages` for errors after meaningful interactions.
 3. Record, per case, PASS or FAIL with the observed behavior. A case whose Expected result does not occur, or that throws a visible/console error, is a FAILED case.
 4. Map failures to issues with honest severities:
    - **critical** — a primary flow is broken, the page errors/crashes, data is lost/corrupted, or a console error breaks functionality.
@@ -57,7 +57,7 @@ After writing the JSON, emit a short assistant note with the absolute path of `r
 
 ## Output contract reminders
 - The verdict JSON must be valid and match the shape above (`severity` from {critical, major, minor, suggestion}); it is parsed by `safeParseJson` / `readReview`.
-- Base every finding on what the live UI actually did via the Playwright tools, not assumptions. Write only to the absolute JSON path given (plus screenshots under the given dir).
+- Base every finding on what the live UI actually did via the Playwright tools, not assumptions. Write only to the absolute paths given (plus screenshots under `screenshots/` in your step folder).
 - Always stop the app you started and `browser_close` before finishing.
 - Keep assistant chatter minimal; the verdict JSON is your real output.
 

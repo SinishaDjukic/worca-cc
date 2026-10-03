@@ -133,3 +133,24 @@ export function mimeForPath(pathname) {
   }
   return null;
 }
+
+/** Extension -> FORMAT kind for the step-folder scan (src/core/step-scan.mjs).
+ *  Format kinds only — never the semantic `plan`/`review`/`result`/`verdict` kinds
+ *  the engine records for allocated outputs, so a scanned row can never masquerade
+ *  as one. Anything else is `text`. `image` and `binary` are in BINARY_KINDS, so
+ *  the text read path refuses them and the viewer never decodes them as UTF-8. */
+export const KIND_BY_EXT = Object.freeze({
+  md: 'markdown', markdown: 'markdown', json: 'json', diff: 'diff', patch: 'diff',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image',
+  pdf: 'binary', zip: 'binary', gz: 'binary', tgz: 'binary', tar: 'binary', woff: 'binary', woff2: 'binary', ttf: 'binary',
+});
+
+/** The format kind for a file name or path (either separator), by extension —
+ *  node's extname semantics without node:path: last segment only, a leading dot
+ *  is not an extension (`.env` -> text), case-insensitive. */
+export function scanKindFor(name) {
+  const base = String(name || '').split(/[\\/]/).pop() || '';
+  const i = base.lastIndexOf('.');
+  const ext = i > 0 ? base.slice(i + 1).toLowerCase() : '';
+  return KIND_BY_EXT[ext] || 'text';
+}

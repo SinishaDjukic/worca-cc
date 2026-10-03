@@ -11,12 +11,9 @@
 //    (non-NULL) persisted values equal to the live state — not clobbered to NULL
 //    (which _persist's catch{} would have silently hidden).
 //
-//  A16 (M3) — the orchestrator indexes a published review's shared markdown, so the
-//    index-based deletePipeline (Task 3.13) actually unlinks the shared
-//    reviews/<date>-<base>-impl-review.md (the regression the old name-pattern
-//    deleter caught but a naive index-only deleter would leak). Driven by a REAL
-//    mock run (NOT a manual recordArtifact), so it proves the orchestrator->index
-//    wiring, then proves the deleter removes the on-disk shared file.
+//  A16 (M3) — the orchestrator indexes every review under steps/ inside the run dir
+//    (run-dir-relative rows); deletePipeline removes them with the run dir, and
+//    `reviewFiles` stays empty because no store-rooted file exists any more.
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +29,6 @@ import { deletePipeline } from '../src/core/pipeline-delete.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
-import { posix } from './helpers/posix-path.mjs';
 
 const PROMPT = 'add a login screen with email + password';
 
@@ -124,30 +120,21 @@ test('a step\'s skills round-trips through writeState -> readPipeline; absent re
   assert.deepEqual(byKey('3:n2').skills, [], 'a step with no skills reads back as []');
 });
 
-test('A16: a completed mock run indexes the shared review md; deletePipeline unlinks it', async () => {
-  const { prevHome, projectDir, id } = await runMockToDone();
+test('A16: a completed mock run indexes its reviews under steps/ in the run dir; deletePipeline removes them with the dir', async () => {
+  const { prevHome, projectDir, orch, id } = await runMockToDone();
   cleanups.push(() => restoreHome(prevHome));
-
-  // The reviewer published an impl-review md -> _publishNodeIo indexed it as kind
-  // 'review' (store-root-relative). Prove the row exists.
   const arts = await listArtifacts(id);
-  const review = arts.find((a) => a.kind === 'review');
-  assert.ok(review, 'a review artifact row was indexed by the orchestrator (A16)');
-  assert.match(posix(review.relPath), /^reviews\/.*-impl-review\.md$/, 'indexed shared review path is store-root-relative');
-
-  // The shared file exists on disk under the project store root
-  // (<WORCA_HOME>/.worca-cc/store/<key>/reviews/...).
-  const reviewAbs = join(process.env.WORCA_HOME, '.worca-cc', 'store', projectKey(projectDir), review.relPath);
-  assert.equal(existsSync(reviewAbs), true, 'the shared review md is on disk before delete');
-  // Sanity: it has the mock review content (it really was written by the run).
+  assert.deepEqual(arts.filter((a) => a.kind === 'review').map((a) => a.relPath).sort(),
+    ['steps/n_review-c1/impl-review-cycle1.md', 'steps/n_review-c2/impl-review-cycle2.md'], 'one run-dir-relative row per cycle');
+  assert.ok(arts.some((a) => a.kind === 'verdict' && a.relPath === 'steps/n_review-c1/impl-review-cycle1.json'), 'the verdict is indexed too');
+  const runDir = orch.getState().pipelineDir;
+  const reviewAbs = join(runDir, 'steps', 'n_review-c1', 'impl-review-cycle1.md');
+  assert.equal(existsSync(reviewAbs), true, 'the review md is on disk before delete');
   assert.ok((await readFile(reviewAbs, 'utf8')).length > 0, 'review md is non-empty');
-
-  // The index-based deleter must unlink that exact shared review md (the regression
-  // a naive index-only deleter would leak). Driven by the indexed row, NOT a guess.
   const report = await deletePipeline({ projectDir, id });
   assert.ok(report && report.ok, 'deletePipeline succeeded');
-  assert.equal(existsSync(reviewAbs), false, 'deletePipeline unlinked the shared review md (A16)');
-  assert.ok(report.reviewFiles.includes(reviewAbs), 'report.reviewFiles records the removed shared review md');
-  // And the row is gone (FK cascade cleared the artifacts index).
-  assert.equal((await listArtifacts(id)).length, 0, 'artifacts rows cascade-deleted with the pipeline');
+  assert.equal(existsSync(runDir), false, 'the run dir (and its steps/) is gone');
+  assert.deepEqual(report.reviewFiles, [], 'no store-rooted review file existed to unlink');
+  assert.equal((await listArtifacts(id)).length, 0, 'artifacts rows are gone');
 });
+
