@@ -28049,16 +28049,20 @@ function openClaudeSetup() {
   paintClaudeSetupStatus();
   modal.classList.remove('hidden');
   document.getElementById('claude-setup-check')?.focus?.();
+  // The page's status may predate a sign-in (or a transient signed-out probe):
+  // ask again on open instead of repeating it.
+  recheckClaudeSetup();
+}
+async function recheckClaudeSetup() {
+  const btn = document.getElementById('claude-setup-check');
+  if (btn) btn.disabled = true;
+  try { await loadOnboarding({ recheck: true }); } finally { if (btn) btn.disabled = false; }
+  paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
 document.getElementById('claude-setup-modal')?.addEventListener('click', (e) => { if (e.target === e.currentTarget) closeClaudeSetup(); });
-document.getElementById('claude-setup-check')?.addEventListener('click', async () => {
-  const btn = document.getElementById('claude-setup-check');
-  btn.disabled = true;
-  try { await loadOnboarding({ recheck: true }); } finally { btn.disabled = false; }
-  paintClaudeSetupStatus();
-});
+document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const m = document.getElementById('claude-setup-modal');

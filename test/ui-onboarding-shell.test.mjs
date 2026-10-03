@@ -248,6 +248,19 @@ test('Hide posts {hidden:true} and removes the pill (the page stays); Settings â
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), true, 'ONLY the checklist returns â€” the welcome stays seen');
 });
 
+test('Connect Claude Code re-checks on open: a page that loaded while signed out does not keep saying so', async () => {
+  const signedOut = status([], { welcomeSeen: true, claude: { bin: 'claude', hint: null, auth: 'signed-out' } });
+  const { doc, window, setStatus } = await boot({ onboarding: signedOut });
+  setStatus(status(['claude'], { welcomeSeen: true, claude: { bin: 'claude', hint: null, auth: 'signed-in' } }));
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="claude"]'));
+  await settle();
+  const line = doc.getElementById('claude-setup-status');
+  assert.match(line.textContent, /installed and signed in/);
+  assert.match(line.className, /\bok\b/);
+});
+
 test('a tile guide: "Connect Claude Code" opens the setup dialog; "Ask Worca" rings the dock pill in place; nav hops survive navigation', async () => {
   const { doc, window } = await boot({ onboarding: status([], { welcomeSeen: true }) });
   click(window, doc.querySelector('.gs-pill'));
