@@ -74,18 +74,18 @@ shape is:
 {
   "phases": [
     { "ordinal": 1, "tasks": [
-      { "id": "p1t1", "title": "Short task title", "file": "tasks/p1-t1-short-task-title.md" },
-      { "id": "p1t2", "title": "Another slice",    "file": "tasks/p1-t2-another-slice.md" }
+      { "id": "p1t1", "title": "Short task title", "file": "/abs/run/steps/n_decompose-c1/tasks/p1-t1-short-task-title.md" },
+      { "id": "p1t2", "title": "Another slice",    "file": "/abs/run/steps/n_decompose-c1/tasks/p1-t2-another-slice.md" }
     ] },
     { "ordinal": 2, "tasks": [
-      { "id": "p2t1", "title": "Depends on phase 1", "file": "tasks/p2-t1-depends-on-phase-1.md" }
+      { "id": "p2t1", "title": "Depends on phase 1", "file": "/abs/run/steps/n_decompose-c1/tasks/p2-t1-depends-on-phase-1.md" }
     ] }
   ]
 }
 ```
 
 - `id` is `p<ordinal>t<taskIndex+1>` (1-based task number within the phase).
-- `file` is the path RELATIVE to the pipeline directory.
+- `file` is the absolute path of the task file under the tasks directory the prompt gives (a path relative to the run folder is also accepted; anything outside the run folder fails the run).
 - Keep ids unique across the whole manifest.
 
 Do not implement anything. Write only the task files and the manifest.

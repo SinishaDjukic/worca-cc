@@ -18,14 +18,14 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, resolve, sep, relative } from 'node:path';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile, writeFile, readdir, mkdir, realpath, rename, stat } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
-  clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, listRunArtifacts,
+  clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, listRunArtifacts, artifactAbsPath,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { claimPipelineCommand, discardPendingPipelineCommands, CONTROL_CHECK_INTERVAL_MS } from './pipeline-commands.mjs';
@@ -57,6 +57,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
+import { posixRel } from './step-scan.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, catalogHasModel, listModels } from './config.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
@@ -233,6 +234,11 @@ export function safeParse(text) {
   } catch {
     return null;
   }
+}
+
+/** True when `p` is an existing regular file (a missing path or a directory is not). */
+export function isRegularFile(p) {
+  try { return statSync(p).isFile(); } catch { return false; }
 }
 
 export function firstLine(text) {
@@ -4207,7 +4213,9 @@ export class RunHarness extends EventEmitter {
       const plans = (await listRunArtifacts(this.pipeline.id, { kind: 'plan' }))
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || ver(b.relPath) - ver(a.relPath));
       for (const a of plans) {
-        const f = join(root, a.relPath);
+        // artifactAbsPath, not join(root, …): a run-folder plan row is run-dir-relative
+        // (steps/<node>-cN/plan.md); only a legacy plans/… row is store-root-relative.
+        const f = artifactAbsPath(a.relPath, this.pipeline.dir, root);
         if (await isFile(f)) { out.push(f); break; }
       }
     } catch { /* no index yet: the task alone */ }
@@ -4910,6 +4918,65 @@ export class RunHarness extends EventEmitter {
    *   2-arg v1 call emits the byte-identical `{kind, path}` payload it always did.
    */
   _artifact(kind, path, attr = null) {
+    // A path that is not a regular file on disk is NOT an artifact: an event/row
+    // for it would render as a clickable bytes-0 entry that 404s. One check here
+    // covers every site (allocated outputs the agent never wrote, the End-bound
+    // result path, flow-card outputs); the run log carries the gap. 'pipeline' is
+    // the run DIR itself and pipeline-less (v1 / test) calls are emit-only.
+    if (this.pipeline && path && kind !== 'pipeline' && !isRegularFile(path)) {
+      this._log(attr?.nodeId || kind, 'warn',
+        `artifact "${kind}" was not written: ${posixRel(this.pipeline.dir, path)}`, attr);
+      return;
+    }
+    this._emitArtifact(kind, path, attr);
+    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
+    // files later, per-step attribution rides along (best-effort; never blocks a
+    // run). Every kind with a resolvable on-disk relPath is recorded (clarify
+    // decision 2). 'clarify' IS indexed — clarify.json is a durable file in its step
+    // folder now, and the row is what stops the scan re-indexing it as a browsable
+    // 'json' — while NON_BROWSABLE_KINDS keeps it out of every list (the Q&A has its
+    // own panel). Two are skipped: 'pipeline' (the run DIR itself, with no single
+    // on-disk file) and 'questions' (a scratch file the orchestrator deletes once
+    // the round is answered — the Q&A lives in the step_questions table, so an
+    // index row would only ever 404; the event above still carries it for the live
+    // view, and the browsableOnly listing also drops the kind in SQL for the rows
+    // older DBs already hold). Every other new-engine output lives in the run dir
+    // (steps/<node>-cN/…, prompt/checklist/webui at its root) and is indexed
+    // dir-relative; the store-root branch below survives only for the legacy
+    // <store>/<key>/{plans,reviews} markdown (run-folder-artifacts D1/D12: nothing
+    // new is written there).
+    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'questions') return;
+    let relPath = null;
+    const pdir = this.pipeline.dir;
+    // Indexed with '/' on every OS (posixRel): the row is a store-layout key, not
+    // a native path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the
+    // store), so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
+    if (path.startsWith(pdir + sep)) {
+      relPath = posixRel(pdir, path);                 // dir-relative (checklist, webui, questions)
+    } else {
+      const root = this.isWorkspace
+        ? workspaceStorePath(this.workspaceKey)
+        : projectStorePath(projectKey(this.projectDir));
+      if (path.startsWith(root + sep)) relPath = posixRel(root, path); // store-rel (plan/review)
+    }
+    if (relPath) {
+      recordArtifact(this.pipeline.id, kind, relPath, {
+        stepKey: attr?.executionId ?? null,
+        nodeId: attr?.nodeId ?? null,
+        cycle: attr?.cycle ?? null,
+      });
+    }
+  }
+
+  /**
+   * The event half of _artifact, with no on-disk check and no index row: the step
+   * folder scan calls it per file it already stat-ed as regular and indexes the
+   * rows itself in one batched transaction (artifacts.recordArtifacts).
+   * @param {string} kind
+   * @param {string} path
+   * @param {{nodeId?:string, executionId?:string, port?:string|null, cycle?:number|null}|null} [attr]
+   */
+  _emitArtifact(kind, path, attr = null) {
     const evt = { kind, path };
     if (attr) {
       if (attr.nodeId != null) evt.nodeId = attr.nodeId;
@@ -4948,37 +5015,6 @@ export class RunHarness extends EventEmitter {
           ...(attr?.cycle != null ? { cycle: attr.cycle } : {}),
         });
       }
-    }
-    // ALSO index FS markdown/extra paths so pipeline-delete can unlink the EXACT
-    // files later, per-step attribution rides along (best-effort; never blocks a
-    // run). Every kind with a durable on-disk relPath is recorded. Skipped:
-    // 'pipeline' (the run DIR itself, no single file), 'clarify' (the Q&A lives in
-    // the clarify table, not in a file this row could resolve) and 'questions' (a
-    // scratch file the orchestrator deletes once the round is answered — the Q&A
-    // lives in the step_questions table, so an index row would only ever 404).
-    // The WS event above still carries all three kinds for the live view. plan/
-    // review markdown live under <store>/<key>/{plans,reviews} (store-root-
-    // relative); prompt/checklist/webui live in the pipeline dir (dir-relative).
-    if (!this.pipeline || !path || kind === 'pipeline' || kind === 'clarify' || kind === 'questions') return;
-    let relPath = null;
-    const pdir = this.pipeline.dir;
-    if (path.startsWith(pdir + sep)) {
-      relPath = relative(pdir, path);                 // dir-relative (checklist, webui)
-    } else {
-      const root = this.isWorkspace
-        ? workspaceStorePath(this.workspaceKey)
-        : projectStorePath(projectKey(this.projectDir));
-      if (path.startsWith(root + sep)) relPath = relative(root, path); // store-rel (plan/review)
-    }
-    // Indexed with '/' on every OS: the row is a store-layout key, not a native
-    // path (pipeline-delete re-roots 'plans/…' / 'reviews/…' under the store),
-    // so a Windows-native 'reviews\\x.md' would silently miss that re-rooting.
-    if (relPath) {
-      recordArtifact(this.pipeline.id, kind, relPath.split(sep).join('/'), {
-        stepKey: attr?.executionId ?? null,
-        nodeId: attr?.nodeId ?? null,
-        cycle: attr?.cycle ?? null,
-      });
     }
   }
 

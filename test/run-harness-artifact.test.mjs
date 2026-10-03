@@ -68,7 +68,7 @@ test('_artifact 2-arg form emits the byte-identical {kind, path} payload', async
   assert.deepEqual(evt, { kind: 'pipeline', path: dir });
 });
 
-test('_artifact emits a clarify event for the live view but never indexes it', async () => {
+test('_artifact emits a clarify event and indexes it as a non-browsable row', async () => {
   const { id, dir } = await seedPipeline(process.cwd(), { title: 'C', status: 'running' });
   const h = Object.create(RunHarness.prototype);
   h.pipeline = { id, dir };
@@ -83,8 +83,11 @@ test('_artifact emits a clarify event for the live view but never indexes it', a
   const evt = events.find((e) => e.name === 'artifact').evt;
   assert.equal(evt.kind, 'clarify');
   assert.equal(evt.cycle, 0);
-  // The Q&A lives in the clarify table, not in a file this index row could resolve.
-  assert.deepEqual(await listRunArtifacts(id, { kind: 'clarify' }), [], 'no clarify row in the artifacts index');
+  // Indexed: clarify.json is a durable step-folder file under the run-folder layout,
+  // and the row is what stops the step scan re-indexing it as a browsable 'json'.
+  assert.deepEqual((await listRunArtifacts(id, { kind: 'clarify' })).map((a) => a.relPath), ['clarify.json']);
+  // ...but never listed: the Q&A has its own panel (NON_BROWSABLE_KINDS).
+  assert.deepEqual(await listRunArtifacts(id, { kind: 'clarify', browsableOnly: true }), []);
 });
 
 // Artifact events were emitted to the live socket but NEVER persisted: only
@@ -143,6 +146,10 @@ test('_artifact persists nothing for a kind no one can open', async () => {
   const { h, pushed } = bench(id, dir);
   // 'pipeline' is the run DIR, 'questions' a scratch file the orchestrator
   // deletes — a link to either 404s, which is why the viewer never lists them.
+  // The files exist: a MISSING path is a different branch (_artifact's
+  // "was not written" warning), not what this test is about.
+  writeFileSync(join(dir, 'questions.json'), '{}');
+  writeFileSync(join(dir, 'live-log.ndjson'), '');
   h._artifact('pipeline', dir, {});
   h._artifact('questions', join(dir, 'questions.json'), {});
   h._artifact('live-log', join(dir, 'live-log.ndjson'), {});

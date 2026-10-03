@@ -620,6 +620,28 @@ test('the Artifacts tab drops transient questions rows (deleted file would 404)'
   assert.doesNotMatch(sec.textContent, /questions-x-clarify/, 'no questions row is shown');
 });
 
+test('the Artifacts tab says when the server truncated the list', async () => {
+  const detail = { ...DETAIL, state: { ...DETAIL.state, stepper: null, steps: [], subAgents: [] }, artifacts: [{ kind: 'plan', relPath: 'steps/plan-c1/plan.md' }] };
+  const ctx = await bootDetail({
+    detail,
+    arms: (url) => (url.endsWith(`/api/runs/${ROW.id}/artifacts`)
+      ? ok({ runId: ROW.id, truncated: true, artifacts: [
+        { kind: 'plan', stepKey: 'plan#1', nodeId: 'plan', cycle: 1, relPath: 'steps/plan-c1/plan.md', bytes: 42, createdAt: ROW.startedAt },
+        { kind: 'verdict', stepKey: 'review#1', nodeId: 'review', cycle: 1, relPath: 'steps/review-c1/impl-review-cycle1.json', bytes: 9, createdAt: ROW.startedAt },
+      ] })
+      : null),
+  });
+  await openDetail(ctx);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.querySelector('#hist-detail .hd-tab[data-sec="artifacts"]'));
+  await settle(ctx.window, 6);
+  const sec = doc.querySelector('#hist-detail .hd-sec[data-sec="artifacts"]');
+  assert.equal(sec.querySelectorAll('.artifact-row').length, 2);
+  // No nextOffset in the response, so the notice is text, not a load-more control.
+  assert.equal(sec.querySelector('.artifact-truncated').textContent, 'Showing the first 2 — this run indexed more.');
+  assert.ok([...sec.querySelectorAll('.artifact-kind')].some((k) => k.textContent === 'verdict'), 'the kind chip shows the stored kind');
+});
+
 test('clicking a tab switches the visible section and lazy-builds exactly once', async () => {
   const ctx = await bootDetail({ detail: TABS_DETAIL });
   await openDetail(ctx);

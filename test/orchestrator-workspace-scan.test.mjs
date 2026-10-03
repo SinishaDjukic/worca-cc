@@ -9,7 +9,7 @@
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, basename, resolve } from 'node:path';
@@ -107,7 +107,7 @@ test('done creates the workspace from the scanner output (the run id IS the work
   assert.ok(ws, 'workspace created');
   assert.equal(ws.name, 'Created WS');
   assert.match(ws.description, /## Interconnections/);
-  const out = await readFile(join(orch.getState().pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8');
+  const out = await readFile(runFile(orch.getState().pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8');
   assert.equal(ws.description, out.trim());
   assert.equal(orch.state.workspaceScan.outcome, 'created');
 });
@@ -135,7 +135,7 @@ test('finalize conflict: a name taken meanwhile leaves the run done with a warni
   assert.equal(orch.state.workspaceScan.outcome, 'failed');
   assert.equal(orch.state.workspaceScan.code, 'DUPLICATE_NAME');
   assert.equal(await readWorkspace(opts.workspace.id), null);
-  assert.ok(existsSync(join(orch.getState().pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE)), 'description kept in the run');
+  assert.ok(existsSync(runFile(orch.getState().pipelineDir, WORKSPACE_SCAN_OUTPUT_FILE)), 'description kept in the run');
 });
 
 // The FIRST `exec` event is the preflight bookend (no checkout, no branch yet) — a stop hooked
@@ -296,6 +296,29 @@ test('a stale stored pick runs on the defaults and says so in the run log (Revie
 const LIB_PKG = `${JSON.stringify({ name: '@wsmap/lib', version: '1.0.0' }, null, 2)}\n`;
 const APP_PKG = `${JSON.stringify({ name: '@wsmap/app', version: '1.0.0', dependencies: { '@wsmap/lib': '^1.0.0' } }, null, 2)}\n`;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/**
+ * A run file by BARE NAME. Run-folder artifacts (D1) allocate each execution's
+ * outputs into its own steps/<node>-c<N>/ folder, so a scan's stage files no longer
+ * sit at the run root. Mirrors workspace-scan-run.mjs#runFilePath: the root first
+ * (the older layout, and the envelopes that still live there), then the most
+ * recently written match under steps/. Returns the root path when nothing matches,
+ * so a failing assertion still names the place a reader would look first.
+ */
+function runFile(dir, rel) {
+  const atRoot = join(dir, rel);
+  if (existsSync(atRoot)) return atRoot;
+  const steps = join(dir, 'steps');
+  if (!existsSync(steps)) return atRoot;
+  let best = null;
+  for (const name of readdirSync(steps)) {
+    const p = join(steps, name, rel);
+    if (!existsSync(p)) continue;
+    const t = statSync(p).mtimeMs;
+    if (!best || t > best.t) best = { p, t };
+  }
+  return best ? best.p : atRoot;
+}
+
 const V3_FILES = ['extract.json', 'survey-brief.md', 'survey.json', 'catalog.json', 'usage-brief.md', 'usage.json',
   'workspace-map.json', 'synth-brief.md', 'synthesis.json', WORKSPACE_SCAN_OUTPUT_FILE];
 
@@ -309,10 +332,10 @@ async function npmPair() {
  *  dependency is an exact app -> lib edge and a line under ## Interconnections. */
 async function assertMapped(orch, { lib, app }) {
   const dir = orch.getState().pipelineDir;
-  for (const f of V3_FILES) assert.ok(existsSync(join(dir, f)), `${f} written`);
+  for (const f of V3_FILES) assert.ok(existsSync(runFile(dir, f)), `${f} written`);
   const keys = [projectKey(app), projectKey(lib)].sort();
-  for (const k of keys) assert.ok(existsSync(join(dir, 'usage-briefs', `${k}.md`)), `usage-briefs/${k}.md written`);
-  const read = async (f) => JSON.parse(await readFile(join(dir, f), 'utf8'));
+  for (const k of keys) assert.ok(existsSync(runFile(dir, join('usage-briefs', `${k}.md`))), `usage-briefs/${k}.md written`);
+  const read = async (f) => JSON.parse(await readFile(runFile(dir, f), 'utf8'));
   const survey = checkSurvey(await read('survey.json'), { memberKeys: keys });
   assert.equal(survey.ok, true, survey.errors.join('\n'));
   const entryIds = (await read('catalog.json')).entries.map((e) => e.id);
@@ -324,7 +347,7 @@ async function assertMapped(orch, { lib, app }) {
   const edge = map.edges.find((e) => e.from === projectKey(app) && e.to === projectKey(lib) && e.kind === 'pkg');
   assert.ok(edge, `the npm dependency is an edge: ${JSON.stringify(map.edges)}`);
   assert.equal(edge.confidence, 'exact');
-  const md = await readFile(join(dir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8');
+  const md = await readFile(runFile(dir, WORKSPACE_SCAN_OUTPUT_FILE), 'utf8');
   const inter = md.split('\n## Interconnections\n')[1]?.split('\n## ')[0] ?? '';
   // Case-insensitive: a projectKey lower-cases the dir name the member's display name keeps.
   assert.match(inter, new RegExp(`^- .*${esc(basename(app))}.* -> .*${esc(basename(lib))}`, 'mi'), md);
@@ -352,7 +375,7 @@ test('v3 end to end (detached): the npm dependency is an exact edge in the map a
     assert.equal(m.projectDir, resolve(m.key === projectKey(pair.app) ? pair.app : pair.lib), 'the live project');
   }
   assert.deepEqual(env.ctx.repos.map((r) => r.key), keys);
-  const ex = JSON.parse(await readFile(join(dir, 'extract.json'), 'utf8'));
+  const ex = JSON.parse(await readFile(runFile(dir, 'extract.json'), 'utf8'));
   for (const m of env.ctx.workspace.members) assert.equal(ex.members[m.key].dir, m.dir, 'extract scans the run checkout, not the live project');
   assert.equal((await readWorkspace(opts.workspace.id)).description, md.trim(), 'the finalize saved the rendered description');
 });
@@ -385,7 +408,7 @@ test('v3 end to end: a literal use the candidate scan finds is confirmed by the 
   const orch = createOrchestrator(scanOpts([tool, lib], 'Candidate WS'));
   assert.equal((await runUntilAbort(t, orch)).status, 'done');
   const dir = orch.getState().pipelineDir;
-  const read = async (f) => JSON.parse(await readFile(join(dir, f), 'utf8'));
+  const read = async (f) => JSON.parse(await readFile(runFile(dir, f), 'utf8'));
   const keys = [projectKey(lib), projectKey(tool)].sort();
   const catalog = await read('catalog.json');
   const cands = catalog.candidates[projectKey(tool)] || [];
@@ -411,15 +434,17 @@ test('v3 end to end: survey, usage and synthesis files that never appear still e
   const drop = { n_catalog: 'survey.json', n_join: 'usage.json', n_render: 'synthesis.json' };
   const orig = orch._execCtx.bind(orch);
   orch._execCtx = (node, nc, args) => {
-    if (drop[node.id]) rmSync(join(orch.getState().pipelineDir, drop[node.id]), { force: true });
+    // runFile, not the run root: the file this drops is the PREVIOUS card's output,
+    // which now lives in that execution's step folder.
+    if (drop[node.id]) rmSync(runFile(orch.getState().pipelineDir, drop[node.id]), { force: true });
     return orig(node, nc, args);
   };
   assert.equal((await runUntilAbort(t, orch)).status, 'done');
   const dir = orch.getState().pipelineDir;
-  const map = JSON.parse(await readFile(join(dir, 'workspace-map.json'), 'utf8'));
+  const map = JSON.parse(await readFile(runFile(dir, 'workspace-map.json'), 'utf8'));
   assert.ok(map.edges.some((e) => e.from === projectKey(pair.app) && e.to === projectKey(pair.lib) && e.confidence === 'exact'), 'static edges survive');
   assert.ok(map.members.every((m) => m.coverage.usageStatus === 'failed'), 'no usage.json: every member counts as usage failed');
-  const catalog = JSON.parse(await readFile(join(dir, 'catalog.json'), 'utf8'));
+  const catalog = JSON.parse(await readFile(runFile(dir, 'catalog.json'), 'utf8'));
   assert.ok(catalog.errors.some((e) => /^survey: missing/.test(e)), `no survey.json: the catalog ran on a failed survey: ${JSON.stringify(catalog.errors)}`);
   const ws = await readWorkspace(opts.workspace.id);
   assert.match(ws.description, /## Interconnections/);

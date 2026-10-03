@@ -104,7 +104,10 @@ test('a script card runs inside a mock graph: $0 agent-shaped rows, key on exec 
   assert.ok(execs.some((e) => e.nodeId === 'n_plan' && e.status === 'start' && e.key === 'planner' && e.agentKey === 'planner'), 'agent events carry both');
   assert.ok(logs.some((l) => l.source === 'runTests' && /^\[info\] cycle 1$/.test(l.text)), 'script logs land under the script key');
   const arts = await listArtifacts(st.id);                       // [{ kind, relPath }], relPath dir-relative with '/' separators
-  assert.ok(arts.some((a) => a.kind === 'log' && a.relPath === 'tests-cycle1.md'), JSON.stringify(arts));
+  // Per-execution step folder (run-folder artifacts D1): the script's own output is
+  // indexed under steps/<node>-c<N>/, not at the run root. The envelope below is the
+  // exception — it is an audit copy under scripts/, outside any step folder.
+  assert.ok(arts.some((a) => a.kind === 'log' && a.relPath === 'steps/n_tests-c1/tests-cycle1.md'), JSON.stringify(arts));
   assert.ok(arts.some((a) => a.kind === 'envelope' && a.relPath === 'scripts/n_tests-c1.envelope.json'));
   assert.ok(readPipelineExtras(st.id).reviews.some((r) => r.kind === 'tests' && r.cycle === 1), 'the script verdict is a review row');
   // Persisted: the exec_meta bag round-trips nodeKey/runtime/exitCode.

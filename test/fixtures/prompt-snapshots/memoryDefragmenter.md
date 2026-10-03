@@ -27,10 +27,16 @@ task: /abs/task.md
 
 ### Outputs
 
-- Write **report** to: <PIPELINE_DIR>/defrag-report.md
+- Write **report** to: <PIPELINE_DIR>/steps/n_memoryDefragmenter-c2/defrag-report.md
+
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_memoryDefragmenter-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
 
 MOCK_ROLE: memory-defrag
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/defrag-report.md
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_memoryDefragmenter-c2
+MOCK_OUT: <PIPELINE_DIR>/steps/n_memoryDefragmenter-c2/defrag-report.md
 MOCK_IN: /abs/task.md

@@ -64,7 +64,10 @@ test('every kind the engine refuses to index is also non-browsable', () => {
   const line = src.split('\n').find((l) => l.includes("kind === 'pipeline'"));
   assert.ok(line, 'the index-skip list moved — re-point this guard');
   const skipped = [...line.matchAll(/kind === '([a-z-]+)'/g)].map((m) => m[1]);
-  assert.ok(skipped.length >= 3, line);
+  // pipeline + questions. `clarify` left this list with the run-folder layout: its
+  // file is durable in its step folder now, so it IS indexed — and stays
+  // non-browsable (asserted in the test above), which is what this guard protects.
+  assert.ok(skipped.length >= 2, line);
   for (const kind of skipped) {
     assert.equal(isBrowsableKind(kind), false, `${kind} is never indexed, so it must never be listed`);
   }

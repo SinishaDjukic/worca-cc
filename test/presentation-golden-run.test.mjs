@@ -23,8 +23,13 @@ test('wf_presentation runs offline end to end and leaves the golden run-folder s
   const dir = orch.pipeline.dir;
   // Cycle shape: both verifier mocks block once (cycle 1), builder fixes, then clean.
   const ordinals = Object.fromEntries(st.steps.filter((s) => s.nodeId).map((s) => [s.nodeId, Math.max(s.ordinal, 0)]));
-  for (const f of ['deck-clarify.json', 'spine.md', 'visual-system.md', 'deck-manifest.md', 'deck/deck.html', 'deck/proof.html',
-    'deck-audit-cycle1.json', 'deck-audit-cycle1.md', 'deck-audit-cycle2.json', 'deck-review-cycle1.json', 'shots/s01.png']) {
+  // Run-folder layout: each allocated report/verdict lives in its execution's step
+  // folder, while the deck tree (deck/, shots/) stays at the run root, edited in
+  // place across fix cycles, where the ports' extraFiles globs sweep it.
+  for (const f of ['steps/n_clarify-c1/deck-clarify.json', 'steps/n_narr-c1/spine.md', 'steps/n_system-c1/visual-system.md',
+    'steps/n_build-c1/deck-manifest.md', 'deck/deck.html', 'deck/proof.html',
+    'steps/n_audit-c1/deck-audit-cycle1.json', 'steps/n_audit-c1/deck-audit-cycle1.md', 'steps/n_audit-c2/deck-audit-cycle2.json',
+    'steps/n_review-c1/deck-review-cycle1.json', 'shots/s01.png']) {
     await access(join(dir, f));
   }
 
@@ -38,13 +43,13 @@ test('wf_presentation runs offline end to end and leaves the golden run-folder s
   const kinds = (await listArtifacts(orch.pipeline.id)).map((a) => `${a.kind}:${a.relPath}`);
   assert.ok(kinds.includes('deck:deck/deck.html'), kinds.join('\n'));
   assert.ok(kinds.includes('deck-shot:shots/s01.png'));
-  assert.ok(kinds.includes('deck-manifest:deck-manifest.md'));
-  // deck-clarify.json is a real file in the run folder, so it gets a kind of its
+  assert.ok(kinds.includes('deck-manifest:steps/n_build-c1/deck-manifest.md'), kinds.join('\n'));
+  // deck-clarify.json is a real file in its step folder, so it gets a kind of its
   // own. Under the shared `clarify` kind the engine refused to index it — the Q&A
   // of the OTHER clarify agent lives in the clarify table, not in a file — so it
   // was invisible in the Artifacts tab, unreadable via read_run_artifact, and
   // left behind by pipeline-delete's index-driven cleanup.
-  assert.ok(kinds.includes('deck-clarify:deck-clarify.json'), kinds.join('\n'));
+  assert.ok(kinds.includes('deck-clarify:steps/n_clarify-c1/deck-clarify.json'), kinds.join('\n'));
   assert.ok(kinds.includes('deck:deck/deck.pdf'), kinds.join('\n'));
   assert.ok(kinds.includes('deck:deck/deck.standalone.html'), kinds.join('\n'));
 
@@ -53,10 +58,10 @@ test('wf_presentation runs offline end to end and leaves the golden run-folder s
   // the export agent's FALLBACK — the same branch a host with no interpreter
   // takes, which is exactly what is worth pinning here. The card's own program is
   // covered for real by test/deck-bundle-script.test.mjs.
-  await access(join(dir, 'deck-bundle-cycle1.md'));
+  await access(join(dir, 'steps/n_bundle-c1/deck-bundle-cycle1.md'));
   assert.equal(ordinals.n_bundle, 1, 'the bundle step runs once, after a clean review');
   const bundleKinds = kinds.filter((k) => k.startsWith('deck-bundle:'));
-  assert.deepEqual(bundleKinds, ['deck-bundle:deck-bundle-cycle1.md'], kinds.join('\n'));
+  assert.deepEqual(bundleKinds, ['deck-bundle:steps/n_bundle-c1/deck-bundle-cycle1.md'], kinds.join('\n'));
 
   // The port's extraFiles entries are FIRST-MATCH-WINS: the deliverables take the
   // browsable `deck` kind, and the catch-all sweeps the rest into `deck-asset` —

@@ -21,10 +21,16 @@ You are a pipeline agent. Read every input below, do your job exactly as your ro
 
 ### Outputs
 
-- Write **synthesis** to: <PIPELINE_DIR>/synthesis.json
+- Write **synthesis** to: <PIPELINE_DIR>/steps/n_workspaceSynthesizer-c2/synthesis.json
+
+### Step folder
+
+- Your step folder for this execution: <PIPELINE_DIR>/steps/n_workspaceSynthesizer-c2
+- Put every additional artifact you produce (deviation notes, findings, scratch, screenshots, task files) inside it — never anywhere else in the run store. Files there are indexed and shown to the user after this step.
 
 MOCK_ROLE: workspace-synth
 MOCK_CYCLE: 2
 MOCK_BASE: feature
-MOCK_OUT: <PIPELINE_DIR>/synthesis.json
+MOCK_STEP_DIR: <PIPELINE_DIR>/steps/n_workspaceSynthesizer-c2
+MOCK_OUT: <PIPELINE_DIR>/steps/n_workspaceSynthesizer-c2/synthesis.json
 MOCK_IN: /abs/brief.md

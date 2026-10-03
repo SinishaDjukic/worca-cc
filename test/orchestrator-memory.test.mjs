@@ -504,7 +504,8 @@ test('wf_memory_defrag + memoryScope global: one-scope mount, the mock merges, s
   assert.deepEqual(results.memory.changes[0].modified, [{ scope: 'global', name: 'a' }]);
   assert.deepEqual(results.memory.changes[0].deleted, [{ scope: 'global', name: 'b' }]);
   assert.deepEqual(results.memory.totals, { added: 0, modified: 1, deleted: 1, rejected: 0, failed: 0 });
-  assert.ok(existsSync(join(st.pipelineDir, 'defrag-report.md')), 'the report output landed in the pipeline dir');
+  assert.ok(existsSync(join(st.pipelineDir, 'steps', 'n_defrag-c1', 'defrag-report.md')),
+    "the report output landed in the defragmenter execution's own step folder");
   const detail = await readPipelineByKey(pk, orch.pipeline.id);
   assert.match(detail.auditMarkdown, /Memory: \+0 ~1 -1 by memoryDefragmenter/);
   assert.match(detail.auditMarkdown, /Memory: Global defragmented by this run\./);

@@ -21,14 +21,20 @@
     "reviewer": 2
   },
   "artifacts": [
+    "clarify:steps/n_clarify-c1/clarify.json",
     "diff-patch:diff-patch.patch",
     "live-log:live-log.ndjson",
-    "plan:plans/<DATE>-seed-trace-probe-v2.md",
-    "plan:plans/<DATE>-seed-trace-probe-v3.md",
-    "plan:plans/<DATE>-seed-trace-probe.md",
+    "plan:steps/n_plan-c1/plan.md",
+    "plan:steps/n_refine-c1/plan-v2.md",
+    "plan:steps/n_refine-c2/plan-v3.md",
     "prompt:prompt.md",
     "results:results.json",
-    "review:reviews/<DATE>-seed-trace-probe-impl-review.md"
+    "review:steps/n_review-c1/impl-review-cycle1.md",
+    "review:steps/n_review-c2/impl-review-cycle2.md",
+    "verdict:steps/n_refine-c1/refine-review-cycle1.json",
+    "verdict:steps/n_refine-c2/refine-review-cycle2.json",
+    "verdict:steps/n_review-c1/impl-review-cycle1.json",
+    "verdict:steps/n_review-c2/impl-review-cycle2.json"
   ],
   "wireDeliveries": {
     "w5": 1,

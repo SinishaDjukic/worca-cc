@@ -8,7 +8,7 @@
 // ctx.workspace carries them, the join card applies them and the render card renders with them.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile, mkdir, readdir, stat } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -399,6 +399,28 @@ function scanOpts(ws) {
   return { workspace: { id: ws.id, key: ws.id, name: ws.name, description: '', projects }, branch: { source: 'main' }, workflowId: WORKSPACE_SCAN_WORKFLOW_ID,
     prompt: `Scan the interconnections of the workspace "${ws.name}".`, auto: true, claude: { mock: true } };
 }
+/** A run file by BARE NAME. Run-folder artifacts (D1) allocate each execution's
+ *  outputs into its own steps/<node>-c<N>/ folder, so a scan stage's file is no
+ *  longer at the run root. Root first (the older layout, and the envelopes that
+ *  still live there), then the most recently written match under steps/. */
+async function runFile(dir, name) {
+  const asFile = async (p) => { try { return (await stat(p)).isFile() ? p : null; } catch { return null; } };
+  const atRoot = await asFile(join(dir, name));
+  if (atRoot) return atRoot;
+  let entries = [];
+  try { entries = await readdir(join(dir, 'steps'), { withFileTypes: true }); } catch { return join(dir, name); }
+  let best = null;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const p = join(dir, 'steps', e.name, name);
+    try {
+      const st = await stat(p);
+      if (st.isFile() && (!best || st.mtimeMs > best.at)) best = { p, at: st.mtimeMs };
+    } catch { /* this execution wrote no such file */ }
+  }
+  return best ? best.p : join(dir, name);
+}
+
 async function runScan(t, opts) {
   const orch = createOrchestrator(opts);
   const stop = () => orch.stop();
@@ -406,8 +428,8 @@ async function runScan(t, opts) {
   try { assert.equal((await orch.run()).status, 'done'); } finally { t.signal.removeEventListener('abort', stop); }
   const dir = orch.getState().pipelineDir;
   const envelope = JSON.parse(await readFile(join(dir, 'scripts', 'n_join-c1.envelope.json'), 'utf8'));
-  const map = JSON.parse(await readFile(join(dir, 'workspace-map.json'), 'utf8'));
-  return { envelope, map, brief: await readFile(join(dir, 'synth-brief.md'), 'utf8') };
+  const map = JSON.parse(await readFile(await runFile(dir, 'workspace-map.json'), 'utf8'));
+  return { envelope, map, brief: await readFile(await runFile(dir, 'synth-brief.md'), 'utf8') };
 }
 
 test('run harness: a re-scan hands the join the overrides stored at run start (read again on resume); a first scan hands none', async (t) => {
@@ -443,5 +465,5 @@ test('run harness: a re-scan hands the join the overrides stored at run start (r
   const dir = resumed.getState().pipelineDir;
   const envelope = JSON.parse(await readFile(join(dir, 'scripts', 'n_join-c1.envelope.json'), 'utf8'));
   assert.deepEqual(envelope.ctx.workspace.overrides, parked.overrides, 'the overrides stored when the run resumed');
-  assert.deepEqual(JSON.parse(await readFile(join(dir, 'workspace-map.json'), 'utf8')).order, [[appKey, libKey].sort()], 'the rejection made while parked counts');
+  assert.deepEqual(JSON.parse(await readFile(await runFile(dir, 'workspace-map.json'), 'utf8')).order, [[appKey, libKey].sort()], 'the rejection made while parked counts');
 });

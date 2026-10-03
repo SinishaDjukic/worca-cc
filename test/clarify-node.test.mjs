@@ -56,7 +56,9 @@ test('the default run writes clarify.json (scratch) AND a DB answers row', async
   assert.equal(res.status, 'done');
 
   const pipelineDir = orch.pipeline.dir;            // VERIFIED real accessor (orchestrator.mjs)
-  const fs = JSON.parse(await readFile(join(pipelineDir, 'clarify.json'), 'utf8'));
+  // run-folder-artifacts D1/D2: every allocated output lives in its execution's
+  // step folder under steps/<node>-c<ordinal>/, not loose in the run dir.
+  const fs = JSON.parse(await readFile(join(pipelineDir, 'steps', 'n_clarify-c1', 'clarify.json'), 'utf8'));
   assert.ok(Array.isArray(fs.questions), 'clarify.json has a questions array');
 
   const row = readClarifyRow(orch.pipeline.id);     // VERIFIED real accessor

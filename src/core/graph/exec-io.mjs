@@ -6,9 +6,10 @@
 // executor.mjs re-exports `readVerdict` and `publishable` for its existing importers.
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { relative, basename } from 'node:path';
+import { basename } from 'node:path';
 
 import { normalizeReview, safeParseJson } from '../protocol.mjs';
+import { posixRel } from '../step-scan.mjs';
 
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
@@ -52,7 +53,8 @@ export async function readVerdict(verdictPath) {
 /** The warning line a missing verdict raises, relative to the pipeline dir so the
  *  run log stays readable. */
 export function missingVerdictWarning(ctx, verdictPath) {
-  const rel = ctx?.pipelineDir ? relative(ctx.pipelineDir, verdictPath) : basename(verdictPath);
+  // `/`-joined (posixRel), so the pinned warning text is identical on Windows.
+  const rel = ctx?.pipelineDir ? posixRel(ctx.pipelineDir, verdictPath) : basename(verdictPath);
   return `verdict file missing: ${ctx?.nodeId || ctx?.node?.id || '?'} ${rel} — treated as clean`;
 }
 

@@ -10,7 +10,7 @@
 //                                  card's description, the join's map, the synth's synthesis,
 //                                  the merged graph): create or update, never throw
 
-import { copyFile, lstat, mkdir, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -116,6 +116,42 @@ async function readJsonFile(path) {
 }
 
 /**
+ * A file this run produced, by BARE NAME, wherever the run's layout puts it.
+ *
+ * A scan's outputs used to sit at the run root. Run-folder artifacts (D1) allocate
+ * every execution's outputs into its own steps/<node>-c<N>/ folder, so the join's map
+ * and the synth's synthesis land there now. The root is tried FIRST, so a scan
+ * recorded under the older layout still resolves, then the step folders — the most
+ * recently written match wins, which is the last execution that produced it (a
+ * re-scan's later cycle over an earlier one).
+ *
+ * lstat, never stat: the name can come from the map's own `graph.file`, and
+ * adoptGraphFile refuses a symlink on purpose (it could point anywhere on the
+ * machine). A symlink is not `isFile()`, so it is refused here too.
+ *
+ * @param {string} pipelineDir
+ * @param {string} name
+ * @returns {Promise<string|null>}
+ */
+async function runFilePath(pipelineDir, name) {
+  const asFile = async (p) => { try { return (await lstat(p)).isFile() ? p : null; } catch { return null; } };
+  const atRoot = await asFile(join(pipelineDir, name));
+  if (atRoot) return atRoot;
+  let entries = [];
+  try { entries = await readdir(join(pipelineDir, 'steps'), { withFileTypes: true }); } catch { return null; }
+  let best = null;
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const p = join(pipelineDir, 'steps', e.name, name);
+    try {
+      const st = await lstat(p);
+      if (st.isFile() && (!best || st.mtimeMs > best.at)) best = { path: p, at: st.mtimeMs };
+    } catch { /* this execution wrote no such file */ }
+  }
+  return best ? best.path : null;
+}
+
+/**
  * The join's map + the synth's synthesis from a finished scan's run folder. null when there is
  * no run folder or no usable map (a scan from before the map, or a join that wrote nothing). A
  * missing or unreadable synthesis is null; a present one is returned as read —
@@ -126,9 +162,11 @@ async function readJsonFile(path) {
  */
 export async function readScanMap(pipelineDir) {
   if (typeof pipelineDir !== 'string' || !pipelineDir) return null;
-  const map = await readJsonFile(join(pipelineDir, WORKSPACE_MAP_FILE));
+  const mapPath = await runFilePath(pipelineDir, WORKSPACE_MAP_FILE);
+  const map = mapPath ? await readJsonFile(mapPath) : null;
   if (!isWorkspaceMap(map)) return null;
-  const raw = await readJsonFile(join(pipelineDir, WORKSPACE_SYNTHESIS_FILE));
+  const synthPath = await runFilePath(pipelineDir, WORKSPACE_SYNTHESIS_FILE);
+  const raw = synthPath ? await readJsonFile(synthPath) : null;
   const synthesis = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : null;
   return { map, synthesis };
 }
@@ -158,8 +196,8 @@ export async function adoptGraphFile(map, { pipelineDir, storeDir, renameFile = 
   let copied = false;
   if (GRAPH_FILE_NAME_RE.test(name)) {
     try {
-      const src = join(pipelineDir, name);
-      if ((await lstat(src)).isFile()) {
+      const src = await runFilePath(pipelineDir, name);
+      if (src) {
         await mkdir(storeDir, { recursive: true });
         await copyFile(src, tmp);
         try { await renameFile(tmp, dest); } catch { await copyFile(src, dest); }
