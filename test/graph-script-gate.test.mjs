@@ -78,12 +78,14 @@ test('the gate validates; a script that passes at cycle 2 closes the loop throug
   assert.equal(r.state.endReached, true);
   assert.deepEqual(r.execSeq, ['n_task c1', 'n_impl c1', 'n_tests c1', 'n_impl c2', 'n_tests c2', 'n_fin c1', 'n_end c1']);
   assert.deepEqual(r.state.warnings, []);
-  assert.equal(readFileSync(join(pipelineDir, 'tests-cycle1.md'), 'utf8'), '# tests cycle 1\n\n3 failing\n');
-  assert.deepEqual(JSON.parse(readFileSync(join(pipelineDir, 'tests-cycle2.json'), 'utf8')).issues, []);
+  // Allocated per EXECUTION, under steps/<node>-c<N>/ (run-folder artifacts D1).
+  const stepFile = (ordinal, name) => join(pipelineDir, 'steps', `n_tests-c${ordinal}`, name);
+  assert.equal(readFileSync(stepFile(1, 'tests-cycle1.md'), 'utf8'), '# tests cycle 1\n\n3 failing\n');
+  assert.deepEqual(JSON.parse(readFileSync(stepFile(2, 'tests-cycle2.json'), 'utf8')).issues, []);
   const impl2 = r.calls.find((c) => c.nodeId === 'n_impl' && c.ordinal === 2);
   assert.ok(impl2, 'the worker re-ran on the fix cycle');
   const fixToken = r.events.find((e) => e.name === 'token' && e.from.node === 'n_tests' && e.from.port === 'fail');
-  assert.equal(fixToken.path, join(pipelineDir, 'tests-cycle1.md'), 'the failing log rides the fix wire');
+  assert.equal(fixToken.path, stepFile(1, 'tests-cycle1.md'), 'the failing log rides the fix wire');
   assert.deepEqual(r.events.filter((e) => e.name === 'exec' && e.nodeId === 'n_tests' && e.status === 'done').map((e) => e.verdict.hasBlocking), [true, false]);
   assert.ok(r.events.filter((e) => e.name === 'exec' && e.nodeId === 'n_tests').every((e) => e.key === 'runTests' && e.agentKey === null));
   assert.ok(existsSync(join(pipelineDir, 'scripts', 'n_tests-c1.envelope.json')));

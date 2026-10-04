@@ -87,10 +87,13 @@ test('buildBenchCtx: the synthetic run — bench:true, cycle 1, the bench`s own 
   assert.equal(ctx.repos, null);
   assert.equal(ctx.checkpointRef, '3f2a');
   assert.deepEqual(ctx.trigger.freshPorts, ['done'], 'every bound input is fresh');
-  assert.equal(ctx.outputs.log.path, join(dirs.pipeline, 'bench-1.md'));
+  // The bench is an execution like any other, so its allocations land in its own
+  // step folder (run-folder artifacts D1): steps/<node id>-c<ordinal>/.
+  const benchStep = join(dirs.pipeline, 'steps', 'bench-c1');
+  assert.equal(ctx.outputs.log.path, join(benchStep, 'bench-1.md'));
   assert.equal(ctx.outputs.fail.path, ctx.outputs.log.path, 'one template, one path');
-  assert.equal(ctx.outputs.plan.path, join(dirs.pipeline, 'bench-plan.md'), 'a project-store port is forced into the bench dir');
-  assert.equal(ctx.verdict.path, join(dirs.pipeline, 'bench-1.json'));
+  assert.equal(ctx.outputs.plan.path, join(benchStep, 'bench-plan.md'), 'a project-store port is forced into the bench dir');
+  assert.equal(ctx.verdict.path, join(benchStep, 'bench-1.json'));
   assert.equal(ctx.script.timeoutMs, 5000);
 });
 

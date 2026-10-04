@@ -9,7 +9,7 @@
   "verdict": { "filename": "plan-review-cycle{cycle}.json" },
   "inputs": [{ "id": "plan", "type": "md" }],
   "outputs": [
-    { "id": "review", "type": "md", "when": "blocking", "filename": "{base}-plan-review.md", "store": "project" },
+    { "id": "review", "type": "md", "when": "blocking", "filename": "plan-review-cycle{cycle}.md" },
     { "id": "pass", "type": "void", "when": "clean" }
   ],
   "domain": "coding",

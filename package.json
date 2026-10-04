@@ -64,6 +64,7 @@
     "verify:theme": "node --disable-warning=ExperimentalWarning tools/verify-theme-cdp.mjs",
     "verify:memory": "node --disable-warning=ExperimentalWarning tools/verify-memory-cdp.mjs",
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
+    "verify:artifacts": "node --disable-warning=ExperimentalWarning tools/verify-artifacts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
     "test": "rm -rf .worca-cc-test && h=$(mktemp -d \"${TMPDIR:-/tmp}/worca-cc-test-home.XXXXXX\") && PATH=\"$PWD/test/helpers/no-real-claude:$PATH\" WORCA_HOME=.worca-cc-test HOME=\"$h\" USERPROFILE=\"$h\" node --disable-warning=ExperimentalWarning --test --test-timeout=300000 ${WORCA_TEST_SHARD:+--test-shard=$WORCA_TEST_SHARD} test/*.mjs; s=$?; node test/helpers/no-real-claude/assert-none.mjs || s=1; rm -rf \"$h\"; exit $s"

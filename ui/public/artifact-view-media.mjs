@@ -1,16 +1,16 @@
 // ui/public/artifact-view-media.mjs — byte-kind artifact viewers, layered on top
-// of artifact-view.mjs WITHOUT modifying it.
+// of artifact-view.mjs.
 //
-// artifact-view.mjs is owned upstream and is kept byte-identical to origin/dev, so
-// a merge in either direction touches none of its lines. Everything this branch
-// adds — the image/pdf/html/binary viewers and the raw-bytes URL helper — lives
-// here, in a file upstream does not have, which cannot conflict by construction.
+// artifact-view.mjs owns the TEXT kinds (markdown/json/diff/text, the per-execution
+// grouping, the never-decode-as-text 'binary' notice). Everything byte-shaped — the
+// image/pdf/html/binary viewers and the raw-bytes URL helper — lives here, so the
+// two layers change independently.
 //
 // The module deliberately re-exports upstream's whole surface, so a consumer
 // switches by changing ONE import path and nothing else:
 //
-//     -import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
-//     +import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view-media.mjs';
+//     -import { artifactsByNodeStep, viewerKindFor, renderArtifact } from './artifact-view.mjs';
+//     +import { artifactsByNodeStep, viewerKindFor, renderArtifact } from './artifact-view-media.mjs';
 //
 // Dispatch is a strict widening: the four byte kinds are handled here and every
 // other kind is delegated to upstream's renderArtifact unchanged, so upstream's
@@ -23,7 +23,7 @@ import { RAW_KINDS, BULK_ARTIFACT_THRESHOLD, viewerKindFor as kindForPath } from
 
 // Upstream's surface, re-exported verbatim so this module is a drop-in.
 export {
-  escapeHtml, artifactsByNodeCycle,
+  artifactsByNodeStep, DIFF_MAX_ROWS,
   renderText, renderJson, renderDiff, renderMarkdown,
 } from './artifact-view.mjs';
 

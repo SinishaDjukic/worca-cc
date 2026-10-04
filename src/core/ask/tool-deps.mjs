@@ -100,7 +100,9 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     hasDiffPatch,
     readRunMemory,
     listRunArtifacts: (row, filter) => listRunArtifacts(row.id, filter),
-    readRunArtifact: (row, rel) => resolveIndexedArtifactForRow(row, rel), // {rel, text}|null
+    // No byte cap: read_run_artifact pages the text itself (offset/maxBytes), and a
+    // deck's standalone HTML is several MB.
+    readRunArtifact: (row, rel) => resolveIndexedArtifactForRow(row, rel, { maxBytes: Infinity }), // {rel, text} | {rel, bytes, binary} | {rel, bytes, tooLarge, cap} | null
     // Night mode decisions ride the progress report (artifacts.mjs stays free of the night store).
     readRunProgress: async (row) => ({ ...(await readRunProgress(row.id)), nightDecisions: readNightDecisions(row.id) }),
     // Ask forms (spec D9, ruling X17): a persisted form round as text for the model.

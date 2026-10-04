@@ -2,7 +2,7 @@
 //
 // Proves the Phase 3 UI WIRING (not just the pure adapters): the per-step
 // artifact viewers are reachable from the real Running-detail render path. The
-// pure primitives (artifactsByNodeCycle / viewerKindFor / renderArtifact) are
+// pure primitives (artifactsByNodeStep / viewerKindFor / renderArtifact) are
 // covered by test/artifact-view.test.mjs; here we drive the actual DOM.
 //
 // boot() / settle() / go() / live() / openRun() are a deliberate local copy of the
