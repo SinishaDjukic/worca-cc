@@ -46,7 +46,7 @@ function scalar({ id, path = [id], check, def, teamKey = null, hint, readUser = 
     team: teamKey ? (ctx) => ctx.teamValue(teamKey) : null };
 }
 const SCALARS = [
-  scalar({ id: 'run.engine', path: ['runEngine'], check: SETTING_CHECKS.engine, def: 'claude', hint: 'must be an engine', readUser: runEngineSetting }),
+  scalar({ id: 'run.engine', path: ['runEngine'], check: SETTING_CHECKS.runEngine, def: 'claude', hint: 'must be an engine', readUser: runEngineSetting }),
   scalar({ id: 'pipelineCostLimitUsd', check: SETTING_CHECKS.usdCap, def: null, hint: 'must be a positive number of USD' }),
   scalar({ id: 'humanRateUsdPerHour', check: SETTING_CHECKS.usdCap, def: DEFAULT_HUMAN_RATE_USD, teamKey: 'cost.humanRateUsd', hint: 'must be a positive number of USD' }),
   scalar({ id: 'askMaxTurns', check: SETTING_CHECKS.askMaxTurns, def: DEFAULT_ASK_MAX_TURNS, teamKey: 'ask.maxTurns', hint: 'must be an integer between 1 and 500' }),
@@ -243,6 +243,8 @@ export function scopeForRunKey(key) {
   return key.startsWith('workspaces/') ? { workspace: true } : { projectKey: key };
 }
 export function utilityModelFor(engine, job, scope = null) {
+  // Copilot has no helper-model slots: its helper jobs run copilot's own default model.
+  if (engine === 'copilot') return { model: null, effort: null, source: 'default' };
   const entry = settingEntry(utilityId(engine === 'codex' ? 'codex' : 'claude', job));
   if (!entry) return { model: null, effort: null, source: 'default' };
   const result = resolveWith(entry, makeCtx(scope)); const value = result.value || {};

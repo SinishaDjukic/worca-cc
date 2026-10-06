@@ -79,7 +79,7 @@ import { syncBaseForRun, ensureLocalBranch, fetchRemote, isSafeBranchName, runSy
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
-import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH, codexUnattachableMcp } from './engines/codex.mjs';
+import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
 import { isNormalized } from './engines/events.mjs';
@@ -762,9 +762,12 @@ export class RunHarness extends EventEmitter {
       const saved = savedClaude.model;
       const engine = this.claude.engine;
       const owner = engineOfModel(saved);
-      const keep = owner === engine
-        ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
-        : (owner === null && engine !== 'claude' && engine === savedEngine);
+      // Copilot owns no catalog model: it keeps an id of its own naming (_engineModel) while the run stays on it.
+      const keep = engine === 'copilot'
+        ? (savedEngine === 'copilot' && !!this._engineModel(saved))
+        : owner === engine
+          ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
+          : (owner === null && engine !== 'claude' && engine === savedEngine);
       if (keep) {
         this.claude.model = saved;
         if (!this.claude.effort && typeof savedClaude.effort === 'string' && savedClaude.effort) this.claude.effort = savedClaude.effort;
@@ -2456,7 +2459,7 @@ export class RunHarness extends EventEmitter {
       const partial = both((r) => this._enginePartial(r));
       const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
       if (enforced.length) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
-      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as command rules — ${CODEX_COMMAND_RULE_REACH} (--allow-unguarded-engine): ${ruleNames(partial)}`);
+      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as ${this._enginePartialKind()} — ${this._engineRuleReach()} (--allow-unguarded-engine): ${ruleNames(partial)}`);
       const gSkip = this._engineUnenforced(this.guardrailPermissionRules);
       if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
       const pSkip = this._engineUnenforced(projectRules);
@@ -2464,9 +2467,16 @@ export class RunHarness extends EventEmitter {
       if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
     }
     for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'claude')) {
+      if (this._engineModel(m)) continue;   // copilot runs a Claude id the catalog does not hold (its own naming) as named
       lines.push(name === 'codex'
         ? `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
         : `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, so their cost stays unknown`);
+    }
+    // Copilot owns no catalog model: a Codex catalog model is dropped there too.
+    if (name === 'copilot') {
+      for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'codex')) {
+        lines.push(`engine ${name}: model "${m}" is a Codex model — the nodes that name it run on ${name}'s default model`);
+      }
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
@@ -2503,11 +2513,11 @@ export class RunHarness extends EventEmitter {
     // Command rules hold only in part (CODEX_COMMAND_RULE_REACH): running on them is a choice, like running without a rule.
     const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules);
     if (gPart.length && !allowed) {
-      return `guardrail set "${guardrailsId}" has command rules this engine holds only in part (${ruleNames(gPart)}): ${CODEX_COMMAND_RULE_REACH} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `guardrail set "${guardrailsId}" has ${this._enginePartialKind()} this engine holds only in part (${ruleNames(gPart)}): ${this._engineRuleReach()} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
     const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules);
     if (pPart.length && !allowed) {
-      return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${CODEX_COMMAND_RULE_REACH} — pass --allow-unguarded-engine to run it with them as a partial guard`;
+      return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${this._engineRuleReach()} — pass --allow-unguarded-engine to run it with them as a partial guard`;
     }
     if (caps.mcpTools === false) {
       const n = nodes.find((nc) => Array.isArray(nc?.tools) && nc.tools.some((t) => String(t).startsWith('mcp__')));
@@ -2542,6 +2552,17 @@ export class RunHarness extends EventEmitter {
     if (name === 'claude' || !hasPermissionRules(rules)) return [];
     const adapter = getEngine(name);
     return adapter.capabilities.permissionRules !== false && typeof adapter.partialRules === 'function' ? adapter.partialRules(rules) : [];
+  }
+
+  /** In words, how far this run's engine holds the rules it holds only in part (the adapter's `ruleReach`). */
+  _engineRuleReach() {
+    return getEngine(this.claude.engine || 'claude').ruleReach || CODEX_COMMAND_RULE_REACH;
+  }
+
+  /** What this run's engine turns partly-held deny rules into: codex's are command rules; copilot also holds
+   *  Edit/Write path rules in part (its write rules skip the shell). */
+  _enginePartialKind() {
+    return (this.claude.engine || 'claude') === 'copilot' ? 'command and write rules' : 'command rules';
   }
 
   /** The distinct models a run names: the run's own, then each node's. */
@@ -2659,8 +2680,11 @@ export class RunHarness extends EventEmitter {
     const out = [];
     const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
     if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
-    const remote = name === 'codex' ? codexUnattachableMcp(written) : [];
-    if (remote.length) out.push(`engine ${name}: remote MCP servers are not attached on ${name} (stdio only): ${remote.join(', ')}`);
+    const unattachable = getEngine(name).unattachableMcp;
+    const remote = typeof unattachable === 'function' ? unattachable(written) : [];
+    if (remote.length) out.push(name === 'codex'
+      ? `engine ${name}: remote MCP servers are not attached on ${name} (stdio only): ${remote.join(', ')}`
+      : `engine ${name}: MCP servers ${name} cannot attach are not attached: ${remote.join(', ')}`);
     return out;
   }
 
@@ -2673,10 +2697,14 @@ export class RunHarness extends EventEmitter {
     if (getEngine(name).capabilities.mcpTools === false) {
       return `this run attaches MCP servers (${copies.map((c) => c.name).join(', ')}), which this engine cannot attach`;
     }
-    if (name !== 'codex') return null;
+    const unattachable = getEngine(name).unattachableMcp;
+    if (typeof unattachable !== 'function') return null;
     const servers = layer.servers || {};
-    const remote = codexUnattachableMcp(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
-    return remote.length ? `this run attaches remote MCP servers (${remote.join(', ')}), and ${name} attaches stdio servers only` : null;
+    const remote = unattachable(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
+    if (!remote.length) return null;
+    return name === 'codex'
+      ? `this run attaches remote MCP servers (${remote.join(', ')}), and ${name} attaches stdio servers only`
+      : `this run attaches MCP servers ${name} cannot attach (${remote.join(', ')})`;
   }
 
   /**
@@ -2745,7 +2773,15 @@ export class RunHarness extends EventEmitter {
    *  another engine, so it is dropped there and that engine runs its own default model
    *  (the gate says so at run start). */
   _engineModel(model) {
-    return modelForEngine(model, this.claude.engine || 'claude', { projectDir: this.projectDir });
+    const engine = this.claude.engine || 'claude';
+    // Copilot owns no catalog model and names its models its own way (gpt-5.4, claude-sonnet-4.6, auto): a model
+    // the catalog holds belongs to another engine and is dropped, and so is a Claude Code id or alias (opus,
+    // claude-opus-4-8: copilot versions its Claude ids with a dot); any other id is handed to copilot as named.
+    if (engine === 'copilot') {
+      if (typeof model !== 'string' || !model.trim() || catalogHasModel(model, { projectDir: this.projectDir })) return undefined;
+      return engineOfModel(model, { projectDir: this.projectDir }) === 'claude' && !/\d\.\d/.test(model) ? undefined : model;
+    }
+    return modelForEngine(model, engine, { projectDir: this.projectDir });
   }
 
   /** The permission rules a node's spawn carries. Claude Code reads each checkout's .claude/settings.json itself;
@@ -4854,7 +4890,8 @@ export class RunHarness extends EventEmitter {
     // can be picked, the run's model counts only when that engine owns it, and on Codex an unnamed model is
     // codex's own default, named so the decision record and the cost say which model weighed the options.
     const engine = this.claude.engine || 'claude';
-    const runModel = modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir }) || null;
+    const runModel = (engine === 'copilot' ? this._engineModel(this.claude.model || undefined)
+      : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
     const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel },
       { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
     if (!pair.model && engine === 'codex') { pair.model = CODEX_DEFAULT_MODEL; pair.source = 'default'; }
@@ -5821,7 +5858,8 @@ export class RunHarness extends EventEmitter {
     // no call was counted, and the call and cost maps evict apart (bridge/telemetry.mjs MAX_TAGS).
     if (upstreamCost) forgetBridgeTag(attr.executionId);
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
-    else if (!this.claude.mock) {
+    // An engine that reports no cost at all (copilot) said so once at run start (the capability audit).
+    else if (!this.claude.mock && getEngine(this.claude.engine || 'claude').capabilities.cost !== false) {
       // A {perMtok} model prices from tokens alone, so a result with no usage is
       // unpriceable (NaN) — say so plainly rather than blaming a missing cost field.
       this._log('orchestrator', 'warn', costCfg?.perMtok

@@ -91,6 +91,6 @@ test('POST /api/settings runEngine: stored, shown, validated, cleared', async ()
   assert.deepEqual((await get(`/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}`)).body.engine, { value: 'codex', source: 'user' });
   const bad = await post('/api/settings', { runEngine: 'gpt' });
   assert.equal(bad.status, 400);
-  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex.');
+  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex, copilot.');
   assert.equal((await (await post('/api/settings', { runEngine: null })).json()).runEngine, null);
 });

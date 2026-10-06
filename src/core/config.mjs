@@ -762,6 +762,8 @@ export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspa
   return out;
 }
 export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
+  // Copilot has no step slots (it owns no catalog model): every step runs the run's own model, else copilot's default.
+  if (engine === 'copilot') return Object.fromEntries(agentSteps().map(({ key }) => [key, { model: fallbackModel || undefined, effort: undefined }]));
   const eng = engine === 'codex' ? 'codex' : 'claude'; const cfg = readRaw(projectDir);
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });

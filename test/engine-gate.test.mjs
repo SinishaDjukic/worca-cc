@@ -36,7 +36,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {

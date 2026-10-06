@@ -18,6 +18,9 @@
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 export const MODEL_ENGINES = ['claude', 'codex'];
+/** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
+ *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
+export const RUN_ENGINES = [...MODEL_ENGINES, 'copilot'];
 export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 

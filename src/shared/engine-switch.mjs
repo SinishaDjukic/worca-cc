@@ -6,7 +6,7 @@
 /** The engines a run can switch between (src/core/model-env.mjs MODEL_ENGINES, kept equal by a test). */
 export const SWITCH_ENGINES = Object.freeze(['claude', 'codex']);
 
-const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex' });
+const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot' });
 
 /** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
 export function engineLabel(engine) {
