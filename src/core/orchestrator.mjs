@@ -2177,11 +2177,18 @@ export class GraphOrchestrator extends RunHarness {
     }
     // One-shot session re-attach: only executions the pause left PAUSED. The map
     // is consumed entry-by-entry in _execCtx, so a fix cycle (a NEW executionId)
-    // never re-attaches, and a composite slice re-runs whole.
+    // never re-attaches, and a composite slice re-runs whole. A node whose MODEL was
+    // switched while paused (model-switch.mjs → rp.freshSessionNodes) starts a fresh
+    // session on the new model instead: its old transcript belongs to the old model.
+    const fresh = new Set(Array.isArray(rp.freshSessionNodes) ? rp.freshSessionNodes : []);
+    const pausedSteps = (this.resumeOpts?.steps || []).filter((s) => s.status === 'paused' && s.sessionId);
+    for (const s of pausedSteps) {
+      if (!fresh.has(s.nodeId)) continue;
+      this._log(s.agentKey || s.nodeId, 'info', 'model switched while paused — starting a fresh session on the new model',
+        { nodeId: s.nodeId, executionId: s.key });
+    }
     this._resumeSessions = new Map(
-      (this.resumeOpts?.steps || [])
-        .filter((s) => s.status === 'paused' && s.sessionId)
-        .map((s) => [s.key, s.sessionId]),
+      pausedSteps.filter((s) => !fresh.has(s.nodeId)).map((s) => [s.key, s.sessionId]),
     );
   }
 }

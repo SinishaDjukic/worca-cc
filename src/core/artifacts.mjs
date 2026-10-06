@@ -1678,6 +1678,24 @@ export function claimPausedForStop(pipelineId) {
 }
 
 /**
+ * Rewrite a PAUSED run's frozen manifest — both persisted copies (`stepper` and
+ * `resume_point.manifest`) in ONE conditional UPDATE (model-switch.mjs). Compare-and-swap on the
+ * resume_point text the caller read: a resume, a stop or a second switch that landed in between
+ * (this process or another — SQLite serializes the write) makes it a no-op and the caller lost.
+ * @param {string} pipelineId
+ * @param {{stepper:object, resumePoint:object, expect:string|null, now?:Date}} next
+ * @returns {boolean} true only when this call rewrote the row
+ */
+export function rewritePausedManifest(pipelineId, { stepper, resumePoint, expect, now = new Date() }) {
+  if (!pipelineId) return false;
+  const r = getDb().prepare(`
+    UPDATE pipelines SET stepper = ?, resume_point = ?, updated_at = ?
+    WHERE id = ? AND status = 'paused' AND archived_at IS NULL AND resume_point IS ?
+  `).run(JSON.stringify(stepper), JSON.stringify(resumePoint), now.toISOString(), pipelineId, expect ?? null);
+  return r.changes === 1;
+}
+
+/**
  * Take a parked run over for a resume — claimPausedForStop's twin: ONE atomic UPDATE flips the
  * row to `running` and stamps this process as its owner, unless it has settled since (stopped,
  * done, error). A resume and a stop of one paused run, in this process or two, can then never

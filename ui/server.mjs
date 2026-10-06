@@ -22,6 +22,7 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
+import { describeModelSwitch, switchPausedRunModels, ModelSwitchError } from '../src/core/model-switch.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
@@ -4026,6 +4027,47 @@ app.post('/api/resume', async (req, res) => {
   } catch (err) {
     if (err instanceof ResumeError) return res.status(err.status).json(err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+/** A model-switch failure → the shared envelope (ModelSwitchError carries code + status). */
+function modelSwitchReply(res, err) {
+  if (err instanceof ModelSwitchError) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+
+// A paused run's stages, their models and the run project's catalog (the run detail's "Models" panel).
+app.get('/api/pipelines/:id/models', async (req, res) => {
+  try { res.json(await describeModelSwitch(req.params.id, { projectDirFor: projectDirForKey })); }
+  catch (err) { modelSwitchReply(res, err); }
+});
+
+// Switch the models of a PAUSED run's remaining stages (this run only — model-switch.mjs).
+app.post('/api/pipelines/:id/models', async (req, res) => {
+  const pipelineId = req.params.id;
+  try {
+    // A pause still unwinding owns its row until done(paused): let it finish (stopPausedPipelineOnce's rule).
+    const parked = [...runs.values()].find((e) => e.pipelineId === pipelineId && e.status === 'paused') || null;
+    if (parked && !parked.settled && parked.launch) await parked.launch.catch(() => {});
+    for (const e of runs.values()) {
+      if (e.pipelineId === pipelineId && !SETTLED_RUN.has(String(e.status || ''))) {
+        return res.status(409).json({ error: 'pipeline is live — pause it first', code: 'LIVE' });
+      }
+    }
+    const out = await switchPausedRunModels(pipelineId, {
+      changes: req.body?.changes, by: actorOf(req), projectDirFor: projectDirForKey,
+    });
+    if (out.changed.length) {
+      // The parked entry's orchestrator is what a reconnect snapshots: show the new models there too.
+      if (parked?.orch?.state) {
+        parked.orch.state.stepper = out.stepper;
+        broadcast({ runId: parked.id, type: 'state', ...parked.orch.getState() });
+      }
+      emitChanged('pipelines-changed', 'updated');
+    }
+    res.json(out);
+  } catch (err) {
+    modelSwitchReply(res, err);
   }
 });
 

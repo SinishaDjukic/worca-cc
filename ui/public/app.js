@@ -199,6 +199,7 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
+import { renderModelSwitchPanel } from './model-switch.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
@@ -1540,6 +1541,13 @@ function manifestSig(stepper) {
 }
 
 
+/** Per-node model selection signature: a paused run's model switch changes it without touching ids. */
+function manifestModelSig(stepper) {
+  return (stepper?.graph?.nodes || [])
+    .map((n) => `${n.id}:${n.model || ''}:${n.effort || ''}:${n.subagentModel || ''}:${n.subagentEffort || ''}`)
+    .join('|');
+}
+
 // ---------------------------------------------------------------------------
 // Multi-run engine: per-run model + Map. Each run renders into one card in the
 // Running view; events are fanned out by handleServerMessage.
@@ -2089,7 +2097,8 @@ function onState(r, msg) {
   // Swap the manifest when it FIRST arrives OR when its node-id signature changes
   // (a decomposed run rewrites the implementer node into per-phase/per-task nodes
   // mid-run). Rebuild the stepper DOM so subsequent paints address the right nodes.
-  if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper))) {
+  if (msg.stepper && (r.stepper == null || manifestSig(msg.stepper) !== manifestSig(r.stepper)
+      || manifestModelSig(msg.stepper) !== manifestModelSig(r.stepper))) {
     r.stepper = msg.stepper;
     // paintGraphFor mounts the graph renderer into the same host on the next
     // paint; there is no separate structural rebuild any more.
@@ -2990,6 +2999,8 @@ if (typeof window !== 'undefined') {
     onHello,
     isPaused,
     resumeRunFromCard,
+    openModelSwitch,
+    manifestModelSig,
     seedResumedLog,
     openStopModal,
     closeStopModal,
@@ -17102,6 +17113,46 @@ async function confirmCostOverride(runId, btn) {
   if (ok) resumeRunFromCard(runId, btn, { ignoreCostCap: true });
 }
 
+/** The paused run's "Switch models" panel: fetch the run's stages + catalog, mount the panel into
+ *  `host`, POST the diff, then (Save & resume) hand over to the screen's own resume path so the
+ *  budget / policy / base-moved gates still apply. Re-clicking the button closes the panel. */
+async function openModelSwitch(host, pipelineId, { onResume, onSwitched } = {}) {
+  if (!host || !pipelineId) return;
+  if (!host.hidden && host.dataset.pipelineId === pipelineId) { host.hidden = true; host.replaceChildren(); return; }
+  host.dataset.pipelineId = pipelineId;
+  host.hidden = false;
+  host.replaceChildren(Object.assign(document.createElement('div'), { className: 'msw-loading', textContent: 'Loading models…' }));
+  const url = `/api/pipelines/${encodeURIComponent(pipelineId)}/models`;
+  let data = null;
+  try {
+    const res = await fetch(url);
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+  } catch (err) {
+    host.hidden = true; host.replaceChildren();
+    notify({ tone: 'err', title: 'Could not load the models', detail: err?.message || String(err) });
+    return;
+  }
+  const close = () => { host.hidden = true; host.replaceChildren(); };
+  const panel = renderModelSwitchPanel(data, {
+    doc: document,
+    onCancel: close,
+    onSave: async ({ changes, resume }) => {
+      if (Object.keys(changes).length) {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }) });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(out?.error || `HTTP ${res.status}`);   // the panel shows it inline
+        onSwitched?.(out);
+        notify({ tone: 'ok', title: `Switched ${out.changed.length} ${out.changed.length === 1 ? 'stage' : 'stages'}`,
+          detail: (out.warnings || []).join(' '), key: `msw-${pipelineId}` });
+      }
+      close();
+      if (resume) onResume?.();
+    },
+  });
+  host.replaceChildren(panel.el);
+}
+
 async function resumeRunFromCard(runId, btn, opts = {}) {
   const { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false } = opts;
   const r = runs.get(runId);
@@ -20771,6 +20822,14 @@ function paintHdLive(screen, record, data) {
   if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
   if (live && live.status === 'pausing') pauseBtn.disabled = true;
 
+  // "Models": a PAUSED run only (an interrupted one is resumed as it is), never an archived one.
+  const modelsBtn = screen.querySelector('.hd-models');
+  if (modelsBtn) {
+    modelsBtn.hidden = !(live ? isPaused(live) && !archived : pausedSaved);
+    const mswHost = screen.querySelector('.hd-model-switch');
+    if (mswHost && modelsBtn.hidden && !mswHost.hidden) { mswHost.hidden = true; mswHost.replaceChildren(); }
+  }
+
   const split = screen.querySelector('.hd-resume-split');
   const resumeBtn = screen.querySelector('.hd-resume');
   if (!split || !resumeBtn || resumeBtn.dataset.resumeState === 'busy') return;
@@ -21374,6 +21433,12 @@ function setupHdActions(screen, record, data) {
   resumeBtn.addEventListener('click', () => {
     const r = hdCurrentRecord(record);              // never the load-time object
     resumePipeline(r, r.projectDir || null, resumeBtn);
+  });
+  screen.querySelector('.hd-models')?.addEventListener('click', () => {
+    const r = hdCurrentRecord(record);
+    openModelSwitch(screen.querySelector('.hd-model-switch'), r.id, {
+      onResume: () => resumePipeline(hdCurrentRecord(record), r.projectDir || null, screen.querySelector('.hd-resume')),
+    });
   });
 
   // Scheduled resume ("Resume at…" in the split's menu); paintHdLive gates the item.
@@ -27423,6 +27488,18 @@ function openRunDetail(runId, { instant = false } = {}) {
     const name = screen.querySelector('.rd-branch-name').textContent || '';
     if (name) copyBranchToClipboard(screen.querySelector('.rd-branch-copy'), name);
   });
+  screen.querySelector('.rd-models').addEventListener('click', () => {
+    const r = runs.get(runDetailState.runId);
+    if (!r || !isPaused(r) || !r.pipelineId) return;
+    openModelSwitch(screen.querySelector('.rd-model-switch'), r.pipelineId, {
+      onSwitched: (out) => {
+        if (!out?.stepper) return;
+        r.stepper = out.stepper;
+        if (runDetailState.runId === r.runId) paintRunDetail(r);
+      },
+      onResume: () => resumeRunFromCard(r.runId, screen.querySelector('.rd-pause')),
+    });
+  });
   screen.querySelector('.rd-pause').addEventListener('click', (e) => {
     const btn = e.currentTarget;
     // A disabled control means a pause/resume request is already in flight (C16).
@@ -28737,6 +28814,11 @@ function paintRdHeader(screen, r) {
   const nextAction = paused ? 'resume' : 'pause';
   const actionChanged = pauseBtn.dataset.action !== nextAction;
   pauseBtn.dataset.action = nextAction;
+  // "Models" — paused only (not pausing/interrupted): the switch edits the frozen manifest of a run no process drives.
+  const modelsBtn = screen.querySelector('.rd-models');
+  if (modelsBtn) modelsBtn.hidden = !(paused && r.status === 'paused' && r.pipelineId);
+  const mswHost = screen.querySelector('.rd-model-switch');
+  if (mswHost && modelsBtn?.hidden && !mswHost.hidden) { mswHost.hidden = true; mswHost.replaceChildren(); }
 
   // BUSY GUARD — load-bearing, not defensive padding.
   // `resumeRunFromCard` writes `btn.textContent = ' Resuming…'`, and the

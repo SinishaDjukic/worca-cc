@@ -1048,9 +1048,9 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 });
 
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
-// Resume split, Pause, Stop, then the terminal button), in both modes. The Details header keeps
+// Resume split, Models, Pause, Stop, then the terminal button), in both modes. The Details header keeps
 // only the PR controls and the ⋯ menu, and the glance card carries no run control.
-const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
+const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-models', 'hd-pause', 'hd-stop', 'term-opener'];
 test('History bar per finished/paused status: Run after, Resume split only when resumable, Stop only when paused, no Pause without a live run', async () => {
   const rows = [];
   for (const [status, resumable, finished] of [
@@ -1075,6 +1075,7 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(end.querySelector('.hd-resume-split').hidden, !resumable);
       assert.equal(end.querySelector('.hd-resume').hidden, !resumable);
       assert.ok(end.querySelector('.hd-resume svg'), 'Resume leads with the play glyph');
+      assert.equal(end.querySelector('.hd-models').hidden, status !== 'paused', 'Models is for a PAUSED run only');
       assert.equal(end.querySelector('.hd-pause').hidden, true, 'no live run: nothing to pause');
       assert.equal(end.querySelector('.hd-stop').hidden, status !== 'paused',
         status === 'paused' ? 'a paused saved run is stopped through its row' : 'no live run: nothing to stop');

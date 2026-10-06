@@ -354,6 +354,40 @@ worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → O
 
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.
 
+## Switch models on a paused run
+
+A run's models are frozen when it starts. If it pauses on a model problem (an exhausted usage
+limit, a model that went away), switch the models of the stages that have not completed, then
+resume.
+
+- **When.** Only while the run is **paused**. An interrupted, stopped, finished, archived or
+  live run is refused.
+- **What changes.** The paused stage and the stages after it: model, effort, sub-agent model and
+  sub-agent effort. Completed stages are locked. The change applies to **this run only**; the
+  template and the project's settings are untouched.
+- **Fresh session.** A stage whose **model** changed starts a fresh Claude session when the run
+  resumes, because its old transcript belongs to the old model. A change of effort or sub-agent
+  settings alone keeps the session.
+- **UI.** A paused run's page (running or saved) shows a **Models** button next to Resume. The
+  panel lists the stages; the "All remaining stages" row sets one model on every one of them.
+  *Save* stores the change, *Save & resume* stores it and resumes through the normal Resume
+  (budget and policy checks still apply).
+- **CLI.**
+
+  ```
+  worca switch-model <id>                              # list stages and their models
+  worca switch-model <id> --stage refiner --model claude-opus-5-5 [--effort high]
+  worca switch-model <id> --all --model claude-opus-5-5
+  worca resume <id>
+  ```
+
+  `--stage` takes a node id, or an agent key when only one stage uses it. `default` clears a field
+  back to the run default. See `worca switch-model help`.
+- **API.** `GET /api/pipelines/:id/models` returns the stages and the run project's model
+  catalog. `POST /api/pipelines/:id/models` takes
+  `{ "changes": { "<nodeId>": { "model", "effort", "subagentModel", "subagentEffort" } } }`.
+  Errors use `{ error, code }` (`NOT_PAUSED`, `STAGE_COMPLETED`, `INVALID_SELECTION`, `CHANGED`, …).
+
 ## Plugins and team policy
 
 A plugin manifest's `models[]` entry may carry the same `upstream` block
