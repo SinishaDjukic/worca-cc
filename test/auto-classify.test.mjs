@@ -7,6 +7,7 @@ import {
 } from '../src/core/auto/classify.mjs';
 import { normalizeShape, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
+import { WORKSPACE_GUIDE } from '../src/core/auto/recipes.mjs';
 
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
 const MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }];
@@ -176,6 +177,58 @@ test('repoLook: the call carries Read/Grep/Glob, --max-turns and the Repository 
   assert.deepEqual(plain.calls[0].allowedTools, []);
   assert.equal(plain.calls[0].maxTurns, undefined);
   assert.ok(!plain.calls[0].systemPrompt.includes('## Repository'));
+});
+
+const WS = { name: 'Shop', members: [
+  { projectKey: 'api', projectName: 'Shop API', checkout: '.' },
+  { projectKey: 'web', projectName: 'Shop Web', checkout: '/abs/web' },
+  { projectKey: 'ops', projectName: '', checkout: null },
+] };
+
+test('workspace + repoLook: the system prompt names the members, their checkouts and the workspace guide; addDirs reach the runner', async () => {
+  const look = fakeRun([reply(GOOD)]);
+  await classifyTask(base({ repoLook: true, workspace: WS, addDirs: ['/abs/web'] }), { run: look.run });
+  const o = look.calls[0];
+  const sys = o.systemPrompt;
+  assert.ok(sys.includes('Your working directory holds read-only checkouts of the repositories listed under Workspace'), 'the plural repository paragraph');
+  assert.ok(!sys.includes('is a read-only checkout of the repository the task targets'), 'the singular text is replaced');
+  assert.ok(sys.includes(`at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total`), 'the tool-call budget stays');
+  assert.ok(sys.includes('\n## Workspace\nThe task targets the workspace "Shop" — 3 repositories: Shop API (api), Shop Web (web), ops (ops). The fingerprint has one block per repository.'));
+  assert.ok(sys.includes('Readable checkouts: api at .; web at /abs/web. No checkout for ops — size those from the fingerprint.'));
+  assert.ok(sys.includes(WORKSPACE_GUIDE));
+  assert.ok(sys.indexOf('## Repository') < sys.indexOf('## Workspace') && sys.indexOf(WORKSPACE_GUIDE) < sys.indexOf('## Recipes'), 'repository → workspace → recipes');
+  assert.deepEqual(o.addDirs, ['/abs/web']);
+  assert.deepEqual(o.tools, ['Read', 'Grep', 'Glob']);
+});
+
+test('workspace without repoLook: no checkout list, no tools, addDirs NOT forwarded; the guide still rides along', async () => {
+  const plain = fakeRun([reply(GOOD)]);
+  await classifyTask(base({ workspace: WS, addDirs: ['/abs/web'] }), { run: plain.run });
+  const o = plain.calls[0];
+  assert.equal(o.addDirs, undefined);
+  assert.ok(!('addDirs' in o));
+  assert.deepEqual(o.tools, []);
+  assert.ok(o.systemPrompt.includes('\n## Workspace\n') && o.systemPrompt.includes(WORKSPACE_GUIDE));
+  assert.ok(!o.systemPrompt.includes('Readable checkouts:') && !o.systemPrompt.includes('## Repository'));
+  const noDirs = fakeRun([reply(GOOD)]);
+  await classifyTask(base({ repoLook: true, workspace: WS }), { run: noDirs.run });
+  assert.ok(!('addDirs' in noDirs.calls[0]), 'an empty addDirs is not forwarded');
+});
+
+test('a project call (no workspace) keeps the system prompt byte-identical: the workspace section is a pure insertion', () => {
+  const agents = agentVocabulary(REG);
+  for (const humanInLoop of [true, false]) {
+    const project = buildClassifierSystemPrompt({ agents, models: MODELS, humanInLoop });
+    assert.equal(buildClassifierSystemPrompt({ agents, models: MODELS, humanInLoop, workspace: null }), project);
+    assert.ok(!project.includes('## Workspace') && !project.includes(WORKSPACE_GUIDE) && !project.includes('Readable checkouts:'));
+    const ws = buildClassifierSystemPrompt({ agents, models: MODELS, humanInLoop, workspace: WS });
+    const cut = ws.indexOf('\n\n## Workspace\n');
+    const end = ws.indexOf(WORKSPACE_GUIDE) + WORKSPACE_GUIDE.length;
+    assert.equal(ws.slice(0, cut) + ws.slice(end), project, 'removing the workspace section gives back the project prompt');
+    const projectLook = buildClassifierSystemPrompt({ agents, models: MODELS, humanInLoop, repoLook: true });
+    assert.ok(projectLook.includes('Your working directory is a read-only checkout of the repository the task targets.'));
+    assert.ok(!projectLook.includes('## Workspace'));
+  }
 });
 
 test('repoLook: an empty reply retries with a "reply now" nudge (and the nudge is absent text-only)', async () => {

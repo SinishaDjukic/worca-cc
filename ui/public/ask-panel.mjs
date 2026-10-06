@@ -2926,11 +2926,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return nodes;
   }
 
+  /** The card's target: the workspace (+ member count once proposed), else the project name or key; '' on old cards. */
+  const wfTargetLine = (card) => card.workspaceId
+    ? `workspace · ${card.workspaceName || card.workspaceId}${Array.isArray(card.members) && card.members.length ? ` · ${card.members.length} projects` : ''}`
+    : (card.projectName || card.projectKey || '');
+  function wfTargetEl(text) {
+    const el = make('div', 'ask-wfcard-meta ask-wfcard-target', text);
+    el.setAttribute('data-ask-wf-target', '');
+    return el;
+  }
+
   function buildWorkflowCard(block, prev) {
     const card = block.card || {};
     const name = card.name || '';
-    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`) };
-    if (block.state === 'failed') return { el: make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`) };
+    const target = wfTargetLine(card);
+    // Old cards (no target fields) stay the bare stub; otherwise the stub keeps its text and the target sits under it.
+    const stub = (el) => {
+      if (!target) return { el };
+      const wrap = make('div', 'ask-wfcard-stubwrap');
+      wrap.append(el, wfTargetEl(target));
+      return { el: wrap };
+    };
+    if (block.state === 'declined') return stub(make('div', 'ask-card-stub', `Declined — ${name || 'workflow proposal'}`));
+    if (block.state === 'failed') return stub(make('div', 'ask-card-stub ask-card-failed', `Proposal failed: ${block.error || 'unknown error'}`));
     // State modifier = `is-<state>` (v6): `ask-wfcard-${state}` would make the SAVED root carry the same class as the check line below.
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
     rootEl.setAttribute('data-ask-wfcard', block.state);
@@ -2939,6 +2957,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
     if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
     rootEl.appendChild(head);
+    if (target) rootEl.appendChild(wfTargetEl(target));
     if (block.state === 'building') {
       const trace = buildTrace(doc, { mode: card.mode });
       rootEl.appendChild(trace.el);

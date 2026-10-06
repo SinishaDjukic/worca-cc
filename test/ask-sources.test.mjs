@@ -92,7 +92,7 @@ test('shapeTask / shapeSources: redacted, clipped, the task browser hidden', () 
   assert.deepEqual(s[0].profiles, ['acme', 'globex']);
 });
 
-test('propose_run with a source: no brief, the task\'s title, the card carries the reference; a brief as well is refused; Auto only on projects', async () => {
+test('propose_run with a source: no brief, the task\'s title, the card carries the reference; a brief as well is refused; Auto on a workspace too', async () => {
   const validate = createProposalValidator({
     listProjects: async () => [{ key: 'shop-00000001', name: 'shop', path: '/x/shop' }],
     readWorkspace: async () => ({ id: 'wks-team-00000001', name: 'Team', projectPaths: ['/x/a'], projectKeys: ['a-00000001'] }),
@@ -116,7 +116,8 @@ test('propose_run with a source: no brief, the task\'s title, the card carries t
   const missing = await validate({ projectKey: 'shop-00000001', source: { plugin: 'jira-source', sourceId: 'jira', taskId: 'NOPE-1' } }, { lookupTask: async () => null });
   assert.match(missing.errors.join(), /Jira has no task "NOPE-1"/);
   const ws = await validate({ workspaceId: 'wks-team-00000001', workflowId: 'wf_auto', brief: 'x' });
-  assert.match(ws.errors.join(), /Auto workflow is not available for workspace targets yet/);
+  assert.equal(ws.ok, true, `Auto runs on a workspace target too: ${JSON.stringify(ws.errors)}`);
+  assert.equal(ws.card.workflowId, 'wf_auto');
   const plain = await validate({ projectKey: 'shop-00000001', brief: 'x' });
   assert.equal('source' in plain.card, false, 'a plain card keeps its key set');
 });

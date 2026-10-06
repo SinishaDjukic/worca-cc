@@ -52,6 +52,7 @@ const state = {
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
   selectedWorkspaceId: '',   // '' === none; set ONLY in workspace target mode
+  wsHumanInLoop: true,       // D-W1: Auto's Human in the loop on a workspace target — per run, never stored
   runTarget: 'project',      // 'project' | 'workspace' — New Pipeline target toggle
   sync: freshSyncState(),    // #527: the New-pipeline Sync row (branch-sync.mjs#freshSyncState)
   syncChips: {},             // #527: projectKey -> SyncBlock, from GET /api/sync/projects
@@ -3225,16 +3226,15 @@ async function loadWorkflowsInto(selectId) {
   list.forEach((wf) => {
     if (simplePicker && wf.id !== AUTO_WORKFLOW_ID && wf.id !== 'wf_default' && wf.id !== want) return;
     const o = option(wf.id, wf.id === AUTO_WORKFLOW_ID ? wf.name : (workflowPickerLabel(wf, enabledPluginNames) || wf.id));
-    if (wf.id === AUTO_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Auto is not available for workspaces yet'; }
     // Memory defragment holds exactly one scope, and a workspace run has no single project to
-    // resolve `project` against (the server 400s) — same treatment as Auto.
+    // resolve `project` against (the server 400s) — so it is disabled on a workspace target.
     if (wf.id === MEMORY_DEFRAG_WORKFLOW_ID && isWorkspace) { o.disabled = true; o.title = 'Memory defragment runs on one project'; }
     sel.appendChild(o);
   });
-  // Fall back to default if the wanted id is gone (e.g. a deleted workflow). D19: a workspace
-  // target SHOWS Default in Auto's place but never persists it — the project keeps its choice.
+  // Fall back to Default if the wanted id is gone (a deleted workflow). Memory defragment holds one
+  // project scope, so a workspace target SHOWS Default in its place but never persists it.
   const known = list.some((wf) => wf.id === want);
-  state.workflowId = !known || (isWorkspace && (want === AUTO_WORKFLOW_ID || want === MEMORY_DEFRAG_WORKFLOW_ID)) ? 'wf_default' : want;
+  state.workflowId = !known || (isWorkspace && want === MEMORY_DEFRAG_WORKFLOW_ID) ? 'wf_default' : want;
   sel.value = state.workflowId;
   await renderWorkflowConfig(state.workflowId);
 }
@@ -3323,13 +3323,21 @@ async function renderWorkflowConfig(workflowId) {
   // once; the policy-line repaint at the end refetches the preview for every other workflow.
   if (el.mcpRunsField) renderMcpRuns();
   if (isAuto) {
-    // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch, read from the project config.
-    // The switch is per PROJECT like the accordion's rows, and saveHumanInLoop drops the
-    // write with no project selected — so disable it there instead of accepting a flip
-    // the save discards (.sw-input:disabled + .switch is already styled).
+    // Auto picks the agents per run (spec §7.2 / D20): no accordion, one switch. On a project target
+    // the switch is per PROJECT like the accordion's rows, read from the project config, and
+    // saveHumanInLoop drops the write with no project selected — so disable it there instead of
+    // accepting a flip the save discards (.sw-input:disabled + .switch is already styled). On a
+    // workspace target it is per RUN (D-W1); agentsEditable() reads the hidden project select, so
+    // the workspace arm must not consult it.
     if (el.humanInLoop) {
-      el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
-      el.humanInLoop.disabled = !agentsEditable();
+      if (state.runTarget === 'workspace') {
+        // D-W1: a workspace has no stored switch — the value lives for this form only and rides the run body.
+        el.humanInLoop.checked = state.wsHumanInLoop !== false;
+        el.humanInLoop.disabled = false;
+      } else {
+        el.humanInLoop.checked = state.config.humanInLoop !== false;   // readRunConfig echoes only `false`
+        el.humanInLoop.disabled = !agentsEditable();
+      }
     }
     // Reset what the failed-fetch arm resets, so nothing from the previous workflow lingers inside the
     // hidden accordion (#wf-feedback-config and the agents header live INSIDE #agents-config).
@@ -3920,7 +3928,10 @@ async function saveActiveWorkflow(workflowId) {
 }
 
 // Persist the Auto "Human in the loop" switch: PATCH /api/config { projectDir, humanInLoop }.
+// A workspace target keeps it for this form only — checked FIRST, because selectedProjectPath()
+// reads the hidden project select and would PATCH an unrelated project.
 async function saveHumanInLoop(on) {
+  if (state.runTarget === 'workspace') { state.wsHumanInLoop = !!on; return; }   // D-W1: no PATCH
   const projectDir = selectedProjectPath();
   if (!projectDir) return;
   try {
@@ -5291,7 +5302,10 @@ function buildTunablesTable(w, wf, handle) {
     effort.s.addEventListener('change', () => set(id, { effort: effort.s.value }));
     tdModel.dataset.label = 'Model'; tdEffort.dataset.label = 'Effort';
     tdModel.appendChild(model.wrap); tdEffort.appendChild(effort.wrap); tr.append(tdModel, tdEffort);
-    const tdFan = document.createElement('td'); tdFan.className = 'qtune-sw-cell'; tdFan.appendChild(sw(`Fan-out for ${name.textContent}`, n.fanOut, !n.canFanOut, (on) => set(id, { fanOut: on }))); tr.appendChild(tdFan);
+    const tdFan = document.createElement('td'); tdFan.className = 'qtune-sw-cell';
+    const fan = sw(`Fan-out for ${name.textContent}`, n.fanOut, !n.canFanOut, (on) => set(id, { fanOut: on }));
+    if (n.fanOutLocked) fan.title = 'Runs per project on a workspace';   // canFanOut is false too ⇒ checked + locked
+    tdFan.appendChild(fan); tr.appendChild(tdFan);
     const tdQ = document.createElement('td'); tdQ.className = 'qtune-sw-cell';
     if (n.asksQuestions) tdQ.appendChild(sw(`Questions for ${name.textContent}`, n.askQuestions, n.questionsLocked, (on) => set(id, { askQuestions: on })));
     else tdQ.textContent = '\u2014';
@@ -7569,6 +7583,10 @@ if (el.workspaceSelect) {
   el.workspaceSelect.addEventListener('change', () => {
     state.selectedWorkspaceId = el.workspaceSelect.value || '';
     if (state.selectedWorkspaceId) localStorage.setItem(LAST_WORKSPACE_KEY, state.selectedWorkspaceId);
+    // D-W1: Human in the loop is per run on a workspace — a new workspace starts it on again. This
+    // listener does not re-run renderWorkflowConfig, so repaint the switch here.
+    state.wsHumanInLoop = true;
+    if (state.runTarget === 'workspace' && state.workflowId === AUTO_WORKFLOW_ID && el.humanInLoop) el.humanInLoop.checked = true;
     renderWorkspaceMembers();
     renderWorkspaceSourceBranches();
     schedulePolicyLine();                   // team policy notes for the new target (design board 8)

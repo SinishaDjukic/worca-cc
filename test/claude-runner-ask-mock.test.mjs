@@ -85,6 +85,37 @@ test('ask mock scenarios: propose card, metrics arm, foreground Agent', async ()
   ]);
 });
 
+test('workflow arm: the propose_workflow input and its result carry the card target — workspaceId or projectKey, never both', async () => {
+  const wfResult = (r) => JSON.parse(r.events.map((e) => e.raw).find((raw) => raw?.type === 'user'
+    && raw.message.content[0].tool_use_id === 'toolu_mock_workflow').message.content[0].content[0].text);
+  await checkRows([
+    { name: 'a workspace card: workspaceId (and workspaceName: null), no projectKey', run: async () => {
+      const wsSys = `MOCK_ROLE: ask\nMOCK_ASK_CARD: ${JSON.stringify({ workspaceId: 'ws_0000aaaa' })}\n`;
+      const r = await run('build a workflow for this', { systemPrompt: wsSys });
+      const tool = r.summary.blocks.find((b) => b.kind === 'tool');
+      assert.equal(tool.name, 'mcp__worca__propose_workflow');
+      assert.deepEqual(tool.input, { task: 'build a workflow for this', workspaceId: 'ws_0000aaaa', thenRun: false });
+      const res = wfResult(r);
+      assert.equal(res.workspaceId, 'ws_0000aaaa');
+      assert.equal(res.workspaceName, null);
+      assert.ok(!('projectKey' in res) && !('projectName' in res));
+    } },
+    { name: 'a project card: projectKey (and projectName: null), no workspaceId — unchanged', run: async () => {
+      const r = await run('build a workflow and run it');
+      const tool = r.summary.blocks.find((b) => b.kind === 'tool');
+      assert.equal(tool.name, 'mcp__worca__propose_workflow');
+      assert.deepEqual(tool.input, { task: 'build a workflow and run it', projectKey: CARD.projectKey, thenRun: true });
+      assert.deepEqual(Object.keys(tool.input), ['task', 'projectKey', 'thenRun']);
+      const res = wfResult(r);
+      assert.equal(res.projectKey, CARD.projectKey);
+      assert.equal(res.projectName, null);
+      assert.ok(!('workspaceId' in res) && !('workspaceName' in res));
+      const noCard = await run('build a workflow', { systemPrompt: 'MOCK_ROLE: ask\n' });
+      assert.equal(noCard.summary.blocks.find((b) => b.kind === 'tool').input.projectKey, null, 'no card: projectKey null, as before');
+    } },
+  ]);
+});
+
 test('error scenarios: MOCK_FAIL, MOCK_MAX_TURNS, MOCK_MAX_BUDGET emit the result frame then reject like the real CLI', async () => {
   await checkRows([
     { name: 'MOCK_FAIL: the error result frame, then a rejection shaped like the real CLI', run: async () => {

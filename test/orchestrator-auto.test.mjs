@@ -2,9 +2,11 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
+import { gitDir, templateRepo } from './helpers/git-dir.mjs';
+import { projectKey } from '../src/core/store.mjs';
+import { workspaceKey } from '../src/core/workspaces.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { normalizeShape, assembleShape } from '../src/shared/graph/assemble.mjs';
 import { readWorkflow, listWorkflows, writeGraphWorkflow } from '../src/core/workflows.mjs';
@@ -314,4 +316,141 @@ test('finding 5: with human-in-the-loop OFF, a reused twin whose per-project ove
   assert.ok(line, `expected the ignored-overrides log line; got:\n${logs.map((e) => e.text).join('\n')}`);
   assert.equal(line.level, 'warn');
   assert.equal(line.source, 'orchestrator');
+});
+
+// ── Workspace targets: the classifier sees every member, the adopted graph gets the workspace variants ──
+const wsCreated = [];
+after(() => Promise.all(wsCreated.map((d) => rm(d, { recursive: true, force: true }))));
+/** The opts the server builds for a workspace Auto run (as orchestrator-workspace-scan's scanOpts). */
+function wsOpts(name, over = {}) {
+  const dirs = ['a', 'b'].map((l) => { const d = templateRepo(`auto-ws-${l}`, { branch: 'main', user: true, files: { 'seed.txt': 'seed\n' } }); wsCreated.push(d); return d; });
+  const id = workspaceKey({ name, projectPaths: dirs });
+  const projects = dirs
+    .map((d) => ({ projectDir: d, projectKey: projectKey(d), projectName: basename(d), branch: { source: 'main' } }))
+    .sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
+  return {
+    workspace: { id, key: id, name, description: '', projects },
+    branch: { source: 'main' }, workflowId: 'wf_auto', prompt: 'Change both services.', claude: { mock: true }, ...over,
+  };
+}
+/** Pin WORCA_RUN_ROOT for one test, restoring it afterwards. */
+async function withRunRoot(mode, fn) {
+  const prev = process.env.WORCA_RUN_ROOT;
+  process.env.WORCA_RUN_ROOT = mode;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prev; }
+}
+
+/** A topology no project test in this file adopts, so the workspace run WRITES its own row. */
+const WS_SHAPE = { name: 'Workspace change', taskKind: 'prompt', stages: [S('planner'), S('planReviewer'), S('implementer'), S('reviewer')] };
+
+test('workspace (detached): the classifier sees a workspace fingerprint and every member checkout as ./repos/<key>', { timeout: 180000 }, async () => {
+  await withRunRoot('detached', async () => {
+    const { classify, calls } = scripted([IMPL]);
+    const orch = createOrchestrator(wsOpts('Auto WS detached', { classify, humanInLoop: false }));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].fingerprint, /^workspace: Auto WS detached — 2 projects/);
+    assert.equal(calls[0].repoLook, true);
+    assert.equal(calls[0].cwd, orch.runCwd, 'the neutral run root, with the checkouts below it');
+    assert.deepEqual(calls[0].workspace, {
+      name: 'Auto WS detached',
+      members: orch.members.map((m) => ({ projectKey: m.projectKey, projectName: m.projectName, checkout: `./repos/${m.projectKey}` })),
+    });
+    assert.deepEqual(calls[0].addDirs, [], 'the run root already contains every checkout');
+  });
+});
+
+test('workspace: the adopted graph runs the workspace variants with forced fan-out; the proposal says workspace; the saved row stays authored', { timeout: 180000 }, async () => {
+  await withRunRoot('detached', async () => {
+    const { classify } = scripted([WS_SHAPE]);
+    const orch = createOrchestrator(wsOpts('Auto WS adopt', { classify, auto: false, humanInLoop: true }));
+    const seen = answerer(orch, () => ({ decision: 'accept', name: 'WS flow' }));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    const p = seen.find((q) => q.kind === 'workflow').workflow;
+    assert.equal(p.target, 'workspace');
+    assert.deepEqual(p.members, orch.members.map((m) => m.projectName));
+    const st = orch.getState();
+    assert.equal(st.stepper.auto.via, 'created');
+    const agents = st.stepper.graph.nodes.filter((n) => n.kind === 'agent');
+    assert.deepEqual(agents.map((n) => n.key), ['planner', 'planReviewer', 'implementer', 'workspaceReviewer'], 'reviewer runs as its workspace variant');
+    for (const n of agents) assert.equal(n.fanOut, true, `${n.key} is a workspaceFanOut node: fan-out is forced`);
+    const row = await readWorkflow(st.stepper.auto.workflowId);
+    const rowAgents = row.nodes.filter((n) => n.kind === 'agent');
+    assert.deepEqual(rowAgents.map((n) => n.key), ['planner', 'planReviewer', 'implementer', 'reviewer'], 'the row is the AUTHORED template');
+    assert.ok(rowAgents.every((n) => n.config?.fanOut !== true && n.fanOut !== true), 'no forced fan-out is written to the row');
+  });
+});
+
+test('workspace: fanOut false for the implementer in the accept answer is ignored — the run still fans out', { timeout: 180000 }, async () => {
+  await withRunRoot('detached', async () => {
+    const { classify } = scripted([IMPL]);
+    const orch = createOrchestrator(wsOpts('Auto WS fanout', { classify, auto: false, humanInLoop: true }));
+    const seen = answerer(orch, () => ({ decision: 'accept', nodes: { n_implementer: { fanOut: false } } }));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    const proposed = seen.find((q) => q.kind === 'workflow').workflow.nodes.n_implementer;
+    assert.deepEqual([proposed.fanOut, proposed.fanOutLocked, proposed.canFanOut], [true, true, false], 'the proposal shows the fan-out locked on');
+    const st = orch.getState();
+    const impl = st.stepper.graph.nodes.find((n) => n.key === 'implementer');
+    assert.equal(impl.fanOut, true);
+    assert.equal(orch.resolved.nodeCtx[impl.id].fanOut, true, 'the engine dispatches it fanned out');
+  });
+});
+
+test('workspace (legacy): the non-primary worktrees ride as addDirs and the primary checkout is "."', { timeout: 180000 }, async () => {
+  await withRunRoot('legacy', async () => {
+    const { classify: inner, calls } = scripted([IMPL]);
+    let orch;
+    let atDecide = null;
+    const classify = (input) => { atDecide = { workDirs: new Map(orch.workDirs), runCwd: orch.runCwd }; return inner(input); };   // teardown clears both
+    orch = createOrchestrator(wsOpts('Auto WS legacy', { classify, humanInLoop: false }));
+    const res = await orch.run();
+    assert.equal(res.status, 'done', res.error);
+    const [primary, other] = orch.members;
+    const otherDir = atDecide.workDirs.get(other.projectKey);
+    assert.ok(otherDir);
+    assert.deepEqual(calls[0].workspace.members.map((m) => [m.projectKey, m.checkout]), [[primary.projectKey, '.'], [other.projectKey, otherDir]]);
+    assert.deepEqual(calls[0].addDirs, [otherDir]);
+    assert.equal(calls[0].cwd, atDecide.runCwd);
+    assert.equal(atDecide.runCwd, atDecide.workDirs.get(primary.projectKey), 'legacy: runCwd is the primary\'s worktree');
+  });
+});
+
+test('_autoWorkspaceInput: a member with no checkout yet gets checkout null; no runCwd means no checkouts and no addDirs', () => {
+  const orch = createOrchestrator({
+    workflowId: 'wf_auto', prompt: 'x', claude: { mock: true },
+    workspace: { id: 'ws', key: 'ws', name: 'WS', description: '', projects: [
+      { projectDir: '/x/b', projectKey: 'k-b', projectName: 'b' },
+      { projectDir: '/x/a', projectKey: 'k-a', projectName: 'a' },
+    ] },
+  });
+  // A resume paused inside the setup: detached, only one checkout re-attached so far.
+  orch.runRootMode = 'detached';
+  orch.runCwd = '/run/root';
+  orch.workDirs = new Map([['k-a', '/run/root/repos/k-a']]);
+  assert.deepEqual(orch._autoWorkspaceInput(), {
+    workspace: { name: 'WS', members: [
+      { projectKey: 'k-a', projectName: 'a', checkout: './repos/k-a' },
+      { projectKey: 'k-b', projectName: 'b', checkout: null },
+    ] },
+    addDirs: [],
+  });
+  // Legacy, paused before _setupRunRoot: no runCwd, so nothing is readable.
+  orch.runRootMode = 'legacy';
+  orch.runCwd = null;
+  orch.workDirs = new Map([['k-a', '/wt/a'], ['k-b', '/wt/b']]);
+  assert.deepEqual(orch._autoWorkspaceInput(), {
+    workspace: { name: 'WS', members: [
+      { projectKey: 'k-a', projectName: 'a', checkout: null },
+      { projectKey: 'k-b', projectName: 'b', checkout: null },
+    ] },
+    addDirs: [],
+  });
+  // A bare orchestrator with no workDirs map at all.
+  orch.workDirs = undefined;
+  assert.deepEqual(orch._autoWorkspaceInput().addDirs, []);
+  // A project run has no workspace view.
+  assert.deepEqual(orchFor()._autoWorkspaceInput(), { workspace: null, addDirs: [] });
 });

@@ -51,6 +51,27 @@ before saving a row. The recipe guide (`src/core/auto/recipes.mjs`) is an additi
 ladder — implementer only, + reviewer, + clarify/planner, + refiner — with the web
 test pair, the decomposer and the plan reviewer as signal-gated modifiers.
 
+**Auto on a workspace.** The fingerprint has one block per member under a `workspace:`
+header, with twice a project's byte budget; members are added until the budget is spent,
+then one overflow line names the rest. The classifier's repo look depends on the run root:
+under a *detached* run root each member is readable at `./repos/<projectKey>`; in *legacy*
+run-root mode the primary's worktree is the cwd and the other members' worktrees are passed
+as `--add-dir`. The workspace variant (`reviewer` → `workspaceReviewer`) and the forced
+fan-out are applied at adopt time by `resolveGraph`; a saved `origin: 'auto'` row stays
+authored (no variant, no forced fan-out), so the same row also runs on a project.
+
+**Human in the loop** is per run on a workspace, on by default: a workspace has no stored
+switch, so the run body carries `humanInLoop` (absent ⇒ true), and `--yes`/`auto` still
+forces it off. There is no decomposer on a workspace in this version — the classifier is
+told not to apply the large-task modifier, because the workspace implementer already runs
+one sub-agent per plan task (cap 8).
+
+**Designing a workflow for a workspace from Ask Worca.** `propose_workflow` takes
+`workspaceId` or `projectKey` (at most one; neither ⇒ the pinned scope). The chat's repo
+look checks out up to 8 members detached under a throwaway dir (`auto-look-*` in
+`<worcaHome>/tmp/ask`), and a boot sweep removes looks a crashed chat child left behind
+after one hour.
+
 Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md) · [Scheduled runs](scheduled-runs.md)
 
 <!--

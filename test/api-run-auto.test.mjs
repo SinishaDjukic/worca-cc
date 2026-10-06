@@ -6,21 +6,24 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { setHumanInLoop } from '../src/core/config.mjs';
 
 useTempHome(after);
-let homeDir, srv, base, prevHome;
+let homeDir, srv, base, prevHome, runs;
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-runauto-'));
   prevHome = process.env.WORCA_HOME;
   process.env.WORCA_HOME = homeDir;
   process.env.WORCA_MOCK = '1';
-  const { app } = await import('../ui/server.mjs');
-  srv = http.createServer(app);
+  const mod = await import('../ui/server.mjs');
+  runs = mod.runs;
+  srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
 });
@@ -32,6 +35,12 @@ after(async () => {
 });
 const projects = [];
 const runDir = async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-runauto-proj-')); projects.push(d); return d; };
+function gitInit(dir) {
+  const g = (a) => spawnSync('git', a, { cwd: dir });
+  g(['init', '-q', '-b', 'main']); g(['config', 'user.email', 't@t']); g(['config', 'user.name', 't']);
+  writeFileSync(join(dir, 'README.md'), '# x\n');
+  g(['add', '-A']); g(['commit', '-qm', 'init']);
+}
 after(() => Promise.all(projects.map((d) => rm(d, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }))));
 const api = async (method, path, body) => {
   const res = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
@@ -99,10 +108,10 @@ test('humanInLoop falls back to the project switch, and a question can be answer
   assert.equal(JSON.parse(row.stepper).auto.status, 'deciding', 'cancelled before any graph was adopted');
 });
 
-test('wf_auto is refused for a workspace target; a saved workflow accepts and ignores humanInLoop', async () => {
+test('wf_auto reaches the workspace lookup (an unknown id is 404); a saved workflow accepts and ignores humanInLoop', async () => {
   const ws = await api('POST', '/api/run', { workspaceId: 'wks-nope-00000000', prompt: 'x', workflowId: 'wf_auto', mock: true });
-  assert.equal(ws.status, 400);
-  assert.equal(ws.body.error, 'Auto workflow is not available for workspace targets yet');
+  assert.equal(ws.status, 404);
+  assert.equal(ws.body.error, 'workspace not found');
   const prev = newestId();
   const r = await api('POST', '/api/run', { projectDir: await runDir(), prompt: 'demo task', workflowId: 'wf_default', humanInLoop: false, mock: true });
   assert.equal(r.status, 200, 'a saved workflow accepts the field and ignores it');
@@ -113,4 +122,49 @@ test('wf_auto is refused for a workspace target; a saved workflow accepts and ig
   // stop it explicitly, so nothing is alive when the after-hooks reap the home.
   assert.equal((await api('POST', '/api/stop', { runId: r.body.runId })).status, 200);
   await waitForRow((x) => x.status === 'stopped', prev);
+});
+
+/** A two-member workspace over fresh git repos (the server rejects non-git members). */
+async function seedWorkspace() {
+  const [a, b] = [await runDir(), await runDir()];
+  for (const dir of [a, b]) gitInit(dir);
+  const r = await api('POST', '/api/workspaces', { name: `Auto ${projects.length}`, projectPaths: [a, b] });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  return r.body.workspace.id;
+}
+
+test('wf_auto on a workspace with humanInLoop:false decides without a proposal question and runs to done', async () => {
+  const workspaceId = await seedWorkspace();
+  const prev = newestId();
+  const r = await api('POST', '/api/run', { workspaceId, prompt: 'demo task', workflowId: 'wf_auto', humanInLoop: false, mock: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  let asked = null;
+  const row = await waitForRow((x) => {
+    const pq = runs.get(r.body.runId)?.pendingQuestion;
+    if (pq && pq.kind === 'workflow') asked = pq;
+    return x.status === 'done';
+  }, prev);
+  assert.equal(asked, null, 'no proposal question on a run with human in the loop off');
+  const stepper = JSON.parse(row.stepper);
+  assert.equal(stepper.auto.status, 'decided');
+  assert.equal(stepper.auto.humanInLoop, false);
+  assert.ok(stepper.graph.nodes.some((n) => n.kind === 'agent'));
+});
+
+test('wf_auto on a workspace defaults human in the loop on: the run parks on the workflow proposal', async () => {
+  const workspaceId = await seedWorkspace();
+  const prev = newestId();
+  const r = await api('POST', '/api/run', { workspaceId, prompt: 'demo task', workflowId: 'wf_auto', mock: true });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  let pq = null;
+  for (let i = 0; i < 1800 && !pq; i += 1) {
+    const q = runs.get(r.body.runId)?.pendingQuestion;
+    if (q) pq = q; else await new Promise((res) => setTimeout(res, 100));
+  }
+  assert.ok(pq, 'the run asked a question');
+  assert.equal(pq.kind, 'workflow');
+  assert.equal(pq.id, 'auto-1');
+  assert.equal((await api('POST', '/api/answer', { runId: r.body.runId, id: pq.id, payload: { decision: 'cancel' } })).status, 200);
+  const row = await waitForRow((x) => x.status === 'stopped', prev);
+  assert.equal(JSON.parse(row.stepper).auto.status, 'deciding', 'cancelled before any graph was adopted');
 });

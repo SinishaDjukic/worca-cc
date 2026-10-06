@@ -5,7 +5,7 @@
 import { buildGraphManifest } from '../../shared/graph/manifest.mjs';
 import { cleanText } from '../../shared/graph/assemble.mjs';
 import { slugify } from '../artifacts.mjs';
-import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID } from '../workflows.mjs';
+import { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, workspaceVariants } from '../workflows.mjs';
 
 const isObject = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
@@ -23,10 +23,14 @@ export function remapTunables(tunables, nodeMap) {
  * @param {{round:number, shape:object, template:object, match:{id:string,name:string}|null,
  *          tunables:Record<string,object>, registry:Record<string,object>,
  *          models:Array<{id:string,label?:string,efforts?:string[],hidden?:boolean}>, warnings?:Array, costUsd?:number,
- *          fingerprint?:string, ignoredProjectOverrides?:boolean}} o
+ *          fingerprint?:string, ignoredProjectOverrides?:boolean, isWorkspace?:boolean, members?:string[]}} o
  */
-export function buildProposal({ round, shape, template, match = null, tunables = {}, registry = {}, models = [], warnings = [], costUsd = 0, fingerprint = '', ignoredProjectOverrides = false }) {
+export function buildProposal({ round, shape, template, match = null, tunables = {}, registry = {}, models = [], warnings = [], costUsd = 0, fingerprint = '', ignoredProjectOverrides = false, isWorkspace = false, members = [] }) {
   const name = shape?.name || template?.name || 'Auto workflow';
+  // D-W6: a node keeps its AUTHORED key (the row's key — sanitize and Save read it);
+  // what a workspace run substitutes (`runKey`) and forces (`fanOutLocked`) are
+  // display facts mirroring resolveGraph (workflows.mjs:686, :722).
+  const variants = isWorkspace ? workspaceVariants(registry) : {};
   const agentsByKey = {};
   for (const n of template.nodes || []) if (n.kind === 'agent' && registry[n.key]) agentsByKey[n.key] = registry[n.key];
   // B1 (2026-09-07 review): paint what resolveGraph will RUN (workflows.mjs:664) — an overlay
@@ -39,6 +43,9 @@ export function buildProposal({ round, shape, template, match = null, tunables =
   for (const n of template.nodes || []) {
     if (n.kind !== 'agent') continue;
     const meta = registry[n.key] || {};
+    const variant = variants[n.key] || null;
+    const runs = variant || meta;
+    const fanOutLocked = isWorkspace && !!runs.workspaceFanOut;
     const cfg = n.config || {};
     const t = tunables[n.id] || {};
     const effort = t.effort ?? (t.model ? '' : (cfg.effort ?? ''));
@@ -46,14 +53,16 @@ export function buildProposal({ round, shape, template, match = null, tunables =
     const asks = !!meta.asksQuestions;
     nodes[n.id] = {
       key: n.key,
-      label: meta.displayName || n.key,
+      ...(variant ? { runKey: variant.key } : {}),
+      label: runs.displayName || (variant ? variant.key : n.key),
       model: t.model ?? cfg.model ?? '',
       effort,
-      fanOut: !!(t.fanOut ?? cfg.fanOut ?? meta.fanOut ?? false),
+      fanOut: fanOutLocked ? true : !!(t.fanOut ?? cfg.fanOut ?? meta.fanOut ?? false),
       askQuestions: asks ? (meta.questionsLocked ? !!meta.questionsDefault : !!(t.askQuestions ?? cfg.askQuestions ?? meta.questionsDefault ?? false)) : false,
       asksQuestions: asks,
       questionsLocked: asks && !!meta.questionsLocked,
-      canFanOut: !!meta.fanOut,
+      canFanOut: !!meta.fanOut && !fanOutLocked,
+      ...(fanOutLocked ? { fanOutLocked: true } : {}),
     };
   }
   const manifest = buildGraphManifest({ ...template, id: match ? match.id : AUTO_WORKFLOW_ID, name }, agentsByKey, { overlays: { nodes: overlays } });
@@ -80,6 +89,8 @@ export function buildProposal({ round, shape, template, match = null, tunables =
     costUsd: Number.isFinite(costUsd) ? costUsd : 0,
     fingerprint: typeof fingerprint === 'string' ? fingerprint : '',
     ignoredProjectOverrides: !!ignoredProjectOverrides,
+    target: isWorkspace ? 'workspace' : 'project',
+    members: isWorkspace ? (members || []).map((s) => cleanText(s, 80)).filter(Boolean).slice(0, 64) : [],
   };
 }
 
@@ -115,7 +126,8 @@ export function sanitizeProposalAnswer(payload, { proposal, models = [], registr
       const m = mid ? byId.get(String(mid).toLowerCase()) : null;
       if (m && (m.efforts || []).includes(sel.effort)) out.effort = sel.effort;
     }
-    if (typeof sel.fanOut === 'boolean' && meta.fanOut) out.fanOut = sel.fanOut;
+    // A workspace run forces fan-out on a locked node; old stored cards carry no lock.
+    if (typeof sel.fanOut === 'boolean' && meta.fanOut && !known.fanOutLocked) out.fanOut = sel.fanOut;
     if (typeof sel.askQuestions === 'boolean' && meta.asksQuestions && !meta.questionsLocked) out.askQuestions = sel.askQuestions;
     if (Object.keys(out).length) nodes[nodeId] = out;
   }

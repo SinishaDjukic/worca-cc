@@ -564,12 +564,14 @@ class AskTurn extends EventEmitter {
     this._wfCards.set(toolUseId, cardId);
     const raw = input && typeof input === 'object' ? input : {};
     const pin = this.pinnedScope;
-    // A pinned WORKSPACE is not a default target (D19/PD17): the building card then carries projectKey null and the child's
-    // own "projectKey is required" error flips it to failed at RESULT.
-    const projectKey = (typeof raw.projectKey === 'string' && raw.projectKey.trim()) || (pin && pin.projectKey) || null;
+    // The target resolves as the tool does: an explicit projectKey, else an explicit workspaceId, else the pin.
+    const inKey = typeof raw.projectKey === 'string' ? raw.projectKey.trim() : '';
+    const inWs = typeof raw.workspaceId === 'string' ? raw.workspaceId.trim() : '';
+    const projectKey = inKey || (!inWs && pin && pin.projectKey) || null;
+    const workspaceId = projectKey ? null : (inWs || (pin && pin.workspaceId) || null);
     const mode = typeof raw.task === 'string' && raw.task.trim() ? 'task' : 'shape';
     this.reducer.addBlock({ kind: 'card', id: cardId, state: 'building', card: {
-      type: 'workflow', mode, projectKey, projectName: null,
+      type: 'workflow', mode, projectKey, projectName: null, workspaceId, workspaceName: null,
       // v7: the building payload is transient (the proposed flip replaces `card` wholesale) — cap a hand-authored shape like the task text.
       ...(mode === 'task' ? { task: String(raw.task).slice(0, 2000) } : { shape: raw.shape && typeof raw.shape === 'object' && JSON.stringify(raw.shape).length <= 8000 ? raw.shape : null }),
       name: cleanText(raw.name, 60), note: cleanText(raw.note, d.limits.workflowNoteMaxChars ?? 200), thenRun: raw.thenRun === true,
@@ -598,13 +600,16 @@ class AskTurn extends EventEmitter {
       return;
     }
     try {
-      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '' });
-      // v4: the child's projectName first (the real child resolves it), else the parent's own lookup (the MOCK child
-      // returns null — without this every mock card, and its context-header line, would have no project name).
-      const projectName = cleanText(out.projectName, 120) || cleanText(r.project && r.project.name, 120) || null;
+      const workspaceId = typeof out.workspaceId === 'string' && out.workspaceId ? out.workspaceId : null;
+      // workspaceId rides the revalidate input only when set — a project card's input stays exactly what it was.
+      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, ...(workspaceId ? { workspaceId } : {}), warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '' });
+      // v4: the child's name first (the real child resolves it), else the parent's own lookup (the MOCK child
+      // returns null — without this every mock card, and its context-header line, would have no target name).
+      const workspaceName = workspaceId ? (cleanText(out.workspaceName, 120) || cleanText(r.workspace && r.workspace.name, 120) || null) : null;
+      const projectName = workspaceId ? null : (cleanText(out.projectName, 120) || cleanText(r.project && r.project.name, 120) || null);
       const flipped = this.reducer.updateBlock(cardId, { state: 'proposed', card: {
-        type: 'workflow', mode: out.mode === 'shape' ? 'shape' : 'task', projectKey: typeof out.projectKey === 'string' ? out.projectKey : null,
-        projectName, note: cleanText(out.note, 200), thenRun: out.thenRun === true,
+        type: 'workflow', mode: out.mode === 'shape' ? 'shape' : 'task', projectKey: !workspaceId && typeof out.projectKey === 'string' ? out.projectKey : null,
+        projectName, workspaceId, workspaceName, note: cleanText(out.note, 200), thenRun: out.thenRun === true,
         shape: r.shape, summary: cleanText(r.summary, 2000),
         ...r.proposal,
       } });

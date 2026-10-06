@@ -11,7 +11,7 @@ import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
-import { RECIPE_GUIDE, mockShapeFor } from './recipes.mjs';
+import { RECIPE_GUIDE, WORKSPACE_GUIDE, mockShapeFor } from './recipes.mjs';
 
 export const CLASSIFIER_TIMEOUT_MS = 90_000;
 // The bounded repo look (spec D6 amendment, 2026-09-07): the classifier may Read/Grep/Glob
@@ -154,7 +154,21 @@ export function shapeForPrompt(shape) {
   return { ...shape, stages: (Array.isArray(shape.stages) ? shape.stages : []).map((u) => (isObject(u) && Array.isArray(u.parallel) ? { ...u, parallel: u.parallel.map(flatStage) } : flatStage(u))) };
 }
 
-export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false } = {}) {
+/** The workspace section: the members, which of them have a readable checkout (repo look only), and the guide. */
+function workspaceSection(workspace, repoLook) {
+  const members = Array.isArray(workspace?.members) ? workspace.members : [];
+  const lines = ['', '## Workspace',
+    `The task targets the workspace "${cleanText(workspace.name, 80) || 'workspace'}" — ${members.length} repositories: ${members.map((m) => `${cleanText(m.projectName, 60) || m.projectKey} (${m.projectKey})`).join(', ')}. The fingerprint has one block per repository.`];
+  if (repoLook) {
+    const seen = members.filter((m) => m.checkout);
+    const unseen = members.filter((m) => !m.checkout);
+    if (seen.length) lines.push(`Readable checkouts: ${seen.map((m) => `${m.projectKey} at ${m.checkout}`).join('; ')}.${unseen.length ? ` No checkout for ${unseen.map((m) => m.projectKey).join(', ')} — size those from the fingerprint.` : ''}`);
+  }
+  lines.push('', WORKSPACE_GUIDE);
+  return lines;
+}
+
+export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false, workspace = null } = {}) {
   const modelLines = models.filter((m) => m && !m.hidden).map((m) => `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}`);
   return [
     'You design a worca workflow for ONE software task. Reply with exactly one fenced ```json block containing a shape object and nothing else.',
@@ -179,8 +193,9 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
     ...(repoLook ? [
       '',
       '## Repository',
-      `Your working directory is a read-only checkout of the repository the task targets. Before you decide, you may use Read, Grep and Glob — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`,
+      `${workspace ? 'Your working directory holds read-only checkouts of the repositories listed under Workspace' : 'Your working directory is a read-only checkout of the repository the task targets'}. Before you decide, you may use Read, Grep and Glob — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`,
     ] : []),
+    ...(workspace ? workspaceSection(workspace, repoLook) : []),
     '',
     RECIPE_GUIDE,
     '',
@@ -262,6 +277,7 @@ export async function classifyTask(input, deps = {}) {
   const {
     taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null, requireModel = false,
     model, modelEnv, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook = false, timeoutMs, bridgeTag = null,
+    workspace = null, addDirs = [],
   } = input || {};
   const timeout = Number.isFinite(timeoutMs) ? timeoutMs : (repoLook ? REPO_LOOK_TIMEOUT_MS : CLASSIFIER_TIMEOUT_MS);
   const run = deps.run || runClaude;
@@ -272,7 +288,7 @@ export async function classifyTask(input, deps = {}) {
     return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
   }
   const known = new Set(agents.map((a) => a.key));
-  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel });
+  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel, workspace });
   const nudge = repoLook ? ' Do not spend more tool calls: reply with the shape now.' : '';
   let fb = [...feedback];
   let prior = priorShape;
@@ -300,6 +316,7 @@ export async function classifyTask(input, deps = {}) {
         // by --max-turns (the prompt budget is smaller, so a normal reply lands first).
         allowedTools: repoLook ? [...REPO_LOOK_TOOLS] : [], tools: repoLook ? [...REPO_LOOK_TOOLS] : [],
         ...(repoLook ? { maxTurns: REPO_LOOK_MAX_TURNS } : {}),
+        ...(repoLook && addDirs.length ? { addDirs: [...addDirs] } : {}),   // legacy-mode workspace: the non-primary worktrees
         signal: ctrl.signal, bin, mock, envScrub, envAllowlist,
         onEvent: (e) => {
           // ONLY the terminal `result` frame is booked: it is the one frame whose

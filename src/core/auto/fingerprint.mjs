@@ -139,3 +139,42 @@ export async function fingerprintProject(dir, limits = {}) {
     return `fingerprint: unavailable (${err?.code || err?.message || 'error'})`;
   }
 }
+
+/** A workspace fingerprint's total budget (2 × a project's) and the smallest useful per-member slice. */
+export const WORKSPACE_FINGERPRINT_LIMITS = Object.freeze({ maxBytes: FINGERPRINT_LIMITS.maxBytes * 2, memberFloor: 384 });
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+/**
+ * One block per member, in projectKey order, under a one-line workspace header. Never throws.
+ * @param {Array<{projectKey:string, projectName?:string, projectDir:string}>} members
+ * @param {{name?:string, description?:string}} [ws]
+ * @param {{maxBytes?:number, memberFloor?:number}} [limits]  maxBytes = the WORKSPACE total
+ * @returns {Promise<string>}
+ */
+export async function fingerprintWorkspace(members, ws = {}, limits = {}) {
+  try {
+    const L = { ...WORKSPACE_FINGERPRINT_LIMITS, ...limits };
+    const list = (Array.isArray(members) ? members : []).filter((m) => m && m.projectKey)
+      .slice().sort((a, b) => byCodeUnit(String(a.projectKey), String(b.projectKey)));
+    const nameOf = (m) => clip(oneLine(m.projectName) || m.projectKey, 80);
+    const head = [`workspace: ${clip(oneLine(ws.name) || 'workspace', 120)} — ${list.length} project${list.length === 1 ? '' : 's'}`];
+    const desc = oneLine(ws.description);
+    if (desc) head.push(`description: ${clip(desc, 240)}`);
+    const headText = head.join('\n');
+    const room = Math.max(0, L.maxBytes - Buffer.byteLength(headText, 'utf8'));
+    const fits = list.length ? Math.max(1, Math.min(list.length, Math.floor(room / L.memberFloor))) : 0;
+    const perMember = fits ? Math.max(L.memberFloor, Math.floor(room / fits)) : 0;
+    const blocks = [];
+    for (const m of list.slice(0, fits)) {
+      const title = `## ${nameOf(m)} (${m.projectKey})`;
+      // -2: the '\n' after the title and the '\n' that joins this block to the previous one
+      const budget = Math.max(64, perMember - Buffer.byteLength(title, 'utf8') - 2);
+      blocks.push(`${title}\n${await fingerprintProject(m.projectDir, { maxBytes: budget })}`);
+    }
+    const rest = list.slice(fits);
+    if (rest.length) blocks.push(clip(`… (+${rest.length} more: ${rest.map(nameOf).join(', ')})`, 400));
+    return [headText, ...blocks].join('\n');
+  } catch (err) {
+    return `fingerprint: unavailable (${err?.code || err?.message || 'error'})`;
+  }
+}

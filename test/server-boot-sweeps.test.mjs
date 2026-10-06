@@ -14,7 +14,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { rm, mkdir } from 'node:fs/promises';
-import { existsSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, realpathSync, rmSync, utimesSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -175,6 +175,29 @@ test('boot: ask-worktree sweep removes an orphan dir, drops a stale row, and rep
     `the sweep logs through sink('ask-worktrees'): ${JSON.stringify(events)}`);
   assert.ok(!String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('/wt/'),
     'both registrations were git-pruned in the source repo');
+});
+
+// The fourth janitor — chat repo looks (auto-look-*) a crashed MCP child left under
+// <worcaHome>/tmp/ask. The helper is unit-tested in auto-repo-look.test.mjs; this pins
+// the WIRING (a typo'd identifier would only log "sweep failed").
+test('boot: repo-look sweep removes a stale auto-look-* dir under tmp/ask and reports it', async () => {
+  const repo = await freshRepo('worca-cc-boot-look-');
+  const { openRepoLook } = await import('../src/core/auto/repo-look.mjs');
+  const base = join(worcaHome(), 'tmp', 'ask');
+  await mkdir(base, { recursive: true });
+  const look = await openRepoLook(repo, base);
+  assert.ok(look && existsSync(look.cwd), 'fixture: a single-project look checked out');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);                     // 2h > the 1h window
+  utimesSync(look.cwd, old, old);
+
+  const events = [];
+  const res = await bootMaintenance({ log: (scope, level, msg) => events.push({ scope, level, msg }) });
+
+  assert.deepEqual(res.repoLooks.removed, [look.cwd]);
+  assert.deepEqual(res.repoLooks.failed, []);
+  assert.ok(!existsSync(look.cwd), 'the stale look is gone');
+  assert.ok(!String(spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd: repo }).stdout).includes('auto-look-'),
+    'its registration was removed from the source repo');
 });
 
 // P8a: a DB stamped past 24 by a divergent ladder can still hold v1 resume

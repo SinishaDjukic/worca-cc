@@ -391,8 +391,8 @@ export function createAskTools(deps) {
       description: 'Follow a run in this chat: puts a live progress card (status, elapsed time, cost, active agents, the workflow) into your reply, kept current while the user watches. Works for running, paused and finished runs. id is the run\'s 8-hex id; the app\'s live run id also works. Call it once per run per reply, only from your own turn.',
       inputSchema: SCHEMA.obj({ id: SCHEMA.s('run id (8 hex), or the app\'s live run id'), projectKey: SCHEMA.s('scope to a project'), workspaceId: SCHEMA.s('scope to a workspace') }, ['id']) },
     { name: 'propose_run',
-      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts (projects only). Returns {ok:true, card} or {ok:false, errors}.',
-      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto, projects only)'),
+      description: 'Propose a pipeline run for the user to confirm — it never starts anything. Exactly one of projectKey / workspaceId; omitting both targets the scope the user pinned for this chat, when there is one. guardrailsId defaults to "normal"; "permissive" is not allowed. To run it LATER give `when` (once) or `every` (repeat) in the user\'s own words — the card then offers Schedule instead of Start; check the phrase with preview_schedule first when unsure. To run it when ANOTHER run ends give `after` (a run id) — `sourceFromPrevious: true` starts it on that run\'s branch. When the work IS a tracker task (an issue in an installed task source), give `source` INSTEAD of brief: the run fetches the task itself when it starts (find_tasks / get_task find it). workflowId "wf_auto" = Auto: the run picks its own workflow from the task when it starts. Returns {ok:true, card} or {ok:false, errors}.',
+      inputSchema: SCHEMA.obj({ projectKey: SCHEMA.s('target project key'), workspaceId: SCHEMA.s('target workspace id'), workflowId: SCHEMA.s('workflow id (default wf_default; "wf_auto" = Auto)'),
         brief: SCHEMA.s(`the full task description for the run (≤ ${L.briefMaxChars} chars); omit when you give source`),
         source: { type: 'object', additionalProperties: false, required: ['plugin', 'sourceId', 'taskId'],
           description: 'a task in an installed task source (list_task_sources) — the run reads it at start',
@@ -409,12 +409,13 @@ export function createAskTools(deps) {
           description: 'diff comment ids (dc_…) this run is meant to address. They are stamped with the run id once the user confirms the card AND the run actually starts; nothing is resolved.' },
         ...SCHEDULE_FIELDS }, ['brief']) },
     { name: 'propose_workflow',
-      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored shape (see "Workflows you can create" in your instructions — only when the user describes the steps). projectKey defaults to the project pinned for this chat and is required when none is pinned (a workspace cannot be the target). thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
+      description: 'Propose a NEW workflow for the user to save — it never writes anything; the user sees a card and decides. Exactly one of task / shape: task = the full task text (worca\'s Auto classifier picks the agents, loops and models exactly as an Auto run would — use this when the user says "auto" or simply gives a task); shape = a hand-authored shape (see "Workflows you can create" in your instructions — only when the user describes the steps). Target: projectKey OR workspaceId (not both); with neither, the scope pinned for this chat is used, whichever kind it is. A workspace proposal runs its plan, refine and implement stages across every member. thenRun = the user also asked to run it. Returns {ok:true, name, match, warnings, summary, shape}: match names the saved workflow with the same shape (Save reuses it), summary lists the stages and loops. Returns {ok:false, error} when worca\'s classifier failed (timeout, unusable replies): tell the user, retry at most once. Do not search list_workflows for a match yourself — the tool does.',
       inputSchema: SCHEMA.obj({
         task: SCHEMA.s('the full task text (≤ 32000 chars) — mode task'),
         shape: { type: 'object', description: 'a hand-authored workflow shape {name, taskKind, reasoning, stages[], loops?} — mode shape', additionalProperties: true },
         name: SCHEMA.s('workflow name (≤ 60 chars); overrides the classifier\'s / shape\'s name'),
         projectKey: SCHEMA.s('target project key (default: the pinned project)'),
+        workspaceId: SCHEMA.s('target workspace id (default: the pinned workspace)'),
         thenRun: SCHEMA.b('the user also asked to run the work: the card offers "Save & propose run"'),
         note: SCHEMA.s('one line shown on the card: why this shape (≤ 200 chars)'),
       }) },
@@ -1690,14 +1691,20 @@ export function createAskTools(deps) {
       const shape = input.shape && typeof input.shape === 'object' && !Array.isArray(input.shape) ? input.shape : null;
       if ((task && shape) || (!task && !shape)) throw new AskToolError('propose_workflow: give exactly one of task / shape');
       if (task.length > L.workflowTaskMaxChars) throw new AskToolError(`propose_workflow: task is longer than ${L.workflowTaskMaxChars} chars`);
-      // The pinned scope is the default target ONLY when it is a project (D19: no workspace targets in v1).
+      // At most one target; with neither, the pinned scope whichever kind it is (D-W5, like propose_run).
       let projectKey = str(input.projectKey);
-      if (!projectKey) { const pin = pinnedScope(); if (pin && pin.projectKey) projectKey = pin.projectKey; }
-      if (!projectKey) throw new AskToolError('propose_workflow: projectKey is required — no project is pinned for this chat (a workspace cannot be the target)');
+      let workspaceId = str(input.workspaceId);
+      if (projectKey && workspaceId) throw new AskToolError('propose_workflow: give projectKey or workspaceId, not both');
+      if (!projectKey && !workspaceId) {
+        const pin = pinnedScope();
+        if (pin && pin.projectKey) projectKey = pin.projectKey;
+        else if (pin && pin.workspaceId) workspaceId = pin.workspaceId;
+      }
+      if (!projectKey && !workspaceId) throw new AskToolError('propose_workflow: projectKey or workspaceId is required — nothing is pinned for this chat');
       if (!deps.workflow || typeof deps.workflow.propose !== 'function') throw new AskToolError('propose_workflow: unavailable');
       try {
         return await deps.workflow.propose({
-          mode: task ? 'task' : 'shape', task, shape, name: str(input.name).slice(0, 60), projectKey,
+          mode: task ? 'task' : 'shape', task, shape, name: str(input.name).slice(0, 60), projectKey, workspaceId,
           note: str(input.note).slice(0, L.workflowNoteMaxChars), thenRun: input.thenRun === true,
         });
       } catch (err) {

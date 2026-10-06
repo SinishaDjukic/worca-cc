@@ -43,6 +43,44 @@ test('buildProposal: a new workflow — manifest under wf_auto, dispatch order, 
   assert.equal(p.nodes.n_implementer.fanOut, true);
   assert.equal(p.nodes.n_reviewer.model, '');
   assert.deepEqual(p.models, MODELS.filter((m) => !m.hidden).map((m) => ({ id: m.id, label: m.label, efforts: m.efforts })), 'hidden catalog entries are not offered');
+  assert.equal(p.target, 'project');
+  assert.deepEqual(p.members, []);
+});
+
+function workspaceProposal({ members = ['api', '  web\x1b[31m  ', '', 'x'.repeat(120)] } = {}) {
+  const built = assembleShape({ name: 'Cross-repo', stages: [S('planner'), S('refiner'), S('planReviewer'), S('implementer', { fanOut: false }), S('reviewer')] }, { registry: REG });
+  return buildProposal({ round: 1, shape: built.shape, template: built.template, match: null, tunables: built.tunables, registry: REG, models: MODELS, isWorkspace: true, members });
+}
+
+test('buildProposal on a workspace: the reviewer keeps its authored key and shows the variant it runs; workspaceFanOut nodes are locked to fan out', () => {
+  const p = workspaceProposal();
+  assert.equal(p.nodes.n_reviewer.key, 'reviewer', 'the row keeps the AUTHORED key (D-W6)');
+  assert.equal(p.nodes.n_reviewer.runKey, 'workspaceReviewer');
+  assert.equal(p.nodes.n_reviewer.label, REG.workspaceReviewer.displayName);
+  for (const id of ['n_planner', 'n_refiner', 'n_planreviewer', 'n_implementer', 'n_reviewer']) {
+    assert.equal(p.nodes[id].fanOut, true, `${id} fans out (resolveGraph forces it)`);
+    assert.equal(p.nodes[id].fanOutLocked, true, `${id} is locked`);
+    assert.equal(p.nodes[id].canFanOut, false, `${id} offers no editable switch`);
+  }
+  assert.equal('runKey' in p.nodes.n_planner, false, 'only a substituted node carries runKey');
+  assert.equal(p.manifest.graph.nodes.find((n) => n.id === 'n_reviewer').key, 'reviewer', 'the manifest is built from the authored template');
+  assert.equal(p.target, 'workspace');
+  assert.deepEqual(p.members, ['api', 'web', 'x'.repeat(80)], 'member names are cleaned, empties dropped');
+});
+
+test('buildProposal on a project: no variant, no lock — node entries carry no runKey/fanOutLocked keys', () => {
+  const built = assembleShape({ stages: [S('planner'), S('reviewer')] }, { registry: REG });
+  const p = buildProposal({ round: 1, shape: built.shape, template: built.template, tunables: built.tunables, registry: REG, models: MODELS, members: ['ignored'] });
+  for (const n of Object.values(p.nodes)) { assert.equal('runKey' in n, false); assert.equal('fanOutLocked' in n, false); }
+  assert.equal(p.nodes.n_reviewer.label, REG.reviewer.displayName);
+  assert.equal(p.target, 'project');
+  assert.deepEqual(p.members, [], 'members ride only a workspace proposal');
+});
+
+test('sanitizeProposalAnswer drops fanOut on a locked node and keeps its model/effort edits', () => {
+  const p = workspaceProposal();
+  const acc = sanitizeProposalAnswer({ decision: 'accept', nodes: { n_planner: { fanOut: false, model: 'claude-sonnet-5', effort: 'high' }, n_implementer: { fanOut: false } } }, { proposal: p, models: MODELS, registry: REG });
+  assert.deepEqual(acc.nodes, { n_planner: { model: 'claude-sonnet-5', effort: 'high' } });
 });
 
 test('buildProposal: a matched workflow — the candidate ids and its own id ride the manifest; order follows the row', () => {

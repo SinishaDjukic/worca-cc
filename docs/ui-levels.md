@@ -145,6 +145,8 @@ be skipped by forgetting it.
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as workflow defaults"; memory scope | E |
 
+The **Auto** workflow option is available for both targets — a project and a workspace.
+
 ### Running
 
 | Element | Level |

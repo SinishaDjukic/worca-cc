@@ -24,6 +24,14 @@ export const RECIPE_GUIDE = [
   'Rules: only a clarifier stage asks the user up front; a verifier loops automatically to the nearest earlier stage that can take its verdict (declare "loops" only to override, "loop": false to suppress); give "selfLoop": true to every stage whose card says it can loop on itself; use "parallel" only for stages that do not depend on each other; a stage after a parallel group waits for the whole group on every cycle; a verifier after a group loops back to a stage BEFORE the group unless it reads a member\'s output directly (the assembler enforces this — never loop into a member the verifier does not read); plugin and user agents (the card\'s origin field: plugin:<name> or user) fit wherever their ports match.',
 ].join('\n');
 
+// Rendered by the classifier system prompt when the run targets a workspace, and ONCE in the
+// Ask catalog (prompt.mjs) so a hand-authored workspace shape follows the same rule (D-W4).
+export const WORKSPACE_GUIDE = [
+  '## Workspace targets (several repositories)',
+  'On a workspace the engine already spreads the work: planner, refiner, planReviewer and implementer fan out per project or per plan task (the implementer runs one sub-agent per plan task, cap 8), and reviewer runs as the workspace reviewer. Never add stages to split the work by repository.',
+  '- the large-task modifier does not apply to a workspace: never insert decomposer and never set fanOut; take the rung the task would get without that modifier',
+].join('\n');
+
 const S = (agent, extra = {}) => ({ agent, ...extra });
 const REFINER = () => S('refiner', { selfLoop: true });
 

@@ -263,6 +263,61 @@ test('saved workflow card: graph stays with inert chips, footer is Open in compo
   ]);
 });
 
+test('target line: a muted line under the card head names the workspace (or project) in building, proposed, saved, declined and failed; an old card with neither field shows none', async () => {
+  const WS = { workspaceId: 'wks-team-00000001', workspaceName: 'Team' };
+  const targetText = (sel) => { const el = ctx.window.document.querySelector(sel); return el ? (el.querySelector('[data-ask-wf-target]') || {}).textContent ?? null : undefined; };
+  let ctx;
+  await checkRows([
+    { name: 'workspace card: "workspace · Team" while building, "· 2 projects" once proposed, and on through saved/declined/failed', run: async () => {
+      ctx = await boot();
+      await openSheet(ctx.window);
+      await sendText(ctx.window, 'please help');
+      ctx.recv({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
+      flip(ctx, 2, { state: 'building', card: { type: 'workflow', mode: 'task', task: 'x', ...WS, name: '', note: '', thenRun: true, trace: { step: 1, startedAt: 't' } } });
+      await settle(ctx.window, 4);
+      assert.equal(targetText('[data-ask-wfcard="building"]'), 'workspace · Team');
+      // The proposed workspace card: the node's fanOutLocked shows the read-only "per project" band flag.
+      const p = proposalFor();
+      const locked = p.order[p.order.length - 1];
+      const nodes = { ...p.nodes, [locked]: { ...p.nodes[locked], fanOutLocked: true } };
+      const wsCard = (over = {}) => wfCard({ ...WS, members: ['proj', 'lib'], target: 'workspace', nodes, projectKey: undefined, projectName: undefined, ...over });
+      flip(ctx, 3, { state: 'proposed', card: wsCard() });
+      await settle(ctx.window, 6);
+      assert.equal(targetText('[data-ask-wfcard="proposed"]'), 'workspace · Team · 2 projects');
+      const el = ctx.window.document.querySelector('[data-ask-wfcard="proposed"]');
+      assert.ok([...el.querySelectorAll('.ask-wfcard-graph *')].some((n) => n.children.length === 0 && n.textContent === 'per project'), 'the per-project band flag shows on the locked node');
+      flip(ctx, 4, { state: 'saved', workflowId: 'wf_rename-fix', card: wsCard({ name: 'Rename fix', adopted: false }) });
+      await settle(ctx.window, 6);
+      assert.equal(targetText('[data-ask-wfcard="saved"]'), 'workspace · Team · 2 projects');
+      flip(ctx, 5, { state: 'declined', card: { type: 'workflow', mode: 'task', name: 'Nope', ...WS } });
+      await settle(ctx.window, 4);
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined — Nope', 'the stub text is unchanged');
+      assert.equal(ctx.window.document.querySelector('[data-ask-wf-target]').textContent, 'workspace · Team');
+      flip(ctx, 6, { state: 'failed', error: 'boom', card: { type: 'workflow', mode: 'task', ...WS } });
+      await settle(ctx.window, 4);
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub.ask-card-failed').textContent, 'Proposal failed: boom');
+      assert.equal(ctx.window.document.querySelector('[data-ask-wf-target]').textContent, 'workspace · Team');
+    } },
+    { name: 'project card: the project name, else the key; an old card with neither field has no line', run: async () => {
+      ctx = await boot();
+      await openBuilding(ctx);
+      assert.equal(targetText('[data-ask-wfcard="building"]'), 'proj-00000001', 'no projectName ⇒ the key');
+      flip(ctx, 3, { state: 'proposed', card: wfCard() });
+      await settle(ctx.window, 6);
+      assert.equal(targetText('[data-ask-wfcard="proposed"]'), 'proj');
+      // A same-state frame reuses the cached element, so the old card arrives as a state change.
+      flip(ctx, 4, { state: 'saved', workflowId: 'wf_rename-fix', card: wfCard({ projectKey: undefined, projectName: undefined, name: 'Old' }) });
+      await settle(ctx.window, 6);
+      assert.equal(targetText('[data-ask-wfcard="saved"]'), null, 'an old card shows no target line');
+      flip(ctx, 5, { state: 'declined', card: { type: 'workflow', mode: 'task', name: 'Old' } });
+      await settle(ctx.window, 4);
+      assert.equal(ctx.window.document.querySelector('[data-ask-wf-target]'), null);
+      assert.equal(ctx.window.document.querySelector('.ask-card-stub').textContent, 'Declined — Old');
+      assert.equal(ctx.window.document.querySelector('.ask-wfcard-stubwrap'), null, 'an old stub stays a bare stub');
+    } },
+  ]);
+});
+
 test('a synthetic user row renders the notice and no bubble; a typed row still renders its bubble', async () => {
   const ctx = await boot();
   await openSheet(ctx.window);

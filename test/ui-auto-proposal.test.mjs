@@ -93,3 +93,26 @@ test('a matched proposal reads "Same as your saved workflow"; an empty graph mou
   assert.equal(fingerprintLine({}), '');
   assert.deepEqual(proposalBands({ models: [{ id: 'm', label: 'M' }], nodes: { n: { model: '', effort: '', askQuestions: false } }, manifest: { graph: { nodes: [], wires: [] } } }), { n: { model: '', effort: '', flags: [] } });
 });
+
+test('workspace proposal: target chip first with member names, "per project" band flag on locked nodes, workspace header as fingerprint', () => {
+  const empty = { graph: { nodes: [], wires: [] } };
+  const ws = renderAutoProposal({ round: 1, name: 'x', target: 'workspace', members: ['Alpha', 'Beta'], taskKind: 'prompt', manifest: empty, nodes: {}, order: [] }, { doc });
+  const first = ws.parts.signals.children[0];
+  assert.equal(first.className, 'ask-wfcard-sig target');
+  assert.equal(first.textContent, 'workspace · 2 projects');
+  assert.equal(first.title, 'Alpha, Beta');
+  assert.equal(ws.parts.signals.children[1].textContent, 'prompt');
+  ws.destroy();
+  for (const target of ['project', undefined]) {
+    const pr = renderAutoProposal({ round: 1, name: 'x', target, members: ['Alpha'], taskKind: 'prompt', manifest: empty, nodes: {}, order: [] }, { doc });
+    assert.equal(pr.parts.signals.querySelector('.target'), null, `no target chip for target=${target}`);
+    pr.destroy();
+  }
+  const bands = proposalBands({ nodes: { a: { model: '', effort: '', fanOutLocked: true, runKey: 'a' }, b: { model: '', effort: '' } }, manifest: empty });
+  assert.deepEqual(bands.a.flags, [{ text: 'per project', cls: 'fan', title: 'Runs per project on a workspace' }]);
+  assert.deepEqual(bands.b.flags, []);
+  const fingerprint = 'workspace: Team — 2 projects\ndescription: shared\n## A (a)\nhints: x\n## B (b)\nhints: y';
+  assert.equal(fingerprintLine({ target: 'workspace', fingerprint }), 'workspace: Team — 2 projects');
+  assert.equal(fingerprintLine({ target: 'workspace', signals: ['fingerprint: ws sig'], fingerprint }), 'ws sig', 'a fingerprint: signal still wins');
+  assert.equal(fingerprintLine({ target: 'project', fingerprint: 'top-level: a\nhints: web-ui' }), 'web-ui');
+});

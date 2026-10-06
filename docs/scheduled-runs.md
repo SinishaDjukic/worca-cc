@@ -251,9 +251,10 @@ so the run reads the issue as it is when it starts, and can write its result bac
   fetches it again at start). Only the `listTasks` and `getTask` ops are reachable from Ask.
 - A multi-profile source uses the profile the project (or workspace) is bound to; when none is
   bound Ask asks which. A brief and a source together are refused — POST /api/run takes one.
-- **Auto** (`wf_auto`) picks the workflow from the task when the run starts (projects only).
-  In a project with human-in-the-loop on, an Auto run waits for its proposed workflow to be
-  accepted, which an unattended run cannot do by itself — Ask says so.
+- **Auto** (`wf_auto`) picks the workflow from the task when the run starts, on a project or a
+  workspace. With human-in-the-loop on (a project's stored switch; a workspace run is on by
+  default), an Auto run waits for its proposed workflow to be accepted, which an unattended
+  run cannot do by itself — Ask says so.
 - *Open in New Pipeline* is hidden on a tracker-task card: the source pane cannot be pre-filled
   from a card yet.
 

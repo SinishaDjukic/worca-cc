@@ -3,9 +3,11 @@ import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { gitDir } from './helpers/git-dir.mjs';
+import { gitDir, templateRepo } from './helpers/git-dir.mjs';
+import { projectKey } from '../src/core/store.mjs';
+import { workspaceKey } from '../src/core/workspaces.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { normalizeShape } from '../src/shared/graph/assemble.mjs';
 import { ClassifierError } from '../src/core/auto/classify.mjs';
@@ -431,4 +433,71 @@ test('the setup replay stages requiresAssets, not only the skills gate', { timeo
 
   await access(join(second.pipeline.dir, 'deck-kit', 'CONTRACT.md'));
   await access(join(second.pipeline.dir, 'deck-kit', 'deck-stage.js'));
+});
+
+// ── Workspace targets ──
+const wsCreated = [];
+after(() => Promise.all(wsCreated.map((d) => rm(d, { recursive: true, force: true }))));
+/** The opts the server builds for a workspace Auto run (as orchestrator-workspace-scan's scanOpts). */
+function wsOpts(name) {
+  const dirs = ['a', 'b'].map((l) => { const d = templateRepo(`auto-resume-ws-${l}`, { branch: 'main', user: true, files: { 'seed.txt': 'seed\n' } }); wsCreated.push(d); return d; });
+  const id = workspaceKey({ name, projectPaths: dirs });
+  const projects = dirs
+    .map((d) => ({ projectDir: d, projectKey: projectKey(d), projectName: basename(d), branch: { source: 'main' } }))
+    .sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));
+  return { workspace: { id, key: id, name, description: '', projects }, branch: { source: 'main' }, workflowId: 'wf_auto', prompt: 'Change both services.', claude: { mock: true } };
+}
+/** Pin WORCA_RUN_ROOT to detached for one test, restoring it afterwards. */
+async function detached(fn) {
+  const prev = process.env.WORCA_RUN_ROOT;
+  process.env.WORCA_RUN_ROOT = 'detached';
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prev; }
+}
+
+test('workspace B4: a pause while the proposal is open resumes INTO the same proposal — no classifier call, humanInLoop kept from the point', { timeout: 180000 }, async () => {
+  await detached(async () => {
+    const ws = wsOpts('Auto resume WS');
+    let calls = 0;
+    const first = createOrchestrator({ ...ws, humanInLoop: true, classify: async (input) => { calls += 1; return shapeOf(QUICK, 0.02)(input); } });
+    first.on('question', (q) => { if (q.kind === 'workflow') setImmediate(() => first.pause()); });
+    const r1 = await first.run();
+    assert.equal(r1.status, 'paused', JSON.stringify(r1));
+    const saved = readPipelineForResume(first.getState().id);
+    assert.equal(saved.resumePoint.manifest.auto.status, 'deciding');
+    assert.equal(saved.resumePoint.auto.pending?.shape?.name, 'Quick fix', 'the open proposal rides the point');
+    assert.equal(saved.resumePoint.auto.humanInLoop, true);
+    // The second process is opened with the switch OFF: the point's value must win.
+    const second = createOrchestrator({ ...ws, humanInLoop: false, resume: saved, classify: async () => { throw new Error('the classifier must not run again'); } });
+    const seen = answerer(second, () => ({ decision: 'accept', name: 'Quick fix', nodes: {} }));
+    const r2 = await second.resume();
+    assert.equal(r2.status, 'done', r2.error);
+    assert.equal(calls, 1);
+    const asked = seen.filter((q) => q.kind === 'workflow');
+    assert.equal(asked.length, 1, 'the SAME proposal is re-asked once (humanInLoop restored)');
+    assert.equal(asked[0].workflow.round, 1);
+    assert.equal(asked[0].workflow.target, 'workspace');
+    const st = second.getState();
+    assert.equal(st.stepper.auto.humanInLoop, true);
+    assert.equal(st.stepper.auto.rounds, 1, 'a replay is not a new round');
+    assert.ok(st.stepper.graph.nodes.some((n) => n.key === 'workspaceReviewer'), 'the replayed adoption still runs the workspace variant');
+  });
+});
+
+test('workspace, human out of the loop: a classifier that stays rate-limited falls back to the default recipe and adopts the workspace variants', { timeout: 180000 }, async () => {
+  process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
+  try {
+    await detached(async () => {
+      let calls = 0;
+      const orch = createOrchestrator({ ...wsOpts('Auto fallback WS'), humanInLoop: false, classify: async () => { calls++; throw transient('rate_limit', POOL_429); } });
+      const res = await orch.run();
+      assert.equal(res.status, 'done', res.error);
+      assert.equal(calls, 4, '1 call + 3 retries');
+      const st = orch.getState();
+      assert.equal(st.stepper.auto.via, 'fallback');
+      assert.match(st.stepper.auto.reason, /^rate_limit: .*429/);
+      const agents = st.stepper.graph.nodes.filter((n) => n.kind === 'agent');
+      assert.deepEqual(agents.map((n) => n.key), ['planner', 'refiner', 'implementer', 'workspaceReviewer'], 'the default recipe, reviewer as its workspace variant');
+      assert.ok(agents.every((n) => n.fanOut === true), 'every workspaceFanOut node fans out');
+    });
+  } finally { delete process.env.WORCA_RECOVERY_BACKOFF_MS; }
 });

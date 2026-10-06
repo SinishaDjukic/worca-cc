@@ -1167,9 +1167,9 @@ const WF_TOOL = 'mcp__worca__propose_workflow';
 const wfStart = (onEvent, id, input) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: WF_TOOL, input }] } });
 const wfResult = (onEvent, id, text, isError = false) => push(onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError ? { is_error: true } : {}) }] } });
 const drain = async () => { for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r)); };
-const BUILDING_KEYS = ['mode', 'name', 'note', 'projectKey', 'projectName', 'task', 'thenRun', 'trace', 'type'];
-const PROPOSED_KEYS = ['costUsd', 'fingerprint', 'ignoredProjectOverrides', 'manifest', 'match', 'mode', 'models', 'name', 'nodes', 'note', 'order',
-  'projectKey', 'projectName', 'reasoning', 'round', 'shape', 'signals', 'size', 'summary', 'taskKind', 'thenRun', 'type', 'warnings'];
+const BUILDING_KEYS = ['mode', 'name', 'note', 'projectKey', 'projectName', 'task', 'thenRun', 'trace', 'type', 'workspaceId', 'workspaceName'];
+const PROPOSED_KEYS = ['costUsd', 'fingerprint', 'ignoredProjectOverrides', 'manifest', 'match', 'members', 'mode', 'models', 'name', 'nodes', 'note', 'order',
+  'projectKey', 'projectName', 'reasoning', 'round', 'shape', 'signals', 'size', 'summary', 'target', 'taskKind', 'thenRun', 'type', 'warnings', 'workspaceId', 'workspaceName'];
 
 test('workflow card: building at START, proposed at RESULT (cost booked); a tool error, unassemblable shape, {ok:false} or a mid-build end fails it with the reason', async () => {
   await checkRows([
@@ -1212,6 +1212,55 @@ test('workflow card: building at START, proposed at RESULT (cost booked); a tool
       const done = frames.find((f) => f.type === 'ask-done');
       assert.equal(done.costUsd, 0.07, 'RESULT() bills 0.05 (test/ask-turn.test.mjs:20) + the classifier\'s 0.02 ride the turn\'s four sinks (PD2)');
       assert.equal(final.costUsd, 0.07);
+      assert.equal(card.card.workspaceId, null); assert.equal(card.card.workspaceName, null);
+    } },
+    { name: 'workflow card: a workspace-pinned chat with no explicit target builds a workspace card; the workspace result revalidates with workspaceId and names the workspace', run: async () => {
+      const s = seed();
+      let midBlocks = null; let revalArgs = null;
+      const { turn } = makeTurn(s, { pinnedScope: { workspaceId: 'ws_00000001' } }, {
+        revalidateWorkflow: async (o) => { revalArgs = o; return { proposal: { ...proposalFor(), target: 'workspace', members: [] }, shape: o.shape, summary: 's', workspace: { id: 'ws_00000001', name: 'Fleet' } }; },
+        runClaudeImpl: async (opts) => {
+          wfStart(opts.onEvent, 'toolu_ws', { task: 'Add a settings page' });
+          await drain();
+          midBlocks = getMessage(s.asst.id).blocks;
+          wfResult(opts.onEvent, 'toolu_ws', JSON.stringify({ ok: true, mode: 'task', projectKey: null, workspaceId: 'ws_00000001', workspaceName: null, projectName: 'Stray',
+            summary: 's', shape: { name: 'N', stages: [] }, costUsd: 0, fingerprint: 'workspace: Fleet' }));
+          await drain();
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      const building = (midBlocks || []).find((b) => b.kind === 'card');
+      assert.equal(building.card.projectKey, null, 'a pinned workspace is the default target');
+      assert.equal(building.card.workspaceId, 'ws_00000001');
+      assert.equal(building.card.workspaceName, null);
+      assert.equal(revalArgs.workspaceId, 'ws_00000001', 'revalidate gets the workspace');
+      const card = getMessage(s.asst.id).blocks.find((b) => b.kind === 'card');
+      assert.equal(card.state, 'proposed');
+      assert.equal(card.card.workspaceId, 'ws_00000001');
+      assert.equal(card.card.workspaceName, 'Fleet', 'the parent\'s lookup names the workspace when the child returns null');
+      assert.equal(card.card.projectName, null, 'a workspace card carries no project name');
+      assert.equal(card.card.projectKey, null);
+      assert.equal(card.card.target, 'workspace');
+    } },
+    { name: 'workflow card: an explicit projectKey wins over a workspace pin', run: async () => {
+      const s = seed();
+      let midBlocks = null;
+      const { turn } = makeTurn(s, { pinnedScope: { workspaceId: 'ws_00000001' } }, {
+        revalidateWorkflow: async (o) => ({ proposal: proposalFor(), shape: o.shape, summary: 's', project: { key: 'demo-00000001', name: 'Demo' } }),
+        runClaudeImpl: async (opts) => {
+          wfStart(opts.onEvent, 'toolu_p', { task: 'Add a settings page', projectKey: 'demo-00000001' });
+          await drain();
+          midBlocks = getMessage(s.asst.id).blocks;
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      const building = (midBlocks || []).find((b) => b.kind === 'card');
+      assert.equal(building.card.projectKey, 'demo-00000001');
+      assert.equal(building.card.workspaceId, null);
     } },
     { name: 'workflow card: a tool error, an unassemblable shape or an {ok:false} classifier result flips the card to failed with the reason (the failed classifier\'s spend is still booked); a turn that ends mid-build fails it', run: async () => {
       const s = seed();

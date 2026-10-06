@@ -4,7 +4,7 @@ import { checkRows } from './helpers/rows.mjs';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fingerprintProject, FINGERPRINT_LIMITS } from '../src/core/auto/fingerprint.mjs';
+import { fingerprintProject, FINGERPRINT_LIMITS, fingerprintWorkspace, WORKSPACE_FINGERPRINT_LIMITS } from '../src/core/auto/fingerprint.mjs';
 
 const dirs = [];
 after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
@@ -78,4 +78,51 @@ test('the bounds hold: dotfiles are hidden (except .github), the walk is depth-c
   assert.equal(fp.split('\n')[0].slice('top-level: '.length).split(' … ')[0].split(' ').length, FINGERPRINT_LIMITS.maxTopEntries, 'exactly maxTopEntries names are listed');
   assert.ok(!/Python/.test(fp), 'the language walk stops at FINGERPRINT_LIMITS.depth');
   assert.match(fp, /TypeScript \(1\)/);
+});
+
+test('a workspace fingerprint: a header line, then one block per member in projectKey order', async () => {
+  await checkRows([
+    { name: 'header, description and member order', run: async () => {
+      const web = await fixture({ 'package.json': JSON.stringify({ dependencies: { react: '1' } }), 'src/app.tsx': '' });
+      const api = await fixture({ 'pyproject.toml': '[project]\ndependencies = ["fastapi"]\n', 'app/main.py': '' });
+      const fp = await fingerprintWorkspace(
+        [{ projectKey: 'web', projectName: 'Web', projectDir: web }, { projectKey: 'api', projectName: 'API', projectDir: api }],
+        { name: 'Shop', description: 'the  storefront\nand its API' },
+      );
+      const lines = fp.split('\n');
+      assert.equal(lines[0], 'workspace: Shop — 2 projects');
+      assert.equal(lines[1], 'description: the storefront and its API');
+      const apiAt = lines.indexOf('## API (api)');
+      const webAt = lines.indexOf('## Web (web)');
+      assert.ok(apiAt > 1 && webAt > apiAt, 'blocks follow projectKey order, not input order');
+      assert.match(lines[apiAt + 1], /^top-level: /);
+      assert.match(fp, /^pyproject\.toml \(python\): fastapi$/m);
+      assert.match(fp, /^package\.json \(node\): react$/m);
+    } },
+    { name: 'singular count, no description line, a missing dir degrades', run: async () => {
+      const fp = await fingerprintWorkspace([{ projectKey: 'gone', projectDir: join(tmpdir(), 'worca-fp-ws-does-not-exist') }], { name: 'Solo' });
+      assert.equal(fp, 'workspace: Solo — 1 project\n## gone (gone)\nfingerprint: unavailable (ENOENT)');
+    } },
+    { name: 'an empty member list gives the header only', run: async () => {
+      assert.equal(await fingerprintWorkspace([], { name: 'Empty' }), 'workspace: Empty — 0 projects');
+      assert.equal(await fingerprintWorkspace(undefined), 'workspace: workspace — 0 projects');
+    } },
+  ]);
+});
+
+test('a workspace fingerprint stays within its byte budget and names the members it could not fit', async () => {
+  const deps = Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`some-really-long-dependency-name-number-${i}`, '1']));
+  const big = await fixture({ 'package.json': JSON.stringify({ dependencies: deps }) });
+  const members = ['e', 'c', 'a', 'd', 'b'].map((k) => ({ projectKey: k, projectDir: big }));
+  const fp = await fingerprintWorkspace(members, { name: 'Many' }, { maxBytes: 1200 });
+  assert.deepEqual(fp.split('\n').filter((l) => l.startsWith('## ')), ['## a (a)', '## b (b)', '## c (c)']);
+  const last = fp.split('\n').at(-1);
+  assert.equal(last, '… (+2 more: d, e)');
+  const body = fp.slice(0, -(last.length + 1));
+  assert.ok(Buffer.byteLength(body, 'utf8') <= 1200, `${Buffer.byteLength(body)} bytes`);
+  assert.ok(Buffer.byteLength(last, 'utf8') <= 400);
+
+  const all = await fingerprintWorkspace(members, { name: 'Many' });
+  assert.ok(Buffer.byteLength(all, 'utf8') <= WORKSPACE_FINGERPRINT_LIMITS.maxBytes + 400, `${Buffer.byteLength(all)} bytes`);
+  assert.equal(WORKSPACE_FINGERPRINT_LIMITS.maxBytes, FINGERPRINT_LIMITS.maxBytes * 2);
 });

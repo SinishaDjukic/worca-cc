@@ -11,6 +11,7 @@ import {
 import { SANDBOX_NOTE } from '../src/core/ask/spawn.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { createAskTools } from '../src/core/ask/tools.mjs';
+import { RECIPE_GUIDE, WORKSPACE_GUIDE } from '../src/core/auto/recipes.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 // Everything that can start a new line in a rendered prompt: C0 + DEL, the C1
@@ -498,7 +499,7 @@ test('the context header says which part of a run page is open; runPage is an en
 
 // ── P3: propose_workflow — the two modes, the two events, the placeable agents ─
 
-test('catalog: the "Workflows you can create" section lists the shape DSL, one line per agent WITH its key, and the recipe guide; byte-stable', () => {
+test('catalog: the "Workflows you can create" section lists the shape DSL, one line per agent WITH its key, the recipe guide and the workspace guide once; byte-stable', () => {
   const a = buildSystemPrompt(CATALOG);
   const i = a.indexOf('### Workflows you can create (propose_workflow)');
   assert.ok(i > 0 && i > a.indexOf('### Workflows (steps in order'), 'the section follows the saved workflows');
@@ -508,6 +509,8 @@ test('catalog: the "Workflows you can create" section lists the shape DSL, one l
   assert.ok(section.indexOf('- planner') < section.indexOf('- reviewer'), 'sorted by key regardless of catalog order');
   assert.ok(section.includes('· verdict') && section.includes('· fanOut'), 'flags');
   assert.ok(section.includes('## Recipes (starting points'), 'RECIPE_GUIDE verbatim');
+  assert.equal(section.split(WORKSPACE_GUIDE).length - 1, 1, 'WORKSPACE_GUIDE renders once');
+  assert.ok(section.indexOf(WORKSPACE_GUIDE) > section.indexOf(RECIPE_GUIDE), 'the workspace guide follows the recipes');
   const permuted = { ...CATALOG, agents: [...CATALOG.agents].reverse() };
   assert.equal(buildSystemPrompt(permuted), a);
   assert.equal(buildSystemPrompt({ ...CATALOG, agents: undefined }).includes('### Workflows you can create'), true, 'no agents ⇒ the section still renders (DSL + recipes)');

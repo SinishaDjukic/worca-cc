@@ -146,7 +146,7 @@ test('propose (task mode): a classifier failure resolves {ok:false} WITH the spe
   const p = await project('wffail');
   const timeout = defaultWorkflowDeps({ classify: async () => { throw new ClassifierError('CLASSIFIER_TIMEOUT', 'no reply after 90s', [], { costUsd: 0.03 }); } });
   const out = await timeout.workflow.propose({ mode: 'task', task: WEB_TASK, projectKey: p.key });
-  assert.deepEqual(out, { ok: false, mode: 'task', projectKey: p.key, projectName: 'wffail', error: 'the workflow classifier timed out: no reply after 90s', costUsd: 0.03 });
+  assert.deepEqual(out, { ok: false, mode: 'task', projectKey: p.key, projectName: 'wffail', workspaceId: null, workspaceName: null, error:'the workflow classifier timed out: no reply after 90s', costUsd: 0.03 });
   // Two billed replies whose shape the REAL assembler rejects (unknown agent) ⇒ one retry with the issues as feedback, then {ok:false} carrying BOTH costs.
   const seen = [];
   const bad = defaultWorkflowDeps({ classify: async (input) => { seen.push(input); return { shape: { name: 'x', stages: [{ agent: 'no-such-agent' }] }, warnings: [], costUsd: 0.02 }; } });
@@ -163,7 +163,91 @@ test('propose (task mode): a classifier failure resolves {ok:false} WITH the spe
   assert.equal(seen.at(-1).signal, ctrl.signal, 'the child lifetime signal is threaded into classifyTask');
 });
 
+test('workspace target: propose resolves the workspace, revalidate builds a workspace proposal, input errors throw before any spend', async () => {
+  const { createWorkspace } = await import('../src/core/workspaces.mjs');
+  const { ClassifierError } = await import('../src/core/auto/classify.mjs');
+  const ws = await createWorkspace({ name: 'Wf Team', description: 'two services', projectPaths: [gitDir('wfws-a'), gitDir('wfws-b')] });
+  const keys = ws.projectKeys.slice().sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  await checkRows([
+    { name: 'workspaceTarget: members sorted by projectKey (code unit), named by basename; null for no/unknown id', run: async () => {
+      const { workspaceTarget } = await import('../src/core/ask/workflow-deps.mjs');
+      const t = await workspaceTarget(ws.id);
+      assert.equal(t.id, ws.id); assert.equal(t.name, 'Wf Team'); assert.equal(t.description, 'two services');
+      assert.deepEqual(t.members.map((m) => m.projectKey), keys);
+      for (const m of t.members) { assert.ok(ws.projectPaths.includes(m.projectDir)); assert.ok(m.projectDir.endsWith(m.projectName)); }
+      assert.equal(await workspaceTarget('nope-00000000'), null);
+      assert.equal(await workspaceTarget(''), null);
+    } },
+    { name: 'propose (task mode, workspace) under mock: a workspace fingerprint + descriptor reach the classifier, no look; the result names the workspace', run: async () => {
+      const seen = [];
+      const deps = defaultWorkflowDeps({ classify: async (input) => { seen.push(input); return { shape: mockShapeFor(PLAIN_TASK), warnings: [], costUsd: 0 }; } });
+      const out = await deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, workspaceId: ws.id });
+      assert.equal(out.ok, true);
+      assert.equal(out.workspaceId, ws.id); assert.equal(out.workspaceName, 'Wf Team');
+      assert.equal(out.projectKey, null); assert.equal(out.projectName, null);
+      assert.match(out.fingerprint, /^workspace: Wf Team — 2 projects/);
+      assert.equal(seen.length, 1);
+      assert.match(seen[0].fingerprint, /^workspace: /);
+      assert.equal(seen[0].repoLook, false); assert.equal(seen[0].cwd, join(worcaHome(), 'tmp', 'ask'));
+      assert.equal(seen[0].workspace.name, 'Wf Team');
+      assert.deepEqual(seen[0].workspace.members.map((m) => [m.projectKey, m.checkout]), keys.map((k) => [k, null]));
+    } },
+    { name: 'propose (task mode, workspace) off mock: the classifier runs at the look root with one checkout per member, removed after', run: async () => {
+      delete process.env.WORCA_MOCK;
+      try {
+        const seen = [];
+        const deps = defaultWorkflowDeps({ classify: async (input) => {
+          seen.push({ ...input, existed: input.workspace.members.map((m) => m.checkout && existsSync(join(input.cwd, m.checkout))) });
+          return { shape: mockShapeFor(PLAIN_TASK), warnings: [], costUsd: 0 };
+        } });
+        const out = await deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, workspaceId: ws.id });
+        assert.equal(out.ok, true);
+        assert.equal(seen[0].repoLook, true);
+        assert.ok(seen[0].cwd.startsWith(join(worcaHome(), 'tmp', 'ask', 'auto-look-')), seen[0].cwd);
+        assert.deepEqual(seen[0].workspace.members.map((m) => m.checkout), keys.map((k) => `./repos/${k}`));
+        assert.deepEqual(seen[0].existed, [true, true], 'each member checkout exists during the call');
+        assert.equal(existsSync(seen[0].cwd), false, 'and the look root is gone after it');
+      } finally { process.env.WORCA_MOCK = '1'; }
+    } },
+    { name: 'propose (shape mode, workspace): assembles without a classifier call and returns workspaceId/workspaceName', run: async () => {
+      let calls = 0;
+      const deps = defaultWorkflowDeps({ classify: async () => { calls += 1; throw new Error('never'); } });
+      const out = await deps.workflow.propose({ mode: 'shape', shape: mockShapeFor('rename a symbol'), workspaceId: ws.id });
+      assert.equal(calls, 0);
+      assert.equal(out.ok, true); assert.equal(out.workspaceId, ws.id); assert.equal(out.workspaceName, 'Wf Team'); assert.equal(out.projectKey, null);
+    } },
+    { name: 'propose: an unknown workspaceId and both ids throw before any classify call', run: async () => {
+      let calls = 0;
+      const deps = defaultWorkflowDeps({ classify: async () => { calls += 1; return { shape: mockShapeFor(PLAIN_TASK), warnings: [], costUsd: 0 }; } });
+      await assert.rejects(() => deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, workspaceId: 'nope-ws' }), /^Error: unknown workspace "nope-ws" — list_projects names the workspaces$/);
+      const p = await project('wfboth');
+      await assert.rejects(() => deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, projectKey: p.key, workspaceId: ws.id }), /give projectKey or workspaceId, not both/);
+      assert.equal(calls, 0);
+    } },
+    { name: 'propose (task mode, workspace): a ClassifierError resolves {ok:false, costUsd, workspaceId, workspaceName}', run: async () => {
+      const deps = defaultWorkflowDeps({ classify: async () => { throw new ClassifierError('CLASSIFIER_TIMEOUT', 'no reply after 90s', [], { costUsd: 0.03 }); } });
+      const out = await deps.workflow.propose({ mode: 'task', task: PLAIN_TASK, workspaceId: ws.id });
+      assert.deepEqual(out, { ok: false, mode: 'task', workspaceId: ws.id, workspaceName: 'Wf Team', projectKey: null, projectName: null, error: 'the workflow classifier timed out: no reply after 90s', costUsd: 0.03 });
+    } },
+    { name: 'revalidate({workspaceId}): returns the workspace and a proposal targeting it; an unknown id resolves to a project proposal', run: async () => {
+      const r = await revalidateWorkflowProposal({ shape: mockShapeFor(PLAIN_TASK), workspaceId: ws.id, models: MODELS, registry: REG });
+      assert.equal(r.project, null);
+      const t = await (await import('../src/core/ask/workflow-deps.mjs')).workspaceTarget(ws.id);
+      assert.deepEqual(r.workspace, { id: ws.id, name: 'Wf Team', members: t.members.map((m) => m.projectName) });
+      assert.equal(r.proposal.target, 'workspace');
+      assert.deepEqual(r.proposal.members, t.members.map((m) => m.projectName));
+      const none = await revalidateWorkflowProposal({ shape: mockShapeFor(PLAIN_TASK), workspaceId: 'nope-ws', models: MODELS, registry: REG });
+      assert.equal(none.workspace, null); assert.equal(none.proposal.target, 'project');
+    } },
+  ]);
+});
+
 test('event prompt + notice text are single-line and cleaned', () => {
+  // A workspace target: a non-empty workspaceId wins and the line never carries both targets.
+  const wsSaved = workflowEventPrompt({ cardId: 'card_0000aa01', state: 'saved', workflowId: 'wf_x', name: 'A', thenRun: true, projectKey: 'p-1', workspaceId: 'ws-1' });
+  assert.equal(wsSaved, '[worca event] workflow card card_0000aa01 saved as wf_x "A"; thenRun=true; workspace=ws-1');
+  assert.doesNotMatch(wsSaved, /project=/);
+  assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'declined', workspaceId: 'ws-1' }), '[worca event] workflow card card_0000aa01 declined; workspace=ws-1');
   assert.equal(workflowEventPrompt({ cardId: 'card_0000aa01', state: 'saved', workflowId: 'wf_x', name: 'A\nB', thenRun: true, projectKey: 'p-1' }),
     '[worca event] workflow card card_0000aa01 saved as wf_x "A B"; thenRun=true; project=p-1');
   // v7: the name lives inside the line's double quotes (the mock's event regex and the model key on them) — quotes become apostrophes, tags are neutralised.

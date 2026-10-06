@@ -5,7 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { RECIPE_GUIDE, RECIPE_SHAPES, mockShapeFor } from '../src/core/auto/recipes.mjs';
+import { RECIPE_GUIDE, RECIPE_SHAPES, WORKSPACE_GUIDE, mockShapeFor } from '../src/core/auto/recipes.mjs';
 import { assembleShape, normalizeShape } from '../src/shared/graph/assemble.mjs';
 import { runGraphOffline } from './helpers/graph-run.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
@@ -60,6 +60,25 @@ test('RECIPE_GUIDE names every task kind, rung, modifier and agent key; RECIPE_S
   assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer']);
   assert.equal(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.taskKind, 'plan-complete-detailed', 'a given large plan keeps the plan-of-record seed');
   for (const r of RECIPE_SHAPES) { assert.ok(r.id); normalizeShape(r.shape); }
+});
+
+test('mockShapeFor never inserts decomposer or sets fanOut (the workspace path relies on it, D-W4); WORKSPACE_GUIDE forbids both', () => {
+  const texts = ['demo task',
+    'Please add a background job that re-indexes the search catalogue every night and reports failures to the ops channel.',
+    'Add a settings page with a toggle button in the React UI so users can switch themes in the browser.',
+    `Rewrite the storage layer across every service, the API, the CLI and the web UI. ${'Touch many files and subsystems. '.repeat(60)}`,
+    '# Plan\n\n- rename the flag\n- update the test',
+    `# Plan\n\n## Task 1\n${'detail '.repeat(300)}`];
+  for (const text of texts) {
+    for (const humanInLoop of [true, false]) {
+      const stages = mockShapeFor(text, { humanInLoop }).stages;
+      assert.ok(!stages.some((s) => s.agent === 'decomposer'), `${text.slice(0, 30)}: no decomposer`);
+      assert.ok(!stages.some((s) => s.fanOut !== undefined), `${text.slice(0, 30)}: no fanOut`);
+    }
+  }
+  assert.ok(WORKSPACE_GUIDE.startsWith('## Workspace targets'));
+  assert.ok(WORKSPACE_GUIDE.includes('never insert decomposer and never set fanOut'), 'the large-task modifier is switched off on a workspace');
+  assert.ok(WORKSPACE_GUIDE.includes('Never add stages to split the work by repository'));
 });
 
 test('every recipe shape assembles and runs offline to the End card, with and without a human in the loop', { timeout: 300000 }, async () => {

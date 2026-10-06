@@ -266,6 +266,68 @@ test('a save DURING a running turn is queued until it ends', async (tc) => {
   w2.ws.close();
 });
 
+// A workspace-pinned chat (askPinnedScope honours only `pinned: true`). A heading plus ≥ 1200 chars makes the mock classifier
+// pick plan-complete-detailed (implementer + reviewer) — a shape no project case above saves, so the first Save here CREATES a
+// row and the twin case adopts exactly that row whatever the test order. On a workspace the reviewer runs as its workspace
+// variant (`runKey`) and the implementer's fan-out is forced (`fanOutLocked`); the saved row keeps the AUTHORED keys.
+const WS_PLAN = `build me an auto workflow for this plan and run it:\n# Split the config loader\n${'Move each loader step into its own module and keep the public entry point unchanged.\n'.repeat(16)}`;
+const wsCtx = () => ({ pinned: true, workspaceId });
+
+test('workspace chat: the card targets the workspace; Save writes the AUTHORED row (no forced fanOut), the event turn names the workspace and proposes a run on it; a twin is adopted', async () => {
+  const { thread, card } = await proposeWorkflow(wsCtx(), WS_PLAN);
+  assert.equal(card.card.workspaceId, workspaceId); assert.equal(card.card.workspaceName, 'Team');
+  assert.equal(card.card.projectKey, null); assert.equal(card.card.target, 'workspace');
+  assert.equal(card.card.match, null, 'fixture: no twin yet — Save creates a row');
+  assert.equal(card.card.thenRun, true);
+  const implId = Object.keys(card.card.nodes).find((id) => card.card.nodes[id].fanOutLocked);
+  assert.ok(implId, 'a workspace run forces the implementer\'s fan-out');
+  const w = openWs(); await w.opened;                                        // bare: no replay of the finished job
+  const r = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'saved', name: 'Split loader', nodes: { [implId]: { fanOut: false } } });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.block.state, 'saved'); assert.equal(body.block.card.adopted, false);
+  const row = (await (await fetch(`${base}/api/workflows`)).json()).workflows.find((x) => x.id === body.block.workflowId);
+  assert.equal(row.origin, 'auto');
+  const agents = row.nodes.filter((n) => n.kind === 'agent');
+  assert.deepEqual(agents.map((n) => n.key).sort(), Object.values(card.card.nodes).map((n) => n.key).sort(), 'the row keeps the AUTHORED keys, never a runKey');
+  for (const n of agents) assert.equal(n.config && n.config.fanOut, undefined, `no fanOut baked into ${n.key}`);
+
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
+  const snap = await snapshot(thread.id);
+  const notice = snap.messages.find((m) => m.role === 'user' && (m.blocks || []).some((b) => b.kind === 'notice' && b.synthetic));
+  assert.equal(notice.text, `[worca event] workflow card ${card.id} saved as ${body.block.workflowId} "Split loader"; thenRun=true; workspace=${workspaceId}`);
+  const runCard = (snap.messages.at(-1).blocks || []).find((b) => b.kind === 'card' && !b.card.type);
+  assert.ok(runCard && runCard.state === 'proposed', 'the mock event arm proposed a run');
+  assert.equal(runCard.card.workflowId, body.block.workflowId, 'with the saved workflow');
+  assert.equal(runCard.card.workspaceId, workspaceId, 'on the workspace');
+  w.ws.close();
+
+  const twin = await proposeWorkflow(wsCtx(), WS_PLAN);
+  assert.deepEqual(twin.card.card.match, { id: body.block.workflowId, name: 'Split loader' }, 'the second proposal finds the saved row');
+  const before = (await (await fetch(`${base}/api/workflows`)).json()).workflows.length;
+  const w2 = openWs(); await w2.opened;
+  const t = await (await post(`/api/ask/threads/${twin.thread.id}/cards/${twin.card.id}`, { state: 'saved' })).json();
+  assert.equal(t.block.workflowId, body.block.workflowId); assert.equal(t.block.card.adopted, true);
+  assert.equal((await (await fetch(`${base}/api/workflows`)).json()).workflows.length, before, 'no row written');
+  await waitFor(() => frames(w2.msgs, twin.thread.id, 'ask-done').length >= 1);
+  w2.ws.close();
+});
+
+test('workspace chat: Decline names the workspace in the event line; the context header names the workspace', async () => {
+  const { thread, card } = await proposeWorkflow(wsCtx(), NEW_TEXT);
+  const w = openWs(); await w.opened;
+  const dec = await post(`/api/ask/threads/${thread.id}/cards/${card.id}`, { state: 'declined' });
+  assert.equal((await dec.json()).block.state, 'declined');
+  await waitFor(() => frames(w.msgs, thread.id, 'ask-done').length >= 1);
+  const snap = await snapshot(thread.id);
+  const notice = snap.messages.find((m) => m.role === 'user' && m.blocks?.[0]?.synthetic);
+  assert.equal(notice.text, `[worca event] workflow card ${card.id} declined; workspace=${workspaceId}`);
+  const ctx = await mod._testing.resolveAskContext(thread.id, wsCtx(), [], null);
+  const mine = (ctx.cards || []).find((c) => c.id === card.id);
+  assert.deepEqual(mine, { id: card.id, type: 'workflow', state: 'declined', name: card.card.name, workflowId: null, targetName: 'Team' });
+  w.ws.close();
+});
+
 test('an event turn that cannot start (queued behind a spent cost window, or failing immediately) posts a system notice; the queue is not stranded', async () => {
   await checkRows([
     { name: 'a queued event turn that cannot start (total cost window spent by the turn it waited on) posts a system notice instead of vanishing; the queue is not stranded', run: async () => {

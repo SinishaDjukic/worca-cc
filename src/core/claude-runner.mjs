@@ -1490,10 +1490,13 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     if (workflow) {
       // The result the real MCP child would return (plan PD1) — the parent re-assembles it with the real registry.
       const shape = normalizeShape(mockShapeFor(userText, { humanInLoop: true }));
-      const wfInput = { task: userText.slice(0, 2000), projectKey: card.projectKey || null, thenRun: /\brun\b/i.test(userText) };
+      // The card's target: a workspace-scoped chat carries workspaceId, a project chat projectKey — never both.
+      const target = card.workspaceId ? { workspaceId: card.workspaceId } : { projectKey: card.projectKey || null };
+      const targetName = card.workspaceId ? { workspaceName: null } : { projectName: null };
+      const wfInput = { task: userText.slice(0, 2000), ...target, thenRun: /\brun\b/i.test(userText) };
       frames.push(delta('[mock] '), delta('building '), delta('a workflow'), atext(MSG1, 'Building a workflow card.'),
         atool(MSG1, 'toolu_mock_workflow', 'mcp__worca__propose_workflow', wfInput),
-        uresult('toolu_mock_workflow', JSON.stringify({ ok: true, mode: 'task', projectKey: card.projectKey || null, projectName: null, name: shape.name, match: null,
+        uresult('toolu_mock_workflow', JSON.stringify({ ok: true, mode: 'task', ...target, ...targetName, name: shape.name, match: null,
           warnings: [], summary: '', shape, costUsd: 0, fingerprint: 'top-level: (mock)\nhints: mock', note: '', thenRun: wfInput.thenRun })));
       answerMsg = MSG2;
     }

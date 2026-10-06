@@ -46,17 +46,20 @@ export function proposalBands(proposal, nodesState = null, { pick = false } = {}
     const cur = { ...base, ...((nodesState && nodesState[id]) || {}) };
     const flags = [];
     if (cur.askQuestions) flags.push({ text: 'asks', cls: 'q', title: 'may ask you questions' });
+    if (cur.fanOutLocked) flags.push({ text: 'per project', cls: 'fan', title: 'Runs per project on a workspace' });
     for (const l of loops.filter((x) => x.from === id)) flags.push({ text: `${l.self ? '⟳' : '↩'} ${l.maxCycles}`, title: `${l.self ? 'refines itself' : `loops to ${l.toLabel}`} · max ${l.maxCycles} cycles` });
     out[id] = { model: cur.model ? (models.get(cur.model) || cur.model) : '', effort: cur.effort || '', flags, ...(pick ? { pick: true } : {}) };
   }
   return out;
 }
 
-/** The mono line under the chips (A8): a `fingerprint:` signal wins, else the fingerprint's `hints:` line, else its first line. */
+/** The mono line under the chips (A8): a `fingerprint:` signal wins, else (workspace) the `workspace: …` header,
+ *  else the fingerprint's `hints:` line, else its first line. */
 export function fingerprintLine(proposal) {
   const sig = (proposal.signals || []).find((s) => /^fingerprint:/i.test(s));
   if (sig) return sig.replace(/^fingerprint:\s*/i, '');
   const lines = String(proposal.fingerprint || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (proposal.target === 'workspace') return lines[0] || '';
   const hints = lines.find((l) => /^hints:/i.test(l));
   return hints ? hints.replace(/^hints:\s*/i, '') : (lines[0] || '');
 }
@@ -103,6 +106,7 @@ export function renderAutoProposal(proposal, {
   // ---- reasoning, chips, fingerprint
   parts.reason = p.reasoning ? h(doc, 'p', 'ask-wfcard-reason', p.reasoning) : null;
   const sig = h(doc, 'div', 'ask-wfcard-signals');
+  if (p.target === 'workspace') { const chip = h(doc, 'span', 'ask-wfcard-sig target', `workspace · ${(p.members || []).length} projects`); chip.title = (p.members || []).join(', '); sig.appendChild(chip); }
   if (p.taskKind) sig.appendChild(h(doc, 'span', 'ask-wfcard-sig kind', p.taskKind));
   if (p.size) sig.appendChild(h(doc, 'span', 'ask-wfcard-sig size', p.size));
   for (const s of p.signals || []) if (!/^fingerprint:/i.test(s)) sig.appendChild(h(doc, 'span', 'ask-wfcard-sig', s));

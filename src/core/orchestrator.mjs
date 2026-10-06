@@ -41,7 +41,7 @@ import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { RECIPE_SHAPES } from './auto/recipes.mjs';
-import { fingerprintProject } from './auto/fingerprint.mjs';
+import { fingerprintProject, fingerprintWorkspace } from './auto/fingerprint.mjs';
 import { classifyTask, ClassifierError } from './auto/classify.mjs';
 import { autoCandidates, findEquivalentWorkflow } from './auto/match.mjs';
 import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowId } from './auto/proposal.mjs';
@@ -279,7 +279,12 @@ export class GraphOrchestrator extends RunHarness {
     const requireModel = runnable.requireModel;
     if (runnable.note) this._log('orchestrator', requireModel ? 'info' : 'warn', `auto: ${runnable.note}`);
     const model = resolveAutoModel(models);
-    const fingerprint = await fingerprintProject(this.projectDir);
+    const fingerprint = this.isWorkspace
+      ? await fingerprintWorkspace(this.members, {
+        name: this.workspace.name,
+        description: this.workspaceDescription || this.workspace.description || '',
+      })
+      : await fingerprintProject(this.projectDir);
     this._log('orchestrator', 'info', `auto: fingerprint ${Buffer.byteLength(fingerprint, 'utf8')} B`);
     const extras = await this._autoExtras();
     const taskText = this.pipeline?.promptText || this.opts.prompt || '';
@@ -376,11 +381,13 @@ export class GraphOrchestrator extends RunHarness {
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
       // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
       // size the change — this.runCwd is set by _setupRunRoot before the run() hook
-      // (run-harness.mjs:1641) and rehydrated before the resume() hook (:1360). It is never the
+      // and rehydrated by _reattachCheckouts before the resume() hook. It is never the
       // user's live checkout. With no worktree (not a case a project run reaches today) it
-      // falls back to the scratch dir, text-only, exactly as before. (A detached WORKSPACE run's
-      // runCwd is the neutral run root whose repos/<key>/ checkouts sit below it — still readable.)
+      // falls back to the scratch dir, text-only, exactly as before. (A workspace run adds
+      // `workspace` (members + each checkout, ./repos/<key> under a detached run root) and,
+      // under legacy mode, the non-primary worktrees as `addDirs`.)
       model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, bin: this.claude.bin, mock: this.claude.mock,
+      ...this._autoWorkspaceInput(),
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
       envScrub: this.guardrails?.envScrub || undefined,
@@ -450,10 +457,34 @@ export class GraphOrchestrator extends RunHarness {
       tunables, registry, models,
       warnings: [...(classified.warnings || []), ...assembled.warnings],
       costUsd: this._auto.costUsd, fingerprint, ignoredProjectOverrides,
+      isWorkspace: this.isWorkspace, members: this.isWorkspace ? this.members.map((m) => m.projectName || m.projectKey) : [],
     });
     this._log('orchestrator', 'info',
       `auto: round ${round} proposed "${proposal.name}" (${Object.keys(proposal.nodes).length} agents) — ${match ? `same shape as saved workflow "${match.candidate.name}" (${match.candidate.id})` : 'no saved workflow has this shape; Accept saves a new one'}`);
     return { proposal, template, match, tunables, shape: assembled.shape };
+  }
+
+  /** The classifier's view of a workspace run: members + where each checkout is readable (A5).
+   *  A resume decides BEFORE _replaySetup re-creates missing checkouts, so a member may have none
+   *  yet (checkout null). The detached layout is fixed (./repos/<key>, as _setupRunRoot creates
+   *  it) — never derived from runCwd, whose path is not realpath'd like the checkouts are. */
+  _autoWorkspaceInput() {
+    if (!this.isWorkspace) return { workspace: null, addDirs: [] };
+    const primaryKey = this.members[0].projectKey;
+    const detached = this.runRootMode === 'detached';
+    const workDirs = this.workDirs || new Map();
+    const addDirs = [];
+    const members = this.members.map((m) => {
+      const dir = workDirs.get(m.projectKey) || null;
+      let checkout = null;
+      if (this.runCwd && dir) {
+        if (detached) checkout = `./repos/${m.projectKey}`;
+        else if (m.projectKey === primaryKey) checkout = '.';             // legacy: runCwd IS the primary's worktree
+        else { checkout = dir; addDirs.push(dir); }                       // legacy: --add-dir per other member
+      }
+      return { projectKey: m.projectKey, projectName: m.projectName, checkout };
+    });
+    return { workspace: { name: this.workspace.name, members }, addDirs };
   }
 
   /** Ask the proposal ONCE; the validator keeps the question OPEN on a malformed
@@ -496,7 +527,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      isWorkspace: false, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).

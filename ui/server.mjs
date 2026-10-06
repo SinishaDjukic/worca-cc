@@ -205,7 +205,7 @@ import {
   writeGuardrailSet, deleteGuardrailSet, isBuiltinGuardrailSetId,
 } from '../src/core/guardrail-store.mjs';
 import {
-  GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
+  GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
   setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
@@ -335,6 +335,7 @@ import {
 import { REASON } from '../src/core/failure-policy.mjs';
 import { callSource, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
+import { sweepRepoLooks } from '../src/core/auto/repo-look.mjs';
 import {
   buildRunReport, buildIssueUrl, reportFilename, renderIssueBodyFull, issueTitle,
   repoSlugFromBugsUrl, BUGS_URL,
@@ -1985,18 +1986,13 @@ const startRunHandler = async (req, res) => {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
 
-    // Auto workflow (spec D19): project targets only in v1. Before the workspace lookup,
-    // so an Auto request for ANY workspace id answers 400, never 404.
-    if (workflowId === AUTO_WORKFLOW_ID && hasWorkspace) {
-      return badRequest(res, 'Auto workflow is not available for workspace targets yet');
-    }
     // The Workspace scan workflow starts only through scanRequest: a hand-built body would run
     // a read-only scan the launch never validated (D2).
     if (workflowId === WORKSPACE_SCAN_WORKFLOW_ID && !scanTarget) {
       return badRequest(res, 'the workspace scan starts from the Workspaces view');
     }
     // Agent memory (§7.3): the defragment run option — ONE gate for every entry point (the CLI
-    // and Ask's proposal validator call the same helper). Before the target lookup, like Auto.
+    // and Ask's proposal validator call the same helper). Before the target lookup.
     if (body.memoryScope != null && typeof body.memoryScope !== 'string') return badRequest(res, 'memoryScope must be "global" or "project"');
     const memoryScope = typeof body.memoryScope === 'string' && body.memoryScope.trim() ? body.memoryScope.trim() : null;
     const scopeReason = validateMemoryScope({ workflowId, memoryScope, isWorkspace: !!hasWorkspace });
@@ -2169,6 +2165,8 @@ const startRunHandler = async (req, res) => {
         startedBy,
         branch,
         sync,
+        // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
+        humanInLoop: bodyHumanInLoop ?? true,
         claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
@@ -9550,7 +9548,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
-            workflowId: b.workflowId || null, targetName: (b.card && b.card.projectName) || '',
+            workflowId: b.workflowId || null, targetName: (b.card && (b.card.projectName || b.card.workspaceName)) || '',
           }
           : {
             id: b.id, state: b.state, workflowId: b.card && b.card.workflowId,
@@ -9965,7 +9963,7 @@ async function saveWorkflowCard(threadId, block, body = {}) {
     workflowId = card.match.id; name = card.match.name; matched = true;   // adopt: name/nodes ignored, row untouched
   } else {
     const r = await revalidateWorkflowProposal({
-      shape: { ...card.shape, name: ans.name }, projectKey: card.projectKey, models, registry,
+      shape: { ...card.shape, name: ans.name }, projectKey: card.projectKey, workspaceId: card.workspaceId || null, models, registry,
     });
     if (r.match) { workflowId = r.match.id; name = r.match.name; matched = true; }   // a twin appeared since the proposal
     else {
@@ -10004,7 +10002,7 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
   const card = block.card || {};
   const state = declined ? 'declined' : 'saved';
   const text = workflowEventPrompt({
-    cardId: block.id, state, workflowId: block.workflowId, name: card.name, thenRun, projectKey: card.projectKey || '',
+    cardId: block.id, state, workflowId: block.workflowId, name: card.name, thenRun, projectKey: card.projectKey || '', workspaceId: card.workspaceId || '',
   });
   const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
   let mv = await validateModelEffort(thread.model, thread.effort);
@@ -11940,12 +11938,12 @@ app.use((err, _req, res, next) => {
  * everything up to the first `await` — including the reconcile — still runs before
  * `server.listen`, exactly as it did when this was an inline block.
  *
- * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees', level:string, msg:string) => void}} [args]
+ * @param {{log?: (scope:'run-root'|'legacy'|'ask-worktrees'|'repo-look', level:string, msg:string) => void}} [args]
  *        optional sink for the per-candidate lines both sweeps emit; omitted, each
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -12075,6 +12073,16 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed) console.error(`[worca-ui] ask-worktree sweep: ${r.failed} candidate(s) skipped`);
   } catch (err) {
     console.error(`[worca-ui] ask-worktree sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Chat repo looks (auto-look-*) a crashed MCP child left under <worcaHome>/tmp/ask.
+  try {
+    const r = await sweepRepoLooks(path.join(worcaHome(), 'tmp', 'ask'), { log: sink('repo-look') });
+    summary.repoLooks = r;
+    if (r.removed.length) console.log(`[worca-ui] repo-look sweep: removed ${r.removed.length} stale look dir(s)`);
+    if (r.failed.length) console.error(`[worca-ui] repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key

@@ -21,7 +21,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const wins = [];
 afterEach(() => { for (const w of wins.splice(0)) { try { w.close(); } catch { /* already closed */ } } });
 
-async function bootWith(configExtra = {}, { url = 'http://localhost:4317/' } = {}) {
+const WORKFLOWS = [{ id: 'wf_default', name: 'Default' }, { id: 'wf_a', name: 'A', version: 2 }];
+async function bootWith(configExtra = {}, { url = 'http://localhost:4317/', workflows = WORKFLOWS } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url }));
   const { window } = dom;
   wins.push(window);
@@ -57,7 +58,7 @@ async function bootWith(configExtra = {}, { url = 'http://localhost:4317/' } = {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [], activeWorkflowId: 'wf_auto', ...configExtra }, models: [], efforts: [] }) });
     }
     if (path.endsWith('/api/workflows')) {
-      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_a', name: 'A', version: 2 }] }) });
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ workflows }) });
     }
     if (path.endsWith('/api/guardrails')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }] }) });
@@ -133,16 +134,63 @@ test('the switch persists humanInLoop and the run body carries it under Auto onl
   assert.equal('humanInLoop' in runBodies.at(-1), false, 'a saved workflow sends no humanInLoop');
 });
 
-test('a workspace target disables Auto with the hint and shows Default WITHOUT persisting it (D19)', async () => {
-  const { window, patches } = await boot();
-  window.document.querySelector('#target-seg button[data-target="workspace"]').click(); await settle(window, 6);
-  const sel = window.document.getElementById('workflowSelect');
-  assert.equal(sel.options[0].disabled, true);
-  assert.equal(sel.options[0].title, 'Auto is not available for workspaces yet');
-  assert.equal(sel.value, 'wf_default');
-  assert.ok(!patches.some((p) => p.activeWorkflowId), 'the fallback is never written');
-  window.document.querySelector('#target-seg button[data-target="project"]').click(); await settle(window, 6);
-  assert.equal(sel.value, 'wf_auto', 'back on a project the stored choice returns');
+// D-W1: a workspace has no stored switch — Human in the loop is per run there, default on,
+// lives for this form only and rides the run body. It never reads or writes a project's switch.
+test('a workspace target offers Auto with a per-run Human-in-the-loop switch that is never persisted (D-W1)', async () => {
+  const toWorkspace = async (window) => { window.document.querySelector('#target-seg button[data-target="workspace"]').click(); await settle(window, 6); };
+  await checkRows([
+    { name: 'Auto is enabled and selected; the switch is on and enabled despite a project left in the hidden select', run: async () => {
+      const { window } = await bootWith({ humanInLoop: false });
+      await toWorkspace(window);
+      const sel = window.document.getElementById('workflowSelect');
+      assert.equal(sel.options[0].value, 'wf_auto');
+      assert.equal(sel.options[0].disabled, false);
+      assert.equal(sel.options[0].title, '');
+      assert.equal(sel.value, 'wf_auto');
+      assert.equal(window.document.getElementById('projectSelect').value, '/repos/proj', 'the hidden project select is still set');
+      const cb = window.document.getElementById('humanInLoop');
+      assert.equal(window.document.getElementById('hitl-row').hidden, false);
+      assert.equal(cb.checked, true, 'default on — the project\'s stored false is not read');
+      assert.equal(cb.disabled, false);
+    } },
+    { name: 'toggling sends no PATCH and the run body carries the toggled value and the workspace', run: async () => {
+      const { window, patches, runBodies } = await boot();
+      await toWorkspace(window);
+      const ws = window.document.getElementById('workspaceSelect');
+      ws.value = 'wks-team-00000001'; ws.dispatchEvent(new window.Event('change')); await settle(window);
+      const before = patches.length;
+      const cb = window.document.getElementById('humanInLoop');
+      cb.checked = false; cb.dispatchEvent(new window.Event('change')); await settle(window);
+      assert.equal(patches.length, before, 'no /api/config PATCH for a workspace flip');
+      assert.equal(cb.checked, false);
+      window.document.getElementById('prompt').value = 'demo task';
+      window.document.getElementById('run-form').dispatchEvent(new window.Event('submit', { cancelable: true })); await settle(window);
+      const body = runBodies.at(-1);
+      assert.equal(body.workflowId, 'wf_auto');
+      assert.equal(body.humanInLoop, false);
+      assert.equal(body.workspaceId, 'wks-team-00000001');
+      window.document.querySelector('#target-seg button[data-target="project"]').click(); await settle(window, 6);
+      assert.equal(window.document.getElementById('workflowSelect').value, 'wf_auto', 'back on a project the stored choice returns');
+      assert.ok(!patches.some((p) => p.activeWorkflowId), 'the target switch writes no workflow choice');
+    } },
+    { name: 'changing the workspace resets the switch to on', run: async () => {
+      const { window, patches } = await boot();
+      await toWorkspace(window);
+      const cb = window.document.getElementById('humanInLoop');
+      cb.checked = false; cb.dispatchEvent(new window.Event('change')); await settle(window);
+      const ws = window.document.getElementById('workspaceSelect');
+      ws.value = 'wks-team-00000001'; ws.dispatchEvent(new window.Event('change')); await settle(window);
+      assert.equal(cb.checked, true);
+      assert.ok(!patches.some((p) => 'humanInLoop' in p), 'nothing written');
+    } },
+    { name: 'Memory defragment still falls back to Default on a workspace, without persisting it', run: async () => {
+      const { window, patches } = await bootWith({ activeWorkflowId: 'wf_memory_defrag' }, { workflows: [...WORKFLOWS, { id: 'wf_memory_defrag', name: 'Memory defragment' }] });
+      assert.equal(window.document.getElementById('workflowSelect').value, 'wf_memory_defrag', 'a project target keeps it');
+      await toWorkspace(window);
+      assert.equal(window.document.getElementById('workflowSelect').value, 'wf_default');
+      assert.ok(!patches.some((p) => p.activeWorkflowId), 'the fallback is never written');
+    } },
+  ]);
 });
 
 // humanInLoop is stored PER PROJECT, and saveHumanInLoop drops the write when none is

@@ -5,19 +5,20 @@
 //     and RETURNS the normalized shape (the parent cannot see the child's memory — the shape travels in the tool result);
 //   • the parent: turn.mjs _onWorkflowResult and the cards route → revalidateWorkflowProposal(): re-assembles that shape,
 //     re-matches and builds the card payload (buildProposal) — deterministic, so Save re-derives the same template.
-// Reads only (the workflows row is written by the cards route; test/ask-workflow-deps.test.mjs scans this file).
+// Reads only (the workflows row is written by the cards route; test/ask-tools.test.mjs scans this file).
 // Names no agent key (D23). tools.mjs may not import anything, hence every reader/spawner lives here.
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { loadAgentRegistry } from '../agent-registry.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
+import { readWorkspace, workspaceMembers } from '../workspaces.mjs';
 import { listModels, resolveRunConfig } from '../config.mjs';
 import { mockEnabled } from '../claude-runner.mjs';
 import { assembleShape, ShapeError, cleanText, normalizeShape } from '../../shared/graph/assemble.mjs';
-import { fingerprintProject } from '../auto/fingerprint.mjs';
+import { fingerprintProject, fingerprintWorkspace } from '../auto/fingerprint.mjs';
 import { classifyTask, checkShapeModels, ClassifierError } from '../auto/classify.mjs';
 import { autoCandidates, findEquivalentWorkflow } from '../auto/match.mjs';
-import { openRepoLook } from '../auto/repo-look.mjs';
+import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
 import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -31,6 +32,19 @@ export async function projectByKey(key) {
   const rows = await listProjects();
   const p = rows.find((x) => x && x.key === key);
   return p ? { key: p.key, name: p.name || '', path: p.path } : null;
+}
+
+/** A workspace as the chat path needs it, members sorted by projectKey; null for no/unknown id.
+ *  Members are named basename(dir) as the run path names them and need not be registered projects; the
+ *  code-unit sort (not workspaceMembers' localeCompare) makes members[0] the primary a run uses (D-W3). */
+export async function workspaceTarget(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const ws = await readWorkspace(id);
+  if (!ws) return null;
+  const members = ((await workspaceMembers(id)) || [])
+    .map((m) => ({ projectKey: m.projectKey, projectName: m.name, projectDir: m.projectDir }))
+    .sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0));   // the run path's order
+  return { id: ws.id, name: ws.name || ws.id, description: ws.description || '', members };
 }
 
 /** The CLI's proposal vocabulary (src/cli/render.mjs formatWorkflowProposal) as ONE line for the model. */
@@ -83,27 +97,29 @@ function dropUnknownModels(shape, models) {
 
 /**
  * The deterministic half (spec §8.2): assemble (validateGraph inside), match, buildProposal. Pure w.r.t. the workflows table.
- * Also resolves the target project (v4): the parent needs its NAME for the card and the context header, and the MCP
- * child's result may not carry it (the mock never does).
- * @param {{shape:object, projectKey?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null}} o
- * @returns {Promise<{proposal:object, template:object, match:{id,name}|null, tunables:object, shape:object, summary:string, project:{key,name,path}|null}>}
+ * Also resolves the target project (v4) or workspace: the parent needs its NAME for the card and the context header, and
+ * the MCP child's result may not carry it (the mock never does). A workspace's project overrides are its primary member's.
+ * @param {{shape:object, projectKey?:string|null, workspaceId?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null}} o
+ * @returns {Promise<{proposal:object, template:object, match:{id,name}|null, tunables:object, shape:object, summary:string, project:{key,name,path}|null, workspace:{id,name,members:string[]}|null}>}
  * @throws {ShapeError} on an unassemblable shape
  */
-export async function revalidateWorkflowProposal({ shape, projectKey = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null }) {
+export async function revalidateWorkflowProposal({ shape, projectKey = null, workspaceId = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null }) {
   const reg = registry || loadAgentRegistry();
   const catalog = models || await listModels('');
   const built = assembleShape(shape, { registry: reg, humanInLoop: true });
   const match = findEquivalentWorkflow(built.template, await autoCandidates());
-  const project = await projectByKey(projectKey);          // null for no key / an unknown key — never throws
+  const ws = workspaceId ? await workspaceTarget(workspaceId) : null;     // null for an unknown id — never throws (as projectByKey)
+  const project = ws ? null : await projectByKey(projectKey);          // null for no key / an unknown key — never throws
+  const overridesDir = ws ? (ws.members[0] && ws.members[0].projectDir) : (project && project.path);   // D-W3: the primary member
   let template = built.template;
   let tunables = built.tunables;
   let ignoredProjectOverrides = false;
   if (match) {
     tunables = remapTunables(tunables, match.nodeMap);
     template = match.candidate;
-    if (project) {
+    if (overridesDir) {
       try {
-        const rc = await resolveRunConfig(project.path, match.candidate.id);
+        const rc = await resolveRunConfig(overridesDir, match.candidate.id);
         ignoredProjectOverrides = Object.keys(rc?.nodes || {}).length > 0 || Object.keys(rc?.wires || {}).length > 0;
       } catch { ignoredProjectOverrides = false; }
     }
@@ -113,18 +129,22 @@ export async function revalidateWorkflowProposal({ shape, projectKey = null, war
     match: match ? { id: match.candidate.id, name: match.candidate.name } : null,
     tunables, registry: reg, models: catalog,
     warnings: [...(warnings || []), ...built.warnings], costUsd, fingerprint, ignoredProjectOverrides,
+    isWorkspace: !!ws, members: ws ? ws.members.map((m) => m.projectName) : [],
   });
-  return { proposal, template, match: proposal.match, tunables, shape: built.shape, summary: proposalSummary(proposal), project };
+  return {
+    proposal, template, match: proposal.match, tunables, shape: built.shape, summary: proposalSummary(proposal), project,
+    workspace: ws ? { id: ws.id, name: ws.name, members: ws.members.map((m) => m.projectName) } : null,
+  };
 }
 
 /** `[worca event] …` — the synthetic turn's prompt (spec §8.4). Names are cleaned: they land in a prompt line. v7: the name sits
  *  inside double quotes that the mock's event regex (and the model) key on, so `"` becomes `'`, and a `[worca context]` /
  *  `[/worca context]` tag typed into a name is neutralised (prompt.mjs:47-49 does that only for header lines). */
 const eventName = (name) => flat(name, 60).replace(/"/g, "'").replace(/\[(\/?)worca context\]/gi, '($1worca context)');
-export function workflowEventPrompt({ cardId, state, workflowId = null, name = '', thenRun = false, projectKey = '' }) {
-  const p = flat(projectKey, 120);
-  if (state === 'declined') return `[worca event] workflow card ${cardId} declined; project=${p}`;
-  return `[worca event] workflow card ${cardId} saved as ${flat(workflowId, 120)} "${eventName(name)}"; thenRun=${thenRun ? 'true' : 'false'}; project=${p}`;
+export function workflowEventPrompt({ cardId, state, workflowId = null, name = '', thenRun = false, projectKey = '', workspaceId = '' }) {
+  const tgt = workspaceId ? `workspace=${flat(workspaceId, 120)}` : `project=${flat(projectKey, 120)}`;   // a workspace wins; never both
+  if (state === 'declined') return `[worca event] workflow card ${cardId} declined; ${tgt}`;
+  return `[worca event] workflow card ${cardId} saved as ${flat(workflowId, 120)} "${eventName(name)}"; thenRun=${thenRun ? 'true' : 'false'}; ${tgt}`;
 }
 
 /** The user-row notice (mockup §C copy). */
@@ -149,18 +169,27 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
       /**
        * The child-side half. Task mode = the orchestrator's _autoRound (classify, ONE retry on a ShapeError with the issues as
        * feedback); shape mode = normalize + drop unknown models. Both then run revalidateWorkflowProposal.
-       * Resolves {ok:true,…} — or, in task mode, {ok:false, error, costUsd, mode, projectKey, projectName} when the classifier
+       * Resolves {ok:true,…} — or, in task mode, {ok:false, error, costUsd, mode, projectKey, projectName, workspaceId, workspaceName} when the classifier
        * failed (timeout / two unusable replies / a shape the assembler still rejects after the retry): the money it spent is
        * REAL and rides `costUsd` so the parent books it (PD2, v7 — v6 rethrew and lost the spend). Input errors (unknown
-       * project, an unassemblable hand-authored shape: nothing was spent) still THROW and reach the model as tool-error text.
-       * @param {{mode:'task'|'shape', task?:string, shape?:object, name?:string, projectKey:string, note?:string, thenRun?:boolean, signal?:AbortSignal}} o
+       * project or workspace, both ids, an unassemblable hand-authored shape: nothing was spent) still THROW and reach the
+       * model as tool-error text. The target is a project OR a workspace — the result carries all four keys, the other pair null.
+       * @param {{mode:'task'|'shape', task?:string, shape?:object, name?:string, projectKey?:string, workspaceId?:string, note?:string, thenRun?:boolean, signal?:AbortSignal}} o
        */
-      async propose({ mode, task = '', shape = null, name = '', projectKey, note = '', thenRun = false, signal = null }) {
-        const project = await projectByKey(projectKey);
-        if (!project) throw new Error(`unknown projectKey "${flat(projectKey, 120)}" — call list_projects`);
+      async propose({ mode, task = '', shape = null, name = '', projectKey = '', workspaceId = '', note = '', thenRun = false, signal = null }) {
+        if (projectKey && workspaceId) throw new Error('give projectKey or workspaceId, not both');
+        const ws = workspaceId ? await workspaceTarget(workspaceId) : null;
+        if (workspaceId && !ws) throw new Error(`unknown workspace "${flat(workspaceId, 120)}" — list_projects names the workspaces`);
+        const project = ws ? null : await projectByKey(projectKey);
+        if (!ws && !project) throw new Error(`unknown projectKey "${flat(projectKey, 120)}" — call list_projects`);
+        const target = ws
+          ? { workspaceId: ws.id, workspaceName: flat(ws.name, 120), projectKey: null, projectName: null }
+          : { projectKey: project.key, projectName: flat(project.name, 120), workspaceId: null, workspaceName: null };
         const registry = loadAgentRegistry();
         const models = await listModels('');
-        const fingerprint = await fingerprintProject(project.path);
+        const fingerprint = ws
+          ? await fingerprintWorkspace(ws.members, { name: ws.name, description: ws.description })
+          : await fingerprintProject(project.path);
         const warnings = [];
         let picked;
         let costUsd = 0;
@@ -171,16 +200,24 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
-          const look = mockEnabled({}) ? null : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
+          // A workspace gets one checkout per member under repos/<projectKey> (the run root's shape).
+          const look = mockEnabled({}) ? null : ws
+            ? await openWorkspaceRepoLook(ws.members, cwd, { signal: signal || bundleSignal })
+            : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
             humanInLoop: true, feedback: [], priorShape: null, model: resolveAutoModel(models), cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
+            ...(ws ? { workspace: {
+              name: ws.name,
+              members: ws.members.map((m) => ({ projectKey: m.projectKey, projectName: m.projectName,
+                checkout: look && look.members.includes(m.projectKey) ? `./repos/${m.projectKey}` : null })),
+            } } : {}),
           };
           // Every failure AFTER money may have been spent resolves {ok:false, costUsd} (v7): ClassifierError carries what its
           // failed attempts cost (classify.mjs); a ShapeError after the retry means two billed classifier calls.
           const spent = (err) => ({
-            ok: false, mode, projectKey: project.key, projectName: flat(project.name, 120),
+            ok: false, mode, ...target,
             error: flat(err && err.message ? err.message : String(err), 300), costUsd: Math.round((costUsd + (Number(err && err.costUsd) || 0)) * 1e6) / 1e6,
           });
           try {
@@ -191,7 +228,7 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
             warnings.push(...(classified.warnings || []));
             picked = name ? { ...classified.shape, name } : classified.shape;
             try {
-              r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
+              r = await revalidateWorkflowProposal({ shape: picked, projectKey: target.projectKey, workspaceId: target.workspaceId, warnings, costUsd, fingerprint, models, registry });
             } catch (err) {
               if (!(err instanceof ShapeError)) throw err;
               let again;
@@ -203,7 +240,7 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
               warnings.push(...(again.warnings || []));
               picked = name ? { ...again.shape, name } : again.shape;
               try {
-                r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
+                r = await revalidateWorkflowProposal({ shape: picked, projectKey: target.projectKey, workspaceId: target.workspaceId, warnings, costUsd, fingerprint, models, registry });
               } catch (e3) { if (e3 instanceof ShapeError) return spent(e3); throw e3; }
             }
           } finally {
@@ -212,10 +249,10 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
         } else {
           picked = normalizeShape(name ? { ...shape, name } : shape);   // throws ShapeError with EVERY issue — the model fixes them in one go
           warnings.push(...dropUnknownModels(picked, models));
-          r = await revalidateWorkflowProposal({ shape: picked, projectKey: project.key, warnings, costUsd, fingerprint, models, registry });
+          r = await revalidateWorkflowProposal({ shape: picked, projectKey: target.projectKey, workspaceId: target.workspaceId, warnings, costUsd, fingerprint, models, registry });
         }
         return {
-          ok: true, mode, projectKey: project.key, projectName: flat(project.name, 120),
+          ok: true, mode, ...target,
           name: r.proposal.name, match: r.match, warnings: r.proposal.warnings, summary: r.summary,
           shape: r.shape, costUsd: r.proposal.costUsd, fingerprint, note: flat(note, ASK_LIMITS.workflowNoteMaxChars), thenRun: thenRun === true,
         };

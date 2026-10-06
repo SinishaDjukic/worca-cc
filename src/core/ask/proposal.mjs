@@ -37,7 +37,6 @@ export const PROPOSAL_ERRORS = Object.freeze({
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
   briefAndSource: 'give brief OR source, not both — with a task source the run reads the task itself; put what you learned in the note',
-  autoWorkspace: 'Auto workflow is not available for workspace targets yet',
   scanWorkflow: 'the Workspace scan starts from Workspaces (Create workspace, or a workspace\'s Re-scan) — never from a card',
   briefTooLong: `brief exceeds ${ASK_LIMITS.briefMaxChars} characters`,
   badSource: (v) => `unknown or invalid sourceBranch: ${v}`,
@@ -191,9 +190,6 @@ export function createProposalValidator({
     }
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
-
-    // ── Auto: project targets only, like POST /api/run ─────────────────────
-    if (wf && wf.id === 'wf_auto' && target.target === 'workspace') errors.push(PROPOSAL_ERRORS.autoWorkspace);
 
     // ── task source (source-spec.mjs): a reference the run fetches at start ──
     const src = validateRunSource(inp.source, { target, listTaskSources, resolveProfile });

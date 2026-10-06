@@ -119,3 +119,24 @@ test('the run page header badge reads "Auto" while deciding and "Auto → name" 
     } },
   ]);
 });
+
+// A workspace run forces fan-out on the agents that run per project (proposal.mjs `fanOutLocked`):
+// the tunables row shows the switch on, locked, and says why on hover.
+test('a workspace-run proposal paints a locked fan-out switch titled "Runs per project on a workspace"', async () => {
+  const ctx = await boot();
+  helloRunning(ctx, { stepper: DECIDING, kind: 'workspace-run', workspaceId: 'wks-team-00000001' });
+  ctx.go(`running/${RUN_ID}`); await settle(ctx.window);
+  const p = proposalFor();
+  const [lockedId, freeId] = p.order;
+  p.nodes[lockedId] = { ...p.nodes[lockedId], fanOut: true, canFanOut: false, fanOutLocked: true };
+  ctx.dispatch({ type: 'question', runId: RUN_ID, id: 'auto-1', kind: 'workflow', workflow: p }); await settle(ctx.window);
+  const panel = ctx.window.document.querySelector('#run-detail .rd-questions .qpanel');
+  assert.ok(panel, 'the proposal panel renders on a workspace run');
+  const fanOf = (id) => panel.querySelector(`.qtune tr[data-node-id="${id}"] input[aria-label^="Fan-out"]`);
+  const locked = fanOf(lockedId);
+  assert.equal(locked.checked, true);
+  assert.equal(locked.disabled, true);
+  assert.equal(locked.dataset.locked, '1');
+  assert.equal(locked.closest('label.qtune-sw').title, 'Runs per project on a workspace');
+  assert.equal(fanOf(freeId).closest('label.qtune-sw').title, '', 'an unlocked row carries no title');
+});
