@@ -19,6 +19,12 @@ test('base env strips worca internals and GitHub credentials', () => {
   assert.deepEqual(Object.keys(env).sort(), ['PATH']);
 });
 
+test('base env strips every Azure DevOps credential', () => {
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+  const env = actionBaseEnv({ ...Object.fromEntries(ADO_KEYS.map((k) => [k, 'x'])), PATH: '/b' });
+  assert.deepEqual(env, { PATH: '/b' });
+});
+
 test('stop kills the whole process group (grandchild included)', POSIX, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'act-spawn-'));
   const pidFile = join(dir, 'gpid');

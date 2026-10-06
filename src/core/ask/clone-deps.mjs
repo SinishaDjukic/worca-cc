@@ -6,13 +6,14 @@
 import { getProjectsRoot } from '../settings.mjs';
 import { listProjects } from '../projects.mjs';
 import { githubMode } from '../deployment.mjs';
-import { createCloneValidator, githubLabel } from './clone-proposal.mjs';
+import { readAzureCredentials } from '../azure-credentials.mjs';
+import { createCloneValidator, hostCredentialLabel } from './clone-proposal.mjs';
 
-/** The parent's validator: the card carries the GitHub line (deployment.mjs, never a secret). */
+/** The parent's validator: the card carries the code-host credential line (never a secret). */
 export const validateCloneProposal = createCloneValidator({
   projectsRoot: () => getProjectsRoot(),
   listProjects: () => listProjects(),
-  github: (host) => githubLabel(githubMode(process.env), { host, appId: (process.env.WORCA_GH_APP_ID || '').trim() || null }),
+  github: (host) => hostCredentialLabel(githubMode(process.env), { host, appId: (process.env.WORCA_GH_APP_ID || '').trim() || null, adoMode: readAzureCredentials().mode }),
 });
 
 /** The MCP child's bundle. */

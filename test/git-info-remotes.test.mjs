@@ -5,9 +5,18 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseRemoteUrl, remoteRepoSlug, sameRepo, listRemotes, listRemoteBranches, prHeadRef,
-  pushBranch, createPr, prMergeable, findPrForBranch, _testing as gitInfo,
+  pushBranch, createPr, prMergeable, findPrForBranch, prLifecycleState, prProviderFor, prHostsAvailable, anyPrHost,
+  _testing as gitInfo,
 } from '../src/core/git-info.mjs';
+import { forgeOf, forgeOfPrUrl, prNumberFromUrl } from '../src/core/forge.mjs';
+import * as azurePr from '../src/core/pr/azure.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+/** Every ambient variable that opens a D6/D7/D20 host-lookup gate: Azure credentials, push-as-person, App mode. */
+const CLOSED_GATES = { ...NO_ADO, WORCA_GH_AS_PERSON: undefined, WORCA_BROKER_URL: undefined,
+  WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
 
 afterEach(() => gitInfo.reset());
 
@@ -75,6 +84,7 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
       assert.deepEqual(r.remotes[0], {
         name: 'origin', fetchUrl: 'https://github.com/me/repo.git', pushUrl: 'https://github.com/me/repo.git',
         host: 'github.com', owner: 'me', repo: 'repo', slug: 'me/repo',
+        forge: 'github', org: null, project: null,
       });
       assert.equal(r.remotes[1].slug, 'up/repo');
       assert.equal(r.remotes[2].owner, 'y', 'push URL wins for the owner');
@@ -86,6 +96,52 @@ test('listRemotes: parses git remote -v (push URL wins); empty output and git fa
       gitInfo.setRunner(() => fail('fatal: not a git repository', 128));
       assert.deepEqual(await listRemotes('/nope'), { ok: false, remotes: [], error: 'fatal: not a git repository' });
       assert.deepEqual(await listRemotes(''), { ok: false, remotes: [], error: 'projectDir is required' });
+    } },
+  ]);
+});
+
+test('Azure DevOps remotes: one identity for every spelling; sameRepo across ssh/https; forge', async () => {
+  const want = { host: 'dev.azure.com', org: 'acme', project: 'Shop', owner: 'acme/Shop', repo: 'api' };
+  await checkRows([
+    { name: 'every URL shape parses to the same identity', run: () => {
+      for (const u of [
+        'https://dev.azure.com/acme/Shop/_git/api',
+        'https://acme@dev.azure.com/acme/Shop/_git/api',
+        'https://acme.visualstudio.com/Shop/_git/api',
+        'https://acme.visualstudio.com/DefaultCollection/Shop/_git/api',
+        'git@ssh.dev.azure.com:v3/acme/Shop/api',
+        'ssh://git@ssh.dev.azure.com/v3/acme/Shop/api',
+        'acme@vs-ssh.visualstudio.com:v3/acme/Shop/api',
+      ]) assert.deepEqual(parseRemoteUrl(u), want, u);
+    } },
+    { name: 'slug and sameRepo', run: () => {
+      const a = parseRemoteUrl('https://dev.azure.com/acme/Shop/_git/api');
+      const b = parseRemoteUrl('git@ssh.dev.azure.com:v3/acme/shop/API');
+      assert.equal(remoteRepoSlug(a), 'dev.azure.com/acme/Shop/api');
+      assert.ok(sameRepo(a, b));
+      assert.ok(!sameRepo(a, parseRemoteUrl('https://dev.azure.com/other/Shop/_git/api')));
+    } },
+    { name: '%20 names and the default-repo short form', run: () => {
+      assert.equal(parseRemoteUrl('https://dev.azure.com/acme/My%20Project/_git/My%20Repo').project, 'My Project');
+      assert.equal(parseRemoteUrl('https://dev.azure.com/acme/_git/Shop').repo, 'Shop');
+    } },
+    { name: 'forgeOf / forgeOfPrUrl / prNumberFromUrl', run: () => {
+      assert.equal(forgeOf(parseRemoteUrl('https://github.com/o/r')), 'github');
+      assert.equal(forgeOf(parseRemoteUrl('https://dev.azure.com/acme/Shop/_git/api')), 'azure');
+      assert.equal(forgeOf(parseRemoteUrl('https://gitlab.com/g/r')), null);
+      assert.equal(forgeOf(null), null);
+      assert.equal(forgeOfPrUrl('https://github.com/o/r/pull/3'), 'github');
+      assert.equal(forgeOfPrUrl('https://dev.azure.com/acme/Shop/_git/api/pullrequest/9'), 'azure');
+      assert.equal(prNumberFromUrl('https://github.com/o/r/pull/3'), 3);
+      assert.equal(prNumberFromUrl('https://dev.azure.com/acme/Shop/_git/api/pullrequest/9'), 9);
+      assert.equal(prNumberFromUrl('nope'), null);
+    } },
+    { name: 'listRemotes adds forge/org/project', run: async () => {
+      gitInfo.setRunner(() => okOut('origin\thttps://dev.azure.com/acme/Shop/_git/api (fetch)\norigin\thttps://dev.azure.com/acme/Shop/_git/api (push)\n'));
+      const { remotes } = await listRemotes('/repo');
+      assert.deepEqual(
+        { forge: remotes[0].forge, org: remotes[0].org, project: remotes[0].project, slug: remotes[0].slug },
+        { forge: 'azure', org: 'acme', project: 'Shop', slug: 'dev.azure.com/acme/Shop/api' });
     } },
   ]);
 });
@@ -257,4 +313,125 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
         { state: 'OPEN', url: 'https://github.com/up/repo/pull/12', number: 12 });
     } },
   ]);
+});
+
+test('pushBranch spends a remote lookup only when the host can change the credential (D7)', async () => {
+  await checkRows([
+    { name: 'token mode, no Azure credential: no lookup, pushes only (same as today)', run: async () => {
+      const seen = [];
+      await withEnv({ ...CLOSED_GATES, GH_TOKEN: 't' }, async () => {
+        gitInfo.setRunner((cmd, args) => { seen.push([cmd, ...args]); return okOut(''); });
+        await pushBranch('/repo', 'feat/x');
+      });
+      assert.deepEqual(seen, [['git', 'push', '-u', 'origin', 'feat/x']]);
+    } },
+    { name: 'Azure credential + Azure remote: lookup (with an env), then the push carries the ADO helper, not GH_TOKEN', run: async () => {
+      const seen = [];
+      await withEnv({ ...CLOSED_GATES, WORCA_ADO_TOKEN: 'pat', GH_TOKEN: 'ghp_x' }, async () => {
+        gitInfo.setRunner((cmd, args, opts = {}) => {
+          seen.push({ argv: [cmd, ...args], env: opts.env });
+          if (args[0] === 'remote') return okOut('https://dev.azure.com/acme/Shop/_git/api\n');
+          return okOut('');
+        });
+        assert.equal((await pushBranch('/repo', 'feat/x')).ok, true);
+      });
+      assert.deepEqual(seen.map((s) => s.argv), [['git', 'remote', 'get-url', '--push', 'origin'], ['git', 'push', '-u', 'origin', 'feat/x']]);
+      assert.ok(seen[0].env, 'the lookup runs with an env');
+      assert.equal(seen[0].env.WORCA_ADO_TOKEN, undefined);
+      assert.equal(seen[0].env.GH_TOKEN, undefined);
+      assert.equal(seen[1].env.WORCA_ADO_GIT_TOKEN, 'pat');
+      assert.equal(seen[1].env.GH_TOKEN, undefined);
+    } },
+    { name: 'Azure credential + GitHub remote: GitHub token as before, no Azure token', run: async () => {
+      const seen = [];
+      await withEnv({ ...CLOSED_GATES, WORCA_ADO_TOKEN: 'pat', GH_TOKEN: 'ghp_x' }, async () => {
+        gitInfo.setRunner((cmd, args, opts = {}) => {
+          seen.push({ argv: [cmd, ...args], env: opts.env });
+          return args[0] === 'remote' ? okOut('https://github.com/o/r.git\n') : okOut('');
+        });
+        await pushBranch('/repo', 'feat/x');
+      });
+      const push = seen.find((s) => s.argv[1] === 'push');
+      assert.equal(push.env.GH_TOKEN, 'ghp_x');
+      assert.equal(push.env.WORCA_ADO_TOKEN, undefined);
+      assert.equal(push.env.WORCA_ADO_GIT_TOKEN, undefined);
+    } },
+    { name: 'WORCA_GH_AS_PERSON=required no longer refuses an Azure push', run: async () => {
+      let r;
+      await withEnv({ ...NO_ADO, WORCA_GH_AS_PERSON: 'required', WORCA_BROKER_URL: 'http://127.0.0.1:9' }, async () => {
+        gitInfo.setRunner((cmd, args) => (args[0] === 'remote' ? okOut('git@ssh.dev.azure.com:v3/acme/Shop/api\n') : okOut('')));
+        r = await pushBranch('/repo', 'feat/x');
+      });
+      assert.equal(r.ok, true, r.stderr);
+    } },
+  ]);
+});
+
+test('findPrForBranch: the gh pr list branch search reads with the read token', async () => {
+  const seen = [];
+  await withEnv({ ...CLOSED_GATES, GH_TOKEN: undefined, GITHUB_TOKEN: undefined, WORCA_GH_READ_TOKEN: 'R', WORCA_GH_WRITE_TOKEN: 'W' }, async () => {
+    gitInfo.setRunner((cmd, args, opts = {}) => { seen.push({ argv: [cmd, ...args], env: opts.env }); return okOut('[]'); });
+    await findPrForBranch({ projectDir: '/r', head: 'feat' });
+  });
+  const list = seen.find((s) => s.argv[1] === 'pr' && s.argv[2] === 'list');
+  assert.ok(list?.env, 'gh pr list runs with an env');
+  assert.equal(list.env.GH_TOKEN, 'R');
+});
+
+test('PR functions dispatch Azure URLs/remotes to the Azure provider; everything else stays on gh', async () => {
+  const calls = [];
+  gitInfo.setRunner((cmd, args) => {
+    calls.push(`${cmd} ${args.join(' ')}`);
+    if (cmd === 'git' && args[0] === 'remote') return okOut('origin\thttps://dev.azure.com/acme/Shop/_git/api (fetch)\norigin\thttps://dev.azure.com/acme/Shop/_git/api (push)\n');
+    return fail('gh must not run', 1);
+  });
+  azurePr._testing.setFetch(async (url) => ({ status: 200, ok: true, json: async () => (String(url).includes('/pullrequests/9')
+    ? { pullRequestId: 9, status: 'completed', mergeStatus: 'succeeded' }
+    : { value: [{ pullRequestId: 4, status: 'active', mergeStatus: 'conflicts' }] }) }));
+  try {
+    await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, async () => {
+      const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/9';
+      assert.equal(await prLifecycleState({ projectDir: '/r', prUrl: url }), 'MERGED');
+      assert.equal(await prMergeable({ projectDir: '/r', head: 'feat', prUrl: url }), 'MERGEABLE');
+      assert.deepEqual(await findPrForBranch({ projectDir: '/r', head: 'feat', prUrl: url }), { state: 'MERGED', url, number: 9 });
+      assert.equal((await findPrForBranch({ projectDir: '/r', head: 'feat' })).number, 4);   // forge learned from the remotes
+      assert.equal(await prMergeable({ projectDir: '/r', head: 'feat' }), 'CONFLICTING');
+    });
+    assert.ok(calls.every((c) => c.startsWith('git ')), calls.join('\n'));
+  } finally { azurePr._testing.reset(); }
+});
+
+test('without an Azure credential the branch lookup spends no git call (D6)', async () => {
+  const calls = [];
+  await withEnv(CLOSED_GATES, async () => {
+    gitInfo.setRunner((cmd, args) => { calls.push(`${cmd} ${args[0]}`); return okOut('[]'); });
+    await findPrForBranch({ projectDir: '/r', head: 'feat' });
+  });
+  assert.deepEqual(calls, ['gh pr']);
+});
+
+test("Azure-only machine (no gh): a GitHub project's PR lookups return null/UNKNOWN without spawning gh pr", async () => {
+  const calls = [];
+  await withEnv({ ...CLOSED_GATES, WORCA_ADO_TOKEN: 'pat' }, async () => {
+    gitInfo.setRunner((cmd, args) => {
+      calls.push(`${cmd} ${args[0]}`);
+      if (cmd === 'gh') return fail('gh: command not found', 127);
+      return okOut('origin\thttps://github.com/o/r.git (fetch)\norigin\thttps://github.com/o/r.git (push)\n');
+    });
+    assert.equal(await findPrForBranch({ projectDir: '/r', head: 'feat' }), null);
+    assert.equal(await prLifecycleState({ projectDir: '/r', prUrl: 'https://github.com/o/r/pull/3' }), null);
+    assert.equal(await prMergeable({ projectDir: '/r', head: 'feat' }), 'UNKNOWN');
+  });
+  assert.deepEqual(calls.filter((c) => c.startsWith('gh ')), ['gh --version'], 'one memoized probe, no gh pr');
+});
+
+test('prProviderFor / prHostsAvailable / anyPrHost', async () => {
+  await withEnv(NO_ADO, async () => {
+    gitInfo.setRunner((cmd) => (cmd === 'gh' ? fail('missing', 127) : okOut('')));
+    assert.equal(prProviderFor({ host: 'dev.azure.com', org: 'a', owner: 'a/p', repo: 'r' }).label, 'Azure DevOps');
+    assert.equal(prProviderFor(null).label, 'GitHub');
+    assert.deepEqual(await prProviderFor(null).available(), { ok: false, reason: 'GitHub CLI (gh) is not available' });
+    assert.deepEqual(await prHostsAvailable(), { github: false, azure: false });
+    assert.equal(await anyPrHost(), false);
+  });
 });

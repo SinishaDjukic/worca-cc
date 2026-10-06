@@ -27,6 +27,7 @@ const PROJECTS = [
   { key: 'ed-00000003', name: 'edge', path: '/p/edge' },
   { key: 'lc-00000004', name: 'local', path: '/p/local' },
   { key: 'pl-00000005', name: 'platform', path: '/p/platform' },
+  { key: 'az-00000009', name: 'azshop', path: '/p/azshop' },
 ];
 const STATUS = {
   'gw-00000001': { hasOrigin: true, present: true, delegateTo: null, slug: 'acme/gateway', home: 'acme/gateway' },
@@ -34,6 +35,7 @@ const STATUS = {
   'ed-00000003': { hasOrigin: true, present: false, delegateTo: null, slug: 'acme/edge', home: null },
   'lc-00000004': { hasOrigin: false, present: false, slug: null, home: null },
   'pl-00000005': { hasOrigin: true, present: true, delegateTo: null, slug: 'acme/platform', home: 'acme/platform' },
+  'az-00000009': { hasOrigin: true, present: false, delegateTo: null, slug: 'dev.azure.com/acme/shop/shop', home: null },
 };
 const WS = { id: 'wks-iot-0000abcd', name: 'IoT', projectPaths: ['/p/gateway', '/p/billing', '/p/edge'], policyProject: '/p/gateway' };
 const WS_NONE = { id: 'wks-bare-0000abcd', name: 'Bare', projectPaths: ['/p/edge', '/p/local'], policyProject: null };
@@ -92,6 +94,8 @@ test('enable here / follow: origins, re-point and every refusal', async () => {
       assert.match((await errs({ kind: 'enable', projectKey: 'bl-00000002', mode: 'follow', delegateTo: 'acme/edge' }))[0], /acme\/edge carries no team policy/);
       assert.match((await errs({ kind: 'enable', projectKey: 'ed-00000003', mode: 'follow', delegateTo: 'acme/billing' }))[0], /acme\/billing follows acme\/gateway; follow acme\/gateway directly/);
       assert.match((await errs({ kind: 'enable', projectKey: 'ed-00000003', mode: 'follow', delegateTo: 'acme/edge' }))[0], /cannot follow itself/);
+      // cycle-3 M1: the old short-form spelling of this project's own slug is still a self-follow (red today: targetUnknown)
+      assert.match((await errs({ kind: 'enable', projectKey: 'az-00000009', mode: 'follow', delegateTo: 'dev.azure.com/acme/shop' }))[0], /cannot follow itself/);
       assert.match((await errs({ kind: 'enable', projectKey: 'gw-00000001', mode: 'follow', delegateTo: 'acme/other' }))[0], /carries its own team policy; it cannot be turned into a follower/);
       assert.match((await errs({ kind: 'enable', projectKey: 'bl-00000002', mode: 'follow', delegateTo: 'acme/gateway' }))[0], /already follows acme\/gateway/);
     } },

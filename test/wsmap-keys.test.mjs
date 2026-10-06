@@ -128,6 +128,15 @@ test('remoteSlug: scp, https and ssh remotes → host/path; local paths → null
   assert.equal(remoteSlug('../x'), null);
 });
 
+test('remoteSlug: every Azure DevOps spelling folds to one dev.azure.com slug', () => {
+  assert.equal(remoteSlug('https://dev.azure.com/acme/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(remoteSlug('https://acme@dev.azure.com/acme/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(remoteSlug('git@ssh.dev.azure.com:v3/acme/Shop/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(remoteSlug('https://acme.visualstudio.com/DefaultCollection/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(remoteSlug('https://github.com/Acme/API.git'), 'github.com/acme/api', 'non-Azure unchanged');
+  assert.equal(remoteSlug('https://dev.azure.com/acme/Shop/api'), 'dev.azure.com/acme/shop/api', 'an unparseable Azure path keeps the old generic slug');
+});
+
 test('pathSuffixMatch: provider segments are a suffix of the consumer, {} matches one segment, one static segment agrees', () => {
   assert.equal(pathSuffixMatch('/api/v1/invoices/{}', '/invoices/{}'), true);
   assert.equal(pathSuffixMatch('/invoices/42', '/invoices/{}'), true);

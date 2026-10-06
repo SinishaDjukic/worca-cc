@@ -12,6 +12,7 @@
 import { ASK_LIMITS } from './limits.mjs';
 import { FIELDS, fieldMeta, normalizeEntry, normalizePolicyDoc, KINDS } from '../policy/registry.mjs';
 import { fmtValue } from '../policy/effective.mjs';
+import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 
 export const POLICY_CHANGE_KINDS = Object.freeze(['enable', 'edit', 'workspace_home', 'route_members']);
 const TITLE_MAX = 120;
@@ -225,17 +226,17 @@ export function createPolicyChangeValidator({ listProjects, readWorkspace, proje
         ];
         return { ok: true, card };
       }
-      const delegateTo = str(raw.delegateTo).toLowerCase();
+      const delegateTo = canonicalMetricsSlug(str(raw.delegateTo).toLowerCase());
       if (!delegateTo || /\s/.test(delegateTo)) return { ok: false, errors: [POLICY_ERRORS.delegateTo] };
-      if (st.slug && delegateTo === String(st.slug).toLowerCase()) return { ok: false, errors: [POLICY_ERRORS.followSelf(card.projectName)] };
+      if (sameMetricsSlug(st.slug, delegateTo)) return { ok: false, errors: [POLICY_ERRORS.followSelf(card.projectName)] };
       if (st.present && !st.delegateTo) return { ok: false, errors: [POLICY_ERRORS.carriesNotMarker(card.projectName)] };
-      if (st.present && String(st.delegateTo).toLowerCase() === delegateTo) return { ok: false, errors: [POLICY_ERRORS.alreadyFollows(card.projectName, delegateTo)] };
+      if (st.present && sameMetricsSlug(st.delegateTo, delegateTo)) return { ok: false, errors: [POLICY_ERRORS.alreadyFollows(card.projectName, delegateTo)] };
       // The core follows only a project registered HERE that carries a policy itself (no chains).
       let target = null;
       for (const q of await listProjects()) {
         if (!q || q.key === p.key) continue;
         const qs = (await projectStatus(q)) || {};
-        if (qs.slug && String(qs.slug).toLowerCase() === delegateTo) { target = qs; break; }
+        if (sameMetricsSlug(qs.slug, delegateTo)) { target = qs; break; }
       }
       if (!target) return { ok: false, errors: [POLICY_ERRORS.targetUnknown(delegateTo)] };
       if (!target.present) return { ok: false, errors: [POLICY_ERRORS.targetNoPolicy(delegateTo)] };

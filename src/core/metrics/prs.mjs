@@ -4,16 +4,21 @@
 // three sources, most trusted first:
 //   1. PR event files on the worca-metrics branch (`.worca-metrics/prs/<number>.json`), written
 //      by the optional GitHub Action (docs/team-metrics-pr-events.md);
-//   2. the GitHub CLI: one batched GraphQL query per 30 branches, cached in
-//      ~/.worca-cc/metrics/pr-cache.json (a merged PR is never asked about again);
+//   2. the GitHub CLI: one batched GraphQL query per 30 branches, or for an Azure DevOps repo one
+//      REST listing of its PRs for the window, cached in ~/.worca-cc/metrics/pr-cache.json (a
+//      merged PR is never asked about again);
 //   3. this machine's own pipelines table (pr_url / pr_state, no dates).
 // Every source is optional. Without gh and without the Action the page still renders; the
 // status block says which source was missing so the page can explain the gap. Never throws.
 import { execFile } from 'node:child_process';
 import { lstat, readdir, readFile, realpath, mkdir, writeFile, rename } from 'node:fs/promises';
 import { join, sep } from 'node:path';
-import { METRICS_DIR, metricsRoot, worktreePath } from './sync.mjs';
+import { METRICS_DIR, metricsRoot, worktreePath, azureMetricsSlug, canonicalMetricsSlug, azureCoordsForSlug } from './sync.mjs';
 import { prepare } from '../db.mjs';
+import { listPullRequests } from '../pr/azure.mjs';
+import { readAzureCredentials } from '../azure-credentials.mjs';
+import { azurePrUrl, parseAzurePrUrl } from '../../shared/azure-remote.mjs';
+import { mapWithCap } from '../fanout.mjs';
 
 export const PR_EVENTS_DIR = 'prs';
 export const MAX_EVENT_FILE_BYTES = 64 * 1024;
@@ -23,6 +28,10 @@ export const OPEN_TTL_MS = 10 * 60_000;       // an open PR (or none yet) is re-
 export const NONE_OLD_TTL_MS = 24 * 3_600_000; // …or after a day, once the run is a month old
 export const GH_STATUS_TTL_MS = 5 * 60_000;
 const DAY = 86_400_000;
+export const AZURE_CONCURRENCY = 4;
+export const AZURE_LOOKBACK_MS = 60 * DAY;   // a PR is looked for from 60 days before the earliest run's end
+export const AZURE_MAX_PAGES = 10;
+const AZ_STATE = { active: 'OPEN', completed: 'MERGED', abandoned: 'CLOSED' };
 const STATES = new Set(['OPEN', 'MERGED', 'CLOSED']);
 
 function defaultRun(cmd, args, { timeout = 30_000 } = {}) {
@@ -43,11 +52,16 @@ const isoOrNull = (v) => (typeof v === 'string' && Number.isFinite(Date.parse(v)
 const lower = (s) => String(s || '').toLowerCase();
 /** github.com slugs are exactly "owner/repo"; every other host keeps its host segment. */
 export const isGithubSlug = (slug) => typeof slug === 'string' && /^[a-z0-9._-]+\/[a-z0-9._-]+$/i.test(slug);
+export const isAzureSlug = (slug) => typeof slug === 'string' && /^dev\.azure\.com\/[^/]+\/[^/]+\/[^/]+$/i.test(slug);
+/** 'github' | 'azure' | null — which lookup a record slug can use. */
+export const forgeOfSlug = (slug) => (isGithubSlug(slug) ? 'github' : isAzureSlug(slug) ? 'azure' : null);
 
-/** "https://github.com/o/r/pull/12" → { repo: 'o/r', number: 12 } | null */
+/** GitHub "…/pull/12" or Azure DevOps "…/pullrequest/12" → { repo: <metrics slug>, number } | null */
 export function parsePrUrl(url) {
   const m = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/i.exec(String(url || ''));
-  return m ? { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) } : null;
+  if (m) return { repo: `${m[1]}/${m[2]}`, number: Number(m[3]) };
+  const az = parseAzurePrUrl(url);
+  return az ? { repo: azureMetricsSlug(az), number: az.number } : null;
 }
 
 /** One PR event file (v1) → a normalised PR, or null when it is not one. */
@@ -148,6 +162,64 @@ export async function lookupBranchesViaGh(lookups) {
   return { results, error };
 }
 
+// ---- Azure DevOps --------------------------------------------------------------------------
+
+const stripHeads = (ref) => (typeof ref === 'string' ? ref.replace(/^refs\/heads\//, '') : null);
+function fromAzurePr(slug, coords, p) {
+  const state = AZ_STATE[p?.status];
+  if (!state || !Number.isInteger(p.pullRequestId)) return null;
+  return { repo: slug, number: p.pullRequestId, url: azurePrUrl(coords, p.pullRequestId), title: p.title || null,
+    head: stripHeads(p.sourceRefName), base: stripHeads(p.targetRefName), state,
+    createdAt: isoOrNull(p.creationDate), mergedAt: state === 'MERGED' ? isoOrNull(p.closedDate) : null,
+    closedAt: isoOrNull(p.closedDate), via: 'azure' };
+}
+
+/**
+ * Azure has no batch query like GraphQL aliases: list each repo's PRs once for the window, match branches locally.
+ * `truncated`: repos whose listing hit AZURE_MAX_PAGES inside the window (D22; surfaced in status, m5).
+ * @returns {Promise<{results: Map<string, object[]>, error: string|null, auth: 'unauthenticated'|null, truncated: string[]}>}
+ */
+export async function lookupBranchesViaAzure(lookups, { coordsFor = azureCoordsForSlug, now = _now() } = {}) {
+  const byRepo = new Map();
+  for (const l of lookups) {
+    const g = byRepo.get(l.repo) || { slug: l.repo, branches: new Set(), from: Infinity };
+    g.branches.add(l.branch);
+    g.from = Math.min(g.from, l.endedMs ?? now);
+    byRepo.set(l.repo, g);
+  }
+  const results = new Map();
+  const truncated = [];
+  let error = null;
+  let auth = null;
+  await mapWithCap([...byRepo.values()], AZURE_CONCURRENCY, async (g) => {
+    let coords;
+    let listing;
+    try {                                          // everything that can throw stays inside: mapWithCap is Promise.all
+      coords = await coordsFor(g.slug);
+      if (!coords) { error ||= `no Azure DevOps repository is known for ${g.slug}`; return; }
+      listing = await listPullRequests(coords, { minTime: new Date(g.from - AZURE_LOOKBACK_MS).toISOString(), maxPages: AZURE_MAX_PAGES });
+    } catch (e) {
+      if (e.kind === 'auth') auth = 'unauthenticated';
+      error ||= String(e.message || e);
+      return;                                      // not cached: asked again next time
+    }
+    let unset = false;
+    for (const b of g.branches) {
+      const found = listing.prs
+        .filter((p) => !p.forkSource && p.sourceRefName === `refs/heads/${b}`)   // a fork's same-named branch is not this run's
+        .map((p) => fromAzurePr(g.slug, coords, p)).filter(Boolean);
+      // M2: a listing cut off at AZURE_MAX_PAGES proves nothing about a branch it did not reach. Leave it unset:
+      // unknown (null) in the join, never cached as "no PR", asked again next time.
+      if (found.length || listing.complete) results.set(`${lower(g.slug)}#${b}`, found);
+      else unset = true;
+    }
+    // n8: name the repo only when the cap actually left a branch unknown. If every branch was found inside
+    // the cap, the cut-off listing lost nothing, and a timeline notice would be noise.
+    if (unset) truncated.push(g.slug);
+  });
+  return { results, error, auth, truncated: truncated.sort() };
+}
+
 // ---- cache ---------------------------------------------------------------------------------
 
 export function cachePath() { return join(metricsRoot(), 'pr-cache.json'); }
@@ -199,7 +271,7 @@ function localPrs(ids) {
 // ---- resolve -------------------------------------------------------------------------------
 
 const RANK = { OPEN: 0, CLOSED: 1, MERGED: 2 };
-const VIA_RANK = { local: 1, gh: 2, action: 3 };
+const VIA_RANK = { local: 1, gh: 2, azure: 2, action: 3 };
 /** The better of two answers for one PR: a more final state, then a more trusted source. */
 function better(a, b) {
   if (!a) return b;
@@ -209,7 +281,7 @@ function better(a, b) {
 
 function sanitizeLookup(x) {
   if (!x || typeof x.id !== 'string' || !x.id || x.id.length > 64) return null;
-  const repos = Array.isArray(x.repos) ? x.repos.filter((r) => typeof r === 'string' && r && r.length <= 200).slice(0, 20) : [];
+  const repos = Array.isArray(x.repos) ? x.repos.filter((r) => typeof r === 'string' && r && r.length <= 200).slice(0, 20).map(canonicalMetricsSlug) : [];
   const branch = typeof x.branch === 'string' && x.branch && x.branch.length <= 255 ? x.branch : null;
   const pr = x.pr && typeof x.pr === 'object' ? { url: typeof x.pr.url === 'string' ? x.pr.url : null, number: Number.isInteger(x.pr.number) ? x.pr.number : null } : null;
   const endedMs = typeof x.endedAt === 'string' ? Date.parse(x.endedAt) : NaN;
@@ -221,12 +293,16 @@ function sanitizeLookup(x) {
  * @param {object[]} p.runs      [{ id, repos, branch, pr, endedAt }] from prLookupFor() (shared/timeline).
  * @param {string[]} p.sinks     metrics slugs whose worktrees may hold PR events.
  * @param {boolean} [p.useGh]
- * @returns {Promise<{ prs: Object<string, object[]|null>, status: object }>}
+ * @param {boolean} [p.useAzure]
+ * @param {(slug: string) => Promise<{org,project,repo}|null>} [p.coordsFor]  Azure coordinates of a metrics slug.
+ * @returns {Promise<{ prs: Object<string, object[]|null>, status: object }>} status: gh/ghDetail/ghError;
+ *   azure ('unused'|'missing'|'unauthenticated'|'ok'), azureError, azureTruncated (repos whose listing hit
+ *   AZURE_MAX_PAGES and left a branch unknown); actionRepos, unsupportedRepos, checked.
  */
-export async function resolveRunPrs({ runs = [], sinks = [], useGh = true } = {}) {
+export async function resolveRunPrs({ runs = [], sinks = [], useGh = true, useAzure = true, coordsFor = azureCoordsForSlug } = {}) {
   const now = _now();
   const lookups = runs.map(sanitizeLookup).filter(Boolean).slice(0, MAX_LOOKUPS);
-  const status = { gh: 'unused', ghDetail: null, ghError: null, actionRepos: [], unsupportedRepos: [], checked: 0 };
+  const status = { gh: 'unused', ghDetail: null, ghError: null, azure: 'unused', azureError: null, azureTruncated: [], actionRepos: [], unsupportedRepos: [], checked: 0 };
 
   // 1. Action events, indexed by repo#branch and repo#number.
   const byBranch = new Map();
@@ -249,36 +325,51 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true } = {}
   // 2. Local pipelines (this machine's own runs).
   const local = localPrs(lookups.map((l) => l.id));
 
-  // 3. gh, for the repo#branch pairs the Action has not answered.
+  // 3. gh / Azure DevOps, for the repo#branch pairs the Action has not answered.
   const cache = await loadCache();
-  const need = new Map();   // key → { repo, branch, endedMs }
+  const need = new Map();   // key → { repo, branch, endedMs, forge }
   const unsupported = new Set();
   for (const l of lookups) {
     if (!l.branch) continue;
     for (const repo of l.repos) {
       const key = `${lower(repo)}#${l.branch}`;
       if (byBranch.has(key)) continue;
-      if (!isGithubSlug(repo)) { if (!actionRepos.has(lower(repo))) unsupported.add(repo); continue; }
+      const forge = forgeOfSlug(repo);
+      if (!forge) { if (!actionRepos.has(lower(repo))) unsupported.add(repo); continue; }
       if (cacheFresh(cache.entries[key], { now, runEndedMs: l.endedMs })) continue;
       const prev = need.get(key);
-      if (!prev || (l.endedMs ?? 0) > (prev.endedMs ?? 0)) need.set(key, { repo, branch: l.branch, endedMs: l.endedMs });
+      if (!prev || (l.endedMs ?? 0) > (prev.endedMs ?? 0)) need.set(key, { repo, branch: l.branch, endedMs: l.endedMs, forge });
     }
   }
   status.unsupportedRepos = [...unsupported];
-  if (useGh && need.size) {
+  const ghNeed = [...need.values()].filter((n) => n.forge === 'github');
+  if (useGh && ghNeed.length) {
     const gh = await ghStatus();
     status.gh = gh.state;
     status.ghDetail = gh.detail;
     if (gh.state === 'ok') {
-      const { results, error } = await lookupBranchesViaGh([...need.values()]);
+      const { results, error } = await lookupBranchesViaGh(ghNeed);
       status.ghError = error;
-      status.checked = results.size;
+      status.checked += results.size;
+      for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
+      if (results.size) await saveCache(cache);
+    }
+  }
+  const azNeed = [...need.values()].filter((n) => n.forge === 'azure');
+  if (useAzure && azNeed.length) {
+    if (readAzureCredentials().mode === 'none') status.azure = 'missing';
+    else {
+      const { results, error, auth, truncated } = await lookupBranchesViaAzure(azNeed, { coordsFor, now });
+      status.azure = auth || 'ok';
+      status.azureError = auth ? null : error;
+      status.azureTruncated = truncated;
+      status.checked += results.size;
       for (const [key, prs] of results) cache.entries[key] = { prs, checkedAt: now };
       if (results.size) await saveCache(cache);
     }
   }
 
-  // Join per run.
+  // Join per run — keep the source the cache recorded (Azure), default gh for older entries (m5).
   const prs = {};
   for (const l of lookups) {
     const found = new Map();   // repo#number → pr
@@ -304,11 +395,11 @@ export async function resolveRunPrs({ runs = [], sinks = [], useGh = true } = {}
         const evs = byBranch.get(key);
         const cached = cache.entries[key];
         if (evs) { known = true; evs.forEach(add); }
-        else if (cached && Array.isArray(cached.prs)) { known = true; cached.prs.forEach((p) => add({ ...p, via: 'gh' })); }
+        else if (cached && Array.isArray(cached.prs)) { known = true; cached.prs.forEach((p) => add({ ...p, via: p.via || 'gh' })); }
       }
     }
     // A PR known only from this machine's table is still a real PR, but "no PR" is only claimed
-    // when the Action or GitHub actually answered for the run's branch.
+    // when the Action, GitHub or Azure DevOps actually answered for the run's branch.
     prs[l.id] = found.size ? [...found.values()] : known ? [] : null;
   }
   return { prs, status };

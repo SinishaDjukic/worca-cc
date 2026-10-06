@@ -16,7 +16,8 @@ import {
   workspaceEnvelope, MAX_LINE, STREAM_MAX, FRAME_MAX,
 } from '../src/core/graph/script-runner.mjs';
 import { classifyError } from '../src/core/recoverable-error.mjs';
-import { stripGithubCredentials } from '../src/core/github-credentials.mjs';
+import { stripHostCredentials } from '../src/core/host-credentials.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../src/shared/graph/constants.mjs';
 import { probePython, resetPythonProbe } from '../src/core/graph/python-probe.mjs';
 
@@ -460,7 +461,7 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
     const scrubbed = await runScriptExecution(ctxFor({ meta: shellMeta(), params: { command: print }, ports,
       claudeOpts: { envScrub: true, envAllowlist: ['WORCA_TEST_KEEP'] } }));
     assert.match(readFileSync(scrubbed.outputs.log.path, 'utf8'), /^S= K=kept O=y$/m, 'scrub on: the secret is gone, the allowlisted var and the contract stay');
-    assert.deepEqual(scriptBaseEnv({}), stripGithubCredentials(process.env), 'scrub off: the server env minus GitHub credentials');
+    assert.deepEqual(scriptBaseEnv({}), stripHostCredentials(process.env), 'scrub off: the server env minus code-host credentials');
     process.env.GH_TOKEN_PROBE_PREV = process.env.GH_TOKEN ?? '';
     process.env.GH_TOKEN = 'ghp_secret';
     try {
@@ -477,6 +478,15 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
     delete process.env.WORCA_TEST_SECRET;
     delete process.env.WORCA_TEST_KEEP;
   }
+});
+
+test('a script base env never carries an Azure DevOps credential, scrub on or off', async () => {
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+  await withEnv(Object.fromEntries(ADO_KEYS.map((k) => [k, 'x'])), () => {
+    for (const env of [scriptBaseEnv({}), scriptBaseEnv({ envScrub: true, envAllowlist: ADO_KEYS })]) {
+      for (const k of ADO_KEYS) assert.equal(k in env, false, k);
+    }
+  });
 });
 
 test('W12: ctx.bench rides the envelope and WORCA_BENCH the shell env; a pipeline run carries neither', () => {

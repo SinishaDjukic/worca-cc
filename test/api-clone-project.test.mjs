@@ -46,6 +46,12 @@ test('refusals known up front answer at once with a status and a code', async ()
   r = await post({ url: 'https://user:tok@github.com/acme/api' });
   assert.equal(r.status, 400);
   assert.match((await r.json()).error, /contains credentials/);
+  r = await post({ url: 'https://acme:pat@dev.azure.com/acme/Shop/_git/api' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /set WORCA_ADO_TOKEN/);
+  r = await post({ url: 'https://dev.azure.com/acme/Shop/api' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /like https:\/\/dev\.azure\.com\/org\/project\/_git\/repo/);
   await mkdir(join(rootDir, 'taken'));
   r = await post({ url: 'https://github.com/acme/taken' });
   assert.equal(r.status, 409);

@@ -1,11 +1,12 @@
 // Add a project by cloning a repository into the projects folder (docs/deploy-railway.md).
 // On a hosted worca this replaces a `railway ssh` session: the clone runs in the server,
 // as the server's user, with the read credential for that one command
-// (github-credentials.mjs#githubEnv), and lands in a NEW folder directly under the
+// (host-credentials.mjs#gitEnvFor: GitHub's token or App, or the Azure DevOps PAT), and lands in a NEW folder directly under the
 // projects root. Registration is the ordinary add-project step.
 //
-//   URLs     https only; no credentials inside the URL (use the token variables)
-//   allow    WORCA_CLONE_ALLOW, e.g. "github.com/acme/*,github.com/you/app"; unset = any
+//   URLs     https only; no credentials inside the URL (use the token variables); Azure DevOps
+//            spellings fold to https://dev.azure.com/org/project/_git/repo
+//   allow    WORCA_CLONE_ALLOW, e.g. "github.com/acme/*,dev.azure.com/org/project/*"; unset = any
 //   where    <projects root>/<name>; name defaults to the repository name, is sanitised,
 //            and an existing folder is refused, never overwritten
 //   size     --filter=blob:none (partial clone), a timeout (default 10 minutes), and a
@@ -14,24 +15,31 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { githubEnv, stripGithubCredentials } from './github-credentials.mjs';
+import { githubEnv } from './github-credentials.mjs';
+import { gitEnvFor } from './host-credentials.mjs';
+import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const SEG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*@\{)[A-Za-z0-9._\/-]{1,200}(?<![./])$/;
+const AZ_ORG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/;
+// Azure project/repo names: up to 64 chars, no control chars or \ / : * ? " < > | ; # $ { } , + = [ ], no leading . or _.
+const AZ_NAME_RE = /^(?![._])[^\\/:*?"<>|;#${},+=[\]\u0000-\u001f]{1,64}$/u;
+const folderFrom = (s) => s.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[^A-Za-z0-9]+/, '').slice(0, 100) || 'repo';
 
 /** A clone refusal: `code` is one of invalid | not-allowed | exists | auth-failed | not-found | timeout | failed. */
 export class CloneError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 
-/** WORCA_CLONE_ALLOW -> ["github.com/acme/*", "github.com/you/app"] (lowercased). */
+/** WORCA_CLONE_ALLOW -> lowercased, percent-decoded patterns of any depth ("host/a/*", "host/a/b/c"). */
 export function parseCloneAllow(value) {
-  return String(value || '').split(',').map((s) => s.trim().toLowerCase().replace(/\/+$/, '')).filter(Boolean);
+  const dec = (x) => { try { return decodeURIComponent(x); } catch { return x; } };
+  return String(value || '').split(',').map((s) => dec(s.trim()).toLowerCase().replace(/\/+$/, '')).filter(Boolean);
 }
 
-/** True when host/owner/repo matches an allow entry ("host/owner/*" or "host/owner/repo"). Empty list = any. */
+/** True when host/owner/repo matches an allow entry ("host/path/*" or "host/path/repo", any depth). Empty list = any. */
 export function cloneAllowed(allow, { host, owner, repo }) {
   if (!allow.length) return true;
   const full = `${host}/${owner}/${repo}`.toLowerCase();
@@ -40,31 +48,46 @@ export function cloneAllowed(allow, { host, owner, repo }) {
 
 /**
  * Validate a clone request. Pure (besides existsSync on the target). Returns
- * { url, host, owner, repo, name, dir, branch } or throws CloneError('invalid'|'not-allowed'|'exists').
+ * { url, host, owner, repo, name, dir, branch } (Azure adds org and project; owner is "org/project") or throws CloneError('invalid'|'not-allowed'|'exists').
  */
 export function planClone({ url, branch = null, name = null } = {}, { projectsRoot, env = process.env, exists = existsSync } = {}) {
   if (typeof url !== 'string' || !url.trim()) throw new CloneError('invalid', 'a repository URL is required');
   let u;
   try { u = new URL(url.trim()); } catch { throw new CloneError('invalid', 'not a valid URL'); }
   if (u.protocol !== 'https:') throw new CloneError('invalid', 'only https:// repository URLs are supported');
-  if (u.username || u.password) {
-    throw new CloneError('invalid', 'the URL contains credentials; remove them and set the GitHub token or App variables where worca is deployed');
+  const azure = isAzureHost(u.hostname);
+  // Azure's "Clone" button puts the org as a user ("https://acme@dev.azure.com/…"): a user alone is dropped.
+  if (u.password || (u.username && !azure)) {
+    throw new CloneError('invalid', `the URL contains credentials; remove them and set ${azure ? 'WORCA_ADO_TOKEN' : 'the GitHub token or App variables'} where worca is deployed`);
   }
   if (u.search || u.hash) throw new CloneError('invalid', 'the URL must not have a query or fragment');
   if (u.port) throw new CloneError('invalid', 'the URL must not name a port');
-  const host = u.hostname.toLowerCase();
   const segs = u.pathname.replace(/\/+$/, '').replace(/\.git$/i, '').split('/').filter(Boolean);
-  if (segs.length !== 2 || !segs.every((s) => SEG_RE.test(s))) {
-    throw new CloneError('invalid', 'the URL must name one repository, like https://github.com/owner/repo');
+  let host; let owner; let repo; let extra = {}; let canonical;
+  if (azure) {
+    const az = parseAzurePath(u.hostname.toLowerCase(), segs);
+    if (!az || !AZ_ORG_RE.test(az.org) || !AZ_NAME_RE.test(az.project) || !AZ_NAME_RE.test(az.repo)) {
+      throw new CloneError('invalid', 'the URL must name one repository, like https://dev.azure.com/org/project/_git/repo');
+    }
+    ({ host, owner, repo } = az);
+    extra = { org: az.org, project: az.project };
+    const e = encodeURIComponent;
+    canonical = `https://dev.azure.com/${e(az.org)}/${e(az.project)}/_git/${e(az.repo)}`;
+  } else {
+    host = u.hostname.toLowerCase();
+    if (segs.length !== 2 || !segs.every((s) => SEG_RE.test(s))) {
+      throw new CloneError('invalid', 'the URL must name one repository, like https://github.com/owner/repo');
+    }
+    [owner, repo] = segs;
+    canonical = `https://${host}/${owner}/${repo}.git`;
   }
-  const [owner, repo] = segs;
   if (!cloneAllowed(parseCloneAllow(env.WORCA_CLONE_ALLOW), { host, owner, repo })) {
     throw new CloneError('not-allowed', `${host}/${owner}/${repo} is not in WORCA_CLONE_ALLOW`);
   }
   if (branch != null && branch !== '' && (typeof branch !== 'string' || !BRANCH_RE.test(branch.trim()))) {
     throw new CloneError('invalid', 'not a valid branch name');
   }
-  const folder = name == null || name === '' ? repo : String(name).trim();
+  const folder = name == null || name === '' ? (azure ? folderFrom(repo) : repo) : String(name).trim();
   if (!NAME_RE.test(folder) || folder === '.' || folder === '..') {
     throw new CloneError('invalid', 'the folder name may use letters, digits, ".", "_" and "-" (up to 100)');
   }
@@ -74,15 +97,17 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
   if (!dir.startsWith(root + sep)) throw new CloneError('invalid', 'the folder must be directly under the projects folder');
   if (exists(dir)) throw new CloneError('exists', `${dir} already exists; pick another folder name`);
   return {
-    url: `https://${host}/${owner}/${repo}.git`, host, owner, repo, name: folder, dir,
+    url: canonical, host, ...extra, owner, repo, name: folder, dir,
     branch: branch ? branch.trim() : null,
   };
 }
 
-function classify(stderr) {
+function classify(stderr, host = 'github.com') {
   const s = String(stderr || '');
   if (/Authentication failed|could not read Username|terminal prompts disabled|403/i.test(s)) {
-    return new CloneError('auth-failed', 'GitHub refused the credential: check the token or that the App is installed on this repository');
+    return new CloneError('auth-failed', isAzureHost(host)
+      ? 'Azure DevOps refused the credential: check WORCA_ADO_TOKEN (Code: Read) and that it can see this repository'
+      : 'GitHub refused the credential: check the token or that the App is installed on this repository');
   }
   if (/Remote branch .* not found/i.test(s)) return new CloneError('not-found', 'that branch does not exist');
   if (/Repository not found|not found|404/i.test(s)) {
@@ -94,10 +119,8 @@ function classify(stderr) {
 
 /** Run `git clone` for a plan. Resolves the plan; rejects with CloneError after removing the folder. */
 export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential = githubEnv, spawnImpl = spawn } = {}) {
-  // GitHub gets the read credential for this one command; any other host gets no GitHub credential.
-  const cred = plan.host === 'github.com'
-    ? await credential('read', { repo: `${plan.owner}/${plan.repo}` })
-    : { env: stripGithubCredentials(process.env), error: null };
+  // Each host gets ITS read credential for this one command (gitEnvFor); GitHub keeps the injectable seam.
+  const cred = await gitEnvFor('read', plan.url, { githubEnvImpl: credential });
   if (cred.error) throw new CloneError('auth-failed', cred.error);
   const args = ['clone', '--filter=blob:none', ...(plan.branch ? ['--branch', plan.branch] : []), '--', plan.url, plan.dir];
   const env = { ...cred.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', LC_ALL: 'C' };
@@ -114,7 +137,7 @@ export async function runClone(plan, { timeoutMs = CLONE_TIMEOUT_MS, credential 
   if (code === 0) return plan;
   await rm(plan.dir, { recursive: true, force: true }).catch(() => {});
   if (timedOut) throw new CloneError('timeout', `the clone took longer than ${Math.round(timeoutMs / 60_000)} minutes`);
-  throw classify(stderr);
+  throw classify(stderr, plan.host);
 }
 
 /**

@@ -9,6 +9,9 @@ import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 
 // settingsFile() lives under HOME, not WORCA_HOME: repoint both BEFORE any src/core import,
 // or this test rewrites the developer's real settings.json (keep policy, cap).
@@ -27,6 +30,7 @@ const { worcaHome } = await import('../src/core/projects.mjs');
 const { setActionsSettings } = await import('../src/core/settings.mjs');
 const { checkoutRecordsFor, findPipelineRowById, persistPrState } = await import('../src/core/artifacts.mjs');
 const { keepAfterRun, releaseKeptCheckouts } = await import('../src/core/checkout.mjs');
+const azurePr = await import('../src/core/pr/azure.mjs');
 
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 const created = [];
@@ -84,4 +88,32 @@ test('until-pr: released when the PR is MERGED or CLOSED, kept while OPEN or abs
   const states = { [`https://github.com/o/r/pull/MERGED`]: 'MERGED', [`https://github.com/o/r/pull/CLOSED`]: 'CLOSED' };
   const { released } = await releaseKeptCheckouts({ prState: async ({ prUrl }) => states[prUrl] || 'OPEN' });
   assert.deepEqual(released.sort(), [ids.MERGED, ids.CLOSED].sort());
+});
+
+test('until-pr: an Azure DevOps PR URL is released when its PR is MERGED', async () => {
+  await setActionsSettings({ keep: 'until-pr' });
+  await releaseKeptCheckouts({ prState: async () => 'MERGED' });           // clear earlier rows' checkouts
+  const feature = 'worca-cc/azure-merged';
+  const repo = await freshRepo(); git(repo, ['branch', feature]);
+  const { id } = await seedDoneRun(repo, feature);
+  await keepAfterRun({ pipelineId: id });
+  const url = 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/7';
+  persistPrState(id, { url, number: 7, state: 'OPEN' });
+  const { released } = await releaseKeptCheckouts({ prState: async ({ prUrl }) => (prUrl === url ? 'MERGED' : 'OPEN') });
+  assert.deepEqual(released, [id]);
+});
+
+test('until-pr: the default prState releases a checkout whose Azure DevOps PR completed', async () => {
+  await setActionsSettings({ keep: 'until-pr' });
+  await releaseKeptCheckouts({ prState: async () => 'MERGED' });           // clear earlier rows' GitHub-URL checkouts, no gh
+  const feature = 'worca-cc/azure-done';
+  const repo = await freshRepo(); git(repo, ['branch', feature]);
+  const { id } = await seedDoneRun(repo, feature);
+  await keepAfterRun({ pipelineId: id });
+  persistPrState(id, { url: 'https://dev.azure.com/acme/Shop/_git/api/pullrequest/3', number: 3, state: 'OPEN' });
+  azurePr._testing.setFetch(async () => ({ status: 200, ok: true, json: async () => ({ pullRequestId: 3, status: 'completed' }) }));
+  try {
+    const { released } = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, () => releaseKeptCheckouts());
+    assert.ok(released.includes(id), JSON.stringify(released));
+  } finally { azurePr._testing.reset(); }
 });

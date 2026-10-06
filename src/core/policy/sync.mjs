@@ -22,6 +22,7 @@ import {
   runGit, projectSlug, gitUserName, orphanCommit, identityArgs, findLocalRepoBySlug, isNonFastForward,
   slugDirName, DISCOVERY_TTL_MS, DISCOVERY_RETRY_MS,
 } from '../metrics/sync.mjs';
+import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 import { normalizePolicyDoc, emptyPolicyDoc, serializePolicyDoc, POLICY_SCHEMA, fieldMeta } from './registry.mjs';
 import { capSummary, fieldCount, effectiveRows } from './effective.mjs';
 
@@ -192,7 +193,7 @@ export async function resolveProjectPolicy(projectDir, { discover = true } = {})
   if (!own.delegateTo) {
     return { ok: true, home: own.slug, homeDir: projectDir, sha: own.headSha, doc: own.doc, delegated: false, from: own.slug, warnings: own.warnings || [], checkedAt: own.checkedAt ?? null };
   }
-  if (own.delegateTo === own.slug) return invalid('DELEGATE_SELF', `${own.slug} follows itself`);
+  if (sameMetricsSlug(own.delegateTo, own.slug)) return invalid('DELEGATE_SELF', `${own.slug} follows itself`);
   const target = await findLocalRepoBySlug(own.delegateTo);
   if (!target) return invalid('DELEGATE_UNKNOWN', `follows ${own.delegateTo}, which is not a project in Worca on this machine`);
   const t = await prefsFor(target.path, { discover });
@@ -257,9 +258,9 @@ export async function ensureWorktree(slug, projectDir) {
 
 /** @returns {Promise<{slug:string}>} the validated home to follow */
 async function validateFollowTarget(delegateTo, ownSlug) {
-  const want = String(delegateTo || '').toLowerCase();
+  const want = canonicalMetricsSlug(String(delegateTo || '').toLowerCase());
   if (!want) throw policyError('BAD_REQUEST', 'delegateTo is required');
-  if (want === ownSlug) throw policyError('DELEGATE_INVALID', 'a project cannot follow itself');
+  if (sameMetricsSlug(want, ownSlug)) throw policyError('DELEGATE_INVALID', 'a project cannot follow itself');
   const target = await findLocalRepoBySlug(want);
   if (!target) throw policyError('DELEGATE_INVALID', `${want} is not a project in Worca on this machine`);
   const t = (await discoverPolicy(target.path, { force: true }).catch(() => null)) || {};
@@ -326,7 +327,7 @@ async function rewriteMarker(slug, projectDir, doc) {
     if (!reset.ok) throw policyError('WORKTREE_FAILED', firstLine(reset.stderr), { stderr: reset.stderr });
     const cur = await readFile(join(dir, POLICY_FILE), 'utf8').then(JSON.parse).catch(() => ({}));
     if (!cur.delegateTo) throw policyError('DELEGATE_INVALID', 'this project carries its own policy; its branch is not a marker');
-    if (String(cur.delegateTo).toLowerCase() === doc.delegateTo) return { action: 'changed' };
+    if (sameMetricsSlug(cur.delegateTo, doc.delegateTo)) return { action: 'changed' };
     await writeFile(join(dir, POLICY_FILE), JSON.stringify({ ...cur, enabledAt: doc.enabledAt, enabledBy: doc.enabledBy, delegateTo: doc.delegateTo }, null, 2) + '\n');
     await runGit(dir, ['add', '-A', '-f', POLICY_DIR]);
     const c = await runGit(dir, [...(await identityArgs(projectDir, 'git-user')), 'commit', '-q', '--no-verify', '-m', `policy: follow ${doc.delegateTo}`]);
@@ -447,8 +448,8 @@ export async function workspacePolicyStatus(ws, { discover = false } = {}) {
     if (isHome) { state = 'home'; policyFrom = homeR?.home ?? prefs.slug ?? null; }
     else if (prefs.hasOrigin === false) state = 'no-origin';
     else if (!prefs.present) state = 'none';
-    else if (prefs.delegateTo) { state = homeR && prefs.delegateTo === homeR.home ? 'follows-home' : 'follows-other'; policyFrom = prefs.delegateTo; }
-    else { state = homeR && prefs.slug === homeR.home ? 'is-home' : 'own'; policyFrom = prefs.slug; }
+    else if (prefs.delegateTo) { state = homeR && sameMetricsSlug(prefs.delegateTo, homeR.home) ? 'follows-home' : 'follows-other'; policyFrom = prefs.delegateTo; }
+    else { state = homeR && sameMetricsSlug(prefs.slug, homeR.home) ? 'is-home' : 'own'; policyFrom = prefs.slug; }
     members.push({ path, slug: prefs.slug ?? basename(path), state, policyFrom });
   }
   return { id: ws.id, name: ws.name, projectPaths: ws.projectPaths, home, members,

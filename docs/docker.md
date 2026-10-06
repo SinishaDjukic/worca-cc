@@ -135,6 +135,19 @@ source, the `worca-metrics` / `worca-policy` branches and clone-in mode.
 | SSH remotes | `docker compose -f compose.yml -f compose.ssh.yml up -d` forwards your agent socket (Docker Desktop: automatic; Linux: `WORCA_SSH_SOCK=$SSH_AUTH_SOCK`). Keys never enter the box; the socket does, so pair it with the egress overlay for untrusted tasks |
 | Commit identity | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` in `.env` (agents commit in run worktrees; git refuses without one) |
 
+### Azure DevOps
+
+`WORCA_ADO_TOKEN=<PAT>` in `.env` (or a read/write pair, `WORCA_ADO_READ_TOKEN` and
+`WORCA_ADO_WRITE_TOKEN`) lets Worca clone, fetch, push and open pull requests on
+`dev.azure.com` and `*.visualstudio.com` repositories. `compose.yml` passes these three
+through. Like the GitHub token, Worca hands it to its own git calls and REST requests one
+call at a time, and agents never get it. The entrypoint logs which mode it found (`Azure
+DevOps: one token for clone, push and PRs, per call`, or `split read/write tokens`). With the
+egress overlay, add `dev.azure.com,.visualstudio.com,vssps.dev.azure.com` to
+`WORCA_EGRESS_ALLOW`; the default list is GitHub's only. The Azure Boards task source reads its
+own token (`WORCA_ADO_BOARDS_TOKEN`), which `compose.yml` does not pass: add it in a
+`compose.override.yml`. Scopes, URL shapes and limits: [Azure DevOps](azure-devops.md).
+
 ## Projects, paths and worktrees
 
 Worca isolates every run in a `git worktree`, and git records **absolute paths**
@@ -217,6 +230,7 @@ URL from `docker compose logs teams-tunnel`.
 | `TZ` | `UTC` | **scheduled runs use this clock** |
 | `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL` | | commit identity |
 | `GH_TOKEN` | | GitHub over HTTPS |
+| `WORCA_ADO_TOKEN`, `WORCA_ADO_READ_TOKEN`, `WORCA_ADO_WRITE_TOKEN` | | Azure DevOps over HTTPS ([Azure DevOps](#azure-devops)) |
 | `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY` | | see *Logging in* |
 | `WORCA_UID`, `WORCA_GID` | `1000` | Linux Engine: your ids (`id -u`, `id -g`) when not 1000, so the box can write your bind-mounted repos; the volumes work for any uid |
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |

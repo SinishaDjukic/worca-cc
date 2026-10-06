@@ -13,6 +13,9 @@ import {
 } from '../src/core/git-sync.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { templateWorld } from './helpers/git-dir.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 
 let root; const saved = {};
 before(async () => {
@@ -534,4 +537,52 @@ test('a failed fetch keeps the last good fetch time (git empties FETCH_HEAD) and
   assert.equal(bad.fetchedAt, good.fetchedAt);
   const st = await syncRepo(a, { base: 'dev', mode: 'status' });
   assert.equal(st.stale, true); assert.equal(st.fetchedAt, good.fetchedAt);
+});
+
+const AZ_URL = 'https://dev.azure.com/acme/Shop/_git/api';
+const answerAzureUrl = (args) => args[0] === 'remote' && args[1] === 'get-url'
+  ? Promise.resolve({ ok: true, stdout: `${AZ_URL}\n`, stderr: '', code: 0, timedOut: false }) : null;
+
+test('fetch of an Azure DevOps remote carries the ADO read helper, never a GitHub token', async () => {
+  const { a } = await world();
+  let fetchEnv;
+  _testing.setRunner((args, opts) => {
+    const az = answerAzureUrl(args);
+    if (az) return az;
+    if (args[0] === 'fetch') { fetchEnv = opts.env; return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0, timedOut: false }); }
+    return _testing.defaultRun(args, opts);
+  });
+  try {
+    await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat', GH_TOKEN: 'ghp_x' }, () => fetchRemote(a));
+  } finally { _testing.setRunner(null); }
+  assert.equal(fetchEnv.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(fetchEnv.WORCA_ADO_TOKEN, undefined);
+  assert.equal(fetchEnv.GH_TOKEN, undefined);
+});
+
+test('a fast-forward on an Azure DevOps remote merges with the ADO read helper', { skip: process.platform === 'win32' }, async () => {
+  const { a, push } = await world();
+  await push('m.txt', 'two'); await fetchRemote(a);
+  let mergeOpts = null;
+  _testing.setRunner((args, opts) => {
+    const az = answerAzureUrl(args);
+    if (az) return az;
+    if (args[0] === 'merge') mergeOpts = opts;
+    return _testing.defaultRun(args, opts);
+  });
+  let r;
+  try {
+    r = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, () => fastForward(a, { base: 'dev' }));
+  } finally { _testing.setRunner(null); }
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(mergeOpts.env.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(mergeOpts.env.GH_TOKEN, undefined);
+});
+
+test('scrubGitText redacts Azure DevOps PAT shapes', () => {
+  const pat84 = `${'A1'.repeat(38)}AZDOab12`;
+  const pat52 = 'abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst';
+  assert.equal(scrubGitText(`fatal: token ${pat84} refused`), 'fatal: token <redacted> refused');
+  assert.equal(scrubGitText(`fatal: token ${pat52} refused`), 'fatal: token <redacted> refused');
+  assert.equal(scrubGitText('fatal: repository not found'), 'fatal: repository not found');
 });

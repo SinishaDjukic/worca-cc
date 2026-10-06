@@ -143,6 +143,9 @@ test('helpers: tierRank, semverAtLeast, looksLikeSecret', () => {
   assert.equal(semverAtLeast('1.4.0', '1.3.9'), true); assert.equal(semverAtLeast('1.3.0', '1.4.0'), false); assert.equal(semverAtLeast('1.4.0-rc.1', '1.4.0'), true);
   assert.equal(looksLikeSecret('${TOKEN}'), false); assert.equal(looksLikeSecret('https://x'), false);
   assert.equal(looksLikeSecret('sk-ant-' + 'a'.repeat(30)), true); assert.equal(looksLikeSecret('a'.repeat(48)), true);
+  // Both Azure DevOps PAT shapes (84-char with AZDO, 52-char base32): the long opaque token rule covers them.
+  assert.equal(looksLikeSecret('A'.repeat(76) + 'AZDO' + 'abcd'), true);
+  assert.equal(looksLikeSecret('abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrst'), true);
 });
 
 test('ask.webEnabled / ask.webAllowedDomains', () => {

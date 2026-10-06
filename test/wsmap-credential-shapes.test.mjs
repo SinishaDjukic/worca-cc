@@ -358,7 +358,7 @@ test('no artifact of extract → catalog → briefs → join → finalize holds 
   const cited = (e) => e.evidence.from.map((x) => `${x.file}:${x.line} ${x.match}`);
   assert.deepEqual(cited(edge('nats', 'service')), ['.env:1 nats://***@nats:4222', 'docker-compose.yml:5 nats://***@nats:4222']);
   assert.deepEqual(cited(edge('private-lib', 'pkg', 'private-lib')), ['package.json:5 "private-lib": "git+https://***@github.com/acme/private-lib.git"']);
-  assert.deepEqual(cited(edge('private-lib', 'pkg', 'dev.azure.com/acme/shop/_git/private-lib')), ['.gitmodules:3 https://***@dev.azure.com/acme/shop/_git/private-lib']);
+  assert.deepEqual(cited(edge('private-lib', 'pkg', 'dev.azure.com/acme/shop/private-lib')), ['.gitmodules:3 https://***@dev.azure.com/acme/shop/_git/private-lib']);
   assert.deepEqual(cited(edge('reports', 'http', 'GET /api/reports/latest')), ['.env:3 http://reports:8080/api/reports/latest?jwt=***']);
   assert.deepEqual(cited(edge('reports', 'http', 'GET /embed/dashboard/:token')), ['.env:4 http://reports:8080/embed/dashboard/eyJ***']);
   assert.deepEqual(cited(edge('reports', 'http', 'GET /api/reports/weekly')), ['.env:5 http://reports:8080/api/reports/weekly?session=***']);

@@ -10,6 +10,7 @@
 #   WORCA_EGRESS_ALLOW   comma-separated hosts; ".example.com" allows subdomains.
 #                        Default: api.anthropic.com, github.com, .github.com,
 #                        .githubusercontent.com, registry.npmjs.org
+#                        Azure DevOps: add dev.azure.com,.visualstudio.com,vssps.dev.azure.com
 
 services:
   worca:

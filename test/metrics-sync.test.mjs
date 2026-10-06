@@ -1,7 +1,7 @@
 // test/metrics-sync.test.mjs
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, utimesSync, rmSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -16,9 +16,16 @@ import { readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../src/core/config.
 import {
   enableTeamMetrics, discoverProject, resolveProjectSink, writeOutbox, listOutbox, listOutboxSlugs, flushSlug,
   outboxDir, worktreePath, slugDirName, slugFromDirName, metricsEvents, isNonFastForward, backoffMs, routeWorkspaceMembers,
-  metricsSlugFromUrl, _testing,
+  metricsSlugFromUrl, keepProjectRecord, workspaceMetricsStatus, metricsGitEnv, _testing,
 } from '../src/core/metrics/sync.mjs';
+import { canonicalMetricsSlug, sameMetricsSlug } from '../src/shared/team-metrics/slug.mjs';
 import { readRunLedger } from '../src/core/metrics/ledger.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+/** Every ambient variable that opens a D6/D7/D20 host-lookup gate: Azure credentials, push-as-person, App mode. */
+const CLOSED_GATES = { ...NO_ADO, WORCA_GH_AS_PERSON: undefined, WORCA_BROKER_URL: undefined,
+  WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
 
 const skip = process.platform === 'win32' ? 'pre-receive hooks / sh not portable to win32' : false;
 const CHILD = resolve(dirname(fileURLToPath(import.meta.url)), 'fixtures/team-metrics/flush-child.mjs');
@@ -358,4 +365,83 @@ test('metricsSlugFromUrl is stable across protocols and never collides across or
   assert.equal(metricsSlugFromUrl('https://dev.azure.com/org/My%20Project/_git/My Repo'), 'dev.azure.com/org/my-project/my-repo');
   assert.doesNotThrow(() => slugDirName(metricsSlugFromUrl('https://dev.azure.com/org/My%20Project/_git/My Repo')));
   assert.equal(metricsSlugFromUrl('/tmp/remotes/billing-api.git'), null);   // local bare repo → basename fallback
+});
+
+test('Azure metrics slug: every spelling folds; the default-repo short form names project and repo; odd shapes keep the generic slug', () => {
+  assert.equal(metricsSlugFromUrl('https://acme.visualstudio.com/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(metricsSlugFromUrl('https://acme.visualstudio.com/DefaultCollection/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  assert.equal(metricsSlugFromUrl('https://acme@dev.azure.com/acme/Shop/_git/api'), 'dev.azure.com/acme/shop/api');
+  // M3: the short form now matches its ssh spelling
+  assert.equal(metricsSlugFromUrl('https://dev.azure.com/acme/_git/Shop'), 'dev.azure.com/acme/shop/shop');
+  assert.equal(metricsSlugFromUrl('git@ssh.dev.azure.com:v3/acme/Shop/Shop'), 'dev.azure.com/acme/shop/shop');
+  assert.equal(metricsSlugFromUrl('https://acme.visualstudio.com/DefaultCollection/_git/Shop'), 'dev.azure.com/acme/shop/shop');
+  // m8: shapes the strict parser rejects still get today's generic slug (the sink is never lost)
+  assert.equal(metricsSlugFromUrl('https://dev.azure.com/acme/Shop/_git/api/extra'), 'dev.azure.com/acme/shop/api/extra');
+  assert.equal(metricsSlugFromUrl('git@ssh.dev.azure.com:acme/Shop/api'), 'dev.azure.com/acme/shop/api', 'ssh without v3');
+});
+
+test('canonicalMetricsSlug maps every slug older code wrote for an Azure repo to today\'s; idempotent (M3)', () => {
+  for (const [old, now] of [
+    ['dev.azure.com/acme/shop', 'dev.azure.com/acme/shop/shop'],                                  // https://dev.azure.com/acme/_git/Shop
+    ['acme.visualstudio.com/shop/api', 'dev.azure.com/acme/shop/api'],
+    ['acme.visualstudio.com/defaultcollection/shop/api', 'dev.azure.com/acme/shop/api'],
+    ['acme.visualstudio.com/defaultcollection/shop', 'dev.azure.com/acme/shop/shop'],             // …/DefaultCollection/_git/Shop
+    ['dev.azure.com/acme/shop/api', 'dev.azure.com/acme/shop/api'],
+    ['dev.azure.com/acme/shop/api/extra', 'dev.azure.com/acme/shop/api/extra'],                   // D19 generic slug: untouched
+    ['acme/api', 'acme/api'], ['gitlab.com/g/api', 'gitlab.com/g/api'], ['gitlab.com/g/sub/api', 'gitlab.com/g/sub/api'],
+    ['billing-api', 'billing-api'],
+  ]) {
+    assert.equal(canonicalMetricsSlug(old), now, old);
+    assert.equal(canonicalMetricsSlug(now), now, `idempotent: ${now}`);
+  }
+  assert.equal(canonicalMetricsSlug(null), null);
+  assert.equal(sameMetricsSlug('dev.azure.com/acme/shop', 'dev.azure.com/acme/shop/shop'), true);
+  assert.equal(sameMetricsSlug('acme.visualstudio.com/defaultcollection/shop', 'dev.azure.com/acme/shop/shop'), true);
+  assert.equal(sameMetricsSlug('dev.azure.com/acme/shop', 'dev.azure.com/acme/other/shop'), false);
+  assert.equal(sameMetricsSlug('Acme/API', 'acme/api'), true);
+  assert.equal(sameMetricsSlug(null, null), false);
+});
+
+test('the project-scope predicate keeps records stamped with an older spelling of the same Azure slug (M3)', () => {
+  const rec = (project, kind = 'project') => ({ target: { kind, project } });
+  const short = keepProjectRecord('dev.azure.com/acme/shop/shop');
+  assert.equal(short(rec('dev.azure.com/acme/shop')), true, 'written by https://dev.azure.com/acme/_git/Shop before the fold');
+  assert.equal(short(rec('acme.visualstudio.com/defaultcollection/shop')), true);
+  assert.equal(short(rec('dev.azure.com/acme/shop/shop')), true);
+  assert.equal(short(rec('dev.azure.com/acme/shop/api')), false);
+  assert.equal(short(rec('dev.azure.com/acme/shop/shop', 'workspace')), false, 'workspace runs stay excluded');
+  assert.equal(keepProjectRecord('dev.azure.com/acme/shop/api')(rec('acme.visualstudio.com/shop/api')), true);
+  assert.equal(keepProjectRecord('gateway')(rec('gateway')), true, 'non-Azure slugs: exact match as before');
+  assert.equal(keepProjectRecord('gateway')(rec('gateway-2')), false);
+  assert.equal(keepProjectRecord('gateway')({}), false);
+});
+
+test('workspace metrics card: a member delegating to the home under its old Azure slug reads routed (cycle-3 M1)', async () => {
+  const h = mkdtempSync(join(tmpdir(), 'worca-mws-h-'));
+  const m = mkdtempSync(join(tmpdir(), 'worca-mws-m-'));
+  git(h, 'init', '-q'); git(m, 'init', '-q');       // createWorkspace → checkNewMembers needs git work trees (n1)
+  writeTeamMetricsPrefs(projectKey(h), { hasOrigin: true, enabled: true, configKnown: true, slug: 'dev.azure.com/acme/shop/shop', config: { delegateTo: null } });
+  writeTeamMetricsPrefs(projectKey(m), { hasOrigin: true, enabled: true, configKnown: true, slug: 'dev.azure.com/acme/web/web', config: { delegateTo: 'dev.azure.com/acme/shop' } });
+  const ws = await createWorkspace({ name: 'Azure metrics', projectPaths: [h, m], metricsProject: h });
+  const st = await workspaceMetricsStatus(ws, { discover: false });
+  const mem = st.members.find((x) => x.path === m);
+  assert.equal(mem.state, 'routed', JSON.stringify(mem));
+  assert.equal(mem.recordsOn, 'dev.azure.com/acme/shop/shop');
+});
+
+test('metrics network git: an Azure origin gets the ADO helper, never a GitHub mint (App mode)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-mgit-'));
+  spawnSync('git', ['init', '-q', dir]);
+  spawnSync('git', ['-C', dir, 'remote', 'add', 'origin', 'https://dev.azure.com/acme/Shop/_git/api']);
+  const cred = await withEnv({ WORCA_GH_APP_ID: '123', WORCA_GH_APP_KEY_B64: Buffer.from('not-a-key').toString('base64'),
+    WORCA_ADO_TOKEN: 'pat', WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined },
+  () => metricsGitEnv(dir));
+  assert.equal(cred.error, null);
+  assert.equal(cred.env.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(cred.env.GH_TOKEN, undefined);
+});
+
+test('metrics network git: token mode without an Azure credential keeps the GitHub token env (no lookup)', async () => {
+  const cred = await withEnv({ ...CLOSED_GATES, GH_TOKEN: 'ghp_x' }, () => metricsGitEnv('/nonexistent'));
+  assert.equal(cred.env.GH_TOKEN, 'ghp_x');
 });

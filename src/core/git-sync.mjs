@@ -15,9 +15,12 @@ import { spawn, spawnSync } from 'node:child_process';
 import { stat, realpath, readFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { devNull } from 'node:os';
-import { githubEnv, stripGithubCredentials } from './github-credentials.mjs';
+import { githubEnv } from './github-credentials.mjs';
+import { azureEnv } from './azure-credentials.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 import { worcaHome } from './projects.mjs';
 import { parseRemoteUrl } from './git-info.mjs';
+import { forgeOf } from './forge.mjs';
 import { mapWithCap } from './fanout.mjs';
 
 export const INTERACTIVE_TTL_MS = 45_000;
@@ -74,7 +77,7 @@ function defaultRun(args, { cwd, timeoutMs = LOCAL_TIMEOUT_MS, env = null } = {}
     let child;
     try {
       child = spawn('git', [...hookFreeArgs(), ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: group,
-        env: { ...(env || stripGithubCredentials(process.env)), ...QUIET_ENV } });
+        env: { ...(env || stripHostCredentials(process.env)), ...QUIET_ENV } });
     } catch (err) { done({ ok: false, stdout: '', stderr: err.message, code: -1, timedOut: false }); return; }
     if (group && child.pid) trackGroup(child.pid);
     let stdout = '', stderr = '', settled = false, timer = null;
@@ -123,11 +126,12 @@ export function isSafeBranchName(s) {
   if (s.includes('..') || s.includes('//')) return false;
   return s.split('/').every((c) => c && !c.startsWith('.') && !c.endsWith('.lock'));
 }
-/** Redact URL credentials and GitHub token shapes from git output / URLs; cap the length. */
+/** Redact URL credentials and GitHub / Azure DevOps token shapes from git output / URLs; cap the length. */
 export function scrubGitText(s, max = 2000) {
   return String(s ?? '')
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1***@')
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '<redacted>')
+    .replace(/\b(?:[A-Za-z0-9]{76}AZDO[A-Za-z0-9]{4}|[a-z2-7]{52})\b/g, '<redacted>')   // Azure DevOps PATs (84-char, legacy 52-char)
     .trim().slice(0, max);
 }
 /** Stable failure kind for a failed fetch's stderr (LC_ALL=C, so English). */
@@ -242,7 +246,7 @@ async function checkoutsOf(dir, base) {
 }
 
 // ── remote + fetch ───────────────────────────────────────────────────────────
-/** The remote's display label (host/owner/repo, credential-free) and its github "owner/name". */
+/** The remote's display label (host/owner/repo, credential-free), its github "owner/name", and whether it is Azure DevOps. */
 export async function remoteInfo(dir, remote = 'origin') {
   if (!isSafeRemoteName(remote)) return { ok: false, kind: 'bad-remote', error: 'invalid remote name' };
   const r = await _run(['remote', 'get-url', remote], { cwd: dir });
@@ -250,15 +254,19 @@ export async function remoteInfo(dir, remote = 'origin') {
   const url = r.stdout.trim();
   const p = parseRemoteUrl(url);
   return { ok: true, name: remote, label: p ? `${p.host}/${p.owner}/${p.repo}` : scrubGitText(url, 200),
-    githubRepo: p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null, fetchUrls: fetchHeadUrls(url) };
+    githubRepo: p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null,
+    azure: forgeOf(p) === 'azure', fetchUrls: fetchHeadUrls(url) };
+}
+
+/** worca's server-side READ credential for the remote's host (App mode mints per call); other hosts: this machine's git. */
+async function readCred(info) {
+  if (info.githubRepo) return githubEnv('read', { repo: info.githubRepo });
+  if (info.azure) return { env: azureEnv('read'), error: null };
+  return { env: stripHostCredentials(process.env), error: null };
 }
 
 async function runFetch(key, dir, info, timeoutMs) {
-  // worca's server-side READ credential for github.com (App mode mints per call); any other
-  // host uses whatever this machine's git is configured with.
-  const cred = info.githubRepo
-    ? await githubEnv('read', { repo: info.githubRepo })
-    : { env: stripGithubCredentials(process.env), error: null };
+  const cred = await readCred(info);
   let r;
   for (let i = 0; i < 3; i++) {
     r = await _run(['fetch', '--prune', '--no-tags', info.name], { cwd: dir, env: cred.env, timeoutMs });
@@ -430,7 +438,7 @@ export async function fastForward(dir, { base, remote = 'origin' } = {}) {
     // read credential the fetch had (v8), or a private hosted repo fails every fast-forward.
     // Minting can take a network round trip, so HEAD is re-checked after it, right before the merge.
     const info = await remoteInfo(dir, remote);
-    const cred = info.ok && info.githubRepo ? await githubEnv('read', { repo: info.githubRepo }) : null;
+    const cred = info.ok && (info.githubRepo || info.azure) ? await readCred(info) : null;
     const headNow = await _run(['symbolic-ref', '-q', 'HEAD'], { cwd: dir });
     if (!(headNow.ok && headNow.stdout.trim() === `refs/heads/${base}`)) return { ok: false, kind: 'in-use', paths: [], status: s };
     r = await _run(['merge', '--ff-only', '--no-stat', '-q', s.remoteSha], { cwd: dir, timeoutMs: FF_TIMEOUT_MS, env: cred ? cred.env : null });

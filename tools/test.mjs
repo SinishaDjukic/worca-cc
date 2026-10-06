@@ -96,6 +96,10 @@ function main() {
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ') };
   delete env.WORCA_HOST_PID; // a test run is never a worca-hosted child
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
+  // A developer's own Azure DevOps / push-as-person settings must not open host-lookup gates in tests
+  // (D6/D7/D20): tests that need them set them with withEnv.
+  for (const k of ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN',
+    'WORCA_ADO_BOARDS_TOKEN', 'WORCA_GH_AS_PERSON', 'WORCA_BROKER_URL']) delete env[k];
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
   env[pathKey] = join(ROOT, 'test', 'helpers', 'no-real-claude') + delimiter + (env[pathKey] || '');
 

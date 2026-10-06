@@ -17,12 +17,20 @@ import { join, dirname } from 'node:path';
 import { pluginsRoot, pluginDir, readPluginsLock } from './plugins-lock.mjs';
 import { normalizeManifest, findEscapingSymlinks } from './plugin-manifest.mjs';
 import { githubEnv } from './github-credentials.mjs';
+import { withAzureToken, readAzureCredentials } from './azure-credentials.mjs';
 import { mcpUpdatePreview } from './mcp/plugin-lifecycle.mjs';
 
 const execFileP = promisify(execFile);
-const defaultExec = async (cmd, args, opts = {}) => {
-  // The read credential for this call (a fresh App token in App mode); a failed mint leaves none.
+
+/** worca's own read credential for plugin repo git calls: GitHub (helper answers github.com) + Azure (dev.azure.com, *.visualstudio.com). */
+export async function pluginGitEnv() {
   const { env } = await githubEnv('read');
+  return withAzureToken(env, readAzureCredentials().read);
+}
+
+const defaultExec = async (cmd, args, opts = {}) => {
+  // The read credentials for this call (a fresh App token in App mode; the Azure helper when a PAT is set).
+  const env = await pluginGitEnv();
   return execFileP(cmd, args, {
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000,

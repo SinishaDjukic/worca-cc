@@ -45,7 +45,8 @@ async function boot({ fetchHandler } = {}) {
   const settle = async (n = 4) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
   return { window, selectProject, showRuns, showDetails, settle };
 }
-const runs = (pipelines, ghAvailable) => Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines, live: [], ghAvailable }) });
+const runs = (pipelines, ghAvailable, prHosts = null) => Promise.resolve({ ok: true, status: 200,
+  json: async () => ({ pipelines, live: [], ghAvailable, ...(prHosts ? { prHosts } : {}) }) });
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 
 const SURVIVED = {
@@ -67,10 +68,10 @@ const detailOf = (p) => ({
 });
 // MOST-SPECIFIC FIRST: the keyed detail URL `/api/history/proj-0000abcd/p1` STARTS WITH
 // `/api/history/pr` (the key begins "pro"), so every arm matches with endsWith.
-const armsFor = (rows, ghAvailable = true) => (url) => {
+const armsFor = (rows, ghAvailable = true, prHosts = null) => (url) => {
   if (url.endsWith('/api/history/pr')) return ok({ ok: true });
   for (const p of rows) if (url.endsWith(`/api/history/${p.projectKey}/${p.id}`)) return ok(detailOf(p));
-  if (url.endsWith('/api/history')) return runs(rows, ghAvailable);
+  if (url.endsWith('/api/history')) return runs(rows, ghAvailable, prHosts);
   return null;
 };
 
@@ -161,6 +162,25 @@ test('PR state words: OPEN reads \'In review\' (links to the saved run), MERGED 
     { name: 'merged PR with branch gone (survived=false) still reads "Merged"', run: () => {
       assert.equal(word(rowFor(MERGED_GONE)), 'Merged');
     } },
+  ]);
+});
+
+// No PR yet and a clean review: "Ready to ship" when some PR host can open one (gh, or an
+// Azure DevOps token, D8), "Finished" when none can.
+test('a run with no PR reads "Ready to ship" when gh or an Azure DevOps token is available, "Finished" when neither is', async () => {
+  const READY = { ...DONE, id: 'pr0', pr: null, checks: 0, files: 3 };
+  const wordWith = async (ghAvailable, prHosts) => {
+    const ctx = await boot({ fetchHandler: armsFor([READY], ghAvailable, prHosts) });
+    ctx.showRuns();
+    await ctx.settle();
+    const row = ctx.window.document.querySelector(`#runs-list .runs-row[data-kind="hist"][data-pipeline-id="${READY.id}"]`);
+    assert.ok(row, 'the finished run is listed');
+    return word(row);
+  };
+  await checkRows([
+    { name: 'gh available', run: async () => assert.equal(await wordWith(true, null), 'Ready to ship') },
+    { name: 'only an Azure DevOps token', run: async () => assert.equal(await wordWith(false, { github: false, azure: true }), 'Ready to ship') },
+    { name: 'no PR host at all', run: async () => assert.equal(await wordWith(false, { github: false, azure: false }), 'Finished') },
   ]);
 });
 

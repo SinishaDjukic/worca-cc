@@ -16,12 +16,17 @@ import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
-import { writeStoreMeta, persistPrState, createPipeline, writeState } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState } from '../src/core/artifacts.mjs';
 import { _testing as prDesc, PR_BODY_MAX } from '../src/core/pr-description.mjs';
+import * as azurePr from '../src/core/pr/azure.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+const WITH_ADO = { ...NO_ADO, WORCA_ADO_TOKEN: 'pat' };
 
 let srv, base, home, prevHome, betaKey, betaId, betaRepo;
 
@@ -46,12 +51,13 @@ after(async () => {
   if (srv) await new Promise((r) => srv.close(r));
   gitInfo.reset();
   gitSync.reset();
+  azurePr._testing.reset();
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
 
-beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); });
+beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); });
 
 // git-sync's runner (the base-freshness fetch, #527): upstream is a github remote; every argv
 // lands in `seen`; `rev-list --count` answers `moved`.
@@ -93,7 +99,36 @@ function stubForkRepo(seen, { create = 'https://github.com/up/repo/pull/7\n', vi
     return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
   });
 }
-const getRemotes = (q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
+
+const AZ = 'https://dev.azure.com/acme/Shop/_git/api';
+const AZ_REMOTES_V = `origin\t${AZ} (fetch)\norigin\t${AZ} (push)\n`;
+/** gh present; one Azure origin. `remote -v` lists it, `remote get-url` answers the single URL; argv + env recorded. */
+function stubAzureRepo(seen, { remotesV = AZ_REMOTES_V, getUrl = (name) => (name === 'fork' ? 'https://dev.azure.com/acme/Shop/_git/api-fork' : AZ) } = {}) {
+  gitInfo.setRunner((cmd, args, opts = {}) => {
+    seen.push({ argv: [cmd, ...args], env: opts.env });
+    const done = (stdout = '') => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === '--version') return done('gh 2.x');
+    if (cmd === 'git' && args[0] === 'remote' && args[1] === 'get-url') return done(`${getUrl(args[args.length - 1])}\n`);
+    if (cmd === 'git' && args[0] === 'remote') return done(remotesV);
+    if (cmd === 'git' && args[0] === 'for-each-ref') return done(REFS);
+    if (cmd === 'gh') return Promise.resolve({ ok: false, stdout: '', stderr: 'gh must not run for Azure', code: 1 });
+    return done();
+  });
+}
+const adoJson = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+/** Azure REST fake: POST …/pullrequests answers `create`, GET …/pullrequests/31 answers `view`; every call recorded. */
+function stubAdo(calls, { create = () => adoJson(201, { pullRequestId: 31 }),
+  view = { pullRequestId: 31, status: 'active', mergeStatus: 'succeeded' } } = {}) {
+  azurePr._testing.setFetch(async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : undefined });
+    const path = new URL(url).pathname;
+    if (method === 'POST' && path.endsWith('/pullrequests')) return create();
+    if (method === 'GET' && path.endsWith('/pullrequests/31')) return adoJson(200, view);
+    return adoJson(404, { message: 'not stubbed' });
+  });
+}
+const getRemotes =(q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
 const postMergeable = (body) => fetch(`${base}/api/pr/mergeable`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
@@ -109,12 +144,12 @@ test('POST /api/pr error paths: 400 without id, 409 when gh is unavailable', asy
     { name: 'POST /api/pr -> 400 when id is missing', run: async () => {
       assert.equal((await post({ projectKey: betaKey })).status, 400);
     } },
-    { name: 'POST /api/pr -> 409 when gh is unavailable', run: async () => {
+    { name: 'POST /api/pr -> 409 when no PR host is available (no gh, no Azure token)', run: () => withEnv(NO_ADO, async () => {
       gitInfo.setRunner((cmd) => Promise.resolve(
         cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
                      : { ok: true, stdout: '', stderr: '', code: 0 }));
       assert.equal((await post({ projectKey: betaKey, id: betaId })).status, 409);
-    } },
+    }) },
   ]);
 });
 
@@ -190,7 +225,7 @@ test('GET /api/runs?projectDir still returns inline pr (per-project withPr uncha
 
 test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is missing or the key is malformed', async () => {
   await checkRows([
-    { name: 'POST /api/pr/mergeable -> UNKNOWN (best-effort) when gh is unavailable', run: async () => {
+    { name: 'POST /api/pr/mergeable -> UNKNOWN (best-effort) when no PR host is available', run: () => withEnv(NO_ADO, async () => {
       gitInfo.setRunner((cmd) => Promise.resolve(
         cmd === 'gh' ? { ok: false, stdout: '', stderr: 'not found', code: 127 }
                      : { ok: true, stdout: '', stderr: '', code: 0 }));
@@ -200,7 +235,7 @@ test('POST /api/pr/mergeable error paths: 400 without id; 200 UNKNOWN when gh is
       });
       assert.equal(r.status, 200);
       assert.equal((await r.json()).mergeable, 'UNKNOWN');
-    } },
+    }) },
     { name: 'POST /api/pr/mergeable requires id -> 400 (the one hard error)', run: async () => {
       const r = await fetch(`${base}/api/pr/mergeable`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -547,4 +582,149 @@ test('POST /api/pr/describe: a request the client abandons aborts the model call
   await pending;
   for (let i = 0; i < 200 && !aborted; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(aborted, true);
+});
+
+// ---------------------------------------------------------------------------
+// Azure DevOps: a base remote on dev.azure.com goes to the REST provider (pr/azure.mjs),
+// never to gh; the push gets the ADO PAT through the gated push-URL lookup (D7).
+// ---------------------------------------------------------------------------
+const AZ_PR = `${AZ}/pullrequest/31`;
+
+test('POST /api/pr on an Azure origin: pushes with the ADO token, creates over REST, persists #31, reads mergeability', () => withEnv(WITH_ADO, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = [];
+  const calls = [];
+  stubAzureRepo(seen);
+  stubAdo(calls);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.url, AZ_PR);
+  assert.equal(j.mergeable, 'MERGEABLE');
+  const push = seen.find((s) => s.argv[1] === 'push');
+  assert.ok(push, 'the branch was pushed');
+  assert.equal(push.env.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(push.env.GH_TOKEN, undefined);
+  assert.equal(push.env.WORCA_ADO_TOKEN, undefined);
+  assert.ok(seen.some((s) => s.argv[1] === 'remote' && s.argv[2] === 'get-url'), 'the gated push-URL lookup ran');
+  assert.deepEqual(seen.filter((s) => s.argv[0] === 'gh').map((s) => s.argv), [['gh', '--version']], 'gh never ran beyond --version');
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(new URL(create.url).pathname, '/acme/Shop/_apis/git/repositories/api/pullrequests');
+  assert.equal(create.body.sourceRefName, `refs/heads/${FEATURE}`);
+  assert.equal(create.body.targetRefName, 'refs/heads/main');
+  assert.equal('workItemRefs' in create.body, false, 'a prompt run links no work item');
+  const pr = readPrState(betaId);
+  assert.deepEqual({ number: pr.number, state: pr.state }, { number: 31, state: 'OPEN' });
+  assert.equal(pr.url, AZ_PR);
+}));
+
+test('POST /api/pr on an Azure origin without a token -> 409 naming WORCA_ADO_TOKEN, nothing pushed', () => withEnv(NO_ADO, async () => {
+  const seen = [];
+  stubAzureRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.match(j.error, /WORCA_ADO_TOKEN/);
+  assert.equal(j.forge, 'azure');
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'), 'nothing was pushed');
+}));
+
+test('POST /api/pr Azure fork (push to another repo) -> 422 unsupported before anything is pushed', () => withEnv(WITH_ADO, async () => {
+  const seen = [];
+  const calls = [];
+  const forkUrl = 'https://dev.azure.com/acme/Shop/_git/api-fork';
+  stubAzureRepo(seen, { remotesV: `fork\t${forkUrl} (fetch)\nfork\t${forkUrl} (push)\n${AZ_REMOTES_V}` });
+  stubAdo(calls);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'fork', baseRemote: 'origin' });
+  assert.equal(r.status, 422);
+  const j = await r.json();
+  assert.equal(j.kind, 'unsupported');
+  assert.match(j.error, /forks\) are not supported yet — push to origin/);
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'), 'nothing was pushed');
+  assert.equal(calls.length, 0, 'no REST call');
+}));
+
+test('POST /api/pr names the host in a create failure: Azure DevOps and GitHub', async () => {
+  await withEnv(WITH_ADO, async () => {
+    await setPrRemotePrefs(betaRepo, {});
+    stubAzureRepo([]);
+    stubAdo([], { create: () => adoJson(500, { message: 'boom' }) });
+    const r = await post({ projectKey: betaKey, id: betaId });
+    assert.equal(r.status, 500);
+    assert.equal((await r.json()).error, 'Azure DevOps pull request failed: Azure DevOps 500: boom');
+  });
+  await withEnv(NO_ADO, async () => {
+    gitInfo.setRunner((cmd, args) => Promise.resolve(
+      cmd === 'gh' && args[0] === 'pr' && args[1] === 'create'
+        ? { ok: false, stdout: '', stderr: 'no such base\n', code: 1 }
+        : { ok: true, stdout: cmd === 'gh' ? 'gh 2.x' : '', stderr: '', code: 0 }));
+    const r = await post({ projectKey: betaKey, id: betaId });
+    assert.equal(r.status, 500);
+    assert.equal((await r.json()).error, 'GitHub pull request failed: no such base');
+  });
+});
+
+test('GET /api/pr/remotes names each remote\'s PR host and whether PRs can be opened there', async () => {
+  const GL = 'https://gitlab.com/g/api.git';
+  const remotesV = `${AZ_REMOTES_V}gl\t${GL} (fetch)\ngl\t${GL} (push)\n`;
+  await withEnv(WITH_ADO, async () => {
+    stubAzureRepo([], { remotesV });
+    const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+    const [az, gl] = [j.remotes.find((x) => x.name === 'origin'), j.remotes.find((x) => x.name === 'gl')];
+    assert.deepEqual([az.forge, az.prHost, az.prSupported, 'prReason' in az], ['azure', 'Azure DevOps', true, false]);
+    assert.deepEqual([gl.forge, gl.prHost, gl.prSupported], [null, null, true], 'other hosts keep gh, but are not labelled GitHub');
+  });
+  await withEnv(NO_ADO, async () => {
+    stubAzureRepo([], { remotesV });
+    const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+    const az = j.remotes.find((x) => x.name === 'origin');
+    assert.equal(az.prSupported, false);
+    assert.match(az.prReason, /WORCA_ADO_TOKEN/);
+  });
+});
+
+test('POST /api/pr/mergeable reads an Azure PR URL over REST', () => withEnv(WITH_ADO, async () => {
+  persistPrState(betaId, { url: AZ_PR, number: 31, state: 'OPEN' });
+  const seen = [];
+  const calls = [];
+  stubAzureRepo(seen);
+  stubAdo(calls, { view: { pullRequestId: 31, status: 'active', mergeStatus: 'conflicts' } });
+  const r = await postMergeable({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).mergeable, 'CONFLICTING');
+  assert.equal(new URL(calls[0].url).pathname, '/acme/Shop/_apis/git/pullrequests/31');
+  assert.ok(!seen.some((s) => s.argv[0] === 'gh' && s.argv[1] === 'pr'), 'gh never ran');
+}));
+
+test('GET /api/history and /api/runs expose prHosts next to ghAvailable', () => withEnv(WITH_ADO, async () => {
+  stubAzureRepo([]);
+  const h = await (await fetch(`${base}/api/history`)).json();
+  assert.deepEqual(h.prHosts, { github: true, azure: true });
+  assert.equal(h.ghAvailable, true);
+  const r = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(betaRepo)}`)).json();
+  assert.deepEqual(r.prHosts, { github: true, azure: true });
+}));
+
+test('POST /api/pr links the Azure Boards work item a run came from', () => withEnv(WITH_ADO, async () => {
+  const { id, dir } = await createPipeline(betaRepo, { prompt: 'p', title: 'Board item',
+    sourceMeta: { plugin: 'azure-boards-source', sourceId: 'azure-boards', taskId: 'acme/Shop#77' } });
+  await writeState(dir, { projectKey: betaKey, id, title: 'Board item', status: 'done',
+    branch: { source: 'main', feature: 'worca-cc/board-77', branchKept: true } });
+  const calls = [];
+  stubAzureRepo([]);
+  stubAdo(calls);
+  const r = await post({ projectKey: betaKey, id });
+  assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body.workItemRefs, [{ id: '77' }]);
+}));
+
+test('POST /api/pr/describe drafts for the PR host the modal names', async () => {
+  const seen = [];
+  prDesc.setRunClaude(async (o) => { seen.push(o); return { text: 'Does x.' }; });
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId, forge: 'azure' })).status, 200);
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId, forge: 'gitlab' })).status, 200);
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId })).status, 200);
+  assert.match(seen[0].systemPrompt, /Azure DevOps/);
+  assert.doesNotMatch(seen[1].systemPrompt, /Azure DevOps/, 'anything else is GitHub');
+  assert.doesNotMatch(seen[2].systemPrompt, /Azure DevOps/);
 });

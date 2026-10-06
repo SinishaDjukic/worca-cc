@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // Pure module directly — read.mjs would pull in sync/DB/projects for no reason.
-import { aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl } from '../src/shared/team-metrics/aggregate.mjs';
+import { aggregate, resolveRange, weekStartMs, parseRecordLine, toCsv, safeHttpUrl, DIMENSIONS } from '../src/shared/team-metrics/aggregate.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 const NOW = Date.parse('2026-09-16T12:00:00Z');
@@ -195,4 +195,27 @@ test('empty input renders zeros, not NaN', () => {
   assert.equal(agg.kpis.runs, 0); assert.equal(agg.kpis.spendUsd, 0);
   assert.equal(agg.kpis.successRate, null);
   assert.equal(agg.series.spend.length, 3); // weeks of Aug 31, Sep 7, Sep 14 — series stop at `now`
+});
+
+test('the project dimension folds older Azure spellings into one key (cycle-3 M1)', () => {
+  const key = (target) => DIMENSIONS.project({ target }).map((x) => x.key);
+  assert.deepEqual(key({ kind: 'project', project: 'dev.azure.com/acme/shop' }), ['dev.azure.com/acme/shop/shop']);
+  assert.deepEqual(key({ kind: 'project', project: 'acme.visualstudio.com/shop/api' }), ['dev.azure.com/acme/shop/api']);
+  assert.deepEqual(key({ kind: 'project', project: 'acme/gateway' }), ['acme/gateway']);
+  assert.deepEqual(key({ kind: 'workspace', touched: ['dev.azure.com/acme/shop', 'acme/gateway'] }), ['dev.azure.com/acme/shop/shop', 'acme/gateway']);
+  // s2: both spellings of one repo in one workspace record → one row, file counts summed
+  assert.deepEqual(DIMENSIONS.project({ target: { kind: 'workspace', touched: ['dev.azure.com/acme/shop', 'dev.azure.com/acme/shop/shop', 'acme/gateway'],
+    touchedFiles: { 'dev.azure.com/acme/shop': 2, 'dev.azure.com/acme/shop/shop': 3, 'acme/gateway': 1 } } }),
+  [{ key: 'dev.azure.com/acme/shop/shop', label: 'dev.azure.com/acme/shop/shop', files: 5 }, { key: 'acme/gateway', label: 'acme/gateway', files: 1 }]);
+  // No touchedFiles: files stays null after the fold.
+  assert.deepEqual(DIMENSIONS.project({ target: { kind: 'workspace', touched: ['dev.azure.com/acme/shop', 'dev.azure.com/acme/shop/shop'] } }),
+    [{ key: 'dev.azure.com/acme/shop/shop', label: 'dev.azure.com/acme/shop/shop', files: null }]);
+});
+
+test('a run row lists canonical project slugs, one per repo (cycle-3 M1)', () => {
+  const rows = aggregate([
+    makeRecord({ id: 'p', project: 'acme.visualstudio.com/shop/api', startedAt: '2026-09-10T10:00:00Z' }),
+    makeRecord({ id: 'w', kind: 'workspace', touched: ['dev.azure.com/acme/shop', 'dev.azure.com/acme/shop/shop', 'acme/gateway'], startedAt: '2026-09-09T10:00:00Z' }),
+  ], { range: 'all', now: NOW }).runs;
+  assert.deepEqual(rows.map((r) => [r.id, r.projects]), [['p', ['dev.azure.com/acme/shop/api']], ['w', ['dev.azure.com/acme/shop/shop', 'acme/gateway']]]);
 });

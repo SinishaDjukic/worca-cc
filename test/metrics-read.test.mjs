@@ -8,8 +8,12 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { makeOrigin, cloneAs, useGitSandbox } from './helpers/metrics-git.mjs';   // `git` is unused here
 import { addProject, listProjects } from '../src/core/projects.mjs';
 import { createWorkspace, updateWorkspace } from '../src/core/workspaces.mjs';
-import { enableTeamMetrics, writeOutbox, flushSlug, worktreePath, metricsEvents, _testing as syncTesting } from '../src/core/metrics/sync.mjs';
+import {
+  enableTeamMetrics, writeOutbox, flushSlug, worktreePath, metricsEvents, findLocalProjectBySlug, findLocalRepoBySlug, _testing as syncTesting,
+} from '../src/core/metrics/sync.mjs';
 import { readScope, readRecordsFromDir, fetchDecision, noteFetch, parseScopeParam, _testing as readTesting } from '../src/core/metrics/read.mjs';
+import { writeTeamMetricsPrefs } from '../src/core/config.mjs';
+import { projectKey } from '../src/core/store.mjs';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 const skip = process.platform === 'win32';
@@ -158,4 +162,15 @@ test('defer: no worktree → "pending" now and the clone afterwards; a due fetch
     const inline = await readScope(scope);
     assert.equal(inline.fetchError, null, 'an inline read (Ask tools, CLI) only reports its own fetch');
   } finally { metricsEvents.off('changed', onChanged); }
+});
+
+test('a project whose cached slug is the old Azure short form is found by the canonical slug (M3)', { skip }, async () => {
+  const bare = makeOrigin(root, 'az-short');
+  const dir = cloneAs(root, 'm3', bare, 'az-short');
+  await addProject({ name: 'az-short', path: dir });
+  writeTeamMetricsPrefs(projectKey(dir), { slug: 'dev.azure.com/acme/shop' });      // what older code cached for …/acme/_git/Shop
+  assert.equal((await findLocalProjectBySlug('dev.azure.com/acme/shop/shop'))?.name, 'az-short');
+  assert.equal((await findLocalRepoBySlug('dev.azure.com/acme/shop/shop'))?.name, 'az-short');
+  assert.equal((await findLocalProjectBySlug('dev.azure.com/acme/shop'))?.name, 'az-short', 'and by the old slug (leftover outbox)');
+  assert.equal(await findLocalProjectBySlug('dev.azure.com/acme/other/shop'), null);
 });

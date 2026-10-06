@@ -124,6 +124,22 @@ test('verify: anonymous goes to sign-in; the service token headers are used and 
   assert.equal(await main(['verify', 't1'], bad.ctx), 1, 'an open app (200 anonymous) fails');
 });
 
+test('Azure DevOps: the in-container probe reports and tests the token', () => {
+  const p = readFileSync(new URL('../tools/railway/in-container-probe.sh', import.meta.url), 'utf8');
+  assert.match(p, /broker=%s ado=%s"\}\\n'/, 'the agent prints whether it sees an Azure token');
+  assert.match(p, /"\$\{WORCA_BROKER_SECRET:\+set\}" "\$\{WORCA_ADO_TOKEN:\+set\}\$\{WORCA_ADO_READ_TOKEN:\+set\}\$\{WORCA_ADO_WRITE_TOKEN:\+set\}\$\{AZURE_DEVOPS_EXT_PAT:\+set\}"$/m);
+  assert.match(p, /"user=worca-agent environ=denied db=denied home=denied gh= app= broker= ado="/, 'the agent sees no Azure token');
+  const agent = p.indexOf('console.log(`agent ${r.text}`);');
+  const azure = p.indexOf('await import(`${root}/azure-credentials.mjs`)');
+  const github = p.indexOf('await import(`${root}/github-credentials.mjs`)');
+  assert.ok(agent > 0 && azure > agent && github > azure, 'the Azure check runs before the GitHub block can exit');
+  assert.match(p, /azureAuthHeader\('read'\) \|\| azureAuthHeader\('write'\)/, 'a write-only split still authenticates');
+  assert.match(p, /'X-TFS-FedAuthRedirect': 'Suppress'/);
+  assert.match(p, /console\.log\(`ado FAILED /, 'a rejected fetch is printed, not thrown');
+  assert.match(p, /want "Azure DevOps credential works" "\$ado" 200/);
+  assert.match(p, /set WORCA_ADO_PROBE_ORG to test the Azure DevOps token/);
+});
+
 test('the repo carries no deployment detail: the example target is a template', () => {
   const ex = readFileSync(new URL('../tools/railway/targets.example.env', import.meta.url), 'utf8');
   const t = parseEnvFile(ex);

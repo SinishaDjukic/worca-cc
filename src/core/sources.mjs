@@ -15,7 +15,7 @@ import { normalizeManifest } from './plugin-manifest.mjs';
 import { getDb } from './db.mjs';
 import { runDirForRow, readStoreMeta, readPromptFile } from './artifacts.mjs';
 import { RESULTS_FILE } from './results.mjs';
-import { hasGh, findPrForBranch } from './git-info.mjs';
+import { anyPrHost, findPrForBranch } from './git-info.mjs';
 
 /** Profile roster for a plugin; never throws — the pane must render even when a
  *  plugin's data dir is unreadable (it degrades to "no profiles yet"). */
@@ -277,12 +277,12 @@ export async function retryWriteback(pipelineId) {
     try { results = JSON.parse(await readFile(join(dir, RESULTS_FILE), 'utf8')); } catch { results = null; }
     let branch = null;
     try { branch = row.branch ? (JSON.parse(row.branch)?.feature ?? null) : null; } catch { branch = null; }
-    // PR link, best-effort (same hasGh-gated pattern as artifacts.mjs#rowToHistoryEntry).
+    // PR link, best-effort (same anyPrHost-gated pattern as artifacts.mjs#rowToHistoryEntry).
     let prUrl = null;
     if (branch) {
       try {
         const meta = readStoreMeta(row.project_key);
-        if (meta?.path && (await hasGh())) {
+        if (meta?.path && (await anyPrHost())) {
           // The persisted pr_url (SELECT * above) resolves a cross-repo PR by URL; the
           // branch search stays the fallback for rows that never recorded one.
           const persisted = row.pr_url || null;

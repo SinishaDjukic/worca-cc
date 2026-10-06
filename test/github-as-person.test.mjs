@@ -105,7 +105,9 @@ test('asPerson:false (worca\'s own metrics branch) always uses worca\'s credenti
   const r = await githubEnv('write', { base: base({ WORCA_GH_AS_PERSON: 'required' }), person: 'ada@acme.dev', asPerson: false });
   assert.equal(r.env.GH_TOKEN, 'ghs_worcas_own');
   assert.equal(asked.length, 0);
-  assert.match(readFileSync(new URL('../src/core/metrics/sync.mjs', import.meta.url), 'utf8'), /githubEnv\('write', \{[^}]*asPerson: false/);
+  const metricsSrc = readFileSync(new URL('../src/core/metrics/sync.mjs', import.meta.url), 'utf8');
+  assert.match(metricsSrc, /githubOnlyEnv\('write', \{[^}]*asPerson: false/);
+  assert.match(metricsSrc, /gitEnvFor\('write', url, \{[^}]*asPerson: false/);
 });
 
 test('boot: WORCA_GH_AS_PERSON without a GitHub slot on the broker is a warning', async () => {

@@ -248,7 +248,10 @@ import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
-import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo } from '../src/core/git-info.mjs';
+import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo,
+  prProviderFor, prHostsAvailable, anyPrHost } from '../src/core/git-info.mjs';
+import { prNumberFromUrl } from '../src/core/forge.mjs';
+import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { archivePipeline, restorePipeline, discardRetainedWorktrees } from '../src/core/pipeline-delete.mjs';
@@ -3988,7 +3991,7 @@ app.get('/api/runs', async (req, res) => {
       const live = [...runs.values()]
         .filter((r) => r.workspaceId === ws.id)
         .map((r) => ({ id: r.pipelineId || r.id, runId: r.id, title: r.title, status: r.status, live: true }));
-      return res.json({ pipelines, live, scheduled: listTickets({ workspaceId: ws.id }), ghAvailable: await hasGh() });
+      return res.json({ pipelines, live, scheduled: listTickets({ workspaceId: ws.id }), ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
     } catch (err) {
       return res.status(500).json({ error: err && err.message ? err.message : String(err) });
     }
@@ -4013,7 +4016,7 @@ app.get('/api/runs', async (req, res) => {
         live: true,
       }));
     // Additive: runs that WAIT for their start time are tickets, not pipelines.
-    res.json({ pipelines, live, scheduled: listTickets({ projectDir }), ghAvailable: await hasGh() });
+    res.json({ pipelines, live, scheduled: listTickets({ projectDir }), ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -4392,7 +4395,7 @@ app.get('/api/history', async (req, res) => {
     // shape as the active list. They cannot be stale-running, so no self-heal here —
     // and `lite` (no git/gh fans), since an archived run's branch and worktree are gone.
     if (req.query.archived === '1' || req.query.archived === 'true') {
-      return res.json({ pipelines: (await listAllPipelines({ archived: true, lite: true })) || [], ghAvailable: await hasGh() });
+      return res.json({ pipelines: (await listAllPipelines({ archived: true, lite: true })) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
     }
     // Self-heal records left 'running' by a dead process before listing, so History
     // never shows a phantom Running run and its Delete button appears (see
@@ -4400,7 +4403,7 @@ app.get('/api/history', async (req, res) => {
     try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort */ }
     // Phase 1: PR-light skeleton (no `gh pr list`). Live PR state is pushed
     // separately over the WS by POST /api/history/pr -> enrichPipelinesPr.
-    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh() });
+    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -6164,7 +6167,9 @@ async function resolvePrPipeline(src, res) {
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
-// -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug}],
+// Each remote carries its PR host (`prHost`: GitHub | Azure DevOps | null for other hosts,
+// which still use gh) and whether PRs can be opened there now (`prSupported`, else `prReason`).
+// -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug,forge,org,project,prHost,prSupported,prReason?}],
 //      defaults:{pushRemote,baseRemote}, remembered:{pushRemote,baseRemote}|null,
 //      chain:[branch], defaultBase:branch|null, branches:{[remote]:[branch]},
 //      baseStatus:{base, remote, movedSinceRun:number|null, fetchedAt, stale} }
@@ -6202,13 +6207,22 @@ app.get('/api/pr/remotes', async (req, res) => {
   const bfNoRemote = !!(bf && !bf.ok && (bf.kind === 'no-remote' || bf.kind === 'bad-remote'));
   const baseStatus = { base: defaultBase, remote: baseRemote, movedSinceRun,
     fetchedAt: bf ? bf.fetchedAt || null : null, stale: !!(bf && !bf.ok && !bfNoRemote) };
-  res.json({ ok: true, remotes: rl.remotes, defaults, remembered,
+  const remotes = await Promise.all(rl.remotes.map(async (r) => {
+    const p = prProviderFor(r);
+    const a = await p.available();
+    // Name the host only where it is that host: gitlab/bitbucket/local remotes still go through
+    // gh (D4), but the modal must not label them "GitHub".
+    return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
+  }));
+  res.json({ ok: true, remotes, defaults, remembered,
     chain, defaultBase, branches, baseStatus });
 });
 
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
-// against its source branch (or the dialog's `baseBranch`) via the GitHub CLI.
+// against its source branch (or the dialog's `baseBranch`) on the base remote's
+// forge: Azure DevOps over REST (no forks: 422 before the push), every other host
+// via the GitHub CLI. 409 { error, forge } when that forge is not usable here.
 // Mergeability is read back only here (never during list rendering).
 // body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, body? } —
 // a workspace run (projectKey 'workspaces/<wks-…>') REQUIRES memberKey (the member repo
@@ -6229,8 +6243,8 @@ app.post('/api/pr', async (req, res) => {
     if (body.body.length > PR_BODY_MAX) return badRequest(res, `body must be at most ${PR_BODY_MAX} characters`);
     description = body.body.trim() ? body.body.trimEnd() : '';
   }
-  if (!(await hasGh())) {
-    return res.status(409).json({ error: 'GitHub CLI (gh) is not available' });
+  if (!(await anyPrHost())) {
+    return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
   }
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
@@ -6287,6 +6301,15 @@ app.post('/api/pr', async (req, res) => {
   const crossRepo = !!(pushR?.slug && baseR?.slug && !sameRepo(pushR, baseR));
   const headOwner = crossRepo ? pushR.owner : null;
 
+  // The base remote's forge opens the PR (no base remote: GitHub's gh, as before). Its own
+  // reason when it cannot; an Azure fork is refused BEFORE anything is pushed.
+  const provider = prProviderFor(baseR);
+  const avail = await provider.available();
+  if (!avail.ok) return res.status(409).json({ error: avail.reason, forge: provider.forge });
+  if (provider.forge === 'azure' && pushR && !sameRepo(pushR, baseR)) {
+    return res.status(422).json({ error: forkRefusal(baseR), kind: 'unsupported' });
+  }
+
   // Push (idempotent) -> create PR -> read mergeability. All args are passed as
   // an argv array (no shell), so branch/remote/source names cannot inject.
   const pushed = await pushBranch(repoDir, feature, pushRemote);
@@ -6294,18 +6317,24 @@ app.post('/api/pr', async (req, res) => {
 
   // A PR opened by a shared bot still names the person behind it (identity.mjs); none for 'local'.
   const footer = prAttributionFooter(state.startedBy);
+  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
+  // A run from the Azure Boards source links its work item to the PR.
+  const workItemId = provider.forge === 'azure'
+    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
   const pr = await createPr({
     projectDir: repoDir, base, head: feature, title: state.title || feature, repo, headOwner,
+    baseRemote: baseR, pushRemote: pushR, workItemId,
     ...(description ? { body: `${description}${footer}` }
       : footer ? { body: `${state.title || feature}${footer}` } : {}),
   });
-  if (!pr.ok) return res.status(500).json({ error: `gh pr create failed: ${pr.error}` });
+  if (!pr.ok) {
+    return res.status(pr.kind === 'unsupported' ? 422 : 500)
+      .json({ error: `${provider.label} pull request failed: ${pr.error}`, ...(pr.kind ? { kind: pr.kind } : {}) });
+  }
 
   // Persist the PR facts we just learned, so History/stats survive a gh outage.
-  const parsePrNumber = (u) => Number((/\/pull\/(\d+)/.exec(u) || [])[1]) || null;
-  const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   if (pipelineIdForPr) {
-    const facts = { url: pr.url, number: parsePrNumber(pr.url), state: 'OPEN' };
+    const facts = { url: pr.url, number: pr.number ?? prNumberFromUrl(pr.url), state: 'OPEN' };
     // A workspace member's PR is recorded per member; the row keeps the rollup (stats count the run once).
     if (memberKey) persistMemberPrState(pipelineIdForPr, memberKey, facts);
     else persistPrState(pipelineIdForPr, facts);
@@ -6319,7 +6348,7 @@ app.post('/api/pr', async (req, res) => {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
   }
 
-  const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null });
+  const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null, baseRemote: baseR });
   // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, ...(memberKey ? { memberKey } : {}) });
 });
@@ -6329,7 +6358,8 @@ app.post('/api/pr', async (req, res) => {
 // drafts a PR description from the run's persisted artifacts (pr-description.mjs).
 // Never cached and never submitted — the text only fills the modal's textarea.
 // No gh needed. A request the client abandons (Cancel, the modal closing) aborts
-// the call. body: { id, projectKey | projectDir, baseBranch? } -> 200 { ok, body }
+// the call. `forge` ('azure', else GitHub) picks the host's system prompt.
+// body: { id, projectKey | projectDir, baseBranch?, forge? } -> 200 { ok, body }
 // | 400 | 404 | 500, or 409 code 'claude-signed-out' (mapped like the overview route).
 // ---------------------------------------------------------------------------
 app.post('/api/pr/describe', async (req, res) => {
@@ -6347,7 +6377,8 @@ app.post('/api/pr/describe', async (req, res) => {
   const life = new AbortController();
   res.on('close', () => { if (!res.writableEnded) life.abort(); });
   try {
-    const text = await generatePrDescription(key, state.id || id, { baseBranch, signal: life.signal });
+    const forge = body.forge === 'azure' ? 'azure' : 'github';
+    const text = await generatePrDescription(key, state.id || id, { baseBranch, signal: life.signal, forge });
     res.json({ ok: true, body: text });
   } catch (err) {
     if (life.signal.aborted) return;                 // the client is gone; nobody to answer
@@ -6363,8 +6394,8 @@ app.post('/api/pr/describe', async (req, res) => {
 // POST /api/pr/mergeable -> re-read mergeability for a pipeline's PR head so the
 // History UI can refresh the "merge: checking…" pill after GitHub finishes its
 // async computation. Read-only + best-effort: no push, no create — just
-// `gh pr view`. Missing `id` is the ONLY hard error (400, like /api/pr); every
-// other failure (gh missing, unresolvable pipeline, bad key, thrown error)
+// `gh pr view` (an Azure DevOps PR URL: one REST read). Missing `id` is the ONLY hard
+// error (400, like /api/pr); every other failure (no PR host, unresolvable pipeline, bad key, thrown error)
 // resolves to UNKNOWN (200) so the client simply hides the pill.
 // body: { id, projectKey? , projectDir? }
 // ---------------------------------------------------------------------------
@@ -6372,7 +6403,7 @@ app.post('/api/pr/mergeable', async (req, res) => {
   const body = req.body || {};
   const id = typeof body.id === 'string' ? body.id.trim() : '';
   if (!id) return badRequest(res, 'id is required');
-  if (!(await hasGh())) return res.json({ ok: true, mergeable: 'UNKNOWN' });
+  if (!(await anyPrHost())) return res.json({ ok: true, mergeable: 'UNKNOWN' });
 
   try {
     // Resolve the pipeline state (by store key, else by project dir) — mirrors /api/pr.

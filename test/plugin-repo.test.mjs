@@ -13,8 +13,10 @@ import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug,
+  addPluginRepo, fetchCandidate, exportVersion, repoCacheDir, parseMarketplaceManifest, repoSlug, pluginGitEnv,
 } from '../src/core/plugin-repo.mjs';
+import { ADO_GIT_CREDENTIAL_HELPER } from '../src/core/azure-credentials.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 import { writePluginsLock } from '../src/core/plugins-lock.mjs';
 
 const WIN_SYMLINK = { skip: process.platform === 'win32' ? 'creating symlinks needs a privilege (Developer Mode / admin) on Windows' : false };
@@ -354,4 +356,17 @@ test('addPluginRepo: manifest plugin dir starting with "-" is rejected (git opti
   assert.match(r.warnings.join('\n'), /invalid plugin path "--output=\/tmp\/worca-cc-pwned"/);
   assert.equal(existsSync('/tmp/worca-cc-pwned'), false);
   assert.deepEqual(r.discovered.map((d) => d.name), []); // manifest present but all entries invalid -> empty (still authoritative)
+});
+
+test('plugin repo git calls carry worca\'s GitHub read env plus the host-scoped Azure helper', async () => {
+  const NO_APP = { WORCA_GH_APP_ID: undefined, WORCA_GH_APP_KEY_FILE: undefined, WORCA_GH_APP_KEY_B64: undefined };
+  const env = await withEnv({ ...NO_APP, WORCA_ADO_TOKEN: 'pat', WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined,
+    AZURE_DEVOPS_EXT_PAT: undefined, GH_TOKEN: 'ghp_x' }, () => pluginGitEnv());
+  assert.equal(env.WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(env.WORCA_ADO_TOKEN, undefined, 'the raw PAT variable is stripped');
+  assert.ok(Object.values(env).includes(ADO_GIT_CREDENTIAL_HELPER));
+  const none = await withEnv({ ...NO_APP, WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined,
+    AZURE_DEVOPS_EXT_PAT: undefined }, () => pluginGitEnv());
+  assert.equal(none.WORCA_ADO_GIT_TOKEN, undefined);
+  assert.equal(Object.values(none).includes(ADO_GIT_CREDENTIAL_HELPER), false);
 });

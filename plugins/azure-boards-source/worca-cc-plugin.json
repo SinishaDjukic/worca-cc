@@ -1,0 +1,28 @@
+{
+  "name": "azure-boards-source",
+  "version": "0.1.0",
+  "description": "Pull tasks from Azure Boards work items, write results back",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=5 <6" },
+  "taskSources": [
+    {
+      "id": "azure-boards",
+      "displayName": "Azure Boards",
+      "module": "./connector/index.mjs",
+      "multiProfile": true,
+      "configSchema": [
+        { "key": "organization", "type": "text", "label": "Organization", "required": true,
+          "help": "The name in https://dev.azure.com/<organization>" },
+        { "key": "token", "type": "text", "secret": true, "required": true, "label": "Personal access token",
+          "help": "A PAT with Work Items (Read & Write) and Project and Team (Read), or {\"$env\":\"WORCA_ADO_BOARDS_TOKEN\"}. Kept separate from worca's Code token on purpose." },
+        { "key": "closeOnComplete", "type": "select", "label": "Close work item on completion", "default": "no", "options": ["yes", "no"],
+          "help": "yes = move the work item to its type's Completed state when a pipeline finishes successfully" }
+      ],
+      "inputs": [
+        { "key": "project", "type": "remote-select", "label": "Project", "optionsFrom": "listProjects" },
+        { "key": "query", "type": "text", "label": "WIQL filter", "default": "[System.AssignedTo] = @Me AND [System.State] <> 'Closed'" },
+        { "key": "task", "type": "task-browser", "label": "Work item" }
+      ]
+    }
+  ]
+}

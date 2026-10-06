@@ -34,7 +34,7 @@ cat > /tmp/worca-probe-claude <<'F'
 #!/bin/sh
 p=$(pgrep -u worca -o node)
 r() { if cat "$1" >/dev/null 2>&1; then echo read; else echo denied; fi; }
-printf '{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s app=%s broker=%s"}\n' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:+set}" "${WORCA_GH_APP_KEY_B64:+set}" "${WORCA_BROKER_SECRET:+set}"
+printf '{"type":"result","subtype":"success","is_error":false,"result":"user=%s environ=%s db=%s home=%s gh=%s app=%s broker=%s ado=%s"}\n' "$(id -un)" "$(r /proc/$p/environ)" "$(r /data/worca/.worca-cc/worca-cc.db)" "$(ls /data/home >/dev/null 2>&1 && echo read || echo denied)" "${GH_TOKEN:+set}" "${WORCA_GH_APP_KEY_B64:+set}" "${WORCA_BROKER_SECRET:+set}" "${WORCA_ADO_TOKEN:+set}${WORCA_ADO_READ_TOKEN:+set}${WORCA_ADO_WRITE_TOKEN:+set}${AZURE_DEVOPS_EXT_PAT:+set}"
 F
 cat > /tmp/worca-probe.mjs <<'F'
 import { readFileSync } from 'node:fs';
@@ -52,6 +52,22 @@ const root = '/usr/local/lib/node_modules/@worca/app/src/core';
 const { runClaude } = await import(`${root}/claude-runner.mjs`);
 const r = await runClaude({ cwd: '/data/projects', prompt: 'x', bin: '/tmp/worca-probe-claude', asAgent: true });
 console.log(`agent ${r.text}`);
+// Azure DevOps (review minor 13): nothing here may stop the GitHub check below. A rejected fetch (DNS, egress
+// proxy) or a missing module is caught and printed. In split mode with only a write token, the read header is
+// null, so fall back to the write token rather than send an unauthenticated request that reads as a bad PAT.
+try {
+  const { readAzureCredentials, azureAuthHeader } = await import(`${root}/azure-credentials.mjs`);
+  const adoMode = readAzureCredentials().mode;
+  console.log(`azure ${adoMode}`);
+  if (adoMode !== 'none' && process.env.WORCA_ADO_PROBE_ORG) {
+    const auth = azureAuthHeader('read') || azureAuthHeader('write');
+    const a = await fetch(`https://dev.azure.com/${encodeURIComponent(process.env.WORCA_ADO_PROBE_ORG)}/_apis/connectionData`,
+      { headers: { ...auth, 'X-TFS-FedAuthRedirect': 'Suppress' }, signal: AbortSignal.timeout(20_000) });
+    console.log(`ado ${a.status}`);
+  }
+} catch (e) {
+  console.log(`ado FAILED ${String(e?.message || e).replace(/\s+/g, ' ').slice(0, 200)}`);
+}
 const { githubEnv, readGithubCredentials } = await import(`${root}/github-credentials.mjs`);
 const mode = readGithubCredentials().mode;
 console.log(`github ${mode}`);
@@ -67,7 +83,7 @@ out=$(su -s /bin/sh worca -c "cd /data/projects && umask 0007 && node --no-warni
 rm -f /tmp/worca-probe.mjs /tmp/worca-probe-claude
 agent=$(printf '%s\n' "$out" | sed -n 's/^agent //p')
 if id worca-agent >/dev/null 2>&1; then
-  want "agent sees" "$agent" "user=worca-agent environ=denied db=denied home=denied gh= app= broker="
+  want "agent sees" "$agent" "user=worca-agent environ=denied db=denied home=denied gh= app= broker= ado="
   [ -n "$agent" ] || printf 'info  runner said: %s\n' "$(printf '%s\n' "$out" | tail -3 | tr '\n' ' ' | cut -c1-300)"
 else
   printf 'info  agent %s (no worca-agent user: isolation is off)\n' "$agent"
@@ -76,6 +92,11 @@ mode=$(printf '%s\n' "$out" | sed -n 's/^github //p')
 printf 'info  github mode %s\n' "${mode:-unknown}"
 mint=$(printf '%s\n' "$out" | sed -n 's/^mint //p')
 if [ -n "$mint" ]; then want "GitHub credential works" "$mint" 200; fi
+ado_mode=$(printf '%s\n' "$out" | sed -n 's/^azure //p')
+printf 'info  azure devops mode %s\n' "${ado_mode:-unknown}"
+ado=$(printf '%s\n' "$out" | sed -n 's/^ado //p')
+if [ -n "$ado" ]; then want "Azure DevOps credential works" "$ado" 200   # "FAILED …" fails the check with the reason
+elif [ "${ado_mode:-none}" != none ]; then printf 'info  set WORCA_ADO_PROBE_ORG to test the Azure DevOps token\n'; fi
 
 # 4. The credential broker (docs/credential-broker.md), when worca runs with one: no model key
 #    anywhere an agent runs, and the broker's ports refuse an agent that has no token.

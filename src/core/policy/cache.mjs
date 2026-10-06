@@ -4,8 +4,8 @@
 // workflow, human in the loop, step models, the model catalog and its routing env),
 // guardrail-store.mjs (policy guardrail sets), ask/limits.mjs (Ask Worca limits).
 //
-// Deliberately a LEAF: it imports only db.mjs, store.mjs and the pure registry/effective pair,
-// never config.mjs or policy/sync.mjs, so config.mjs can import it without a cycle. It never
+// Deliberately a LEAF: it imports only db.mjs, store.mjs and the pure registry/effective pair and
+// shared/team-metrics/slug.mjs, never config.mjs or policy/sync.mjs, so config.mjs can import it without a cycle. It never
 // touches git: the cache is written by policy/sync.mjs discovery (server start + hourly, or
 // `worca policy pull`), and a project with no cache simply has no team defaults.
 
@@ -13,6 +13,7 @@ import { prepare, getDb } from '../db.mjs';
 import { projectKey } from '../store.mjs';
 import { normalizePolicyDoc } from './registry.mjs';
 import { fieldsForRun } from './effective.mjs';
+import { canonicalMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 
 const parse = (s) => { try { const v = JSON.parse(s); return v && typeof v === 'object' ? v : null; } catch { return null; } };
 
@@ -29,7 +30,8 @@ function homeRows() {
   for (const r of rows) {
     const tp = parse(r.extra)?.teamPolicy;
     if (!tp || !tp.present || !tp.docKnown || tp.delegateTo || !tp.slug) continue;
-    found.push({ r, tp, slug: String(tp.slug).toLowerCase(), at: typeof tp.checkedAt === 'string' ? tp.checkedAt : '' });
+    // Canonical: a home cached under an older Azure spelling and today's is one home (M3).
+    found.push({ r, tp, slug: canonicalMetricsSlug(String(tp.slug).toLowerCase()), at: typeof tp.checkedAt === 'string' ? tp.checkedAt : '' });
   }
   found.sort((a, b) => (Number(b.r.registered) - Number(a.r.registered)) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   const out = new Map();
@@ -80,9 +82,10 @@ export function cachedPolicyForKey(key) {
   if (!tp || !tp.present || !tp.docKnown || tp.unknownSchema) return null;
   if (!tp.delegateTo) {
     const doc = tp.doc ? normalizePolicyDoc(tp.doc).doc : null;
-    return doc ? { home: String(tp.slug || '').toLowerCase(), sha: tp.headSha ?? null, doc } : null;
+    return doc ? { home: canonicalMetricsSlug(String(tp.slug || '').toLowerCase()), sha: tp.headSha ?? null, doc } : null;
   }
-  const want = String(tp.delegateTo).toLowerCase();
+  // A marker committed by older code may name the home's older Azure spelling; both sides are canonical here.
+  const want = canonicalMetricsSlug(String(tp.delegateTo).toLowerCase());
   const home = cachedPolicyHomes().find((h) => h.slug === want);
   return home ? { home: home.slug, sha: home.sha, doc: home.doc } : null;
 }

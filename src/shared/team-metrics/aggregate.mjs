@@ -1,6 +1,7 @@
 // src/shared/team-metrics/aggregate.mjs
 // Team metrics aggregation (team-metrics-design.md §4.9). PURE: no I/O, no node: imports —
 // shared by the server (read.mjs) and the browser (the page re-aggregates per range/group/filter).
+import { canonicalMetricsSlug } from './slug.mjs';
 
 export const SUPPORTED_RECORD_VERSION = 1;
 export const RANGES = Object.freeze(['this-month', 'last-month', 'quarter', 'year', 'all', 'custom']);
@@ -114,11 +115,21 @@ export const DIMENSIONS = {
       // `files`: this member's own changed-file count (target.touchedFiles, additive); null on a
       // record that predates it — the run's total is NOT this project's, so the row says "–".
       const tf = r.target.touchedFiles && typeof r.target.touchedFiles === 'object' ? r.target.touchedFiles : null;
-      return t.length
-        ? t.map((p) => ({ key: p, label: p, files: tf && Number.isInteger(tf[p]) ? tf[p] : null }))
-        : [{ key: NONE, label: 'No project touched', files: null }];
+      if (!t.length) return [{ key: NONE, label: 'No project touched', files: null }];
+      // One row per canonical slug: a record that touched two spellings of one Azure repo counts it once,
+      // and the per-spelling file counts add up (null only when no spelling has a count).
+      const rows = new Map();
+      for (const p of t) {
+        const key = canonicalMetricsSlug(p);
+        const f = tf && Number.isInteger(tf[p]) ? tf[p] : null;
+        const prev = rows.get(key);
+        if (!prev) rows.set(key, { key, label: key, files: f });
+        else if (f != null) prev.files = (prev.files ?? 0) + f;
+      }
+      return [...rows.values()];
     }
-    return [{ key: r.target?.project || NONE, label: r.target?.project || 'Unknown project' }];
+    const p = canonicalMetricsSlug(r.target?.project);
+    return [{ key: p || NONE, label: p || 'Unknown project' }];
   },
 };
 
@@ -312,8 +323,8 @@ function toRunRow(r, humanRateUsd = 0) {
     actor: r.actor ?? null,
     source: r.source ? [r.source.ref, r.source.title].filter(Boolean).join(' ') : null,
     projects: r.target?.kind === 'workspace'
-      ? (Array.isArray(r.target.touched) ? r.target.touched.filter((p) => typeof p === 'string') : [])
-      : [r.target?.project].filter((p) => typeof p === 'string' && p),
+      ? [...new Set((Array.isArray(r.target.touched) ? r.target.touched.filter((p) => typeof p === 'string') : []).map(canonicalMetricsSlug))]
+      : [r.target?.project].filter((p) => typeof p === 'string' && p).map(canonicalMetricsSlug),
     // Team policy (§10): only on a run recorded under a policy, so policy-less rows keep their shape.
     ...(r.policy && r.policy.home ? { policy: {
       home: r.policy.home,

@@ -9,10 +9,11 @@
 // origin, attribution is a team decision made once, routing pushes marker branches to other
 // repositories. Outward-facing and hard to reverse — never a direct tool.
 import { ASK_LIMITS } from './limits.mjs';
+import { canonicalMetricsSlug } from '../../shared/team-metrics/slug.mjs';
 
 export const METRICS_CHANGE_KINDS = Object.freeze(['enable', 'record', 'workspace_home', 'route_members']);
 const ATTRIBUTIONS = ['git-user', 'none'];
-const SLUG_RE = /^[^\s/]+\/[^\s/]+$/;                     // owner/repo — what projectSlug() derives from origin
+const SLUG_RE = /^[^\s/]+(?:\/[^\s/]+)+$/;               // owner/repo, or host/…/repo (dev.azure.com/org/project/repo) — what projectSlug() derives
 
 export const METRICS_ERRORS = Object.freeze({
   kind: `kind must be one of ${METRICS_CHANGE_KINDS.join(', ')}`,
@@ -23,7 +24,7 @@ export const METRICS_ERRORS = Object.freeze({
   unknownWorkspace: (id) => `unknown workspaceId "${id}"`,
   mode: 'mode must be "here" or "delegate"',
   attribution: 'attribution must be "git-user" or "none"',
-  delegateTo: 'delegateTo must be the target project\'s owner/repo slug',
+  delegateTo: 'delegateTo must be the target project\'s slug (owner/repo, or dev.azure.com/org/project/repo)',
   alreadyRecords: (name) => `${name} already records team metrics on its own branch`,
   recordBool: 'record must be true or false',
   notEnabled: (name) => `team metrics are not enabled on ${name} — propose kind "enable" first`,
@@ -76,7 +77,7 @@ export function createMetricsChangeValidator({ listProjects, readWorkspace, read
         if (errors.length) return { ok: false, errors };
         card.mode = mode;
         card.attribution = mode === 'here' ? attribution : null;
-        card.delegateTo = mode === 'delegate' ? delegateTo : null;
+        card.delegateTo = mode === 'delegate' ? canonicalMetricsSlug(delegateTo.toLowerCase()) : null;
         // A project that already delegates gets its marker re-pointed (enableTeamMetrics change:true).
         card.change = mode === 'delegate' && !!prefs?.enabled && !!prefs.config?.delegateTo;
         if (mode === 'here') {
@@ -88,10 +89,10 @@ export function createMetricsChangeValidator({ listProjects, readWorkspace, read
             'A team decision, made once: changing attribution later means committing to the branch by hand',
           ];
         } else {
-          card.summary = `${card.change ? 'Re-point' : 'Enable'} team metrics on ${card.projectName} — delegate to ${delegateTo}`;
+          card.summary = `${card.change ? 'Re-point' : 'Enable'} team metrics on ${card.projectName} — delegate to ${card.delegateTo}`;
           card.effects = [
-            `Pushes a marker branch worca-metrics on ${card.projectName}'s origin that points teammates at ${delegateTo}`,
-            `This project's single-project runs land on ${delegateTo}'s branch, still labelled with this project`,
+            `Pushes a marker branch worca-metrics on ${card.projectName}'s origin that points teammates at ${card.delegateTo}`,
+            `This project's single-project runs land on ${card.delegateTo}'s branch, still labelled with this project`,
             'Attribution follows the target project\'s policy',
           ];
         }

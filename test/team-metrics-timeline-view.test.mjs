@@ -75,6 +75,18 @@ test('without merge data: Completed tile, no lead time, and the notice says why'
   assert.equal(prNotice(doc, { status: { gh: 'ok', actionRepos: [] } }), null);
 });
 
+test('prNotice: Azure DevOps token, errors, cut-off listings and the unsupported-host line', () => {
+  assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'missing', actionRepos: [], unsupportedRepos: [] } }).textContent, /set WORCA_ADO_TOKEN/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'unauthenticated', actionRepos: [], unsupportedRepos: [] } }).textContent, /Azure DevOps refused the token/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureError: 'Azure DevOps 500: boom', actionRepos: [], unsupportedRepos: [] } }).textContent, /did not answer for some pull requests: Azure DevOps 500: boom/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', actionRepos: [], unsupportedRepos: ['gitlab.com/g/api'] } }).textContent,
+    /Merge tracking covers GitHub and Azure DevOps repositories; gitlab\.com\/g\/api shows without merge data/);
+  assert.match(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureTruncated: ['dev.azure.com/acme/shop/api'], actionRepos: [], unsupportedRepos: [] } }).textContent,
+    /dev\.azure\.com\/acme\/shop\/api has more pull requests than one listing covers; older runs there may show without merge data/);
+  assert.equal(prNotice(doc, { status: { gh: 'ok', azure: 'ok', azureTruncated: [], actionRepos: [], unsupportedRepos: [] } }), null);
+  assert.equal(prNotice(doc, { status: { gh: 'ok', azure: 'ok', actionRepos: [], unsupportedRepos: [] } }), null);
+});
+
 test('popover: status, reason, PR links (http only), runs', () => {
   const ship = items.find((i) => i.title === 'Responses upstream');
   const pop = renderTimelinePopover(ship, { doc, now: NOW });

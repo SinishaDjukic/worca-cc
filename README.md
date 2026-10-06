@@ -103,7 +103,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **One-click PRs** — a finished run's page offers **Create pull request**:
   *Ship it?* shows the files and +/− lines, lets you write the description or
   **Generate with AI**, then pushes the branch and opens the PR with the GitHub
-  CLI (`gh`). The button then becomes **View pull request**.
+  CLI (`gh`), or on [Azure DevOps](docs/azure-devops.md) with a personal access
+  token. The button then becomes **View pull request**.
 - **Mock mode** — the **Mock mode** switch on New pipeline (`--mock` on the
   CLI, `WORCA_MOCK=1` for a whole server) runs the pipeline against a
   deterministic offline mock — no `claude`, no tokens — for demos, development
@@ -810,6 +811,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Credential broker](docs/credential-broker.md) — model keys stay out of Worca's container: each `claude` it starts gets a short-lived token, and the broker adds the real key on the way to the provider
 - [Voice mode](docs/speech.md) — hands-free Ask Worca: Whisper and Kokoro in the browser, or your own speech servers
 - [Voice languages](docs/speech-languages.md) — which languages work today, and the plan for more
+- [Azure DevOps](docs/azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`: the token, its scopes, and what does not work yet
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch
 - [Team policy](docs/team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch
 - [Storage](docs/storage.md) — where state lives, project keys, migration

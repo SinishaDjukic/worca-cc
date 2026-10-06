@@ -12,7 +12,7 @@ import { join } from 'node:path';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
-import { createCloneValidator, githubLabel, cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
+import { createCloneValidator, githubLabel, hostCredentialLabel, cloneEventPrompt, cloneNoticeText } from '../src/core/ask/clone-proposal.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -62,6 +62,13 @@ test('githubLabel names the mode, never a secret', () => {
   assert.match(githubLabel('single'), /GH_TOKEN/);
   assert.match(githubLabel('none'), /public repositories only/);
   assert.match(githubLabel('app', { host: 'gitlab.com' }), /gitlab\.com is not GitHub/);
+});
+
+test('hostCredentialLabel names the Azure DevOps credential; githubLabel still exports', () => {
+  assert.equal(hostCredentialLabel('none', { host: 'dev.azure.com', adoMode: 'single' }), 'the Azure DevOps token (WORCA_ADO_TOKEN)');
+  assert.equal(hostCredentialLabel('app', { host: 'dev.azure.com', adoMode: 'split' }), 'the Azure DevOps read token (WORCA_ADO_READ_TOKEN)');
+  assert.match(hostCredentialLabel('none', { host: 'dev.azure.com', adoMode: 'none' }), /none \(Azure DevOps: set WORCA_ADO_TOKEN\): public repositories only/);
+  assert.equal(githubLabel, hostCredentialLabel);
 });
 
 test('event and notice text: applied names the project, failed carries the code, context tags are defused', () => {

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   PR_DESCRIPTION_SYSTEM_PROMPT, DESCRIPTION_CAP, buildPrDescriptionPrompt, sanitizePrDescription,
-  resolvePrDescriptionModel, generatePrDescription,
+  resolvePrDescriptionModel, generatePrDescription, prDescriptionSystemPrompt,
 } from '../src/core/pr-description.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
@@ -41,6 +41,17 @@ test('the system prompt treats the run data as untrusted and asks for the three 
   assert.match(PR_DESCRIPTION_SYSTEM_PROMPT, /## Summary/);
   assert.match(PR_DESCRIPTION_SYSTEM_PROMPT, /## Changes/);
   assert.match(PR_DESCRIPTION_SYSTEM_PROMPT, /## Testing/);
+});
+
+test('prDescriptionSystemPrompt: GitHub keeps the prompt; Azure DevOps names its host and the 4,000-char cap', () => {
+  assert.equal(prDescriptionSystemPrompt('github'), PR_DESCRIPTION_SYSTEM_PROMPT);
+  assert.equal(prDescriptionSystemPrompt(), PR_DESCRIPTION_SYSTEM_PROMPT);
+  const azure = prDescriptionSystemPrompt('azure');
+  assert.match(azure, /an Azure DevOps pull request/);
+  assert.match(azure, /4,000 characters/);
+  assert.doesNotMatch(azure, /GitHub/);
+  assert.match(azure, /untrusted data/i);
+  assert.match(azure, /## Summary/);
 });
 
 test('buildPrDescriptionPrompt: a patch above the cap keeps hunk headers only; a long prompt is capped', () => {
@@ -137,5 +148,15 @@ test('generatePrDescription: without an explicit model it resolves the setting, 
     assert.ok(warns.some((w) => /prDescriptionModel "gone-model" is no longer in the catalog/.test(w)), warns.join('\n'));
     await generatePrDescription(key, id, { setting: 'claude-opus-5', runClaudeImpl: fake });
     assert.equal(seen[1].model, 'claude-opus-5');
+  });
+});
+
+test('generatePrDescription: an Azure DevOps target gets the Azure system prompt', async () => {
+  await withRun({ title: 't' }, async ({ id, key }) => {
+    const seen = [];
+    const fake = async (o) => { seen.push(o); return { text: '## Summary\nok' }; };
+    await generatePrDescription(key, id, { model: 'claude-sonnet-5', forge: 'azure', runClaudeImpl: fake });
+    assert.equal(seen[0].systemPrompt, prDescriptionSystemPrompt('azure'));
+    assert.notEqual(seen[0].systemPrompt, PR_DESCRIPTION_SYSTEM_PROMPT);
   });
 });

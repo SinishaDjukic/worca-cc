@@ -4,14 +4,16 @@
 // missing or signed out. gh is never spawned for real: every call goes through the test runner.
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, symlinkSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { worktreePath } from '../src/core/metrics/sync.mjs';
+import { withEnv } from './helpers/with-env.mjs';
+import { worktreePath, azureCoordsForSlug } from '../src/core/metrics/sync.mjs';
 import {
   resolveRunPrs, listPrEvents, parsePrEvent, readPrEventsFromDir, buildBranchQuery, cacheFresh, cachePath, isGithubSlug, parsePrUrl,
-  GH_BATCH, OPEN_TTL_MS, _testing,
+  forgeOfSlug, GH_BATCH, OPEN_TTL_MS, AZURE_MAX_PAGES, _testing,
 } from '../src/core/metrics/prs.mjs';
+import * as azurePr from '../src/core/pr/azure.mjs';
 
 useTempHome(after);
 afterEach(() => _testing.reset());
@@ -193,4 +195,158 @@ test('bad lookup rows are dropped, not fatal', async () => {
   const { prs } = await resolveRunPrs({ runs: [null, { id: '' }, { id: 'ok', repos: 'nope', branch: 5 }], sinks: ['not a slug!'] });
   assert.deepEqual(Object.keys(prs), ['ok']);
   assert.equal(prs.ok, null);
+});
+
+// ---- Azure DevOps ----------------------------------------------------------------------------
+
+const freshCache = () => rmSync(cachePath(), { force: true });
+const AZ = 'dev.azure.com/acme/shop/api';
+const COORDS = async () => ({ org: 'acme', project: 'shop', repo: 'api' });
+const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
+const AZ_RUNS = [
+  { id: 'r1', repos: [AZ], branch: 'worca/a', endedAt: '2026-09-20T09:00:00Z' },
+  { id: 'r2', repos: [AZ], branch: 'worca/b', endedAt: '2026-09-22T09:00:00Z' },
+  { id: 'r3', repos: [AZ], branch: 'worca/none', endedAt: '2026-09-22T09:00:00Z' },
+];
+const AZ_PRS = [
+  { pullRequestId: 7, status: 'completed', creationDate: '2026-09-20T10:00:00Z', closedDate: '2026-09-21T10:00:00Z', sourceRefName: 'refs/heads/worca/a', targetRefName: 'refs/heads/main', title: 'A' },
+  { pullRequestId: 8, status: 'active', creationDate: '2026-09-22T10:00:00Z', sourceRefName: 'refs/heads/worca/b', targetRefName: 'refs/heads/main', title: 'B' },
+  { pullRequestId: 9, status: 'active', creationDate: '2026-09-22T11:00:00Z', sourceRefName: 'refs/heads/someone-else', targetRefName: 'refs/heads/main', title: 'C' },
+];
+afterEach(() => azurePr._testing.reset());
+
+test('Azure DevOps repos: one PR listing per repo, matched to branches, cached; status.azure ok', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  const ghCalls = [];
+  _testing.setRunner(fakeGh({ calls: ghCalls }));
+  const urls = [];
+  azurePr._testing.setFetch(async (url) => { urls.push(String(url)); return { status: 200, ok: true, json: async () => ({ value: AZ_PRS }) }; });
+  await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, async () => {
+    const first = await resolveRunPrs({ runs: AZ_RUNS, coordsFor: COORDS });
+    assert.equal(urls.length, 1, 'one listing per repo, not per branch');
+    assert.match(urls[0], /^https:\/\/dev\.azure\.com\/acme\/shop\/_apis\/git\/repositories\/api\/pullrequests\?searchCriteria\.status=all&/);
+    assert.match(urls[0], /searchCriteria\.minTime=2026-07-22T09%3A00%3A00\.000Z/, 'earliest run end − 60 days');
+    assert.equal(first.status.azure, 'ok');
+    assert.equal(first.status.azureError, null);
+    assert.deepEqual(first.status.azureTruncated, []);
+    assert.equal(first.status.gh, 'unused');
+    assert.deepEqual(first.status.unsupportedRepos, []);
+    assert.equal(ghCalls.length, 0, 'gh is never asked about an Azure repo');
+
+    assert.equal(first.prs.r1.length, 1);
+    assert.deepEqual(
+      (({ state, number, url, mergedAt, head, base, via }) => ({ state, number, url, mergedAt, head, base, via }))(first.prs.r1[0]),
+      { state: 'MERGED', number: 7, url: 'https://dev.azure.com/acme/shop/_git/api/pullrequest/7',
+        mergedAt: '2026-09-21T10:00:00Z', head: 'worca/a', base: 'main', via: 'azure' });
+    assert.equal(first.prs.r2.length, 1);
+    assert.equal(first.prs.r2[0].state, 'OPEN');
+    assert.equal(first.prs.r2[0].number, 8);
+    assert.equal(first.prs.r2[0].mergedAt, null);
+    assert.deepEqual(first.prs.r3, [], 'looked up, no PR');
+
+    // Within the TTL: MERGED is final, OPEN and "none" were just checked → no new listing; same answers from the cache.
+    const second = await resolveRunPrs({ runs: AZ_RUNS, coordsFor: COORDS });
+    assert.equal(urls.length, 1, 'served from pr-cache.json');
+    assert.equal(second.prs.r1[0].via, 'azure', 'the cache keeps the Azure source (m5)');
+    assert.equal(second.prs.r1[0].number, 7);
+    assert.equal(second.prs.r2[0].number, 8);
+    assert.deepEqual(second.prs.r3, []);
+  });
+});
+
+test('Azure without a token → status.azure missing; a refused token → unauthenticated; never unsupported, never cached', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  _testing.setRunner(fakeGh({}));
+  const runs = [{ id: 'm1', repos: ['dev.azure.com/acme/shop/missing'], branch: 'x', endedAt: '2026-09-22T09:00:00Z' }];
+  const urls = [];
+  azurePr._testing.setFetch(async (url) => { urls.push(String(url)); return { status: 401, ok: false, json: async () => null }; });
+
+  const missing = await withEnv(NO_ADO, () => resolveRunPrs({ runs, coordsFor: COORDS }));
+  assert.equal(missing.status.azure, 'missing');
+  assert.equal(missing.prs.m1, null, 'unknown, not "no PR"');
+  assert.deepEqual(missing.status.unsupportedRepos, []);
+  assert.equal(urls.length, 0);
+
+  const refused = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'expired' }, () => resolveRunPrs({ runs, coordsFor: COORDS }));
+  assert.equal(refused.status.azure, 'unauthenticated');
+  assert.equal(refused.prs.m1, null);
+  const again = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'expired' }, () => resolveRunPrs({ runs, coordsFor: COORDS }));
+  assert.equal(again.status.azure, 'unauthenticated');
+  assert.equal(urls.length, 2, 'a failed listing is not cached: asked again next time');
+});
+
+test('a listing cut off at AZURE_MAX_PAGES leaves unmatched branches unknown and uncached (M2)', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  _testing.setRunner(fakeGh({}));
+  const urls = [];
+  // Every page is full and inside the window; worca/a sits on the third page, worca/old on none of the ten.
+  azurePr._testing.setFetch(async (url) => {
+    urls.push(String(url));
+    const skip = Number(/\$skip=(\d+)/.exec(String(url))[1]);
+    const value = Array.from({ length: 100 }, (_, i) => ({ pullRequestId: 5000 - skip - i, status: 'active', creationDate: '2026-09-23T00:00:00Z',
+      sourceRefName: skip === 200 && i === 0 ? 'refs/heads/worca/a' : `refs/heads/other-${skip + i}`, targetRefName: 'refs/heads/main' }));
+    return { status: 200, ok: true, json: async () => ({ value }) };
+  });
+  const runs = [
+    { id: 't1', repos: [AZ], branch: 'worca/a', endedAt: '2026-09-22T09:00:00Z' },
+    { id: 't2', repos: [AZ], branch: 'worca/old', endedAt: '2026-09-22T09:00:00Z' },
+  ];
+  await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, async () => {
+    const first = await resolveRunPrs({ runs, coordsFor: COORDS });
+    assert.equal(urls.length, AZURE_MAX_PAGES, 'all ten pages were read');
+    assert.equal(first.prs.t1[0].number, 4800, 'a match inside the cap is found');
+    assert.equal(first.prs.t2, null, 'beyond the cap: unknown, not "no PR"');
+    assert.equal(first.status.azure, 'ok');
+    assert.deepEqual(first.status.azureTruncated, [AZ], 'the notice names the cut-off repo (m5)');
+
+    const again = await resolveRunPrs({ runs, coordsFor: COORDS });
+    assert.equal(urls.length, 2 * AZURE_MAX_PAGES, 'only the unknown branch is asked again: it was not cached');
+    assert.equal(again.prs.t1[0].number, 4800, 't1 is served from the cache');
+    assert.equal(again.prs.t2, null);
+  });
+});
+
+test('a cut-off listing that still found every needed branch names no repo (n8)', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  _testing.setRunner(fakeGh({}));
+  // Same ten full pages as the M2 row, but both runs' branches are on page one.
+  azurePr._testing.setFetch(async (url) => {
+    const skip = Number(/\$skip=(\d+)/.exec(String(url))[1]);
+    const value = Array.from({ length: 100 }, (_, i) => ({ pullRequestId: 6000 - skip - i, status: 'active', creationDate: '2026-09-23T00:00:00Z',
+      sourceRefName: skip === 0 && i < 2 ? `refs/heads/worca/n8-${i}` : `refs/heads/other-${skip + i}`, targetRefName: 'refs/heads/main' }));
+    return { status: 200, ok: true, json: async () => ({ value }) };
+  });
+  const runs = [0, 1].map((i) => ({ id: `n8-${i}`, repos: [AZ], branch: `worca/n8-${i}`, endedAt: '2026-09-22T09:00:00Z' }));
+  const r = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' }, () => resolveRunPrs({ runs, coordsFor: COORDS }));
+  assert.equal(r.prs['n8-0'][0].number, 6000);
+  assert.equal(r.prs['n8-1'][0].number, 5999);
+  assert.deepEqual(r.status.azureTruncated, [], 'nothing was left unknown, so no notice');
+});
+
+test('a coordsFor failure is an azureError, not a rejected resolveRunPrs', async () => {
+  freshCache();
+  _testing.setNow(() => NOW);
+  _testing.setRunner(fakeGh({}));
+  azurePr._testing.setFetch(async () => { throw new Error('must not be called'); });
+  const r = await withEnv({ ...NO_ADO, WORCA_ADO_TOKEN: 'pat' },
+    () => resolveRunPrs({ runs: AZ_RUNS, coordsFor: async () => { throw new Error('remotes unreadable'); } }));
+  assert.equal(r.status.azureError, 'remotes unreadable');
+  assert.equal(r.prs.r1, null);
+});
+
+test('parsePrUrl / forgeOfSlug know Azure', () => {
+  assert.deepEqual(parsePrUrl('https://dev.azure.com/acme/My%20Project/_git/Api/pullrequest/12'), { repo: 'dev.azure.com/acme/my-project/api', number: 12 });
+  assert.deepEqual(parsePrUrl('https://github.com/o/r/pull/3'), { repo: 'o/r', number: 3 });
+  assert.equal(forgeOfSlug('acme/api'), 'github');
+  assert.equal(forgeOfSlug('dev.azure.com/acme/shop/api'), 'azure');
+  assert.equal(forgeOfSlug('gitlab.com/g/api'), null);
+});
+
+test('azureCoordsForSlug: without a local repo for the slug, the slug\'s own segments (D15)', async () => {
+  assert.deepEqual(await azureCoordsForSlug('dev.azure.com/Acme/Shop/Api'), { org: 'acme', project: 'shop', repo: 'api' });
+  assert.equal(await azureCoordsForSlug('acme/api'), null);
 });

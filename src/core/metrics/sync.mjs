@@ -9,24 +9,33 @@ import { randomBytes } from 'node:crypto';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { projectKey, canonicalProjectRoot } from '../store.mjs';
 import { listRemotes, parseRemoteUrl } from '../git-info.mjs';
-import { githubEnv, readGithubCredentials, stripGithubCredentials } from '../github-credentials.mjs';
+import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from '../host-credentials.mjs';
 
 const NETWORK_GIT = new Set(['fetch', 'push', 'ls-remote', 'clone', 'pull']);
 
-/** "owner/name" of origin on github.com, only in App mode (the one mode that needs it). */
-async function originRepo(cwd) {
-  if (readGithubCredentials().mode !== 'app' || !cwd) return null;
+/** The URL of origin in `cwd`, or '' (no cwd, no origin, not a repo). */
+async function originUrl(cwd) {
+  if (!cwd) return '';
   try {
-    const url = await new Promise((ok) => execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 10_000 }, (e, out) => ok(e ? '' : String(out).trim())));
-    const p = parseRemoteUrl(url);
-    return p && p.host === 'github.com' ? `${p.owner}/${p.repo}` : null;
-  } catch { return null; }
+    return await new Promise((ok) => execFile('git', ['remote', 'get-url', 'origin'], { cwd, timeout: 10_000 }, (e, out) => ok(e ? '' : String(out).trim())));
+  } catch { return ''; }
+}
+
+/** worca's own credential for a metrics/policy network git call in `cwd`: team data, never "push as me". */
+export async function metricsGitEnv(cwd) {
+  if (!hostLookupNeeded()) return githubOnlyEnv('write', { repo: null, asPerson: false });
+  const url = await originUrl(cwd);
+  return parseRemoteUrl(url) ? gitEnvFor('write', url, { asPerson: false }) : githubOnlyEnv('write', { repo: null, asPerson: false });
 }
 import { readTeamMetricsPrefs, writeTeamMetricsPrefs } from '../config.mjs';
 import { readWorkspace, listWorkspaces, isGitRepo } from '../workspaces.mjs';
 import { withLock } from './lock.mjs';
 import { writeRunLedger, readRunLedger, sweepRunLedger } from './ledger.mjs';
 import { matchesWorkspace } from '../../shared/team-metrics/workspace-match.mjs';
+import { isAzureHost } from '../../shared/azure-remote.mjs';
+import { canonicalMetricsSlug, sameMetricsSlug } from '../../shared/team-metrics/slug.mjs';
+
+export { canonicalMetricsSlug, sameMetricsSlug };
 
 export const METRICS_BRANCH = 'worca-metrics';
 export const METRICS_DIR = '.worca-metrics';
@@ -90,11 +99,11 @@ async function defaultGit(cwd, args, { timeoutMs = 60_000, env = null } = {}) {
   let base;
   if (NETWORK_GIT.has(args[0])) {
     // Team data, not a person's work: always worca's own credential, never "push as me".
-    const cred = await githubEnv('write', { repo: await originRepo(cwd), asPerson: false });
+    const cred = await metricsGitEnv(cwd);
     if (cred.error) console.warn(`[worca] metrics/policy git ${args[0]}: ${cred.error}`);
     base = cred.env;
   } else {
-    base = stripGithubCredentials(process.env);
+    base = stripHostCredentials(process.env);
   }
   for (const k of STRIP_ENV) delete base[k];
   return new Promise((done) => {
@@ -141,18 +150,30 @@ function slugSegment(x) {
  */
 export function metricsSlugFromUrl(url) {
   const parsed = parseRemoteUrl(url);
-  if (!parsed) return null;
-  const s = String(url).trim();
-  const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?[^/:]+(?::\d+)?\/(.+)$/i.exec(s) || /^(?:[^@/\s]+@)?[^:/\s]+:(.+)$/.exec(s);
-  let segs = (m ? m[1] : '').replace(/\/+$/, '').replace(/\.git$/i, '').split('/').filter(Boolean);
-  let host = String(parsed.host || '').toLowerCase();
+  if (parsed?.org) return azureMetricsSlug(parsed);      // every Azure spelling the parser knows, incl. *.visualstudio.com
+  const s = String(url || '').trim();
+  const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/i.exec(s) || /^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/.exec(s);
+  // An Azure-host URL the strict parser rejects keeps the old generic slug rather than losing its metrics sink (D19).
+  if (!parsed && !(m && isAzureHost(m[1]))) return null;
+  let segs = (m ? m[2] : '').replace(/\/+$/, '').replace(/\.git$/i, '').split('/').filter(Boolean);
+  let host = String(parsed?.host || m[1]).toLowerCase();
   // ssh and https spellings of the same Azure repo must give the same slug.
   if (host === 'ssh.dev.azure.com' || host === 'vs-ssh.visualstudio.com') { host = 'dev.azure.com'; if (segs[0] === 'v3') segs = segs.slice(1); }
   segs = segs.filter((x) => x !== '_git');                         // Azure DevOps https
   if (segs[0] === 'scm' && segs.length > 2) segs = segs.slice(1);  // Bitbucket Server https
   segs = segs.map(slugSegment);
   if (segs.length < 2) return null;
-  return host === 'github.com' ? segs.slice(-2).join('/') : [slugSegment(host), ...segs].join('/');
+  return canonicalMetricsSlug(host === 'github.com' ? segs.slice(-2).join('/') : [slugSegment(host), ...segs].join('/'));
+}
+
+/** The Azure metrics slug of a parsed Azure remote / PR (org/project/repo, each slugSegment-ed). */
+export function azureMetricsSlug({ org, project, repo }) {
+  return ['dev.azure.com', org, project, repo].map(slugSegment).join('/');
+}
+
+/** The project-scope record predicate (read.mjs scopeSources, the status.runs count). */
+export function keepProjectRecord(ownSlug) {
+  return (r) => r?.target?.kind === 'project' && sameMetricsSlug(r.target.project, ownSlug);
 }
 
 /** "owner/repo" (github) or "host/…/repo" from origin, else basename of the canonical root (§4.3). */
@@ -352,7 +373,7 @@ export async function findLocalProjectBySlug(slug) {
     if (!p.exists) continue;
     const cached = readTeamMetricsPrefs(p.key)?.slug;
     const s = cached || (await projectSlug(p.path)).slug;
-    if (s === want) return p;
+    if (sameMetricsSlug(s, want)) return p;
   }
   return null;
 }
@@ -374,10 +395,24 @@ export async function findLocalRepoBySlug(slug) {
       seen.add(path);
       const key = projectKey(path);
       const s = readTeamMetricsPrefs(key)?.slug || (await projectSlug(path)).slug;
-      if (s === want) return { key, path, name: basename(path) };
+      if (sameMetricsSlug(s, want)) return { key, path, name: basename(path) };
     }
   }
   return null;
+}
+
+/** The real Azure org/project/repo behind a (lossy) metrics slug: the local repo with that slug, else the slug's own segments. */
+export async function azureCoordsForSlug(slug) {
+  const s = String(slug || '').toLowerCase();
+  const local = await findLocalRepoBySlug(s).catch(() => null);
+  if (local?.path) {
+    const r = await listRemotes(local.path);
+    const o = r.ok ? r.remotes.find((x) => x.name === 'origin') : null;
+    const p = parseRemoteUrl(o?.pushUrl || o?.fetchUrl);
+    if (p?.org && azureMetricsSlug(p) === s) return { org: p.org, project: p.project, repo: p.repo };
+  }
+  const m = /^dev\.azure\.com\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(s);
+  return m ? { org: m[1], project: m[2], repo: m[3] } : null;   // Azure names compare case-insensitively
 }
 
 export function setRecordMyRuns(projectDir, record) {
@@ -403,11 +438,11 @@ export async function resolveProjectSink(projectDir, { discover = true } = {}) {
   // Decision 32: an unread config could be a delegation marker — never route onto it.
   if (!own.configKnown) return { ok: false, reason: 'not-enabled', code: 'CONFIG_UNKNOWN', detail: 'the worca-metrics branch exists but could not be fetched yet' };
   const record = own.record !== false;
-  const delegateTo = own.config?.delegateTo ? String(own.config.delegateTo).toLowerCase() : null;
+  const delegateTo = own.config?.delegateTo ? canonicalMetricsSlug(String(own.config.delegateTo).toLowerCase()) : null;
   if (!delegateTo) {
     return { ok: true, slug: own.slug, projectDir, attribution: normAttribution(own.config?.attribution), record, delegated: false, from: own.slug };
   }
-  if (delegateTo === own.slug) return invalidDelegate('DELEGATE_SELF', `${own.slug} delegates to itself`);
+  if (sameMetricsSlug(delegateTo, own.slug)) return invalidDelegate('DELEGATE_SELF', `${own.slug} delegates to itself`);
   // Registered project OR workspace member/home (decision 11 / 28): a home need not be registered.
   const target = await findLocalRepoBySlug(delegateTo);
   if (!target) return invalidDelegate('DELEGATE_UNKNOWN', `points at ${delegateTo}, which is not a project in Worca on this machine`);
@@ -527,9 +562,9 @@ export function pushHint(stderr) {
 
 /** @returns {Promise<{slug:string, attribution:'git-user'|'none'}>} the validated delegate. */
 async function validateDelegateTarget(delegateTo, ownSlug) {
-  const want = String(delegateTo || '').toLowerCase();
+  const want = canonicalMetricsSlug(String(delegateTo || '').toLowerCase());
   if (!want) throw metricsError('BAD_REQUEST', 'delegateTo is required');
-  if (want === ownSlug) throw metricsError('DELEGATE_INVALID', 'a project cannot delegate to itself');
+  if (sameMetricsSlug(want, ownSlug)) throw metricsError('DELEGATE_INVALID', 'a project cannot delegate to itself');
   const target = await findLocalRepoBySlug(want); // registered project or workspace member/home (decision 11)
   if (!target) throw metricsError('DELEGATE_INVALID', `${want} is not a project in Worca on this machine`);
   const t = (await discoverProject(target.path, { force: true }).catch(() => null)) || {};
@@ -600,7 +635,7 @@ async function rewriteDelegation(slug, projectDir, config, attr = 'git-user') {
     if (!reset.ok) throw metricsError('WORKTREE_FAILED', firstLine(reset.stderr), { stderr: reset.stderr });
     const cur = await readFile(join(dir, METRICS_DIR, 'config.json'), 'utf8').then(JSON.parse).catch(() => ({}));
     if (!cur.delegateTo) throw metricsError('DELEGATE_INVALID', 'this project records locally; its branch is not a delegation marker');
-    if (String(cur.delegateTo).toLowerCase() === config.delegateTo) return { action: 'changed' }; // already points there: nothing to commit
+    if (sameMetricsSlug(cur.delegateTo, config.delegateTo)) return { action: 'changed' }; // already points there: nothing to commit
     await writeFile(join(dir, METRICS_DIR, 'config.json'), JSON.stringify({ ...cur, enabledAt: config.enabledAt, enabledBy: config.enabledBy, delegateTo: config.delegateTo }, null, 2) + '\n');
     await _git(dir, ['add', '-A', '-f', METRICS_DIR]);   // single segment: no separator to normalise
     // Same policy as enableTeamMetrics: the marker commit follows the DELEGATE's attribution,
@@ -1005,7 +1040,7 @@ export async function projectMetricsStatus(p, { discover = false, recordsBySink 
   // one sink must share a single read of its worktree.
   if (!recordsBySink.has(sink.slug)) recordsBySink.set(sink.slug, countRuns(sink.slug));
   const recs = await recordsBySink.get(sink.slug);
-  status.runs = recs ? recs.filter((r) => r.target?.kind === 'project' && r.target.project === status.slug).length : null;
+  status.runs = recs ? recs.filter(keepProjectRecord(status.slug)).length : null;
   if (sink.delegated) {
     const t = readTeamMetricsPrefs(projectKey(sink.projectDir));
     if (t?.lastError) { status.lastError = t.lastError; status.lastErrorCode = t.lastErrorCode; status.lastErrorHint = t.lastErrorCode === 'PUSH_REJECTED' ? pushHint(t.lastError) : null; }
@@ -1059,7 +1094,7 @@ export async function workspaceMetricsStatus(ws, { discover = false } = {}) {
     let recordsOn = null;
     if (isHome) { state = 'home'; recordsOn = prefs.slug ?? null; }
     else if (prefs.hasOrigin === false) { state = 'not-recording'; reason = 'no origin remote'; }
-    else if (prefs.config?.delegateTo && prefs.config.delegateTo.toLowerCase() === homeSlug) { state = 'routed'; recordsOn = homeSlug; }
+    else if (prefs.config?.delegateTo && sameMetricsSlug(prefs.config.delegateTo, homeSlug)) { state = 'routed'; recordsOn = homeSlug; }
     else if (prefs.enabled) { state = 'records-elsewhere'; reason = prefs.config?.delegateTo ? `delegates to ${prefs.config.delegateTo}` : 'records on its own branch'; recordsOn = prefs.config?.delegateTo ?? prefs.slug ?? null; }
     else { state = 'not-recording'; reason = 'no worca-metrics branch'; }
     members.push({ path, slug: prefs.slug ?? basename(path), state, reason, recordsOn });

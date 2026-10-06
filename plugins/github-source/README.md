@@ -18,9 +18,9 @@ DB). Any of:
 2. Environment indirection — set the field value to `{"$env":"GH_TOKEN"}` and
    export `GH_TOKEN` in the worca server's environment; the token never touches disk.
 3. Leave it blank. The connector then runs `gh auth token` and uses whatever
-   account the GitHub CLI is logged in as — the same identity worca uses for
-   `gh pr create`. It works under the connector's scrubbed env because `PATH`
-   finds the binary and `HOME` finds `~/.config/gh` (and the OS keyring).
+   account the GitHub CLI is logged in as — the same identity the `gh` CLI
+   uses on this machine. It works under the connector's scrubbed env because
+   `PATH` finds the binary and `HOME` finds `~/.config/gh` (and the OS keyring).
 
 Blank is the least setup and the **most** privilege: a `gh auth login` token
 typically carries `repo`, `workflow`, `read:org` and `gist` across every repo

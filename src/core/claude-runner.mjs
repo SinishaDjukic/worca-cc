@@ -53,7 +53,7 @@ import { writeFile, mkdir, appendFile, readFile, access, readdir } from 'node:fs
 import { constants as FS, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { stripGithubCredentials } from './github-credentials.mjs';
+import { stripHostCredentials } from './host-credentials.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from './workspace-scan-mock.mjs';
 import { agentIdentity, agentSpawn, killAgentGroup, shareWithAgent } from './agent-user.mjs';
 import { agentIdentityFor } from './agent-pool.mjs';
@@ -926,9 +926,9 @@ function runReal({ cwd, systemPrompt, prompt, allowedTools, permissionMode, mode
     // drop it — WORCA_ is not an allowlisted prefix — so it is added AFTER).
     if (guardOn) spawnEnv = { ...(spawnEnv ?? process.env), WORCA_HOST_PID: String(process.pid) };
 
-    // No GitHub credential reaches claude, in any guardrail tier, from a per-project allowlist or a
-    // model env alike (src/core/github-credentials.mjs): pushes and PRs are worca's own calls.
-    spawnEnv = stripGithubCredentials(spawnEnv ?? process.env);
+    // No GitHub or Azure DevOps credential reaches claude, in any guardrail tier, from a per-project
+    // allowlist or a model env alike (src/core/host-credentials.mjs): pushes and PRs are worca's own calls.
+    spawnEnv = stripHostCredentials(spawnEnv ?? process.env);
     // The broker's own secret never reaches an agent. With the broker on, neither does any
     // ambient model credential (the boot guard refuses them; this is the second line): the
     // spawn's broker token is the only one it holds, and it wins over nothing.

@@ -152,7 +152,12 @@ export function prNotice(doc, { status = null, loading = false, prKnown = false 
       parts.push(`Merge dates are unavailable because ${why}. Install gh and run \`gh auth login\`, or add the merge-tracking workflow to the repository with \`worca metrics pr-workflow\`.${prKnown ? '' : ' Until then, Completed counts finished runs.'}`);
     }
     if (status.ghError) parts.push(`GitHub did not answer for some pull requests: ${status.ghError}`);
-    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
+    if (status.azure === 'missing') parts.push('Merge dates for Azure DevOps repositories need a token: set `WORCA_ADO_TOKEN` (Code: Read) where worca runs.');
+    if (status.azure === 'unauthenticated') parts.push('Azure DevOps refused the token in `WORCA_ADO_TOKEN`: check that it has not expired and has the Code (Read) scope.');
+    if (status.azureError) parts.push(`Azure DevOps did not answer for some pull requests: ${status.azureError}`);
+    const cut = Array.isArray(status.azureTruncated) ? status.azureTruncated : [];
+    if (cut.length) parts.push(`${cut.join(', ')} ${cut.length === 1 ? 'has' : 'have'} more pull requests than one listing covers; older runs there may show without merge data.`);
+    if ((status.unsupportedRepos || []).length) parts.push(`Merge tracking covers GitHub and Azure DevOps repositories; ${status.unsupportedRepos.join(', ')} show${status.unsupportedRepos.length === 1 ? 's' : ''} without merge data.`);
   }
   if (!parts.length) return null;
   const n = h(doc, 'div', 'hint tl-note');

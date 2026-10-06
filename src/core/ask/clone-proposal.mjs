@@ -6,20 +6,28 @@
 // authoritatively and mints the card — the model-proposal.mjs split. Nothing here clones:
 // applying the card starts ui/server.mjs's clone job, behind the user's click.
 import { planClone, CloneError } from '../clone-project.mjs';
+import { isAzureHost } from '../../shared/azure-remote.mjs';
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 // eslint-disable-next-line no-control-regex
 const BREAKS_RE = /[\x00-\x1f\x7f-\x9f\u2028\u2029]/g;
 const clip = (v, n) => String(v ?? '').replace(BREAKS_RE, ' ').slice(0, n);
 
-/** How the clone authenticates, in words for the card. `mode` = githubMode() (deployment.mjs). */
-export function githubLabel(mode, { host = 'github.com', appId = null } = {}) {
+/** How the clone authenticates, in words for the card. `mode` = githubMode(), `adoMode` = readAzureCredentials().mode. */
+export function hostCredentialLabel(mode, { host = 'github.com', appId = null, adoMode = 'none' } = {}) {
+  if (isAzureHost(host)) {
+    if (adoMode === 'split') return 'the Azure DevOps read token (WORCA_ADO_READ_TOKEN)';
+    if (adoMode === 'single') return 'the Azure DevOps token (WORCA_ADO_TOKEN)';
+    return 'none (Azure DevOps: set WORCA_ADO_TOKEN): public repositories only';
+  }
   if (host !== 'github.com') return `none (${host} is not GitHub): public repositories only`;
   if (mode === 'app') return `GitHub App${appId ? ` ${appId}` : ''} (a read-only token for this clone)`;
   if (mode === 'split') return 'the read token (WORCA_GH_READ_TOKEN)';
   if (mode === 'single') return 'the deployment token (GH_TOKEN)';
   return 'none: public repositories only';
 }
+/** @deprecated name kept for existing imports. */
+export const githubLabel = hostCredentialLabel;
 
 /**
  * @param {object} r

@@ -219,3 +219,27 @@ test('discovery: a head cached by a build that did not know a field is read agai
   await discoverPolicy(gw, { force: true });
   assert.equal(calls.some((c) => c === 'fetch' || c === 'show'), true, calls.join(' '));
 });
+
+test('an old-spelling self-reference is DELEGATE_SELF (red today: DELEGATE_UNKNOWN) (cycle-3 M1)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-policy-self-'));
+  writeTeamPolicyPrefs(projectKey(dir), { present: true, hasOrigin: true, docKnown: true, slug: 'dev.azure.com/acme/shop/shop',
+    delegateTo: 'dev.azure.com/acme/shop', doc: { schema: 1, delegateTo: 'dev.azure.com/acme/shop' }, checkedAt: new Date().toISOString() });
+  const r = await resolveProjectPolicy(dir, { discover: false });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'DELEGATE_SELF');
+});
+
+test('workspace card: a member following the home under its old Azure slug reads follows-home (cycle-3 M1)', async () => {
+  const h = mkdtempSync(join(tmpdir(), 'worca-policy-wsh-'));
+  const m = mkdtempSync(join(tmpdir(), 'worca-policy-wsm-'));
+  git(h, 'init', '-q'); git(m, 'init', '-q');       // checkNewMembers (workspaces.mjs) needs git work trees
+  const now = new Date().toISOString();
+  writeTeamPolicyPrefs(projectKey(h), { present: true, hasOrigin: true, docKnown: true, slug: 'dev.azure.com/acme/shop/shop', delegateTo: null,
+    doc: { schema: 1, fields: {} }, checkedAt: now });
+  writeTeamPolicyPrefs(projectKey(m), { present: true, hasOrigin: true, docKnown: true, slug: 'dev.azure.com/acme/web/web',
+    delegateTo: 'dev.azure.com/acme/shop', doc: { schema: 1, delegateTo: 'dev.azure.com/acme/shop' }, checkedAt: now });
+  const ws = await createWorkspace({ name: 'Azure team', projectPaths: [h, m], policyProject: h });
+  const st = await workspacePolicyStatus(await readWorkspace(ws.id), { discover: false });
+  assert.equal(st.members.find((x) => x.path === m).state, 'follows-home');
+  assert.equal(st.counts.onHome, 2);
+});

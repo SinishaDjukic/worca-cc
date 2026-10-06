@@ -94,3 +94,25 @@ test('removing a project a workspace still names keeps its cache: the home its p
   await removeProject('dl-lone');
   assert.deepEqual(homesOf('acme/dl-lone'), []);
 });
+
+test('a follower whose marker names the old Azure short-form slug still gets the home\'s policy (cycle-3 M1)', () => {
+  const azHome = dirOf('az-home'); const azFollower = dirOf('az-follower');
+  cacheOf(azHome, 'dev.azure.com/acme/shop/shop', { headSha: 'az1', doc: DOC(3) });
+  // The marker was committed before the fold: it names https://dev.azure.com/acme/_git/Shop's old slug.
+  cacheOf(azFollower, 'dev.azure.com/acme/web/web', { delegateTo: 'dev.azure.com/acme/shop', doc: { schema: 1, delegateTo: 'dev.azure.com/acme/shop' } });
+  const got = cache.cachedPolicyForKey(projectKey(azFollower));
+  assert.ok(got, 'the follower is governed, not silently policy-free');
+  assert.equal(got.home, 'dev.azure.com/acme/shop/shop');
+  assert.deepEqual(got.doc, cache.cachedPolicyForKey(projectKey(azHome)).doc);
+  assert.equal(cache.cachedPolicyForKey(projectKey(azHome)).home, 'dev.azure.com/acme/shop/shop');
+});
+
+test('a home cached under both the visualstudio.com and the canonical spelling is one home', () => {
+  const a = dirOf('vs-a'); const b = dirOf('vs-b');
+  cacheOf(a, 'acme.visualstudio.com/shop/api', { headSha: 'vs1', checkedAt: '2026-01-01T00:00:00Z', doc: DOC(4) });
+  cacheOf(b, 'dev.azure.com/acme/shop/api', { headSha: 'vs2', checkedAt: '2026-02-01T00:00:00Z', doc: DOC(5) });
+  assert.deepEqual(cache.cachedPolicyHomes().map((h) => h.slug).filter((s) => s.includes('shop/api')), ['dev.azure.com/acme/shop/api']);
+  assert.deepEqual(homesOf('dev.azure.com/acme/shop/api'), [['vs2', projectKey(b)]], 'the newest discovery stands for the home');
+  // The old-spelling home reports the canonical `home`, like its followers do.
+  assert.equal(cache.cachedPolicyForKey(projectKey(a)).home, 'dev.azure.com/acme/shop/api');
+});

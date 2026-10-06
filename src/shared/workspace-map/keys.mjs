@@ -4,6 +4,7 @@
 // host alias) are the only other ways a consume meets a provide. Pure and total: bad input → null.
 
 import { LIMITS } from './limits.mjs';
+import { isAzureHost, parseAzurePath } from '../azure-remote.mjs';
 
 const HTTP_METHODS = Object.freeze(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT', 'ALL', 'ANY', '*']);
 const PKG_ECOSYSTEMS = Object.freeze(['npm', 'pypi', 'maven', 'go', 'cargo', 'nuget', 'gem', 'composer', 'git']);
@@ -208,7 +209,9 @@ export function hostName(value) {
  *  (the user is required: `host:path` alone reads like a Windows drive path) and
  *  `scheme://[user[:pass]@]host[:port]/path` for any scheme (https, http, ssh, git, git+ssh …).
  *  User-info and port are dropped, the result is lower-cased, repeated '/' collapsed, and a
- *  trailing '/' and '.git' stripped. Local paths, `file://` URLs and host-only URLs → null. */
+ *  trailing '/' and '.git' stripped. Local paths, `file://` URLs and host-only URLs → null.
+ *  Every Azure DevOps spelling of one repository (https dev.azure.com, {org}.visualstudio.com, ssh v3)
+ *  folds to 'dev.azure.com/org/project/repo'; an Azure path the parser rejects keeps the generic slug. */
 export function remoteSlug(url) {
   if (typeof url !== 'string') return null;
   let s = url.trim();
@@ -219,6 +222,12 @@ export function remoteSlug(url) {
     const m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/:]+)(?::\d+)?\/(.+)$/i.exec(s);
     if (!m) return null;
     s = `${m[1]}/${m[2]}`;
+  }
+  const slash = s.indexOf('/');
+  const host0 = s.slice(0, slash).toLowerCase();
+  if (isAzureHost(host0)) {
+    const az = parseAzurePath(host0, s.slice(slash + 1).replace(/\/+$/, '').replace(/\.git$/i, '').split('/'));
+    if (az) s = ['dev.azure.com', az.org, az.project, az.repo].map((x, i) => (i ? encodeURIComponent(x) : x)).join('/');
   }
   s = s.toLowerCase().replace(/\/{2,}/g, '/').replace(/\/+$/, '').replace(/\.git$/, '');
   return /^[a-z0-9.-]+\/[\w.~/-]+$/.test(s) ? s : null;

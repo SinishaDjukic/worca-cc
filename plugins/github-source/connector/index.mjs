@@ -64,7 +64,7 @@ function toSummary(repo, it) {
 export default function createTaskSource(ctx, deps = {}) {
   const resolveToken = deps.ghAuthToken || ghAuthToken;
   // An explicit config token wins. With none, fall back to the gh CLI's
-  // logged-in account — the same identity worca uses for `gh pr create`.
+  // logged-in account (the `gh` CLI's identity on this machine).
   // Lazy AND memoized: building the source must not spawn anything, and one op
   // must not spawn gh once per request.
   let token = String(ctx.config?.token || '') || null;

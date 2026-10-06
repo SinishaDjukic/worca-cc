@@ -32,3 +32,12 @@ test('deploymentFacts: null locally; the three facts otherwise, with no secret i
   assert.equal(deploymentFacts({ WORCA_TERMINAL_REMOTE: '1' }, { remoteMode: true }).terminal, undefined);
   assert.equal(deploymentFacts({ WORCA_CONTAINER: '1' }).terminal, undefined);
 });
+
+test('deploymentFacts: azureDevOps names the Azure DevOps mode, and is absent without one', () => {
+  const f = deploymentFacts({ WORCA_CONTAINER: '1', GH_TOKEN: 'ghp_secret', WORCA_ADO_TOKEN: 'x' }, { remoteMode: true, projectsRoot: '/data/projects' });
+  assert.equal(f.azureDevOps, 'single');
+  assert.deepEqual(Object.keys(f), ['deployment', 'projectsRoot', 'github', 'azureDevOps', 'actions', 'terminal']);
+  assert.equal(deploymentFacts({ WORCA_CONTAINER: '1', WORCA_ADO_READ_TOKEN: 'r', WORCA_ADO_WRITE_TOKEN: 'w' }).azureDevOps, 'split');
+  assert.ok(!JSON.stringify(deploymentFacts({ WORCA_CONTAINER: '1', WORCA_ADO_TOKEN: 'ado_secret' })).includes('ado_secret'));
+  assert.equal('azureDevOps' in deploymentFacts({ WORCA_CONTAINER: '1', GH_TOKEN: 'ghp_secret' }, { remoteMode: true }), false);
+});

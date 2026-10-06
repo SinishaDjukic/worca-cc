@@ -98,6 +98,24 @@ test('Add project opens on Clone without a folder picker, on Folder with a picke
   ]);
 });
 
+test('clone form: host-neutral credential copy; the folder placeholder is the folder planClone will create (n9)', async () => {
+  const { window, doc } = await boot({ pick: 'unsupported' });
+  await openAdd(window, doc);
+  assert.match($(doc, '#proj-add-msg').textContent, /credential for its host \(GitHub or Azure DevOps\)/);
+  for (const [url, want] of [
+    ['https://github.com/acme/api.git', 'api'],
+    ['https://dev.azure.com/acme/Shop/_git/api', 'api'],
+    ['https://dev.azure.com/acme/Shop/_git/api.git', 'api'],
+    ['https://acme@dev.azure.com/acme/My%20Project/_git/My%20Repo', 'My-Repo'],
+    ['https://dev.azure.com/acme/_git/Shop', 'Shop'],
+  ]) {
+    type(window, $(doc, '#proj-clone-url'), url);
+    assert.equal($(doc, '#proj-clone-name').placeholder, want, url);
+  }
+  type(window, $(doc, '#proj-clone-url'), 'not a url');
+  assert.equal($(doc, '#proj-clone-name').placeholder, 'the repository name');
+});
+
 test('an up-front refusal shows the server message inline, and the form stays usable', async () => {
   const { window, doc, calls } = await boot({
     clone: () => json(409, { error: '/data/projects/api already exists; pick another folder name', code: 'exists' }),

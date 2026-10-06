@@ -23,7 +23,8 @@ const POSIX = { skip: process.platform === 'win32' ? 'the stub CLI is a POSIX sc
 const SECRET = 'r'.repeat(48);
 let up; let single; let multi; let dir; let stub;
 const saved = {};
-const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_BROKER_URL', 'WORCA_BROKER_SECRET', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORCA_HOST_GUARD', 'WORCA_BROKER_SYSTEM_BILL_TO'];
+const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_BROKER_URL', 'WORCA_BROKER_SECRET', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'WORCA_HOST_GUARD', 'WORCA_BROKER_SYSTEM_BILL_TO', ...ADO_KEYS];
 
 async function brokerFor(mode) {
   const env = { WORCA_BROKER_MODE: mode, WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1', WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '0' };
@@ -47,7 +48,7 @@ const base = process.env.ANTHROPIC_BASE_URL;
 const tok = process.env.ANTHROPIC_AUTH_TOKEN || '';
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 out({ type: 'system', subtype: 'init', session_id: 's1' });
-const seen = { apiKey: !!process.env.ANTHROPIC_API_KEY, oauth: !!process.env.CLAUDE_CODE_OAUTH_TOKEN, secret: !!process.env.WORCA_BROKER_SECRET, base };
+const seen = { apiKey: !!process.env.ANTHROPIC_API_KEY, oauth: !!process.env.CLAUDE_CODE_OAUTH_TOKEN, secret: !!process.env.WORCA_BROKER_SECRET, base, ado: ${JSON.stringify(ADO_KEYS)}.filter((k) => k in process.env) };
 const r = await fetch(base + '/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }) });
 const body = await r.text();
 if (!r.ok) { out({ type: 'result', is_error: true, result: 'API Error: ' + r.status + ' ' + body }); process.exit(1); }
@@ -78,9 +79,11 @@ test('a spawn gets its own token, and the CLI sees no other credential', POSIX, 
   process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat-ambient';
   const events = [];
   up.requests.length = 0;
+  for (const k of ADO_KEYS) process.env[k] = 'x';
   const r = await runClaude({ bin: stub, prompt: 'hi', model: 'claude-sonnet-5', onEvent: (e) => events.push(e) });
   const seen = JSON.parse(r.text.slice(r.text.indexOf('{')));
   assert.deepEqual({ apiKey: seen.apiKey, oauth: seen.oauth, secret: seen.secret }, { apiKey: false, oauth: false, secret: false });
+  assert.deepEqual(seen.ado, [], 'no Azure DevOps key reaches claude');
   assert.equal(seen.base, `${process.env.WORCA_BROKER_URL}/p/anthropic`);
   assert.equal(up.requests.at(-1).headers['x-api-key'], GOOD_KEY, 'the broker added the real key');
   // Redaction: the token the stub printed is gone from the result and every event.

@@ -666,8 +666,8 @@ export function createAskTools(deps) {
     ] : []),
     ...(deps.clones ? [
       { name: 'propose_clone_project',
-        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how GitHub is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
-        inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api'),
+        description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo or https://dev.azure.com/org/project/_git/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
+        inputSchema: SCHEMA.obj({ url: SCHEMA.s('https:// repository URL, e.g. https://github.com/acme/api or https://dev.azure.com/acme/shop/_git/api'),
           branch: SCHEMA.s('branch to check out (default: the repository default)'),
           name: SCHEMA.s('folder and project name (default: the repository name)'),
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },

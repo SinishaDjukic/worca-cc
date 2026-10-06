@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pushBranch, isRemotePackFailure, _testing } from '../src/core/git-info.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { withEnv } from './helpers/with-env.mjs';
 
 const WORCA01 = 'remote: error: inflate: data stream error (invalid block type)\nremote: fatal: pack has bad object at offset 7126: inflate returned -3\nerror: remote unpack failed: index-pack failed\nTo https://github.com/SinishaDjukic/worca-cc.git\n ! [remote rejected] worca-cc/show-mock-mode-in-the-ui-4fae3c66 -> worca-cc/show-mock-mode-in-the-ui-4fae3c66 (failed)\nerror: failed to push some refs to \'https://github.com/SinishaDjukic/worca-cc.git\'';
 
@@ -96,4 +97,21 @@ test('the retry waits while a git gc runs in the repository, and not past the li
     await pushBranch(dir, 'feat', 'origin', { gcWait: { maxMs: 50, stepMs: 10, sleep: async (ms) => { slept += ms; } } });
     assert.equal(slept, 0);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('App mode + an Azure remote: push runs with the Azure env, no GitHub mint', async () => {
+  const pushes = [];
+  let r;
+  await withEnv({ WORCA_GH_APP_ID: '123', WORCA_GH_APP_KEY_B64: Buffer.from('not-a-key').toString('base64'),
+    WORCA_ADO_TOKEN: 'pat', WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined }, async () => {
+    _testing.setRunner(async (cmd, args, opts = {}) => {
+      if (args[0] === 'remote') return { ok: true, stdout: 'https://dev.azure.com/acme/Shop/_git/api\n', stderr: '' };
+      if (args[0] === 'push') { pushes.push(opts.env); return { ok: true, stdout: '', stderr: '' }; }
+      return { ok: true, stdout: '', stderr: '' };
+    });
+    r = await pushBranch('/tmp', 'feat', 'origin');
+  });
+  assert.equal(r.ok, true, r.stderr);                 // a mint would have failed on the bogus key
+  assert.equal(pushes[0].WORCA_ADO_GIT_TOKEN, 'pat');
+  assert.equal(pushes[0].GH_TOKEN, undefined);
 });

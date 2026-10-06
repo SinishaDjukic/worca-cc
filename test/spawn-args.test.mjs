@@ -767,8 +767,9 @@ test('WORCA_DEBUG_SPAWN on: ONE stderr event with bin + argv + routing env; NO s
 
 // ── GitHub credentials never reach claude (src/core/github-credentials.mjs) ──
 
-test('no GitHub credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
-  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN'];
+test('no GitHub or Azure DevOps credential reaches claude: scrub off, scrub on with it allowlisted, or set by a model env', POSIX_SHIM, async () => {
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+  const keys = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN', ...ADO_KEYS];
   const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) process.env[k] = `secret-${k}`;
   try {
@@ -779,6 +780,7 @@ test('no GitHub credential reaches claude: scrub off, scrub on with it allowlist
     ];
     for (const d of dumps) {
       assert.ok(!/secret-|from-model/.test(d), 'no credential in the child env');
+      for (const k of ADO_KEYS) assert.ok(!d.includes(`${k}=`), `${k} is not in the child env`);
       assert.ok(d.includes('PATH='), 'the child still got a usable env');
     }
     assert.ok(dumps[0].includes('WORCA_TEST_LEAK=x'), 'scrub off still inherits everything else');

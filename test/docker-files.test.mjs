@@ -101,6 +101,21 @@ test('compose.yml: loopback-only publish, least privilege, named volumes, no doc
   assert.match(c, /init: true/);
 });
 
+test('Azure DevOps: compose passes the tokens, egress names the hosts, the entrypoint logs the mode', () => {
+  const c = read('docker/compose.yml');
+  for (const k of ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN']) {
+    assert.match(c, new RegExp(`^\\s+${k}: \\$\\{${k}:-\\}$`, 'm'), `${k} reaches the container`);
+  }
+  assert.match(read('docker/compose.egress.yml'), /Azure DevOps: add dev\.azure\.com,\.visualstudio\.com,vssps\.dev\.azure\.com/,
+    'the default allowlist is not widened, so the overlay tells Azure users what to add');
+  const e = read('docker/entrypoint.sh');
+  const gh = e.indexOf('log "GitHub: one token for clone, push and PRs, per call"');
+  const ado = e.indexOf('if [ -n "${WORCA_ADO_READ_TOKEN:-}${WORCA_ADO_WRITE_TOKEN:-}" ]; then');
+  assert.ok(gh > 0 && ado > gh, 'the Azure mode is logged after the GitHub mode');
+  assert.match(e, /log "Azure DevOps: split read\/write tokens, per call"/);
+  assert.match(e, /elif \[ -n "\$\{WORCA_ADO_TOKEN:-\}\$\{AZURE_DEVOPS_EXT_PAT:-\}" \]; then\n\s+log "Azure DevOps: one token for clone, push and PRs, per call"/);
+});
+
 test('overlays: egress confines worca to an internal network; clone-in drops the bind mount; ssh mounts only the socket', () => {
   const eg = read('docker/compose.egress.yml');
   assert.match(eg, /internal:\s*true/);

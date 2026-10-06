@@ -221,7 +221,7 @@ and close.
 | Field | Notes |
 |---|---|
 | `v`, `kind` | always `1` and `"pr"`; anything else is ignored |
-| `repo` | `owner/repo` as GitHub spells it; matched case-insensitively to record slugs |
+| `repo` | the project's metrics slug (`owner/repo` on GitHub, `dev.azure.com/org/project/repo` on Azure DevOps); matched case-insensitively to record slugs |
 | `number`, `url`, `title` | the PR; `title` cleaned of control characters, ≤200 chars |
 | `head`, `base` | branch names; `head` is what a run's `git.branch` is matched against |
 | `authorName` | the git author name of most of the PR's commits (machine identities `*@local` skipped); `null` when none (additive) |

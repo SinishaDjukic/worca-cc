@@ -8,6 +8,7 @@
 //
 // Pure: reads only `env` and the remote-mode flag the server already computed.
 import { readGithubCredentials } from './github-credentials.mjs';
+import { readAzureCredentials } from './azure-credentials.mjs';
 
 const on = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
 
@@ -32,7 +33,11 @@ export function deploymentFacts(env = process.env, { remoteMode = false, project
   // Actions and the terminal (docs/actions.md, docs/terminal.md "Security"): a hosted worca runs none
   // unless the operator set WORCA_ACTIONS_REMOTE / WORCA_TERMINAL_REMOTE.
   const hosted = deployment === 'hosted';
+  // Azure DevOps (docs/azure-devops.md): named only when worca holds a credential, so the line
+  // stays as before for a GitHub-only deployment.
+  const ado = readAzureCredentials(env).mode;
   return { deployment, projectsRoot: projectsRoot || null, github: githubMode(env),
+    ...(ado !== 'none' ? { azureDevOps: ado } : {}),
     ...(hosted && !on(env.WORCA_ACTIONS_REMOTE) ? { actions: 'off' } : {}),
     ...(hosted && !on(env.WORCA_TERMINAL_REMOTE) ? { terminal: 'off' } : {}) };
 }

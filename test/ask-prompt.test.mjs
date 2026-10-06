@@ -629,6 +629,13 @@ test('context header: deployment and signed-in lines come first; absent on a loc
   assert.ok(c.includes('\ndeployment: container github=none\n'));
   assert.ok(!c.includes('signed in:'));
   assert.ok(!buildContextHeader({ now: CTX.now }).includes('deployment:'), 'local: no line');
+  const ado = buildContextHeader({ deployment: { deployment: 'hosted', projectsRoot: null, github: 'single', azureDevOps: 'split', actions: 'off', terminal: 'off' }, now: CTX.now });
+  assert.ok(ado.includes('\ndeployment: hosted github=single actions=off terminal=off azureDevOps=split\n'), ado);
+});
+
+test('rule 23 names the Azure DevOps credential', () => {
+  assert.match(ASK_HOSTING_RULE, /WORCA_ADO_TOKEN/);
+  assert.match(ASK_HOSTING_RULE, /Azure DevOps/);
 });
 
 test('web section: absent (byte-identical) when off; on lists the hosts, web_search only with search, card flow and any-host/empty wording', async () => {

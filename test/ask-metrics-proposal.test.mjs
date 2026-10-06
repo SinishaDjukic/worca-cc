@@ -59,6 +59,14 @@ test('enable (here / delegate): defaults, attribution, owner/repo slug, refusal 
       const r = await validate({ kind: 'enable', projectKey: 'console-00000003', mode: 'delegate', delegateTo: 'acme/gateway' });
       assert.deepEqual([r.ok, r.card.mode, r.card.delegateTo, r.card.attribution, r.card.change], [true, 'delegate', 'acme/gateway', null, false]);
       assert.equal(r.card.summary, 'Enable team metrics on console — delegate to acme/gateway');
+      // D23: an Azure metrics home is a multi-segment slug; an older spelling is canonicalised
+      const az = await validate({ kind: 'enable', projectKey: 'console-00000003', mode: 'delegate', delegateTo: 'dev.azure.com/acme/shop/api' });
+      assert.deepEqual([az.ok, az.card.delegateTo], [true, 'dev.azure.com/acme/shop/api']);
+      const old = await validate({ kind: 'enable', projectKey: 'console-00000003', mode: 'delegate', delegateTo: 'Acme.VisualStudio.com/Shop/Api' });
+      assert.deepEqual([old.ok, old.card.delegateTo], [true, 'dev.azure.com/acme/shop/api']);
+      assert.match(old.card.summary, /delegate to dev\.azure\.com\/acme\/shop\/api$/);
+      assert.ok(old.card.effects.every((e) => !/VisualStudio/i.test(e)), 'effects name the canonical slug');
+      assert.equal(METRICS_ERRORS.delegateTo, "delegateTo must be the target project's slug (owner/repo, or dev.azure.com/org/project/repo)");
       const re = await validate({ kind: 'enable', projectKey: 'billing-00000002', mode: 'delegate', delegateTo: 'acme/other' });
       assert.deepEqual([re.ok, re.card.change], [true, true]);
       assert.equal(re.card.summary, 'Re-point team metrics on billing — delegate to acme/other');

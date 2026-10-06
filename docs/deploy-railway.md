@@ -205,6 +205,21 @@ author.
 An App can only reach repositories owned by the account that owns the App. If a repository moves
 to an organisation, create and install a new App there first, then swap the variables.
 
+## Azure DevOps
+
+For repositories on `dev.azure.com` (or `*.visualstudio.com`), set a personal access token on the
+`worca` service. It works next to the GitHub credential; each call uses the one for its host.
+
+```bash
+node tools/railway/worca-railway.mjs set mydeploy WORCA_ADO_TOKEN --yes    # paste the PAT (stdin)
+```
+
+Then seal it. A read/write pair (`WORCA_ADO_READ_TOKEN`, `WORCA_ADO_WRITE_TOKEN`) works as for
+GitHub. "Push as me" is GitHub-only, so `WORCA_GH_AS_PERSON=required` does not refuse an Azure
+push. To make `verify --in-container` test the token too, set `WORCA_ADO_PROBE_ORG` to your
+organisation's name on the service. PAT scopes, the Boards token, URL shapes and what does not
+work yet: [Azure DevOps](azure-devops.md).
+
 ## Operate your deployment
 
 A deployment is a fixed image plus service variables. Pushing to the repository never changes it:
@@ -284,6 +299,7 @@ Not in Railway at all:
 | Claude token from `claude setup-token` | about a year | a new token, `set … CLAUDE_CODE_OAUTH_TOKEN` |
 | GitHub fine-grained tokens | what you chose at creation | a new token, `set` it |
 | GitHub App installation tokens | an hour, minted per call | nothing to do |
+| Azure DevOps PATs | what you chose at creation, at most a year | a new PAT, `set … WORCA_ADO_TOKEN` |
 | Access service token | what you chose at creation | Zero Trust → Service Auth, then update your local token file |
 
 ### Verify

@@ -21,7 +21,8 @@ import { RESULTS_FILE, DIFF_PATCH_FILE } from './results.mjs';
 const PATCH_CAP = 60_000;  // chars; above this, send hunk headers only
 const PROMPT_CAP = 8_000;  // chars of the run's original prompt
 /** The longest description POST /api/pr accepts: GitHub caps a PR body at 65,536
- *  characters, and the attribution footer still has to fit after it. */
+ *  characters, and the attribution footer still has to fit after it. Azure DevOps caps
+ *  a description at 4,000 characters; its prompt (prDescriptionSystemPrompt) asks for less. */
 export const PR_BODY_MAX = 60_000;
 /** The longest description handed back to the modal — well inside PR_BODY_MAX. */
 export const DESCRIPTION_CAP = 20_000;
@@ -48,6 +49,15 @@ export const PR_DESCRIPTION_SYSTEM_PROMPT = [
   'generic types in backticks. No title line, no preamble,',
   'no closing remarks, no code fence around the whole reply.',
 ].join(' ');
+
+/** The system prompt for the PR host: GitHub's as before; Azure DevOps names the host and its 4,000-char cap. */
+export function prDescriptionSystemPrompt(forge = 'github') {
+  if (forge !== 'azure') return PR_DESCRIPTION_SYSTEM_PROMPT;
+  return PR_DESCRIPTION_SYSTEM_PROMPT
+    .replace('a GitHub pull request', 'an Azure DevOps pull request')
+    .replace('GitHub-flavored markdown', 'markdown')
+    + ' Azure DevOps caps a description at 4,000 characters: keep the whole description well under 3,500 characters.';
+}
 
 /**
  * Which model drafts the description, decided per call: the stored catalog id
@@ -110,13 +120,13 @@ export function sanitizePrDescription(raw) {
 
 /**
  * On demand: read the persisted artifacts, run a one-shot agent, return the
- * description text. `model` overrides the Settings resolution; `setting` and
- * `runClaudeImpl` are injectable for tests. Throws 'pipeline not found' for an
- * unknown run and on an empty reply.
+ * description text. `model` overrides the Settings resolution; `forge` picks the
+ * host's system prompt (prDescriptionSystemPrompt); `setting` and `runClaudeImpl` are
+ * injectable for tests. Throws 'pipeline not found' for an unknown run and on an empty reply.
  * @returns {Promise<string>}
  */
 export async function generatePrDescription(key, id, {
-  model: explicitModel, baseBranch, signal, setting, runClaudeImpl = _runClaude,
+  model: explicitModel, baseBranch, signal, setting, runClaudeImpl = _runClaude, forge = 'github',
 } = {}) {
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
@@ -141,7 +151,7 @@ export async function generatePrDescription(key, id, {
   const startedAt = new Date().toISOString();
   const { text } = await runClaudeImpl({
     cwd: dir,
-    systemPrompt: PR_DESCRIPTION_SYSTEM_PROMPT,
+    systemPrompt: prDescriptionSystemPrompt(forge),
     prompt,
     allowedTools: [],                 // pure writing over the prompt; no tools needed
     // The diff and the prompt are untrusted: no built-in tool (`--tools ""`) and no

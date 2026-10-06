@@ -2,13 +2,13 @@
 // its whole process tree. Mirrors graph/script-runner.mjs (#runtime shell form + killTree).
 import { spawn } from 'node:child_process';
 import { killTree } from '../graph/script-runner.mjs';
-import { stripGithubCredentials } from '../github-credentials.mjs';
+import { stripHostCredentials } from '../host-credentials.mjs';
 
 const STRIPPED = ['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
 const MAX_LINE = 8000;
 
 export function actionBaseEnv(base = process.env) {
-  const env = stripGithubCredentials({ ...base });
+  const env = stripHostCredentials({ ...base });
   for (const k of STRIPPED) delete env[k];
   return env;
 }

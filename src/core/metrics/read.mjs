@@ -8,7 +8,7 @@ import { listWorkspaces, readWorkspace, WORKSPACE_KEY_RE } from '../workspaces.m
 import {
   METRICS_DIR, REMOTE_REF, ensureWorktree, fetchMetricsBranch, runGit, withSlugLock, worktreePath, pushHint,
   resolveProjectSink, discoverProject, listOutbox, projectMetricsStatus, workspaceMetricsStatus, recordsLocally,
-  metricsEvents,
+  metricsEvents, keepProjectRecord,
 } from './sync.mjs';
 import { readTeamMetricsPrefs } from '../config.mjs';
 import { projectKey } from '../store.mjs';
@@ -267,7 +267,7 @@ export async function scopeSources(scope) {
       throw Object.assign(new Error(sink.detail || `team metrics are not enabled for ${p.name}`), { code });
     }
     const ownSlug = sink.from;
-    sources.push({ slug: sink.slug, projectDir: sink.projectDir, keep: (r) => r.target?.kind === 'project' && r.target.project === ownSlug });
+    sources.push({ slug: sink.slug, projectDir: sink.projectDir, keep: keepProjectRecord(ownSlug) });
     meta = { kind: 'project', id: p.key, name: p.name, slug: ownSlug, recordedIn: sink.delegated ? sink.slug : null };
   } else {
     const ws = await readWorkspace(scope.id);

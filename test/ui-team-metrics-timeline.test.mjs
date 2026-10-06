@@ -160,3 +160,18 @@ test('a failing PR lookup leaves a working page that says so', async () => {
   assert.match(doc.querySelector('#tm-timeline .tl-note').textContent, /GitHub did not answer for some pull requests: boom/);
   assert.equal(doc.querySelector('#tm-timeline .tl-tile .stat-label span').textContent, 'Completed');
 });
+
+test('mergePrStatus keeps an earlier batch\'s Azure notice', async () => {
+  // boot() calls fetchHandler on every fetch, so pass one; null falls through to its defaults.
+  const { window } = await boot({ fetchHandler: () => null });
+  const m = window.__np.mergePrStatus;
+  const base = { gh: 'ok', ghDetail: null, ghError: null, actionRepos: [], unsupportedRepos: [] };
+  const pick = (s) => ({ azure: s.azure, azureError: s.azureError });
+  assert.deepEqual(pick(m({ ...base, azure: 'missing', azureError: null }, { ...base, gh: 'unused', azure: 'unused', azureError: null })),
+    { azure: 'missing', azureError: null });
+  assert.deepEqual(pick(m({ ...base, azure: 'ok', azureError: 'Azure DevOps 500: boom' }, { ...base, azure: 'unused', azureError: null })),
+    { azure: 'ok', azureError: 'Azure DevOps 500: boom' });
+  assert.equal(m({ ...base, azure: 'missing' }, { ...base, azure: 'ok' }).azure, 'ok', 'a later real answer wins, as for gh');
+  assert.equal(m({ ...base, azure: 'unauthenticated' }, { ...base }).azure, 'unauthenticated', 'an older server without the field');
+  assert.deepEqual(m({ ...base, azureTruncated: ['dev.azure.com/a/p/r'] }, { ...base, azureTruncated: [] }).azureTruncated, ['dev.azure.com/a/p/r'], 'a cut-off repo stays named');
+});
