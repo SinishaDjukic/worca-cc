@@ -273,10 +273,20 @@ jobs:
           npm pack --silent --pack-destination docker/.pack
           echo "tarball=$(ls docker/.pack/worca-app-*.tgz)" >> "$GITHUB_OUTPUT"
           echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
-          # UTC date: rebuilds the cached apt layer daily so new Debian security
-          # fixes land (the layer text never changes, so the gha cache kept it forever).
-          # Weekly was too slow: a fix published mid-week failed every PR's scan until Monday.
-          echo "apt_refresh=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          # Debian's own publish stamps: rebuilds the cached apt layer exactly when
+          # bookworm or bookworm-security changes, so new security fixes land (the
+          # layer text never changes, so the gha cache kept it forever). A UTC-date
+          # key was too coarse: a fix published at 17:39 UTC failed every PR's scan
+          # until midnight because an earlier run had cached that day's layer.
+          # Falls back to the UTC date when the mirrors are unreachable.
+          apt_refresh=
+          for d in debian-security/dists/bookworm-security debian/dists/bookworm; do
+            rel=$(curl -fsSL --max-time 20 "https://deb.debian.org/$d/InRelease") \
+              && stamp=$(grep -m1 '^Date:' <<<"$rel") \
+              && apt_refresh+="$stamp;" \
+              || { apt_refresh=$(date -u +%F); break; }
+          done
+          echo "apt_refresh=$apt_refresh" | tee -a "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 

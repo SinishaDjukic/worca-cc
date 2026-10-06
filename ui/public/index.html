@@ -817,6 +817,9 @@
                   <span class="act-pill-slot"></span>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
                 </div>
+                <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
+                     Painted by paintHdPr; never shown for a single-project run. -->
+                <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
                      for the status WORD it now sits next to (same pairing the list
                      card uses), and row 1 stays title + PR actions. -->
@@ -2475,6 +2478,9 @@
           </div>
           <small class="shipit-remotes-hint hint"></small>
         </div>
+        <!-- Workspace runs: one row per affected member repo (tick box, branch → base,
+             push/base remotes, per-repo status). Built by openShipItWsModal. -->
+        <div id="shipit-repos" class="shipit-repos" hidden></div>
         <!-- The PR description (optional): free-form markdown with Write / Preview tabs,
              or drafted by Generate with AI (POST /api/pr/describe) for the user to edit.
              Reset to empty on every open; empty = the PR body is the title, as before.

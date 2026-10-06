@@ -593,10 +593,9 @@ test('OPEN/MERGED records render links, not the button, even when the merged bra
 
 test('Create PR eligibility: never for workspace runs (detail or list, histPrEligible), hidden when gh is unavailable', async () => {
   await checkRows([
-    { name: 'workspace runs never show Create PR', run: async () => {
-      // POST /api/pr has NO workspace arm — its key regex (ui/server.mjs:1637) rejects
-      // a `workspaces/…` composite with a 404 — yet workspace rows satisfy every other
-      // clause because listAllPipelines hands rowToHistoryEntry the primary member dir.
+    { name: 'a workspace run with no member facts never shows Create PR', run: async () => {
+      // `members` absent (legacy/lite row) ⇒ no affected member ⇒ not eligible — even
+      // though the row satisfies every primary-only clause (survived/branch/sourceBranch).
       const ctx = await bootShip({
         rows: [row({ projectKey: WKS_KEY, target: 'workspace' })],
       });
@@ -622,7 +621,7 @@ test('Create PR eligibility: never for workspace runs (detail or list, histPrEli
       assert.equal(isOpen(ctx.window), false, 'the ship-it modal never opens for a workspace run');
       assert.equal(prPosts(ctx).length, 0, 'and no POST /api/pr is fired');
     } },
-    { name: 'histPrEligible rejects a workspace run that satisfies every other clause', run: async () => {
+    { name: 'histPrEligible: a workspace row is judged by its members, never the primary-only clauses', run: async () => {
       const ctx = await bootShip();
       await openDetail(ctx);                                   // state.ghAvailable is true here
       const { histPrEligible } = ctx.window.__np;

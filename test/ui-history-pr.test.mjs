@@ -149,6 +149,9 @@ test('PR state words: OPEN reads \'In review\' (links to the saved run), MERGED 
       assert.equal(word(row), 'In review');
       assert.equal(row.getAttribute('href'), `#history/${OPEN.projectKey}/po`, 'the row opens the run, not GitHub');
     } },
+    // A workspace run never offers Create PR from the list — the Runs list shows only a
+    // word, and PR eligibility (members vs primary-only) is asserted for the saved-run
+    // detail screen in ui-history-shipit.test.mjs.
     { name: 'merged PR: the row reads "Merged"', run: () => {
       assert.equal(word(rowFor(MERGED)), 'Merged');
     } },

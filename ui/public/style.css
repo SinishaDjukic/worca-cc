@@ -4019,6 +4019,16 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);transform:translateY(-1px);}
 .hd-pr-link{flex:0 0 auto;font:600 12.5px var(--sans);}
 .hd-pr-link[hidden]{display:none;}
+/* Workspace runs: one line per member repo under the header row. */
+.hd-pr-repos{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font:500 12.5px var(--sans);}
+.hd-pr-repos[hidden]{display:none;}
+.hd-pr-repo{display:inline-flex;align-items:center;gap:8px;}
+.hd-pr-repo-link{font-weight:600;color:var(--green-ink);text-decoration:none;}
+.hd-pr-repo-link:hover{text-decoration:underline;}
+.hd-pr-repo-link.merged{color:var(--ink-3);}
+.hd-pr-repo-note{color:var(--ink-3);}
+.hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
+.hd-after[hidden]{display:none;}
 
 /* WIDTH GOES ON `#shipit-modal .card`, NOT `.shipit-card`. The markup is
    `<div class="card shipit-card">` inside `.viewer-modal`, and
@@ -4054,12 +4064,12 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 /* The base-branch pick stands where the plain base name was, inline in the
    summary line: a compact house select (cf. `.step-config select`) on the
    --field pill, not the full-width form field. */
-.shipit-summary .select-wrap{max-width:100%;}
-.shipit-summary .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
+.shipit-summary .select-wrap,.shipit-repo-branch .select-wrap{max-width:100%;}
+.shipit-summary .select,.shipit-repo-branch .select{width:auto;max-width:100%;padding:6px 30px 6px 10px;font:inherit;color:var(--ink);
   background:var(--surface);border-color:var(--line-2);border-radius:10px;}
-.shipit-summary .select:focus{border-color:var(--ink);}
-.shipit-summary .select-wrap::after{right:11px;}
-.shipit-summary select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-summary .select:focus,.shipit-repo-branch .select:focus{border-color:var(--ink);}
+.shipit-summary .select-wrap::after,.shipit-repo-branch .select-wrap::after{right:11px;}
+.shipit-summary select:disabled,.shipit-repo-branch select:disabled{opacity:.55;cursor:not-allowed;}
 .shipit-actions{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:22px;}
 .shipit-ok{padding:11px 22px;border:1.5px solid var(--ink);border-radius:999px;background:var(--ink);
   font:600 13.5px var(--sans);color:var(--on-ink);cursor:pointer;}
@@ -4070,12 +4080,25 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .shipit-remotes[hidden]{display:none;}
 .shipit-remote-field label{display:block;margin:0 0 6px 2px;font:600 11.5px/1.2 var(--sans);color:var(--ink-2);
   text-transform:uppercase;letter-spacing:.04em;}
-.shipit-remotes .select{padding:10px 36px 10px 12px;font-size:13px;}
-.shipit-remotes .select-wrap::after{right:13px;}
-.shipit-remotes select:disabled{opacity:.55;cursor:not-allowed;}
+.shipit-remotes .select,.shipit-repo-remotes .select{padding:10px 36px 10px 12px;font-size:13px;}
+.shipit-remotes .select-wrap::after,.shipit-repo-remotes .select-wrap::after{right:13px;}
+.shipit-remotes select:disabled,.shipit-repo-remotes select:disabled{opacity:.55;cursor:not-allowed;}
 .shipit-remotes-hint{grid-column:1/-1;margin:0;font-size:12px;color:var(--ink-3);word-break:break-all;}
 .shipit-remotes-hint:empty{display:none;}
-@media (max-width:520px){.shipit-remotes{grid-template-columns:1fr;}}
+
+/* Workspace Ship-it: one row per affected member repo (tick box, branch → base,
+   its own remotes, its own status line). Every node the JS hides has a [hidden] twin. */
+.shipit-repos{display:grid;gap:10px;margin-top:14px;max-height:50vh;overflow:auto;text-align:left;}
+.shipit-repos[hidden]{display:none;}
+.shipit-repo{display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;}
+.shipit-repo-head{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.shipit-repo-stat{margin-left:auto;font-size:12px;color:var(--ink-3);}
+.shipit-repo-branch{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;}
+.shipit-repo-remotes{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;}
+.shipit-repo-remotes[hidden]{display:none;}
+.shipit-repo-status[hidden]{display:none;}   /* .hint sets display:block */
+.shipit-skipped{margin:0;}
+@media (max-width:520px){.shipit-remotes,.shipit-repo-remotes{grid-template-columns:1fr;}}
 
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,
    the textarea (or its rendered preview) under it. Left-aligned inside the centered

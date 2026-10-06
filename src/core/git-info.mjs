@@ -58,6 +58,15 @@ export async function diffShortstat(projectDir, source, feature) {
   return parseShortstat(r.stdout);
 }
 
+/** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure. */
+export async function commitsAhead(projectDir, source, feature) {
+  if (!projectDir || !source || !feature) return null;
+  const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir });
+  if (!r.ok) return null;
+  const n = Number.parseInt(String(r.stdout || '').trim(), 10);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
 /**
  * Parse `git diff --name-status -M` rows. `head` omitted -> diff base vs working tree.
  * Rename/copy rows look like `R100\told\tnew`; status letter is the first char.
@@ -437,6 +446,24 @@ export async function findPrForBranch({ projectDir, head, prUrl = null } = {}) {
   // Requirement is binary: hide the button if any OPEN or MERGED PR exists. After
   // the filter, norm[0] is necessarily a MERGED entry when there is no OPEN one.
   return norm.find((p) => p.state === 'OPEN') || norm[0];
+}
+
+/** A PR's current body via its (repo-agnostic) URL. { ok, body } | { ok:false, error }. Never throws. */
+export async function readPrBody({ projectDir = null, prUrl } = {}) {
+  if (!prUrl) return { ok: false, error: 'prUrl is required' };
+  const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'body', '-q', '.body'],
+    { cwd: projectDir || undefined, env: (await githubEnv('read', { repo: ownerRepoOfPrUrl(prUrl) })).env });
+  if (!r.ok) return { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  return { ok: true, body: String(r.stdout || '').replace(/\r?\n$/, '') };
+}
+
+/** Replace a PR's body (`gh pr edit <url> --body`; argv, no shell). { ok } | { ok:false, error }. */
+export async function editPrBody({ projectDir = null, prUrl, body } = {}) {
+  if (!prUrl) return { ok: false, error: 'prUrl is required' };
+  const cred = await githubEnv('write', { repo: ownerRepoOfPrUrl(prUrl) });
+  if (cred.error) return { ok: false, error: cred.error };
+  const r = await _run('gh', ['pr', 'edit', prUrl, '--body', String(body ?? '')], { cwd: projectDir || undefined, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, error: (r.stderr || '').trim() || `gh exited ${r.code}` };
 }
 
 // ── Remotes (fork support) ──────────────────────────────────────────────────

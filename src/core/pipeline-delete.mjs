@@ -20,8 +20,9 @@ import { join, isAbsolute } from 'node:path';
 import { projectKey, projectStorePath } from './store.mjs';
 import {
   listArtifacts, readPipelineByKey, persistPrState, retainedWorkFor, checkoutRecordsFor,
-  recordArtifact, appendAudit, findRunDir,
+  recordArtifact, appendAudit, findRunDir, readMemberPrStates, persistMemberPrState,
 } from './artifacts.mjs';
+import { workspaceMembers } from './workspace-prs.mjs';
 import { worcaHome } from './projects.mjs';
 import { getDb, tx } from './db.mjs';
 import { removeWorktree, snapshotWorktreePatch } from './worktree.mjs';
@@ -33,6 +34,33 @@ import { branchExists, hasGh, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
+
+/**
+ * Final PR observation while the branches still exist (spec §6.8.3). A workspace run
+ * is observed PER MEMBER into pipeline_member_prs (whose write refreshes the row's
+ * pr_* rollup) — never through persistPrState with the primary member's branch,
+ * which would let the row and the member table diverge. Exported for tests.
+ */
+export async function refreshFinalPrs(row, state) {
+  if (state?.target === 'workspace') {
+    const members = workspaceMembers(state).filter((m) => m.projectDir && m.feature);
+    if (members.length && (await hasGh())) {
+      const known = readMemberPrStates(row.id);
+      for (const m of members) {
+        const pr = await findPrForBranch({ projectDir: m.projectDir, head: m.feature, prUrl: known[m.memberKey]?.url || null });
+        if (pr) persistMemberPrState(row.id, m.memberKey, pr);
+      }
+      return;
+    }
+    if (members.length) return;                 // members known but no gh: nothing to observe
+    // A legacy workspace row with no member facts falls through to the primary-only arm (today's behaviour).
+  }
+  const branch = state?.branch?.feature;
+  if (branch && state?.projectDir && await hasGh()) {   // unchanged condition order
+    const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch, prUrl: row.pr_url || null });
+    if (pr) persistPrState(row.id, pr);
+  }
+}
 
 // Statuses for which deletion is refused (the entry is or may be live).
 const ACTIVE = new Set(['running', 'starting', 'created', 'pausing']);
@@ -168,16 +196,10 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
     report.warnings.push('retention metadata was unreadable; per-member branch/worktree cleanup was skipped');
   }
 
-  // Final PR observation while the branch still exists (spec §6.8.3). Single-
-  // project runs only: workspace rows carry a branches MAP (state.branches) —
-  // their per-project PR facts are left to prior enrichment passes (accepted
-  // limitation). A merge after archive is never observed — also accepted.
+  // Final PR observation (spec §6.8.3); workspace runs per member — see refreshFinalPrs.
+  // A merge after archive is never observed — accepted.
   try {
-    const branch = state?.branch?.feature;
-    if (branch && state?.projectDir && await hasGh()) {
-      const pr = await findPrForBranch({ projectDir: state.projectDir, head: branch, prUrl: row.pr_url || null });
-      if (pr) persistPrState(row.id, pr);
-    }
+    await refreshFinalPrs(row, state);
   } catch (e) {
     // Named `e`, not `err`: `err` is this module's error-factory helper and a catch
     // parameter would shadow it for the whole block.

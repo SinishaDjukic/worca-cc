@@ -58,7 +58,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 50;
+export const SCHEMA_VERSION = 51;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -980,6 +980,24 @@ CREATE TABLE IF NOT EXISTS terminal_worktrees (
 CREATE INDEX IF NOT EXISTS idx_terminal_worktrees_branch ON terminal_worktrees (project_key, branch);
 `;
 
+/** v51: the per-member PRs of a WORKSPACE run (one PR per affected member repo).
+ *  The pipelines row's pr_* columns keep a rollup of these (stats count a run once).
+ *  NOT in workspace_meta: that JSON is re-serialized from in-memory state on every
+ *  persist, so a PR recorded post-hoc would vanish at the next resume. IF NOT EXISTS
+ *  + an INCREMENTAL_TABLES entry: reconcile-safe on a divergently stamped DB. */
+const PIPELINE_MEMBER_PRS_DDL = `
+CREATE TABLE IF NOT EXISTS pipeline_member_prs (
+  pipeline_id    TEXT NOT NULL,
+  member_key     TEXT NOT NULL,
+  pr_url         TEXT NOT NULL,
+  pr_number      INTEGER,
+  pr_state       TEXT NOT NULL DEFAULT 'OPEN',
+  pr_checked_at  TEXT,
+  PRIMARY KEY (pipeline_id, member_key),
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines (id) ON DELETE CASCADE
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1000,6 +1018,7 @@ const INCREMENTAL_TABLES = {
   notifications:     SCHEDULED_RUNS_DDL,
   pipeline_commands: PIPELINE_COMMANDS_DDL,
   notification_reads: NOTIFICATION_READS_DDL,
+  pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1594,6 +1613,36 @@ function applySchemaV48(db) {
   db.exec(NIGHT_DECISIONS_DDL);
 }
 
+/** v51 (workspace PRs): create pipeline_member_prs (via the gap repair) and backfill
+ *  the single PR the pre-v51 path could have recorded on a workspace row. The old
+ *  POST /api/pr resolved a workspace run only through its primary member's project
+ *  key and pushed the PRIMARY member's branch, so that PR belongs to project_key.
+ *  INSERT OR IGNORE: re-entering the step never duplicates or overwrites.
+ *  GATED on the columns the SELECT reads: minimal hand-seeded test schemas carry
+ *  `pipelines(id)` only, and the gap repair adds INCREMENTAL_COLUMNS (pr_*) but never
+ *  the base columns project_key/target — an ungated SELECT throws `no such column`
+ *  and rolls the whole ladder back. Also fenced (V33/V39 shape): a backfill is never
+ *  worth failing the migration over. */
+function applySchemaV51(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+  if (!memberPrBackfillable(db)) return;
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO pipeline_member_prs (pipeline_id, member_key, pr_url, pr_number, pr_state, pr_checked_at)
+      SELECT id, project_key, pr_url, pr_number, COALESCE(pr_state, 'OPEN'), pr_checked_at
+      FROM pipelines
+      WHERE target = 'workspace' AND pr_url IS NOT NULL AND project_key IS NOT NULL
+    `);
+  } catch { /* never fail the migration on the backfill */ }
+}
+
+/** applySchemaV51's column guard (the presentationSeedable precedent). */
+function memberPrBackfillable(db) {
+  if (!hasSqliteTable(db, 'pipelines') || !hasSqliteTable(db, 'pipeline_member_prs')) return false;
+  const cols = new Set(db.prepare('PRAGMA table_info(pipelines)').all().map((c) => c.name));
+  return ['id', 'project_key', 'target', 'pr_url', 'pr_number', 'pr_state', 'pr_checked_at'].every((c) => cols.has(c));
+}
+
 /** Move every stored pin on model id `from` (lower-case) to `to`. Each table
  *  is guarded like V24's: hand-seeded upgrade fixtures (and a DB from before the
  *  fs->db import) reach this step without some of them. */
@@ -2025,6 +2074,7 @@ export function migrate(db) {
     if (current < 48) applySchemaV48(db);            // Away mode: one row per answered ask
     if (current < 49) db.exec(PIPELINE_COMMANDS_DDL); // run-control mailbox (#513) — IF NOT EXISTS, reconcile-safe
     if (current < 50) db.exec(TERMINAL_DDL);         // built-in terminal (#573) — IF NOT EXISTS, reconcile-safe
+    if (current < 51) applySchemaV51(db);            // workspace PRs: pipeline_member_prs + gated backfill
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

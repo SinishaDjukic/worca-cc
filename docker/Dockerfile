@@ -12,7 +12,7 @@
 #   CLAUDE_CODE_VERSION  the @anthropic-ai/claude-code version to pin              [required]
 #   VARIANT              slim | full                                               [slim]
 #   NODE_IMAGE           base image                                                [node:22-bookworm-slim]
-#   APT_REFRESH          any string; a new value rebuilds the OS layer (CI: UTC date)
+#   APT_REFRESH          any string; a new value rebuilds the OS layer (CI: Debian publish stamps)
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 FROM ${NODE_IMAGE}
@@ -20,7 +20,7 @@ FROM ${NODE_IMAGE}
 ARG WORCA_TARBALL
 ARG CLAUDE_CODE_VERSION
 ARG VARIANT=slim
-# Changes daily in CI (UTC date) so the cached OS layer picks up Debian fixes.
+# Changes in CI whenever Debian publishes, so the cached OS layer picks up its fixes.
 ARG APT_REFRESH=
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
