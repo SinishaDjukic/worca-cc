@@ -867,6 +867,28 @@ test('legacy workspace: the scalar mirror is NOT stamped removed while a member 
   assert.equal(orch.state.branches['proj-a'].worktreeRemoved, false);
 });
 
+test('legacy workspace: a commit-failed (retained) member is never branch-dropped', async () => {
+  const repo = await freshRepo();
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'x', auto: true, claude: { mock: true }, branch: { source: 'main' },
+  });
+  orch.isWorkspace = true;   // a plain field (run-harness.mjs:635), assigned the same way by the test at :835
+  const head = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout.toString().trim();
+  spawnSync('git', ['-C', repo, 'branch', 'worca/keep-me', head]);
+  const info = { worktreeDir: join(repo, 'wt-a'), branch: 'worca/keep-me' };
+  orch.branchInfos = new Map([['proj-a', info]]);
+  orch.state.branches = { 'proj-a': { feature: 'worca/keep-me', worktreeDir: info.worktreeDir, baseSha: head } };
+  orch.state.branch = { feature: 'worca/keep-me', worktreeDir: info.worktreeDir };
+  orch._commitWork = async () => ({ ok: false, step: 'commit', message: 'x' });
+  let dropCalled = false;
+  orch._dropUnchangedMemberBranch = async () => { dropCalled = true; return true; };
+  await orch._teardownWorktreeAll();
+  assert.equal(dropCalled, false, 'retention short-circuits before any drop');
+  assert.ok(branchList(repo).includes('worca/keep-me'));
+  assert.equal(orch.state.branches['proj-a'].branchKept, true);
+  assert.equal(orch.state.branches['proj-a'].branchDeleted, undefined);
+});
+
 test('workspace members snapshot to distinct retained-work-<key>.patch files', async () => {
   const repo = await freshRepo();
   const orch = createOrchestrator({

@@ -352,6 +352,37 @@ export async function removeWorktree({ projectDir, worktreeDir, branch, force = 
 }
 
 /**
+ * Delete local branch `branch` ONLY while it still points at `sha` — the proof that a
+ * run left nothing on it — and no worktree has it checked out. Used by workspace
+ * teardown to drop the branch of a member the run never changed. The delete is a
+ * compare-and-swap (`update-ref -d <ref> <old>`): a commit landing between the check and
+ * the delete makes git refuse, so a branch carrying work is never discarded. Every
+ * doubt (unknown base, moved tip, live checkout, git failure) keeps the branch.
+ * Never throws.
+ * @returns {Promise<{deleted:true}|{deleted:false, reason:string, stderr?:string}>}
+ */
+export async function deleteBranchIfAt({ projectDir, branch, sha } = {}) {
+  if (!projectDir || typeof branch !== 'string' || !branch || /^-/.test(branch)
+      || typeof sha !== 'string' || !sha || /^-/.test(sha)) {
+    return { deleted: false, reason: 'invalid' };
+  }
+  const ref = `refs/heads/${branch}`;
+  const tip = await git(projectDir, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const tipSha = tip.ok ? tip.stdout.trim() : '';
+  if (!tipSha) return { deleted: false, reason: 'missing' };
+  const base = await git(projectDir, ['rev-parse', '--verify', '--quiet', `${sha}^{commit}`]);
+  const baseSha = base.ok ? base.stdout.trim() : '';
+  if (!baseSha) return { deleted: false, reason: 'unknown-base' };
+  if (tipSha !== baseSha) return { deleted: false, reason: 'moved' };
+  // Reap stale registrations first: worktreePathForBranch does not skip prunable entries,
+  // so a just-removed checkout could otherwise read as "in use".
+  await git(projectDir, ['worktree', 'prune']);
+  if (await worktreePathForBranch(projectDir, branch)) return { deleted: false, reason: 'checked-out' };
+  const r = await git(projectDir, ['update-ref', '-d', ref, tipSha]);
+  return r.ok ? { deleted: true } : { deleted: false, reason: 'update-ref', stderr: r.stderr.trim() };
+}
+
+/**
  * Create a DETACHED worktree at `worktreeDir` checking out `ref` — the Ask
  * Worca inspection checkout (ask-worca-worktrees-design.md §3). Detached by
  * construction: no branch is created, locked or deleted, so the pipeline

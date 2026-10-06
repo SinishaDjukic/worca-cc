@@ -17,7 +17,9 @@ import { join, basename } from 'node:path';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
-import { listAllPipelines, readPipelineForResume } from '../src/core/artifacts.mjs';
+import { listAllPipelines, readPipelineForResume, slugify } from '../src/core/artifacts.mjs';
+import { sanitizeBranchName } from '../src/core/worktree.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { readRunManifest } from '../src/core/run-manifest.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { posix } from './helpers/posix-path.mjs';
@@ -90,6 +92,27 @@ function workspaceOpts(dirs, { name = 'Demo WS', description = '', branch = { so
   };
 }
 function require_basename(p) { return p.split('/').filter(Boolean).pop(); }
+
+const tipOf = (dir, ref) => spawnSync('git', ['-C', dir, 'rev-parse', ref]).stdout.toString().trim();
+const auditLines = (id) => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(id).map((r) => r.text);
+/** [primaryDir, otherDir] — the primary is projects[0], the lowest projectKey. */
+function primaryFirst(ws, a, b) {
+  return projectKey(a) === ws.workspace.projects[0].projectKey ? [a, b] : [b, a];
+}
+/** Stop the run the moment every member checkout exists (setup's "Building the knowledge
+ *  graph" state emit, before any agent node). `beforeStop(s)` runs first, synchronously. */
+function stopWhenCheckedOut(orch, keys, beforeStop = () => {}) {
+  let fired = false;
+  orch.on('state', (s) => {
+    if (fired || !s.branches) return;
+    const dirs = keys.map((k) => s.branches[k]?.worktreeDir);
+    if (!dirs.every((d) => d && existsSync(d))) return;
+    fired = true;
+    beforeStop(s);
+    orch.stop();
+  });
+  return () => fired;
+}
 
 // ── one legacy 2-member run: D3 layout through the history walker ──────────────
 test('legacy workspace run (2 members): own-repo worktrees, per-member checkpoints, scalar branch object, slugged features, frozen description, workspace-store routing, all members staged, teardown keeps branches, history row', async () => {
@@ -374,7 +397,8 @@ test('detached workspace run: member worktrees under runs/<id>/repos/<key>, cwd 
       assert.match(state.checkpointRefs[ka], /^[0-9a-f]{7,40}$/);
       assert.match(state.checkpointRefs[kb], /^[0-9a-f]{7,40}$/);
       assert.equal(state.checkpointRef, state.checkpointRefs[ws.workspace.projects[0].projectKey]);
-      // Teardown keeps every branch and removes every checkout + the run root.
+      // Teardown keeps every branch (the detached mock changed EVERY member, so none is
+      // unchanged) and removes every checkout + the run root.
       for (const dir of [a, b]) {
         const k = projectKey(dir);
         assert.ok(branchList(dir).includes(state.branches[k].feature), `member ${k} branch KEPT`);
@@ -690,4 +714,123 @@ test('legacy workspace + detached single: NO §8.19 / §8.21 warnings (gates hol
       }
     } },
   ]);
+});
+
+// ── affected projects only: an unchanged member's branch is dropped at teardown ──
+test('legacy: the changed (primary) member keeps its branch; the unchanged member\'s branch is deleted', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = workspaceOpts([a, b]);
+  const [pDir, oDir] = primaryFirst(ws, a, b);
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  const res = await orch.run();
+  assert.equal(res.status, 'done', JSON.stringify(res));
+  const st = orch.getState();
+  const pRec = st.branches[projectKey(pDir)];
+  const oRec = st.branches[projectKey(oDir)];
+  // Legacy mock writes only into the primary's checkout (phases.mjs workspaceWriteTargetsFor).
+  assert.ok(branchList(pDir).includes(pRec.feature), 'changed member: branch KEPT');
+  assert.equal(pRec.branchKept, true);
+  assert.equal(pRec.branchDeleted, undefined);
+  assert.ok(!branchList(oDir).includes(oRec.feature), 'unchanged member: branch DELETED');
+  assert.equal(oRec.branchKept, false);
+  assert.equal(oRec.branchDeleted.reason, 'unchanged');
+  assert.ok(!existsSync(oRec.worktreeDir), 'its checkout is removed too');
+  assert.deepEqual(branchList(oDir), ['main'], 'the unchanged repo is left exactly as it was');
+  // The scalar mirror follows the primary's real outcome.
+  assert.equal(st.branch.branchKept, true);
+  assert.equal(st.branch.branchDeleted, undefined);
+  // Persisted: the DB round trip carries the per-member marker.
+  const saved = readPipelineForResume(st.id);
+  const meta = JSON.parse(saved.row.workspace_meta);
+  assert.equal(meta.branches[projectKey(oDir)].branchDeleted.reason, 'unchanged');
+  // Audit names the drop. appendAudit writes the DB timeline (pipeline_events), not a file.
+  const lines = auditLines(st.id);
+  assert.ok(lines.some((t) => t.includes(`deleted branch \`${oRec.feature}\` — no changes`)), lines.join('\n'));
+  assert.ok(lines.some((t) => t.includes(`kept branch \`${pRec.feature}\``)), 'the kept member keeps today\'s wording');
+});
+
+test('detached: a run stopped before any change drops EVERY member branch, the primary included', async () => {
+  process.env.WORCA_RUN_ROOT = 'detached';
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = workspaceOpts([a, b]);
+  const keys = [projectKey(a), projectKey(b)];
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  const fired = stopWhenCheckedOut(orch, keys);
+  const res = await orch.run();
+  assert.equal(res.status, 'stopped', JSON.stringify(res));
+  assert.ok(fired(), 'the stop landed after both member branches existed');
+  const st = orch.getState();
+  for (const dir of [a, b]) {
+    const rec = st.branches[projectKey(dir)];
+    assert.ok(rec.baseSha, 'precondition: a fresh branch this run created');
+    assert.deepEqual(branchList(dir), ['main'], `${projectKey(dir)}: no branch left behind`);
+    assert.equal(rec.branchKept, false);
+    assert.equal(rec.branchDeleted.reason, 'unchanged');
+  }
+  // Primary dropped too (clarify: no special case) — the scalar mirror says so.
+  assert.equal(st.branch.branchKept, false);
+  assert.equal(st.branch.branchDeleted.reason, 'unchanged');
+  assert.ok(!existsSync(join(worcaHome(), 'runs', st.id)), 'run root still reclaimed');
+});
+
+test('detached: an agent\'s own commit (nothing left uncommitted at teardown) still keeps that member\'s branch', async () => {
+  process.env.WORCA_RUN_ROOT = 'detached';
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = workspaceOpts([a, b]);
+  const ka = projectKey(a), kb = projectKey(b);
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  stopWhenCheckedOut(orch, [ka, kb], (s) => {
+    const wt = s.branches[ka].worktreeDir;
+    writeFileSync(join(wt, 'agent.txt'), 'by the agent\n');
+    spawnSync('git', ['-C', wt, 'add', 'agent.txt']);
+    spawnSync('git', ['-C', wt, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'agent commit']);
+  });
+  assert.equal((await orch.run()).status, 'stopped');
+  const st = orch.getState();
+  assert.ok(branchList(a).includes(st.branches[ka].feature), 'a: the agent-committed branch is KEPT');
+  assert.equal(spawnSync('git', ['-C', a, 'show', `${st.branches[ka].feature}:agent.txt`]).status, 0);
+  assert.equal(st.branches[ka].branchKept, true);
+  assert.equal(st.branches[ka].branchDeleted, undefined);
+  assert.ok(!branchList(b).includes(st.branches[kb].feature), 'b: unchanged, deleted');
+});
+
+test('a pre-existing feature branch (no baseSha) is never deleted, even when unchanged', async () => {
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = workspaceOpts([a, b], { branch: { source: 'main', feature: 'preexist' } });
+  // Pre-create BOTH members' feature branches (not checked out anywhere) so each is reused.
+  // Name = run-harness _resolveMemberBranches: sanitizeBranchName(`${feature}-${slugify(projectName)}`).
+  for (const dir of [a, b]) {
+    const name = sanitizeBranchName(`preexist-${slugify(require_basename(dir))}`);
+    assert.equal(spawnSync('git', ['-C', dir, 'branch', name, 'main']).status, 0);
+  }
+  const [, oDir] = primaryFirst(ws, a, b);
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  assert.equal((await orch.run()).status, 'done');
+  const rec = orch.getState().branches[projectKey(oDir)];
+  assert.equal(rec.baseSha, undefined, 'precondition: a reused branch carries no baseSha');
+  assert.equal(tipOf(oDir, rec.feature), tipOf(oDir, 'main'), 'precondition: unchanged');
+  assert.ok(branchList(oDir).includes(rec.feature), 'the user\'s pre-existing branch is KEPT');
+  assert.equal(rec.branchKept, true);
+});
+
+test('a paused workspace run keeps every member branch (teardown never runs on pause)', async () => {
+  process.env.WORCA_RUN_ROOT = 'detached';
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const ws = workspaceOpts([a, b]);
+  const keys = [projectKey(a), projectKey(b)];
+  const orch = createOrchestrator({ ...ws, prompt: 'x', auto: true, claude: { mock: true } });
+  let fired = false;
+  orch.on('state', (s) => {
+    if (fired || !s.branches || !keys.every((k) => s.branches[k]?.worktreeDir && existsSync(s.branches[k].worktreeDir))) return;
+    fired = true;
+    orch.pause();
+  });
+  assert.equal((await orch.run()).status, 'paused');
+  const st = orch.getState();
+  for (const dir of [a, b]) assert.ok(branchList(dir).includes(st.branches[projectKey(dir)].feature), 'kept while paused');
 });

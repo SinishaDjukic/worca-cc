@@ -448,6 +448,16 @@ test('predecessorState follows a ticket into its pipeline and reads the outcome 
   assert.equal(predecessorState({ kind: 'ticket', id: fired.id }, { now: T0 + 10 * MIN }).state, 'gone', 'the ticket follows into the archived pipeline');
 });
 
+test('previousBranchesOf: a member whose branch was dropped (unchanged) chains from its source', () => {
+  seedPipelineRow({ id: 'w0000009', title: 'Ws', status: 'done', target: 'workspace', workspaceKey: 'ws_9', startedAt: new Date(T0).toISOString(),
+    workspaceMeta: { workspaceId: 'ws_9', branches: {
+      'proj-a': { source: 'main', feature: 'worca/ws-a', branchKept: true },
+      'proj-b': { source: 'dev', feature: 'worca/ws-b', branchKept: false, branchDeleted: { reason: 'unchanged', at: 'x' } },
+      'proj-c': { feature: 'worca/ws-c', branchKept: false },      // no source recorded: omitted -> member default
+    } } });
+  assert.deepEqual(previousBranchesOf('w0000009'), { sourceBranchByKey: { 'proj-a': 'worca/ws-a', 'proj-b': 'dev' } });
+});
+
 test('afterRefOf, previousBranchesOf and dependentsOfRun read the rows', () => {
   // projectKey stated, not inherited: the assertion below is about THIS value.
   seedPipelineRow({ id: 'p0000002', title: 'Refactor', status: 'done', projectKey: 'proj-00000001', startedAt: new Date(T0).toISOString(), branch: { source: 'main', feature: 'worca/refactor-p0000002' } });

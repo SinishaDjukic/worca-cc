@@ -20942,11 +20942,14 @@ function paintHdHeaderMeta(screen, record, data) {
   const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
   const feature = br.feature || (typeof st.branch === 'string' ? st.branch : '') || record.branch || '';
   const source = br.source || record.sourceBranch || '';
-  base.textContent = source ? `${source} →` : '';
-  base.hidden = !source;
-  copyBtn.hidden = !feature;
+  // A workspace member this run never changed has its branch dropped at teardown
+  // (run-harness _dropUnchangedMemberBranch): never offer a name that no longer exists.
+  const dropped = !!br.branchDeleted;
+  base.textContent = dropped ? 'No branch — no changes in this project' : (source ? `${source} →` : '');
+  base.hidden = !dropped && !source;
+  copyBtn.hidden = dropped || !feature;
   paintPageBranch(screen.querySelector('.hd-glance'), feature);
-  if (feature) {
+  if (feature && !dropped) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
       copyBtn.dataset.bound = '1';

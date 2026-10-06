@@ -174,3 +174,34 @@ test('single-project rows keep the OLD URLs (byte-identity): /api/history/:key/:
   assert.ok(seen.some((u) => /\/api\/runs\/p1\?projectKey=alpha-00000001 \[DELETE\]$/.test(u)), 'project delete still sends ?projectKey=');
   assert.ok(!seen.some((u) => u.includes('/api/workspaces/')), 'a single-project row never hits a workspace route');
 });
+
+test('detail: a workspace run whose primary branch was dropped (no changes) shows no copyable branch', async () => {
+  const detail = { ...PIPELINE_DETAIL, state: { ...PIPELINE_DETAIL.state, target: 'workspace',
+    branch: { source: 'main', feature: 'worca-cc/gone-w2', branchKept: false, branchDeleted: { reason: 'unchanged', at: 'x' } } } };
+  const { window, showDetail, settle } = await boot({
+    fetchHandler: (u) => (/\/api\/workspaces\/.+\/runs\/w2$/.test(u)
+      ? Promise.resolve({ ok: true, status: 200, json: async () => detail }) : null),
+  });
+  showDetail(WKS_KEY, 'w2');
+  await settle(6);
+  const doc = window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true, 'no copy button for a deleted branch');
+  const base = doc.querySelector('#hist-detail .hd-base');
+  assert.equal(base.hidden, false);
+  assert.match(base.textContent, /No branch — no changes/);
+});
+
+test('detail: a kept workspace branch still paints source → feature with a copy button', async () => {
+  const detail = { ...PIPELINE_DETAIL, state: { ...PIPELINE_DETAIL.state, target: 'workspace',
+    branch: { source: 'main', feature: 'worca-cc/kept-w2', branchKept: true } } };
+  const { window, showDetail, settle } = await boot({
+    fetchHandler: (u) => (/\/api\/workspaces\/.+\/runs\/w2$/.test(u)
+      ? Promise.resolve({ ok: true, status: 200, json: async () => detail }) : null),
+  });
+  showDetail(WKS_KEY, 'w2');
+  await settle(6);
+  const doc = window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, false);
+  assert.equal(doc.querySelector('#hist-detail .hd-branch-name').textContent, 'worca-cc/kept-w2');
+  assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'main →');
+});

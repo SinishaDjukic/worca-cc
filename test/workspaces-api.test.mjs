@@ -560,6 +560,31 @@ test('a chained run that starts from the previous run\'s branches still fires af
   for (const r of runs.values()) if (r.workspaceId === workspace.id && r.orch && r.kind !== 'scan') { try { r.orch.stop(); } catch { /* best-effort */ } }
 });
 
+test('a chained run still fires when a member\'s branch was dropped as unchanged (it starts from its source)', async () => {
+  const { createTicket, getTicket } = await import('../src/core/scheduler.mjs');
+  const { seedPipelineRow } = await import('./helpers/db-seed.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const a = await freshRepo();
+  const b = await freshRepo();
+  const { workspace } = await (await post('/api/workspaces', { name: 'Dropped', projectPaths: [a, b] })).json();
+  spawnSync('git', ['branch', 'worca/prev-kept'], { cwd: a });   // a changed: its branch exists
+  // b changed nothing: teardown deleted 'worca/prev-dropped', so it does NOT exist in git.
+  seedPipelineRow({
+    id: 'c0ffee02', projectKey: projectKey(a), workspaceKey: workspace.id, target: 'workspace', status: 'done',
+    startedAt: new Date().toISOString(),
+    workspaceMeta: { workspaceId: workspace.id, branches: {
+      [projectKey(a)]: { source: 'main', feature: 'worca/prev-kept', branchKept: true },
+      [projectKey(b)]: { source: 'main', feature: 'worca/prev-dropped', branchKept: false,
+        branchDeleted: { reason: 'unchanged', at: new Date().toISOString() } },
+    } },
+  });
+  const t = createTicket({ workspaceId: workspace.id, after: { kind: 'pipeline', id: 'c0ffee02' }, afterPolicy: 'any', sourceFromPrevious: true,
+    request: { workspaceId: workspace.id, prompt: 'next step', mock: true } });
+  const out = await testing.fireTicket(getTicket(t.id, { withRequest: true }));
+  assert.deepEqual(out, { ok: true }, 'the dropped member starts from main instead of failing the ticket');
+  for (const r of runs.values()) if (r.workspaceId === workspace.id && r.orch && r.kind !== 'scan') { try { r.orch.stop(); } catch { /* best-effort */ } }
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // POST /api/run — workspace target (§2.6)
 // ───────────────────────────────────────────────────────────────────────────

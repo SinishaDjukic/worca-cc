@@ -18,6 +18,7 @@ import {
   resolveDefaultBranch,
   createWorktree,
   removeWorktree,
+  deleteBranchIfAt,
   isValidSourceRef,
   worktreePathForBranch,
   createDetachedWorktree,
@@ -414,4 +415,52 @@ test('createDetachedWorktree: prunes a stale registration first, throws on git f
   await assert.rejects(
     () => createDetachedWorktree({ projectDir: repo, worktreeDir: join(base, 'wt_0000000b'), ref: 'main', signal: ac.signal }),
     (err) => { assert.equal(err.name, 'AbortError'); return true; });
+});
+
+const revParse = (dir, ref) => spawnSync('git', ['-C', dir, 'rev-parse', ref]).stdout.toString().trim();
+
+test('deleteBranchIfAt: deletes a branch still at its start commit', async () => {
+  const repo = await freshRepo();
+  const sha = revParse(repo, 'main');
+  spawnSync('git', ['-C', repo, 'branch', 'worca-cc/empty-1', sha]);
+  const res = await deleteBranchIfAt({ projectDir: repo, branch: 'worca-cc/empty-1', sha });
+  assert.deepEqual(res, { deleted: true });
+  assert.ok(!(await listLocalBranches(repo)).includes('worca-cc/empty-1'));
+});
+
+test('deleteBranchIfAt: keeps a branch that moved past its start commit', async () => {
+  const repo = await freshRepo();
+  const sha = revParse(repo, 'main');
+  const wt = join(repo, '.wt-moved');
+  spawnSync('git', ['-C', repo, 'worktree', 'add', '-b', 'worca-cc/moved-1', '--', wt, 'main']);
+  await writeFile(join(wt, 'x.txt'), 'x\n');
+  spawnSync('git', ['-C', wt, 'add', '-A']);
+  spawnSync('git', ['-C', wt, 'commit', '-qm', 'agent']);
+  spawnSync('git', ['-C', repo, 'worktree', 'remove', '--force', wt]);
+  const res = await deleteBranchIfAt({ projectDir: repo, branch: 'worca-cc/moved-1', sha });
+  assert.equal(res.deleted, false);
+  assert.equal(res.reason, 'moved');
+  assert.ok((await listLocalBranches(repo)).includes('worca-cc/moved-1'));
+});
+
+test('deleteBranchIfAt: keeps a branch that is checked out in a live worktree', async () => {
+  const repo = await freshRepo();
+  const sha = revParse(repo, 'main');
+  const wt = join(repo, '.wt-live');
+  spawnSync('git', ['-C', repo, 'worktree', 'add', '-b', 'worca-cc/live-1', '--', wt, 'main']);
+  const res = await deleteBranchIfAt({ projectDir: repo, branch: 'worca-cc/live-1', sha });
+  assert.deepEqual([res.deleted, res.reason], [false, 'checked-out']);
+  assert.ok((await listLocalBranches(repo)).includes('worca-cc/live-1'));
+});
+
+test('deleteBranchIfAt: missing branch, unknown base and option-shaped input are refused, never thrown', async () => {
+  const repo = await freshRepo();
+  const sha = revParse(repo, 'main');
+  assert.equal((await deleteBranchIfAt({ projectDir: repo, branch: 'nope', sha })).reason, 'missing');
+  spawnSync('git', ['-C', repo, 'branch', 'worca-cc/b-1']);
+  assert.equal((await deleteBranchIfAt({ projectDir: repo, branch: 'worca-cc/b-1', sha: 'f'.repeat(40) })).reason, 'unknown-base');
+  assert.equal((await deleteBranchIfAt({ projectDir: repo, branch: '--force', sha })).reason, 'invalid');
+  assert.equal((await deleteBranchIfAt({ projectDir: repo, branch: 'worca-cc/b-1', sha: '-q' })).reason, 'invalid');
+  assert.equal((await deleteBranchIfAt({})).reason, 'invalid');
+  assert.ok((await listLocalBranches(repo)).includes('worca-cc/b-1'), 'nothing was deleted');
 });

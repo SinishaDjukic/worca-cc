@@ -469,7 +469,10 @@ export function predecessorState(after, { policy = 'done', now = Date.now(), isL
   return pipelineGate(row, { policy, isLive });
 }
 
-/** The feature branch(es) a finished pipeline left, in POST /api/run's own field names. */
+/** The feature branch(es) a finished pipeline left, in POST /api/run's own field names.
+ *  A workspace member whose branch was dropped at teardown (it changed nothing —
+ *  `branchKept:false`) chains from the source it started from instead: the dropped
+ *  branch no longer exists, and fireTicket would refuse the whole run for it. */
 export function previousBranchesOf(pipelineId) {
   const row = pipelineRefRow(pipelineId);
   if (!row) return null;
@@ -478,7 +481,11 @@ export function previousBranchesOf(pipelineId) {
     const branches = meta && meta.branches && typeof meta.branches === 'object' ? meta.branches : null;
     if (!branches) return null;
     const byKey = {};
-    for (const [key, b] of Object.entries(branches)) if (b && typeof b.feature === 'string' && b.feature) byKey[key] = b.feature;
+    for (const [key, b] of Object.entries(branches)) {
+      if (!b) continue;
+      const name = b.branchKept === false ? b.source : b.feature;
+      if (typeof name === 'string' && name) byKey[key] = name;
+    }
     return Object.keys(byKey).length ? { sourceBranchByKey: byKey } : null;
   }
   const b = parseJson(row.branch, null);
