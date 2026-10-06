@@ -3644,7 +3644,8 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // A Codex run has no sub-agents (codexCapabilities.subagents === false): nothing to pick for them.
-    if (state.engine === 'codex') sWrap.hidden = true;
+    // Neither does a Copilot run: its sub-agents run on the node's own model.
+    if (state.engine === 'codex' || state.engine === 'copilot') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
       qWrap.className = 'fanout-toggle questions-toggle';
@@ -3679,8 +3680,8 @@ function renderAgentRows(rows) {
     // A pick of the other engine was healed off this run's row (D10) but stays stored and is
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
-      const owner = state.engine === 'codex' ? 'Claude' : 'Codex';
       const entry = modelById(row.enginePair.model);
+      const owner = (entry && entry.engine === 'codex') || (!entry && state.engine === 'claude') ? 'Codex' : 'Claude';
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
       kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
@@ -3844,7 +3845,7 @@ if (el.memoryScopeSeg) {
 // Engine (harness bridge §10.4): per run, never remembered — every New pipeline starts on Claude.
 function setRunEngine(engine) {
   const prev = state.engine;
-  state.engine = engine === 'codex' ? 'codex' : 'claude';
+  state.engine = engine === 'codex' || engine === 'copilot' ? engine : 'claude';
   for (const b of el.engineSeg ? el.engineSeg.querySelectorAll('button[data-engine]') : []) {
     const on = b.dataset.engine === state.engine;
     b.classList.toggle('on', on);
@@ -3861,7 +3862,9 @@ function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.codex || {}).some((s) => s?.source === 'project');
-    el.engineHint.textContent = `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
+    el.engineHint.textContent = state.engine === 'copilot'
+      ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
+      : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -3876,7 +3879,7 @@ async function loadRunDefaults(projectDir) {
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
-  state.runDefaults = data?.engine && ['claude','codex'].includes(data.engine.value) ? data : null;
+  state.runDefaults = data?.engine && ['claude', 'codex', 'copilot'].includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
@@ -12604,8 +12607,8 @@ el.form.addEventListener('submit', async (e) => {
     // ticked, so a Claude run's body stays byte-identical.
     // The engine shown is the engine that runs: Claude goes unsent only when the default is KNOWN
     // to be Claude (a failed or stale defaults read must not let the server pick a Codex default).
-    engine: state.engine === 'codex' ? 'codex' : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
-    allowUnguardedEngine: state.engine === 'codex' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
+    engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
+    allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
   };
   if (target === 'workspace') {
     body.workspaceId = workspaceId;

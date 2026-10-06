@@ -72,6 +72,14 @@ test('a project default of Codex prefills Codex and says it comes from the proje
   assert.equal(ctx.posted.at(-1).engine, 'codex');
 });
 
+test('a user default of Copilot prefills Copilot and sends it', async () => {
+  const ctx = await boot({ defaults: () => ({ engine: { value: 'copilot', source: 'user' }, steps: { claude: {}, codex: {} } }) });
+  assert.equal(on(ctx.doc), 'copilot');
+  assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from your settings');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'copilot');
+});
+
 test('switching back to Claude over a Codex default sends engine: claude (Review Focus 1)', async () => {
   const ctx = await boot({ defaults: () => ({ engine: { value: 'codex', source: 'user' }, steps: { claude: {}, codex: { planner: { model: 'gpt-5.5', source: 'project' } } } }) });
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from your settings');
