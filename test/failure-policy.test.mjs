@@ -213,3 +213,18 @@ test('describePauseReason: a label per code, none for a manual pause', () => {
   assert.equal(describePauseReason(REASON.USAGE_LIMIT), 'session/usage limit reached');
   assert.match(describePauseReason(REASON.RECOVERABLE), /recoverable/);
 });
+
+test('a model that is unavailable pauses as model_unavailable at setup/shell; launch and resume still end the run', () => {
+  for (const site of ['setup', 'shell']) {
+    for (const auto of [true, false]) {
+      assert.deepEqual(resolveFailure({ site, cls: 'model_unavailable', auto }), { outcome: 'pause', reason: REASON.MODEL_UNAVAILABLE });
+    }
+  }
+  assert.equal(resolveFailure({ site: 'launch', cls: 'model_unavailable' }).outcome, 'error');
+  assert.equal(resolveFailure({ site: 'resume', cls: 'model_unavailable' }).outcome, 'error');
+  const c = pauseConsequences(REASON.MODEL_UNAVAILABLE);
+  assert.equal(c.stagesResults, false);
+  assert.equal(c.reportsToSource, true);
+  assert.equal(c.label, 'a model this run uses is unavailable');
+  assert.equal(pauseExitCode(REASON.MODEL_UNAVAILABLE, false), 1);
+});

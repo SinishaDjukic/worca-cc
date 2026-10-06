@@ -55,7 +55,7 @@ const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 // error / recoverable / a manual pause read plain "Paused".
 const PAUSE_WORDS = Object.freeze({
   cost_pipeline: 'Cost limit', cost_total: 'Total budget', cost_pipeline_policy: 'Team cap',
-  cost_total_policy: 'Team total', usage_limit: 'Usage limit',
+  cost_total_policy: 'Team total', usage_limit: 'Usage limit', model_unavailable: 'Model unavailable',
 });
 // Search words per icon, beyond the row's own word: "paused" finds a cost-limit pause too.
 const STATE_TERMS = Object.freeze({

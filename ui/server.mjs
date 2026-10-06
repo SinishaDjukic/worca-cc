@@ -206,7 +206,7 @@ import {
 } from '../src/core/guardrail-store.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, listWorkflows, deleteWorkflow, isSafeWorkflowId,
-  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow,
+  setWorkflowNodeDefaults, workflowNodeDefaults, assertRunnableWorkflow, writeGraphWorkflow, readWorkflow, AUTO_WORKFLOW_ID,
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
@@ -279,6 +279,7 @@ import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
+import { checkRunModels, resolveWorkflowManifest, MODEL_UNAVAILABLE_CODE, modelUnavailableError } from '../src/core/model-check.mjs';
 import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
@@ -1847,6 +1848,30 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
+/**
+ * The pre-run model check without a run (model-check.mjs), LOCAL checks only — catalog, provider
+ * sign-in/terms/key, ${VAR}s, the CLI sign-in (cached `claude auth status`); never a network
+ * probe. The harness repeats it with the live probe at launch. null for Auto (no graph yet).
+ */
+async function localModelCheck({ projectDir, isWorkspace, workflowId, runModel = null }) {
+  if (workflowId === AUTO_WORKFLOW_ID) return null;
+  const manifest = await resolveWorkflowManifest({ projectDir, workflowId, agentsDir: AGENTS_DIR, isWorkspace });
+  return checkRunModels(manifest, {
+    runModel, live: false,
+    claudeAuth: () => probeClaudeAuth({ bin: configuredClaudeBin(), mock: serverMockMode() }),
+  });
+}
+
+/** startRunHandler's refusal: the 409 body, or null to proceed. A resolution fault never blocks
+ *  here — the harness resolves the same graph and reports it. */
+async function modelStartRefusal(target) {
+  let report;
+  try { report = await localModelCheck(target); } catch { return null; }
+  if (!report || report.ok) return null;
+  const err = modelUnavailableError(report, { when: 'start' });
+  return { error: err.message, code: MODEL_UNAVAILABLE_CODE, problems: report.problems };
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/run  -> start a new orchestration run
 // body (single-project): { projectDir, prompt?, promptMarkdown?, title?, mock? }
@@ -2135,6 +2160,16 @@ const startRunHandler = async (req, res) => {
         sched.afterRef = r.after;
       }
       if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      // Pre-run model check (model-check.mjs): refuse NOW, naming node/model/reason/fix, rather
+      // than answering 200 and failing on the WS a moment later. A firing ticket (internal, sched
+      // null) gets the same 409, which scheduler.mjs records as "could not start: …". The harness
+      // re-checks at launch, adding the live provider probe.
+      if (!mock && !scanTarget && !memoryScope) {
+        const refusal = await modelStartRefusal({ projectDir: projects[0].projectDir,
+          isWorkspace: true, workflowId,
+          runModel: (typeof stored.model === 'string' && stored.model.trim()) || null });
+        if (refusal) return res.status(409).json(refusal);
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
@@ -2251,6 +2286,16 @@ const startRunHandler = async (req, res) => {
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
       if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      // Pre-run model check (model-check.mjs): refuse NOW, naming node/model/reason/fix, rather
+      // than answering 200 and failing on the WS a moment later. A firing ticket (internal, sched
+      // null) gets the same 409, which scheduler.mjs records as "could not start: …". The harness
+      // re-checks at launch, adding the live provider probe.
+      if (!mock && !scanTarget && !memoryScope) {
+        const refusal = await modelStartRefusal({ projectDir: projectDir,
+          isWorkspace: false, workflowId,
+          runModel: (typeof stored.model === 'string' && stored.model.trim()) || null });
+        if (refusal) return res.status(409).json(refusal);
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -4713,6 +4758,34 @@ app.get('/api/policy', async (req, res) => {
     }
     res.json(payload);
   } catch (err) { sendPolicyError(res, err); }
+});
+
+// New pipeline: will the picked workflow's models run? LOCAL checks only (model-check.mjs) —
+// the card's warning line; the start itself re-checks (409) and the harness probes live.
+app.get('/api/run/model-check', async (req, res) => {
+  const scope = parseScopeParam(req.query.scope);
+  if (!scope) return badRequest(res, 'scope must be project:<projectKey> or workspace:<workspaceId>');
+  const workflowId = typeof req.query.workflowId === 'string' && req.query.workflowId.trim() ? req.query.workflowId.trim() : 'wf_default';
+  const runModel = typeof req.query.model === 'string' && req.query.model.trim() ? req.query.model.trim() : null;
+  const none = { ok: true, problems: [], warnings: [], checked: [] };
+  try {
+    if (serverMockMode()) return res.json({ ...none, workflowId, skipped: 'mock' });
+    if (workflowId === AUTO_WORKFLOW_ID) return res.json({ ...none, workflowId, skipped: 'auto' });
+    try { await assertRunnableWorkflow(workflowId, { checkGraph: false }); } catch (err) { return badRequest(res, err?.message || String(err)); }
+    let target = null;
+    if (scope.kind === 'project') {
+      const p = (await listProjects()).find((x) => x.key === scope.id);
+      if (p) target = { projectDir: p.path, isWorkspace: false };
+    } else {
+      const ws = await readWorkspace(scope.id);
+      if (ws && Array.isArray(ws.projectPaths) && ws.projectPaths.length) target = { projectDir: primaryMemberOf(ws.projectPaths), isWorkspace: true };
+    }
+    if (!target) return res.status(404).json({ error: `${scope.kind} not found` });
+    const report = await localModelCheck({ ...target, workflowId, runModel });
+    res.json({ workflowId, ...(report || none) });
+  } catch (err) {
+    res.status(500).json({ error: err?.message || String(err) });
+  }
 });
 
 // New pipeline form (board 8): the notes for a selection — caps, off-policy picks, plugin gaps.
@@ -12279,6 +12352,7 @@ export const _testing = {
   startCloneJob, followCloneCard, CLONE_JOBS,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  modelStartRefusal, localModelCheck,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

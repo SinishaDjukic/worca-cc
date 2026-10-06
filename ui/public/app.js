@@ -124,6 +124,7 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { renderCredentials } from './credentials-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { renderFreeDaily, freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
+import { modelCheckNote } from './model-check-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
@@ -17803,10 +17804,29 @@ async function paintTeamCapsReadout(force = false) {
 // New pipeline (board 8): the notes line for the selected target, debounced behind the selects.
 let policyLineTimer = null;
 let policyLineSeq = 0;
+// New pipeline: the pre-run model check's warning line (GET /api/run/model-check, local checks
+// only). The start re-checks and refuses with the same text; this only warns earlier.
+let modelNoteSeq = 0;
+async function paintModelNote() {
+  const note = document.getElementById('newModelNote');
+  if (!note || currentView() !== 'new') return;
+  const scope = currentRunScopeId();
+  const seq = ++modelNoteSeq;
+  let data = null;
+  if (scope && state.workflowId && state.workflowId !== 'wf_auto') {
+    const qs = new URLSearchParams({ scope, workflowId: state.workflowId });
+    try { const r = await fetch(`/api/run/model-check?${qs}`); data = r.ok ? await safeJson(r) : null; } catch { data = null; }
+  }
+  if (seq !== modelNoteSeq) return;   // a newer selection answered first
+  const msg = modelCheckNote(data);
+  note.hidden = !msg;
+  note.textContent = msg || '';
+}
+
 function schedulePolicyLine() {
   if (!el.policyLine) return;
   clearTimeout(policyLineTimer);
-  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); }, 150);
+  policyLineTimer = setTimeout(() => { void paintPolicyLine(); void paintMcpRuns(); void paintModelNote(); }, 150);
 }
 /** The models the run will pick: the Agents accordion's selects, else the legacy per-role config. */
 function selectedRunModels() {
@@ -24435,6 +24455,13 @@ function rdStateCopy(r, stepName) {
     const why = r.pauseDetail ? ` (${r.pauseDetail})` : '';
     return `Paused on a recoverable error${why}. Once it clears, Resume retries the step — the worktree and progress are kept.`;
   }
+  // The detail is modelUnavailableError's text (whitespace-collapsed by errorDetail): it already
+  // names node/model/reason/fix and ends "Fix it, then resume." — do not repeat that.
+  if (r.pauseReason === 'model_unavailable') {
+    return r.pauseDetail
+      ? `Paused — ${r.pauseDetail} The worktree and progress are kept.`
+      : 'Paused — a model this run uses is unavailable. Fix it in Settings › Providers or Models, then Resume — the worktree and progress are kept.';
+  }
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
     if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
@@ -25606,6 +25633,7 @@ function statusPill(r) {
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
     if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
+    if (r.pauseReason === 'model_unavailable') return { family: 'amber', text: 'Paused · model unavailable' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and

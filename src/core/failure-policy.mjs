@@ -45,6 +45,7 @@ export const REASON = Object.freeze({
   COST_PIPELINE_POLICY: 'cost_pipeline_policy',
   COST_TOTAL_POLICY: 'cost_total_policy',
   NIGHT_GUARDRAIL: 'night_guardrail', // night mode hit its per-run decision limit or the night spend cap
+  MODEL_UNAVAILABLE: 'model_unavailable', // the pre-run model check (model-check.mjs) found a model the run cannot use
 });
 export const REASON_CODES = Object.freeze(Object.values(REASON));
 
@@ -109,13 +110,21 @@ export const FAILURE_POLICY = Object.freeze({
   // row already created. A pause here stamps `setupIncomplete`; resume replays it.
   // A usage limit (OpenRouter's daily free requests spent by the Auto classifier, say)
   // is not a setup bug: it pauses as a usage limit, resumable after the reset.
-  setup: Object.freeze({ usage_limit: both(pause(REASON.USAGE_LIMIT)), '*': both(pause(REASON.ERROR)) }),
+  setup: Object.freeze({
+    usage_limit: both(pause(REASON.USAGE_LIMIT)),
+    model_unavailable: both(pause(REASON.MODEL_UNAVAILABLE)),
+    '*': both(pause(REASON.ERROR)),
+  }),
   // Before the pipeline row exists (topology, preflight, tool detection) there is
   // nothing to resume into: a launch error is the only enactable verdict.
   launch: Object.freeze({ '*': both(error()) }),
   // Anything that escaped the engine after setup (a scheduler throw, a persist
   // failure, a bookkeeping bug).
-  shell: Object.freeze({ usage_limit: both(pause(REASON.USAGE_LIMIT)), '*': both(pause(REASON.ERROR)) }),
+  shell: Object.freeze({
+    usage_limit: both(pause(REASON.USAGE_LIMIT)),
+    model_unavailable: both(pause(REASON.MODEL_UNAVAILABLE)),
+    '*': both(pause(REASON.ERROR)),
+  }),
   // resume() could not REHYDRATE the paused run — the checkout is gone, run.json
   // is corrupt, a guardrail set or agent prompt no longer loads. The point on disk
   // is already the best the run can offer: parking it again would re-persist the
@@ -194,6 +203,7 @@ const CONSEQUENCES = Object.freeze({
   [REASON.COST_PIPELINE_POLICY]: { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'team cost cap reached' },
   [REASON.COST_TOTAL_POLICY]:    { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'team total cap reached' },
   [REASON.ERROR]:        { reportsToSource: true,  stagesResults: true,  severity: 'error',   notifyPref: 'error',  exitInteractive: 1, label: 'a step failed' },
+  [REASON.MODEL_UNAVAILABLE]: { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 1, label: 'a model this run uses is unavailable' },
   [REASON.NIGHT_GUARDRAIL]: { reportsToSource: true, stagesResults: false, severity: 'warning', notifyPref: 'paused', exitInteractive: 0, label: 'Away mode limit reached' },
 });
 
