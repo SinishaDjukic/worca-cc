@@ -217,6 +217,38 @@ test('engine: the hint and the checkbox row really hide (explicit [hidden] rules
 
 test('engine: the Codex hint says the whole pipeline runs on Codex and where its models live', async () => {
   const ctx = await boot();
+  pick(ctx, 'codex');
   assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
     'Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex');
+});
+
+test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  const doc = ctx.doc;
+  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'cursor']);
+  pick(ctx, 'cursor');
+  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'cursor');
+  const hint = doc.getElementById('engine-hint');
+  assert.equal(hint.hidden, false);
+  assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Settings › Models › Cursor.');
+  assert.doesNotMatch(hint.textContent, /including titles and summaries/);
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'cursor');
+});
+
+test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent model', async () => {
+  const ctx = await boot();
+  const np = ctx.window.__np;
+  np._setModels([
+    { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] },
+    { id: 'my-cursor-m', label: 'My Cursor', engine: 'cursor', efforts: [], custom: 'global' },
+  ]);
+  pick(ctx, 'cursor');
+  const def = { model: '', effort: '', fanOut: false, askQuestions: false, subagentModel: '' };
+  np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
+    model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
+  const model = ctx.doc.querySelector('#agents-rows .step-model');
+  assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', 'my-cursor-m']);
+  assert.equal(model.options[0].textContent, '(default model)');
+  assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
 });

@@ -299,6 +299,7 @@ export async function classifyTask(input, deps = {}) {
     return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
   }
   const known = new Set(agents.map((a) => a.key));
+  // Never 'cursor': its helper jobs run on Claude (model-env.mjs helperEngineFor).
   const onClaude = !engine || engine === 'claude';
   const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel, repoRoot: repoLook && !onClaude ? cwd : null, workspace });
   const nudge = repoLook ? ' Do not spend more tool calls: reply with the shape now.' : '';

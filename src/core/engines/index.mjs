@@ -1,12 +1,17 @@
 // src/core/engines/index.mjs
 // The engine registry: the only way to get a runner. An unknown name is a hard
 // error at run start, never a silent fallback; mock mode (WORCA_MOCK or
-// opts.mock) resolves every known engine to the offline mock.
+// opts.mock) resolves every known engine to the offline mock. An adapter is
+// {name, capabilities, run, classifyError[, preflight, unenforcedRules, partialRules,
+// partialRuleTerms]}: see the codex and cursor entries below.
 import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
 import { classifyError } from '../recoverable-error.mjs';
-import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules } from './codex.mjs';
+import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules,
+  CODEX_COMMAND_RULE_REACH } from './codex.mjs';
+import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
+  unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS } from './capabilities.mjs';
 
@@ -38,13 +43,21 @@ const claudeAdapter = Object.freeze({ name: 'claude', capabilities: claudeCapabi
 // an engine without it holds every rule its `permissionRules` capability says it can.
 // `partialRules(rules)`: the deny rules it holds only in part (codex: command rules); the gate refuses those
 // unless allowed too, and the spawn still applies them.
-const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError, preflight: codexPreflight, unenforcedRules, partialRules });
+// `partialRuleTerms`: how the gate and the run log name the rules this engine holds only in part.
+const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError,
+  preflight: codexPreflight, unenforcedRules, partialRules,
+  partialRuleTerms: Object.freeze({ kind: 'command rules', reach: CODEX_COMMAND_RULE_REACH }) });
+// cursor emits the normalized vocabulary itself (engines/cursor.mjs). Every rule it is given is partial (cursorRulePlan).
+const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
+  preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
+  partialRuleTerms: CURSOR_RULE_TERMS });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 
 const ENGINES = new Map([
   ['claude', claudeAdapter],
   ['codex', codexAdapter],
+  ['cursor', cursorAdapter],
   ['mock', mockAdapter],
 ]);
 

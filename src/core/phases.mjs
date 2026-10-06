@@ -316,7 +316,8 @@ function relRepo(p) {
  */
 export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
   if (!fanOut) return '';
-  if (engine && engine !== 'claude') return codexFanOutDirective();
+  // Codex has its own spawn_agent; Cursor has no sub-agents (fan-out never reaches it: _engineNodeOpts), so nothing.
+  if (engine && engine !== 'claude') return engine === 'codex' ? codexFanOutDirective() : '';
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
   // custom endpoint cannot serve — swap the sentence AND the model block.
@@ -883,11 +884,16 @@ export function taskHeader(ctx, title) {
   // project + root skills are COPIED into `<cwd>/.claude/skills` for the run (§5.7);
   // legacy delivers neither (skills.mjs copies bundle/plugin entries only), so the
   // legacy sentence stays exactly as today.
-  const onCodex = !!(ctx.node?.engine && ctx.node.engine !== 'claude');
-  const skillsHint = onCodex
+  // Codex lists the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
+  const nodeEngine = ctx.node?.engine || 'claude';
+  const skillsHint = nodeEngine === 'codex'
     ? `Project, root and your personal skills are mounted at .agents/skills for this run and are listed for ` +
       `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
       `skills) rather than guessing conventions.\n\n`
+    : nodeEngine !== 'claude'
+    ? `Project, root and your personal skills are mounted at .agents/skills for this run — each folder's SKILL.md ` +
+      `describes one skill; read any that fit (e.g. design, framework-pattern, or knowledge-graph skills) rather ` +
+      `than guessing conventions.\n\n`
     : detached
     ? `Project and root skills are mounted at .claude/skills for this run (in addition to your ` +
       `personal ~/.claude/skills) and are available via the Skill tool — invoke any that fit ` +

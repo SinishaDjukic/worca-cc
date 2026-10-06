@@ -17,8 +17,18 @@
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-export const MODEL_ENGINES = ['claude', 'codex'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : EFFORTS; }
+/** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
+export const CURSOR_EFFORTS = [];
+export const MODEL_ENGINES = ['claude', 'codex', 'cursor'];
+/** Engines that run worca's helper jobs (title, overview, PR description, Auto classifier, night decider) themselves.
+ *  Every other engine's run hands them to Claude: they read untrusted text, and only these engines can run them with
+ *  the shell off. The memory defrag and the workspace scan are agent nodes of the run, not helper jobs. */
+export const HELPER_ENGINES = ['claude', 'codex'];
+export function helperEngineFor(engine) { return HELPER_ENGINES.includes(engine) ? engine : 'claude'; }
+/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex only while
+ *  CODEX_ASK_LOCKDOWN is set; ask/models.mjs checks that). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+export const ASK_ENGINES = ['claude', 'codex'];
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models

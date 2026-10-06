@@ -49,6 +49,7 @@ import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowI
 import { resolveAutoModel } from './auto/model.mjs';
 import { autoModelsFor } from './auto/runnable.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
+import { helperEngineFor } from './model-env.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions, forgetMissingArtifacts,
@@ -109,7 +110,10 @@ export class GraphOrchestrator extends RunHarness {
     this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
     // Whether Claude Code is signed in decides which models Auto may design with
     // (auto/runnable.mjs). `claudeAuth` is the test seam.
-    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth : () => probeClaudeAuth({ bin: this.claude.bin || undefined });
+    // The run's `bin` only on a Claude run: on any other run it is another CLI's (cursor-agent on a Cursor run), and the
+    // probe reads Claude's own sign-in with no bin.
+    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth
+      : () => probeClaudeAuth({ bin: (this.claude.engine || 'claude') === 'claude' ? (this.claude.bin || undefined) : undefined });
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -285,18 +289,28 @@ export class GraphOrchestrator extends RunHarness {
 
   async _decideTopologyInner() {
     const registry = this.registry;
+    // Node models stay on the run engine; the classifier call runs on the helper engine (Claude on a Cursor run).
     const engine = this.claude.engine || 'claude';
-    let auth = 'unknown';
-    if (engine === 'claude') {
-      try { auth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+    const helper = helperEngineFor(engine);
+    let helperAuth = 'unknown';
+    if (helper === 'claude') {
+      // On a Claude run: the run's own sign-in. On a Cursor run: the helper's Claude (the seam probes with no bin).
+      try { helperAuth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
     }
     const catalog = (await listModels(this.projectDir)).filter((m) => (m.engine || 'claude') === engine);
-    const runnable = autoModelsFor(catalog, { auth, routed: modelHasBaseUrlRouting });
+    const runnable = autoModelsFor(catalog, { auth: engine === 'claude' ? helperAuth : 'unknown', routed: modelHasBaseUrlRouting });
     const models = runnable.models;
     const requireModel = runnable.requireModel;
     if (runnable.note) this._log('orchestrator', requireModel ? 'info' : 'warn', `auto: ${runnable.note}`);
     const slot = this._utilitySlot('classifier');
-    const model = resolveAutoModel(models, { engine, ...(engine !== 'claude' || slot.source === 'project' ? { setting: slot.model || '' } : {}) });
+    // The classifier's own call runs on the helper engine: on a Cursor run that is Claude, picking from Claude's catalog.
+    let callPool = models;
+    if (helper !== engine) {
+      const pool = autoModelsFor((await listModels(this.projectDir)).filter((m) => (m.engine || 'claude') === helper), { auth: helperAuth, routed: modelHasBaseUrlRouting });
+      if (pool.note) this._log('orchestrator', 'warn', `auto: ${pool.note}`);   // e.g. Claude signed out on a Cursor run
+      callPool = pool.models;
+    }
+    const model = resolveAutoModel(callPool, { engine: helper, ...(helper !== 'claude' || slot.source === 'project' ? { setting: slot.model || '' } : {}) });
     const fingerprint = this.isWorkspace
       ? await fingerprintWorkspace(this.members, {
         name: this.workspace.name,
@@ -393,9 +407,11 @@ export class GraphOrchestrator extends RunHarness {
 
   /** One round: classifier call (one assembler-driven retry), match, proposal. */
   async _autoRound({ registry, models, requireModel = false, model, fingerprint, extras, taskText, classify, round }) {
+    const runEngine = this.claude.engine || 'claude';
+    const helper = helperEngineFor(runEngine);
     const input = {
       taskText, extras, fingerprint, models, requireModel, registry,
-      engine: this.claude.engine || 'claude',
+      engine: helper,                                  // the classifier's own spawn: Claude on a Cursor run
       domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
       // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
@@ -405,7 +421,8 @@ export class GraphOrchestrator extends RunHarness {
       // falls back to the scratch dir, text-only, exactly as before. (A workspace run adds
       // `workspace` (members + each checkout, ./repos/<key> under a detached run root) and,
       // under legacy mode, the non-primary worktrees as `addDirs`.)
-      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, bin: this.claude.bin, mock: this.claude.mock,
+      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, mock: this.claude.mock,
+      ...(helper === runEngine && this.claude.bin ? { bin: this.claude.bin } : {}),   // the run's bin is the run engine's
       ...this._autoWorkspaceInput(),
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),

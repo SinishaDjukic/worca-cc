@@ -8149,3 +8149,6 @@ span.act-running-title{cursor:default}
 .inherit-row{display:flex;gap:8px;flex-wrap:wrap}
 .engine-card{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
 .engine-card h3{margin:0 0 6px}.engine-card h4{margin:12px 0 4px;font-size:13px}.pd-settings-card{margin-top:14px}
+/* A non-Claude engine card's readiness line (GET /api/engines): text only. */
+.engine-card-status{display:block;color:var(--ink-3);font-size:12px;margin:0 0 6px}
+.engine-card-status:empty{display:none}

@@ -53,12 +53,13 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, ASK_ENGINES, HELPER_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
 } from './model-env.mjs';
-import { CODEX_PRICES } from './list-prices.mjs';
+import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
+import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
 import { normalizeDomainList, normalizeDomainPattern, domainError, DOMAIN_LIST_MAX, RESERVED_KEY_VAR } from './web-allowlist.mjs';
 
@@ -1174,7 +1175,7 @@ export function askModelsSetting() {
 }
 export function assertAskEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;
-  if (!MODEL_ENGINES.includes(input)) throw new Error(`askEngine must be one of ${MODEL_ENGINES.join(' | ')}`);
+  if (!ASK_ENGINES.includes(input)) throw new Error(`askEngine must be one of ${ASK_ENGINES.join(' | ')}`);
   return input;
 }
 export async function setAskEngineSetting(input) {
@@ -1188,7 +1189,7 @@ export function assertAskModelsInput(input) {
   if (!isObj(input)) throw new Error('askModels must be { <engine>: { model, effort } | null }');
   const out = {};
   for (const [engine, value] of Object.entries(input)) {
-    if (!MODEL_ENGINES.includes(engine)) throw new Error(`askModels: unknown engine "${engine}"`);
+    if (!ASK_ENGINES.includes(engine)) throw new Error(`askModels: unknown engine "${engine}"`);
     out[engine] = normalizeModelPair(engine, value, `askModels.${engine}`);
   }
   return out;
@@ -1241,10 +1242,11 @@ export async function setStepModels(input) {
   await persistSettings(settings); return { stepModels: stepModelsSetting() };
 }
 export function assertUtilityModelsInput(input) {
-  if (!isObj(input)) throw new Error('utilityModels must be { codex: { <job>: { model, effort } | null } }');
+  if (!isObj(input)) throw new Error('utilityModels must be { <engine>: { <job>: { model, effort } | null } }');
   const out = {};
   for (const [engine, jobs] of Object.entries(input)) {
     if (engine === 'claude') throw new Error("utilityModels.claude: Claude's helper models are the titleModel, autoWorkflowModel, prDescriptionModel and memoryDefrag settings");
+    if (MODEL_ENGINES.includes(engine) && !HELPER_ENGINES.includes(engine)) throw new Error(`utilityModels.${engine}: ${engineLabel(engine)} runs no helper jobs — on a ${engineLabel(engine)} run they run on Claude (titleModel, autoWorkflowModel, prDescriptionModel)`);
     if (!MODEL_ENGINES.includes(engine)) throw new Error(`utilityModels: unknown engine "${engine}"`);
     if (!isObj(jobs)) throw new Error(`utilityModels.${engine} must be an object of job → { model, effort } | null`);
     out[engine] = {};
@@ -1275,6 +1277,7 @@ export function normalizeModelPair(engine, input, label = 'model') {
   const effort = input.effort == null ? '' : (typeof input.effort === 'string' ? input.effort.trim() : null);
   if (effort === null) throw new Error(`${label}.effort must be a string`);
   const efforts = effortsForEngine(engine);
+  if (effort && !efforts.length) throw new Error(`${label}: ${engineLabel(engine)} takes no effort`);
   if (effort && !efforts.includes(effort)) throw new Error(`${label}.effort must be one of ${efforts.join(' | ')}`);
   if (!model && !effort) return null;
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
@@ -1533,7 +1536,7 @@ function sanitizeGlobalModel(raw) {
   const id = typeof raw.id === 'string' ? raw.id.trim() : '';
   if (!id) return null;
   const label = (typeof raw.label === 'string' && raw.label.trim()) || id;
-  const engine = raw.engine === 'codex' ? 'codex' : 'claude';
+  const engine = MODEL_ENGINES.includes(raw.engine) ? raw.engine : 'claude';
   const efforts = Array.isArray(raw.efforts) ? orderEfforts(raw.efforts, engine) : [];
   const env = {};
   const rawEnv = raw.env && typeof raw.env === 'object' && !Array.isArray(raw.env) ? raw.env : {};
@@ -1555,6 +1558,10 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
+  if (engine === 'cursor') {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
     // hand-edited file carrying both is degraded, not rejected: the bridge wins.
@@ -1567,8 +1574,8 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: efforts.length ? efforts : [...effortsForEngine(engine)],
-    ...(engine === 'codex' ? { engine } : {}),
+    efforts: engine === 'cursor' ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
+    ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
     ...(upstream ? { upstream } : {}),
@@ -1650,13 +1657,24 @@ function assertEfforts(input, engine = 'claude') {
   const allowed = effortsForEngine(engine);
   if (isClearInput(input) || (Array.isArray(input) && input.length === 0)) return [];
   if (!Array.isArray(input)) throw new Error(`efforts must be an array drawn from ${allowed.join(' | ')}`);
+  if (!allowed.length) throw new Error(`${engineLabel(engine)} takes no effort`);
   for (const e of input) {
     if (!allowed.includes(e)) throw new Error(`unknown effort ${JSON.stringify(e)} — must be one of ${allowed.join(' | ')}`);
   }
   return orderEfforts(input, engine);
 }
 
-function assertModelEngine(input) { if (isClearInput(input) || input === 'claude') return 'claude'; if (input === 'codex') return input; throw new Error('engine must be one of claude | codex'); }
+function assertModelEngine(input) {
+  if (isClearInput(input) || input === 'claude') return 'claude';
+  if (MODEL_ENGINES.includes(input)) return input;
+  throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
+}
+/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
+function assertCursorFields(engine, env, upstream) {
+  if (engine !== 'cursor') return;
+  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
+  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+}
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
   if (engine !== 'codex') return;
@@ -1664,7 +1682,13 @@ function assertCodexFields(engine, env, upstream) {
   const why = codexUpstreamProblem(upstream);
   if (why) throw new Error(why);
 }
-function assertIdForEngine(id, engine) { if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id`); if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is a Codex built-in`); }
+function assertIdForEngine(id, engine) {
+  if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id`);
+  if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is a Codex built-in`);
+  // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
+  // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
+  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+}
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
  *  the PATCH delete marker (env: {KEY: null}). Returns entries as given. */
@@ -1695,7 +1719,7 @@ function storedModelShape(id, label, efforts, env, cost, upstream, engine = 'cla
   return {
     id,
     ...(label && label !== id ? { label } : {}),
-    ...(engine === 'codex' ? { engine } : {}),
+    ...(engine !== 'claude' ? { engine } : {}),
     ...(efforts.length && efforts.length !== effortsForEngine(engine).length ? { efforts } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -1743,6 +1767,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
+  assertCursorFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1771,7 +1796,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   const idx = findModelIndex(models, vid);
   if (idx === -1) throw new Error(`unknown model id ${JSON.stringify(vid)}`);
   const current = sanitizeGlobalModel(models[idx]);
-  const curEngine = current.engine === 'codex' ? 'codex' : 'claude';
+  const curEngine = MODEL_ENGINES.includes(current.engine) ? current.engine : 'claude';
   if (engine !== undefined && assertModelEngine(engine) !== curEngine) throw new Error("a model's engine cannot change — delete it and add it again");
 
   let nextLabel = current.label;
@@ -1804,6 +1829,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
+  assertCursorFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();

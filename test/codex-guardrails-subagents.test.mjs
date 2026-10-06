@@ -208,3 +208,8 @@ test('the memory block on codex says to read the rules (nothing loads them), and
   assert.match(codex, /Nothing has loaded them for you: before you start, read the files/);
   assert.equal(codex.split('\n').length, claude.split('\n').length);
 });
+
+test('fanOutDirective on cursor: nothing (no sub-agents) — never spawn_agent, the investigator role or the Agent tool', () => {
+  const t = fanOutDirective(true, { engine: 'cursor', subagentModel: 'auto', investigator: true });
+  assert.equal(t, '');
+});

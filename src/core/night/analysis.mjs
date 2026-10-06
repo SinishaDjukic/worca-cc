@@ -32,6 +32,7 @@ Reply with ONLY this JSON (no prose, no fences):
 /** The decider's system prompt on `engine`. On Codex the repository is read through worca's file tools
  *  (engines/codex-files-mcp.mjs), which take absolute paths. */
 export function nightDeciderSystemPrompt(engine = 'claude', cwd = '') {
+  // Never 'cursor': its helper jobs run on Claude (model-env.mjs helperEngineFor).
   if (!engine || engine === 'claude') return NIGHT_DECIDER_SYSTEM_PROMPT;
   return NIGHT_DECIDER_SYSTEM_PROMPT.replace('You may read the repository (Read, Grep, Glob) to check conventions and scope; never modify anything.',
     `You may read the repository at ${cwd} and the plan files with the read_file, grep and glob tools (absolute paths) to check conventions and scope; never modify anything.`);
@@ -135,6 +136,7 @@ export async function runNightAnalysis({ questions, cwd, task, planPaths, memory
   if (signal?.aborted) {
     throw Object.assign(new Error('aborted'), { name: 'AbortError', notStarted: true, costUsd: 0, priced: false, usage: {}, turnUsage: zeroTurnUsage(), turnModel: null, peakContextTokens: 0 });
   }
+  // Never 'cursor': its helper jobs run on Claude (model-env.mjs helperEngineFor).
   const onClaude = !engine || engine === 'claude';
   // On Codex: a read-only spawn with its shell off, reading the checkout and the plan folders through worca's
   // file tools under the same deny rules (NIGHT_DENY_RULES); maxTurns caps its tool calls (codex.mjs).

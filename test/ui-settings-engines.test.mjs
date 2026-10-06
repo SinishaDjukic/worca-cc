@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { renderEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId } from '../ui/public/engine-settings-view.mjs';
+import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId } from '../ui/public/engine-settings-view.mjs';
 import { EFFORTS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
 
 const trackDom = useDomRelease(afterEach);
@@ -44,7 +44,7 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
     'run.engine': { own: 'codex', inherited: { value: 'claude', source: 'default' } },
   }, jobs: { claude: [], codex: ['title', 'workspaceScan'] } });
   assert.equal(host.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor']);
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
@@ -52,7 +52,32 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
   assert.ok(extra.claude.classList.contains('engine-card-extra'));
 });
 
-async function boot(settings = {}, { hash = 'settings' } = {}) {
+test('renderEngineSection: the Cursor card has step rows, no helper rows, its own default label and the Claude-helpers note', () => {
+  const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+  const host = doc.getElementById('h');
+  renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
+    fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
+  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'cursor']);
+  const card = host.querySelector('.engine-card[data-engine="cursor"]');
+  assert.equal(card.querySelector('h3').textContent, 'Cursor');
+  const plan = card.querySelector('[data-setting="models.cursor.steps.planner"] .inherit-model');
+  assert.deepEqual([...plan.options].map((o) => o.value), ['', 'my-cursor-m']);
+  assert.match(plan.options[0].textContent, /Cursor's default model/);
+  assert.equal(card.querySelector('.engine-helpers'), null, 'no helper rows');
+  assert.match(card.querySelector('.hint').textContent, /Helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) run on Claude on a Cursor run\./);
+  assert.ok(card.querySelector('.engine-card-status'), 'a status line app.js fills');
+  assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
+});
+
+test('renderAskEngineSection offers no Cursor engine', () => {
+  const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+  const host = doc.getElementById('h');
+  renderAskEngineSection(host, { catalog: CATALOG });
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex']);
+});
+
+async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -69,6 +94,7 @@ async function boot(settings = {}, { hash = 'settings' } = {}) {
       return ok(body());
     }
     if (u.includes('/api/projects')) return ok({ projects: [] });
+    if (engines && u.endsWith('/api/engines')) return ok({ engines });
     return ok({ config: { steps: {}, customModels: [] }, models: CATALOG, steps: STEPS, efforts: ['medium', 'high'] });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -108,4 +134,18 @@ test('opening Settings › Models directly paints the Engines card (a link or a 
   const root = doc.getElementById('engine-settings-root');
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input')?.value, 'codex', 'painted without visiting another Settings tab first');
   assert.ok(doc.querySelector('#titleModel')?.options.length > 1, 'the Claude helper pickers too');
+});
+
+test('Settings › Models: each non-Claude card says whether its engine is ready (GET /api/engines)', async () => {
+  const { doc } = await boot({}, { hash: 'settings/models', engines: [
+    { name: 'claude', label: 'Claude', ready: true, reason: null },
+    { name: 'codex', label: 'Codex', ready: true, reason: 'could not check the codex sign-in' },
+    { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in' },
+  ] });
+  const status = (e) => doc.querySelector(`.engine-card[data-engine="${e}"] .engine-card-status`)?.textContent;
+  assert.equal(status('cursor'), 'Not ready — cursor-agent is not signed in');
+  assert.equal(status('codex'), 'Ready — could not check the codex sign-in');
+  assert.equal(status('claude'), undefined, 'the Claude card has no status line');
+  const { doc: none } = await boot({}, { hash: 'settings/models' });
+  assert.equal(none.querySelector('.engine-card[data-engine="cursor"] .engine-card-status').textContent, '', 'no engines array: an empty line');
 });

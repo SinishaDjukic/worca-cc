@@ -16,6 +16,7 @@ import { listAllPipelines, readPipelineByKey, readStoreMeta } from '../core/arti
 import { readUiInstance } from '../core/ui-instance.mjs';
 import { fmtDur, executionCount, loopDeliveries } from './render.mjs';
 import { formatInstant } from '../shared/schedule/recurrence.mjs';
+import { runCostLabel } from '../shared/engine-switch.mjs';
 
 export const RUNS_HELP = `worca runs — list and inspect pipeline runs
 
@@ -260,7 +261,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   out(`  duration ${fmtDur(row.total_active_ms)}${counts.length ? ` · ${counts.join(' · ')}` : ''}`);
   // COST's sub-line, the web UI's wording (app.js: `across ${steps.length} steps`).
   const steps = Array.isArray(st.steps) ? st.steps : [];
-  out(`  cost     ${usd(row.total_cost_usd)}${steps.length ? ` · across ${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}`);
+  out(`  cost     ${runCostLabel(st.runEngine, row.total_cost_usd, usd)}${steps.length ? ` · across ${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}`);
   if (branch && (branch.feature || branch.source)) {
     // The web UI's order (hd-base: `dev → worca-cc/…`), for one mental model.
     const b = branch.source && branch.feature

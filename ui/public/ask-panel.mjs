@@ -18,6 +18,7 @@ import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
+import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
@@ -2825,13 +2826,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
     // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).
-    const engine = defaults && defaults.engine && defaults.engine.value === 'codex' ? 'codex' : 'claude';
+    const engine = defaults && defaults.engine && ENGINE_NAMES.includes(defaults.engine.value) ? defaults.engine.value : 'claude';
     const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
     if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
     const allModels = Array.isArray(cfg.models) ? cfg.models : [];
-    const models = allModels.filter((m) => (m && m.engine === 'codex' ? 'codex' : 'claude') === engine);
+    const models = allModels.filter((m) => ((m && m.engine) || 'claude') === engine);
     // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
     // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
     // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
@@ -2840,7 +2841,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
       models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
     return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine,
-      models, efforts: engine === 'codex' ? [...ENGINE_EFFORTS.codex] : (Array.isArray(cfg.efforts) ? cfg.efforts : []),
+      models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
@@ -3010,7 +3011,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
       subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
       subWrap.appendChild(subSel);
-      if (lane.engine !== 'codex') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex run has none
+      if (lane.engine === 'claude') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex or Cursor run has none
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }

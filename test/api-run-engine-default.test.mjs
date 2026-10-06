@@ -91,6 +91,29 @@ test('POST /api/settings runEngine: stored, shown, validated, cleared', async ()
   assert.deepEqual((await get(`/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}`)).body.engine, { value: 'codex', source: 'user' });
   const bad = await post('/api/settings', { runEngine: 'gpt' });
   assert.equal(bad.status, 400);
-  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex.');
+  assert.equal((await bad.json()).error, '“Default engine” must be one of claude, codex, cursor.');
   assert.equal((await (await post('/api/settings', { runEngine: null })).json()).runEngine, null);
+});
+
+test('GET /api/engines: each engine\'s readiness from its own preflight; ?recheck=1 checks again', { skip: process.platform === 'win32' && 'POSIX shell fixtures' }, async () => {
+  const { fakeCursor } = await import('./helpers/fake-cursor.mjs');
+  const { dirname } = await import('node:path');
+  const binDir = await mkdtemp(join(tmpdir(), 'worca-cc-engines-bin-'));
+  const fake = fakeCursor(binDir, 'x', { statusText: 'Not logged in', statusExit: 1 });
+  const saved = { WORCA_MOCK: process.env.WORCA_MOCK, WORCA_CURSOR_BIN: process.env.WORCA_CURSOR_BIN, CURSOR_API_KEY: process.env.CURSOR_API_KEY, PATH: process.env.PATH };
+  process.env.WORCA_MOCK = '';
+  process.env.WORCA_CURSOR_BIN = fake.bin;
+  delete process.env.CURSOR_API_KEY;
+  process.env.PATH = `${dirname(process.execPath)}:/bin:/usr/bin`;
+  try {
+    const r = await get('/api/engines?recheck=1');
+    assert.equal(r.status, 200);
+    const by = Object.fromEntries(r.body.engines.map((e) => [e.name, e]));
+    assert.equal(by.claude.ready, true);
+    assert.equal(by.cursor.ready, false);
+    assert.match(by.cursor.reason, /not signed in/);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await rm(binDir, { recursive: true, force: true });
+  }
 });

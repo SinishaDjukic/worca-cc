@@ -440,3 +440,14 @@ test('a $0 review (mock / free model) keeps its chip and band at $0.00; several 
   assert.deepEqual(awayOnly(w.feet.n_impl).map((b) => [b.variant, b.label, b.right, b.title]), [['stopped', '2 reviews stopped', '', 'Away mode · 2 reviews stopped']],
     'no booked band for a review that never booked; an unpriced lower bound stays blank');
 });
+
+test('a run on an engine that reports no cost (Cursor): no $0.00 pill, no $ in totals or the strip; Claude unchanged', () => {
+  const steps = [impl(1, { activeMs: 63000, costUsd: 0.6 }), impl(2, { costUsd: 0 })];
+  const d = decorFromState(S({ steps, runEngine: 'cursor' }));
+  assert.deepEqual(d.footers.n_impl.rows.map((r) => r.cost), ['', '']);
+  assert.equal(d.totals.n_impl.cost, '');
+  assert.equal(d.footers.n_impl.summary, '2 runs', 'the strip never shows worca\'s helper share as the run\'s cost');
+  const c = decorFromState(S({ steps, runEngine: 'claude' }));
+  assert.equal(c.totals.n_impl.cost, '$0.60');
+  assert.equal(c.footers.n_impl.summary, '2 runs · $0.60');
+});
