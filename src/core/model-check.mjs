@@ -143,8 +143,8 @@ export function providerProbeKey(up) {
 function timeBox(p, ms) {
   let t;
   const timeout = new Promise((resolve) => {
+    // Not unref'd: the caller is awaiting this answer, and the finally below clears it on settle.
     t = setTimeout(() => resolve({ ok: false, kind: 'timeout', message: `no answer within ${Math.max(1, Math.round(ms / 1000))} s` }), ms);
-    t.unref?.();
   });
   return Promise.race([p, timeout]).finally(() => clearTimeout(t));
 }

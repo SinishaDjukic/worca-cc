@@ -32,7 +32,11 @@ test('failures carry a kind the pre-run check can act on', async () => {
       assert.equal(r.kind, 'unreachable'); assert.match(r.message, /endpoint unreachable/);
     } },
     { name: 'timeoutMs aborts → timeout', run: async () => {
-      const hang = (_u, { signal }) => new Promise((_r, rej) => signal.addEventListener('abort', () => rej(signal.reason), { once: true }));
+      // AbortSignal.timeout never holds the event loop open; a real fetch's socket does, so the fake holds a timer.
+      const hang = (_u, { signal }) => new Promise((_r, rej) => {
+        const held = setInterval(() => {}, 1000);
+        signal.addEventListener('abort', () => { clearInterval(held); rej(signal.reason); }, { once: true });
+      });
       const r = await testProviderConnection('openai', { fetch: hang, timeoutMs: 30 });
       assert.equal(r.kind, 'timeout');
     } },
