@@ -1,0 +1,8 @@
+{
+  "name": "worca-ai-enablement",
+  "version": "0.1.0",
+  "description": "AI analysis and AI enablement pipelines: score a repository's AI-readiness, show the scorecard, then generate CLAUDE.md, skills, agents and tests on a branch.",
+  "author": "Bulibas",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=4 <5" }
+}

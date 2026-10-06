@@ -1,0 +1,160 @@
+{
+  "name": "AI analysis",
+  "version": 2,
+  "domain": "enablement",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_scope",
+      "kind": "agent",
+      "key": "enableClarifier",
+      "x": 320,
+      "y": 200,
+      "config": {
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_analyze",
+      "kind": "agent",
+      "key": "enableAnalyzer",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_assess",
+      "kind": "agent",
+      "key": "enableAssessor",
+      "x": 880,
+      "y": 200,
+      "config": {
+        "askQuestions": true,
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_or",
+      "kind": "or",
+      "x": 1160,
+      "y": 200,
+      "config": {
+        "arity": 2
+      }
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 1440,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_scope",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_analyze",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_analyze",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_assess",
+        "port": "proceed"
+      },
+      "to": {
+        "node": "n_or",
+        "port": "in1"
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_assess",
+        "port": "stopped"
+      },
+      "to": {
+        "node": "n_or",
+        "port": "in2"
+      }
+    },
+    {
+      "id": "w9",
+      "from": {
+        "node": "n_or",
+        "port": "out"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

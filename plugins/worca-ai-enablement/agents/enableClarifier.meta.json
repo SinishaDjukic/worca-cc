@@ -1,0 +1,150 @@
+{
+  "key": "enableClarifier",
+  "metaVersion": 2,
+  "runnerType": "clarifier",
+  "mockRole": "clarify",
+  "domain": "enablement",
+  "displayName": "Scope",
+  "description": "Asks the six set-up questions for an AI analysis or enablement run.",
+  "color": "violet",
+  "scope": "project",
+  "agentFile": "enableClarifier.md",
+  "order": 10,
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "answers",
+      "type": "json",
+      "filename": "enable-clarify.json",
+      "artifactKind": "enable-clarify"
+    }
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "ask": {
+    "forms": {
+      "enable-scope": {
+        "version": 1,
+        "title": "Set up this run",
+        "data": {
+          "type": "object",
+          "properties": {}
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "testTier",
+            "vendoringDepth",
+            "canary"
+          ],
+          "properties": {
+            "testTier": {
+              "type": "string",
+              "enum": [
+                "scaffold",
+                "docs-only",
+                "smoke",
+                "characterization"
+              ],
+              "default": "scaffold"
+            },
+            "vendoringDepth": {
+              "type": "string",
+              "enum": [
+                "full",
+                "baseline-only",
+                "none"
+              ],
+              "default": "full"
+            },
+            "multiToolTargets": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "AGENTS.md",
+                  ".cursor/rules",
+                  ".github/copilot-instructions.md"
+                ]
+              },
+              "default": [
+                "AGENTS.md",
+                ".cursor/rules",
+                ".github/copilot-instructions.md"
+              ]
+            },
+            "canary": {
+              "type": "boolean",
+              "default": true
+            },
+            "scopeConstraints": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "optionalTools": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "writing-plans",
+                  "executing-plans",
+                  "requesting-code-review"
+                ]
+              },
+              "default": []
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "select",
+            "field": "testTier",
+            "label": "How much testing should we set up?",
+            "style": "cards",
+            "labels": {
+              "scaffold": "Scaffold",
+              "docs-only": "Docs only",
+              "smoke": "Smoke tests",
+              "characterization": "Characterization"
+            }
+          },
+          {
+            "widget": "select",
+            "field": "vendoringDepth",
+            "label": "Bundle reusable AI skills?",
+            "style": "segmented"
+          },
+          {
+            "widget": "multiselect",
+            "field": "multiToolTargets",
+            "label": "Which other AI tools should we set up? (CLAUDE.md is always produced)",
+            "style": "chips"
+          },
+          {
+            "widget": "toggle",
+            "field": "canary",
+            "label": "Quick test-drive at the end"
+          },
+          {
+            "widget": "textarea",
+            "field": "scopeConstraints",
+            "label": "Folders to focus on or avoid",
+            "rows": 2
+          },
+          {
+            "widget": "multiselect",
+            "field": "optionalTools",
+            "label": "Optional AI skills to add"
+          }
+        ],
+        "example": {}
+      }
+    }
+  }
+}

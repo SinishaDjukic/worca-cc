@@ -1,0 +1,56 @@
+{
+  "key": "enableInfra",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "enablement",
+  "displayName": "Generate",
+  "description": "Writes CLAUDE.md, rules, project skills and agents, multi-tool files and bundled skills for the kept gaps.",
+  "color": "green",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
+  "sideEffect": "code",
+  "agentFile": "enableInfra.md",
+  "order": 13,
+  "requiresSkills": [
+    "enable-rubric"
+  ],
+  "inputs": [
+    {
+      "id": "graph",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "gaps",
+      "type": "json",
+      "directive": "Close every gap whose verdict is keep. Skip waived gaps and say so in tools-report.json under \"skipped\"."
+    },
+    {
+      "id": "fixes",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "## Fix cycle\n\nAddress EVERY critical and major finding in the report below that falls in your domain: the generated instruction files, skills, agents, rules, settings and multi-tool files. Findings that name test files or the test tier are handled by the Tests step, which re-runs right after you. Change only what the findings name; keep every other generated file byte-identical."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "void"
+    },
+    {
+      "id": "tools",
+      "type": "json",
+      "filename": "tools-report.json",
+      "artifactKind": "enable-tools"
+    }
+  ]
+}

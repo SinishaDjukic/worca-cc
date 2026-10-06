@@ -1,0 +1,58 @@
+{
+  "key": "enableCanary",
+  "metaVersion": 2,
+  "runnerType": "verifier",
+  "mockRole": "generic-verifier",
+  "domain": "enablement",
+  "displayName": "Canary",
+  "description": "Test-drives the generated guidance on one small task and reports what was missing.",
+  "color": "red",
+  "scope": "project",
+  "agentFile": "enableCanary.md",
+  "order": 16,
+  "promptHints": "Cycle: {cycle}.",
+  "verdict": {
+    "filename": "enable-canary-verdict-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "graph",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "report",
+      "type": "md",
+      "when": "always",
+      "filename": "canary-cycle{cycle}.md",
+      "artifactKind": "enable-canary"
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "canary-findings-cycle{cycle}.md",
+      "artifactKind": "enable-review"
+    },
+    {
+      "id": "pass",
+      "type": "md",
+      "when": "clean",
+      "filename": "canary-cycle{cycle}.md",
+      "artifactKind": "enable-canary"
+    }
+  ]
+}

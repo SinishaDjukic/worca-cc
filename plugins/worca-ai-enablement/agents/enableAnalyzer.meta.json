@@ -1,0 +1,50 @@
+{
+  "key": "enableAnalyzer",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "enablement",
+  "displayName": "Analyze",
+  "description": "Maps the repository (graphify when installed), detects skill, agent and pure-unit candidates, scores the baseline readiness.",
+  "color": "blue",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "enableAnalyzer.md",
+  "order": 11,
+  "requiresSkills": [
+    "enable-rubric"
+  ],
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "graph",
+      "type": "json",
+      "filename": "graph-summary.json",
+      "artifactKind": "enable-graph",
+      "extraFiles": [
+        {
+          "kind": "enable-graph-report",
+          "glob": "graphify-out/GRAPH_REPORT.md"
+        }
+      ]
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "filename": "analysis.md",
+      "artifactKind": "enable-analysis"
+    }
+  ]
+}

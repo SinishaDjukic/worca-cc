@@ -11,6 +11,7 @@
     "plugins/atlassian-mcp",
     "plugins/firebase-mcp",
     "plugins/railway-mcp",
-    "plugins/notion-mcp"
+    "plugins/notion-mcp",
+    "plugins/worca-ai-enablement"
   ]
 }

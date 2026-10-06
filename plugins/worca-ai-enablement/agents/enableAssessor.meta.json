@@ -1,0 +1,287 @@
+{
+  "key": "enableAssessor",
+  "metaVersion": 2,
+  "runnerType": "verifier",
+  "mockRole": "generic-verifier",
+  "domain": "enablement",
+  "displayName": "Assess",
+  "description": "Writes the baseline readiness scorecard and asks you to approve the gaps before any file is generated.",
+  "color": "amber",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "enableAssessor.md",
+  "order": 12,
+  "promptHints": "Cycle: {cycle}.",
+  "requiresSkills": [
+    "enable-rubric"
+  ],
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "verdict": {
+    "filename": "enable-assess-verdict-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "graph",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "task",
+      "type": "md"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "readiness",
+      "type": "md",
+      "when": "always",
+      "filename": "readiness-baseline.md",
+      "artifactKind": "enable-readiness",
+      "extraFiles": [
+        {
+          "kind": "enable-readiness-json",
+          "glob": "readiness/baseline.json"
+        },
+        {
+          "kind": "enable-scorecard",
+          "glob": "readiness/baseline.html"
+        }
+      ]
+    },
+    {
+      "id": "gaps",
+      "type": "json",
+      "when": "always",
+      "filename": "approved-gaps.json",
+      "artifactKind": "enable-gaps"
+    },
+    {
+      "id": "proceed",
+      "type": "md",
+      "when": "clean",
+      "filename": "analysis-approved.md",
+      "artifactKind": "enable-approved"
+    },
+    {
+      "id": "stopped",
+      "type": "md",
+      "when": "blocking",
+      "filename": "analysis-stopped.md",
+      "artifactKind": "enable-stopped"
+    }
+  ],
+  "ask": {
+    "forms": {
+      "approve-readiness": {
+        "version": 1,
+        "title": "AI-readiness today \u2014 approve what to fix",
+        "data": {
+          "type": "object",
+          "required": [
+            "summary",
+            "score",
+            "dimensions",
+            "gaps"
+          ],
+          "properties": {
+            "summary": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "score": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "dimensions": {
+              "type": "array",
+              "maxItems": 9,
+              "items": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "score": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 300
+                  }
+                }
+              }
+            },
+            "gaps": {
+              "type": "array",
+              "maxItems": 30,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "title"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "critical",
+                      "major",
+                      "minor",
+                      "suggestion"
+                    ]
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "detail": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "decision",
+            "gaps"
+          ],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": [
+                "proceed",
+                "stop"
+              ],
+              "default": "proceed"
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "verdict"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "keep",
+                      "waive"
+                    ],
+                    "default": "keep"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 4000
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "markdown",
+            "bind": "data.summary"
+          },
+          {
+            "widget": "table",
+            "bind": "data.dimensions",
+            "label": "Dimensions",
+            "columns": [
+              {
+                "key": "key",
+                "label": "Dimension"
+              },
+              {
+                "key": "score",
+                "label": "Score",
+                "align": "right"
+              },
+              {
+                "key": "reason",
+                "label": "Why"
+              }
+            ]
+          },
+          {
+            "widget": "review-list",
+            "bind": "data.gaps",
+            "field": "gaps",
+            "label": "Gaps to fix (waive the ones you do not want)"
+          },
+          {
+            "widget": "select",
+            "field": "decision",
+            "label": "Continue to enablement?",
+            "style": "segmented",
+            "labels": {
+              "proceed": "Proceed and fix the kept gaps",
+              "stop": "Stop after the analysis"
+            }
+          },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "Notes for the generators",
+            "rows": 2
+          }
+        ],
+        "example": {
+          "summary": "Started at 28/100.",
+          "score": 28,
+          "dimensions": [
+            {
+              "key": "docs",
+              "score": 40,
+              "reason": "README only"
+            },
+            {
+              "key": "realTests",
+              "reason": "n/a \u2014 no pure units"
+            }
+          ],
+          "gaps": [
+            {
+              "id": "g1",
+              "severity": "major",
+              "title": "No CLAUDE.md",
+              "detail": "Agents start blind."
+            }
+          ]
+        }
+      }
+    }
+  }
+}

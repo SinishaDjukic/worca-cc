@@ -1,0 +1,41 @@
+{
+  "key": "enableTests",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "enablement",
+  "displayName": "Tests",
+  "description": "Sets up the chosen test tier and seeds passing tests over the pure units the analyzer found.",
+  "color": "peach",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
+  "sideEffect": "code",
+  "agentFile": "enableTests.md",
+  "order": 14,
+  "promptHints": "Cycle: {cycle}.",
+  "inputs": [
+    {
+      "id": "graph",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "void"
+    }
+  ]
+}

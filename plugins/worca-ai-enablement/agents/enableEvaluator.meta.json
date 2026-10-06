@@ -1,0 +1,75 @@
+{
+  "key": "enableEvaluator",
+  "metaVersion": 2,
+  "runnerType": "verifier",
+  "mockRole": "generic-verifier",
+  "domain": "enablement",
+  "displayName": "Evaluate",
+  "description": "Scores the generated infrastructure, exercises it, writes the final scorecard and sends blocking findings back to Generate.",
+  "color": "amber",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "enableEvaluator.md",
+  "order": 15,
+  "promptHints": "Cycle: {cycle}.",
+  "requiresSkills": [
+    "enable-rubric"
+  ],
+  "verdict": {
+    "filename": "enable-review-cycle{cycle}.json"
+  },
+  "inputs": [
+    {
+      "id": "graph",
+      "type": "json"
+    },
+    {
+      "id": "answers",
+      "type": "json",
+      "required": false,
+      "as": "answers"
+    },
+    {
+      "id": "tools",
+      "type": "json"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "readiness",
+      "type": "md",
+      "when": "always",
+      "filename": "readiness-final-cycle{cycle}.md",
+      "artifactKind": "enable-readiness",
+      "extraFiles": [
+        {
+          "kind": "enable-readiness-json",
+          "glob": "readiness/final-cycle*.json"
+        },
+        {
+          "kind": "enable-scorecard",
+          "glob": "readiness/final-cycle*.html"
+        }
+      ]
+    },
+    {
+      "id": "findings",
+      "type": "md",
+      "when": "blocking",
+      "filename": "enable-review-cycle{cycle}.md",
+      "artifactKind": "enable-review"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    }
+  ]
+}

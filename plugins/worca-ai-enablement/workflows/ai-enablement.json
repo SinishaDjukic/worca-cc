@@ -1,0 +1,429 @@
+{
+  "name": "AI enablement",
+  "version": 2,
+  "domain": "enablement",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_scope",
+      "kind": "agent",
+      "key": "enableClarifier",
+      "x": 320,
+      "y": 200,
+      "config": {
+        "askQuestions": true
+      }
+    },
+    {
+      "id": "n_analyze",
+      "kind": "agent",
+      "key": "enableAnalyzer",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_assess",
+      "kind": "agent",
+      "key": "enableAssessor",
+      "x": 880,
+      "y": 200,
+      "config": {
+        "askQuestions": true,
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_infra",
+      "kind": "agent",
+      "key": "enableInfra",
+      "x": 1160,
+      "y": 200,
+      "config": {
+        "awaitAll": true
+      }
+    },
+    {
+      "id": "n_tests",
+      "kind": "agent",
+      "key": "enableTests",
+      "x": 1440,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_eval",
+      "kind": "agent",
+      "key": "enableEvaluator",
+      "x": 1720,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_canary",
+      "kind": "agent",
+      "key": "enableCanary",
+      "x": 2000,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_fix",
+      "kind": "or",
+      "x": 1580,
+      "y": 430,
+      "config": {
+        "arity": 2
+      }
+    },
+    {
+      "id": "n_done",
+      "kind": "or",
+      "x": 2280,
+      "y": 200,
+      "config": {
+        "arity": 2
+      }
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 2560,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_scope",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_analyze",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_analyze",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_assess",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_assess",
+        "port": "proceed"
+      },
+      "to": {
+        "node": "n_infra",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_infra",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w9",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_infra",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w10",
+      "from": {
+        "node": "n_assess",
+        "port": "gaps"
+      },
+      "to": {
+        "node": "n_infra",
+        "port": "gaps"
+      }
+    },
+    {
+      "id": "w11",
+      "from": {
+        "node": "n_infra",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_tests",
+        "port": "after"
+      }
+    },
+    {
+      "id": "w12",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_tests",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w13",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_tests",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w14",
+      "from": {
+        "node": "n_tests",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_eval",
+        "port": "after"
+      }
+    },
+    {
+      "id": "w15",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_eval",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w16",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_eval",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w17",
+      "from": {
+        "node": "n_infra",
+        "port": "tools"
+      },
+      "to": {
+        "node": "n_eval",
+        "port": "tools"
+      }
+    },
+    {
+      "id": "w18",
+      "from": {
+        "node": "n_eval",
+        "port": "findings"
+      },
+      "to": {
+        "node": "n_fix",
+        "port": "in1"
+      },
+      "config": {
+        "maxCycles": 2
+      }
+    },
+    {
+      "id": "w19",
+      "from": {
+        "node": "n_eval",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_canary",
+        "port": "after"
+      }
+    },
+    {
+      "id": "w20",
+      "from": {
+        "node": "n_analyze",
+        "port": "graph"
+      },
+      "to": {
+        "node": "n_canary",
+        "port": "graph"
+      }
+    },
+    {
+      "id": "w21",
+      "from": {
+        "node": "n_scope",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_canary",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w22",
+      "from": {
+        "node": "n_canary",
+        "port": "findings"
+      },
+      "to": {
+        "node": "n_fix",
+        "port": "in2"
+      },
+      "config": {
+        "maxCycles": 2
+      }
+    },
+    {
+      "id": "w23",
+      "from": {
+        "node": "n_fix",
+        "port": "out"
+      },
+      "to": {
+        "node": "n_infra",
+        "port": "fixes"
+      }
+    },
+    {
+      "id": "w24",
+      "from": {
+        "node": "n_canary",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_done",
+        "port": "in1"
+      }
+    },
+    {
+      "id": "w25",
+      "from": {
+        "node": "n_assess",
+        "port": "stopped"
+      },
+      "to": {
+        "node": "n_done",
+        "port": "in2"
+      }
+    },
+    {
+      "id": "w26",
+      "from": {
+        "node": "n_done",
+        "port": "out"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    },
+    {
+      "id": "w27",
+      "from": {
+        "node": "n_infra",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_tests",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w28",
+      "from": {
+        "node": "n_tests",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_eval",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w29",
+      "from": {
+        "node": "n_eval",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_canary",
+        "port": "await"
+      }
+    }
+  ]
+}
