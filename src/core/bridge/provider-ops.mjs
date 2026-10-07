@@ -449,6 +449,8 @@ export function formatOpenRouterKeyInfo(info) {
 
 // ── key-based providers: connection test ────────────────────────────────────
 
+const isTimeout = (err) => !!err && (err.name === 'TimeoutError' || err.code === 'ETIMEDOUT');
+
 /**
  * A cheap reachability + auth check for openai / anthropic (§8.1): GET the models list with the
  * configured key. Never throws.
@@ -457,21 +459,27 @@ export function formatOpenRouterKeyInfo(info) {
  * Providers card. Testing the stored ones instead made the button lie: type a local llama.cpp URL,
  * press Test, and the answer was "no API key configured", because it had tested api.openai.com.
  * A masked echo (••…) means "keep what is stored" exactly as a save does.
- * @returns {Promise<{ok:true, models?:number}|{ok:false, message:string}>}
+ * Failures carry a `kind` for callers that act on them (model-check.mjs): 'broker' | 'config'
+ * (no key / not signed in) | 'auth' (rejected) | 'unreachable' | 'status' | 'timeout'.
+ * @returns {Promise<{ok:true, models?:number}|{ok:false, kind:string, message:string}>}
  */
-export async function testProviderConnection(name, { fetch: f = globalThis.fetch, baseUrl = '', apiKey } = {}) {
+export async function testProviderConnection(name, { fetch: f = globalThis.fetch, baseUrl = '', apiKey, timeoutMs = 15_000 } = {}) {
   // Credential broker: keys are per person and tested where they are saved.
   if (brokerEnabled()) {
     const keyPage = cachedBrokerInfo()?.publicUrl;
-    return { ok: false, message: `keys are held by the credential broker: test yours on the key page${keyPage ? ` (${keyPage})` : ''}` };
+    return { ok: false, kind: 'broker', message: `keys are held by the credential broker: test yours on the key page${keyPage ? ` (${keyPage})` : ''}` };
   }
   if (name === 'copilot') {
     const c = providerConfig('copilot');
     const token = resolveProviderSecret(c.githubToken);
-    if (!token) return { ok: false, message: 'not signed in' };
-    try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
+    if (!token) return { ok: false, kind: 'config', message: 'not signed in' };
+    try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) {
+      const kind = err?.code === 'AUTH' ? 'auth' : err?.code === 'NOT_SIGNED_IN' ? 'config'
+        : err?.code === 'EXCHANGE' ? 'status' : isTimeout(err) ? 'timeout' : 'unreachable';
+      return { ok: false, kind, message: err.message || String(err) };
+    }
   }
-  if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
+  if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, kind: 'config', message: `unknown provider ${name}` };
   const stored = providerConfig(name);
   const typedKey = typeof apiKey === 'string' && !apiKey.startsWith('••') ? apiKey.trim() : null;
   const p = {
@@ -481,26 +489,26 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
   };
   const key = resolveProviderSecret(p.apiKey);
   const keyIsSet = typedKey === null ? providerSecretSet(name) : !!typedKey;
-  if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
+  if (!key && (keyIsSet || !keyOptional(name, p.baseUrl))) return { ok: false, kind: 'config', message: keyIsSet ? 'the key\'s ${VAR} is not set in worca\'s environment' : `no API key configured for ${p.baseUrl}` };
   const base = (p.baseUrl || '').replace(/\/+$/, '');
   const url = name === 'anthropic' ? (/\/v1$/.test(base) ? `${base}/models` : `${base}/v1/models`) : `${base}/models`;
   const headers = name === 'anthropic' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : (key ? { authorization: `Bearer ${key}` } : {});
   try {
-    const r = await f(url, { headers, signal: AbortSignal.timeout(15_000) });
-    if (r.status === 401 || r.status === 403) return { ok: false, message: `authentication failed (${r.status})` };
-    if (!r.ok) return { ok: false, message: `endpoint answered ${r.status}` };
+    const r = await f(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+    if (r.status === 401 || r.status === 403) return { ok: false, kind: 'auth', message: `authentication failed (${r.status})` };
+    if (!r.ok) return { ok: false, kind: 'status', message: `endpoint answered ${r.status}` };
     const j = await r.json().catch(() => null);
     const n = j && Array.isArray(j.data) ? j.data.length : undefined;
     // OpenRouter lists its models without a key, so a reachable list proves nothing about the key:
     // its /key does, and says what the key may still spend. A key it rejects fails the test.
     if (name === 'openai' && isOpenRouter(base)) {
-      if (!key) return { ok: false, message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
+      if (!key) return { ok: false, kind: 'config', message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
       const info = await openRouterKeyInfo(base, key, { fetch: f });
-      if (!info) return { ok: false, message: 'authentication failed — OpenRouter did not accept the key (its /key check failed)' };
+      if (!info) return { ok: false, kind: 'auth', message: 'authentication failed — OpenRouter did not accept the key (its /key check failed)' };
       return { ok: true, ...(n !== undefined ? { models: n } : {}), openrouter: info, detail: formatOpenRouterKeyInfo(info) };
     }
     return { ok: true, ...(n !== undefined ? { models: n } : {}) };
   } catch (err) {
-    return { ok: false, message: `endpoint unreachable — ${err && err.message ? err.message : String(err)}` };
+    return { ok: false, kind: isTimeout(err) ? 'timeout' : 'unreachable', message: `endpoint unreachable — ${err && err.message ? err.message : String(err)}` };
   }
 }

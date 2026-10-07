@@ -400,6 +400,39 @@ click Apply.
   same setters the Models view calls, as a dry run), and applying runs them for
   real.
 
+## Before a run starts
+
+Before a run spends anything, worca checks every model the run's agent nodes will use (a node's
+own pick, else the run's model, else Claude Code's default). If one is unavailable the run stops
+up front and the message names the node(s), the model, the reason and the fix.
+
+| Model | What is checked |
+| --- | --- |
+| Bridged (Copilot, OpenAI, Anthropic-key upstream) | Sign-in, terms, key and `${VAR}` first, then one cached, time-boxed probe per provider (Copilot token exchange, or `GET /models`). The probe is skipped when the credential broker is on. |
+| Plain Claude id, or no model | `claude auth status` (cached for 60 s). Only a definite "signed out" blocks. |
+| Env-routed endpoint (`ANTHROPIC_BASE_URL`) | Every `${VAR}` in its env must be set, and plugin `{secret}`s too. No network. |
+| Id that is not in the catalog | Blocked unless it looks like an Anthropic id: raw `claude-*` ids (Bedrock and Vertex forms too) and the CLI aliases (`sonnet`, `opus`, `haiku`, …) pass. |
+
+Only a definite answer blocks: a rejected credential, a refused connection, a missing key or a
+signed-out CLI. An ambiguous one (a gateway without `/models` answering 404, a probe that takes
+longer than 8 s, an old CLI) is a warning in the run log and the run starts. Probe answers are
+cached for 5 minutes (30 s after a failure, so a fix is picked up quickly).
+
+Where you see it:
+
+- **New pipeline**: a warning line under the form when the picked workflow has a problem (local
+  checks only, no network).
+- **Start**: the web UI and scheduled runs get an immediate `409` (`code: "model-unavailable"`)
+  and no run is created. A scheduled run is marked failed with "could not start". The CLI prints
+  `Preflight failed: …` and exits with `1`.
+- **Auto workflow**: only the run model is checked at launch. Once Auto has chosen the workflow,
+  its models are checked before its first agent step; a problem pauses the run with the reason
+  "a model this run uses is unavailable".
+- **Resume**: the models of the nodes that have not run yet are checked again. A problem keeps
+  the run paused with the same reason; it never ends the run. Fix the model, then resume.
+
+There is no override: fix the model (or the provider) and start again.
+
 ## Troubleshooting
 
 - **An imported local model has no Prompt limit, or a wrong one** — the server did

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { _runOptsForTests as runOpts } from '../src/core/phases.mjs';
+import { modelEnvSource } from '../src/core/config.mjs';
 import { addGlobalModel } from '../src/core/settings.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 
@@ -51,4 +52,14 @@ test('runOpts leaves modelEnv undefined for env-less and unconfigured models', a
   assert.equal(runOpts({ ...CTX_BASE, claudeOpts: { model: 'plain-model' } }, CALL).modelEnv, undefined);
   assert.equal(runOpts({ ...CTX_BASE, claudeOpts: { model: 'claude-opus-5-5' } }, CALL).modelEnv, undefined);
   assert.equal(runOpts({ ...CTX_BASE, claudeOpts: {} }, CALL).modelEnv, undefined, 'no model -> no env');
+});
+
+test('modelEnvSource: the raw env resolveModelEnv would prepare, with its owner', async () => {
+  await addGlobalModel({ id: 'gw-src', label: 'Gateway', efforts: ['medium'], env: { ANTHROPIC_BASE_URL: '${GW_SRC_URL}' } });
+  const s = modelEnvSource('GW-SRC');
+  assert.equal(s.canonicalId, 'gw-src');
+  assert.deepEqual(s.rawEnv, { ANTHROPIC_BASE_URL: '${GW_SRC_URL}' });
+  assert.deepEqual(s.droppedSecrets, []);
+  assert.equal(modelEnvSource('claude-sonnet-5'), null);   // predefined, no env
+  assert.equal(modelEnvSource(''), null);
 });

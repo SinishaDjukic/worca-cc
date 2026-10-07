@@ -544,6 +544,36 @@ export async function listModels(projectDir) {
 }
 
 /**
+ * The env-carrying catalog entry behind a NON-bridged model id — user global first, else the
+ * plugin entry, else the team-policy entry — as resolveModelEnv reads it, before ${VAR}
+ * expansion. null when the id has no env entry (a predefined/raw Claude id, a bridged id, an
+ * unknown id). Synchronous. It throws only where resolveModelEnv itself would (a policy-catalog
+ * read fault), so behaviour stays identical; callers that must never throw wrap it.
+ * `droppedSecrets` lists plugin {secret} values that are unset, formatted `KEY (secret "name")`
+ * (always [] with the credential broker on: the broker adds the person's key per spawn).
+ * @returns {{rawEnv:Record<string,string>, who:string, canonicalId:string, droppedSecrets:string[], plugin?:string}|null}
+ */
+export function modelEnvSource(modelId) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id || findBridgedEntry(id)) return null;
+  const lc = id.toLowerCase();
+  const entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
+  // A global entry WITHOUT env stops the lookup, as in resolveModelEnv (plugin/policy only when
+  // there is no global entry; policy only when there is no plugin entry either).
+  if (entry) return entry.env ? { rawEnv: entry.env, who: JSON.stringify(entry.id), canonicalId: entry.id, droppedSecrets: [] } : null;
+  const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
+  if (pm) {
+    if (!pm.env) return null;
+    const { env, droppedSecrets } = flattenPluginModelEnv(pm, { withSecrets: !brokerEnabled() });
+    return { rawEnv: env, who: `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`, canonicalId: pm.id, droppedSecrets, plugin: pm.plugin };
+  }
+  // A team-policy catalog entry, reached only when neither the user nor a plugin defines the
+  // id. Its env carries literals and ${VAR} refs only: the editor and the reader refuse secrets.
+  const tm = policyCatalogModels().find((m) => m.id.toLowerCase() === lc);
+  return tm && tm.env ? { rawEnv: tm.env, who: `${JSON.stringify(tm.id)} (team policy ${tm.home})`, canonicalId: tm.id, droppedSecrets: [] } : null;
+}
+
+/**
  * The routing env for a model id (design §4.4, §9.3), or undefined when none
  * is configured. The user's GLOBAL entry wins; otherwise the winning enabled
  * PLUGIN entry applies, with {secret} placeholders resolved from that plugin's
@@ -615,32 +645,14 @@ export function resolveModelEnv(modelId, { tag } = {}) {
     if (caps.maxOutputTokens && !('CLAUDE_CODE_MAX_OUTPUT_TOKENS' in env)) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(caps.maxOutputTokens);
     return withProviderModesOff(withTierModelEnv(env, bridged.id));
   }
-  if (entry && entry.env) {
-    rawEnv = entry.env;
-    who = JSON.stringify(entry.id);
-    canonicalId = entry.id;
-  } else if (!entry) {
-    const pm = listPluginModels().find((m) => m.id.toLowerCase() === lc);
-    if (pm && pm.env) {
-      // With the credential broker on, a plugin secret never reaches a spawn: the broker adds
-      // the person's own key for the plugin's slot (plugin-broker-slots.mjs).
-      const { env, droppedSecrets } = flattenPluginModelEnv(pm, { withSecrets: !brokerEnabled() });
-      for (const d of droppedSecrets) {
-        console.warn(`[worca] plugin "${pm.plugin}" model ${JSON.stringify(pm.id)}: dropping env ${d} — set it in the plugin's Model secrets`);
-      }
-      rawEnv = env;
-      who = `${JSON.stringify(pm.id)} (plugin "${pm.plugin}")`;
-      canonicalId = pm.id;
-    } else if (!pm) {
-      // A team-policy catalog entry, reached only when neither the user nor a plugin defines the
-      // id. Its env carries literals and ${VAR} refs only: the editor and the reader refuse secrets.
-      const tm = policyCatalogModels().find((m) => m.id.toLowerCase() === lc);
-      if (tm && tm.env) {
-        rawEnv = tm.env;
-        who = `${JSON.stringify(tm.id)} (team policy ${tm.home})`;
-        canonicalId = tm.id;
-      }
+  const src = modelEnvSource(id);
+  if (src) {
+    for (const d of src.droppedSecrets) {
+      console.warn(`[worca] plugin "${src.plugin}" model ${JSON.stringify(src.canonicalId)}: dropping env ${d} — set it in the plugin's Model secrets`);
     }
+    rawEnv = src.rawEnv;
+    who = src.who;
+    canonicalId = src.canonicalId;
   }
   if (!rawEnv) return undefined;
   const { env, dropped } = prepareModelEnv(rawEnv);

@@ -57,8 +57,9 @@ import { assembleRunContext, renderContextAudit, MCP_GRANT_MODE } from './run-co
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
-  probeClaudeCapabilities, explainUnspawnableClaude,
+  probeClaudeCapabilities, explainUnspawnableClaude, probeClaudeAuth,
 } from './preflight.mjs';
+import { checkRunModels, modelUnavailableError, pendingNodeIds } from './model-check.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, catalogHasModel, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
@@ -748,6 +749,9 @@ export class RunHarness extends EventEmitter {
       effort: this.opts.claude?.effort,
       mock: !!this.opts.claude?.mock,
     };
+    // Pre-run model availability (model-check.mjs). `modelCheck` is the test seam: a function
+    // with checkRunModels' signature; with one injected the check runs even under mock.
+    this._modelCheck = typeof this.opts.modelCheck === 'function' ? this.opts.modelCheck : null;
     // A resumed run keeps the model it was started with (`worca --model`, the UI's
     // start pair): the resume sites pass none, so it rides the resume point — which
     // _buildResumePoint rewrites at every pause from this.claude — like memoryScope
@@ -1155,7 +1159,7 @@ export class RunHarness extends EventEmitter {
     // OpenRouter's spent daily free requests: say what ran out and when it comes back,
     // not the raw 429 line (freeDailyHint is '' for any other usage limit).
     const freeDaily = reason === REASON.USAGE_LIMIT ? freeDailyHint(err, cachedFreeDailyCounts(currentBillTo())) : '';
-    const text = detail ?? (reason === REASON.ERROR ? errorDetail(err)
+    const text = detail ?? ((reason === REASON.ERROR || reason === REASON.MODEL_UNAVAILABLE) ? errorDetail(err)
       : reason === REASON.RECOVERABLE ? `${cls || 'recoverable'}: ${line}${hint ? ` — ${hint}` : ''}` : (freeDaily || line));
     if (reason === REASON.ERROR) {
       // The ONE error-level line, written BEFORE the pause sentinel the caller
@@ -1231,6 +1235,13 @@ export class RunHarness extends EventEmitter {
       //    run before then, and the run page's clock and status line read it.
       this.state.setupStage = 'Checking the setup';   // the bookend's own state emit carries it
       this._bookend('preflight', 'start');
+      // Pre-run model check (model-check.mjs), overlapped with the loads below so a healthy
+      // run pays no extra wall-clock. Settled to a value: a load failure must not leave an
+      // unhandled rejection behind. Auto's graph is still empty here: its run model is checked
+      // now (its nodes fall back to it), the adopted graph after the decision (3b'').
+      const modelCheck = this._modelPreflight(topology.manifest, {
+        includeRunModel: topology.manifest?.auto?.status === 'deciding',
+      }).then(() => null, (err) => err);
       const [agentPrompts, tools, stepModels] = await Promise.all([
         this._loadAgentPrompts(),
         detectTools(this.projectDir),
@@ -1243,6 +1254,9 @@ export class RunHarness extends EventEmitter {
       // Credential broker: every model this run will spawn needs its person's key; refuse
       // NOW, naming what's missing, instead of pausing mid-run at the first node that needs it.
       await this._brokerPreflight(topology.manifest, stepModels);
+      // No row yet: a failed model check is a launch error (failure-policy 'launch'), nothing spent.
+      const modelErr = await modelCheck;
+      if (modelErr) throw modelErr;
       await this._resolveGuardrails();
       await this._resolvePolicy();
       this._log(
@@ -1384,7 +1398,14 @@ export class RunHarness extends EventEmitter {
       // `topology` is consumed AFTER this point (collectRequiredSkills, the workflow
       // audit line), so the adopted graph is what they see.
       const decided = await this._decideTopology();
-      if (decided) topology = decided;
+      if (decided) {
+        topology = decided;
+        // 3b'') The adopted graph's models, before its first agent step. The row exists (the
+        // classifier ran), so a failure pauses as 'model_unavailable' (setup site) and resume
+        // re-checks after the fix — the decision is kept, never re-classified.
+        this._setupStage('Checking the models');
+        await this._modelPreflight(topology.manifest, { when: 'auto' });
+      }
       this._checkAbort();
 
       // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
@@ -1720,6 +1741,14 @@ export class RunHarness extends EventEmitter {
       }
       await this._decideTopology({ resume: rp });
       this._checkAbort();
+      // Pre-run model check on resume: only the nodes that can still run (a loop can re-run a
+      // finished node, so pendingNodeIds follows the wires). this.state.stepper is the
+      // rehydrated manifest, or the graph Auto just adopted above. A failure stays PAUSED
+      // ('model_unavailable', site setup/shell) at the same point — it never ends the run.
+      {
+        const manifest = this.state.stepper || rp.manifest;
+        await this._modelPreflight(manifest, { onlyNodes: pendingNodeIds(manifest, rp.snapshot), when: 'resume' });
+      }
 
       // ── setup replay (D7): a converted setup failure paused this run before its
       //    checkout / graph / skills gate existed. Re-run exactly what run() never
@@ -3677,6 +3706,35 @@ export class RunHarness extends EventEmitter {
    * recoverable-error gate surfaces it cleanly.
    * @param {Iterable<string>} agentKeys the run's distinct agent keys, in launch order
    */
+  /**
+   * Pre-run model availability (model-check.mjs): every model the manifest's agent nodes will
+   * spawn with — node model, else the run model, else the CLI default — checked before any of
+   * them runs. Throws modelUnavailableError: at launch (no row) a launch error; after the row
+   * exists (Auto's adopted graph, a resume) the setup/shell site pauses it as
+   * REASON.MODEL_UNAVAILABLE. Off under mock unless a check is injected (the mock runner never
+   * resolves a model env, so nothing would fail at dispatch either).
+   * @param {object} manifest
+   * @param {{onlyNodes?:string[]|null, includeRunModel?:boolean, when?:'start'|'auto'|'resume'}} [o]
+   */
+  async _modelPreflight(manifest, { onlyNodes = null, includeRunModel = false, when = 'start' } = {}) {
+    if (!this._modelCheck && mockEnabled({ mock: this.claude.mock })) return null;
+    const check = this._modelCheck || checkRunModels;
+    // GraphOrchestrator defines _claudeAuth (the injected opts.claudeAuth, else probeClaudeAuth);
+    // the bare harness falls back to the cached probe itself.
+    const claudeAuth = typeof this._claudeAuth === 'function'
+      ? () => this._claudeAuth()
+      : () => probeClaudeAuth({ bin: this.claude.bin || undefined });
+    const report = await check(manifest, { runModel: this.claude.model || null, includeRunModel, onlyNodes, live: true, claudeAuth });
+    for (const w of report.warnings || []) {
+      this._log('preflight', 'warn', `model check: ${w.model || 'default model'} — ${w.message} (not blocking; ${w.fix})`);
+    }
+    if (!report.ok) throw modelUnavailableError(report, { when });
+    if (report.checked?.length) {
+      this._log('preflight', 'info', `Model check: ${report.checked.map((c) => c.model || 'CLI default').join(', ')} ready`);
+    }
+    return report;
+  }
+
   /**
    * Credential-broker preflight (docs/credential-broker.md): the models in the manifest
    * (plus the step defaults and the run's own model, which an empty node model falls back
