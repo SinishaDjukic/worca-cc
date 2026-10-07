@@ -79,7 +79,7 @@ import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
   listThreads as askListThreads, updateThread as askUpdateThread, addThreadContexts as askAddThreadContexts,
   deleteThread as askDeleteThread, sweepEmptyThreads, sweepStreamingMessages, sweepCloningCards,
-  countThreads as askCountThreads, listThreadIds as askListThreadIds,
+  countThreads as askCountThreads, listThreadIds as askListThreadIds, askSearchText,
   countWorktrees as askCountWorktrees, countAttachments as askCountAttachments,
   appendMessage as askAppendMessage, getMessage as askGetMessage,
   listMessages as askListMessages, setMessageBlocks as askSetMessageBlocks,
@@ -9589,12 +9589,18 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    const threads = askListThreads({ limit, visibleTo }).map((t) => {
+    // History search (?q=): titles + message text, server-side because the page is capped.
+    // A non-string q (repeated param) is no search; askSearchText trims and caps it.
+    const q = askSearchText(req.query.q);
+    const threads = askListThreads({ limit, visibleTo, q }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
     });
-    // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads({ visibleTo }) });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above;
+    // matches = every chat matching q (also uncapped), only while searching.
+    const body = { threads, total: askCountThreads({ visibleTo }) };
+    if (q) body.matches = askCountThreads({ visibleTo, q });
+    res.json(body);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

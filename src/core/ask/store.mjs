@@ -59,9 +59,26 @@ function rowToThread(r) {
   };
 }
 
-/** On a shared deployment a person sees their own threads plus ownerless legacy ones. */
-const ownerWhere = (visibleTo, alias = '') => (visibleTo ? ` WHERE (${alias}created_by IS NULL OR ${alias}created_by = ?)` : '');
-const ownerArgs = (visibleTo) => (visibleTo ? [visibleTo] : []);
+/** Normalized History search text: trimmed, at most 200 chars; '' = no search. */
+export function askSearchText(q) {
+  return typeof q === 'string' ? q.trim().slice(0, 200) : '';
+}
+
+/** WHERE for the History list/count, on alias `t`. On a shared deployment a person sees their
+ *  own threads plus ownerless legacy ones. `q` matches the title OR any message's text as a
+ *  literal substring: LIKE's `%` and `_` (and the escape char itself) are escaped. */
+function threadFilter({ visibleTo = null, q = '' } = {}) {
+  const clauses = [];
+  const args = [];
+  if (visibleTo) { clauses.push('(t.created_by IS NULL OR t.created_by = ?)'); args.push(visibleTo); }
+  const needle = askSearchText(q);
+  if (needle) {
+    const pattern = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    clauses.push(`(t.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\'))`);
+    args.push(pattern, pattern);
+  }
+  return { where: clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '', args };
+}
 function rowToMessage(r) {
   return {
     id: r.id, threadId: r.thread_id, seq: r.seq, role: r.role, text: r.text ?? '',
@@ -103,21 +120,23 @@ export function getThread(id) {
   return r ? rowToThread(r) : null;
 }
 
-export function listThreads({ limit = 50, visibleTo = null } = {}) {
+export function listThreads({ limit = 50, visibleTo = null, q = '' } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  const { where, args } = threadFilter({ visibleTo, q });
   const rows = prepare(`
     SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
            (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees
-    FROM ask_threads t${ownerWhere(visibleTo, 't.')} ORDER BY t.updated_at DESC, t.id LIMIT ?
-  `).all(...ownerArgs(visibleTo), n);
+    FROM ask_threads t${where} ORDER BY t.updated_at DESC, t.id LIMIT ?
+  `).all(...args, n);
   return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links, worktrees: r.worktrees }));
 }
 
-/** Total saved chats — the History popover shows this, not the capped page listThreads returns. */
-export function countThreads({ visibleTo = null } = {}) {
+/** Total saved chats (or, with `q`, the chats matching it) — the History popover's meter, not the capped page. */
+export function countThreads({ visibleTo = null, q = '' } = {}) {
   getDb();
-  const row = prepare(`SELECT count(*) AS n FROM ask_threads${ownerWhere(visibleTo)}`).get(...ownerArgs(visibleTo));
+  const { where, args } = threadFilter({ visibleTo, q });
+  const row = prepare(`SELECT count(*) AS n FROM ask_threads t${where}`).get(...args);
   return row ? Number(row.n) : 0;
 }
 

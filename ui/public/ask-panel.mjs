@@ -243,6 +243,8 @@ const SIZE_KEY = 'worca-cc.ask.size';
  *  chat follows changed (tracking) or a turn started/ended there (thinking). */
 const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error']);
 const THREADS_REFRESH_MS = 250;
+/** History search debounce: one /api/ask/threads?q= per typing burst. */
+export const ASK_HISTORY_SEARCH_MS = 180;
 /** The pill's mark ↔ orb morph: the canvas tween (thinking-orb morphTo) runs on
  *  the same clocks as the CSS transitions on the two layers — .52s in, .8s out
  *  (style.css .ask-pill-mark rules). The settle fallback outlives the fade-out,
@@ -1484,7 +1486,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       toggleSheet();
       return;
     }
-    if (e.key === 'Escape' && ownsKey(e) && st.popover) closePopover({ focusTrigger: true });
+    if (e.key === 'Escape' && ownsKey(e) && st.popover) {
+      // A popover may spend Escape on itself first (History search: clear the query).
+      if (st.popover.onEscape && st.popover.onEscape(e)) { e.preventDefault(); return; }
+      closePopover({ focusTrigger: true });
+    }
     // Escape with nothing open is an owned no-op — app.js's handlers already
     // returned via ownsKey(); the sheet itself never closes on Escape (§10.4).
   }
@@ -1524,8 +1530,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!p) return;
     const items = menuItems(p.panel);
     if (!items.length) return;
-    const idx = items.indexOf(doc.activeElement);
     const go = (i) => { const item = items[(i + items.length) % items.length]; item.tabIndex = 0; try { item.focus(); } catch { /* ignore */ } };
+    // In a search field (History) Home/End/Space/Enter edit text; ArrowDown/ArrowUp enter the rows.
+    if (e.target && e.target.tagName === 'INPUT') {
+      if (e.key === 'ArrowDown') { e.preventDefault(); go(0); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); go(items.length - 1); }
+      return;
+    }
+    const idx = items.indexOf(doc.activeElement);
     if (e.key === 'ArrowDown') { e.preventDefault(); go(idx + 1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); go(idx - 1); }
     else if (e.key === 'Home') { e.preventDefault(); go(0); }
@@ -1533,7 +1545,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     else if ((e.key === 'Enter' || e.key === ' ') && idx >= 0) { e.preventDefault(); items[idx].click(); }
   }
 
-  function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh }) {
+  function openPopover({ panelClass, trigger, build, onClose, refreshOn, refresh, onEscape }) {
     if (st.popover && st.popover.trigger === trigger) { closePopover({ focusTrigger: false }); return null; }
     closePopover({ focusTrigger: false });
     const panel = make('div', `ask-pop ${panelClass}`);
@@ -1545,7 +1557,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // OPEN popover follows the live meters / worktrees instead of freezing at open.
     // refresh(panel) is the server-fed twin: scheduleThreadsRefresh calls it
     // (debounced) on out-of-turn frames the model never sees.
-    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null, refresh: refresh || null };
+    st.popover = { panel, trigger, onClose: onClose || null, build, refreshOn: refreshOn || null, refresh: refresh || null, onEscape: onEscape || null };
     const first = menuItems(panel)[0];
     if (first) { first.tabIndex = 0; try { first.focus(); } catch { /* ignore */ } }
     return panel;
@@ -1617,6 +1629,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function toggleThreadsPopover(trigger) {
     let meter = null;
+    let search = null;
+    // Per open: the query never outlives the popover (every open starts empty).
+    const hist = { q: '', seq: 0, timer: null };
     const panel = openPopover({
       panelClass: 'ask-pop-threads',
       trigger,
@@ -1628,35 +1643,75 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         meter = make('span', 'ask-pop-caption-meter', '');
         head.appendChild(meter);
         p.appendChild(head);
+        // Server-side search (titles + message text): the list is capped, so filtering
+        // the loaded rows would miss chats. Debounced; the rows below follow it.
+        search = doc.createElement('input');
+        search.type = 'search';
+        search.className = 'ask-threads-search';
+        search.placeholder = 'Search chats';
+        search.setAttribute('aria-label', 'Search chats');
+        search.autocomplete = 'off';
+        search.spellcheck = false;
+        search.addEventListener('input', () => {
+          if (hist.timer) clearTimeout(hist.timer);
+          hist.timer = setTimeout(() => {
+            hist.timer = null;
+            const q = search.value.trim();
+            if (q === hist.q) return;
+            hist.q = q;
+            loadThreadRows(p, meter, hist);
+          }, ASK_HISTORY_SEARCH_MS);
+        });
+        p.appendChild(search);
       },
-      refresh: (p) => loadThreadRows(p, meter),
+      refresh: (p) => loadThreadRows(p, meter, hist),
+      onClose: () => { if (hist.timer) { clearTimeout(hist.timer); hist.timer = null; } },
+      // Escape in a non-empty field clears it (and reloads the full list); otherwise it closes.
+      onEscape: (e) => {
+        if (e.target !== search || !search.value) return false;
+        search.value = '';
+        if (hist.timer) { clearTimeout(hist.timer); hist.timer = null; }
+        if (hist.q) { hist.q = ''; loadThreadRows(panel, meter, hist); }
+        return true;
+      },
     });
     if (!panel) return;
-    loadThreadRows(panel, meter);
+    try { search.focus(); } catch { /* ignore */ }
+    loadThreadRows(panel, meter, hist);
   }
 
-  /** Fetch the list and (re)render the rows under the pinned caption. On a
-   *  refresh the old rows are replaced in place — same panel node, the focused
-   *  row keeps focus by index — so the dots follow the server while it is open. */
-  function loadThreadRows(panel, meter) {
+  /** History meter while searching: "3 of 120". */
+  function fmtMatches(matches, total) { return `${matches} of ${total}`; }
+
+  /** Fetch the list for the current query and (re)render the rows under the pinned caption
+   *  and search field. Only the newest load renders (hist.seq): typing fires overlapping
+   *  fetches. A refresh keeps the focused row by index; focus in the search field stays put. */
+  function loadThreadRows(panel, meter, hist) {
+    const seq = ++hist.seq;
+    const q = hist.q;
+    const url = `/api/ask/threads?limit=50${q ? `&q=${encodeURIComponent(q)}` : ''}`;
     Promise.resolve()
-      .then(() => fetch('/api/ask/threads?limit=50'))
+      .then(() => fetch(url))
       .then((r) => (r && r.ok ? r.json() : { threads: [] }))
       .catch(() => ({ threads: [] }))
-      .then(({ threads, total }) => {
+      .then(({ threads, total, matches }) => {
         if (st.popover === null || st.popover.panel !== panel) return; // closed meanwhile
+        if (seq !== hist.seq) return;                                   // a newer load owns the list
         const rows = Array.isArray(threads) ? threads : [];
-        // `total` is EVERY saved chat (the route caps rows at limit); an older
-        // server without it degrades to the page size.
-        if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
+        // `total` is EVERY saved chat (the route caps rows at limit); an older server
+        // without it degrades to the page size. `matches` rides only a ?q= answer.
+        const all = Number.isInteger(total) && total >= 0 ? total : rows.length;
+        if (meter) meter.textContent = q ? fmtMatches(Number.isInteger(matches) && matches >= 0 ? matches : rows.length, all) : fmtChats(all);
         const stale = panel.querySelectorAll(':scope > .ask-threads-list, :scope > .ask-pop-empty');
         const refreshing = stale.length > 0;
-        // First load focuses the first row (menu semantics). A refresh keeps the
-        // focused row by index, and leaves focus alone when it sits elsewhere.
+        const inSearch = doc.activeElement && doc.activeElement.classList && doc.activeElement.classList.contains('ask-threads-search');
+        // Focus in the search field stays there. Otherwise the first load focuses the first
+        // row, and a refresh keeps the focused row by index (or leaves focus alone elsewhere).
         let focusIndex = 0;
-        if (refreshing) focusIndex = panel.contains(doc.activeElement) ? Math.max(0, menuItems(panel).indexOf(doc.activeElement)) : null;
+        if (inSearch) focusIndex = null;
+        else if (refreshing) focusIndex = panel.contains(doc.activeElement) ? Math.max(0, menuItems(panel).indexOf(doc.activeElement)) : null;
         for (const n of stale) n.remove();
-        renderThreadRows(panel, rows, focusIndex);
+        renderThreadRows(panel, rows, focusIndex, q);
       });
   }
 
@@ -1675,10 +1730,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }, THREADS_REFRESH_MS);
   }
 
-  /** @param {number|null} focusIndex row to focus after the render; null leaves focus alone */
-  function renderThreadRows(panel, threads, focusIndex = 0) {
+  /** @param {number|null} focusIndex row to focus after the render; null leaves focus alone
+   *  @param {string} q the active search ('' = none) — picks the empty-state text */
+  function renderThreadRows(panel, threads, focusIndex = 0, q = '') {
     if (!threads.length) {
-      panel.appendChild(make('div', 'ask-pop-empty', 'No saved chats.'));
+      panel.appendChild(make('div', 'ask-pop-empty', q ? 'No chats match.' : 'No saved chats.'));
       return;
     }
     // The rows scroll inside a capped list so 50 threads cannot run past the

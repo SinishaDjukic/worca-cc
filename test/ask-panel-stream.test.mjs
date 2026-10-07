@@ -304,6 +304,7 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   const pop = ctx.doc.querySelector('.ask-pop-threads');
   const rows = () => [...pop.querySelectorAll('.ask-thread-pick')];
   assert.equal(rows()[1].querySelector('.ask-dot-track'), null, 'T2 not tracking at open');
+  rows()[0].focus();
   const focused = ctx.doc.activeElement;
   assert.equal(focused, rows()[0], 'the first row holds focus');
   // The chat behind row 2 starts following a run: no thread is active (st.threadId null),

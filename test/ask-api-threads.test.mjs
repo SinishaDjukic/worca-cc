@@ -426,6 +426,43 @@ test('list: ?limit clamps the page; total counts every saved chat', async () => 
   ]);
 });
 
+test('list: ?q searches titles and message text server-side; matches is uncapped; total stays every chat', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const mk = async (title) => (await (await post('/api/ask/threads', { title })).json()).thread;
+  const hit1 = await mk('Zebra rollout notes');
+  const hit2 = await mk('zebra ROLLOUT follow-up');
+  await mk('Something else');
+  store.appendMessage(hit1.id, { role: 'user', text: 'what about 50%_off?' });
+  await checkRows([
+    { name: 'title match, case-insensitive; total is every chat; matches counts hits', run: async () => {
+      const j = await (await fetch(`${base}/api/ask/threads?limit=50&q=${encodeURIComponent('zebra rollout')}`)).json();
+      // appendMessage bumped hit1's updated_at, so compare as a set, not by order.
+      assert.deepEqual(j.threads.map((t) => t.id).sort(), [hit1.id, hit2.id].sort());
+      assert.equal(j.matches, 2);
+      assert.equal(j.total, store.countThreads());
+    } },
+    { name: 'limit caps rows but not matches', run: async () => {
+      const j = await (await fetch(`${base}/api/ask/threads?limit=1&q=zebra`)).json();
+      assert.equal(j.threads.length, 1);
+      assert.equal(j.matches, 2);
+    } },
+    { name: 'message text matches; % and _ are literal', run: async () => {
+      const j = await (await fetch(`${base}/api/ask/threads?q=${encodeURIComponent('50%_off')}`)).json();
+      assert.deepEqual(j.threads.map((t) => t.id), [hit1.id]);
+      const none = await (await fetch(`${base}/api/ask/threads?q=${encodeURIComponent('50%xoff')}`)).json();
+      assert.equal(none.matches, 0);
+      assert.deepEqual(none.threads, []);
+    } },
+    { name: 'blank or repeated q is no search: no matches key', run: async () => {
+      const blank = await (await fetch(`${base}/api/ask/threads?q=%20%20`)).json();
+      assert.equal('matches' in blank, false);
+      const arr = await (await fetch(`${base}/api/ask/threads?q=a&q=b`)).json();
+      assert.equal('matches' in arr, false);
+      assert.equal(arr.total, store.countThreads());
+    } },
+  ]);
+});
+
 test('GET /api/ask/history counts threads, worktrees, attachments and in-flight jobs', async () => {
   const store = await import('../src/core/ask/store.mjs');
   const thread = store.createThread();
