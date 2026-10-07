@@ -1032,6 +1032,23 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qtune td.qtune-sw-cell{display:flex;align-items:center;min-height:24px;}
 .qtune-sw{display:inline-flex;align-items:center;gap:8px;position:relative;cursor:pointer;}
 .qtune-sw-t{font-size:12.5px;color:var(--ink-2);}
+/* Running or paused run: "Switch models" panel (model-switch.mjs), under the run bar on #running and #history. */
+.msw{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0;}
+.msw-head{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;}
+.msw-sub,.msw-why{color:var(--ink-3);font-size:12px;}
+.msw-why{font-family:var(--mono);margin:0 0 8px;}
+.msw-table{width:100%;border-collapse:collapse;font-size:13px;}
+.msw-table th{text-align:left;color:var(--ink-3);font-weight:500;padding:4px 6px;}
+.msw-table td{padding:4px 6px;vertical-align:middle;}
+.msw-row.is-locked{opacity:.6;}
+.msw-stage{display:flex;flex-direction:column;}
+.msw-state{color:var(--ink-3);font-size:11px;}
+.msw-state.st-paused{color:var(--red-ink);}
+.msw-state.st-running{color:var(--ink-2);font-weight:500;}
+.msw-na{color:var(--ink-3);}
+.msw-all-row td{border-bottom:1px dashed var(--line);padding-bottom:8px;}
+.msw-error{color:var(--red-ink);font-size:12px;margin-top:6px;}
+.msw-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
 /* Disclosures on the workflow review panel: Why this? · Show graph · Customize agents */
 .wf-namelabel{flex:0 0 auto;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink-3);}
 /* The preview: always visible, the whole card is one button that opens the large pan/zoom popup. */

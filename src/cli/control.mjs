@@ -61,7 +61,7 @@ function refusal(msg) {
 
 /** A row's project dir: the registry, else the current directory when it IS that project
  *  (the default run flow needs no registration) — cmdResume's rule. */
-async function cliProjectDirFor(key) {
+export async function cliProjectDirFor(key) {
   for (const p of await listProjects()) if (projectKey(p.path) === key) return p.path;
   return projectKey(resolve(process.cwd())) === key ? process.cwd() : null;
 }

@@ -1433,7 +1433,8 @@ export async function writeState(pipelineDir, stateObj) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null
+        || st.model != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1446,7 +1447,9 @@ export async function writeState(pipelineDir, stateObj) {
               // Worca's own AI spend inside the step cost (Away mode, Auto workflow, run title).
               ...(st.auxCosts ? { auxCosts: st.auxCosts } : {}),
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
-              ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}) })
+              ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
+              // The agent's selection as the execution started ('' = the default; absent before it was recorded).
+              ...(st.model != null ? { model: st.model, effort: st.effort ?? '' } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1674,6 +1677,24 @@ export function claimPausedForStop(pipelineId) {
     UPDATE pipelines SET status = 'stopped', resume_point = NULL, updated_at = ?
     WHERE id = ? AND status = 'paused' AND archived_at IS NULL
   `).run(new Date().toISOString(), pipelineId);
+  return r.changes === 1;
+}
+
+/**
+ * Rewrite a PAUSED run's frozen manifest — both persisted copies (`stepper` and
+ * `resume_point.manifest`) in ONE conditional UPDATE (model-switch.mjs). Compare-and-swap on the
+ * resume_point text the caller read: a resume, a stop or a second switch that landed in between
+ * (this process or another — SQLite serializes the write) makes it a no-op and the caller lost.
+ * @param {string} pipelineId
+ * @param {{stepper:object, resumePoint:object, expect:string|null, now?:Date}} next
+ * @returns {boolean} true only when this call rewrote the row
+ */
+export function rewritePausedManifest(pipelineId, { stepper, resumePoint, expect, now = new Date() }) {
+  if (!pipelineId) return false;
+  const r = getDb().prepare(`
+    UPDATE pipelines SET stepper = ?, resume_point = ?, updated_at = ?
+    WHERE id = ? AND status = 'paused' AND archived_at IS NULL AND resume_point IS ?
+  `).run(JSON.stringify(stepper), JSON.stringify(resumePoint), now.toISOString(), pipelineId, expect ?? null);
   return r.changes === 1;
 }
 
@@ -2458,6 +2479,7 @@ function stepRowToStep(r) {
     if (em.bridgeFreeCalls) step.bridgeFreeCalls = em.bridgeFreeCalls;
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
+    if (typeof em.model === 'string') { step.model = em.model; step.effort = typeof em.effort === 'string' ? em.effort : ''; }
   }
   return step;
 }

@@ -354,6 +354,64 @@ worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → O
 
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.
 
+## Switch models on a running or paused run
+
+A run's models are frozen when it starts. You can change the models of the stages it has not run
+yet — while it runs, or after it paused on a model problem (an exhausted usage limit, a model that
+went away).
+
+- **When.** While the run is **running** or **paused**. A pausing, interrupted, stopped, finished
+  or archived run is refused.
+- **What changes.** Model, effort, sub-agent model and sub-agent effort of every stage that is not
+  running and not finished for good. The change applies to **this run only**; the template and the
+  project's settings are untouched.
+
+  | Stage | Switchable |
+  |---|---|
+  | not started | yes |
+  | paused mid-stage | yes |
+  | ran, and its loop is still going (e.g. Review while Implement runs its next cycle, or the loop waits at its cycle-cap question) | yes — its next cycle uses the new model |
+  | running now | no |
+  | finished (one-way, or its loop has ended) | no |
+
+- **Running run.** The process that drives the run applies the change at once; each switched stage
+  uses its new model when it starts. A stage that started between opening the panel and saving keeps
+  its model and is reported as skipped. The run never pauses. A run driven by another process
+  (another terminal, a scheduled run) gets the change through its run-control mailbox and answers
+  within a couple of seconds. On a run with MCP servers, switching to a model whose API caps MCP
+  tool names at 64 characters warns: pause and resume the run to re-resolve them for that model.
+- **Fresh session.** A stage whose **model** changed starts a fresh Claude session instead of
+  re-attaching its old one, because the old transcript belongs to the old model: on a paused run
+  when it resumes, and on a running run for a stage left paused that the resume has not restarted
+  yet. A change of effort or sub-agent settings alone keeps the session.
+- **UI.** A running or paused run's page (running or saved) shows a **Models** button. The panel
+  lists the stages with their state; the "All remaining stages" row sets one model on every stage
+  that can switch. On a running run *Save* applies the change. On a paused run *Save* stores it and
+  *Save & resume* stores it and resumes through the normal Resume (budget and policy checks still
+  apply).
+- **CLI.**
+
+  ```
+  worca switch-model <id>                              # list stages, their state and models
+  worca switch-model <id> --stage refiner --model claude-opus-5-5 [--effort high]
+  worca switch-model <id> --all --model claude-opus-5-5
+  worca resume <id>                                    # paused runs only
+  ```
+
+  `--stage` takes a node id, or an agent key when only one stage uses it. `default` clears a field
+  back to the run default. On a running run the command prints what was switched and what was
+  skipped; if the run has not answered within about 10 seconds it says "Switch sent". See
+  `worca switch-model help`.
+- **API.** `GET /api/pipelines/:id/models` returns `status` (`running` | `paused`), the stages with
+  their `state` (`pending`, `paused`, `may-rerun`, `running`, `completed`) and the run project's
+  model catalog. `POST /api/pipelines/:id/models` takes
+  `{ "changes": { "<nodeId>": { "model", "effort", "subagentModel", "subagentEffort" } } }` and returns
+  `{ ok, changed, skipped, stages, stepper, warnings }`; on a running run `skipped` lists
+  `{ nodeId, label, reason }` (`running` | `completed`). A run driven by another process that has not
+  answered in time returns **202** `{ ok: false, outcome }`. Errors use `{ error, code }`
+  (`NOT_SWITCHABLE_STATUS`, `NOT_RUNNING`, `NOT_READY`, `REHYDRATING`, `NO_OWNER`, `STAGE_COMPLETED`,
+  `INVALID_SELECTION`, `CHANGED`, …).
+
 ## Plugins and team policy
 
 A plugin manifest's `models[]` entry may carry the same `upstream` block

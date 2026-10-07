@@ -20,7 +20,7 @@ import { getDb } from './db.mjs';
 
 /** The actions a command may carry today. `answer` joins here when question
  *  publication (its own issue) gives it something to carry in `payload`. */
-export const PIPELINE_COMMAND_ACTIONS = ['stop', 'pause'];
+export const PIPELINE_COMMAND_ACTIONS = ['stop', 'pause', 'switch-models'];
 
 /** How often an OWNING harness polls its control slot. Deliberately NOT the
  *  ownership heartbeat's cadence — HEARTBEAT_INTERVAL_MS is 30s, right for
@@ -48,7 +48,7 @@ const iso = (t) => new Date(t).toISOString();
  * checks liveness first (the CLI reads owner_pid/heartbeat_at before writing) —
  * this is the write, not the policy.
  * @param {string} pipelineId
- * @param {'stop'|'pause'} action
+ * @param {'stop'|'pause'|'switch-models'} action
  * @param {{ payload?:object|null, by?:string, now?:number }} [opts]
  * @returns {{ id:number, createdAt:string }}
  */
@@ -88,6 +88,20 @@ export function claimPipelineCommand(pipelineId, { now = Date.now(), by } = {}) 
   let payload = null;
   try { payload = next.payload ? JSON.parse(next.payload) : null; } catch { /* corrupt blob: no payload */ }
   return { id: next.id, action: next.action, payload, by: next.by, createdAt: next.created_at };
+}
+
+/**
+ * Record what a payload-bearing command did (v52 `result`): the issuing client polls for it
+ * (model-switch.mjs requestLiveModelSwitch). Only a CLAIMED row is written — a pending one has not run.
+ * @param {number} id  the command id claimPipelineCommand returned
+ * @param {object} result JSON-serializable
+ * @returns {boolean} whether a row was written
+ */
+export function completePipelineCommand(id, result) {
+  if (!Number.isInteger(id)) return false;
+  return getDb().prepare(
+    'UPDATE pipeline_commands SET result = ? WHERE id = ? AND consumed_at IS NOT NULL',
+  ).run(JSON.stringify(result ?? null), id).changes === 1;
 }
 
 /**

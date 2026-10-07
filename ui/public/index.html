@@ -608,6 +608,10 @@
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
+                  <!-- Running or paused (paintRdHeader): switch the models of the stages that have not started (model-switch.mjs). -->
+                  <button type="button" class="rd-models btn-ghost" hidden title="Switch the models of the stages that have not started">
+                    <span class="rd-btn-label">Models</span>
+                  </button>
                   <button type="button" class="rd-stop" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
                     <span class="rd-btn-label">Stop</span>
@@ -621,6 +625,8 @@
               <!-- Inline error slot for failed actions, under the bar so the graph or a tab
                    body never pushes it below the fold (mirrors .hd-error). -->
               <div class="rd-error" hidden></div>
+              <!-- The "Switch models" panel host (openModelSwitch); hidden until the Models button opens it. -->
+              <div class="rd-model-switch" hidden></div>
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
@@ -757,6 +763,10 @@
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
+                  <!-- Running or paused (paintHdLive): switch the models of the stages that have not started (model-switch.mjs). -->
+                  <button type="button" class="hd-models btn-ghost" hidden title="Switch the models of the stages that have not started">
+                    <span class="hd-btn-label">Models</span>
+                  </button>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
                   <button type="button" class="hd-pause" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
@@ -775,6 +785,8 @@
               <!-- The inline error sits under the shared bar so both modes show it (a load
                    failure, an archive failure); writers resolve it with screen.querySelector. -->
               <div class="hd-error" hidden></div>
+              <!-- The "Switch models" panel host (openModelSwitch); hidden until the Models button opens it. -->
+              <div class="hd-model-switch" hidden></div>
               <section class="rd-glance hd-glance" aria-label="Run status">
                 <div class="rd-now">
                   <header class="rd-page-head">

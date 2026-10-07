@@ -347,6 +347,18 @@ test('Agents tab groups: duration fallback/blank cost, rolled-up header, v2 name
       assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
       assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
     } },
+    { name: 'a group pill shows the selection its execution started with, not the switched manifest', run: async () => {
+      // Cycle 1 ran on the default ('' recorded); the slice ran on Opus; the manifest was switched to Fable later.
+      const steps = AG_V2_DETAIL.state.steps.map((s) => ({ ...s }));
+      Object.assign(steps[0], { model: '', effort: '' });
+      Object.assign(steps[1], { model: 'claude-opus-5-5', effort: 'high' });
+      const ctx = await bootDetail({ detail: { ...AG_V2_DETAIL, state: { ...AG_V2_DETAIL.state, steps } } });
+      ctx.window.__np._setModels([{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'] }]);
+      const sec = await openTab(ctx, 'agents');
+      const groups = [...sec.querySelectorAll('.hd-ag-group')];
+      assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill'), null, 'the default is no pill, not the switched model');
+      assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Opus 5.5 · high');
+    } },
     { name: 'a main agent that spawned nothing still gets a group, coloured by its step', run: async () => {
       const ctx = await bootDetail({
         detail: {
@@ -1048,9 +1060,9 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 });
 
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
-// Resume split, Pause, Stop, then the terminal button), in both modes. The Details header keeps
+// Resume split, Models, Pause, Stop, then the terminal button), in both modes. The Details header keeps
 // only the PR controls and the ⋯ menu, and the glance card carries no run control.
-const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
+const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-models', 'hd-pause', 'hd-stop', 'term-opener'];
 test('History bar per finished/paused status: Run after, Resume split only when resumable, Stop only when paused, no Pause without a live run', async () => {
   const rows = [];
   for (const [status, resumable, finished] of [
@@ -1075,6 +1087,7 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(end.querySelector('.hd-resume-split').hidden, !resumable);
       assert.equal(end.querySelector('.hd-resume').hidden, !resumable);
       assert.ok(end.querySelector('.hd-resume svg'), 'Resume leads with the play glyph');
+      assert.equal(end.querySelector('.hd-models').hidden, status !== 'paused', 'Models is for a PAUSED run only');
       assert.equal(end.querySelector('.hd-pause').hidden, true, 'no live run: nothing to pause');
       assert.equal(end.querySelector('.hd-stop').hidden, status !== 'paused',
         status === 'paused' ? 'a paused saved run is stopped through its row' : 'no live run: nothing to stop');

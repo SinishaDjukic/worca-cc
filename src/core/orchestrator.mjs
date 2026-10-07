@@ -59,6 +59,8 @@ import { classifyError } from './recoverable-error.mjs';
 import { withRecoveryRetry, RETRYABLE_CLASSES, HELPER_RETRY_ATTEMPTS } from './recovery-backoff.mjs';
 import { resolveFailure, markTerminal, isTerminal } from './failure-policy.mjs';
 import { byActor } from './identity.mjs';
+import { switchableStages, heldWireIds, validateChanges, applyModelSwitch, ModelSwitchError, describeModelChange, modelSwitchWarnings } from './model-switch.mjs';
+import { toolNameLimitFor } from './mcp/registry.mjs';
 
 /** Max ask-then-resume question rounds per execution (mirrors v1's constant). */
 const MAX_QUESTION_ROUNDS = 3;
@@ -91,6 +93,7 @@ export class GraphOrchestrator extends RunHarness {
     this._graphSnapshot = null;  // last CLEAN scheduler snapshot
     this._resumeSnapshot = null; // the snapshot a resume restores from
     this._resumeSessions = null; // Map executionId -> sessionId (one-shot)
+    this._freshSessionNodes = new Set(); // nodes whose model was switched while a paused execution of theirs waits to re-fire: never re-attach that old-model session (cleared when the node next starts)
     this._graphError = null;     // first genuine execution error (identity preserved)
     this._planVersion = 0;       // {vsuffix} ticks, carried across a resume
     this._secretEnv = {};        // typed `secret` form fields, MEMORY ONLY: never persisted, so a resume after a restart falls back to the environment
@@ -804,12 +807,17 @@ export class GraphOrchestrator extends RunHarness {
         // executions this pause kills must stay NON-TERMINAL in the persisted
         // point so the scheduler re-invokes them on resume.
         if (this.pauseRequested) return;
+        const holdsChanged = heldWireIds(snap).join() !== heldWireIds(this._graphSnapshot).join();
         this._graphSnapshot = snap;
         // Keep a resumable point on the row at all times: a crash-reconciled
         // ('interrupted') v2 run is then resumable from its last clean snapshot.
         // The base clears it on done and on stop. (No extra _persist — the next
         // _execStep writes it.)
         this.state.resumePoint = this._buildResumePoint(snap);
+        // Except a cycle-cap hold or its answer: the loop then waits on the user with no
+        // execution to write the point, and another process reading the row (the model
+        // switch's stage rule) would take the waiting loop for a finished one.
+        if (holdsChanged) this._persist().catch(() => {});
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -822,6 +830,12 @@ export class GraphOrchestrator extends RunHarness {
     if (resume && this._resumeSnapshot) {
       this._graphSnapshot = this._resumeSnapshot;
       sched.reattach(this._resumeSnapshot);
+      // reattach re-asks a cycle-cap hold without a snapshot, and the resume cleared the row's
+      // point: put the hold back on the row (see onSnapshot).
+      if (heldWireIds(this._graphSnapshot).length) {
+        this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
+        this._persist().catch(() => {});
+      }
     }
 
     let outcome;
@@ -924,6 +938,7 @@ export class GraphOrchestrator extends RunHarness {
       night: { optIn: this._night.optIn, override: this._night.override, ...(this._night.since != null ? { since: this._night.since } : {}), ...(this._night.owner ? { owner: this._night.owner } : {}) },
       guardrailsId: this.guardrailsId,
       ...(this.mcpOptOut?.length ? { mcpOptOut: [...this.mcpOptOut] } : {}),   // MCP registry §6.2: resume re-resolves minus it
+      ...(this._freshSessionNodes?.size ? { freshSessionNodes: [...this._freshSessionNodes] } : {}),   // model switched, paused execution not re-fired yet
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
@@ -935,6 +950,126 @@ export class GraphOrchestrator extends RunHarness {
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * The live inputs of model-switch.mjs's stage rule (also the server's GET payload for a run this
+   * process drives). `active` is the scheduler's view: a node is dispatched — its model copied into the
+   * execution ctx — BEFORE its ledger row exists (_execute awaits the human cursor between _execCtx
+   * and _execStep(ctx, 'start')), and a composite (decomposition) keeps its node busy between slices
+   * that have no row. `held`: the loop wires waiting at their cycle-cap gate. Every hold and every
+   * answer is followed by a snapshot (scheduler publish/resolveGate), so the last clean one is current
+   * while the run is not pausing — and a switch is refused once it is.
+   */
+  modelSwitchSnapshot() {
+    return {
+      manifest: this.state.stepper,
+      steps: this.state.steps,
+      active: (this._scheduler?.getState().active || []).map((a) => a.nodeId),
+      held: heldWireIds(this._graphSnapshot),
+      runDefault: this.claude?.model || '',
+    };
+  }
+
+  /** Refuse a live switch this run cannot honour right now (ModelSwitchError, 409). */
+  _assertModelSwitchable() {
+    const status = this.state.status;
+    if (status === 'pausing' || this.pauseRequested) {
+      throw new ModelSwitchError('NOT_RUNNING', 'the run is pausing — switch its models once it is paused');
+    }
+    // A fresh harness reads 'idle' until run()/resume() flips it (a server entry is 'starting' then).
+    if (status === 'idle' || status === 'created' || status === 'starting') {
+      throw new ModelSwitchError('NOT_READY', 'the run is starting — try again in a moment');
+    }
+    if (status === 'paused') {
+      throw new ModelSwitchError('NOT_RUNNING', 'the run has just paused — reload to switch it as a paused run');
+    }
+    if (status !== 'running') {
+      throw new ModelSwitchError('NOT_RUNNING', `the run is "${status}" — models can be switched while it is running or paused`);
+    }
+    if (this._rehydrated === false) throw new ModelSwitchError('REHYDRATING', 'the run is still resuming — try again in a moment');
+    if (!this.state.stepper?.graph?.nodes?.length) {
+      throw new ModelSwitchError('NO_GRAPH', 'the workflow is still being decided — there are no stages to switch yet');
+    }
+    // No scheduler = not dispatching: setup, a resume whose _restoreFromResumePoint is about to replace
+    // state.stepper from the saved point (the switch would be lost), or the graph winding down.
+    if (!this._scheduler || !this.resolved?.nodeCtx) {
+      throw new ModelSwitchError('NOT_READY', 'the run is starting or finishing its workflow — try again in a moment');
+    }
+  }
+
+  /**
+   * Switch the models of a LIVE run's stages that are not executing (model-switch.mjs's rule). Each
+   * switched stage spawns on its new selection when it next starts; a running or finished stage is
+   * skipped and reported, never refused (D3). An invalid selection refuses the whole request.
+   * @param {Record<string, object>} changes by node id
+   * @param {{ by?: string }} [opts] identity.mjs actor, named in the audit line
+   * @returns {Promise<{ok:true, pipelineId:string|null, changed:object[],
+   *   skipped:{nodeId:string,label:string,reason:'running'|'completed'}[], stages:object[], stepper:object, warnings:string[]}>}
+   * @throws {ModelSwitchError}
+   */
+  async switchModels(changes, { by = 'local' } = {}) {
+    this._assertModelSwitchable();
+    const models = await listModels(this.projectDir);   // the paused path's catalog dir (catalogDirOf)
+    // ── Synchronous from here to the emit: nothing can dispatch in between, so a stage found not
+    // running reads the new node ctx when it starts. Re-check: a pause may have landed during the read.
+    this._assertModelSwitchable();
+    const stages = switchableStages(this.modelSwitchSnapshot());
+    const normalized = validateChanges(stages, changes, models);   // throws: the whole request is refused
+    const byId = new Map(stages.map((s) => [s.nodeId, s]));
+    const accepted = {};
+    const skipped = [];
+    for (const [nodeId, change] of Object.entries(normalized)) {
+      const stage = byId.get(nodeId);
+      if (stage.switchable) accepted[nodeId] = change;
+      else skipped.push({ nodeId, label: stage.label, reason: stage.state });   // 'running' | 'completed'
+    }
+    const { manifest, changed } = applyModelSwitch(this.state.stepper, accepted);
+    if (changed.length) {
+      this.state.stepper = manifest;
+      const ctxs = this.resolved.nodeCtx;
+      for (const { nodeId, after } of changed) {
+        if (!ctxs[nodeId]) continue;
+        // A NEW entry (in-flight executions hold copies in their ctx; nothing keeps the old object).
+        // resolvedFromManifest's shapes: '' model/effort -> undefined (run default / no --effort flag).
+        ctxs[nodeId] = { ...ctxs[nodeId], model: after.model || undefined, effort: after.effort || undefined,
+          subagentModel: after.subagentModel || '', subagentEffort: after.subagentEffort || '' };
+      }
+      // Session hygiene (fact 8): an execution an earlier incarnation left PAUSED, not re-fired since the
+      // resume, would re-attach its old-model session. Drop that re-attach, and keep the node fresh across
+      // a crash or pause until its next execution starts (_execute clears it). Effort/sub-agent-only
+      // changes keep the session, as on the paused path.
+      const modelChanged = new Set(changed.filter((c) => c.before.model !== c.after.model).map((c) => c.nodeId));
+      for (const s of this.state.steps) {
+        if (s.status !== 'paused' || !s.sessionId || !modelChanged.has(s.nodeId)) continue;
+        this._freshSessionNodes.add(s.nodeId);
+        if (this._resumeSessions?.delete(s.key)) {
+          this._log(s.agentKey || s.nodeId, 'info', 'model switched while running — the paused execution starts a fresh session on the new model',
+            { nodeId: s.nodeId, executionId: s.key });
+        }
+      }
+      // The persisted point must carry the new manifest: crash -> interrupted -> resume reads it first.
+      // (Before the first clean completion there is no snapshot yet; the next one carries it.)
+      if (this._graphSnapshot) this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
+      this._emit('state', this.getState());
+    }
+    // ── Async again. ──
+    const warnings = modelSwitchWarnings(changed, models);
+    if (changed.length) {
+      if (this._mcpToolNameLimit && toolNameLimitFor([...this._mcpModels()]) < this._mcpToolNameLimit) {
+        warnings.push(`A switched stage now uses a model whose API caps MCP tool names at 64 characters; `
+          + `this run resolved its MCP servers for ${this._mcpToolNameLimit}. Pause and resume the run to re-resolve them.`);
+      }
+      await this._persist();
+      const what = changed.map(describeModelChange).join('; ');
+      await appendAudit(this.pipeline.dir, `Models switched${byActor(by)} on the running run: ${what}.`, { actor: by }).catch(() => {});
+      this._log('orchestrator', 'info', `model switch${byActor(by)}: ${what}`
+        + (skipped.length ? ` (skipped: ${skipped.map((s) => `${s.label} ${s.reason}`).join(', ')})` : ''));
+    }
+    return {
+      ok: true, pipelineId: this.pipeline?.id ?? null, changed, skipped,
+      stages: switchableStages(this.modelSwitchSnapshot()), stepper: this.state.stepper, warnings,
     };
   }
 
@@ -1103,6 +1238,22 @@ export class GraphOrchestrator extends RunHarness {
       return this._settleUnstarted(nc, node, args, err);   // allocation failed: no row to mark
     }
     await this._humanCursorInit(ctx);
+    // A switched node (fresh-session marker) starts without its old-model session. Drop that id from
+    // EVERY row of the node still paused — its own re-entered row and the sibling slices of a composite
+    // node that wait on the pool (they share node.id, so this first start consumes the marker for all):
+    // `_execStep` re-entry keeps `step.sessionId`, and only a spawn's first 'session' event overwrites it
+    // (run-harness _onAgentEvent). A pause in between (_checkPause, the _checkCostLimits budget gate, a
+    // spawn that fails before its init event) would otherwise park those rows with the OLD id, and with
+    // the marker gone the next resume would re-attach it. Every such row predates the model change.
+    if (this._freshSessionNodes?.delete(node.id) && !ctx.resumeSessionId) {
+      for (const s of this.state.steps) {
+        if (s.nodeId === node.id && s.status === 'paused' && s.sessionId) s.sessionId = null;
+      }
+      // The saved point still lists the marker until its next rebuild; a kill in the pause drain would
+      // resume with it and drop this execution's new-model session. (_graphSnapshot is frozen once a
+      // pause is requested, so the rebuild never moves the point.)
+      if (this._graphSnapshot) this.state.resumePoint = this._buildResumePoint(this._graphSnapshot);
+    }
     this._execStep(ctx, 'start');
     let endMark = 'done';
     try {
@@ -1353,6 +1504,9 @@ export class GraphOrchestrator extends RunHarness {
         ? { meta: nc.meta, runtime: nc.runtime, file: nc.file, command: nc.command, params: nc.params, paramsPort: nc.paramsPort === true, timeoutMs: nc.timeoutMs, mock: nc.mock }
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
+      // The node's own selection as this execution starts ('' = inherit the default), recorded on its
+      // ledger row by _execStep: a later model switch rewrites nodeCtx, never what a past cycle ran on.
+      selection: nc.kind === 'agent' ? { model: nc.model || '', effort: nc.effort || '' } : null,
       resumeSessionId: this._takeResumeSession(executionId),
       ask: (q) => this._enqueueAsk(() => this._ask(q)),
       // Who answered question `id` (identity.mjs actor; answer() records it) — the clarifier
@@ -1379,7 +1533,7 @@ export class GraphOrchestrator extends RunHarness {
 
   /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
    *  asked for, so a recovery retry or a fix cycle never re-attaches a stale
-   *  session. Composite slices re-run whole and are never in the map. */
+   *  session. A paused composite slice is in the map under its own slice id. */
   _takeResumeSession(executionId) {
     if (!this._resumeSessions?.has(executionId)) return undefined;
     const id = this._resumeSessions.get(executionId);
@@ -1443,6 +1597,9 @@ export class GraphOrchestrator extends RunHarness {
       step.updatedAt = now;
       if (status === 'start') step.endedAt = null;
     }
+    // Agents only. A retry keeps its ctx (same selection); a resume re-reads nodeCtx, so a model
+    // switched while paused shows on the re-fired row. The Agents tab labels each cycle from this.
+    if (status === 'start' && ctx.selection) { step.model = ctx.selection.model; step.effort = ctx.selection.effort; }
     if (terminal) step.endedAt = now;
     // Turns this execution's spawn never closed with a `result` (a pause, a stop, a crash, a retried
     // attempt): counted apart on the row (run-harness _closeOpenTurns). A result already cleared them.
@@ -2177,11 +2334,20 @@ export class GraphOrchestrator extends RunHarness {
     }
     // One-shot session re-attach: only executions the pause left PAUSED. The map
     // is consumed entry-by-entry in _execCtx, so a fix cycle (a NEW executionId)
-    // never re-attaches, and a composite slice re-runs whole.
+    // never re-attaches; a paused composite slice is mapped under its own slice id. A node whose MODEL was
+    // switched while paused (model-switch.mjs → rp.freshSessionNodes) starts a fresh
+    // session on the new model instead: its old transcript belongs to the old model.
+    const fresh = new Set(Array.isArray(rp.freshSessionNodes) ? rp.freshSessionNodes : []);
+    // Keep them fresh until they actually re-fire: a crash or pause before that must not re-attach.
+    this._freshSessionNodes = new Set(fresh);
+    const pausedSteps = (this.resumeOpts?.steps || []).filter((s) => s.status === 'paused' && s.sessionId);
+    for (const s of pausedSteps) {
+      if (!fresh.has(s.nodeId)) continue;
+      this._log(s.agentKey || s.nodeId, 'info', 'model switched while paused — starting a fresh session on the new model',
+        { nodeId: s.nodeId, executionId: s.key });
+    }
     this._resumeSessions = new Map(
-      (this.resumeOpts?.steps || [])
-        .filter((s) => s.status === 'paused' && s.sessionId)
-        .map((s) => [s.key, s.sessionId]),
+      pausedSteps.filter((s) => !fresh.has(s.nodeId)).map((s) => [s.key, s.sessionId]),
     );
   }
 }
