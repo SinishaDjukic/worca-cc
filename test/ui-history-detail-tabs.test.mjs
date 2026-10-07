@@ -347,6 +347,18 @@ test('Agents tab groups: duration fallback/blank cost, rolled-up header, v2 name
       assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
       assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Fable 5.1 (1M) · max');
     } },
+    { name: 'a group pill shows the selection its execution started with, not the switched manifest', run: async () => {
+      // Cycle 1 ran on the default ('' recorded); the slice ran on Opus; the manifest was switched to Fable later.
+      const steps = AG_V2_DETAIL.state.steps.map((s) => ({ ...s }));
+      Object.assign(steps[0], { model: '', effort: '' });
+      Object.assign(steps[1], { model: 'claude-opus-5-5', effort: 'high' });
+      const ctx = await bootDetail({ detail: { ...AG_V2_DETAIL, state: { ...AG_V2_DETAIL.state, steps } } });
+      ctx.window.__np._setModels([{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'] }]);
+      const sec = await openTab(ctx, 'agents');
+      const groups = [...sec.querySelectorAll('.hd-ag-group')];
+      assert.equal(groups[0].querySelector('.hd-ag-head .sub-model-pill'), null, 'the default is no pill, not the switched model');
+      assert.equal(groups[1].querySelector('.hd-ag-head .sub-model-pill').textContent, 'Opus 5.5 · high');
+    } },
     { name: 'a main agent that spawned nothing still gets a group, coloured by its step', run: async () => {
       const ctx = await bootDetail({
         detail: {

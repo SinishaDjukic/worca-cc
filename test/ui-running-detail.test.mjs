@@ -909,6 +909,22 @@ test('Agents: a v2 run names its groups from the ledger (rdAgentsBody passes r.s
   }
 });
 
+test('Agents: a group pill shows the selection its execution started with, not the switched manifest', async () => {
+  const ctx = await bootRunning();
+  // Implementer was switched to Fable after cycle 1 ran: the manifest now reads Fable for every cycle.
+  const steps = V2_STEPS();
+  Object.assign(steps[0], { model: '', effort: '' });                    // ran on the default: no pill
+  Object.assign(steps[2], { model: 'claude-opus-5-5', effort: 'high' });  // recorded at its start
+  await openRun(ctx, { stepper: V2_MANIFEST, steps, subAgents: V2_SUBS() });
+  const { window } = ctx;
+  click(window, tabOf(window, 'agents'));
+  await settle(window);
+  const pills = [...secOf(window, 'agents').querySelectorAll('.rd-ag-group')]
+    .map((g) => g.querySelector('.rd-ag-head .sub-model-pill')?.textContent ?? null);
+  // The slice row recorded nothing (a row from before the field): it keeps the manifest's selection.
+  assert.deepEqual(pills, [null, 'claude-fable-5-1 · max', 'claude-opus-5-5 · high']);
+});
+
 // --- script nodes P1b: the live line of a running script card (S4) ----------
 const SCRIPT_MANIFEST = {
   version: 2, template: { id: 'wf', name: 'WF' },

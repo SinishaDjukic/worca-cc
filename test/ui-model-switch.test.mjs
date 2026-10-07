@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { diffChanges, reconcileEffort, renderModelSwitchPanel } from '../ui/public/model-switch.mjs';
+import { diffChanges, reconcileEffort, renderModelSwitchPanel, switchNotice } from '../ui/public/model-switch.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const PAYLOAD = {
@@ -60,4 +60,32 @@ test('Save / Save & resume call onSave with the diff and the resume flag', async
   panel.el.querySelector('.msw-save-resume').click();
   await Promise.resolve();
   assert.deepEqual(calls, [{ changes: { n_refine: { model: 'claude-opus-5-5', effort: 'xhigh' } }, resume: true }]);
+});
+
+const RUNNING = {
+  ...PAYLOAD, status: 'running', pauseReason: null, pauseDetail: null,
+  stages: [
+    { ...PAYLOAD.stages[0], state: 'running', switchable: false },
+    { ...PAYLOAD.stages[1], state: 'may-rerun', switchable: true },
+    { ...PAYLOAD.stages[2], state: 'pending', switchable: true },
+  ],
+};
+
+test('a running payload: the running copy, Save as the primary action, no Save & resume', () => {
+  const panel = renderModelSwitchPanel(RUNNING, { doc });
+  assert.equal(panel.el.dataset.mode, 'running');
+  assert.match(panel.el.querySelector('.msw-title').textContent, /have not started/);
+  assert.match(panel.el.querySelector('.msw-sub').textContent, /a stage that is running keeps its model/);
+  assert.equal(panel.el.querySelector('.msw-save-resume'), null);
+  assert.ok(panel.el.querySelector('.msw-save').classList.contains('primary'));
+  assert.equal(panel.el.querySelector('tr[data-node="n_plan"] .msw-state').textContent, 'running now');
+  assert.ok(panel.el.querySelector('tr[data-node="n_plan"]').classList.contains('is-locked'));
+  assert.equal(panel.el.querySelector('tr[data-node="n_refine"] .msw-state').textContent, 'ran · may run again');
+});
+
+test('switchNotice: changed, skipped and warnings', () => {
+  assert.deepEqual(switchNotice({ changed: [{}, {}], skipped: [], warnings: ['w'] }), { tone: 'ok', title: 'Switched 2 stages', detail: 'w' });
+  assert.deepEqual(switchNotice({ changed: [{}], skipped: [{ label: 'Plan', reason: 'running' }], warnings: [] }),
+    { tone: 'ok', title: 'Switched 1 stage', detail: 'Plan had already started — kept its model.' });
+  assert.equal(switchNotice({ changed: [], skipped: [{ label: 'Plan', reason: 'running' }] }).tone, 'warn');
 });

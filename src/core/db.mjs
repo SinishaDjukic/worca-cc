@@ -58,7 +58,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 52;
+export const SCHEMA_VERSION = 53;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -872,6 +872,7 @@ const INCREMENTAL_COLUMNS = {
                             source_from_previous: 'INTEGER NOT NULL DEFAULT 0',   // v34: run chains
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it
                             resume_pipeline_id: 'TEXT' },   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
+  pipeline_commands:      { result: 'TEXT' },        // v53: JSON outcome a payload-bearing command reports back (switch-models), written by the owner AFTER the claim; NULL = none / not yet
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -936,13 +937,14 @@ CREATE INDEX IF NOT EXISTS idx_night_decisions_pipeline ON night_decisions(pipel
  * pattern to reuse, not a table to merge. No FK to pipelines: pipeline rows are never
  * deleted (archived at most), so orphaned commands are reaped (pipeline-commands.mjs),
  * not cascaded.
+ * v53 adds result TEXT through INCREMENTAL_COLUMNS (the owner's JSON answer, written after the claim).
  */
 const PIPELINE_COMMANDS_DDL = `
 CREATE TABLE IF NOT EXISTS pipeline_commands (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,  -- FIFO arrival order; commands are anonymous (a ticket's id becomes its run's id, a command's does not)
   pipeline_id  TEXT NOT NULL,                -- the 8-hex History id, prefix-resolved client-side before insert
-  action       TEXT NOT NULL,                -- 'stop' | 'pause' (payload-bearing actions, e.g. answer, ride the same table later)
-  payload      TEXT,                         -- JSON, reserved for those future actions
+  action       TEXT NOT NULL,                -- 'stop' | 'pause' | 'switch-models' (more payload-bearing actions may ride the same table later)
+  payload      TEXT,                         -- JSON: switch-models carries { changes }; NULL for stop/pause
   by           TEXT,                         -- who issued it (identity.mjs actor; 'local' from the CLI)
   created_at   TEXT NOT NULL,
   consumed_at  TEXT,                         -- NULL until claimed: the claim marker AND the CLI's "executed vs enqueued" signal
@@ -2077,6 +2079,7 @@ export function migrate(db) {
     if (current < 50) db.exec(TERMINAL_DDL);         // built-in terminal (#573) — IF NOT EXISTS, reconcile-safe
     // v51 (#574): ask_threads.agent_mode — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 52) applySchemaV52(db);            // workspace PRs: pipeline_member_prs + gated backfill
+    // v53: pipeline_commands.result (switch-models answers) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

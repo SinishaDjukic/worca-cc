@@ -31,7 +31,7 @@ import {
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleIndexLock, staleIndexLockNote } from './git-lock.mjs';
-import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
+import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs, completePipelineCommand } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName,
@@ -2566,15 +2566,18 @@ export class RunHarness extends EventEmitter {
       ? { kind: 'workspace', id: this.workspace.id, name: this.workspace.name, members: this.members.map((x) => ({ key: x.projectKey, name: x.projectName })), rank: 0 }
       : { kind: 'project', key: m.projectKey, name: m.projectName, rank: 0 };
     const required = requiredOf(this.policyRun);
+    const toolNameLimit = toolNameLimitFor([...this._mcpModels()]);
     const [result, catalog] = await Promise.all([
       resolveRegistry({
         surface: 'pipeline', targets: [target],
         teams: { [this.isWorkspace ? `ws:${this.workspace.id}` : m.projectKey]: required.length ? { home: this.policyRun.home, required } : null },
-        optOut: this.mcpOptOut, toolNameLimit: toolNameLimitFor([...this._mcpModels()]), copyCap: 24, taken,
+        optOut: this.mcpOptOut, toolNameLimit, copyCap: 24, taken,
         mcpTimeoutMs: MCP_STARTUP_MS.pipeline,
       }),
       loadCatalog(),
     ]);
+    // GraphOrchestrator.switchModels warns when a switch needs less; with no server resolved there is nothing to re-resolve.
+    this._mcpToolNameLimit = Object.keys(result.servers || {}).length ? toolNameLimit : null;
     return { result, catalog };
   }
 
@@ -6173,12 +6176,13 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Claim and execute ONE command from the control mailbox. Claiming IS
-   * consuming (the guarded UPDATE), so the row is gone whoever acts next; an
-   * action whose moment has passed (a `pause` while the run is no longer
-   * `running`) is therefore an honest no-op consumption — the issuing client
-   * reads the run's status, not the command, for what actually happened. The
-   * command's `by` (who issued it) rides into stop()/pause(), so
-   * state.lastAction — and every audit that reads it — names the real actor.
+   * consuming (the guarded UPDATE sets `consumed_at`; the row stays), so
+   * whoever acts next sees it taken; an action whose moment has passed (a `pause` while
+   * the run is no longer `running`) is therefore an honest no-op consumption. The
+   * issuing client reads the run's status for stop/pause, and the row's `result`
+   * for switch-models (switchModels' answer, or its refusal). The command's `by`
+   * (who issued it) rides into stop()/pause()/switchModels(), so state.lastAction
+   * and every audit that reads it name the real actor.
    */
   _checkControlSlot() {
     if (!this.pipeline?.id) return;
@@ -6196,6 +6200,26 @@ export class RunHarness extends EventEmitter {
     if (cmd.action === 'pause') {
       this._log('orchestrator', 'info', `control: pause requested by ${by} (via the run-control mailbox)`);
       this.pause(by);
+      return;
+    }
+    if (cmd.action === 'switch-models') {
+      this._log('orchestrator', 'info', `control: model switch requested by ${by} (via the run-control mailbox)`);
+      // The issuing client polls pipeline_commands.result (model-switch.mjs requestLiveModelSwitch).
+      // Best-effort: a lost write reads as "received" there.
+      const answer = (result) => { try { completePipelineCommand(cmd.id, result); } catch { /* best-effort */ } };
+      if (typeof this.switchModels !== 'function') {
+        answer({ ok: false, code: 'ENGINE_RETIRED', error: 'this run cannot switch models while it runs', httpStatus: 409 });
+        return;
+      }
+      // Not awaited: the tick stays synchronous. switchModels re-checks the run after its one await,
+      // so a pause claimed by a later tick meanwhile still refuses it (NOT_RUNNING). Only the fields a
+      // client prints go into the row (no stages / stepper).
+      Promise.resolve()
+        .then(() => this.switchModels(cmd.payload?.changes, { by }))
+        .then(
+          (r) => answer({ ok: true, changed: r.changed, skipped: r.skipped, warnings: r.warnings }),
+          (err) => answer({ ok: false, code: err?.code || 'ERROR', error: err?.message || String(err), httpStatus: err?.status || 500 }),
+        );
       return;
     }
     this._log('orchestrator', 'warn', `control: unknown command action "${cmd.action}" — consumed, ignored`);

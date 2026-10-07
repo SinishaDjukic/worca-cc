@@ -281,8 +281,8 @@ Subcommands:
                               --json). -f follows; Ctrl-C detaches, the run continues. See: worca logs help
   stop <id>                   Stop a live or paused run (any unique prefix). See: worca stop help
   pause <id>                  Gracefully pause a live run; resume with: worca resume <id>
-  switch-model <id>           Change a paused run's remaining stages' models (this run only),
-                              then resume. See: worca switch-model help
+  switch-model <id>           Change a running or paused run's remaining stages' models
+                              (this run only). See: worca switch-model help
   doctor                      Reconcile crashed runs and sweep leftover run roots.
   plugin <cmd> [...]          Manage plugins: add|install|list|update|remove|purge|enable|
                               disable|doctor|link|reimport|init|validate|exec. See: worca plugin help

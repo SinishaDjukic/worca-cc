@@ -608,8 +608,8 @@
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
-                  <!-- Paused only (paintRdHeader): switch the remaining stages' models before resuming (model-switch.mjs). -->
-                  <button type="button" class="rd-models btn-ghost" hidden title="Switch the models of the stages that have not completed">
+                  <!-- Running or paused (paintRdHeader): switch the models of the stages that have not started (model-switch.mjs). -->
+                  <button type="button" class="rd-models btn-ghost" hidden title="Switch the models of the stages that have not started">
                     <span class="rd-btn-label">Models</span>
                   </button>
                   <button type="button" class="rd-stop" hidden>
@@ -763,8 +763,8 @@
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
-                  <!-- Paused only (paintHdLive): switch the remaining stages' models before resuming (model-switch.mjs). -->
-                  <button type="button" class="hd-models btn-ghost" hidden title="Switch the models of the stages that have not completed">
+                  <!-- Running or paused (paintHdLive): switch the models of the stages that have not started (model-switch.mjs). -->
+                  <button type="button" class="hd-models btn-ghost" hidden title="Switch the models of the stages that have not started">
                     <span class="hd-btn-label">Models</span>
                   </button>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->

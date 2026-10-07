@@ -199,7 +199,7 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
-import { renderModelSwitchPanel } from './model-switch.mjs';
+import { renderModelSwitchPanel, switchNotice } from './model-switch.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
 
 const diffHljsLoader = window.__worcaTestHooks?.hljsLoader ?? createHljsLoader();
@@ -1331,8 +1331,8 @@ function handleServerMessage(msg) {
   // Neither a sub-agent delta, a skills update, nor a question resolution may
   // MATERIALIZE a run: each only attaches to one this tab already knows. (A
   // resolution for an unknown run is meaningless, and auto-creating a card would
-  // resurrect the phantom.)
-  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved' || msg.type === 'night-decision') && !runs.has(msg.runId)) return;
+  // resurrect the phantom.) Nor may an archive mark.
+  if ((msg.type === 'subagent' || msg.type === 'stepskills' || msg.type === 'stepgraphify' || msg.type === 'question-resolved' || msg.type === 'night-decision' || msg.type === 'archived') && !runs.has(msg.runId)) return;
   const r = upsertRun({ runId: msg.runId });
   // A reconnect re-subscribes and the server replays the run's buffer: skip what this page
   // already applied, or every earlier log line shows twice (ws-seq.mjs).
@@ -1377,6 +1377,10 @@ function handleServerMessage(msg) {
       break;
     case 'error':
       onError(r, msg);
+      break;
+    case 'archived':
+      // Its pipeline was archived while this entry lingered paused (server markEntriesArchived).
+      r.archivedAt = msg.archivedAt || new Date().toISOString();
       break;
     default:
       break;
@@ -1443,6 +1447,7 @@ function onHello(msg) {
       workspaceId: r0.workspaceId || undefined,
       projectNames: Array.isArray(r0.projectNames) && r0.projectNames.length ? r0.projectNames : undefined,
       night: r0.night || undefined,
+      archivedAt: r0.archivedAt || undefined,
     });
     // Seed the run's stepper from the hello summary so the live card resolves
     // sub-agents to their real nodes BEFORE any subagent delta paints — closing
@@ -1576,6 +1581,7 @@ function makeRun({
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
   pauseDetail = null, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined,
+  archivedAt = null,
 }) {
   return {
     runId,
@@ -1595,6 +1601,7 @@ function makeRun({
     workspaceId,
     workspaceName,
     night,                // Away mode on this run: {optIn, override, decisions, flagged, openedAt} (hello / state)
+    archivedAt,           // its pipeline was archived while it lingered paused (hello / 'archived' frame), or null
     // Stable ordering key: assigned once per runId, never bumped by activity
     // and never re-minted if the run is dropped and re-materialized.
     // hello seeds runs in server registration order, so this tracks true
@@ -1973,6 +1980,19 @@ function stepGraphifyFromSteps(steps) {
   for (const st of Array.isArray(steps) ? steps : []) {
     if (!st || st.nodeId == null || !(st.graphifyCount > 0)) continue;
     out[execKey(st.nodeId, st.executionId, st.cycle)] = st.graphifyCount;
+  }
+  return out;
+}
+
+// {`${nodeId}|${cycle}`: {model, effort}} — the selection each MAIN-agent execution started with,
+// recorded on its row (orchestrator _execStep; model '' = the default, no pill). Same keying as
+// stepSkillsFromSteps. It wins over the manifest's selection (stepModelByNode), which a model switch
+// rewrites for cycles that already ran; a row from before the field has no entry and keeps the manifest's.
+function stepModelFromSteps(steps) {
+  const out = {};
+  for (const st of Array.isArray(steps) ? steps : []) {
+    if (!st || st.nodeId == null || typeof st.model !== 'string') continue;
+    out[execKey(st.nodeId, st.executionId, st.cycle)] = { model: st.model, effort: typeof st.effort === 'string' ? st.effort : '' };
   }
   return out;
 }
@@ -17120,6 +17140,7 @@ async function openModelSwitch(host, pipelineId, { onResume, onSwitched } = {}) 
   if (!host || !pipelineId) return;
   if (!host.hidden && host.dataset.pipelineId === pipelineId) { host.hidden = true; host.replaceChildren(); return; }
   host.dataset.pipelineId = pipelineId;
+  delete host.dataset.mode;   // unknown until the GET answers: a frame during the load must not close it
   host.hidden = false;
   host.replaceChildren(Object.assign(document.createElement('div'), { className: 'msw-loading', textContent: 'Loading models…' }));
   const url = `/api/pipelines/${encodeURIComponent(pipelineId)}/models`;
@@ -17134,6 +17155,7 @@ async function openModelSwitch(host, pipelineId, { onResume, onSwitched } = {}) 
     return;
   }
   const close = () => { host.hidden = true; host.replaceChildren(); };
+  host.dataset.mode = data.status || 'paused';
   const panel = renderModelSwitchPanel(data, {
     doc: document,
     onCancel: close,
@@ -17142,9 +17164,14 @@ async function openModelSwitch(host, pipelineId, { onResume, onSwitched } = {}) 
         const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ changes }) });
         const out = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(out?.error || `HTTP ${res.status}`);   // the panel shows it inline
+        if (res.status === 202) {
+          // Another process drives the run and has not answered yet (model-switch.mjs requestLiveModelSwitch).
+          notify({ tone: 'info', title: 'Switch sent — the run has not confirmed it yet', key: `msw-${pipelineId}` });
+          close();
+          return;
+        }
         onSwitched?.(out);
-        notify({ tone: 'ok', title: `Switched ${out.changed.length} ${out.changed.length === 1 ? 'stage' : 'stages'}`,
-          detail: (out.warnings || []).join(' '), key: `msw-${pipelineId}` });
+        notify({ ...switchNotice(out), key: `msw-${pipelineId}` });
       }
       close();
       if (resume) onResume?.();
@@ -20822,12 +20849,17 @@ function paintHdLive(screen, record, data) {
   if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
   if (live && live.status === 'pausing') pauseBtn.disabled = true;
 
-  // "Models": a PAUSED run only (an interrupted one is resumed as it is), never an archived one.
+  // "Models": a running or paused run (an interrupted one is resumed as it is), never an archived one,
+  // nor one whose lingering paused entry was archived: Restore clears the row's mark, never the entry's.
+  // A run another process drives is known only from its row: `!live && savedStatus === 'running'`.
   const modelsBtn = screen.querySelector('.hd-models');
   if (modelsBtn) {
-    modelsBtn.hidden = !(live ? isPaused(live) && !archived : pausedSaved);
+    const switchStatus = live ? live.status : (!over ? savedStatus : '');
+    modelsBtn.hidden = archived || !!(live && live.archivedAt) || !(switchStatus === 'paused' || switchStatus === 'running');
     const mswHost = screen.querySelector('.hd-model-switch');
-    if (mswHost && modelsBtn.hidden && !mswHost.hidden) { mswHost.hidden = true; mswHost.replaceChildren(); }
+    if (mswHost && !mswHost.hidden && (modelsBtn.hidden || (mswHost.dataset.mode && mswHost.dataset.mode !== switchStatus))) {
+      mswHost.hidden = true; mswHost.replaceChildren();
+    }
   }
 
   const split = screen.querySelector('.hd-resume-split');
@@ -21436,6 +21468,7 @@ function setupHdActions(screen, record, data) {
   });
   screen.querySelector('.hd-models')?.addEventListener('click', () => {
     const r = hdCurrentRecord(record);
+    if (hdLiveRun(r)?.archivedAt) return;   // an archived entry is read-only (paintHdLive hides the button)
     openModelSwitch(screen.querySelector('.hd-model-switch'), r.id, {
       onResume: () => resumePipeline(hdCurrentRecord(record), r.projectDir || null, screen.querySelector('.hd-resume')),
     });
@@ -23719,6 +23752,7 @@ function buildHdAgents(sec, record, data) {
   const graphifyByGroup = stepGraphifyFromSteps(st.steps);
   const statusOf = stepStatusByKey(st.steps, st.stepper);
   const modelByNode = stepModelByNode(st.stepper);
+  const modelByKey = stepModelFromSteps(st.steps);
 
   for (const key of keys) {
     const list = Array.isArray(groups[key]) ? groups[key] : [];
@@ -23740,7 +23774,7 @@ function buildHdAgents(sec, record, data) {
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
-      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
+      stepModelPillHtml(key in modelByKey ? modelByKey[key] : modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -24689,6 +24723,7 @@ function rdAgentsBody(sec, r) {
   const graphifyByGroup = stepGraphifyFromSteps(r.steps);
   const statusOf = stepStatusByKey(r.steps, r.stepper);
   const modelByNode = stepModelByNode(r.stepper);
+  const modelByKey = stepModelFromSteps(r.steps);
   const cardsByNode = new Map();   // nodeId -> first group card, for the per-node artifact affordance
 
   for (const key of keys) {
@@ -24717,7 +24752,7 @@ function rdAgentsBody(sec, r) {
     head.innerHTML =
       `<b>${escapeHtml(labelOf(key))}</b>` +
       `<span class="subs-stat ${gstat}">${SUBS_STAT_TEXT[gstat] || gstat}</span>` +
-      stepModelPillHtml(modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
+      stepModelPillHtml(key in modelByKey ? modelByKey[key] : modelByNode[sep >= 0 ? String(key).slice(0, sep) : String(key)]) +
       graphifyCountPillHtml(graphifyByGroup[key]) +
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
@@ -25842,6 +25877,7 @@ function subModelPillHtml(model) {
 // time, so a node's model/effort there IS its effective selection. '' = inherit
 // the CLI/global default, which the client cannot resolve: no entry, no pill,
 // never a guess. v2 graph manifests only (frozen v1 snapshots recorded none).
+// The fallback for a row that recorded no selection of its own (stepModelFromSteps).
 function stepModelByNode(stepper) {
   const out = {};
   if (!isGraphManifest(stepper)) return out;
@@ -27490,7 +27526,7 @@ function openRunDetail(runId, { instant = false } = {}) {
   });
   screen.querySelector('.rd-models').addEventListener('click', () => {
     const r = runs.get(runDetailState.runId);
-    if (!r || !isPaused(r) || !r.pipelineId) return;
+    if (!r || !(isPaused(r) || r.status === 'running') || !r.pipelineId || r.archivedAt) return;
     openModelSwitch(screen.querySelector('.rd-model-switch'), r.pipelineId, {
       onSwitched: (out) => {
         if (!out?.stepper) return;
@@ -28814,11 +28850,17 @@ function paintRdHeader(screen, r) {
   const nextAction = paused ? 'resume' : 'pause';
   const actionChanged = pauseBtn.dataset.action !== nextAction;
   pauseBtn.dataset.action = nextAction;
-  // "Models" — paused only (not pausing/interrupted): the switch edits the frozen manifest of a run no process drives.
+  // "Models" — running or paused (not pausing / interrupted): a running run switches the stages that
+  // have not started; a paused one edits its frozen manifest (model-switch.mjs). Never an archived
+  // one: archive keeps a paused run's entry, and the server refuses its switch (409 ARCHIVED).
   const modelsBtn = screen.querySelector('.rd-models');
-  if (modelsBtn) modelsBtn.hidden = !(paused && r.status === 'paused' && r.pipelineId);
+  if (modelsBtn) modelsBtn.hidden = !!r.archivedAt || !(r.pipelineId && (r.status === 'paused' || r.status === 'running'));
   const mswHost = screen.querySelector('.rd-model-switch');
-  if (mswHost && modelsBtn?.hidden && !mswHost.hidden) { mswHost.hidden = true; mswHost.replaceChildren(); }
+  // Close an open panel when the button hides (running -> pausing), or when the run crossed
+  // running <-> paused (its copy and buttons differ).
+  if (mswHost && !mswHost.hidden && (modelsBtn?.hidden || (mswHost.dataset.mode && mswHost.dataset.mode !== r.status))) {
+    mswHost.hidden = true; mswHost.replaceChildren();
+  }
 
   // BUSY GUARD — load-bearing, not defensive padding.
   // `resumeRunFromCard` writes `btn.textContent = ' Resuming…'`, and the

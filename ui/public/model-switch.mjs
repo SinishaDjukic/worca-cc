@@ -1,12 +1,14 @@
 // ui/public/model-switch.mjs
-// The paused run's "Models" panel (run detail, both screens): one row per agent stage of the
-// frozen manifest, model + effort + sub-agent model + sub-agent effort, completed stages locked.
+// The run's "Models" panel (run detail, both screens) for a running or paused run: one row per agent
+// stage of the manifest, model + effort + sub-agent model + sub-agent effort; locked rows are stages
+// that are running or finished for good.
 // Pure DOM — returns a detached element; app.js mounts it and owns the fetches. Data comes from
 // GET /api/pipelines/:id/models (src/core/model-switch.mjs describeModelSwitch).
 import { h } from './script-forms.mjs';
 
 export const FIELDS = Object.freeze(['model', 'effort', 'subagentModel', 'subagentEffort']);
-const STATE_LABEL = { completed: 'completed', paused: 'paused here', pending: 'not started' };
+const STATE_LABEL = { completed: 'completed', paused: 'paused here', pending: 'not started',
+  running: 'running now', 'may-rerun': 'ran · may run again' };
 
 export const effortsFor = (models, modelId) => (models || []).find((m) => m.id === modelId)?.efforts || [];
 
@@ -48,6 +50,21 @@ function modelItems(payload, current) {
   return items;
 }
 
+/** The toast after a save: what changed, what a running run skipped, and the warnings. */
+export function switchNotice(out) {
+  const n = out?.changed?.length || 0;
+  const skipped = Array.isArray(out?.skipped) ? out.skipped : [];
+  const detail = [
+    ...skipped.map((s) => `${s.label} ${s.reason === 'running' ? 'had already started' : 'already completed'} — kept its model.`),
+    ...(out?.warnings || []),
+  ].join(' ');
+  return {
+    tone: !n && skipped.length ? 'warn' : 'ok',
+    title: n ? `Switched ${n} ${n === 1 ? 'stage' : 'stages'}` : 'Nothing switched',
+    detail,
+  };
+}
+
 /**
  * @param {object} payload describeModelSwitch's shape
  * @param {{doc?:Document, onSave?:(x:{changes:object, resume:boolean})=>Promise<void>, onCancel?:()=>void}} [opts]
@@ -56,12 +73,17 @@ function modelItems(payload, current) {
 export function renderModelSwitchPanel(payload, { doc = globalThis.document, onSave, onCancel } = {}) {
   const picks = {};
   const selects = {};   // nodeId -> { model, effort, locked }
+  const live = payload.status === 'running';
   const root = h(doc, 'section', 'msw');
+  root.dataset.mode = live ? 'running' : 'paused';
   root.setAttribute('aria-label', 'Switch models');
   const head = h(doc, 'div', 'msw-head');
-  head.appendChild(h(doc, 'b', 'msw-title', 'Switch models for the remaining stages'));
-  head.appendChild(h(doc, 'small', 'msw-sub',
-    'This run only. A stage whose model changes starts a fresh session when the run resumes.'));
+  head.appendChild(h(doc, 'b', 'msw-title', live
+    ? 'Switch models for the stages that have not started'
+    : 'Switch models for the remaining stages'));
+  head.appendChild(h(doc, 'small', 'msw-sub', live
+    ? 'This run only. Each stage uses its new model when it starts; a stage that is running keeps its model.'
+    : 'This run only. A stage whose model changes starts a fresh session when the run resumes.'));
   root.appendChild(head);
   if (payload.pauseDetail) root.appendChild(h(doc, 'p', 'msw-why', payload.pauseDetail));
 
@@ -145,16 +167,18 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
   root.appendChild(err);
   const actions = h(doc, 'div', 'msw-actions');
   const cancel = h(doc, 'button', 'msw-cancel btn-ghost', 'Cancel');
-  const save = h(doc, 'button', 'msw-save', 'Save');
-  const saveResume = h(doc, 'button', 'msw-save-resume primary', 'Save & resume');
-  for (const b of [cancel, save, saveResume]) { b.type = 'button'; actions.appendChild(b); }
+  const save = h(doc, 'button', live ? 'msw-save primary' : 'msw-save', 'Save');
+  // A running run has nothing to resume: Save is the primary action.
+  const saveResume = live ? null : h(doc, 'button', 'msw-save-resume primary', 'Save & resume');
+  const buttons = [cancel, save, ...(saveResume ? [saveResume] : [])];
+  for (const b of buttons) { b.type = 'button'; actions.appendChild(b); }
   root.appendChild(actions);
 
   const api = {
     el: root,
     picks: () => JSON.parse(JSON.stringify(picks)),
     showError: (msg) => { err.textContent = msg || ''; err.hidden = !msg; },
-    setBusy: (busy) => { for (const b of [cancel, save, saveResume]) b.disabled = !!busy; },
+    setBusy: (busy) => { for (const b of buttons) b.disabled = !!busy; },
   };
   const submit = async (resume) => {
     api.showError('');
@@ -164,7 +188,7 @@ export function renderModelSwitchPanel(payload, { doc = globalThis.document, onS
     finally { api.setBusy(false); }
   };
   save.addEventListener('click', () => { void submit(false); });
-  saveResume.addEventListener('click', () => { void submit(true); });
+  saveResume?.addEventListener('click', () => { void submit(true); });
   cancel.addEventListener('click', () => onCancel?.());
   return api;
 }

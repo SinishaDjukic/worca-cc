@@ -1032,7 +1032,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .qtune td.qtune-sw-cell{display:flex;align-items:center;min-height:24px;}
 .qtune-sw{display:inline-flex;align-items:center;gap:8px;position:relative;cursor:pointer;}
 .qtune-sw-t{font-size:12.5px;color:var(--ink-2);}
-/* Paused run: "Switch models" panel (model-switch.mjs), under the run bar on #running and #history. */
+/* Running or paused run: "Switch models" panel (model-switch.mjs), under the run bar on #running and #history. */
 .msw{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0;}
 .msw-head{display:flex;flex-direction:column;gap:2px;margin-bottom:8px;}
 .msw-sub,.msw-why{color:var(--ink-3);font-size:12px;}
@@ -1044,6 +1044,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .msw-stage{display:flex;flex-direction:column;}
 .msw-state{color:var(--ink-3);font-size:11px;}
 .msw-state.st-paused{color:var(--red-ink);}
+.msw-state.st-running{color:var(--ink-2);font-weight:500;}
 .msw-na{color:var(--ink-3);}
 .msw-all-row td{border-bottom:1px dashed var(--line);padding-bottom:8px;}
 .msw-error{color:var(--red-ink);font-size:12px;margin-top:6px;}

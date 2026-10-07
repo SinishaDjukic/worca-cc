@@ -1,28 +1,34 @@
 // src/cli/switch-model.mjs
-// `worca switch-model` — change a PAUSED run's remaining stages' models before resuming it.
-// Talks to the store, never to the UI server (control.mjs's rule): the switch is one
-// conditional write through the same core action the run detail UI uses (model-switch.mjs).
+// `worca switch-model` — change a running or paused run's remaining stages' models (this run only).
+// Talks to the store, never to the UI server (control.mjs's rule): a paused run is one conditional
+// write; a running run is asked through its run-control mailbox, so this works whichever process
+// drives it (model-switch.mjs switchRunModels).
 
 import { resolveRunRef } from './runs.mjs';
 import { cliProjectDirFor } from './control.mjs';
 
-export const SWITCH_HELP = `worca switch-model — change a paused run's models, then resume it
+export const SWITCH_HELP = `worca switch-model — change a running or paused run's models (this run only)
 
 Usage:
-  worca switch-model <id>                       List the run's stages and their models
+  worca switch-model <id>                       List the run's stages, their state and models
   worca switch-model <id> --stage <stage> [--model <m>] [--effort <e>]
                           [--subagent-model <m>] [--subagent-effort <e>]
   worca switch-model <id> --all --model <m> [...]
-                                                Apply to every stage that has not completed
+                                                Apply to every stage that can still switch
   --json                                        Machine-readable output
 
 <stage> is a node id (n_refine) or an agent key (refiner) when only one stage uses it.
 Pass "default" to clear a field back to the run default. Efforts: medium, high, xhigh, max.
 Sub-agent models: sonnet, opus, fable, auto, inherit.
 
-Only a PAUSED run can be switched, and only the paused stage and the stages after it.
-The change applies to this run only. A stage whose model changed starts a fresh Claude
-session when you resume:  worca resume <id>
+A stage can switch unless it is running right now or finished for good. A loop stage that
+already ran can switch while its loop is still going; its next cycle uses the new model.
+
+Running run: the process that drives it applies the change; each switched stage uses its new
+model when it starts, and a stage that started meanwhile is skipped and reported. The run never
+pauses.
+Paused run: a stage whose model changed starts a fresh Claude session when you resume:
+  worca resume <id>
 `;
 
 const FLAG_FIELDS = Object.freeze({
@@ -66,7 +72,8 @@ function refusal(msg) {
 }
 
 function printStages(info, { out, c }) {
-  out(`${c('bold', info.title || info.pipelineId)} ${c('gray', `— paused${info.pauseReason ? ` (${info.pauseReason})` : ''}`)}`);
+  const tail = info.status === 'running' ? '— running' : `— paused${info.pauseReason ? ` (${info.pauseReason})` : ''}`;
+  out(`${c('bold', info.title || info.pipelineId)} ${c('gray', tail)}`);
   const rows = [['STAGE', 'NODE', 'STATE', 'MODEL', 'EFFORT', 'SUBS', 'SUBS EFFORT']];
   for (const s of info.stages) {
     rows.push([s.key || s.label, s.nodeId, s.state, s.model || 'default', s.effort || '—',
@@ -74,6 +81,32 @@ function printStages(info, { out, c }) {
   }
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => String(r[i]).length)));
   for (const r of rows) out('  ' + r.map((v, i) => String(v).padEnd(widths[i])).join('  ').trimEnd());
+}
+
+const switchedLine = (ch, c) => `${c('green', 'Switched')} ${c('bold', ch.label)} ${c('gray', `(${ch.nodeId})`)}: ${ch.before.model || 'default'} → ${ch.after.model || 'default'}`;
+
+/** A running run's answer (or the lack of one). @returns {number} exit code */
+function printLive(id, res, { json }, { out, c }) {
+  if (!res.ok) {
+    const notApplied = res.outcome === 'not-applied';
+    if (json) { out(JSON.stringify({ id, outcome: res.outcome, status: res.runStatus }, null, 2)); return notApplied ? 1 : 0; }
+    if (notApplied) return refusal(`run ${id} is "${res.runStatus}" now — nothing was switched (see: worca switch-model ${id})`);
+    out(c('yellow', res.outcome === 'received'
+      ? `Switch received — the run has not confirmed it yet (check: worca switch-model ${id})`
+      : `Switch sent — the run has not picked it up yet (check: worca switch-model ${id})`));
+    return 0;
+  }
+  if (json) {
+    out(JSON.stringify({ id, outcome: 'switched', changed: res.changed, skipped: res.skipped, warnings: res.warnings }, null, 2));
+    return 0;
+  }
+  if (!res.changed.length && !res.skipped.length) out(c('gray', 'Nothing changed — the stages already use that selection.'));
+  for (const ch of res.changed) out(switchedLine(ch, c));
+  for (const s of res.skipped) {
+    out(`${c('yellow', 'Skipped')} ${c('bold', s.label)} ${c('gray', `(${s.nodeId})`)}: ${s.reason === 'running' ? 'already running — it keeps its model' : 'already completed'}`);
+  }
+  for (const w of res.warnings) out(c('yellow', w));
+  return 0;
 }
 
 /** @returns {Promise<number>} exit code */
@@ -89,7 +122,7 @@ export async function cmdSwitchModel(argv, { out, c, fail }) {
   if (!hasChange && (a.stage || a.all)) fail('name what to change: --model, --effort, --subagent-model or --subagent-effort');
   const id = resolveRunRef(a.ref, fail);
 
-  const { describeModelSwitch, switchPausedRunModels, ModelSwitchError } = await import('../core/model-switch.mjs');
+  const { describeModelSwitch, switchRunModels, ModelSwitchError } = await import('../core/model-switch.mjs');
   try {
     const info = await describeModelSwitch(id, { projectDirFor: cliProjectDirFor });
     if (!hasChange) {
@@ -99,10 +132,11 @@ export async function cmdSwitchModel(argv, { out, c, fail }) {
     const targets = a.all ? info.stages.filter((s) => s.switchable) : [resolveStage(info.stages, a.stage, fail)];
     if (!targets.length) return refusal(`run ${id} has no stage left to switch`);
     const changes = Object.fromEntries(targets.map((s) => [s.nodeId, { ...a.change }]));
-    const res = await switchPausedRunModels(id, { changes, by: 'local', projectDirFor: cliProjectDirFor });
+    const res = await switchRunModels(id, { changes, by: 'local', projectDirFor: cliProjectDirFor });
+    if (res.mode === 'running') return printLive(id, res, a, { out, c });
     if (a.json) { out(JSON.stringify({ id, changed: res.changed, warnings: res.warnings }, null, 2)); return 0; }
     if (!res.changed.length) out(c('gray', 'Nothing changed — the stages already use that selection.'));
-    for (const ch of res.changed) out(`${c('green', 'Switched')} ${c('bold', ch.label)} ${c('gray', `(${ch.nodeId})`)}: ${ch.before.model || 'default'} → ${ch.after.model || 'default'}`);
+    for (const ch of res.changed) out(switchedLine(ch, c));
     for (const w of res.warnings) out(c('yellow', w));
     if (res.changed.length) out(c('gray', `Resume with: worca resume ${id}`));
     return 0;

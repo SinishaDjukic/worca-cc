@@ -22,7 +22,7 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
-import { describeModelSwitch, switchPausedRunModels, ModelSwitchError } from '../src/core/model-switch.mjs';
+import { describeModelSwitch, switchRunModels, ModelSwitchError } from '../src/core/model-switch.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
@@ -942,6 +942,8 @@ function summarizeRuns() {
     // The clipped failure message behind reason 'error', or null — so a
     // reload/reconnect restores the "Paused · error" detail, not a bare card.
     pauseDetail: r.pauseDetail || null,
+    // When the pipeline was archived while this entry lingered paused (markEntriesArchived), or null.
+    archivedAt: r.archivedAt || null,
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
@@ -4036,27 +4038,55 @@ function modelSwitchReply(res, err) {
   return res.status(500).json({ error: err && err.message ? err.message : String(err) });
 }
 
-// A paused run's stages, their models and the run project's catalog (the run detail's "Models" panel).
+/** The in-process entry still driving `pipelineId` (not settled), or null. */
+function modelSwitchEntry(pipelineId) {
+  return [...runs.values()].find((e) => e.pipelineId === pipelineId && !SETTLED_RUN.has(String(e.status || ''))) || null;
+}
+
+// A running or paused run's stages, their models and the run project's catalog (the "Models" panel).
+// A run THIS process drives is described from its orchestrator (the scheduler knows what is executing);
+// anything else from the store.
 app.get('/api/pipelines/:id/models', async (req, res) => {
-  try { res.json(await describeModelSwitch(req.params.id, { projectDirFor: projectDirForKey })); }
-  catch (err) { modelSwitchReply(res, err); }
+  try {
+    const orch = modelSwitchEntry(req.params.id)?.orch;
+    const live = orch?.state?.status === 'running' && typeof orch.modelSwitchSnapshot === 'function'
+      ? orch.modelSwitchSnapshot() : null;
+    res.json(await describeModelSwitch(req.params.id, { projectDirFor: projectDirForKey, live }));
+  } catch (err) { modelSwitchReply(res, err); }
 });
 
-// Switch the models of a PAUSED run's remaining stages (this run only — model-switch.mjs).
+// Switch the models of a run's remaining stages (this run only — model-switch.mjs). A run this process
+// drives switches in memory (its orchestrator gates pausing / starting runs itself); a paused run is a
+// store edit; a run another process drives gets the request through its run-control mailbox.
 app.post('/api/pipelines/:id/models', async (req, res) => {
   const pipelineId = req.params.id;
+  const changes = req.body?.changes;
+  const by = actorOf(req);
   try {
     // A pause still unwinding owns its row until done(paused): let it finish (stopPausedPipelineOnce's rule).
     const parked = [...runs.values()].find((e) => e.pipelineId === pipelineId && e.status === 'paused') || null;
     if (parked && !parked.settled && parked.launch) await parked.launch.catch(() => {});
-    for (const e of runs.values()) {
-      if (e.pipelineId === pipelineId && !SETTLED_RUN.has(String(e.status || ''))) {
-        return res.status(409).json({ error: 'pipeline is live — pause it first', code: 'LIVE' });
+    const entry = modelSwitchEntry(pipelineId);
+    if (entry) {
+      if (typeof entry.orch?.switchModels !== 'function') {
+        return res.status(409).json({ error: 'this run cannot switch models while it runs', code: 'ENGINE_RETIRED' });
       }
+      // Its own 'state' emit reaches the tabs through wireRun; the history list needs the nudge.
+      const out = await entry.orch.switchModels(changes, { by });
+      if (out.changed.length) emitChanged('pipelines-changed', 'updated');
+      return res.json(out);
     }
-    const out = await switchPausedRunModels(pipelineId, {
-      changes: req.body?.changes, by: actorOf(req), projectDirFor: projectDirForKey,
-    });
+    const out = await switchRunModels(pipelineId, { changes, by, projectDirFor: projectDirForKey });
+    if (out.mode === 'running') {
+      if (out.ok) {
+        if (out.changed.length) emitChanged('pipelines-changed', 'updated');
+        return res.json(out);
+      }
+      if (out.outcome === 'not-applied') {
+        return res.status(409).json({ error: `the run is "${out.runStatus}" now — nothing was switched`, code: 'NOT_RUNNING' });
+      }
+      return res.status(202).json(out);   // sent; the owner has not answered in time
+    }
     if (out.changed.length) {
       // The parked entry's orchestrator is what a reconnect snapshots: show the new models there too.
       if (parked?.orch?.state) {
@@ -5357,6 +5387,7 @@ app.delete('/api/runs/:id', async (req, res) => {
     if (report.archived) {
       const archBy = actorOf(req);
       appendAuditById(report.id, `Run archived${byActor(archBy)}.`, { actor: archBy });
+      markEntriesArchived(report.id);
     }
     emitChanged('pipelines-changed', 'deleted');
     res.json({ ok: true, ...report });
@@ -5367,6 +5398,20 @@ app.delete('/api/runs/:id', async (req, res) => {
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
+
+// The live guard above lets a paused (or interrupted) pipeline through, and its parked entry stays in
+// `runs`: the run page keeps drawing its bar from it. Mark each one, so the page stops offering a
+// model switch the server answers 409 ARCHIVED to. hello carries the mark (summarizeRuns), and a
+// buffered `archived` frame tells the open tabs. One-way: a restore brings a paused row back as an
+// interrupted read-only record (restorePipeline), never a switchable one.
+function markEntriesArchived(pipelineId) {
+  const archivedAt = new Date().toISOString();
+  for (const entry of runs.values()) {
+    if (entry.pipelineId !== pipelineId || entry.archivedAt || !Array.isArray(entry.events)) continue;
+    entry.archivedAt = archivedAt;
+    broadcast(bufferEvent(entry, { type: 'archived', archivedAt }));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/runs/:id/restore?projectKey=...  (or ?projectDir=... / ?workspaceId=...)
