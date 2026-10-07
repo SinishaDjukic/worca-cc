@@ -8,7 +8,7 @@
 // Cloudflare Workers Builds deploys `docs-live` (docs-site/README.md). Before moving
 // it, this checks that the target is on origin/dev and a fast-forward of docs-live,
 // that its newest changelog entry has its page, and that the site actually builds
-// from the target's tree (docs-site/build.mjs run on a `git archive` of it) — so a
+// from the target's tree (`npm ci` + `npm run build` in docs-site/ on a `git archive` of it) — so a
 // broken entry never reaches the pointer.
 
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -78,9 +78,15 @@ try {
   if (archive.status !== 0) fail(`git archive failed: ${archive.stderr}`);
   const untar = spawnSync('tar', ['-x', '-C', tmp], { input: archive.stdout });
   if (untar.status !== 0) fail(`tar failed: ${untar.stderr}`);
-  const build = spawnSync(process.execPath, [path.join(tmp, 'docs-site', 'build.mjs')], { encoding: 'utf8' });
+  // Install from the target's lockfile and build, as Workers Builds does (VitePress is a dependency).
+  const npm = (args) => spawnSync('npm', args, {
+    cwd: path.join(tmp, 'docs-site'), encoding: 'utf8', shell: process.platform === 'win32',
+  });
+  const install = npm(['ci', '--no-audit', '--no-fund']);
+  if (install.status !== 0) fail(`npm ci failed for the docs site at ${short(target)}:\n${install.stderr || install.stdout}`);
+  const build = npm(['run', '--silent', 'build']);
   if (build.status !== 0) fail(`the docs site does not build at ${short(target)}:\n${build.stderr || build.stdout}`);
-  process.stdout.write(`build check: ${build.stdout}`);
+  console.log(`build check: ${build.stdout.trim().split('\n').at(-1)}`);
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }

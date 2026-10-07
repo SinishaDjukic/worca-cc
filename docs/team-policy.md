@@ -112,7 +112,7 @@ entry that breaks a rule is dropped with a warning; the other entries stay.
   why the field is refused in the `workspaceRuns` block.
 - **Consent, never automatic.** The setup checklist lists every entry with its action, and the strip
   on the MCP servers tab every entry still to set up: **Install** (an inline entry), **Turn on**,
-  **Update** (the team definition changed; the dialog shows before and after), **Set <field>**, or
+  **Update** (the team definition changed; the dialog shows before and after), **Set \<field>**, or
   *Needs plugin* (the plugin's own row). Install, a first Turn on and Update open a consent dialog:
   the command or URL, environment and headers, what each teammate fills in and the values the team
   seeds. Consent is recorded on exactly the definition and values the dialog showed; if the cached
@@ -132,7 +132,7 @@ entry that breaks a rule is dropped with a warning; the other entries stay.
   **Forget** once no project here follows its home (removing a project from Worca drops its cached
   policy, unless the repo is still in one of your workspaces; adding a project reads its policy at
   once) or its policy requires no MCP server any more; Forget then drops the set with its values,
-  secrets and tests. A policy server no home requires any more reads "no longer required by <home>"
+  secrets and tests. A policy server no home requires any more reads "no longer required by \<home>"
   in the Servers view, keeps working in your own sets, and offers **Remove**.
 - **Pair it with `worca.minVersion`.** An older Worca drops `mcp.required` as an unknown field, and a
   publish from such a client removes it from the branch. A teammate who upgrades sees the field at
