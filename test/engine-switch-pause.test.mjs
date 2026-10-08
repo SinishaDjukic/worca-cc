@@ -12,8 +12,9 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { MODEL_ENGINES } from '../src/core/model-env.mjs';
-import { SWITCH_ENGINES, engineLabel, otherEngine, usageLimitSwitch, engineSwitchNote } from '../src/shared/engine-switch.mjs';
+import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel } from '../src/shared/engine-switch.mjs';
+import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine } from '../src/core/model-env.mjs';
+import { listEngines } from '../src/core/engines/index.mjs';
 
 useTempHome(after);
 process.env.WORCA_RECOVERY_BACKOFF_MS = '0';
@@ -28,19 +29,60 @@ const LIMIT_ERR = () => new Error("claude exited with code 1: You've hit your se
 const FREE_DAILY_ERR = () => new Error('claude exited with code 1: API Error: Request rejected (429) · openai: rate limited (429) — Rate limit exceeded: free-models-per-day-high-balance.  [openrouter_free_tier_daily]');
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
-test('engine-switch: the other engine, its label, and when a pause offers it', () => {
-  assert.deepEqual([...SWITCH_ENGINES], MODEL_ENGINES, 'one engine list for the switch and the catalog');
-  assert.equal(otherEngine('codex'), 'claude');
-  assert.equal(otherEngine('claude'), 'codex');
-  assert.equal(otherEngine(null), 'codex', 'a missing engine is Claude');
-  assert.equal(otherEngine('gemini'), null);
+test('one engine list for the switch, the catalog and the registry', () => {
+  assert.deepEqual([...SWITCH_ENGINES], MODEL_ENGINES);
+  assert.deepEqual([...MODEL_ENGINE_NAMES], MODEL_ENGINES);
+  assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));
+  assert.deepEqual([...ENGINE_NAMES], RUN_ENGINES);
+});
+
+test('every other engine, in order, filtered by readiness', () => {
+  assert.deepEqual(otherEngines('claude'), ['codex', 'cursor']);
+  assert.deepEqual(otherEngines('cursor'), ['claude', 'codex']);
+  assert.deepEqual(otherEngines(null), ['codex', 'cursor'], 'a missing engine is Claude');
+  assert.deepEqual(otherEngines('codex', ['claude']), ['claude']);
+  assert.deepEqual(otherEngines('gemini'), []);
+});
+
+test('a usage limit offers the ready others; any other pause offers none', () => {
+  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'claude' }, ['claude', 'cursor']), ['cursor']);
+  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'codex' }), ['claude', 'cursor'], 'nothing known: every other engine');
+  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: null }), []);
+  assert.deepEqual(usageLimitSwitches({ reason: 'error', limitEngine: 'claude' }), []);
+  assert.deepEqual(usageLimitSwitches({}), []);
+});
+
+test('labels, lists and cost reporting follow the registry', () => {
   assert.equal(engineLabel('codex'), 'Codex');
   assert.equal(engineLabel(undefined), 'Claude');
-  assert.equal(usageLimitSwitch({ reason: 'usage_limit', limitEngine: 'codex' }), 'claude');
-  assert.equal(usageLimitSwitch({ reason: 'usage_limit', limitEngine: null }), null, 'not an engine limit');
-  assert.equal(usageLimitSwitch({ reason: 'error', limitEngine: 'codex' }), null);
-  assert.equal(usageLimitSwitch({}), null);
+  assert.equal(engineLabel('cursor'), 'Cursor');
+  assert.equal(engineList(['codex', 'cursor']), 'Codex or Cursor');
+  assert.equal(engineList(['claude', 'codex', 'cursor'], (e) => e), 'claude, codex or cursor');
   assert.equal(engineSwitchNote('claude'), "Starts the paused step fresh; the model falls back to Claude's default.");
+  assert.match(engineSwitchNote('cursor'), /Cursor's default/);
+  for (const e of listEngines().filter((x) => x.name !== 'mock')) assert.equal(engineReportsCost(e.name), e.capabilities.cost !== false, e.name);
+});
+
+test('runCostLabel: a priced engine formats its total; Cursor reads "cost unknown", never $0.00', () => {
+  const fmt = (n) => `$${n.toFixed(2)}`;
+  assert.equal(runCostLabel('claude', 0, fmt), '$0.00');
+  assert.equal(runCostLabel(undefined, 1.5, fmt), '$1.50');
+  assert.equal(runCostLabel('codex', null, fmt), '$0.00');
+  assert.equal(runCostLabel('cursor', 0, fmt), 'cost unknown');
+  assert.equal(runCostLabel('cursor', 0.42, fmt), "cost unknown (worca's own calls: $0.42)");
+});
+
+test('helper jobs run on the run engine when it runs them, else on Claude', () => {
+  assert.deepEqual(HELPER_ENGINES, ['claude', 'codex']);
+  assert.equal(helperEngineFor('claude'), 'claude');
+  assert.equal(helperEngineFor('codex'), 'codex');
+  assert.equal(helperEngineFor('cursor'), 'claude');
+  assert.equal(helperEngineFor('copilot'), 'copilot', 'Copilot runs its own helper jobs on its default model');
+  assert.equal(helperEngineFor(undefined), 'claude');
+  for (const e of HELPER_ENGINES) assert.ok(MODEL_ENGINES.includes(e));
+  assert.deepEqual(ASK_ENGINES, ['claude', 'codex'], 'Ask never runs on Cursor (CURSOR_ASK_LOCKDOWN = null)');
+  assert.deepEqual(CURSOR_EFFORTS, []);
+  assert.equal(effortsForEngine('cursor'), CURSOR_EFFORTS);
 });
 
 test('a usage limit an agent hit records its engine on every copy of the pause', async () => {
@@ -60,7 +102,7 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   const row = (await listPipelines(dir)).find((p) => p.id === orch.state.id);
   assert.equal(row.limitEngine, 'claude', 'the history list row too');
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.state.id).map((e) => e.text).join('\n');
-  assert.match(audit, /Resume after the reset, or continue now on Codex\./);
+  assert.match(audit, /Resume after the reset, or continue now on Codex or Cursor\./);
 
   // A resume clears it, like the reason.
   const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier }, resume: saved });

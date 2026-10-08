@@ -181,3 +181,14 @@ test('refusals: ambiguous prefix (match count), unknown verb/id (one combined er
     } },
   ]);
 });
+
+test('a Cursor run: the detail reads "cost unknown", never $0.00, and the list entry names its engine', async () => {
+  insertPipeline({ id: 'ccc30001', projectKey: 'proj-c', title: 'cursor run', status: 'done', minutesAgo: 1, costUsd: 0.3,
+    resumePoint: JSON.stringify({ claude: { engine: 'cursor' } }) });
+  const r = await run(['runs', 'ccc30001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /cost\s+cost unknown \(worca's own calls: \$0\.30\)/);
+  const list = JSON.parse((await run(['runs', '--json'])).stdout);
+  assert.equal(list.find((x) => x.id === 'ccc30001').runEngine, 'cursor');
+  assert.equal(list.find((x) => x.id !== 'ccc30001').runEngine, 'claude', 'a run with no engine recorded is Claude');
+});

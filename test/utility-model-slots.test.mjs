@@ -73,6 +73,20 @@ test('PR description: Codex takes its slot; Claude takes a project override in p
   assert.equal(seen[2].model, 'claude-opus-5-5');
 });
 
+test('overview and PR description of a Cursor run run on Claude, with Claude\'s slot', async () => {
+  const ov = await seedPipeline(join(whome, 'p-ov-cu'), { engine: 2, runEngine: 'cursor', status: 'done' });
+  mkdirSync(ov.dir, { recursive: true });
+  writeUser({ prDescriptionModel: 'claude-sonnet-5' });
+  const seen = [];
+  await generateOverview(ov.key, ov.id, { force: true, runClaudeImpl: spy(seen) });
+  assert.equal('engine' in seen[0], false, 'no engine: Claude');
+  assert.equal('sandbox' in seen[0], false);
+  const pr = await seedPipeline(join(whome, 'p-pr-cu'), { engine: 2, runEngine: 'cursor', status: 'done', title: 't' });
+  await generatePrDescription(pr.key, pr.id, { runClaudeImpl: spy(seen, '## Summary\nx') });
+  assert.equal('engine' in seen[1], false, 'no engine: Claude');
+  assert.equal(seen[1].model, 'claude-sonnet-5', 'Claude\'s Settings pick');
+});
+
 test('classifier: off Claude the slot names a catalog model of the run engine, else no -m', async () => {
   const models = await listModels('');
   assert.equal(resolveAutoModel(models, { engine: 'codex', setting: 'gpt-5.5' }), 'gpt-5.5');

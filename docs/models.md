@@ -476,6 +476,38 @@ There is no sign-in status command, so worca checks only that the binary runs be
 - Per-engine step and helper model slots in Settings.
 - Resuming a paused run on another engine from the usage-limit banner. `worca resume <id> --engine copilot` (or `claude`) still works.
 
+## Cursor
+
+worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run on Cursor.
+
+> **Unverified.** This engine was built without a Cursor CLI to test against. Each fact it relies on (binary name,
+> flags, the stream format, the permission and MCP files) is listed as unverified at the top of
+> `src/core/engines/cursor.mjs`. Try a short pipeline first, and report what differs.
+
+1. Install the Cursor CLI (`cursor-agent`) and make sure worca finds it: on `PATH`, or `WORCA_CURSOR_BIN=/path/to/cursor-agent` in worca's environment. The `cursor` command that opens the editor is not the agent.
+2. Sign in once in a terminal: `cursor-agent login`. `cursor-agent status` must say you are logged in. Or set `CURSOR_API_KEY` in worca's own environment; worca passes it to Cursor and stores nothing.
+3. Pick Cursor per run on New pipeline, or as a default in Settings › Models (Engines). Each engine card shows whether that engine is ready.
+
+**Models.** worca ships no Cursor models. With no model set, Cursor runs your account's default. To pick one, add a model in Settings › Models with Engine **Cursor** and the id Cursor expects (for example `sonnet-4.5`). Cursor models take no env, no endpoint and no effort. A model id that looks like a Claude id (`sonnet-4.5`) only reaches Cursor when it is in the catalog with Engine Cursor; otherwise worca treats it as Claude's and the run uses Cursor's default (the run log says so). An id that is already a built-in (a Claude model or a Codex model such as `gpt-5.6-sol`) cannot be added as a Cursor model.
+
+**Cost.** Cursor reports no cost, so a Cursor run's cost shows as *cost unknown*, never $0.00. A pipeline cost limit cannot count Cursor's spend; the run log says so.
+
+**Helper jobs run on Claude.** On a Cursor run, titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider run on Claude, as on a Claude run. They read text worca did not write, and Cursor's shell cannot be switched off. Their models are the Claude helper models in Settings. The memory defrag and a workspace scan run on Cursor itself, with Cursor's default model unless you name one at start.
+
+**What Cursor holds, and what it does not.**
+
+- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Skills are mounted as files at `.agents/skills`, and the agent is told to read them.
+- Guardrails: worca writes the deny rules it can express into the run checkout's `.cursor/cli.json`. A command rule with one word (`Bash(curl)`) becomes `Shell(curl)`, a bare `Bash` becomes `Shell(*)`, `Read(…)` stays `Read(…)`, and `Edit(…)`/`Write(…)` become `Write(…)`. worca has not verified how Cursor matches them, and the agent's shell can still read a file a `Read` rule names or rewrite the file itself. So **every** rule counts as held only in part, and any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`). Multi-word command rules (`Bash(git push:*)`), `WebFetch`, `WebSearch` and MCP tool rules are not held at all.
+- The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` (the database, `settings.json`, the MCP registry, plugin secrets, and the plugins, scripts, agents, workflows and policy folders) go into `.cursor/cli.json` like the rest, as `Read(…)` and `Write(…)` rules held only in part. Unlike Codex and Copilot, Cursor has no sandbox that limits where it writes, so worca cannot refuse to start it the way it does for those two: a Cursor run with **Allow unguarded** can read and change those files through its shell. Container mode is the containment.
+- Your own Cursor settings still apply: permissions in `~/.cursor/cli-config.json` and MCP servers in `~/.cursor/mcp.json` are read by Cursor, and when worca attaches MCP servers it passes `--approve-mcps`, which may approve your own servers too. No Cursor flag is known that turns them off.
+- MCP servers: worca writes the run's servers into the checkout's `.cursor/mcp.json`, with secrets as `${env:NAME}` references whose values reach Cursor through its environment, never the file.
+- Both files are added to the repository's `.git/info/exclude`. That file is shared with your main checkout, so these two lines also hide a root-level `.cursor/cli.json` or `.cursor/mcp.json` there from `git status`; delete the two lines under `# worca: Cursor engine config` if you mind. The files are removed when the run ends and never reach the run's diff or commit. worca never writes to `~/.cursor`. If the run's checkout already holds a `.cursor/cli.json` or `.cursor/mcp.json` that worca did not write (tracked or not) and the run needs to write it, the run stops with an error instead of changing your file. worca never removes such a file. An agent's own `.cursor/cli.json` or `.cursor/mcp.json` stays in the run's result: worca stages it even though its own exclude line would hide it, unless your own ignore rules exclude that path.
+- The host guard's kill-check hook does not run on Cursor; its instructions to the agent still apply.
+
+**Usage limits.** When an engine hits its usage limit, the paused run offers to continue on each other engine that is ready (installed and signed in). Pick one. From the command line, every other engine is listed; the resume refuses one that is not ready.
+
+**Ask Worca on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Ask Worca.
+
 ## Ask Worca
 
 Ask Worca can read the catalog and the providers, explain why a model is not
@@ -527,6 +559,7 @@ click Apply.
   least **64k** (llama.cpp `-c 65536`) and set the model's Prompt limit to match.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
+- **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
 - **OpenRouter 429 on a `:free` model** — OpenRouter's shared free pool is busy,
   not your concurrency cap; see [OpenRouter](#openrouter).
 - **"OpenRouter's free-model requests for today are used up"** — the key's daily

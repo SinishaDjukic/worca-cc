@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createAskModels, chatEngine } from '../src/core/ask/models.mjs';
+import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { CODEX_EFFORTS } from '../src/core/model-env.mjs';
 
 useTempHome(after);
@@ -76,4 +77,19 @@ test('validateModelEffort: any engine before the first turn; inside a chat only 
 test('the event-turn fallback stays on the chat\'s engine', async () => {
   const cat = await mk().askCatalog({ withSecrets: false });
   assert.equal(cat.defaults[chatEngine({ model: 'gpt-5.5' })].model, 'gpt-6-astra');
+});
+
+test('Cursor models never reach the Ask catalog, and a hand-made pick of one is an unknown model', async () => {
+  const { askCatalog, validateModelEffort } = createAskModels({
+    listModels: async () => [{ id: 'cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
+    pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }),
+    effortless: () => new Set(),                   // as mk() passes: never read the real bridge state
+  });
+  const cat = await askCatalog({});
+  assert.ok(!cat.models.some((m) => m.id === 'cursor-m'));
+  assert.deepEqual(await validateModelEffort('cursor-m', 'high'), { ok: false, error: 'unknown model "cursor-m"' });
+});
+
+test('the Ask turn refuses an engine Ask does not run on', () => {
+  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Ask on Cursor is unavailable/);
 });

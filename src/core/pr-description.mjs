@@ -13,7 +13,7 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels, modelForEngine } from './config.mjs';
 import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
-import { AUX_EFFORT } from './model-env.mjs';
+import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
@@ -133,7 +133,7 @@ export async function generatePrDescription(key, id, {
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
-  const engine = runEngineOfRow(row);
+  const engine = helperEngineFor(runEngineOfRow(row));   // a Cursor run's PR description runs on Claude
   const onClaude = engine === 'claude';
 
   const slot = utilityModelFor(engine, 'prDescription', scopeForRunKey(key));

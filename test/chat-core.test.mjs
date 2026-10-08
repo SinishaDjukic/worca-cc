@@ -223,6 +223,7 @@ test('renderDone/renderError: severity per outcome, truncation, unread direction
       assert.match(text, /Fix the login redirect loop/);
       assert.match(text, /12m34s/);
       assert.match(text, /\$1\.23/);
+      assert.match(renderDone({ ...META, runEngine: 'cursor', totalCostUsd: 0 }, { status: 'done' }).body[0].value, /\*\*Cost:\*\* cost unknown/, 'Cursor: never $0.00');
       const longTitle = renderDone({ ...META, title: 'T'.repeat(70) }, { status: 'done' });
       assert.match(longTitle.body[0].value, new RegExp(`T{60}…`), 'title truncated at 60');
 
@@ -305,11 +306,11 @@ test('renderSchedule: problem vs info, clipped', () => {
   assert.match(JSON.stringify(i.body), /…/);
 });
 
-test('renderDone: a usage limit an engine hit also offers /resume on the other engine', () => {
+test('renderDone: a usage limit an engine hit also offers /resume on each other engine', () => {
   const limit = renderDone(META, { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
   assert.equal(isValidMessage(limit), true);
   assert.match(limit.body[0].value, /reply: \/resume \*2951\n/);
-  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude/);
+  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude\n   Or continue now on Cursor: \/resume \*2951 cursor$/);
   for (const payload of [
     { status: 'paused', reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" },
     { status: 'paused', reason: 'error', detail: 'disk full', limitEngine: 'codex' },

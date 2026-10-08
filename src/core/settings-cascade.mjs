@@ -13,7 +13,7 @@ import {
 } from './settings.mjs';
 import { cachedPolicyForKey } from './policy/cache.mjs';
 import { fieldsForRun } from './policy/effective.mjs';
-import { MODEL_ENGINES } from './model-env.mjs';
+import { MODEL_ENGINES, HELPER_ENGINES } from './model-env.mjs';
 import { NIGHT_FIELDS, NIGHT_DEFAULTS, fieldError as nightFieldError } from './night/config.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
@@ -70,7 +70,8 @@ const NIGHT = NIGHT_FIELDS.map((field) => ({
   readUser: () => nightModeSettings()[field], readProject: (ctx) => ctx.nightProject()?.[field], team: (ctx) => ctx.teamValue(`night.${field}`),
 }));
 const STATIC = new Map([...SCALARS, ...NIGHT].map((entry) => [entry.id, entry]));
-const STEP_RE = /^models\.(claude|codex)\.steps\.([A-Za-z0-9_-]{1,64})$/;
+const STEP_RE = /^models\.(claude|codex|cursor)\.steps\.([A-Za-z0-9_-]{1,64})$/;
+// UTIL_RE and ASK_MODEL_RE stay (claude|codex): Cursor has no helper or Ask slots.
 const UTIL_RE = /^models\.(claude|codex)\.(?:utility\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$/;
 const RUN_JOBS = new Set(['title', 'classifier', 'overview', 'prDescription']);
 const utilityId = (engine, job) => (RUN_JOBS.has(job) ? `models.${engine}.utility.${job}` : `models.${engine}.${job}`);
@@ -89,10 +90,11 @@ const CLAUDE_USER = {
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
 };
 function utilEntry(engine, job) {
+  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
     default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),
-    readUser: engine === 'claude' ? CLAUDE_USER[job] : () => pickPair(dig(utilityModelsSetting(), ['codex', job])),
+    readUser: engine === 'claude' ? CLAUDE_USER[job] : () => pickPair(dig(utilityModelsSetting(), [engine, job])),
     readProject: (ctx) => pickPair(dig(ctx.projectSettings(), ['utilityModels', engine, job])), team: null };
 }
 // Ask Worca (D17): user-only, not cascadable — reachable by id so one resolver serves every caller, but never
@@ -242,10 +244,13 @@ export function scopeForRunKey(key) {
   if (typeof key !== 'string' || !key) return null;
   return key.startsWith('workspaces/') ? { workspace: true } : { projectKey: key };
 }
+/** The slot of `job` on `engine`. An engine without helper slots (Cursor) gets an empty one, never Claude's: the
+ *  memory defrag and the workspace scan run ON that engine, and a helper caller passes helperEngineFor(engine). */
 export function utilityModelFor(engine, job, scope = null) {
   // Copilot has no helper-model slots: its helper jobs run copilot's own default model.
   if (engine === 'copilot') return { model: null, effort: null, source: 'default' };
-  const entry = settingEntry(utilityId(engine === 'codex' ? 'codex' : 'claude', job));
+  const e = engine || 'claude';
+  const entry = HELPER_ENGINES.includes(e) ? settingEntry(utilityId(e, job)) : null;
   if (!entry) return { model: null, effort: null, source: 'default' };
   const result = resolveWith(entry, makeCtx(scope)); const value = result.value || {};
   return { model: value.model || null, effort: value.effort || null, source: result.source };

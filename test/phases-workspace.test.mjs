@@ -383,3 +383,9 @@ test('workspaceFanOutDirective serial: the same per-unit work done by the agent 
   assert.equal(workspaceFanOutDirective('ponder', WS, { serial: true }), '');
   assert.equal(workspaceFanOutDirective('explore', WS, { serial: false }), workspaceFanOutDirective('explore', WS), 'the default is unchanged');
 });
+
+test('taskHeader on cursor: the skills hint names the .agents/skills mount and says how to read it', () => {
+  const h = taskHeader({ ...baseCtx, node: { key: 'planner', engine: 'cursor' }, inputs: { userPrompt: {} } }, 'Plan');
+  assert.match(h, /mounted at \.agents\/skills for this run — each folder's SKILL\.md describes one skill; read any that fit/);
+  assert.doesNotMatch(h, /are listed for you/);
+});

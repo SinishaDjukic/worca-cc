@@ -45,6 +45,8 @@ import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
 import { effectiveTimeZone } from './schedule-spec.mjs';
 import { scheduleDefaults } from '../settings.mjs';
+import { ASK_ENGINES } from '../model-env.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import { codexPreflight, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
@@ -125,6 +127,8 @@ class AskTurn extends EventEmitter {
     deps = {},
   } = {}) {
     super();
+    // D5 backstop: an engine Ask does not run on (Cursor: CURSOR_ASK_LOCKDOWN = null) is refused outright.
+    if (engine && !ASK_ENGINES.includes(engine)) throw new Error(`Ask on ${engineLabel(engine)} is unavailable`);
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
     this.engine = engine === 'codex' ? 'codex' : 'claude';
