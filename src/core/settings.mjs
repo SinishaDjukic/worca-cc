@@ -57,6 +57,7 @@ import {
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+  SIGN_IN_ENGINES, SIGN_IN_CLI,
 } from './model-env.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
@@ -1558,9 +1559,9 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
-  if (engine === 'cursor') {
-    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
-    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  if (SIGN_IN_ENGINES.includes(engine)) {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a ${engine} model takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a ${engine} model runs through ${SIGN_IN_CLI[engine]}'s own sign-in`); upstream = undefined; }
   }
   if (upstream) {
     // The bridge owns the routing keys (model-env.mjs BRIDGE_ROUTING_KEYS); a
@@ -1574,7 +1575,7 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: engine === 'cursor' ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
+    efforts: SIGN_IN_ENGINES.includes(engine) ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -1669,11 +1670,11 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
-function assertCursorFields(engine, env, upstream) {
-  if (engine !== 'cursor') return;
-  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
-  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+/** A Cursor, Gemini CLI or Qwen Code model takes no routing env and no upstream: its CLI connects with its own sign-in. */
+function assertSignInFields(engine, env, upstream) {
+  if (!SIGN_IN_ENGINES.includes(engine)) return;
+  if (Object.keys(env || {}).length) throw new Error(`a ${engine} model takes no env`);
+  if (upstream) throw new Error(`a ${engine} model takes no upstream — ${SIGN_IN_CLI[engine]} connects with its own sign-in`);
 }
 /** A Codex model takes no routing env, and only an OpenAI-compatible Responses endpoint as its upstream (codexUpstreamProblem). */
 function assertCodexFields(engine, env, upstream) {
@@ -1685,9 +1686,9 @@ function assertCodexFields(engine, env, upstream) {
 function assertIdForEngine(id, engine) {
   if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id`);
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is a Codex built-in`);
-  // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
-  // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
+  // A sign-in engine's own ids may look like Claude's (Cursor's sonnet-4.5): the catalog row decides the owner. Only a
+  // built-in id is taken (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
+  if (SIGN_IN_ENGINES.includes(engine) && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -1767,7 +1768,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
-  assertCursorFields(vengine, venv, vupstream);
+  assertSignInFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
   const models = rawModels(settings);
@@ -1829,7 +1830,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
-  assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertSignInFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
   settings.models = models.slice();

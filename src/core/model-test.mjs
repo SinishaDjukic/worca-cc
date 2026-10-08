@@ -10,12 +10,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv, engineOfModel } from './config.mjs';
-import { AUX_EFFORT } from './model-env.mjs';
+import { AUX_EFFORT, SIGN_IN_ENGINES } from './model-env.mjs';
 import { classifyError, isFreeDailyLimit, freeDailyHint } from './recoverable-error.mjs';
 import { failedBecauseSignedOut } from './claude-auth.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { CURSOR_SIGNED_OUT_HINT } from './engines/cursor.mjs';
+import { GEMINI_SIGNED_OUT_HINT } from './engines/gemini.mjs';
+import { QWEN_SIGNED_OUT_HINT } from './engines/qwen.mjs';
+
 
 const TEST_TIMEOUT_MS = 60_000;
 const REPLY_CAP = 100;
@@ -39,6 +42,8 @@ export function hintFor(errorClass) {
 
 export const CLAUDE_SIGNED_OUT_HINT = "Claude Code isn't signed in — run `claude` in a terminal and type /login";
 export const CODEX_SIGNED_OUT_HINT = "codex isn't signed in — run `codex login` in a terminal";
+/** What a signed-out CLI of each non-Claude engine is told to do (the Test button's hint). */
+const SIGNED_OUT_HINTS = Object.freeze({ codex: CODEX_SIGNED_OUT_HINT, cursor: CURSOR_SIGNED_OUT_HINT, gemini: GEMINI_SIGNED_OUT_HINT, qwen: QWEN_SIGNED_OUT_HINT });
 /** A Codex model on its own endpoint that the endpoint did not answer. */
 export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this model's Base URL, or the OpenAI-compatible provider's";
 
@@ -81,18 +86,18 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
   let bridgeFailure = null;
   const onBridgeFailure = (e) => { if (e && !e.tag && String(e.catalogId || '').toLowerCase() === want) bridgeFailure = e; };
   bridgeEvents.on('failure', onBridgeFailure);
-  // A Cursor test never runs in the server's cwd: cursor-agent has its shell and file tools on (no read-only
-  // mode), and the cwd may be $HOME, whose .cursor/ holds the user's own config.
+  // A Cursor, Gemini CLI or Qwen Code test never runs in the server's cwd: worca runs their shell and file tools on (no
+  // read-only mode), and the cwd may be $HOME, whose .cursor/ or .gemini/ holds the user's own config.
   let scratch = null;
   try {
-    if (engine === 'cursor') scratch = mkdtempSync(join(tmpdir(), 'worca-model-test-'));   // inside: a throw here still runs the finally
+    if (SIGN_IN_ENGINES.includes(engine)) scratch = mkdtempSync(join(tmpdir(), 'worca-model-test-'));   // inside: a throw here still runs the finally
     const { text } = await run({
       cwd: scratch || process.cwd(),
       systemPrompt: SYSTEM,
       prompt: 'Reply with exactly OK.',
       model: id,
       modelEnv: onClaude ? resolveModelEnv(id) : undefined,
-      // Codex runs it read-only. Cursor has no read-only mode (engines/cursor.mjs); the prompt is worca's own text.
+      // Codex runs it read-only. The sign-in engines run with no read-only mode; the prompt is worca's own text.
       ...(onClaude ? {} : { engine, ...(engine === 'codex' ? { sandbox: 'read-only' } : {}) }),
       effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
@@ -135,7 +140,7 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? ''
       : cliSignedOut ? CLAUDE_SIGNED_OUT_HINT
       : !onClaude && hasCodexEndpoint(id) ? (errorClass === 'network' ? CODEX_ENDPOINT_NETWORK_HINT : hintFor(errorClass))
-      : !onClaude && errorClass === 'auth' ? (engine === 'cursor' ? CURSOR_SIGNED_OUT_HINT : CODEX_SIGNED_OUT_HINT)
+      : !onClaude && errorClass === 'auth' ? (SIGNED_OUT_HINTS[engine] || CODEX_SIGNED_OUT_HINT)
       : isFreeDailyLimit(message) ? freeDailyHint(message)
       : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };

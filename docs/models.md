@@ -508,6 +508,41 @@ worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run o
 
 **Ask Worca on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Ask Worca.
 
+## Gemini CLI and Qwen Code
+
+worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Ask Worca does not run on either.
+
+Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and every fact the adapters rely on are in `test/fixtures/gemini/README.md` and `test/fixtures/qwen/README.md`.
+
+1. Install the CLI (`npm i -g @google/gemini-cli` or `npm i -g @qwen-code/qwen-code`) and make sure worca finds it: on `PATH`, or `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN` in worca's environment.
+2. Sign in:
+   - **Gemini CLI:** set `GEMINI_API_KEY` (or Vertex AI's variables) in worca's environment or in `~/.gemini/.env`, or run `gemini` once in a terminal and sign in with Google.
+   - **Qwen Code:** run `qwen` once in a terminal and choose how it signs in, or set a whole provider in worca's environment or `~/.qwen/.env` (for example `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`). A key alone is not enough: Qwen Code then stops with "No auth type is selected".
+
+   Neither CLI has a status command, so the engine card's readiness line only checks that the binary runs and that a sign-in is configured. worca never reads the credentials.
+3. Pick the engine per run on New pipeline, or as a default in Settings › Models (Engines).
+
+**Models.** worca ships none. With no model set, the CLI runs its own default (Gemini CLI: `auto`). To pick one, add a model in Settings › Models with Engine **Gemini CLI** or **Qwen Code** and the id the CLI expects (for example `gemini-3.8-flash` or `qwen3-coder-plus`). These models take no env, no endpoint and no effort; which provider a Qwen Code model reaches is Qwen Code's own setting.
+
+**Cost.** Neither CLI reports a cost, only tokens, so the run's cost shows as *cost unknown*, never $0.00. A pipeline cost limit cannot count their spend; the run log says so.
+
+**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. They read text worca did not write, and worca does not lock these CLIs down. The memory defrag and a workspace scan run on the engine itself.
+
+**What they hold, and what they do not.**
+
+- Both run every tool without asking (`--approval-mode yolo`). worca's deny rules are the guard:
+  - **Gemini CLI**: an `--admin-policy` file in worca's own temp folder, at the admin tier, so it outranks your own policies. A bare `Bash`, `WebFetch`, `WebSearch`, a bare `Read`/`Edit`/`Write` and MCP server or tool rules are held. Command rules (`Bash(git push:*)`) are matched against the start of the command, so `env git push` gets past them, and path rules stop Gemini CLI's file tools, not its shell: both are held **only in part**, and need **Allow unguarded** (`--allow-unguarded-engine`). If Gemini CLI reports that it could not read the policy file, the run stops (Gemini would otherwise run with no rule). If your machine's system policy folder already holds policy files, Gemini CLI ignores worca's, so the run refuses.
+  - **Qwen Code** reads Claude's rule syntax itself, so worca hands it the rules as written. Command rules are held only in part (the same `env` gap); a `Read` rule also stops the shell from reading that file. Rules on tools Qwen Code does not have are not held.
+- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Gemini CLI has no flag to add to its system prompt, so worca's system prompt is folded into the prompt; Qwen Code takes it with `--append-system-prompt`.
+- The folders worca hands an agent (its outputs, the pipeline folder) are added as workspace folders, the only places their file tools reach outside the checkout. As with Copilot, a run refuses to start when one of them would sit inside worca's own home outside the run store. Their shell can still reach any file you can; container mode is the containment.
+- MCP servers: only the run's servers attach (`--allowed-mcp-server-names`); your own servers in `~/.gemini` or `~/.qwen`, and the checkout's, stay off. Secrets stay `${NAME}` references whose values reach the CLI through its environment, never a file.
+  - **Gemini CLI** reads them from the checkout's `.gemini/settings.json`, which worca writes for the run (handled like Cursor's files: hidden by a line under `# worca: Gemini CLI engine config` in `.git/info/exclude`, removed when the run ends, never in the diff or commit). If the checkout tracks its own `.gemini/settings.json`, or holds one worca did not write, a run that attaches MCP servers stops instead of changing it.
+  - **Qwen Code** reads them, with the deny rules, from a system settings file in worca's temp folder (`QWEN_CODE_SYSTEM_SETTINGS_PATH`). Your machine's own system settings file, if there is one, is copied into it first, so nothing of it is dropped.
+- Gemini CLI only runs headless in a trusted folder, so worca sets `GEMINI_CLI_TRUST_WORKSPACE=true`. The checkout's own `.gemini/` settings then apply, as the checkout's `.claude/settings.json` does on Claude.
+- The host guard's kill-check hook does not run on either; its instructions to the agent still apply.
+
+**Resume.** worca names each session (`--session-id`) and resumes it after a pause. A session the CLI no longer knows starts fresh, and the run log says so.
+
 ## Ask Worca
 
 Ask Worca can read the catalog and the providers, explain why a model is not
@@ -560,6 +595,7 @@ click Apply.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
 - **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
+- **`engine gemini: cannot run gemini (ENOENT)`** / **`engine qwen: cannot run qwen (ENOENT)`** — install the CLI or set `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN`.
 - **OpenRouter 429 on a `:free` model** — OpenRouter's shared free pool is busy,
   not your concurrency cap; see [OpenRouter](#openrouter).
 - **"OpenRouter's free-model requests for today are used up"** — the key's daily

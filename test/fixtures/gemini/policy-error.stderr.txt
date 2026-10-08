@@ -1,0 +1,5 @@
+[ADMIN] Policy file error in bad.toml:
+  Schema validation failed
+Invalid policy rule (rule #1):
+  - Field "rule.0.toolName": Invalid input
+  Suggestion: Ensure all required fields (decision, priority) are present with correct types

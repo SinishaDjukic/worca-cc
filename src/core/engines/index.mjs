@@ -3,7 +3,7 @@
 // error at run start, never a silent fallback; mock mode (WORCA_MOCK or
 // opts.mock) resolves every known engine to the offline mock. An adapter is
 // {name, capabilities, run, classifyError[, preflight, unenforcedRules, partialRules,
-// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot and cursor entries below.
+// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot, cursor, gemini and qwen entries below.
 import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
@@ -12,6 +12,8 @@ import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight,
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
   unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
+import * as gemini from './gemini.mjs';
+import * as qwen from './qwen.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS } from './capabilities.mjs';
 
@@ -57,6 +59,14 @@ const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.co
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
   ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind });
+// Gemini CLI and Qwen Code (engines/gemini.mjs, engines/qwen.mjs on the shared engines/gemini-family.mjs runner):
+// emit the normalized vocabulary themselves; command rules (and Gemini's path rules) are partial.
+const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.geminiCapabilities, run: gemini.runGeminiProcess,
+  classifyError: gemini.classifyGeminiError, preflight: gemini.geminiPreflight, unenforcedRules: gemini.unenforcedRules,
+  partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind });
+const qwenAdapter = Object.freeze({ name: 'qwen', capabilities: qwen.qwenCapabilities, run: qwen.runQwenProcess,
+  classifyError: qwen.classifyQwenError, preflight: qwen.qwenPreflight, unenforcedRules: qwen.unenforcedRules,
+  partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 
@@ -65,6 +75,8 @@ const ENGINES = new Map([
   ['codex', codexAdapter],
   ['copilot', copilotAdapter],
   ['cursor', cursorAdapter],
+  ['gemini', geminiAdapter],
+  ['qwen', qwenAdapter],
   ['mock', mockAdapter],
 ]);
 

@@ -793,8 +793,8 @@ function collectOpenRouter(conn) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env); a Cursor
- *  model has only its own sign-in (no env, no endpoint). A mode with no text is hidden. */
+/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env); a Cursor,
+ *  Gemini CLI or Qwen Code model has only its CLI's own sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
     direct: ['Anthropic API / CLI default', "Today's behaviour: the claude CLI reaches the endpoint its own login or env names."],
@@ -807,6 +807,12 @@ const MODE_TEXT = {
   },
   cursor: {
     direct: ['Cursor default', "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor."],
+  },
+  gemini: {
+    direct: ['Gemini CLI default', "gemini's own sign-in (GEMINI_API_KEY, Vertex AI, or the sign-in you chose in `gemini`) reaches Google."],
+  },
+  qwen: {
+    direct: ['Qwen Code default', "qwen's own sign-in (the auth type you chose in `qwen`, or a provider's env such as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL)."],
   },
 };
 
@@ -988,10 +994,10 @@ export function applyConnectionMode(connEl) {
   if (!conn) return;
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
-  // A Cursor model: its own sign-in only (MODE_TEXT.cursor), so the provider body never shows.
+  // A Cursor, Gemini CLI or Qwen Code model: its own sign-in only (MODE_TEXT), so the provider body never shows.
   const eng = conn.dataset.engine || 'claude';
   const codex = eng === 'codex';
-  const cursor = eng === 'cursor';
+  const cursor = eng === 'cursor' || eng === 'gemini' || eng === 'qwen';
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
     const text = (MODE_TEXT[eng] || MODE_TEXT.claude)[rb.value];

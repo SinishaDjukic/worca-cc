@@ -9,7 +9,11 @@
 
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
-import { engineLabel, engineChoiceLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+
+/** Each model engine's effort list: Claude's and Codex's as given; the sign-in engines (Cursor, Gemini CLI, Qwen Code)
+ *  have no effort flag. */
+const effortLists = (efforts, codexEfforts) => ({ claude: efforts, codex: codexEfforts, ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, []])) });
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -96,14 +100,15 @@ export function suggestDuplicateId(id, takenIds = []) {
  * entry you came for was never the one on top.
  * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], cursorEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
   const codexLc = new Set(codex.map((m) => m.id.toLowerCase()));
-  // §3.1a: a model of another engine (Codex, Cursor) says so on its card; its efforts are that engine's.
+  // §3.1a: a model of another engine (Codex, Cursor, Gemini CLI, Qwen Code) says so on its card; its efforts are that engine's.
   const engineBadge = (m) => (m.engine && m.engine !== 'claude' ? h(doc, 'span', 'badge blue mv-engine', engineLabel(m.engine)) : null);
-  const effortsOf = (m) => effortsSummary(m.efforts, ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[m.engine || 'claude'] || efforts);
+  const lists = effortLists(efforts, codexEfforts);
+  const effortsOf = (m) => effortsSummary(m.efforts, lists[m.engine || 'claude'] || efforts);
   const q = String(query || '').trim().toLowerCase();
   const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
   const searching = !!q || filter !== 'all';
@@ -438,11 +443,12 @@ function envRow(doc, key = '', value = '') {
  * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
  * mv-env-rm and calls collectModelEditor on save.
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], cursorEfforts = [] } = {}) {
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'] } = {}) {
   const editing = !!model;
   const root = h(doc, 'section', 'card mv-editor');
-  // Both engines' effort lists ride the root so setModelEngine can swap them (§3.1a).
-  root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts });
+  // Every engine's effort list rides the root so setModelEngine can swap them (§3.1a).
+  const lists = effortLists(efforts, codexEfforts);
+  root.dataset.effortLists = JSON.stringify(lists);
   const engineNow = editing && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
   root.dataset.mode = editing ? 'edit' : 'create';
   if (editing) {
@@ -488,7 +494,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   grid.appendChild(field('Engine', engineSel, editing
     ? 'Fixed once created — delete the model and add it again to change it.'
     : 'Which harness runs this model. A Codex model takes no routing env; it connects to OpenAI or to an OpenAI-compatible endpoint. '
-      + "A Cursor model runs through cursor-agent's own sign-in: no env, no endpoint, no effort. Worca cannot price it."));
+      + 'A Cursor, Gemini CLI or Qwen Code model runs through that CLI\'s own sign-in: no env, no endpoint, no effort. Worca cannot price it.'));
 
   // ── Connection (model-bridge-design.md §8.3): direct / env / provider ──
   // Rendered first among the routing controls: it decides whether the env
@@ -496,7 +502,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   grid.appendChild(field('Connection', renderConnectionSection(model, { doc, providers, copilotModels })));
 
   const effWrap = h(doc, 'div', 'mv-efforts');
-  const effortList = ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[engineNow] || efforts;
+  const effortList = lists[engineNow] || efforts;
   const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : effortList);
   for (const lab of effortBoxes(doc, effortList, selected)) effWrap.appendChild(lab);
   const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
@@ -600,7 +606,7 @@ function effortBoxes(doc, list, selected) {
  * The ONE place that knows the rule — the initial render, the select's change handler (app.js)
  * and "+ Add model…" from a Codex New pipeline all go through it. Safe on any editor.
  * @param {Element} rootEl the .mv-editor root
- * @param {'claude'|'codex'|'cursor'} engine
+ * @param {'claude'|'codex'|'cursor'|'gemini'|'qwen'} engine
  */
 export function setModelEngine(rootEl, engine) {
   const sel = rootEl && rootEl.querySelector('.mv-engine');
@@ -619,12 +625,13 @@ export function setModelEngine(rootEl, engine) {
   if (envField) envField.hidden = noEnv;
   const btns = rootEl.querySelector('.mv-env-btns');
   if (btns) btns.hidden = noEnv;
-  // A Cursor model takes no effort and worca cannot price it: the whole fields hide (and come back off Cursor).
-  const cursor = next === 'cursor';
+  // A sign-in engine's model (Cursor, Gemini CLI, Qwen Code) takes no effort and worca cannot price it: the whole fields
+  // hide (and come back on another engine).
+  const signIn = SIGN_IN_ENGINE_NAMES.includes(next);
   const pricing = rootEl.querySelector('.mv-cost-edit')?.closest('.mv-field');
-  if (pricing) pricing.hidden = cursor;
+  if (pricing) pricing.hidden = signIn;
   const effField = rootEl.querySelector('.mv-efforts')?.closest('.mv-field');
-  if (effField) effField.hidden = cursor;
+  if (effField) effField.hidden = signIn;
   const conn = rootEl.querySelector('.mv-conn');
   if (conn) { conn.dataset.engine = next; applyConnectionMode(conn); }
 }

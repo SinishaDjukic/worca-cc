@@ -169,7 +169,7 @@ test('catalog models: a Codex entry keeps its engine, Codex efforts and a Respon
       { id: 'acme-codex-local', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', baseUrl: 'http://gw.acme:8000/v1', apiKey: '${ACME_KEY}' } },
       { id: 'acme-codex-chat', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } },
       { id: 'acme-codex-literal', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', apiKey: 'sk-literal-key-123456' } },
-      { id: 'acme-odd', engine: 'gemini' },
+      { id: 'acme-odd', engine: 'gpt' },
       { id: 'acme-claude', efforts: ['high'] },
     ] },
   });
@@ -192,13 +192,17 @@ test('catalog models: a Cursor entry keeps its engine with no efforts; env or an
       { id: 'acme-cursor', engine: 'cursor', efforts: ['high'] },
       { id: 'acme-cursor-env', engine: 'cursor', env: { X: 'y' } },
       { id: 'acme-cursor-up', engine: 'cursor', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen' } },
+      { id: 'acme-gemini', engine: 'gemini', efforts: ['high'] },
+      { id: 'acme-qwen-env', engine: 'qwen', env: { X: 'y' } },
       { id: 'acme-claude' },
     ] },
   });
   assert.deepEqual(doc.catalogs.models, [
     { id: 'acme-cursor', label: 'acme-cursor', efforts: [], engine: 'cursor' },
+    { id: 'acme-gemini', label: 'acme-gemini', efforts: [], engine: 'gemini' },
     { id: 'acme-claude', label: 'acme-claude', efforts: ['medium', 'high'] },
   ]);
   assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));
   assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-qwen-env') && w.includes('a qwen model takes no env')), warnings.join('\n'));
 });
