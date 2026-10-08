@@ -279,7 +279,7 @@ export function codexInvestigatorRole({ agents, subagentSystemPrompt, inheritMod
     toml: `${lines.join('\n')}\n`, model };
 }   // the Ask turn's own 30-minute clock bounds it (propose_workflow classifies, test_script runs)
 const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
 /** The servers of an --mcp-config document that codex cannot attach: it takes stdio servers only. */
 export function codexUnattachableMcp(servers) {
@@ -287,16 +287,27 @@ export function codexUnattachableMcp(servers) {
     .filter(([name, srv]) => !MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string').map(([name]) => name);
 }
 
-/** `${VAR}` references in a server's env values, filled from `from` the way Claude Code expands an --mcp-config
- *  (the MCP registry writes `${MCPSECRET_…}` references; the values ride the spawn env). An unknown name
- *  becomes empty, as in a shell. */
-export function expandMcpEnvRefs(servers, from = {}) {
+/** The MCP registry's secret references: their values ride the spawn env only, never argv. */
+const MCP_SECRET_REF = /^MCPSECRET_/;
+
+/**
+ * `${VAR}` and `${VAR:-default}` references in a server's command, args and env values, filled from `from` the way
+ * Claude Code expands an --mcp-config (codex expands none). An unset name becomes its default, else empty; a name set
+ * to empty stays empty (unlike a shell's `:-`). command and args reach codex on its argv, which any local user can read, so the registry's `${MCPSECRET_…}`
+ * references are expanded in env values only (the registry writes them nowhere else) and stay as written in argv.
+ */
+export function expandMcpRefs(servers, from = {}) {
+  const fill = (v, { argv = false } = {}) => (typeof v === 'string'
+    ? v.replace(ENV_REF_RE, (ref, n, dflt) => (argv && MCP_SECRET_REF.test(n) ? ref : typeof from[n] === 'string' ? from[n] : (dflt ?? '')))
+    : v);
   const out = {};
   for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
-    if (!srv || typeof srv !== 'object' || !srv.env || typeof srv.env !== 'object') { out[name] = srv; continue; }
-    const env = {};
-    for (const [k, v] of Object.entries(srv.env)) env[k] = typeof v === 'string' ? v.replace(ENV_REF_RE, (_, n) => (typeof from[n] === 'string' ? from[n] : '')) : v;
-    out[name] = { ...srv, env };
+    if (!srv || typeof srv !== 'object') { out[name] = srv; continue; }
+    const next = { ...srv };
+    if (typeof srv.command === 'string') next.command = fill(srv.command, { argv: true });
+    if (Array.isArray(srv.args)) next.args = srv.args.map((a) => fill(a, { argv: true }));
+    if (srv.env && typeof srv.env === 'object') next.env = Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, fill(v)]));
+    out[name] = next;
   }
   return out;
 }
@@ -728,7 +739,7 @@ export async function runCodexProcess({
     // (the registry copies' MCPSECRET_* values), which reaches the servers only through those references.
     const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     // Two registry copies of one server would share a launcher env name in codex's one env: each copy reads its own.
-    mcpServers = expandMcpEnvRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
+    mcpServers = expandMcpRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
   }
   const serverEnv = codexMcpOverrides(mcpServers).env;
   // An Ask chat (askLockdown: no shell, so nothing but codex reads its env) hands its spawn env to its MCP servers the

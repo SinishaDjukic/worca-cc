@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCodexArgs, createCodexNormalizer, codexMcpOverrides, mcpResultText, codexModelPriced, codexResumeNotFound,
-  CODEX_ASK_LOCKDOWN, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexRolloutUsage, estimateCodexCostUsd,
+  CODEX_ASK_LOCKDOWN, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexRolloutUsage, estimateCodexCostUsd, expandMcpRefs,
 } from '../src/core/engines/codex.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
@@ -155,6 +155,28 @@ test('runCodexProcess: a pipeline spawn attaches its stdio servers, fills ${VAR}
   assert.equal(fake.env().MCPSECRET_PG, undefined, 'the secret reaches codex only through the reference');
   assert.equal(res.text.includes('tok-SECRET'), false, 'the reply is redacted');
   assert.equal(JSON.stringify(events).includes('tok-SECRET'), false, 'so is every event');
+});
+
+test('expandMcpRefs: ${VAR} and ${VAR:-default} in command, args and env, as Claude Code expands them; registry secrets never on argv', () => {
+  const from = { ROOT: '/srv', TOOL: '/opt/tool', MCPSECRET_K: 'tok' };
+  const out = expandMcpRefs({ x: { command: '${TOOL}/bin/run', args: ['--root', '${ROOT}', '--port=${PORT:-8080}', '${NOPE}', '${MCPSECRET_K}', 7],
+    env: { A: '${ROOT}/a', K: '${MCPSECRET_K}', D: '${NOPE:-d}' } } }, from);
+  assert.equal(out.x.command, '/opt/tool/bin/run');
+  assert.deepEqual(out.x.args, ['--root', '/srv', '--port=8080', '', '${MCPSECRET_K}', 7]);
+  assert.deepEqual(out.x.env, { A: '/srv/a', K: 'tok', D: 'd' });
+});
+
+test('runCodexProcess: ${VAR} in a server\'s command and args reaches codex filled', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeCodex(dir, 'ok');
+  const cfg = join(dir, 'mcp.json');
+  writeFileSync(cfg, JSON.stringify({ mcpServers: { fs: { command: '${CODEX_TEST_BIN}', args: ['--root', '${CODEX_TEST_ROOT:-/fallback}'] } } }));
+  const prev = process.env.CODEX_TEST_BIN; process.env.CODEX_TEST_BIN = '/usr/bin/true';
+  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir }); }
+  finally { if (prev === undefined) delete process.env.CODEX_TEST_BIN; else process.env.CODEX_TEST_BIN = prev; }
+  const args = fake.args();
+  assert.ok(args.includes('mcp_servers.fs.command="/usr/bin/true"'));
+  assert.ok(args.includes('mcp_servers.fs.args=["--root","/fallback"]'));
 });
 
 test('runCodexProcess: two registry copies of one server (one env name, two values) both attach, each reading its own', POSIX, async () => {
