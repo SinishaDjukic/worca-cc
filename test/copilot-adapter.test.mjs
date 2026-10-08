@@ -17,10 +17,13 @@ import { getEngine, selectRunEngine } from '../src/core/engines/index.mjs';
 import { EVENT_TYPES } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
 import { fakeCopilot } from './helpers/fake-copilot.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
 
 const FIX = new URL('./fixtures/copilot/', import.meta.url);
 const fixturePath = (name) => new URL(name, FIX).pathname;
 const frames = (name) => readFileSync(new URL(name, FIX), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+useTempHome(after);
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX script fixtures' } : {};
 const dirs = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'worca-copilot-')); dirs.push(d); return d; };
@@ -102,6 +105,15 @@ test('deny rules: what copilot holds, holds in part, and cannot hold', () => {
   assert.deepEqual(plan.excluded, ['web_search', 'web_fetch']);
   assert.deepEqual(getEngine('copilot').unenforcedRules({ deny: ['Read(x)'] }), ['Read(x)']);
   assert.deepEqual(getEngine('copilot').partialRules({ deny: ['Bash(curl)'] }), ['Bash(curl)']);
+});
+
+test('WebFetch is held only when the shell and web search are denied too (curl or a search still fetch a page)', () => {
+  for (const deny of [['WebFetch'], ['WebFetch', 'WebSearch'], ['WebFetch', 'Bash']]) {
+    const plan = copilotRulePlan({ deny });
+    assert.ok(plan.unenforced.includes('WebFetch') && !plan.enforced.includes('WebFetch'), JSON.stringify(deny));
+    assert.ok(plan.excluded.includes('web_fetch'), 'the fetch tool is still removed');
+  }
+  assert.ok(copilotRulePlan({ deny: ['Bash', 'WebSearch', 'WebFetch'] }).enforced.includes('WebFetch'));
 });
 
 test('allowedTools: what a role is not granted is withheld; no list withholds nothing', () => {
@@ -335,6 +347,24 @@ test('secrets are redacted from events and the answer', POSIX, async () => {
   const res = await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'x', redactValues: ['Done: hello'], usageDir: join(dir, 'u'), scratchBase: join(dir, 's'), onEvent: (e) => events.push(e) });
   assert.equal(res.text, 'Looking.\n[redacted]');
   assert.ok(!JSON.stringify(events).includes('Done: hello'));
+});
+
+test('runCopilotProcess refuses a writable folder inside Worca\'s home before it spawns or writes anything', POSIX, async () => {
+  const dir = tmp();
+  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl') });
+  const plugins = join(worcaHome(), 'plugins');
+  const base = { bin: f.bin, cwd: dir, prompt: 'x', usageDir: join(dir, 'u'), scratchBase: join(dir, 's') };
+  await assert.rejects(runCopilotProcess({ ...base, addDirs: [plugins] }),
+    (err) => err.message.includes(`it would be able to write ${plugins}, inside Worca's home`));
+  await assert.rejects(runCopilotProcess({ ...base, writableDirs: [worcaHome()] }), /refusing to start copilot/);
+  await assert.rejects(runCopilotProcess({ ...base, cwd: worcaHome() }), /refusing to start copilot/);
+  assert.equal(existsSync(join(dir, 'record.json')), false, 'copilot never ran');
+  assert.equal(existsSync(join(dir, 's')), false, 'no scratch folder was written');
+  // A read-only spawn adds no folder, so nothing is refused; the run store is allowed.
+  await runCopilotProcess({ ...base, sandbox: 'read-only', addDirs: [plugins] });
+  const plans = join(worcaHome(), 'store', 'k', 'plans');
+  await runCopilotProcess({ ...base, writableDirs: [plans] });
+  assert.ok(f.record().argv.includes(plans));
 });
 
 test('Ask Worca does not run on copilot', async () => {

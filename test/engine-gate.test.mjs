@@ -16,7 +16,8 @@ import { readPipelineForResume } from '../src/core/artifacts.mjs';
 import { ENGINES } from './helpers/engines.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import { mockSpawnLog } from '../src/core/claude-runner.mjs';
-import { CODEX_DEFAULT_MODEL, codexRootsInWorcaHome } from '../src/core/engines/codex.mjs';
+import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
+import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 
 useTempHome(after);
@@ -337,7 +338,7 @@ test('a codex run\'s own writable roots pass the Worca-home check: they live in 
   const res = await engine.create({ projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true, engine: 'codex' }, runners }).run();
   assert.equal(res.status, 'done', res.error);
   assert.ok(seen.length > 1 && seen.some((s) => s.roots.some((r) => r.startsWith(worcaHome()))), JSON.stringify(seen));
-  for (const s of seen) assert.deepEqual(codexRootsInWorcaHome(s), [], JSON.stringify(s));
+  for (const s of seen) assert.deepEqual(writableRootsInWorcaHome(s), [], JSON.stringify(s));
 });
 
 test('a codex spawn gets the output dirs as writable roots (its sandbox allows the cwd only)', POSIX, async () => {

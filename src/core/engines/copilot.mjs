@@ -36,7 +36,7 @@ import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
@@ -115,8 +115,9 @@ function writeRule(rule) {
 /**
  * What Copilot can hold of a run's permission rules. Only DENY rules are worca policy (allow / ask are never
  * lifted, and copilot -p never asks). Each rule lands in one bucket:
- * - enforced: a bare `Bash` (the shell is denied outright), `WebSearch` / `WebFetch` (the tool is removed),
- *   an MCP rule (`server(tool)`).
+ * - enforced: a bare `Bash` (the shell is denied outright), `WebSearch` (the tool is removed), an MCP rule
+ *   (`server(tool)`). `WebFetch` removes the fetch tool, but copilot can still fetch a page through its shell
+ *   (`curl`) or its web search: it is held only when the same rules deny both, else it is `unenforced`.
  * - partial: a `Bash(cmd…)` prefix (COPILOT_COMMAND_RULE_REACH) and an `Edit(path)` / `Write(path)` rule
  *   (Copilot's `write` covers its file tools, never a shell redirect). The run gate treats them like the
  *   rules it cannot hold (they need --allow-unguarded-engine); the spawn still applies them.
@@ -127,12 +128,14 @@ export function copilotRulePlan(permissionRules) {
   const out = { deny: [], excluded: [], enforced: [], partial: [], unenforced: [] };
   const deny = Array.isArray(permissionRules?.deny) ? permissionRules.deny : [];
   const add = (list, v) => { if (!list.includes(v)) list.push(v); };
+  const denied = new Set(deny.map((r) => String(r).trim()));
+  const noFetch = denied.has('Bash') && denied.has('WebSearch');
   for (const raw of deny) {
     const rule = String(raw).trim();
     if (!rule) continue;
     if (rule === 'Bash') { add(out.deny, 'shell'); out.enforced.push(rule); continue; }
     if (rule === 'WebSearch') { add(out.excluded, 'web_search'); out.enforced.push(rule); continue; }
-    if (rule === 'WebFetch') { add(out.excluded, 'web_fetch'); out.enforced.push(rule); continue; }
+    if (rule === 'WebFetch') { add(out.excluded, 'web_fetch'); (noFetch ? out.enforced : out.unenforced).push(rule); continue; }
     const mcp = mcpRule(rule);
     if (mcp) { add(out.deny, mcp); out.enforced.push(rule); continue; }
     const shell = shellRule(rule);
@@ -523,6 +526,12 @@ export async function runCopilotProcess({
   if (!session) session = randomUUID();
   const sessionId = COPILOT_SESSION_PREFIX + session;
   const readOnly = sandbox === 'read-only';
+  // Copilot writes the cwd and every --add-dir: none may reach Worca's own state, whose path rules it cannot hold.
+  // A read-only spawn has no built-in tool and no added folder, so nothing is checked.
+  if (!readOnly) {
+    const inHome = writableRootsInWorcaHome({ cwd, roots: [...(addDirs || []), ...(writableDirs || [])] });
+    if (inHome.length) throw new Error(`${bin}: refusing to start copilot — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; copilot cannot hold the rules that protect them`);
+  }
   const guardOn = hostGuardEnabled();
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 

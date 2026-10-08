@@ -449,8 +449,9 @@ There is no sign-in status command, so worca checks only that the binary runs be
 
 - These deny rules hold fully:
   - a bare `Bash` (the shell is denied);
-  - `WebSearch` and `WebFetch` (the tool is removed);
+  - `WebSearch` (the tool is removed);
   - MCP tool rules such as `mcp__github__create_issue` or `mcp__github`.
+- A `WebFetch` rule removes Copilot's fetch tool, but Copilot can still fetch a page with its shell (`curl`) or its web search. It holds only when the same set also has a bare `Bash` and a `WebSearch` rule. Otherwise it is not held.
 - These hold only in part:
   - Command rules such as `Bash(git push:*)` or `Bash(curl)` become Copilot shell rules. They catch the command wherever it sits in a shell line (an `&&` chain, a redirect, a `$(…)`, a `VAR=x` prefix), but not one run through `bash -c "…"` or another interpreter.
   - `Edit(path)` and `Write(path)` become Copilot write rules. These cover Copilot's file tools but not a shell redirect.
@@ -459,6 +460,7 @@ There is no sign-in status command, so worca checks only that the binary runs be
   - globs in a path;
   - a command rule with a flag in it (`Bash(rm -rf:*)`), because Copilot matches a command and its sub-command, never its flags.
 - As on Codex, a run with rules held only in part or not at all needs **Allow unguarded** (`--allow-unguarded-engine`). The partial rules still apply, and the run log lists each group.
+- The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` are path rules Copilot cannot hold. Copilot writes only the run checkout and the folders worca adds, and worca refuses to start Copilot when any of them is inside `~/.worca-cc`, other than the run store and the run's own folder.
 - The host guard's kill-check hook does not run on Copilot; its instructions to the agent still apply.
 
 **MCP, sub-agents and skills.**
