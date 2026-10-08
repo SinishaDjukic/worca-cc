@@ -3,13 +3,14 @@
 // the skills mount folder and the memory block intro on an engine that does not load `.claude/rules`.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, lstatSync, readlinkSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, lstatSync, readlinkSync, rmSync, realpathSync, symlinkSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import {
   codexRulePlan, codexRulesFile, unenforcedRules, partialRules, guardedCodexHome, codexInvestigatorRole, runCodexProcess, CODEX_INVESTIGATOR_ROLE,
+  bringCodexThreadHome, findCodexRollout,
 } from '../src/core/engines/codex.mjs';
 import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
 import { fanOutDirective } from '../src/core/phases.mjs';
@@ -57,6 +58,43 @@ test('guardedCodexHome: one home per rule set, the rules written, the user\'s si
   assert.equal(readFileSync(join(a, 'rules', 'worca.rules'), 'utf8'), 'A\n');
   assert.ok(lstatSync(join(a, 'auth.json')).isSymbolicLink());
   assert.equal(readlinkSync(join(a, 'auth.json')), join(user, 'auth.json'));
+});
+
+test('guardedCodexHome: the sign-in link follows the user\'s codex home on every call', POSIX, () => {
+  const base = tmp(); const user = tmp(); const moved = tmp();
+  writeFileSync(join(user, 'auth.json'), '{}'); writeFileSync(join(moved, 'auth.json'), '{}');
+  const a = guardedCodexHome('A\n', { base, userHome: user });
+  guardedCodexHome('A\n', { base, userHome: moved });
+  assert.equal(readlinkSync(join(a, 'auth.json')), join(moved, 'auth.json'), 'CODEX_HOME moved: the link follows it');
+  rmSync(join(moved, 'auth.json'));
+  guardedCodexHome('A\n', { base, userHome: moved });
+  assert.throws(() => lstatSync(join(a, 'auth.json')), { code: 'ENOENT' }, 'signed out: the link is gone');
+  symlinkSync(join(tmp(), 'gone.json'), join(a, 'auth.json'));
+  guardedCodexHome('A\n', { base, userHome: user });
+  assert.equal(readlinkSync(join(a, 'auth.json')), join(user, 'auth.json'), 'a dangling link is repaired');
+  rmSync(join(a, 'auth.json')); writeFileSync(join(a, 'auth.json'), '{"own":1}');
+  guardedCodexHome('A\n', { base, userHome: user });
+  assert.equal(readFileSync(join(a, 'auth.json'), 'utf8'), '{"own":1}', 'a sign-in codex wrote in this home is its own');
+});
+
+const THREAD = '00000000-0000-4000-8000-0000000000ad';
+const rolloutAt = (home, thread = THREAD) => {
+  const d = join(home, 'sessions', '2026', '10', '08');
+  mkdirSync(d, { recursive: true });
+  const f = join(d, `rollout-2026-10-08T10-00-00-${thread}.jsonl`);
+  writeFileSync(f, '{"type":"session_meta"}\n');
+  return f;
+};
+
+test('bringCodexThreadHome: a thread written under another home is linked in, one file for both homes', POSIX, () => {
+  const a = tmp(); const b = tmp(); const c = tmp();
+  const src = rolloutAt(a);
+  assert.equal(bringCodexThreadHome(b, THREAD, { homes: [c, a] }), true);
+  const dest = findCodexRollout(b, THREAD);
+  assert.equal(dest, join(b, 'sessions', '2026', '10', '08', `rollout-2026-10-08T10-00-00-${THREAD}.jsonl`));
+  assert.equal(statSync(dest).ino, statSync(src).ino, 'a hard link: a turn resumed in either home is seen by both');
+  assert.equal(bringCodexThreadHome(b, THREAD, { homes: [] }), true, 'already there');
+  assert.equal(bringCodexThreadHome(c, '00000000-0000-4000-8000-0000000000ff', { homes: [a, b] }), false, 'no home has it');
 });
 
 test('guardedCodexHome: runs starting together never leave the rules file empty or partial', POSIX, async () => {
@@ -139,6 +177,19 @@ test('runCodexProcess: deny rules put codex under the guarded home and turn web 
     await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, permissionRules: { deny: ['Read(.env)'] } });
     assert.equal(fake.env().CODEX_HOME, undefined);
   } finally { if (prev !== undefined) process.env.CODEX_HOME = prev; }
+});
+
+test('runCodexProcess: a resume under a changed rule set finds the thread its first spawn wrote in the user\'s home', POSIX, async () => {
+  const dir = tmp(); const user = tmp();
+  rolloutAt(user);
+  const fake = fakeCodex(dir, 'ok');
+  const prev = process.env.CODEX_HOME; process.env.CODEX_HOME = user;
+  try {
+    await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, resumeSessionId: `codex:${THREAD}`, permissionRules: { deny: ['Bash(git push:*)'] } });
+  } finally { if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev; }
+  const home = fake.env().CODEX_HOME;
+  assert.notEqual(home, user, 'the guarded home');
+  assert.ok(findCodexRollout(home, THREAD), 'the thread is there for `exec resume`');
 });
 
 test('codexInvestigatorRole: worca\'s prompt plus the memory block; a Codex model and effort kept, a Claude one dropped', () => {

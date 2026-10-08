@@ -16,11 +16,11 @@
 // - A failed turn ends with `error` + `turn.failed`, and codex may still exit 0. A
 //   top-level `error` alone is not a failure: codex also reports its stream retries
 //   that way ("Reconnecting... 1/5 (…)") and may go on to complete the turn.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
@@ -139,12 +139,16 @@ export function codexRulesFile(prefixes) {
 /** The user's own codex home: where codex keeps its sign-in. */
 export const userCodexHome = (env = process.env) => (env.CODEX_HOME && env.CODEX_HOME.trim()) || join(homedir(), '.codex');
 
+/** Where worca keeps its managed codex homes (guardedCodexHome). */
+const codexHomesBase = () => join(worcaHome(), 'engines', 'codex', 'homes');
+
 /**
  * A worca-managed CODEX_HOME holding `rules`. codex reads command rules only from its home's `rules/` folder,
- * so a guarded spawn runs under one home per rule set (the same rules always get the same home, so a resumed
- * thread is found where it was written); its sign-in is the user's own auth.json, linked in. Never throws.
+ * so a guarded spawn runs under one home per rule set; its sign-in is the user's own auth.json, linked in and
+ * re-pointed on every call (keepAuthLinked). A thread written under another home is brought in on resume
+ * (bringCodexThreadHome). Never throws.
  */
-export function guardedCodexHome(rulesText, { base = join(worcaHome(), 'engines', 'codex', 'homes'), userHome = userCodexHome() } = {}) {
+export function guardedCodexHome(rulesText, { base = codexHomesBase(), userHome = userCodexHome() } = {}) {
   const dir = join(base, createHash('sha256').update(rulesText).digest('hex').slice(0, 12));
   try {
     mkdirSync(join(dir, 'rules'), { recursive: true });
@@ -157,10 +161,74 @@ export function guardedCodexHome(rulesText, { base = join(worcaHome(), 'engines'
       const tmp = join(dir, 'rules', `.worca.rules.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
       try { writeFileSync(tmp, rulesText); renameSync(tmp, file); } finally { rmSync(tmp, { force: true }); }
     }
-    const auth = join(dir, 'auth.json');
-    if (!existsSync(auth) && existsSync(join(userHome, 'auth.json'))) symlinkSync(join(userHome, 'auth.json'), auth);
+    keepAuthLinked(dir, userHome);
   } catch { /* the spawn then fails on its sign-in and says so */ }
   return dir;
+}
+
+/**
+ * The managed home's auth.json as a link to the user's current one. The user's codex home can move (CODEX_HOME) or
+ * sign out, so the link is checked on every spawn: a link to another file, or one left dangling, is re-pointed
+ * (a temp link renamed into place, as the rules file is), and removed when the user has no auth.json. A regular
+ * file is left alone: it is a sign-in codex itself wrote in this home.
+ */
+function keepAuthLinked(dir, userHome) {
+  const auth = join(dir, 'auth.json');
+  const want = join(userHome, 'auth.json');
+  let link;   // undefined: nothing there; null: a regular file; else the link's target
+  try { link = lstatSync(auth).isSymbolicLink() ? readlinkSync(auth) : null; } catch { link = undefined; }
+  if (link === null) return;
+  if (!existsSync(want)) { if (link !== undefined) rmSync(auth, { force: true }); return; }
+  if (link === want) return;
+  const tmp = join(dir, `.auth.json.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try { symlinkSync(want, tmp); renameSync(tmp, auth); } finally { rmSync(tmp, { force: true }); }
+}
+
+/** codex's session file for `thread` under `home` (`sessions/<y>/<m>/<d>/rollout-<time>-<thread>.jsonl`), or null. */
+export function findCodexRollout(home, thread) {
+  if (!home || !thread) return null;
+  const suffix = `-${thread}.jsonl`;
+  const walk = (dir, depth) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    for (const e of entries) {
+      if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith(suffix)) return join(dir, e.name);
+      if (e.isDirectory() && depth < 3) { const f = walk(join(dir, e.name), depth + 1); if (f) return f; }
+    }
+    return null;
+  };
+  return walk(join(home, 'sessions'), 0);
+}
+
+/** The codex homes a thread may have been written under: the user's own and every worca-managed one. */
+function knownCodexHomes() {
+  const base = codexHomesBase();
+  let managed = [];
+  try { managed = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(base, e.name)); } catch { /* none yet */ }
+  return [userCodexHome(), ...managed];
+}
+
+/**
+ * Makes `thread` resumable under `home`. A thread lives in the home of the spawn that started it, and a guarded spawn's
+ * home follows its rule set, so a rule change between pause and resume (or a move between guarded and unguarded) moves
+ * the home. codex finds a thread by its session file anywhere under the home's sessions/ (checked on codex-cli 0.162),
+ * so the file is hard-linked in from the home that has it: one file, so either home resumes the latest turn. A copy
+ * stands in when the homes are on different volumes. Never throws; false when no home has the thread.
+ */
+export function bringCodexThreadHome(home, thread, { homes = knownCodexHomes() } = {}) {
+  if (findCodexRollout(home, thread)) return true;
+  for (const h of homes) {
+    if (!h || resolve(h) === resolve(home)) continue;
+    const src = findCodexRollout(h, thread);
+    if (!src) continue;
+    const dest = join(home, relative(h, src));
+    try {
+      mkdirSync(dirname(dest), { recursive: true });
+      try { linkSync(src, dest); } catch { copyFileSync(src, dest); }
+      return true;
+    } catch { return false; }
+  }
+  return false;
 }
 
 // ── sub-agents ───────────────────────────────────────────────────────────────
@@ -658,6 +726,8 @@ export async function runCodexProcess({
   // Guardrails: the deny rules codex can hold (codexRulePlan). Command rules live in a worca-managed CODEX_HOME.
   const plan = codexRulePlan(permissionRules);
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
+  const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(homedir(), '.codex');
+  if (thread) bringCodexThreadHome(home, thread);
   const extra = [];
   if (plan.shellOff && sandbox !== 'read-only' && !askLockdown) extra.push(...CODEX_SHELL_OFF);
   if (plan.webSearchOff) extra.push('-c', 'web_search="disabled"');
