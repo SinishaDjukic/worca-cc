@@ -25133,7 +25133,8 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
     if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
-    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+    const whose = r.limitEngine ? `${engineLabel(r.limitEngine)}'s ` : '';
+    return `Paused — ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
     // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
@@ -26334,7 +26335,7 @@ function statusPill(r) {
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
-    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: r.limitEngine ? `Paused · ${engineLabel(r.limitEngine)} usage limit` : 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
