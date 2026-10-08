@@ -2145,7 +2145,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Switches first, then the disabled rows (Appendix B 10, P4); by the name each shows.
   const memberOrder = (a, b) => (Number(!!a.skip && a.skip.reason !== 'chat-off') - Number(!!b.skip && b.skip.reason !== 'chat-off'))
     || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-  const layerLine = (sk) => `skills from sets not loaded on this machine: ${sk.layer.text || sk.layer.blocked}`;
+  const layerLine = (sk) => `skills from sets not loaded: ${sk.layer.text || sk.layer.blocked}`;
 
   function openMcpPopover(trigger) {
     const panel = openPopover({ panelClass: 'ask-pop-mcp', trigger, build: () => {}, onClose: () => { st.mcp.render = null; } });

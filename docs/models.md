@@ -397,7 +397,9 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 
 - Research fan-out runs on Codex through its own sub-agents. worca defines its read-only investigator as a Codex agent role for each call, carrying the node's sub-agent model and effort (Codex models only) and the run's memory pointers. Codex sub-agents share the node's sandbox, so read-only is an instruction to them, as it is for Claude's investigators.
 - A workspace run's per-project dispatch stays one-at-a-time on Codex.
-- Skills are mounted where Codex reads them, the run checkout's `.agents/skills`. That covers the project's and the root layer's `.claude/skills`, your own `~/.claude/skills`, and the skills a workflow requires. They never reach the run's diff or commit.
+- Skills are mounted where Codex reads them, the run checkout's `.agents/skills`. That covers the project's and the root layer's `.claude/skills`, your own `~/.claude/skills`, the skills a workflow requires, and the skills from the project's sets (Settings › Sets). They never reach the run's diff or commit.
+- A set skill whose name is already taken in `.agents/skills` is mounted as `<set>-<skill>`. The run page's Context card and the audit show the name it got. On Claude a set skill is `/<set>:<skill>` instead.
+- A set skill that declares `hooks:` still loads, but its hooks do not run: hooks are Claude Code's. The run warns once.
 - Codex does not load worca's memory rules on its own, so its agents are told to read them from the memory folders.
 
 **Claude models with custom endpoints.** A Claude model routed to a custom endpoint or through the model bridge no longer refuses a Codex run. Like any Claude model, it is dropped on Codex, and its nodes run on Codex's model. To run Codex itself against your own endpoint, give a Codex model a connection, below.
@@ -467,7 +469,7 @@ There is no sign-in status command, so worca checks only that the binary runs be
 
 - A run's MCP servers attach to its Copilot nodes, stdio and remote (HTTP/SSE) alike. `${VAR}` references are filled by Copilot from its own environment, where worca puts the values. They never reach the command line or the config file.
 - Research fan-out uses Copilot's `task` tool. worca defines its read-only investigator as the custom agent `worca-investigator` for each call. The agent carries the run's memory pointers and runs on the node's model.
-- Skills mount at the run checkout's `.agents/skills`, as on Codex.
+- Skills mount at the run checkout's `.agents/skills`, as on Codex, skills from sets included (renamed `<set>-<skill>` on a clash). A set skill's hooks do not run.
 - Helper jobs (titles, overview, PR description, the Auto classifier, the night decider) run with no built-in tool at all. They get only the MCP servers worca hands them (the classifier's and night decider's read-only file tools), and a scrubbed environment.
 
 **Not on Copilot yet:**
@@ -496,7 +498,7 @@ worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run o
 
 **What Cursor holds, and what it does not.**
 
-- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Skills are mounted as files at `.agents/skills`, and the agent is told to read them.
+- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Skills, skills from sets included, are mounted as files at `.agents/skills`, and the agent is told to read them. A set skill's hooks do not run.
 - Guardrails: worca writes the deny rules it can express into the run checkout's `.cursor/cli.json`. A command rule with one word (`Bash(curl)`) becomes `Shell(curl)`, a bare `Bash` becomes `Shell(*)`, `Read(…)` stays `Read(…)`, and `Edit(…)`/`Write(…)` become `Write(…)`. worca has not verified how Cursor matches them, and the agent's shell can still read a file a `Read` rule names or rewrite the file itself. So **every** rule counts as held only in part, and any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`). Multi-word command rules (`Bash(git push:*)`), `WebFetch`, `WebSearch` and MCP tool rules are not held at all.
 - The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` (the database, `settings.json`, the MCP registry, plugin secrets, and the plugins, scripts, agents, workflows and policy folders) go into `.cursor/cli.json` like the rest, as `Read(…)` and `Write(…)` rules held only in part. Unlike Codex and Copilot, Cursor has no sandbox that limits where it writes, so worca cannot refuse to start it the way it does for those two: a Cursor run with **Allow unguarded** can read and change those files through its shell. Container mode is the containment.
 - Your own Cursor settings still apply: permissions in `~/.cursor/cli-config.json` and MCP servers in `~/.cursor/mcp.json` are read by Cursor, and when worca attaches MCP servers it passes `--approve-mcps`, which may approve your own servers too. No Cursor flag is known that turns them off.

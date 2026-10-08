@@ -117,7 +117,8 @@ import { expandMcpDenyRules } from './mcp/deny.mjs';
 import { resolveSkillRegistry, requiredSkillsOf, SKILL_CAP } from './skills-registry/resolve.mjs';
 import { materializeSkillMount } from './skills-registry/mount.mjs';
 import { skillHostFacts } from './skills-registry/host.mjs';
-import { SKILL_PROBLEM_REASONS, skillSkipMessage, skillSkipReasonText, skillLayerText } from './skills-registry/texts.mjs';
+import { SKILL_PROBLEM_REASONS, skillSkipMessage, skillSkipReasonText, skillLayerText, skillHooksIgnoredText } from './skills-registry/texts.mjs';
+import { skillMdFields } from './skills-registry/inspect.mjs';
 // Skills registry P5 adds `skillDeviations` (policy/effective.mjs); read through the namespace so this module loads
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
@@ -3017,6 +3018,10 @@ export class RunHarness extends EventEmitter {
     const prior = this.runRoot ? await readRunManifest(this.runRoot) : null;
     const alreadyReported = new Set(prior?.warnings ?? []);
     let reg = null;                                        // the MCP registry layer's { result, catalog }
+    // Skills registry: another engine reads set skills from `.agents/skills`, so they are planned BEFORE the
+    // assembly and mounted by it with every other skill (one owner: renames, records, orphan pruning, teardown).
+    // On Claude they load through --plugin-dir and are planned after it, in _resolveSkills.
+    const skillPlan = (this.claude.engine || 'claude') !== 'claude' ? await this._planSkills() : null;
     const rc = await assembleRunContext({
       runRoot: this.runRoot,
       members: this.members.map((m) => ({
@@ -3037,6 +3042,7 @@ export class RunHarness extends EventEmitter {
       agentIsolated: !!agentIdentity(),
       settingsScope: this._settingsScope(),
       engine: this.claude.engine || 'claude',
+      setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
     });
     this.runContext = rc;
@@ -3123,7 +3129,7 @@ export class RunHarness extends EventEmitter {
     await this._recordCapabilities();
     // Skills registry (§4.3): after the capability probe and after the assembly rewrote
     // run.json.warnings; before the audit line, which closes with the layer's clause.
-    await this._resolveSkills({ reported: alreadyReported });
+    await this._resolveSkills({ reported: alreadyReported, plan: skillPlan, mountedAs: rc.skillMountDir ? rc.setSkillNames : null });
     await appendAudit(this.pipeline.dir, renderContextAudit(rc, this.skillLayer)).catch(() => {});
     return rc;
   }
@@ -3176,46 +3182,25 @@ export class RunHarness extends EventEmitter {
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
   _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this.claude.bin)); }
 
-  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Another
-   *  engine has no --plugin-dir (and this.claude.bin is its binary, never probed as claude): no. */
+  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Asked on
+   *  Claude runs only: another engine mounts set skills in `.agents/skills` (_planSkills). */
   async _pluginDirSupported() {
     if (this.claude.mock) return true;
-    if ((this.claude.engine || 'claude') !== 'claude') return false;
     return (await this._claudeCaps()).pluginDir === true;
   }
 
   /**
-   * Skills registry (design §4.3): the set skills this run's target brings, each set's as one
-   * generated plugin under `<pipeline.dir>/skills` (outside every checkout; survives a pause; goes
-   * with the pipeline dir), spawned with one `--plugin-dir` each (_execCtx → runOpts). Re-run on
-   * every resume: the mount is rebuilt from the live sets minus the stored opt-out, BEFORE the first
-   * spawn (the CLI silently ignores a missing --plugin-dir path). Workspace scans and memory-defrag
-   * runs get none. Never throws: a fault leaves the run without set skills and says so.
-   * @param {{reported?: Set<string>}} [o]  warnings this run root already reported (a resumed run)
-   * @returns {Promise<object|null>} the layer, or null when the target brings no set skill
+   * Skills registry (design §4.3), the first half of _resolveSkills: the set skills this run's target brings,
+   * each set's copied as one generated plugin under `<pipeline.dir>/skills` (outside every checkout; survives a
+   * pause; goes with the pipeline dir). Writes nothing but that folder, so another engine plans BEFORE the
+   * assembly and hands the copies to it (_setSkillSources), and _resolveSkills records the plan after it.
+   * Never throws: a fault is a plan with no layer and the line that says why.
+   * @returns {Promise<{none:true, warning:string|null}|{result:object, mounted:object[], skipped:object[], blocked:string|null, mount:object}>}
    */
-  async _resolveSkills({ reported = new Set() } = {}) {
-    this.skillLayer = null;
-    if (!this.pipeline?.dir || this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return null;
+  async _planSkills() {
+    if (!this.pipeline?.dir || this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return { none: true, warning: null, quiet: true };
     const base = join(this.pipeline.dir, 'skills');
     const firstLine = (err) => String(err?.message || err).split('\n')[0];
-    // No layer this segment: no mount and no record — not even one an earlier segment left in the state or in
-    // run.json (History reads its durable copy). A fault's line is warned once and kept with the run's warnings.
-    const noLayer = async (warning = null) => {
-      await rm(base, { recursive: true, force: true }).catch(() => {});
-      delete this.state.skillMount;
-      if (warning && !reported.has(warning)) this._log('skills', 'warn', warning);
-      if (this.runRoot) {
-        try {
-          const cur = (await readRunManifest(this.runRoot)) || {};
-          const warnings = Array.isArray(cur.warnings) ? cur.warnings : [];
-          const add = warning && !warnings.includes(warning) ? [warning] : [];
-          // A run that never had a layer writes nothing (byte-identical run.json); undefined drops the key.
-          if ('skillMount' in cur || add.length) await updateRunManifest(this.runRoot, { skillMount: undefined, warnings: [...warnings, ...add] });
-        } catch { /* best-effort: the run log has the line */ }
-      }
-      return null;
-    };
     let result;
     try {
       const { target, teamKey } = this._registryTarget();
@@ -3226,7 +3211,7 @@ export class RunHarness extends EventEmitter {
         optOut: this.mcpOptOut, skillCap: SKILL_CAP.pipeline,
       });
     } catch (err) {
-      return noLayer(`skills from sets not loaded: ${firstLine(err)}`);
+      return { none: true, warning: `skills from sets not loaded: ${firstLine(err)}` };
     }
     // §2b-13 off-policy findings for required Team skills — after _resolvePolicy (it resets the list
     // on resume); the whole list is persisted, as the MCP deviations are.
@@ -3245,10 +3230,11 @@ export class RunHarness extends EventEmitter {
     }
     const mounted = Array.isArray(result?.mounted) ? result.mounted : [];
     const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
-    if (!mounted.length && !skipped.length) return noLayer();   // and a mount an earlier segment left is removed
-    // §4.1 host gates, only when something would load: managed `disableSideloadFlags`, or a CLI
-    // without --plugin-dir. Either skips the whole layer with one warning — never a dead spawn.
-    const blocked = !mounted.length ? null
+    if (!mounted.length && !skipped.length) return { none: true, warning: null };   // and a mount an earlier segment left is removed
+    // §4.1 host gates, only when something would load on Claude: managed `disableSideloadFlags`, or a CLI
+    // without --plugin-dir. Either skips the whole layer with one warning — never a dead spawn. Another engine
+    // reads the copies from `.agents/skills`, never through --plugin-dir (this.claude.bin is its binary).
+    const blocked = !mounted.length || (this.claude.engine || 'claude') !== 'claude' ? null
       : this._skillHostFacts().sideloadDisabled ? 'sideload-disabled'
       : (await this._pluginDirSupported()) ? null : 'cli-no-plugin-dir';
     let mount = { base: null, pluginDirs: [], plugins: [], failed: [] };
@@ -3259,43 +3245,123 @@ export class RunHarness extends EventEmitter {
         if (!mount.pluginDirs.length) throw new Error(mount.failed?.[0]?.error || 'no skill could be copied');
       } else await rm(base, { recursive: true, force: true });
     } catch (err) {
-      return noLayer(`skills from sets not loaded: could not prepare ${base}: ${firstLine(err)}`);
+      return { none: true, warning: `skills from sets not loaded: could not prepare ${base}: ${firstLine(err)}` };
     }
+    return { result, mounted, skipped, blocked, mount };
+  }
+
+  /**
+   * Another engine's set skills as assembleSkills candidates (run-context.mjs): each copied skill's folder under
+   * `<pipeline.dir>/skills/<plugin>/skills/<name>`, renamed `<set slug>-<name>` on a clash in `.agents/skills`.
+   * [] on Claude (set skills load through --plugin-dir there) and for a plan with nothing to mount.
+   */
+  _setSkillSources(plan) {
+    if ((this.claude.engine || 'claude') === 'claude' || !plan || plan.none || plan.blocked) return [];
+    return (plan.mount.plugins || []).flatMap((p) => p.skills.map((name) => {
+      const m = plan.mounted.find((x) => x.pluginName === p.pluginName && x.name === name);
+      return { key: `${p.pluginName}:${name}`, name, source: join(p.dir, 'skills', name), prefix: `${m?.setSlug || p.pluginName}-`, origin: `set ${m?.setName ?? p.pluginName}` };
+    }));
+  }
+
+  /**
+   * Skills registry (design §4.3): the set-skill layer of this run, recorded. On Claude each set's copy is spawned
+   * with one `--plugin-dir` (_execCtx → runOpts); on another engine the assembly mounted the copies in
+   * `.agents/skills`, and `mountedAs` maps each `<plugin>:<skill>` to the name it got there (null: the run has no
+   * such mount, a legacy run or a member without a checkout). Re-run on every resume: the mount is rebuilt from the
+   * live sets minus the stored opt-out, BEFORE the first spawn (the CLI silently ignores a missing --plugin-dir
+   * path). Workspace scans and memory-defrag runs get none. Never throws: a fault leaves the run without set
+   * skills and says so.
+   * @param {{reported?: Set<string>, plan?: object|null, mountedAs?: Record<string,string>|null}} [o]
+   *        warnings this run root already reported (a resumed run); the plan made before the assembly
+   * @returns {Promise<object|null>} the layer, or null when the target brings no set skill
+   */
+  async _resolveSkills({ reported = new Set(), plan = null, mountedAs = null } = {}) {
+    this.skillLayer = null;
+    plan ??= await this._planSkills();
+    if (plan.none && plan.quiet) return null;
+    const base = join(this.pipeline.dir, 'skills');
+    // No layer this segment: no mount and no record — not even one an earlier segment left in the state or in
+    // run.json (History reads its durable copy). A fault's line is warned once and kept with the run's warnings.
+    if (plan.none) {
+      const warning = plan.warning;
+      await rm(base, { recursive: true, force: true }).catch(() => {});
+      delete this.state.skillMount;
+      if (warning && !reported.has(warning)) this._log('skills', 'warn', warning);
+      if (this.runRoot) {
+        try {
+          const cur = (await readRunManifest(this.runRoot)) || {};
+          const warnings = Array.isArray(cur.warnings) ? cur.warnings : [];
+          const add = warning && !warnings.includes(warning) ? [warning] : [];
+          // A run that never had a layer writes nothing (byte-identical run.json); undefined drops the key.
+          if ('skillMount' in cur || add.length) await updateRunManifest(this.runRoot, { skillMount: undefined, warnings: [...warnings, ...add] });
+        } catch { /* best-effort: the run log has the line */ }
+      }
+      return null;
+    }
+    const { result, mounted, skipped, mount } = plan;
+    const engine = this.claude.engine || 'claude';
+    const onEngine = engine !== 'claude';
+    // Another engine with no `.agents/skills` mount for this run cannot see the copies at all.
+    const blocked = plan.blocked || (onEngine && mounted.length && !mountedAs ? 'engine-no-skill-mount' : null);
+    const firstLine = (err) => String(err?.message || err).split('\n')[0];
     // A skill P3 could not copy is not delivered: it leaves the layer and the plugin list and becomes a skipped
     // row (`mount-failed`, its error as the reason) — never told to agents, the run card or the audit as loaded.
+    // On another engine so is a copy the assembly did not mount (a name the checkout tracks, a copy error).
     const setNameOf = (id) => (result.plugins || []).find((p) => p.setId === id)?.setName ?? id;
     const notCopied = (Array.isArray(mount.failed) ? mount.failed : []).map((f) => ({
       setId: f.setId, setName: setNameOf(f.setId), pluginName: f.pluginName, name: f.name ?? '?',
       skillId: mounted.find((m) => m.pluginName === f.pluginName && m.name === f.name)?.id ?? null,
       qualifiedName: `${f.pluginName}:${f.name ?? '?'}`, reason: 'mount-failed', why: firstLine(f.error),
     }));
+    if (onEngine && !blocked) {
+      for (const p of mount.plugins || []) {
+        for (const name of p.skills) {
+          if (Object.hasOwn(mountedAs, `${p.pluginName}:${name}`)) continue;
+          const m = mounted.find((x) => x.pluginName === p.pluginName && x.name === name);
+          notCopied.push({ setId: p.setId, setName: setNameOf(p.setId), pluginName: p.pluginName, name, skillId: m?.id ?? null,
+            qualifiedName: `${p.pluginName}:${name}`, reason: 'mount-failed', why: 'not mounted in .agents/skills (see the run warnings)' });
+        }
+      }
+    }
     const lost = new Set(notCopied.map((f) => f.qualifiedName));
     const kept = lost.size ? mounted.filter((m) => !lost.has(`${m.pluginName}:${m.name}`)) : mounted;
-    const copied = new Map((mount.plugins || []).map((p) => [p.pluginName, p.skills]));
-    const plugins = (result.plugins || []).filter((p) => blocked || copied.has(p.pluginName)).map((p) => ({
+    const copied = new Map((mount.plugins || []).map((p) => [p.pluginName, p.skills.filter((s) => !lost.has(`${p.pluginName}:${s}`))]));
+    const plugins = (result.plugins || []).filter((p) => blocked || copied.get(p.pluginName)?.length).map((p) => ({
       setId: p.setId, setName: p.setName, pluginName: p.pluginName, renamedPlugin: !!p.renamedPlugin, skills: [...(copied.get(p.pluginName) || p.skills)],
     }));
     const allSkipped = [...skipped, ...notCopied];
-    this.skillLayer = { base: mount.base, pluginDirs: blocked ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked };
+    // The names agents call on another engine: the folders in `.agents/skills`.
+    const agentNames = onEngine && !blocked ? kept.map((m) => mountedAs[`${m.pluginName}:${m.name}`]) : null;
+    this.skillLayer = {
+      base: mount.base, pluginDirs: blocked || onEngine ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked,
+      ...(agentNames ? { rel: skillsRelFor(engine), names: agentNames } : {}),
+    };
     const record = {
       base: mount.base, plugins,
       skipped: allSkipped.map((s) => ({
         setId: s.setId, setName: s.setName, skillId: s.skillId, name: s.name,
         qualifiedName: s.qualifiedName ?? (s.pluginName ? `${s.pluginName}:${s.name}` : s.name), reason: s.reason, why: s.why ?? skillSkipReasonText(s),
       })),
-      layer: { blocked, text: blocked ? skillLayerText(blocked) : null },
+      layer: { blocked, text: blocked ? skillLayerText(blocked, engine) : null },
+      ...(agentNames ? { rel: this.skillLayer.rel, names: agentNames } : {}),
     };
     this.state.skillMount = record;
     // One run-log warning per renamed plugin and per problem skip (choices — off, opted out, never
     // consented — say nothing); a resumed run does not repeat what this run root already reported.
-    const lines = blocked ? [`skills from sets not loaded on this machine: ${skillLayerText(blocked)}`] : [];
+    const lines = blocked ? [`skills from sets not loaded: ${skillLayerText(blocked, engine)}`] : [];
     for (const p of plugins) {
-      if (blocked || !p.renamedPlugin) continue;
+      if (blocked || onEngine || !p.renamedPlugin) continue;
       const slug = mounted.find((m) => m.setId === p.setId)?.setSlug || 'general';
       lines.push(`set ${p.setName} loads as \`${p.pluginName}:\` here — a Claude Code plugin named ${slug} is installed`);
     }
     for (const s of skipped) if (SKILL_PROBLEM_REASONS.includes(s.reason)) lines.push(skillSkipMessage(s));
     for (const s of notCopied) lines.push(`${s.qualifiedName} in ${s.setName} not loaded: ${s.why}`);
+    // A skill's `hooks:` are Claude Code's: mounted on another engine, the skill loads and its hooks never run.
+    if (agentNames) {
+      const hooked = kept.filter((m) => this._skillDeclaresHooks(join(mount.base, m.pluginName, 'skills', m.name)))
+        .map((m) => mountedAs[`${m.pluginName}:${m.name}`]);
+      if (hooked.length) lines.push(skillHooksIgnoredText(engine, hooked));
+    }
     for (const w of lines) if (!reported.has(w)) this._log('skills', 'warn', w);
     if (this.runRoot) {
       try {
@@ -3305,6 +3371,11 @@ export class RunHarness extends EventEmitter {
       } catch { /* best-effort: the run log has the lines */ }
     }
     return this.skillLayer;
+  }
+
+  /** Whether the SKILL.md in a copied set skill's folder declares `hooks:` (skills registry §2a U1); unreadable: no. */
+  _skillDeclaresHooks(dir) {
+    try { return !!skillMdFields(readFileSync(join(dir, 'SKILL.md'), 'utf8'))?.hooks; } catch { return false; }
   }
 
   /**

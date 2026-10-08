@@ -104,7 +104,7 @@ test('level 1: "N servers · N skills · route" under the set name, started/tota
       const { ctx } = setup({ preview: { ...PREVIEW, skills: { ...SKILLS, started: 0, layer: { blocked: 'sideload-disabled', text } } } });
       await openPicker(ctx);
       const line = pop(ctx).querySelector('.ask-pop-empty').textContent;
-      assert.equal(line, `skills from sets not loaded on this machine: ${text}`);
+      assert.equal(line, `skills from sets not loaded: ${text}`);
       assert.equal(line.split('skills from sets not loaded').length, 2, 'never the prefix twice');
       assert.equal(btn(ctx).textContent.trim(), 'Sets · 4');
       ctx.panel.destroy();
@@ -157,7 +157,7 @@ test('level 2: Servers then Skills captions, skill switches by qualified name, s
       await openPicker(ctx);
       drill(ctx, 1);
       assert.deepEqual([...pop(ctx).querySelectorAll('.ask-pop-caption')].map((c) => c.textContent), ['Servers', 'Skills']);
-      assert.deepEqual([...pop(ctx).querySelectorAll('.ask-pop-empty')].map((n) => n.textContent), [`skills from sets not loaded on this machine: ${text}`]);
+      assert.deepEqual([...pop(ctx).querySelectorAll('.ask-pop-empty')].map((n) => n.textContent), [`skills from sets not loaded: ${text}`]);
       assert.equal(pop(ctx).querySelector('[data-mcp-key^="member:billing|skill:"]'), null);
       assert.equal(pop(ctx).querySelectorAll('.is-skipped').length, 0, 'no skipped skill row either');
       ctx.panel.destroy();
