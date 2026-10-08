@@ -202,3 +202,17 @@ test('catalog models: a Cursor entry keeps its engine with no efforts; env or an
   assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));
   assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
 });
+
+test('catalog models: an OpenCode entry keeps its engine and variants; env, an upstream or a bare id drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'acme/oc', engine: 'opencode', efforts: ['high', 'xhigh'] },
+      { id: 'acme/oc-env', engine: 'opencode', env: { X: 'y' } },
+      { id: 'acme-oc-bare', engine: 'opencode' },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [{ id: 'acme/oc', label: 'acme/oc', efforts: ['high'], engine: 'opencode' }]);
+  assert.ok(warnings.some((w) => w.includes('acme/oc-env') && w.includes('an opencode model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-oc-bare') && w.includes('provider/model')), warnings.join('\n'));
+});

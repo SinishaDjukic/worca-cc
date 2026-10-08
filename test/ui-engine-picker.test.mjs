@@ -242,7 +242,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
   pick(ctx, 'cursor');
   assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'cursor');
   const hint = doc.getElementById('engine-hint');
@@ -251,6 +251,16 @@ test('engine: Cursor is the third choice; it sends engine cursor and says helper
   assert.doesNotMatch(hint.textContent, /including titles and summaries/);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'cursor');
+});
+
+test('engine: OpenCode is the fifth choice; it sends engine opencode and says helper jobs run on Claude', async () => {
+  const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+  pick(ctx, 'opencode');
+  assert.equal(ctx.doc.querySelector('#engine-seg button.on').dataset.engine, 'opencode');
+  assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
+    'OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Settings › Models › OpenCode.');
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'opencode');
 });
 
 test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent model', async () => {

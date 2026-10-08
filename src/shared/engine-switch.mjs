@@ -4,16 +4,16 @@
 // Import-free: served to the browser as-is under /src/shared.
 
 /** The run engines (src/core/engines/index.mjs without the mock; src/core/model-env.mjs RUN_ENGINES — kept equal by a test). */
-export const ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor']);
+export const ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor', 'opencode']);
 /** The engines that own catalog models (src/core/model-env.mjs MODEL_ENGINES, kept equal by a test). Copilot owns none. */
-export const MODEL_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'cursor']);
+export const MODEL_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'cursor', 'opencode']);
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
 
-const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot', cursor: 'Cursor' });
+const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot', cursor: 'Cursor', opencode: 'OpenCode' });
 
 /** The engines still in beta: every engine picker marks them. */
-export const BETA_ENGINES = Object.freeze(['codex', 'copilot', 'cursor']);
+export const BETA_ENGINES = Object.freeze(['codex', 'copilot', 'cursor', 'opencode']);
 
 /** Is `engine` in beta? A missing engine is Claude. */
 export function isBetaEngine(engine) {
