@@ -418,6 +418,7 @@ What an Ask chat on Codex can do, and what it cannot do:
 - Codex keeps its sub-agent tools; no Codex setting removes them. A sub-agent gets the same locked-down tools, and the chat stops with an error as soon as one starts.
 - A chat keeps the engine it started on. To switch, start a new chat.
 - Images are sent with the message that carries them. PDFs need a Claude chat. Your MCP servers are available in Claude chats.
+- Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`. The sets' MCP servers stay in Claude chats.
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
 - If Codex is not installed or not signed in, the chat says "Codex isn't ready" with the reason. It never falls back to Claude.
 

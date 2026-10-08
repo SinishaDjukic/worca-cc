@@ -2,12 +2,12 @@
 // Worca's read-only file tools for Codex chats (cascading-settings-design.md D13, §4.6): read_file, grep, glob.
 // Codex has no permission engine, so these are a Codex chat's ONLY view of the disk: every path is resolved
 // (symlinks followed with realpath), must sit under the thread's worktrees, its attachments or the memory
-// mount, and must pass the deny rules a Claude chat hands the CLI (deny-rules.mjs). The walkers never follow
+// mount (plus, for a turn with set skills, that message's skill mount), and must pass the deny rules a Claude chat hands the CLI (deny-rules.mjs). The walkers never follow
 // a symlink. Present in the MCP child only for a Codex chat (WORCA_ASK_ENGINE=codex); a Claude chat keeps
 // its native Read/Grep/Glob.
 import { realpathSync, statSync, fstatSync, readdirSync, openSync, readSync, closeSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
-import { join, isAbsolute, resolve, sep } from 'node:path';
+import { join, isAbsolute, resolve, sep, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { worcaHome } from '../projects.mjs';
 import { ASK_DENY_RULES, askPathDenied, globMatcher, toPosix } from './deny-rules.mjs';
@@ -20,11 +20,17 @@ export const ASK_FILE_LIMITS = Object.freeze({
   grepMaxMatches: 200, grepMaxFiles: 5000, grepFileMaxBytes: 1024 * 1024, grepTimeoutMs: 10_000, globMaxResults: 1000, walkMaxEntries: 20_000, patternMaxChars: 500,
 });
 const THREAD_RE = /^ask_[0-9a-f]{8}$/;
+const MESSAGE_RE = /^askm_[0-9a-f]{8}$/;
 
-/** The three roots a Codex chat may read: its worktrees, its attachments, the memory mount. */
-export function askFileRoots({ home = worcaHome(), threadId } = {}) {
+/** The roots a Codex chat may read: its worktrees, its attachments, the memory mount — and, for a turn with set skills
+ *  (#635), `skillRoot`: that message's mount. Only a path that is exactly `<home>/ask/<this thread>/skills/<message id>`
+ *  is taken, never the thread's whole skills folder or another chat's; anything else is dropped. */
+export function askFileRoots({ home = worcaHome(), threadId, skillRoot = null } = {}) {
   if (typeof threadId !== 'string' || !THREAD_RE.test(threadId)) return [];
-  return [join(home, 'ask', threadId, 'wt'), join(home, 'ask', threadId, 'att'), join(home, 'ask', 'memory')];
+  const roots = [join(home, 'ask', threadId, 'wt'), join(home, 'ask', threadId, 'att'), join(home, 'ask', 'memory')];
+  if (typeof skillRoot === 'string' && isAbsolute(skillRoot) && resolve(skillRoot) === skillRoot
+    && dirname(skillRoot) === join(home, 'ask', threadId, 'skills') && MESSAGE_RE.test(basename(skillRoot))) roots.push(skillRoot);
+  return roots;
 }
 
 function readHead(path, max) {
@@ -50,7 +56,7 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
     const abs = resolve(want);
     const rp = real(abs);
     if (!rp) throw new AskFileError(`${tool}: ${abs} does not exist`);
-    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is outside this chat's worktrees, attachments and memory`);
+    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is outside this chat's worktrees, attachments and memory${roots.length > 3 ? " and this turn's skills" : ''}`);
     const rule = denied(abs) || denied(rp);
     if (rule) throw new AskFileError(`${tool}: ${abs} is protected (${rule})`);
     return rp;
@@ -186,5 +192,5 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
 /** The MCP child's file bundle: present only for a Codex chat (the parent sets WORCA_ASK_ENGINE=codex in the child's env). */
 export function defaultFileDeps({ threadId = null, env = process.env, signal = null } = {}) {
   if (!env || env.WORCA_ASK_ENGINE !== 'codex') return {};
-  return { engine: 'codex', files: createAskFileReader({ roots: askFileRoots({ threadId }), signal }) };
+  return { engine: 'codex', files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
 }

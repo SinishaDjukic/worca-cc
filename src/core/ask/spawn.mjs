@@ -267,7 +267,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, engine = 'claude' }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, engine = 'claude', skillRoot = null }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -299,6 +299,9 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
       // A Codex chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on Codex (D13, D8).
       ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}),
+      // A Codex turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
+      // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
+      ...(engine === 'codex' && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}) },
   });
