@@ -9,6 +9,7 @@
 // Pure: reads only `env` and the remote-mode flag the server already computed.
 import { readGithubCredentials } from './github-credentials.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
+import { readEgressPolicy } from './egress-proxy.mjs';
 
 const on = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
 
@@ -36,8 +37,11 @@ export function deploymentFacts(env = process.env, { remoteMode = false, project
   // Azure DevOps (docs/azure-devops.md): named only when worca holds a credential, so the line
   // stays as before for a GitHub-only deployment.
   const ado = readAzureCredentials(env).mode;
+  // A hosting platform's outbound network policy (src/core/egress-policy.mjs): the mode only.
+  const egress = readEgressPolicy(env);
   return { deployment, projectsRoot: projectsRoot || null, github: githubMode(env),
     ...(ado !== 'none' ? { azureDevOps: ado } : {}),
+    ...(egress.enforced ? { egress: egress.mode } : {}),
     ...(hosted && !on(env.WORCA_ACTIONS_REMOTE) ? { actions: 'off' } : {}),
     ...(hosted && !on(env.WORCA_TERMINAL_REMOTE) ? { terminal: 'off' } : {}) };
 }

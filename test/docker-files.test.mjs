@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import net from 'node:net';
 
-import { DEFAULT_ALLOW, parseAllow, isAllowed, createProxy } from '../docker/egress-proxy.mjs';
+import { DEFAULT_ALLOW, parseAllow, isAllowed, createProxy } from '../src/core/egress-proxy.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -125,6 +125,8 @@ test('overlays: egress confines worca to an internal network; clone-in drops the
   assert.match(eg, /HTTPS_PROXY: http:\/\/egress:3128/);
   assert.match(eg, /NO_PROXY: .*\bbroker\b/, 'worca fetch() honors the proxy, so the broker sidecar must bypass it');
   assert.match(eg, /worca-egress-proxy\.mjs/);
+  assert.match(read('docker/Dockerfile'), /install -m 755 "\$\(npm root -g\)\/@worca\/app\/src\/core\/egress-proxy\.mjs" \/usr\/local\/lib\/worca-egress-proxy\.mjs/,
+    'the sidecar runs the proxy shipped in the package');
   const ci = read('docker/compose.clonein.yml');
   assert.match(ci, /projects:\/projects/);
   assert.doesNotMatch(ci, /\$\{WORCA_PROJECTS/, 'no host path in clone-in mode');

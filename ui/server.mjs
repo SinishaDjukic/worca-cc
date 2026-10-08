@@ -381,6 +381,7 @@ import * as skViews from '../src/core/mcp/views.mjs';
 import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
+import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -13141,6 +13142,19 @@ async function settleShutdownSteps(steps, { timeoutMs = SHUTDOWN_STEPS_MS, log =
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // A hosting platform's outbound network policy (WORCA_EGRESS_MODE, src/core/egress-policy.mjs):
+  // the policy proxy starts on loopback and its address goes into process.env before anything
+  // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
+  // closed: without the proxy, agents would have no restriction at all.
+  try {
+    const egress = await startEgressPolicy({ log: (l) => console.log(`[worca-ui] egress: ${l}`) });
+    const egressLine = egressNotice(egress);
+    if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
+  } catch (err) {
+    console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
+    process.exit(78);
+  }
+
   // Outbound calls honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs). First: the
   // broker check below is already one.
   const proxyLine = proxyNotice(useEnvProxy());
