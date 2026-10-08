@@ -132,7 +132,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -18290,23 +18290,26 @@ async function confirmPastTeamCap(runId, btn) {
 // the saved run, and the run page's usage-limit banner. The consent is New pipeline's own.
 const ENGINE_UNGUARDED_LABEL = 'Allow unguarded: run without the rules this engine cannot enforce';
 
-/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and one
- *  "Resume on <engine>" per other engine, whose line says what switching does. Every other engine is
- *  listed (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
+/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and, when the pause
+ *  offers the switch (a usage limit the engine hit, as the banner and the History bar), one "Resume on
+ *  <engine>" per other engine, whose line says what switching does. Every other engine is listed, ready
+ *  or not (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
  *  hidden template; clones go before it, and the menu's one delegated listener handles them. Every frame
  *  repaints, so an unchanged menu is left alone: re-cloning under an open menu would lose a click. */
-function paintResumeEngineItems(menu, runEngine) {
+function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
-  if (menu.dataset.engineSig === saved) return;
-  menu.dataset.engineSig = saved;
+  const offers = usageLimitSwitches(pause || {});
+  const sig = `${saved}|${offers.join(',')}`;
+  if (menu.dataset.engineSig === sig) return;
+  menu.dataset.engineSig = sig;
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
   if (!tpl) return;
   tpl.dataset.template = '1'; tpl.hidden = true;
   menu.querySelectorAll('.resume-on-other:not([data-template])').forEach((b) => b.remove());
-  for (const e of otherEngines(saved)) {
+  for (const e of offers) {
     const item = tpl.cloneNode(true);
     delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
     item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
@@ -21263,7 +21266,7 @@ function paintHdLive(screen, record, data) {
   gateHdResume(resumeBtn, gate);
   // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
   // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
-  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data));
+  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
   const resumeAtItem = screen.querySelector('.hd-resume-at-item');
   if (resumeAtItem) {
     const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
@@ -29530,7 +29533,7 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine);
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
   const ns = screen.querySelector('.rd-night');
