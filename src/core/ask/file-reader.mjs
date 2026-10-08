@@ -41,7 +41,7 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
     const abs = resolve(want);
     const rp = real(abs);
     if (!rp) throw new AskFileError(`${tool}: ${abs} does not exist`);
-    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is outside this chat's worktrees, attachments and memory`);
+    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is outside this chat's worktrees, attachments and memory${roots.length > 3 ? " and this turn's skills" : ''}`);
     const rule = denied(abs) || denied(rp);
     if (rule) throw new AskFileError(`${tool}: ${abs} is protected (${rule})`);
     return rp;

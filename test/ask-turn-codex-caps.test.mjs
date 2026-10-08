@@ -31,8 +31,7 @@ function makeTurn(s, limits, runClaudeImpl, over = {}) {
     threadId: s.thread.id, assistantMessageId: s.asst.id, userMessageId: s.user.id, prompt: 'P', systemPrompt: 'S', restoredPrompt: 'R',
     model: 'gpt-5.5', effort: 'low', engine: 'codex', ...over,
     deps: { onFrame: (f) => frames.push(f), generateTitle: async () => '', codexPreflight: async () => ({}), memoryMount: async () => null,
-      // Task 0 (a) NOT CONFIRMED: the shipped CODEX_ASK_LOCKDOWN is null, so the watchdog tests inject one.
-      codexLockdown: () => ['--disable', 'shell_tool'],
+      codexLockdown: () => ['--disable', 'shell_tool'], codexAskSupport: async () => ({}),
       askLimits: () => limits, runClaudeImpl },
   });
   return { turn, frames };

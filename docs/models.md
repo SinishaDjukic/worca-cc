@@ -414,13 +414,15 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 - worca does not use OpenAI's list prices for an endpoint model, so its cost shows as unknown unless you set Pricing on the model.
 - The model's Test button checks the endpoint, and a model whose endpoint has no key shows "needs API key" in pickers, like a bridged model.
 
-> **Ask Worca on Codex is not available yet.** A chat on Codex starts only when worca can switch off every Codex tool that reaches the disk or other agents. `codex-cli 0.146` cannot switch off `view_image` (it reads any image file) or its sub-agents, so on that version Codex models are not offered in Ask Worca and a Codex chat refuses to start. Pipelines on Codex are unaffected.
+**Ask Worca on Codex** needs `codex-cli 0.162` or newer. A Codex chat runs with every Codex tool that reaches the disk or the web switched off. An older codex cannot switch off its image viewer, so there a Codex chat refuses to start with "Codex isn't ready: … update codex". Pipelines on Codex are unaffected.
 
-What an Ask chat on Codex will be able to do, and what it cannot do, once a codex version can be locked down:
+What an Ask chat on Codex can do, and what it cannot do:
 
-- It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell and no Codex web search; web access goes through worca's web tools as in any chat.
+- It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell, no image viewer and no Codex web search; web access goes through worca's web tools as in any chat.
+- Codex keeps its sub-agent tools; no Codex setting removes them. A sub-agent gets the same locked-down tools, and the chat stops with an error as soon as one starts.
 - A chat keeps the engine it started on. To switch, start a new chat.
 - Images are sent with the message that carries them. PDFs need a Claude chat. Your MCP servers are available in Claude chats.
+- Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`. The sets' MCP servers stay in Claude chats.
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
 - If Codex is not installed or not signed in, the chat says "Codex isn't ready" with the reason. It never falls back to Claude.
 
