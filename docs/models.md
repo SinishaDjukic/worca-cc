@@ -379,7 +379,8 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 **MCP servers on Codex.** A pipeline's MCP servers attach to its Codex nodes, with these limits:
 
 - Codex takes stdio servers only. A remote (HTTP/SSE) server from the MCP registry refuses the run; one from a project's `.mcp.json` is skipped with a warning.
-- Servers Claude Code loads on its own (user scope, plugins) are not attached on Codex, and the run says which.
+- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking: those named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. worca reads these keys from `~/.claude/settings.json` and the project's `.claude/settings.json` and `.claude/settings.local.json`. The run names the servers it leaves out for want of approval. Their `${VAR}` references are filled the way Claude Code fills them, as for any other server on Codex.
+- Other servers Claude Code loads on its own (user scope, plugins) are not attached on Codex, and the run says which.
 - Codex gives all of a run's servers one shared environment. Copies of a registry server, such as two GitHub copies with their own `GITHUB_TOKEN`, each get their own variable names there, so they attach side by side. Two other servers may not declare the same variable with different values.
 
 **Guardrails on Codex.** Codex holds a guardrail set's command rules only in part, and not its file rules.

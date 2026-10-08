@@ -28,6 +28,7 @@ import {
   assembleSkills,
   mergeMcpConfigs,
   auditAncestors,
+  mcpjsonApproval,
 } from '../src/core/run-context.mjs';
 import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 import { skipMessage } from '../src/core/mcp/registry.mjs';
@@ -711,6 +712,75 @@ test('§5.5 / V3(d): a cross-scope duplicate in single mode warns by name; an id
   assert.ok(w, `warned by name: ${JSON.stringify(differing.warnings)}`);
   assert.match(w, /V3\(d\)/);
   assert.match(w, /config/, 'V3(d) recorded CONFIG scope as effective on this CLI version');
+});
+
+/** A single-mode member whose worktree commits `.mcp.json` servers a (also in the real dir), b, c and d. */
+async function committedMcpMember({ user = {}, project = {}, local = {} } = {}) {
+  const def = (n) => ({ command: 'node', args: [`/abs/${n}.js`] });
+  const wt = await writeTree(await tmp('worca-cc-rc-cm-wt-'), {
+    '.mcp.json': JSON.stringify({ mcpServers: { a: def('a'), b: { command: 'node', args: ['./srv/b.js'] }, c: def('c'), d: def('d') } }),
+    'srv/b.js': '',
+  });
+  const real = await writeTree(await tmp('worca-cc-rc-cm-real-'), {
+    '.mcp.json': JSON.stringify({ mcpServers: { a: def('a') } }),
+    '.claude/settings.json': JSON.stringify(project),
+    '.claude/settings.local.json': JSON.stringify(local),
+  });
+  const home = await writeTree(await tmp('worca-cc-rc-cm-home-'), { '.claude/settings.json': JSON.stringify(user) });
+  return { member: { projectKey: 'k1', projectName: 'P', projectDir: real, worktreeDir: wt }, home, wt };
+}
+
+const committedWarning = (ws) => ws.filter((w) => /not approved/.test(w));
+
+test('codex: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once', async () => {
+  const { member, home, wt } = await committedMcpMember({
+    user: { enabledMcpjsonServers: ['a'] }, project: { enabledMcpjsonServers: ['b', 'c'] }, local: { disabledMcpjsonServers: ['c'] },
+  });
+  const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine: 'codex', platform: 'darwin' });
+  const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
+  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the project layer; c is disabled in the local layer');
+  assert.deepEqual(file.b.args, [join(wt, 'srv', 'b.js')], 'resolved against the worktree, where Claude Code would load it');
+  assert.deepEqual(rc.mcpServerNames, ['a', 'b'], 'the left-out servers are not granted');
+  const w = committedWarning(rc.warnings);
+  assert.equal(w.length, 1, JSON.stringify(rc.warnings));
+  assert.match(w[0], /^engine codex: .*: d\. /, 'only the unapproved one is named, not the disabled one');
+  assert.match(w[0], /enabledMcpjsonServers/);
+  const md = await readFile(rc.claudeMdPath, 'utf8');
+  assert.match(md, /`b` — from the committed `\.mcp\.json` at cwd/);
+  assert.doesNotMatch(md, /`[cd]` — from/);
+});
+
+test('codex: enableAllProjectMcpServers approves every committed server but a disabled one; the last layer to set it decides', async () => {
+  const { member, home } = await committedMcpMember({
+    user: { enableAllProjectMcpServers: false, disabledMcpjsonServers: ['d'] }, local: { enableAllProjectMcpServers: true },
+  });
+  const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine: 'codex', platform: 'darwin' });
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers).sort(), ['a', 'b', 'c']);
+  assert.deepEqual(committedWarning(rc.warnings), [], 'nothing unapproved');
+
+  const off = await committedMcpMember({ user: { enableAllProjectMcpServers: true }, project: { enableAllProjectMcpServers: false } });
+  const rcOff = await assemble({ runRoot: await mkRunRoot(), members: [off.member], homeDir: off.home, engine: 'codex', platform: 'darwin' });
+  assert.equal(rcOff.mcpConfigPath, null, 'the project layer turned it back off');
+  assert.deepEqual(rcOff.mcpServerNames, []);
+  assert.match(committedWarning(rcOff.warnings)[0], /: a, b, c, d\. /);
+});
+
+test('codex: a Claude run of the same checkout is unchanged — the committed servers load natively, no mcp.json, no warning', async () => {
+  const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['a', 'b'] } });
+  const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, platform: 'darwin' });
+  assert.equal(rc.mcpConfigPath, null);
+  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical `a` is granted, as before');
+  assert.deepEqual(committedWarning(rc.warnings), []);
+});
+
+test('mcpjsonApproval: lists add up across the layers, disabled wins, absent files are silent', async () => {
+  const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['x'] }, local: { enabledMcpjsonServers: ['y'], disabledMcpjsonServers: ['x'] } });
+  const verdict = await mcpjsonApproval(member.projectDir, home);
+  assert.equal(verdict('x'), 'disabled');
+  assert.equal(verdict('y'), 'approved');
+  assert.equal(verdict('z'), 'unapproved');
+  const none = await mcpjsonApproval(await emptyDir(), await emptyDir(), () => assert.fail('absence is silent'));
+  assert.equal(none('x'), 'unapproved');
 });
 
 test('§5.5 source 3 / V4: local scope is harvested under the GIT ROOT key, not the member path', POSIX_SHIM, async () => {

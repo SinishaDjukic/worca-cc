@@ -677,6 +677,8 @@ async function transformServer(name, raw, dir, platform) {
  *   reaches a server the CLI loads natively, so the caller withholds the registry layer (§5.5.6).
  *   The committed scan covers `nativeMembers` (default `members`): every member whose worktree is a
  *   spawn cwd, one whose real dir is missing (§8.20, left out of `members`) included.
+ *   `committed` lists those committed servers as `{name, rawName, def, dir, projectDir}` (`def` untransformed,
+ *   `dir` the worktree), for an engine that does not load them on its own (codexProjectMcp).
  */
 export async function mergeMcpConfigs({
   members = [], projectsRoot, homeDir, isWorkspace = false, platform = process.platform, agentIsolated = false,
@@ -709,6 +711,8 @@ export async function mergeMcpConfigs({
   // recorded that the `--mcp-config` definition WINS (the native server's process
   // is never even spawned), so the generated entry is always the effective one.
   const committedByMember = new Map();
+  /** Every committed server as the CLI loads it natively, for an engine that reads no `.mcp.json` (codexProjectMcp). */
+  const committed = [];
   if (!isWorkspace) {
     for (const m of nativeMembers ?? sorted) {   // a worktree whose real dir is gone is still a cwd (§8.20)
       if (!m.worktreeDir) continue;
@@ -720,7 +724,10 @@ export async function mergeMcpConfigs({
       else if (parseError) warnings.push(`\`${committedFile}\` could not be parsed (${parseError}); the cross-scope duplicate check (V3(d)) was skipped for this member.`);
       if (!cs) continue;
       const map = new Map();
-      for (const [k, v] of Object.entries(cs)) map.set(normalizeServerName(k), stableStringify(v));
+      for (const [k, v] of Object.entries(cs)) {
+        map.set(normalizeServerName(k), stableStringify(v));
+        committed.push({ name: normalizeServerName(k), rawName: k, def: v, dir: m.worktreeDir, projectDir: m.projectDir });
+      }
       committedByMember.set(m.projectKey, map);
     }
   }
@@ -843,7 +850,7 @@ export async function mergeMcpConfigs({
     }
   }
 
-  return { servers, renames: { mcpServers: renames }, roster, nativeOnly, warnings, userScopeNames, committedNames, committedRefs };
+  return { servers, renames: { mcpServers: renames }, roster, nativeOnly, warnings, userScopeNames, committedNames, committedRefs, committed };
 }
 
 /** One line of catalog text for CLAUDE.md: breaks flattened, clipped to the §4.1 description cap. */
@@ -876,6 +883,78 @@ function localScopeWarning(member, homeDir, why) {
     `\`${join(homeDir || '~', '.claude.json')}\` (${why}); promote them to ` +
     `\`${join(member.projectDir, '.mcp.json')}\` to guarantee delivery.`
   );
+}
+
+// ── the committed .mcp.json on Codex ────────────────────────────────────────
+
+/** A settings file's top-level object, or null: absent (silent), unreadable (named through `onError`), not an object. */
+async function readSettingsObject(file, onError) {
+  const body = await readTextMaybe(file, onError);
+  if (body === null) return null;
+  try {
+    const v = JSON.parse(body.charCodeAt(0) === 0xfeff ? body.slice(1) : body);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+
+/**
+ * Whether Claude Code runs a `.mcp.json` server of `projectDir` without asking, by its approval keys in the settings
+ * layers it reads for that project: `<homeDir>/.claude/settings.json`, then the project's `.claude/settings.json` and
+ * `.claude/settings.local.json`. The `enabledMcpjsonServers` / `disabledMcpjsonServers` lists add up across the
+ * layers, the last layer that sets `enableAllProjectMcpServers` decides it, and a disabled server is never approved.
+ * Exported for testing.
+ * @returns {Promise<(rawName:string)=>'approved'|'disabled'|'unapproved'>}
+ */
+export async function mcpjsonApproval(projectDir, homeDir, onError) {
+  const files = [
+    homeDir && join(homeDir, '.claude', 'settings.json'),
+    projectDir && join(projectDir, '.claude', 'settings.json'),
+    projectDir && join(projectDir, '.claude', 'settings.local.json'),
+  ].filter(Boolean);
+  const enabled = new Set();
+  const disabled = new Set();
+  let all = false;
+  for (const f of files) {
+    const doc = await readSettingsObject(f, onError);
+    if (!doc) continue;
+    for (const n of Array.isArray(doc.enabledMcpjsonServers) ? doc.enabledMcpjsonServers : []) if (typeof n === 'string') enabled.add(n);
+    for (const n of Array.isArray(doc.disabledMcpjsonServers) ? doc.disabledMcpjsonServers : []) if (typeof n === 'string') disabled.add(n);
+    if (typeof doc.enableAllProjectMcpServers === 'boolean') all = doc.enableAllProjectMcpServers;
+  }
+  return (name) => (disabled.has(name) ? 'disabled' : all || enabled.has(name) ? 'approved' : 'unapproved');
+}
+
+/**
+ * Codex reads no `.mcp.json`, so the committed servers Claude Code loads on its own at a single-mode cwd would go
+ * missing there. Those Claude Code runs without asking (mcpjsonApproval) join mcp.json, transformed against the
+ * worktree the CLI would load them from, and reach codex like any other server of the run. A server the real dir
+ * already defines (the generated definition wins on Claude too, V3(d)) or a root layer took is left as it is. The
+ * rest leave the grant list, and the unapproved ones are named once. Mutates `mcp`.
+ */
+async function attachCommittedMcp(mcp, { homeDir, platform, onError, warnings }) {
+  const approvals = new Map();
+  const unapproved = [];
+  for (const c of mcp.committed) {
+    if (Object.hasOwn(mcp.servers, c.name)) continue;
+    if (!approvals.has(c.projectDir)) approvals.set(c.projectDir, await mcpjsonApproval(c.projectDir, homeDir, onError));
+    const verdict = approvals.get(c.projectDir)(c.rawName);
+    if (verdict !== 'approved') {
+      mcp.nativeOnly = mcp.nativeOnly.filter((n) => n !== c.name);
+      if (verdict === 'unapproved') unapproved.push(c.rawName);
+      continue;
+    }
+    const { def, warnings: tw } = await transformServer(c.name, c.def, c.dir, platform);
+    for (const w of tw) warnings.push(w);
+    mcp.servers[c.name] = def;
+    if (c.name !== c.rawName) mcp.renames.mcpServers[c.name] = c.rawName;
+    if (!mcp.roster.some((r) => r.name === c.name)) mcp.roster.push({ name: c.name, origin: 'the committed `.mcp.json` at cwd', renamedFrom: null });
+  }
+  if (unapproved.length) {
+    warnings.push(
+      `engine codex: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
+      'Approve them in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in the project\'s .claude/settings.local.json.',
+    );
+  }
 }
 
 // ── §8.6 ancestor audit ─────────────────────────────────────────────────────
@@ -1203,6 +1282,7 @@ export async function assembleRunContext({
     nativeMembers: sorted,                 // §5.5.6: every worktree cwd, a missing real dir included
   });
   for (const w of mcp.warnings) warnings.push(w);
+  if (engine === 'codex' && mcp.committed.length) await attachCommittedMcp(mcp, { homeDir, platform, onError, warnings });
   const merged = Object.keys(mcp.servers);
   // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
   // credential broker on they are left out by default, otherwise named.
@@ -1263,7 +1343,7 @@ export async function assembleRunContext({
   } else {
     await rm(join(runRoot, MCP_FILE), { force: true });        // idempotent re-assembly
   }
-  const mcpServerNames = [...written, ...mcp.nativeOnly].sort();
+  const mcpServerNames = [...new Set([...written, ...mcp.nativeOnly])].sort();
   const listed = new Set(mcpServerNames);
 
   // ── 3) CLAUDE.md (§5.4) ──────────────────────────────────────────────────
