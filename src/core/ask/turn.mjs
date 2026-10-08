@@ -669,7 +669,7 @@ class AskTurn extends EventEmitter {
     try {
       const workspaceId = typeof out.workspaceId === 'string' && out.workspaceId ? out.workspaceId : null;
       // workspaceId rides the revalidate input only when set — a project card's input stays exactly what it was.
-      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, ...(workspaceId ? { workspaceId } : {}), warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '' });
+      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, ...(workspaceId ? { workspaceId } : {}), warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '', engine: this.engine });
       // v4: the child's name first (the real child resolves it), else the parent's own lookup (the MOCK child
       // returns null — without this every mock card, and its context-header line, would have no target name).
       const workspaceName = workspaceId ? (cleanText(out.workspaceName, 120) || cleanText(r.workspace && r.workspace.name, 120) || null) : null;
