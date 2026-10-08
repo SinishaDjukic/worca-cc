@@ -12,12 +12,13 @@
  *   cost      its runs report a cost (adapter capability `cost`); where not, a cost shows as unknown, never $0.00
  *   helpers   it runs a run's helper jobs itself (title, overview, PR description, Auto classifier, night decider);
  *             else they run on Claude
+ *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true }),
-  copilot: Object.freeze({ label: 'Copilot', models: false, cost: false, helpers: true }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false }),
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
+  copilot: Object.freeze({ label: 'Copilot', models: false, cost: false, helpers: true, beta: true }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
 });
 
 /** The run engines. */
@@ -26,6 +27,19 @@ export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
 export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
+
+/** The engines still in beta: every engine picker marks them. */
+export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].beta));
+
+/** Is `engine` in beta? A missing engine is Claude. */
+export function isBetaEngine(engine) {
+  return BETA_ENGINES.includes(engine || 'claude');
+}
+
+/** An engine's name where only text fits (a select option, an optgroup): 'Codex (beta)'. */
+export function engineChoiceLabel(engine) {
+  return isBetaEngine(engine) ? `${engineLabel(engine)} (beta)` : engineLabel(engine);
+}
 
 /** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
 export function engineLabel(engine) {
