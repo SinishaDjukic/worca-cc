@@ -231,6 +231,26 @@ export function bringCodexThreadHome(home, thread, { homes = knownCodexHomes() }
   return false;
 }
 
+/**
+ * The thread's cumulative usage as codex last recorded it in its session file (the last `token_count` event), or null.
+ * `exec --json` reports usage only on `turn.completed`, so this is the only record of a turn stopped before it.
+ */
+export function codexRolloutUsage(home, thread) {
+  const file = findCodexRollout(home, thread);
+  if (!file) return null;
+  let lines;
+  try { lines = readFileSync(file, 'utf8').split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!lines[i].includes('"token_count"')) continue;
+    try {
+      const evt = JSON.parse(lines[i]);
+      const total = evt?.payload?.type === 'token_count' ? evt.payload.info?.total_token_usage : null;
+      if (total && typeof total === 'object') return readUsage(total);
+    } catch { /* a torn last line: try the one before */ }
+  }
+  return null;
+}
+
 // ── sub-agents ───────────────────────────────────────────────────────────────
 
 /** The codex agent role worca's fan-out dispatches (`spawn_agent` with this `agent_type`). */
@@ -572,7 +592,7 @@ export function createCodexNormalizer({ model, priorUsage = null, unpriced = fal
   }
 
   const error = () => failed || (turnCompleted ? null : lastError);
-  return { push, finish: () => ({ text: texts.join('\n'), error: error(), cumulativeUsage: lastUsage }) };
+  return { push, finish: () => ({ text: texts.join('\n'), error: error(), cumulativeUsage: lastUsage, completed: turnCompleted }) };
 }
 
 // ── errors and auth ──────────────────────────────────────────────────────────
@@ -750,6 +770,26 @@ export async function runCodexProcess({
   const args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
     ...(askLockdown ? { lockdown, images } : {}) });
   let sawThread = thread;
+  // The thread's usage once the spawn ends, stored for the next resume. `exec --json` reports usage only on
+  // `turn.completed`: a turn that ended without it (the turn cap, an abort, a failed turn) still ran, and codex recorded
+  // its usage in the thread's session file. That spend is booked as this spawn's result (its stop or failure is still
+  // what the spawn throws), and stored, so the next resume is charged only its own turn.
+  const settleUsage = () => {
+    const f = normalizer.finish();
+    if (!sawThread) return f;
+    const now = f.completed ? null : codexRolloutUsage(home, sawThread);
+    if (now) {
+      const delta = diffUsage(now, f.cumulativeUsage);
+      if (Object.values(delta).some((v) => v > 0)) {
+        const cost = endpoint ? null : estimateCodexCostUsd(model, delta);
+        safeEmit(onEvent, { type: 'result', subtype: 'error_during_execution', isError: true, text: '', usage: claudeStyleUsage(delta),
+          ...(cost != null ? { costUsd: cost } : {}) });
+      }
+    }
+    const usage = now || f.cumulativeUsage;
+    if (usage) storeUsage(usageDir, sawThread, usage);
+    return f;
+  };
   // maxTurns: the main agent's tool calls, counted as the Ask watchdog counts them (sub-agent calls do not count).
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const capCtrl = new AbortController();
@@ -777,8 +817,7 @@ export async function runCodexProcess({
       }
     },
   }).catch((err) => {
-    const f = normalizer.finish();
-    if (sawThread && f.cumulativeUsage) storeUsage(usageDir, sawThread, f.cumulativeUsage);
+    const f = settleUsage();
     if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
     // codex writes tracing lines to stderr for recoverable tool errors (a rejected
     // patch), so a non-zero exit's stderr detail and class can miss the failure the
@@ -790,8 +829,7 @@ export async function runCodexProcess({
     }
     throw redacted(err);
   });
-  const final = normalizer.finish();
-  if (sawThread && final.cumulativeUsage) storeUsage(usageDir, sawThread, final.cumulativeUsage);
+  const final = settleUsage();
   // The cap tripped while codex was already finishing: the turn still went past it.
   if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
   if (final.error) {

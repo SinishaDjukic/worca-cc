@@ -1007,7 +1007,9 @@ class AskTurn extends EventEmitter {
     if (e.type === 'result' && Number.isFinite(e.costUsd)) {
       this._spentUsd += e.costUsd;
       this._lastUsage = e.usage ?? null;
-      if (limitsNow.maxBudgetUsd != null && this._spentUsd > limitsNow.maxBudgetUsd) this._trip('max_budget');
+      // An error result is the spend of a turn that already ended (stopped, failed — codex.mjs books it from codex's
+      // session file): it is booked, never a reason to stop what has stopped.
+      if (!e.isError && limitsNow.maxBudgetUsd != null && this._spentUsd > limitsNow.maxBudgetUsd) this._trip('max_budget');
     }
   }
 
