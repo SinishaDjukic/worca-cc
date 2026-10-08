@@ -5274,9 +5274,11 @@ export class RunHarness extends EventEmitter {
     const engine = this.claude.engine || 'claude';
     const runModel = (engine === 'copilot' ? this._engineModel(this.claude.model || undefined)
       : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel },
+    // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
+    const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
+    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
       { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
-    if (!pair.model && engine === 'codex') { pair.model = CODEX_DEFAULT_MODEL; pair.source = 'default'; }
+    if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
       this._nightWarned.add(text);
