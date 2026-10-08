@@ -46,6 +46,7 @@ import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
 import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
+import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -3132,6 +3133,19 @@ function nearestSubcommand(token) {
 }
 
 async function main() {
+  // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
+  // it to the server it starts; any other command (a pipeline started by hand in the container)
+  // runs its own policy proxy, or reuses the one a parent worca put in the environment.
+  if (process.argv[2] !== 'ui') {
+    try {
+      const egress = await startEgressPolicy({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`) });
+      const egressLine = egressNotice(egress);
+      if (egressLine?.level === 'warn') process.stderr.write(`worca: ${egressLine.text}\n`);
+    } catch (err) {
+      process.stderr.write(`worca: outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err})\n`);
+      return 78;
+    }
+  }
   // Outbound calls (pipelines, `worca broker`) honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs).
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
   const proxyLine = proxyNotice(useEnvProxy());

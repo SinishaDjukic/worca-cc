@@ -212,6 +212,22 @@ Tools that honour `HTTPS_PROXY` reach allowed hosts; a raw socket from
 set for an untrusted task. Known needs: add your package registry; Playwright's
 browser download needs its CDN or a pre-fetched browser.
 
+An entry with a leading dot (`.github.com`) allows every subdomain and the name
+itself. A refused host gets `403 egress denied: <host>`; `docker compose logs
+egress` has one `ALLOW` / `DENY` line per connection. The proxy is
+`src/core/egress-proxy.mjs`, which the image installs as
+`/usr/local/lib/worca-egress-proxy.mjs`.
+
+A hosting platform can instead set an outbound network policy with
+`WORCA_EGRESS_MODE` (`open`, `block`, `allow`) plus `WORCA_EGRESS_DENY`. Then
+worca runs the same proxy on loopback inside its own container, the default
+list above never applies, and a leading dot means subdomains only
+([remote-access.md → Outbound network policy](remote-access.md#outbound-network-policy-hosting-platform)).
+Without the internal network that is weaker than this overlay: a tool that
+ignores `HTTPS_PROXY` goes direct. Leave `WORCA_EGRESS_MODE` unset with the
+overlay; set on the `egress` service it switches the sidecar to the same mode
+semantics.
+
 ### Teams
 
 The one chat channel needing an inbound URL. `compose.teams.yml` adds a
@@ -236,6 +252,7 @@ URL from `docker compose logs teams-tunnel`.
 | `WORCA_MEM`, `WORCA_CPUS` | `6g`, `4` | resource caps (`pids_limit` 2048 is fixed) |
 | `HTTPS_PROXY`, `NO_PROXY` | | corporate proxy |
 | `WORCA_EGRESS_ALLOW` | see above | egress overlay allowlist |
+| `WORCA_EGRESS_MODE`, `WORCA_EGRESS_DENY` | | a hosting platform's outbound network policy (see [Egress allowlist](#egress-allowlist)); leave unset with the overlay |
 | `WORCA_SSH_SOCK` | Docker Desktop's | ssh overlay, Linux |
 | `CLOUDFLARE_TUNNEL_TOKEN` | | teams overlay |
 

@@ -1,0 +1,552 @@
+<title>Worca — What's new in 1.10.0</title>
+<!--
+  Ship-log changelog template. Copy to docs/changelog/worca-app-v<VERSION>.src.html,
+  fill every {{SLOT}}, delete the sections you don't need, duplicate the ones
+  you do (keep ids sequential: s0 hero … sN receipts — the rail is built from
+  them). Then run inline-assets.mjs. See DESIGN.md for what each part is for.
+-->
+<style>
+  :root{
+    --bg:#ECEAE4; --card:#FFFFFF; --card-2:#F6F4EF;
+    --ink:#14151A; --ink-2:#56534C; --ink-3:#8B8780; --line:#E2DFD7;
+    --ocean:#4B5ED2; --ocean-deep:#3A49AC; --wash:#DDE3F7; --wash-2:#EBEEFA;
+    --coral:#EEA47D; --coral-soft:#F8E3D5; --lime:#DEEFC4; --lime-2:#EDF6DC;
+    --dark:#131419; --dark-2:#1C1D25; --on-dark:#F4F3EE; --on-dark-2:#9EA0AC;
+    --ok:#38854F; --warn:#DFA23F; --bad:#C9524A; --info:#5B94C8;
+    --r-lg:28px; --r-md:18px; --r-sm:12px;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --shadow:0 18px 50px -22px rgba(20,21,26,.28);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  img{max-width:100%;display:block}
+  .wrap{max-width:1280px;margin:0 auto;padding:18px 22px 90px}
+
+  /* ---------- shared bits ---------- */
+  .kicker{display:inline-flex;align-items:center;gap:8px;background:var(--card);
+    border:1px solid var(--line);border-radius:999px;padding:7px 15px;
+    font-size:11.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)}
+  .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--ocean)}
+  h1,h2{margin:0;letter-spacing:-.035em;line-height:1.02;text-wrap:balance;font-weight:800}
+  h1{font-size:clamp(44px,7vw,92px)}
+  h2{font-size:clamp(34px,4.6vw,58px)}
+  .sub b{color:var(--ink);font-weight:700}
+  .sub{color:var(--ink-2);font-size:clamp(16px,1.6vw,19px);max-width:52ch;margin:0}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:999px;
+    padding:8px 16px;font-size:13.5px;font-weight:600;color:var(--ink-2);white-space:nowrap}
+  .chip b{color:var(--ink);font-family:var(--mono);font-weight:700}
+  .chip.acc{background:var(--ink);border-color:var(--ink);color:#fff}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  .sec{border-radius:var(--r-lg);background:var(--card);margin-top:26px;
+    padding:clamp(28px,4.4vw,64px);position:relative;overflow:hidden}
+  .sec-head{display:flex;flex-direction:column;align-items:flex-start;gap:18px;max-width:900px;position:relative;z-index:2}
+  .grid2{display:grid;grid-template-columns:5fr 6fr;gap:clamp(22px,3vw,44px);align-items:center;margin-top:38px}
+  .grid2.flip{grid-template-columns:6fr 5fr}
+  @media (max-width:920px){.grid2,.grid2.flip{grid-template-columns:1fr}}
+
+  /* screenshot frame */
+  .shot{border-radius:var(--r-md);overflow:hidden;background:var(--card);
+    border:1px solid var(--line);box-shadow:var(--shadow)}
+  .shot .bar{height:32px;background:var(--card-2);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:6px;padding:0 14px}
+  .shot .bar i{width:10px;height:10px;border-radius:50%;background:#DDD9CF;display:block}
+  .shot .bar i:first-child{background:#E8B4AC}.shot .bar i:nth-child(2){background:#EAD3A2}.shot .bar i:nth-child(3){background:#BCD8B4}
+  .shot .crop{overflow:hidden;position:relative}
+  .shot img{height:auto}
+  .shot-cap{margin:12px 4px 0;font-size:13px;color:var(--ink-3);font-weight:600}
+
+  /* reveals */
+  .rv{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+  .rv.in{opacity:1;transform:none}
+  .rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+
+  /* ---------- topbar ---------- */
+  .top{display:flex;justify-content:space-between;align-items:center;padding:10px 6px 4px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.02em;font-size:18px}
+  .top .chip{background:transparent}
+
+  /* ---------- hero ---------- */
+  .hero{background:linear-gradient(135deg,var(--wash) 0%,var(--wash-2) 60%,#F2EFFA 100%)}
+  .hero-grid{display:grid;grid-template-columns:6fr 5fr;gap:clamp(24px,3vw,48px);align-items:center;position:relative}  /* no z-index: a stacking context here would put the ribbon over the text */
+  @media (max-width:920px){.hero-grid{grid-template-columns:1fr}}
+  .hero .shot{transform:rotate(1.6deg)}
+  .hero .sec-head{position:relative;z-index:4}
+  .ribbon{position:absolute;inset:0;z-index:1;pointer-events:none}   /* behind the text (4) and the shot (2) */
+  @media (max-width:920px){.ribbon{display:none}}
+  .ribbon text{font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:.30em;fill:#fff}
+  .float-chip{position:absolute;z-index:3;background:var(--card);border-radius:14px;box-shadow:var(--shadow);
+    border:1px solid var(--line);padding:10px 16px;font-size:13px;font-weight:700}
+  .float-chip small{display:block;font-weight:600;color:var(--ink-3);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+
+  /* ---------- demo cards ---------- */
+  .demo{border-radius:var(--r-md);background:var(--card-2);border:1px solid var(--line);padding:26px;position:relative}
+  .demo .dlabel{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:18px}
+  .env-note{margin:14px 2px 0;font-size:12.5px;color:var(--ink-3);font-weight:600}
+  .badge{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .badge.violet{background:#E7E4F8;color:#4A3E9E}
+  .badge.grey{background:var(--card-2);color:var(--ink-3);border:1px solid var(--line)}
+  .pill{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:4px 10px}
+  .pill.run{background:#E4F0E7;color:var(--ok)}
+  .pill.flag{background:#FBEEDC;color:#9A6A17}
+  .ghost-btn{border:1.5px solid var(--ink);border-radius:999px;background:var(--card);
+    padding:7px 14px;font-size:12px;font-weight:700;white-space:nowrap;transition:.3s;display:inline-block}
+  .ghost-btn.pulse{transform:scale(1.06);box-shadow:0 0 0 6px rgba(75,94,210,.18)}
+
+  /* recipe: precedence — layers resolve into one winner */
+  .cat-demo{display:flex;flex-direction:column;gap:10px}
+  .cat-row{border-radius:var(--r-sm);border:1px solid var(--line);background:var(--card);padding:13px 16px;
+    display:flex;align-items:center;gap:12px;transition:.35s ease}
+  .cat-row .t{font-weight:700;font-size:13.5px;flex:1}
+  .cat-row .src{font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+  .cat-row.dim{opacity:.45}
+  .cat-row.win{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: mask / reveal — a secret shown only on demand */
+  .env-demo .erow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px;
+    display:flex;align-items:center;gap:14px}
+  .env-demo .ekey{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);flex:0 0 auto}
+  .env-demo .eval{font-family:var(--mono);font-size:13px;font-weight:700;position:relative;flex:1;height:20px;overflow:hidden}
+  .env-demo .eval span{position:absolute;inset:0;transition:opacity .4s}
+  .env-demo .eval .raw{opacity:0}
+  .env-demo.reveal .eval .raw{opacity:1}
+  .env-demo.reveal .eval .msk{opacity:0}
+
+  /* recipe: meter + flag — a run crossing a threshold */
+  .meter-run{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:16px 18px}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  .meter-top .t{font-weight:700;font-size:14px}
+  .meter{height:12px;border-radius:999px;background:var(--line);position:relative}
+  .meter .fill{height:100%;border-radius:999px;width:0%;background:var(--info);transition:width 1.4s ease}
+  .meter-amt{display:flex;justify-content:space-between;margin-top:10px;font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+  .cost-banner{margin-top:14px;border-radius:var(--r-sm);background:#FBF3E4;border:1px solid #EDD9AE;
+    padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:10px;
+    opacity:.22;transform:translateY(-4px);transition:.45s ease}
+  .cost-banner.show{opacity:1;transform:none}
+  .cost-banner .msg{font-size:13px;font-weight:600;color:#7A5A1A}
+  .cap-steps{list-style:none;margin:22px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .cap-steps li{display:flex;gap:11px;align-items:center;font-size:13.5px;font-weight:600;color:var(--ink-3);transition:.35s}
+  .cap-steps .n{width:23px;height:23px;border-radius:50%;background:var(--card);border:1px solid var(--line);flex:none;
+    display:grid;place-items:center;font-family:var(--mono);font-size:11px;font-weight:700;transition:.35s}
+  .cap-steps li.on{color:var(--ink)}
+  .cap-steps li.on .n{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe: grouped picker — grouping + a collision suffix */
+  .dd-demo .grp{margin-bottom:12px}
+  .dd-demo .glabel{font-size:10.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 7px 4px}
+  .dd-opt{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 14px;
+    font-size:13.5px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .dd-opt .sfx{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);opacity:0;transition:opacity .5s}
+  .dd-demo.collide .dd-opt .sfx{opacity:1}
+  .dd-opt.sel{border-color:var(--ink);box-shadow:var(--shadow)}
+
+  /* recipe: review rows — red-flagged changes + a green guarantee */
+  .con-demo .crow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    font-size:13px;font-weight:600;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .red-chip{background:#FCE9E4;color:#A03A31;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;font-family:var(--mono)}
+  .con-note{border-radius:var(--r-sm);background:var(--lime-2);border:1px solid #CFE3A8;padding:12px 16px;
+    display:flex;align-items:center;justify-content:space-between;font-size:12.5px;font-weight:600;color:#41611F}
+
+  /* recipe: policy flip — a heuristic changing a default */
+  .pol-demo .prow{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 16px;margin-bottom:10px;
+    display:flex;align-items:center;gap:12px}
+  .pol-demo .pkey{font-family:var(--mono);font-size:12px;color:var(--ink-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pol-demo .pmode{font-size:12px;font-weight:700;border:1px solid var(--line);border-radius:8px;padding:6px 12px;background:var(--card-2);
+    position:relative;min-width:150px;text-align:center;height:31px;overflow:hidden}
+  .pol-demo .pmode span{position:absolute;inset:0;display:grid;place-items:center;transition:opacity .4s}
+  .pol-demo .pmode .b{opacity:0;color:#A03A31}
+  .pol-demo .prow.flip .pmode .a{opacity:0}
+  .pol-demo .prow.flip .pmode .b{opacity:1}
+  .pol-demo .warn-note{font-size:11.5px;color:var(--bad);font-weight:700;opacity:0;transition:opacity .4s}
+  .pol-demo .prow.flip ~ .warn-note{opacity:1}
+
+  /* ---------- receipts section ---------- */
+  .polish{background:linear-gradient(160deg,#F7EFE7,#FBF6EF)}
+  .p-ribbon{position:absolute;inset:0;pointer-events:none;z-index:1}
+  .p-ribbon text{font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.28em;fill:#fff}
+  .bubs{position:relative;z-index:2;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px}
+  @media (max-width:920px){.bubs{grid-template-columns:1fr 1fr}}
+  @media (max-width:560px){.bubs{grid-template-columns:1fr}}
+  .bub{background:var(--card);border-radius:20px;border:1px solid var(--line);padding:18px;display:flex;gap:16px;align-items:center}
+  .bub .im{width:86px;height:86px;border-radius:50%;overflow:hidden;flex:none;border:1px solid var(--line);position:relative;
+    display:grid;place-items:center;background:var(--card-2)}
+  .bub .im img{width:300%;max-width:none;position:absolute}
+  .bub .im .big{font-family:var(--mono);font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .bub .tx b{display:block;font-size:14.5px;letter-spacing:-.01em}
+  .bub .tx span{font-size:12.5px;color:var(--ink-2)}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:34px 8px 0;color:var(--ink-3);font-size:13px}
+
+  /* dot rail */
+  .rail{position:fixed;right:16px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:9px;z-index:50}
+  .rail a{width:8px;height:8px;border-radius:50%;background:var(--ink-3);opacity:.35;transition:.25s}
+  .rail a.on{opacity:1;background:var(--ocean);transform:scale(1.35)}
+  @media (max-width:1360px){.rail{display:none}}
+
+  a{color:inherit}
+  :focus-visible{outline:2.5px solid var(--ocean);outline-offset:2px;border-radius:4px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+    html{scroll-behavior:auto}
+    .rv{opacity:1;transform:none}
+    .cost-banner{opacity:1;transform:none}
+    .env-demo .eval .raw{position:static}
+  }
+
+  /* recipe: desktop alert — a notification slides in, the tab gets a count */
+  .ntf-tab{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--line);border-radius:10px 10px 0 0;
+    padding:9px 14px;font-size:12.5px;font-weight:700;width:max-content;max-width:100%}
+  .ntf-tab .fav{width:14px;height:14px;border-radius:4px;background:var(--ink);position:relative;flex:none}
+  .ntf-tab .fav::after{content:"";position:absolute;right:-3px;top:-3px;width:7px;height:7px;border-radius:50%;background:var(--bad);opacity:0;transition:opacity .4s}
+  .ntf-tab .cnt{font-family:var(--mono);opacity:0;transition:opacity .4s}
+  .ntf.show .ntf-tab .fav::after,.ntf.show .ntf-tab .cnt{opacity:1}
+  .ntf-pop{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:13px 15px;
+    display:flex;gap:12px;align-items:flex-start;opacity:0;transform:translateX(26px);transition:.5s cubic-bezier(.2,.7,.2,1)}
+  .ntf.show .ntf-pop{opacity:1;transform:none}
+  .ntf-pop .ic{width:30px;height:30px;border-radius:8px;background:var(--ink);flex:none}
+  .ntf-pop b{display:block;font-size:13px}
+  .ntf-pop span{font-size:12.5px;color:var(--ink-2)}
+  .ntf-pop small{margin-left:auto;font-size:11px;color:var(--ink-3);white-space:nowrap}
+
+  /* long values wrap instead of widening a grid column */
+  .grid2>*{min-width:0}
+  .cat-row .src{min-width:0;overflow-wrap:anywhere;text-align:right}
+
+  /* recipe: walk-through — one row lit at a time */
+  .walk .cat-row{opacity:.5}
+  .walk .cat-row.win{opacity:1}
+</style>
+
+<div class="wrap">
+
+  <!-- top -->
+  <div class="top">
+    <div class="brand">
+      <img src="ui/public/assets/worca-logo.png" alt="Worca" style="height:34px;width:auto;mix-blend-mode:multiply">
+    </div>
+    <span class="chip mono">changelog · v1.9.0 → v1.10.0</span>
+  </div>
+
+  <!-- ================= HERO ================= -->
+  <section class="sec hero" id="s0">
+    <svg class="ribbon" viewBox="0 0 1280 640" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="rb" d="M -120 690 C 300 640, 540 530, 750 400 S 1120 150, 1400 160" fill="none" stroke="#4B5ED2" stroke-width="42" stroke-linecap="round" opacity=".92"></path>
+      <text><textPath id="rbt" href="#rb" startOffset="-12%">PUBLISH BRANCH · AZURE DEVOPS · SKILLS · ALERTS · WORKSPACE AUTO · GUARDRAILS · PUBLISH BRANCH · AZURE DEVOPS · SKILLS · ALERTS · WORKSPACE AUTO · GUARDRAILS · </textPath></text>
+    </svg>
+    <div class="hero-grid">
+      <div class="sec-head rv in">
+        <span class="kicker"><span class="dot"></span>What's new · v1.10.0</span>
+        <h1>Publish now.<br>PR later.</h1>
+        <p class="sub">Share a run's branch before any pull request, ship to Azure DevOps too, give agents your team's skills, and hear from Worca when a run needs you.</p>
+        <div class="chips">
+          <span class="chip acc">Publish branch</span><span class="chip">Azure DevOps</span><span class="chip">Skills</span><span class="chip">Desktop alerts</span><span class="chip">Workspace Auto</span><span class="chip">Guardrails</span>
+        </div>
+      </div>
+      <div class="rv d1 in" style="position:relative;z-index:2">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:340px"><img src="docs/changelog/shots/1.10.0/s0.jpg" alt="A finished run's page with Create PR and Publish branch in its header, and the Publish branch dialog open: the run's branch, Push to origin, Publish" style="width:148%;max-width:none;margin:-8.5% 0 0 -44%"></div></div>
+        <div class="float-chip" style="right:-8px;top:-16px"><small>New</small><span>Publish branch</span></div>
+        <div class="float-chip" style="right:24px;bottom:-18px"><small>New</small><span>Azure DevOps</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S1 · publish a branch ================= -->
+  <section class="sec" id="s1">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--ok)"></span>Shipping</span>
+      <h2>Publish a branch without a pull request.</h2>
+      <p class="sub"><b>Want a teammate or CI to try a run's work before anyone reviews it?</b><br>Now press Publish branch: Worca pushes the branch and opens no pull request. Fix what testing finds, press Push changes, and open the pull request when it is ready, as a draft if you like.</p>
+      <div class="chips">
+        <span class="chip">no pull request opened</span><span class="chip">fixes push to the same branch</span><span class="chip">open PRs as drafts</span><span class="chip">merging closes the issue</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">From finished run to merged</div>
+        <ol class="cap-steps" id="shipSteps">
+          <li><span class="n">1</span>Publish branch: the branch is on origin, no pull request yet</li>
+          <li><span class="n">2</span>A teammate or CI checks it out and tests it</li>
+          <li><span class="n">3</span>You fix what they found and press Push changes</li>
+          <li><span class="n">4</span>Create PR, ticked Open as draft</li>
+          <li><span class="n">5</span>The merge closes the issue the run came from</li>
+        </ol>
+        <p class="env-note">Workspace runs publish one branch per project, each with its own tick.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:520px"><img src="docs/changelog/shots/1.10.0/s1.jpg" alt="The Ship it dialog for the CSV export run: push to origin, open the PR in origin, a written description, and Open as draft ticked" style="width:248%;max-width:none;margin:-48% 0 0 -74%"></div></div>
+        <p class="shot-cap">Ship it: the pull request can now open as a draft.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S2 · Azure DevOps: two demo cards ================= -->
+  <section class="sec" id="s2">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--info)"></span>Azure DevOps</span>
+      <h2>Azure DevOps works like GitHub.</h2>
+      <p class="sub"><b>Is your code on Azure DevOps instead of GitHub?</b><br>Now Worca clones, pushes and opens pull requests there too, with one personal access token. Team metrics see your merges, and a new plugin picks tasks from Azure Boards.</p>
+      <div class="chips">
+        <span class="chip">pull requests, drafts included</span><span class="chip">clone by URL</span><span class="chip">Azure Boards as a task source</span><span class="chip">agents never see the token</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv">
+        <div class="dlabel">Every URL form, one repository</div>
+        <div class="cat-demo">
+          <div class="cat-row dim"><span class="t">https</span><span class="src">dev.azure.com/acme/Nimbus/_git/nimbus-crm</span></div>
+          <div class="cat-row dim"><span class="t">ssh</span><span class="src">ssh.dev.azure.com:v3/acme/Nimbus/nimbus-crm</span></div>
+          <div class="cat-row dim"><span class="t">older host</span><span class="src">acme.visualstudio.com/Nimbus/_git/nimbus-crm</span></div>
+          <div class="cat-row win"><span class="t">Worca sees</span><span class="src">acme/Nimbus/nimbus-crm</span></div>
+        </div>
+        <p class="env-note">Clones, pushes and team metrics all agree it is the same repository.</p>
+      </div>
+      <div class="demo rv d1">
+        <div class="dlabel">A work item, start to finish</div>
+        <ol class="cap-steps" id="adoSteps">
+          <li><span class="n">1</span>Pick a work item from Azure Boards as the task</li>
+          <li><span class="n">2</span>The run works on it</li>
+          <li><span class="n">3</span>Create PR opens the pull request in Azure DevOps</li>
+          <li><span class="n">4</span>The pull request links the work item</li>
+          <li><span class="n">5</span>The work item closes when the run completes, if you turn that on</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S3 · skills ================= -->
+  <section class="sec" id="s3">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--bad)"></span>Skills</span>
+      <h2>Give every agent your team's skills.</h2>
+      <p class="sub"><b>Want your agents to follow the same checklists and style guides every time?</b><br>Now import a skill from a folder, a git URL or a pasted SKILL.md, add it to a set, and every run and Ask Worca chat on that set's projects can use it. Nothing is written into your repository.</p>
+      <div class="chips">
+        <span class="chip">import from a folder, git or paste</span><span class="chip">risky files flagged before import</span><span class="chip">switch a skill off for one run</span><span class="chip">updates only when you say so</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:560px"><img src="docs/changelog/shots/1.10.0/s3.jpg" alt="The Import skill preview for deploy-checklist: its name, three files with a shell block and an executable flagged, the limits, and the notice about what agents may run" style="width:221%;max-width:none;margin:-13% 0 0 -61%"></div></div>
+        <p class="shot-cap">Import preview: every file, with anything that runs flagged.</p>
+      </div>
+      <div class="demo rv d1 con-demo">
+        <div class="dlabel">Checked before it reaches your agents</div>
+        <div class="crow"><span class="mono">scripts/preflight.sh</span><span class="red-chip">EXECUTABLE</span></div>
+        <div class="crow"><span class="mono">!`git branch --show-current`</span><span class="red-chip">SHELL BLOCK</span></div>
+        <div class="crow"><span class="mono">hooks:</span><span class="red-chip">DECLARES HOOKS</span></div>
+        <div class="con-note"><span>Agents call it by its set</span><span class="mono">/general:deploy-checklist</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S4 · alerts ================= -->
+  <section class="sec" id="s4">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Alerts</span>
+      <h2>A desktop alert when a run needs you.</h2>
+      <p class="sub"><b>Ever found a run that had been waiting on you for an hour?</b><br>Now Worca can show a desktop notification when a run stops for a question, an approval or a decision, and puts a count on its browser tab. Click the notification to open the run.</p>
+      <div class="chips">
+        <span class="chip">macOS · Windows · Linux</span><span class="chip">only when you are elsewhere</span><span class="chip">no question text on the lock screen</span><span class="chip">off until you turn it on</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv ntf" id="ntfDemo">
+        <div class="dlabel">While you work in another app</div>
+        <div class="ntf-tab"><span class="fav"></span><span><span class="cnt">(2) </span>Worca CC</span></div>
+        <div class="ntf-pop"><span class="ic"></span><div><b>Worca: Approval needed</b><span>Webhooks for deal stage changes</span></div><small>now</small></div>
+        <p class="env-note">Answer the question and the notification goes away.</p>
+      </div>
+      <div class="rv d1">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:300px"><img src="docs/changelog/shots/1.10.0/s4.jpg" alt="Settings, General: the new Alerts card with Desktop notifications, Badge when something is waiting switched on, and Send test notification" style="width:185%;max-width:none;margin:-21% 0 0 -46%"></div></div>
+        <p class="shot-cap">Settings › General › Alerts, set per browser.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S5 · workspaces ================= -->
+  <section class="sec" id="s5">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Workspaces</span>
+      <h2>Auto picks the workflow for workspaces too.</h2>
+      <p class="sub"><b>Running one task across several repositories?</b><br>Now start a workspace run on Auto and Worca reads every project, proposes a workflow that plans and reviews per project, and waits for your OK. Branches are made only in the projects the run changes.</p>
+      <div class="chips">
+        <span class="chip">reads every member project</span><span class="chip">plans per project</span><span class="chip">no empty branches</span><span class="chip">one pull request per changed repository</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><img src="docs/changelog/shots/1.10.0/s5.jpg" alt="Review the workflow for a workspace run on Auto: Clarify, Plan, Refine Plan, Implementation and Review Implementation, the middle steps marked per project"></div>
+        <p class="shot-cap">Auto's proposal for the Nimbus workspace: steps run per project.</p>
+      </div>
+      <div class="demo rv d1 pol-demo">
+        <div class="dlabel">Branches only where work happened</div>
+        <div class="prow wsFlip"><span class="pkey">nimbus-crm · 3 files</span><span class="pmode"><span class="a">waiting</span><span class="b" style="color:var(--ok)">branch + pull request</span></span></div>
+        <div class="prow wsFlip"><span class="pkey">nimbus-web · 2 files</span><span class="pmode"><span class="a">waiting</span><span class="b" style="color:var(--ok)">branch + pull request</span></span></div>
+        <div class="prow" id="wsLast"><span class="pkey">nimbus-jobs · no changes</span><span class="pmode"><span class="a">waiting</span><span class="b" style="color:var(--ink-3)">no branch</span></span></div>
+        <p class="warn-note" style="color:var(--ink-3)">an untouched project keeps no branch to clean up</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S6 · guardrails: two demo cards ================= -->
+  <section class="sec" id="s6">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot" style="background:var(--warn)"></span>Guardrails</span>
+      <h2>Agents can't touch Worca's own files.</h2>
+      <p class="sub"><b>Worried a prompt-injected agent could rewrite the tool that runs it?</b><br>Now the Normal and Strict guardrails keep agents out of Worca's database, settings and secrets, and away from its plugins and scripts. Strict also blocks the network commands it missed before.</p>
+      <div class="chips">
+        <span class="chip">database and secrets: no reading</span><span class="chip">plugins and scripts: no editing</span><span class="chip"><b>13</b> more network commands blocked</span><span class="chip">hosted folder browser limited</span>
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="demo rv con-demo">
+        <div class="dlabel">Normal and Strict, now</div>
+        <div class="crow"><span class="mono">read ~/.worca-cc/worca-cc.db</span><span class="red-chip">DENIED</span></div>
+        <div class="crow"><span class="mono">read plugins/*/data/secrets.json</span><span class="red-chip">DENIED</span></div>
+        <div class="crow"><span class="mono">edit ~/.worca-cc/scripts/deploy.mjs</span><span class="red-chip">DENIED</span></div>
+        <div class="con-note"><span>Reading a plugin's skills still works</span><span class="mono">read plugins/* · ✓</span></div>
+      </div>
+      <div class="demo rv d1 con-demo">
+        <div class="dlabel">Strict also blocks</div>
+        <div class="crow"><span class="mono">git fetch · git pull · git clone</span><span class="red-chip">NETWORK</span></div>
+        <div class="crow"><span class="mono">dig · nslookup</span><span class="red-chip">DNS</span></div>
+        <div class="crow"><span class="mono">socat · openssl s_client · lynx</span><span class="red-chip">SOCKETS</span></div>
+        <div class="con-note"><span>Local git, tests and builds still run</span><span class="mono">git commit · npm test · ✓</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= S7 · smaller touches ================= -->
+  <section class="sec" id="s7">
+    <div class="sec-head rv">
+      <span class="kicker"><span class="dot"></span>Polish</span>
+      <h2>Smaller things you'll notice.</h2>
+      <p class="sub"><b>A few clicks that should have worked already.</b><br>Now a step card on a live run opens that step's live log, each terminal tab has its own close button, and Ask Worca sits in a round button in the corner instead of a bar over your work.</p>
+      <div class="chips">
+        <span class="chip">click a step, see its log</span><span class="chip">close a terminal from its tab</span><span class="chip">Haiku <b>5.5</b> in the model list</span><span class="chip">diffs show only the run's own commits</span>
+      </div>
+    </div>
+    <div class="grid2 flip">
+      <div class="rv">
+        <div class="shot"><div class="bar"><i></i><i></i><i></i></div><div class="crop" style="max-height:380px"><img src="docs/changelog/shots/1.10.0/s7.jpg" alt="The terminal pane after git status, with the tab's close button pressed: Close this terminal? A command has run, closing it ends the shell" style="width:153%;max-width:none;margin:0 0 0 -53%"></div></div>
+        <p class="shot-cap">A terminal that ran a command asks before it closes.</p>
+      </div>
+      <div class="demo rv d1 walk" id="walkDemo">
+        <div class="dlabel">Where to click now</div>
+        <div class="cat-demo">
+          <div class="cat-row win"><span class="t">A step card on a live run</span><span class="src">→ its live log</span></div>
+          <div class="cat-row"><span class="t">× on a terminal tab</span><span class="src">→ closes that shell</span></div>
+          <div class="cat-row"><span class="t">The round button, bottom right</span><span class="src">→ Ask Worca · ⌘K</span></div>
+          <div class="cat-row"><span class="t">Model list</span><span class="src">→ Haiku 5.5</span></div>
+        </div>
+        <p class="env-note">A step that never ran stays plain: there is no log to open yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEIPTS (always last) ================= -->
+  <section class="sec polish" id="s8">
+    <svg class="p-ribbon" viewBox="0 0 1280 760" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <path id="pb" d="M -60 78 C 260 8, 520 140, 760 92 S 1160 6, 1360 96" fill="none" stroke="#EEA47D" stroke-width="34" stroke-linecap="round" opacity=".9"></path>
+      <text><textPath id="pbt" href="#pb" startOffset="-10%">TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · TESTS · NUMBERS · PROOF · </textPath></text>
+    </svg>
+    <div class="sec-head rv" style="margin-top:110px">
+      <span class="kicker"><span class="dot" style="background:var(--coral)"></span>And the receipts</span>
+      <h2>Shipped, tested, verified live.</h2>
+    </div>
+    <div class="bubs">
+      <div class="bub rv"><span class="im"><span class="big">8,309</span></span><div class="tx"><b>Tests green</b><span>0 failing · +15.5k test lines</span></div></div>
+      <div class="bub rv d1"><span class="im"><span class="big">+26.6k</span></span><div class="tx"><b>Lines landed</b><span>364 files · 37 commits on dev</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">24</span></span><div class="tx"><b>PRs merged</b><span>since v1.9.0 · 2 days</span></div></div>
+      <div class="bub rv"><span class="im"><span class="big">13</span></span><div class="tx"><b>Network commands closed</b><span>under Strict · git fetch · dig · socat</span></div></div>
+      <div class="bub rv d1"><span class="im"><img src="docs/changelog/shots/1.10.0/ask.png" alt="The round Ask Worca button with its tooltip" style="width:200%;left:-125%;top:9%"></span><div class="tx"><b>Ask Worca, out of the way</b><span>a round button · name and ⌘K on hover</span></div></div>
+      <div class="bub rv d2"><span class="im"><span class="big">✓</span></span><div class="tx"><b>Mock stays mock</b><span>across a pause and resume · no key for script-only runs</span></div></div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>WORCA · changelog · <span class="mono">v1.9.0 → v1.10.0</span></span>
+    <span class="mono">Oct 7 – Oct 8, 2026</span>
+  </div>
+</div>
+
+<nav class="rail" id="rail" aria-label="Sections">
+  <a href="#s0" aria-label="What's new" class="on"></a><a href="#s1" aria-label="Publish branch"></a><a href="#s2" aria-label="Azure DevOps"></a><a href="#s3" aria-label="Skills"></a><a href="#s4" aria-label="Alerts"></a><a href="#s5" aria-label="Workspaces"></a><a href="#s6" aria-label="Guardrails"></a><a href="#s7" aria-label="Polish"></a><a href="#s8" aria-label="Receipts"></a>
+</nav>
+
+<script>
+(function () {
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var $ = function (id) { return document.getElementById(id); };
+  var all = function (sel) { return [].slice.call(document.querySelectorAll(sel)); };
+
+  // scroll reveals
+  var io = new IntersectionObserver(function (es) {
+    es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.18 });
+  all('.rv').forEach(function (el) { io.observe(el); });
+
+  // dot rail follows the section in the middle of the viewport
+  var secs = all('.sec');
+  var dots = all('.rail a');
+  var so = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      if (e.isIntersecting) {
+        var i = secs.indexOf(e.target);
+        dots.forEach(function (d, j) { d.classList.toggle('on', j === i); });
+      }
+    });
+  }, { rootMargin: '-45% 0px -45% 0px' });
+  secs.forEach(function (s) { so.observe(s); });
+
+  // ribbons drift with scroll position
+  var rbt = $('rbt'), pbt = $('pbt');
+  if (!reduced) addEventListener('scroll', function () {
+    var p = scrollY / Math.max(1, document.body.scrollHeight - innerHeight);
+    if (rbt) rbt.setAttribute('startOffset', (-12 + p * 30) + '%');
+    if (pbt) pbt.setAttribute('startOffset', (-10 + p * 26) + '%');
+  }, { passive: true });
+
+  var ship = all('#shipSteps li'), ado = all('#adoSteps li');
+  var wsRows = all('.wsFlip').concat($('wsLast') ? [$('wsLast')] : []);
+  var walk = all('#walkDemo .cat-row');
+
+  // Reduced motion: every demo in its final state, no timers.
+  if (reduced) {
+    ship.concat(ado).forEach(function (li) { li.classList.add('on'); });
+    if ($('ntfDemo')) $('ntfDemo').classList.add('show');
+    wsRows.forEach(function (r) { r.classList.add('flip'); });
+    walk.forEach(function (r) { r.classList.add('win'); });
+    return;
+  }
+
+  // numbered steps light up in order, then start over
+  function stepper(items, ms) {
+    if (!items.length) return;
+    var k = -1;
+    setInterval(function () {
+      k = (k + 1) % (items.length + 1);
+      items.forEach(function (li, i) { li.classList.toggle('on', i < k); });
+    }, ms);
+  }
+  stepper(ship, 1700);
+  stepper(ado, 1900);
+
+  // desktop alert: the notification slides in, the tab gets its count
+  var ntf = $('ntfDemo');
+  if (ntf) setInterval(function () { ntf.classList.toggle('show'); }, 2600);
+
+  // workspace branches: every member settles at once
+  if (wsRows.length) setInterval(function () { wsRows.forEach(function (r) { r.classList.toggle('flip'); }); }, 2600);
+
+  // where to click: one row lit at a time
+  if (walk.length) { var w = 0; setInterval(function () {
+    w = (w + 1) % walk.length;
+    walk.forEach(function (r, i) { r.classList.toggle('win', i === w); });
+  }, 2200); }
+})();
+</script>

@@ -1,6 +1,6 @@
 {
   "name": "@worca/app",
-  "version": "1.9.2",
+  "version": "1.10.0",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
   "author": "Sinisha Djukic",
