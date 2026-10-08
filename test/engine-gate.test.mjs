@@ -44,7 +44,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, gemini, qwen\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {
@@ -981,7 +981,7 @@ test('stopPaused registers the Cursor files even when memory never mounted, and 
   o3.on('log', (l) => logs.push(String(l.text)));
   o3._registerEngineConfig = async () => { throw new Error('boom'); };
   assert.equal((await o3.stopPaused('ada')).status, 'stopped');
-  assert.ok(logs.some((t) => /stop: Cursor's \.cursor config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
+  assert.ok(logs.some((t) => /stop: the engine's checkout config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
 });
 
 test('legacy teardown on a cursor run: the kept branch carries the agent\'s .cursor/mcp.json and never worca\'s cli.json', { timeout: 120000 }, async () => {

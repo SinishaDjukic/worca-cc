@@ -553,7 +553,7 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
   await send('/resume *3333');
   assert.deepEqual(got.at(-1), ['pipe-cccc3333', undefined], 'no engine named: the saved one');
   const n = got.length;
-  assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude, codex or cursor/);
+  assert.match(text(await send('/resume *3333 gpt')), /Unknown engine `gpt` — use claude, codex, cursor, gemini or qwen/);
   assert.equal(got.length, n, 'nothing resumed');
 
   answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce' };
