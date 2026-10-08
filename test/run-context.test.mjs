@@ -116,6 +116,8 @@ async function assemble(over = {}) {
     ...(over.honorByKey ? { honorByKey: over.honorByKey } : {}),
     ...(over.platform ? { platform: over.platform } : {}),
     ...(over.registry ? { registry: over.registry } : {}),
+    ...(over.engine ? { engine: over.engine } : {}),
+    ...(over.agentIsolated ? { agentIsolated: true } : {}),
   });
 }
 
@@ -298,6 +300,25 @@ test('generated CLAUDE.md: single mode de-dups a member file byte-identical to t
   await writeFile(join(real, 'CLAUDE.md'), 'SAME BYTES\n', 'utf8');
   const ws = await assemble({ runRoot: await mkRunRoot(), members: [member], isWorkspace: true });
   assert.match(await readFile(ws.claudeMdPath, 'utf8'), /SAME BYTES/);
+});
+
+test('a Codex run links the user\'s own skills into .agents/skills; Copilot runs and agents under their own user get copies', async () => {
+  const home = await writeTree(await tmp('worca-cc-rc-uhome-'), { '.claude/skills/mine/SKILL.md': '---\nname: mine\n---\n' });
+  const member = async () => ({ projectKey: 'k1', projectName: 'P', projectDir: await tmp(), worktreeDir: await tmp('worca-cc-rc-uwt-') });
+  const linked = await member();
+  await assemble({ runRoot: await mkRunRoot(), members: [linked], homeDir: home, engine: 'codex', platform: 'linux' });
+  assert.equal((await lstat(join(linked.worktreeDir, '.agents', 'skills', 'mine'))).isSymbolicLink(), true);
+  const isolated = await member();
+  await assemble({ runRoot: await mkRunRoot(), members: [isolated], homeDir: home, engine: 'codex', platform: 'linux', agentIsolated: true });
+  assert.equal((await lstat(join(isolated.worktreeDir, '.agents', 'skills', 'mine'))).isSymbolicLink(), false,
+    'the agent user cannot read the server\'s home through a link');
+  const copilot = await member();
+  await assemble({ runRoot: await mkRunRoot(), members: [copilot], homeDir: home, engine: 'copilot', platform: 'linux' });
+  assert.equal((await lstat(join(copilot.worktreeDir, '.agents', 'skills', 'mine'))).isSymbolicLink(), false,
+    'no codex sandbox: its file tools would write through the link');
+  const windows = await member();
+  await assemble({ runRoot: await mkRunRoot(), members: [windows], homeDir: home, engine: 'codex', platform: 'win32' });
+  assert.equal((await lstat(join(windows.worktreeDir, '.agents', 'skills', 'mine'))).isSymbolicLink(), false);
 });
 
 test('§8.20: a DELETED member real dir degrades to worktree-only context with a named warning, never a throw', async () => {

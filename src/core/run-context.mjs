@@ -431,7 +431,7 @@ async function skillCandidates(dir, onError) {
  */
 export async function assembleSkills({
   target, members = [], projectsRoot, resolutions, homeDir,
-  mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'),
+  mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'), linkUserSkills = false,
 }) {
   const warnings = [];
   const onError = fsWarner(warnings);        // ENOENT stays silent; a real error is named
@@ -509,7 +509,8 @@ export async function assembleSkills({
     const dest = join(target, effective);
     // Symlink mode cannot carry a rename: the frontmatter rewrite would land in the
     // user's real source file. Renamed entries therefore stay copies.
-    const asLink = mount === 'symlink' && !renamed;
+    // `linkUserSkills`: the user's own skills (codex only) are linked whatever the mount setting (see assembleRunContext).
+    const asLink = (mount === 'symlink' || (linkUserSkills && cand.cls === 'user')) && !renamed;
     try {
       const st = await stat(cand.source);                 // follows symlinks: a dangling one throws
       if (!st.isDirectory()) continue;                    // not a skill entry; silently ignored
@@ -1152,11 +1153,17 @@ export async function assembleRunContext({
   let skillMountDir = null;
   let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [] };
   const primary = sorted[0] || null;
+  // Copying the whole of the user's `~/.claude/skills` into every Codex run's checkout costs a copy per run and per
+  // resume, so those entries are linked. A link stays read-only to the agent: codex's sandbox checks the real path,
+  // and `~/.claude/skills` is never a writable root. Copies stay where a link would not serve: an engine without that
+  // sandbox (Copilot's file tools would write through the link), agents under their own user (they cannot read the
+  // server's home), and Windows (its links need a privilege, and its codex sandbox is not relied on).
+  const linkUserSkills = engine === 'codex' && !agentIsolated && platform !== 'win32';
   if (isWorkspace) {
     skillMountDir = join(runRoot, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills,
     });
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
   } else if (primary?.worktreeDir) {
@@ -1165,7 +1172,7 @@ export async function assembleRunContext({
     skillMountDir = join(primary.worktreeDir, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills,
       trackedNames: trackedSkillNames(primary.worktreeDir, skillsRel),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;

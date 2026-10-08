@@ -245,9 +245,19 @@ test('skills mount where the engine reads them: codex gets .agents/skills, plus 
   }
   assert.equal(skillsRelFor('codex'), join('.agents', 'skills'));
   assert.equal(skillsRelFor('claude'), join('.claude', 'skills'));
-  const out = await assembleSkills({ target, members: [{ projectKey: 'p-1', projectName: 'p', projectDir: proj }], homeDir: home, rel: skillsRelFor('codex') });
+  const out = await assembleSkills({ target, members: [{ projectKey: 'p-1', projectName: 'p', projectDir: proj }], homeDir: home, rel: skillsRelFor('codex'), linkUserSkills: true });
   assert.deepEqual(out.names.sort(), ['lint', 'mine']);
   assert.deepEqual(out.records.map((r) => r.path).sort(), [join('.agents', 'skills', 'lint'), join('.agents', 'skills', 'mine')]);
+  if (process.platform !== 'win32') {
+    assert.equal(lstatSync(join(target, 'mine')).isSymbolicLink(), true, 'the user\'s own skills are linked, not copied into every run');
+    assert.equal(lstatSync(join(target, 'lint')).isSymbolicLink(), false, 'project skills stay copies');
+    assert.equal(out.records.find((r) => r.path.endsWith('mine')).mount, 'symlink');
+    assert.equal(out.warnings.some((w) => /WRITE-THROUGH/.test(w)), false, 'the write-through warning is the skillMount setting\'s');
+  }
+  // Agents under their own user cannot read the server's home: there (and on Windows) the run context asks for copies.
+  const copied = join(tmp(), '.agents', 'skills');
+  await assembleSkills({ target: copied, members: [], homeDir: home, rel: skillsRelFor('codex'), linkUserSkills: false });
+  assert.equal(lstatSync(join(copied, 'mine')).isSymbolicLink(), false);
   const claude = await assembleSkills({ target: join(tmp(), '.claude', 'skills'), members: [{ projectKey: 'p-1', projectName: 'p', projectDir: proj }], homeDir: home });
   assert.deepEqual(claude.names, ['lint'], 'Claude Code reads ~/.claude/skills itself');
 });
