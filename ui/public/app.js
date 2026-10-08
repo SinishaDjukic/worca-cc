@@ -21782,8 +21782,12 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
  * user may still pick "Start it late"), then POSTs the ticket.
  */
-async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null }, btn) {
+async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
+  // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
+  const saved = runEngine || 'claude';
+  const others = usageLimitSwitches(pause || {});
   const res = await openScheduleSheet({
+    engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
     allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
@@ -21800,6 +21804,7 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       body: JSON.stringify({
         pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
         ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        ...(res.engine ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -22067,7 +22072,8 @@ function setupHdActions(screen, record, data) {
       if (resumeAtItem.disabled) return;
       closeResumeMenu();
       const r = hdCurrentRecord(record);   // never the load-time object (record-identity rule)
-      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null }, resumeAtItem);
+      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null,
+        runEngine: hdRunEngine(r, data), pause: hdPauseOf(hdLiveRun(r), screen, data, r) }, resumeAtItem);
     });
     resumeMenu.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); closeResumeMenu(); resumeMore.focus(); }
@@ -28194,7 +28200,8 @@ function openRunDetail(runId, { instant = false } = {}) {
     if (rdResumeAt.disabled) return;
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
-    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null }, rdResumeAt);
+    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null,
+      runEngine: r.runEngine, pause: { reason: r.pauseReason, limitEngine: r.limitEngine } }, rdResumeAt);
   });
   rdResumeMenu.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeRdResumeMenu(); rdResumeMore.focus(); }

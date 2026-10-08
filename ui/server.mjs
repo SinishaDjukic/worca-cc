@@ -2230,7 +2230,19 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
+            prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
@@ -2346,7 +2358,19 @@ const startRunHandler = async (req, res) => {
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
-      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 }),
+            claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -2848,9 +2872,11 @@ async function fireResumeTicket(ticket, pipelineId) {
   }
   const scheduledBy = ticket.createdBy || null;
   try {
+    const engine = ticket.request && ticket.request.internal && ticket.request.internal.resumeEngine;
     const out = await resumeRun(pipelineId, {
       by: scheduledBy || 'local',
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
+      ...(engine ? { engine } : {}),
     });
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
@@ -3052,9 +3078,10 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin? } — a one-off
+// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine? } — a one-off
 // "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
+// `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
 app.post('/api/schedules/resume', async (req, res) => {
   try {
     const body = req.body || {};
@@ -3074,8 +3101,23 @@ app.post('/api/schedules/resume', async (req, res) => {
       if (!Number.isSafeInteger(body.graceMin) || body.graceMin < 0 || body.graceMin > 10080) return badRequest(res, 'graceMin must be a whole number of minutes from 0 to 10080');
       graceMin = body.graceMin;
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’`;
-    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by } };
+    let engine = null;
+    if (body.engine != null) {
+      try { engine = resumeEngineOpts(body.engine).engine || null; } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+    }
+    if (engine) {
+      const saved = readPipelineForResume(v.row.id);
+      let dirs;
+      try { dirs = await resumeTargetDirs(saved); } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+      const probe = await createOrchestratorFor({
+        projectDir: dirs.projectDir, ...(dirs.workspace ? { workspace: dirs.workspace } : {}), agentsDir: AGENTS_DIR,
+        claude: { permissionMode: 'acceptEdits', mock: serverMockMode(), engine }, resume: saved,
+      });
+      const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
+      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine });
+    }
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}`;
+    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
       runAtMs: at.ms, request, ifMissed, graceMin,
@@ -3950,6 +3992,23 @@ function resumeEngineOpts(engine, allowUnguardedEngine) {
   try { return { engine: selectRunEngine(engine), ...opts }; } catch (err) { throw new ResumeError(400, { error: err.message }); }
 }
 
+/** A saved run's resume target: workspace runs carry their dirs in workspace_meta; single-project runs map
+ *  project_key back through the registry. Throws a ResumeError when neither resolves. */
+async function resumeTargetDirs(saved) {
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    return {
+      projectDir: projects[0].projectDir,
+      workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
+    };
+  }
+  const projectDir = await projectDirForKey(saved.row.project_key);
+  if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  return { projectDir, workspace: undefined };
+}
+
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
@@ -4013,23 +4072,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
   }
 
-  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-  // runs map project_key back through the registry.
-  let projectDir = null;
-  let workspace;
-  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
-    const meta = JSON.parse(saved.row.workspace_meta);
-    const projects = (meta.projects || []).map((p) => ({ ...p }));
-    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
-    projectDir = projects[0].projectDir;
-    workspace = {
-      id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
-      description: meta.workspaceDescription || '', projects,
-    };
-  } else {
-    projectDir = await projectDirForKey(saved.row.project_key);
-    if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
-  }
+  const { projectDir, workspace } = await resumeTargetDirs(saved);
 
   // Base check (opt-in, plan D7) BEFORE the team gates, which save acknowledgements and audit
   // lines a cancelled "base moved" confirmation must not leave behind. A memory-defrag run keeps
