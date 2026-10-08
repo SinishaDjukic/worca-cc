@@ -13,6 +13,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel } from '../src/shared/engine-switch.mjs';
+import { ENGINES } from '../src/shared/engine-switch.mjs';
 import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine } from '../src/core/model-env.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 
@@ -29,7 +30,9 @@ const LIMIT_ERR = () => new Error("claude exited with code 1: You've hit your se
 const FREE_DAILY_ERR = () => new Error('claude exited with code 1: API Error: Request rejected (429) · openai: rate limited (429) — Rate limit exceeded: free-models-per-day-high-balance.  [openrouter_free_tier_daily]');
 const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: [] }, summary: '' });
 
-test('one engine list for the switch, the catalog and the registry', () => {
+test('one engine table: the lists, model-env and the adapter registry derive from it', () => {
+  assert.deepEqual(Object.keys(ENGINES), [...ENGINE_NAMES]);
+  for (const e of listEngines().filter((x) => x.name !== 'mock')) assert.equal(ENGINES[e.name].cost, e.capabilities.cost !== false, `${e.name}: cost`);
   assert.deepEqual([...SWITCH_ENGINES], MODEL_ENGINES);
   assert.deepEqual([...MODEL_ENGINE_NAMES], MODEL_ENGINES);
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));

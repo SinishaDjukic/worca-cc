@@ -3702,11 +3702,13 @@ function renderAgentRows(rows) {
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
-      // The model's own engine; a pick the catalog no longer holds is the other engine's (Codex on a Claude run).
-      const owner = entry ? engineLabel(entry.engine || 'claude') : (state.engine === 'claude' ? 'Codex' : 'Claude');
+      // The model's own engine; a pick the catalog no longer holds belongs to an engine this run is not on.
+      const owner = entry ? engineLabel(entry.engine || 'claude') : null;
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
-      kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
+      kept.textContent = owner
+        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`
+        : `Your pick ${row.enginePair.model} is kept for runs on its own engine — choose a model here to replace it.`;
       body.appendChild(kept);
     }
 
