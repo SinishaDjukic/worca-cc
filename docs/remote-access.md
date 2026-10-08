@@ -350,6 +350,14 @@ network policy blocked it, so an agent's tool error says why (`curl`, `git` and 
 a failed `CONNECT`). worca's log has one `egress: … DENY CONNECT host:443` line per refusal, and
 a boot line with the mode and list sizes. Ask Worca's context shows the mode (`egress=allow`).
 
+The proxy runs inside worca, so nothing a client or a remote host does may take it down: a
+malformed request or `CONNECT` target gets a `400`, a request head over 16 KB a `431`, an
+unreachable host a `502` (`504` after 30 s), and a socket error closes that one connection. A
+request head must arrive within 30 s, a connection or tunnel silent for 10 minutes is closed, and
+at most 512 connections are open at once (more are refused). If the proxy stops listening, worca
+logs it and starts it again on the same port (after 1 s, backing off to 30 s); until then agents'
+connections are refused, so traffic fails closed while worca keeps running.
+
 **What it does not cover.** The proxy is the only control on a host such as Railway, which has no
 internal-only network to put the container on. A program that ignores the proxy variables, or opens
 a raw socket (`node -e`, `python -c`, a binary with its own DNS and TCP), goes direct, and so does

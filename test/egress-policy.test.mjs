@@ -280,3 +280,174 @@ test('the proxy module stays standalone: the image runs it as one file outside t
   assert.ok(imports.length > 0);
   for (const i of imports) assert.match(i, /^node:/, `${i} would not resolve from /usr/local/lib`);
 });
+
+// --- denial of service: nothing a client or an upstream does may take the proxy (and worca) down --
+
+import { PROXY_LIMITS } from '../src/core/egress-proxy.mjs';
+import { superviseProxy } from '../src/core/egress-policy.mjs';
+
+const BLOCK = { mode: 'block', allow: [], deny: ['.invalid'] };
+
+async function alive(pport, o) {
+  const r = await rawRequest(pport, `GET http://127.0.0.1:${o.port}/alive HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+  assert.match(r, /origin saw \/alive/, 'the proxy still serves');
+}
+
+function closedPort() {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
+test('limits: sane defaults', () => {
+  assert.ok(PROXY_LIMITS.maxConnections > 0 && PROXY_LIMITS.maxHeaderSize <= 64 * 1024);
+  assert.ok(PROXY_LIMITS.headersTimeoutMs <= 60_000 && PROXY_LIMITS.connectTimeoutMs <= 60_000);
+});
+
+test('DoS: malformed CONNECT and request lines get 400, never an exception', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK });
+  const pport = await listen(proxy);
+  try {
+    // An out-of-range port used to throw ERR_SOCKET_BAD_PORT from net.connect and kill the process.
+    for (const target of ['example.com:99999', 'example.com:0', ':443', '[]:443', 'example.com:-1']) {
+      const r = await rawRequest(pport, `CONNECT ${target} HTTP/1.1\r\nHost: x\r\n\r\n`);
+      assert.match(r, /^HTTP\/1\.1 400/, target);
+    }
+    for (const line of ['GET /relative HTTP/1.1', 'GET https://example.com/ HTTP/1.1', 'GET ftp://example.com/ HTTP/1.1', 'GET http:// HTTP/1.1']) {
+      const r = await rawRequest(pport, `${line}\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      assert.match(r, /^HTTP\/1\.1 400/, line);
+    }
+    const garbage = await rawRequest(pport, '\x00\x01\x02 not http at all\r\n\r\n');
+    assert.match(garbage, /^HTTP\/1\.1 400|^$/);
+    await alive(pport, o);
+  } finally { proxy.close(); o.server.close(); }
+});
+
+test('DoS: an oversized request head is refused (431) and a slow one times out', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK, limits: { maxHeaderSize: 1024, headersTimeoutMs: 300 } });
+  const pport = await listen(proxy);
+  try {
+    const big = await rawRequest(pport, `GET http://127.0.0.1:${o.port}/ HTTP/1.1\r\nHost: x\r\nX-Pad: ${'a'.repeat(4096)}\r\n\r\n`);
+    assert.match(big, /^HTTP\/1\.1 431/);
+    // Slow loris: half a head, then silence. The proxy must hang up by itself.
+    const closed = await new Promise((res) => {
+      const sock = net.connect(pport, '127.0.0.1', () => sock.write('GET http://127.0.0.1/ HTTP/1.1\r\nHost: x\r\n'));
+      sock.on('error', () => {});
+      sock.on('close', () => res(true));
+      setTimeout(() => { res(false); sock.destroy(); }, 3000).unref();
+    });
+    assert.equal(closed, true, 'an unfinished head is dropped after headersTimeout');
+    await alive(pport, o);
+  } finally { proxy.close(); o.server.close(); }
+});
+
+test('DoS: an upstream that refuses or never answers is a 502/504, not a crash or a hang', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK, limits: { connectTimeoutMs: 300 } });
+  const pport = await listen(proxy);
+  const dead = await closedPort();
+  try {
+    const c = await rawRequest(pport, `CONNECT 127.0.0.1:${dead} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    assert.match(c, /^HTTP\/1\.1 502/);
+    const h = await rawRequest(pport, `GET http://127.0.0.1:${dead}/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    assert.match(h, /^HTTP\/1\.1 502/);
+    // A blackholed address: either the connect timeout (504) or an unreachable network (502).
+    const t = await rawRequest(pport, 'CONNECT 10.255.255.1:443 HTTP/1.1\r\nHost: x\r\n\r\n');
+    assert.match(t, /^HTTP\/1\.1 50[24]/);
+    await alive(pport, o);
+  } finally { proxy.close(); o.server.close(); }
+});
+
+test('DoS: an upstream that dies mid-response does not crash the proxy', async () => {
+  const bad = http.createServer((req, res) => { res.writeHead(200, { 'content-length': '1000' }); res.write('partial'); setTimeout(() => res.socket.destroy(), 20); });
+  await new Promise((r) => bad.listen(0, '127.0.0.1', r));
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK });
+  const pport = await listen(proxy);
+  try {
+    const r = await rawRequest(pport, `GET http://127.0.0.1:${bad.address().port}/ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    assert.match(r, /partial/);
+    await alive(pport, o);
+  } finally { proxy.close(); bad.close(); o.server.close(); }
+});
+
+test('DoS: idle tunnels are closed, connections are capped, the proxy refuses to relay to itself', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK, limits: { idleTimeoutMs: 300, maxConnections: 2 } });
+  const pport = await listen(proxy);
+  try {
+    const self = await rawRequest(pport, `CONNECT 127.0.0.1:${pport} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    assert.match(self, /^HTTP\/1\.1 400/);
+
+    const open = (text) => new Promise((res) => {
+      const sock = net.connect(pport, '127.0.0.1', () => sock.write(text));
+      let got = '';
+      sock.on('data', (d) => { got += d; });
+      sock.on('error', () => {});
+      sock.on('close', () => res({ sock, got, closed: true }));
+      setTimeout(() => res({ sock, got, closed: false }), 1500).unref();
+    });
+    // An idle tunnel: established, then silent. It must be closed by the idle timeout.
+    const idle = await open(`CONNECT 127.0.0.1:${o.port} HTTP/1.1\r\nHost: x\r\n\r\n`);
+    assert.match(idle.got, /200 Connection Established/);
+    assert.equal(idle.closed, true, 'idle tunnel closed');
+
+    // Two held connections fill the cap; a third is dropped at accept.
+    const held = [];
+    for (let i = 0; i < 2; i++) {
+      held.push(await new Promise((res) => { const s = net.connect(pport, '127.0.0.1', () => res(s)); s.on('error', () => {}); }));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    const third = await new Promise((res) => {
+      const s = net.connect(pport, '127.0.0.1', () => s.write('GET http://127.0.0.1/ HTTP/1.1\r\nHost: x\r\n\r\n'));
+      let got = '';
+      s.on('data', (d) => { got += d; });
+      s.on('error', () => res('error'));
+      s.on('close', () => res(got || 'closed'));
+    });
+    assert.ok(third === 'closed' || third === 'error', `third connection refused, got ${third}`);
+    for (const s of held) s.destroy();
+  } finally { proxy.close(); o.server.close(); }
+});
+
+test('DoS: a logger that throws cannot take the proxy down', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK, log: () => { throw new Error('log sink broke'); } });
+  const pport = await listen(proxy);
+  try {
+    await alive(pport, o);
+    const r = await rawRequest(pport, 'CONNECT x.invalid:443 HTTP/1.1\r\nHost: x\r\n\r\n');
+    assert.match(r, /^HTTP\/1\.1 403/);
+  } finally { proxy.close(); o.server.close(); }
+});
+
+test('supervisor: a proxy that stops listening comes back on the same port; stop() is final', async () => {
+  const o = await origin();
+  const proxy = createProxy({ policy: BLOCK });
+  const pport = await listen(proxy);
+  const lines = [];
+  const sup = superviseProxy(proxy, pport, { log: (l) => lines.push(l), baseDelayMs: 20 });
+  try {
+    proxy.close();   // something closed it behind worca's back
+    const back = await new Promise((res) => {
+      const t0 = Date.now();
+      const poll = () => (proxy.listening ? res(true) : Date.now() - t0 > 3000 ? res(false) : setTimeout(poll, 20));
+      poll();
+    });
+    assert.equal(back, true);
+    assert.equal(proxy.address().port, pport, 'children keep the address they were given');
+    assert.equal(sup.restarts(), 1);
+    await alive(pport, o);
+    proxy.emit('error', new Error('EMFILE'));   // an error while listening is only logged
+    assert.ok(lines.some((l) => /EMFILE/.test(l)));
+    assert.equal(proxy.listening, true);
+  } finally {
+    await sup.stop();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(proxy.listening, false, 'not restarted after stop()');
+    o.server.close();
+  }
+});

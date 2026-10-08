@@ -68,12 +68,53 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
     server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
   });
   if (unref) server.unref();
-  const url = `http://127.0.0.1:${server.address().port}`;
+  const port = server.address().port;
+  const url = `http://127.0.0.1:${port}`;
   const replacedProxy = PROXY_NAMES.some((k) => env[k] && env[k] !== url);
   Object.assign(env, egressChildEnv(url));
+  const sup = superviseProxy(server, port, { log });
   return {
     status: 'on', policy, url, replacedProxy,
-    close: () => new Promise((r) => server.close(() => r())),
+    close: () => sup.stop(),
+  };
+}
+
+/**
+ * Keep the proxy listening on `port` for the life of the process. The children were handed that
+ * address at spawn, so the proxy comes back on the same port: an error after listen (EMFILE at
+ * accept, say) is logged, and a server that stopped listening is started again with backoff
+ * (1 s, doubling to 30 s). While it is down a connection to it is refused, so traffic fails
+ * closed; worca itself keeps running.
+ * @returns {{stop: () => Promise<void>, restarts: () => number}}
+ */
+export function superviseProxy(server, port, { log = () => {}, host = '127.0.0.1', baseDelayMs = 1000, maxDelayMs = 30_000 } = {}) {
+  let stopping = false;
+  let delay = baseDelayMs;
+  let timer = null;
+  let restarts = 0;
+  const say = (l) => { try { log(l); } catch { /* ignore */ } };
+  const schedule = () => {
+    if (stopping || timer || server.listening) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (stopping || server.listening) return;
+      server.listen(port, host, () => { restarts += 1; delay = baseDelayMs; say(`policy proxy listening again on ${host}:${port}`); });
+    }, delay);
+    timer.unref?.();
+    delay = Math.min(delay * 2, maxDelayMs);
+  };
+  server.on('error', (err) => {
+    say(`policy proxy error: ${err && err.message ? err.message : err}${server.listening ? '' : '; restarting'}`);
+    schedule();
+  });
+  server.on('close', () => { if (!stopping) { say('policy proxy stopped; restarting'); schedule(); } });
+  return {
+    restarts: () => restarts,
+    stop: () => {
+      stopping = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      return new Promise((r) => { if (!server.listening) { r(); return; } server.close(() => r()); });
+    },
   };
 }
 
