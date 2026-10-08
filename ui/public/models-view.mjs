@@ -9,7 +9,7 @@
 
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
-import { engineLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -478,9 +478,9 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   // §3.1a: which engine runs the model. Codex takes no routing env (codex ignores it), and its connection
   // can only be an OpenAI-compatible endpoint; the engine is part of the entry, so it is fixed once created.
   const engineSel = h(doc, 'select', 'select mv-engine');
-  for (const [v, t] of MODEL_ENGINE_NAMES.map((e) => [e, engineLabel(e)])) {
+  for (const v of MODEL_ENGINE_NAMES) {
     const o = doc.createElement('option');
-    o.value = v; o.textContent = t;
+    o.value = v; o.textContent = engineChoiceLabel(v);
     engineSel.appendChild(o);
   }
   engineSel.value = engineNow;

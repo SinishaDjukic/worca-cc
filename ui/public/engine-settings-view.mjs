@@ -1,5 +1,5 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-import { engineLabel, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
@@ -12,12 +12,12 @@ export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${eng
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
   const extras = {};
   // One card per engine that owns catalog models: Copilot owns none, so it has no step or helper slots to set.
   for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;
-    const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); card.append(heading);
+    const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge amber beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     const noteText = [options.notes?.[engine], engine === 'cursor' ? CURSOR_HELPERS_NOTE : null].filter(Boolean).join(' ');
@@ -51,7 +51,7 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const unavailable = 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${codexOffered ? '' : ` ${unavailable}`}`,
-    options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? 'Codex' : 'Codex (unavailable)' }],
+    options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? engineChoiceLabel('codex') : 'Codex (unavailable)' }],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   for (const engine of ['claude', 'codex']) {
     if (engine === 'codex' && !codexOffered) continue;

@@ -132,7 +132,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -3921,6 +3921,13 @@ function showEngineRefusal(data) {
 }
 
 if (el.engineSeg) {
+  for (const b of el.engineSeg.querySelectorAll('button[data-engine]')) {
+    if (!isBetaEngine(b.dataset.engine)) continue;
+    const beta = document.createElement('span');
+    beta.className = 'badge amber beta-badge';
+    beta.textContent = 'Beta';
+    b.append(beta);
+  }
   el.engineSeg.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-engine]');
     if (!btn) return;
