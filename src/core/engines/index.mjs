@@ -8,12 +8,12 @@ import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
 import { classifyError } from '../recoverable-error.mjs';
-import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexUnattachableMcp, CODEX_COMMAND_RULE_REACH } from './codex.mjs';
+import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexMcpProblems, CODEX_COMMAND_RULE_REACH } from './codex.mjs';
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
   unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
 
-export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS } from './capabilities.mjs';
+export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './capabilities.mjs';
 
 /** Every adapter's run() emits the normalized vocabulary (src/core/engines/events.mjs).
  *  The Claude runner and the mock still build stream-json envelopes internally;
@@ -44,15 +44,16 @@ const claudeAdapter = Object.freeze({ name: 'claude', capabilities: claudeCapabi
 // `partialRules(rules)`: the deny rules it holds only in part (codex: command rules); the gate refuses those
 // unless allowed too, and the spawn still applies them; `ruleReach` says in words how far those rules reach, and
 // `ruleKind` what those rules are on this engine (the gate and the run log name them so).
-// `unattachableMcp(servers)`: the --mcp-config servers this engine cannot attach (the run gate refuses a registry copy
-// among them). An engine without it attaches what Claude Code does.
+// `unattachableMcp(servers)`: the --mcp-config servers this engine cannot attach, as `{name, reason}` (reasons:
+// capabilities.mjs describeUnattachableMcp); the run gate refuses a registry copy among them and warns about the rest.
+// An engine without it attaches what Claude Code does.
 const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError, preflight: codexPreflight,
-  unenforcedRules, partialRules, ruleReach: CODEX_COMMAND_RULE_REACH, ruleKind: 'command rules', unattachableMcp: codexUnattachableMcp });
+  unenforcedRules, partialRules, ruleReach: CODEX_COMMAND_RULE_REACH, ruleKind: 'command rules', unattachableMcp: codexMcpProblems });
 // The GitHub Copilot CLI (engines/copilot.mjs): emits the normalized vocabulary itself, like codex.
 const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.copilotCapabilities, run: copilot.runCopilotProcess,
   classifyError: copilot.classifyCopilotError, preflight: copilot.copilotPreflight, unenforcedRules: copilot.unenforcedRules,
   partialRules: copilot.partialRules, ruleReach: copilot.COPILOT_COMMAND_RULE_REACH, ruleKind: 'command and write rules',
-  unattachableMcp: copilot.copilotUnattachableMcp });
+  unattachableMcp: copilot.copilotMcpProblems });
 // cursor emits the normalized vocabulary itself (engines/cursor.mjs). Every rule it is given is partial (cursorRulePlan).
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,

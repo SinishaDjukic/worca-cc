@@ -62,7 +62,7 @@ import {
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
-import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS } from './engines/index.mjs';
+import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
@@ -2812,9 +2812,11 @@ export class RunHarness extends EventEmitter {
     if (why) throw engineRefusal(this.claude.engine, why);
   }
 
-  /** What a non-Claude run's agents will not get of the merged MCP servers: the ones Claude Code loads on its own
-   *  (the checkout's .mcp.json, user scope, plugins — codex runs with --ignore-user-config) and, on Codex, the
-   *  project servers that are not stdio (a remote registry copy is refused instead, _engineMcpRefusal). Never throws. */
+  /** What a non-Claude run's agents will not get of the merged MCP servers: a granted server that is not in mcp.json
+   *  (Claude Code would load it on its own), and the servers in mcp.json the engine cannot attach, by the adapter's
+   *  reason (a registry copy among them is refused instead, _engineMcpRefusal). The checkout's committed
+   *  .mcp.json servers Claude Code has approved are in mcp.json on every such engine, so they meet the same checks;
+   *  the others are named by the run context (run-context.mjs attachCommittedMcp). Never throws. */
   _engineMcpWarnings(rc) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude' || !rc) return [];
@@ -2824,15 +2826,13 @@ export class RunHarness extends EventEmitter {
     const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
     if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
     const unattachable = getEngine(name).unattachableMcp;
-    const remote = typeof unattachable === 'function' ? unattachable(written) : [];
-    if (remote.length) out.push(name === 'codex'
-      ? `engine ${name}: remote MCP servers are not attached on ${name} (stdio only): ${remote.join(', ')}`
-      : `engine ${name}: MCP servers ${name} cannot attach are not attached: ${remote.join(', ')}`);
+    const problems = typeof unattachable === 'function' ? unattachable(written) : [];
+    if (problems.length) out.push(`engine ${name}: MCP servers not attached on ${name} — ${describeUnattachableMcp(name, problems)}`);
     return out;
   }
 
-  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null.
-   *  Codex attaches stdio servers only, so a remote (http/sse) copy is refused there. */
+  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null:
+   *  the copies the adapter cannot attach, grouped by its reason (Codex attaches stdio servers only, for one). */
   _engineMcpRefusal(layer) {
     const name = this.claude.engine || 'claude';
     const copies = layer?.copies;
@@ -2843,11 +2843,9 @@ export class RunHarness extends EventEmitter {
     const unattachable = getEngine(name).unattachableMcp;
     if (typeof unattachable !== 'function') return null;
     const servers = layer.servers || {};
-    const remote = unattachable(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
-    if (!remote.length) return null;
-    return name === 'codex'
-      ? `this run attaches remote MCP servers (${remote.join(', ')}), and ${name} attaches stdio servers only`
-      : `this run attaches MCP servers ${name} cannot attach (${remote.join(', ')})`;
+    const problems = unattachable(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
+    if (!problems.length) return null;
+    return `this run attaches MCP servers ${name} cannot attach — ${describeUnattachableMcp(name, problems)}`;
   }
 
   /**
@@ -5483,9 +5481,11 @@ export class RunHarness extends EventEmitter {
     const runModel = engine !== runEngine ? null
       : (engine === 'copilot' ? this._engineModel(this.claude.model || undefined)
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel },
+    // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
+    const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
+    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
       { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
-    if (!pair.model && engine === 'codex') { pair.model = CODEX_DEFAULT_MODEL; pair.source = 'default'; }
+    if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
       this._nightWarned.add(text);
