@@ -54,7 +54,8 @@ test('resume never re-reads settings: the saved engine wins (D7)', () => {
 
 test('the user setting validates on write', () => {
   assert.equal(assertRunEngineInput('codex'), 'codex');
+  assert.equal(assertRunEngineInput('copilot'), 'copilot');
   assert.equal(assertRunEngineInput(null), null);
   assert.equal(assertRunEngineInput(''), null);
-  assert.throws(() => assertRunEngineInput('gpt'), /^Error: runEngine must be one of claude \| codex$/);
+  assert.throws(() => assertRunEngineInput('gpt'), /^Error: runEngine must be one of claude \| codex \| copilot$/);
 });

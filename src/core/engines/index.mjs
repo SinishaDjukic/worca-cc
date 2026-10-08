@@ -6,7 +6,8 @@ import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
 import { classifyError } from '../recoverable-error.mjs';
-import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules } from './codex.mjs';
+import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexUnattachableMcp, CODEX_COMMAND_RULE_REACH } from './codex.mjs';
+import * as copilot from './copilot.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS } from './capabilities.mjs';
 
@@ -37,14 +38,22 @@ const claudeAdapter = Object.freeze({ name: 'claude', capabilities: claudeCapabi
 // `unenforcedRules(rules)`: the deny rules this engine cannot hold (the run gate refuses those unless allowed);
 // an engine without it holds every rule its `permissionRules` capability says it can.
 // `partialRules(rules)`: the deny rules it holds only in part (codex: command rules); the gate refuses those
-// unless allowed too, and the spawn still applies them.
-const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError, preflight: codexPreflight, unenforcedRules, partialRules });
+// unless allowed too, and the spawn still applies them; `ruleReach` says in words how far those rules reach.
+// `unattachableMcp(servers)`: the --mcp-config servers this engine cannot attach (the run gate refuses a registry copy
+// among them). An engine without it attaches what Claude Code does.
+const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError, preflight: codexPreflight,
+  unenforcedRules, partialRules, ruleReach: CODEX_COMMAND_RULE_REACH, unattachableMcp: codexUnattachableMcp });
+// The GitHub Copilot CLI (engines/copilot.mjs): emits the normalized vocabulary itself, like codex.
+const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.copilotCapabilities, run: copilot.runCopilotProcess,
+  classifyError: copilot.classifyCopilotError, preflight: copilot.copilotPreflight, unenforcedRules: copilot.unenforcedRules,
+  partialRules: copilot.partialRules, ruleReach: copilot.COPILOT_COMMAND_RULE_REACH, unattachableMcp: copilot.copilotUnattachableMcp });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 
 const ENGINES = new Map([
   ['claude', claudeAdapter],
   ['codex', codexAdapter],
+  ['copilot', copilotAdapter],
   ['mock', mockAdapter],
 ]);
 

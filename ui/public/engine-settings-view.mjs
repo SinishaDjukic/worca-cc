@@ -1,5 +1,5 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-export const ENGINE_LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex' });
+export const ENGINE_LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot' });
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']) });
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
@@ -9,7 +9,7 @@ export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${eng
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }], own: run.own, inherited: run.inherited, format: (value) => ENGINE_LABELS[value] || value }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'copilot', label: 'Copilot' }], own: run.own, inherited: run.inherited, format: (value) => ENGINE_LABELS[value] || value }));
   const extras = {};
   for (const engine of ['claude', 'codex']) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;

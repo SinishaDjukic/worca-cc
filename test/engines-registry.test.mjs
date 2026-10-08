@@ -13,7 +13,7 @@ test('claude is the default engine', () => {
 });
 
 test('an unknown engine is a hard error, even in mock mode', () => {
-  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, mock\)/);
+  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, copilot, mock\)/);
   assert.throws(() => getEngine('codx', { mock: true }), /unknown engine "codx"/);
 });
 
@@ -23,7 +23,7 @@ test('mock:true resolves any known engine to the mock adapter', () => {
 });
 
 test('every engine is a full adapter', () => {
-  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'mock']);
+  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'copilot', 'mock']);
   for (const engine of listEngines()) {
     assert.deepEqual(Object.keys(engine.capabilities).sort(), [...CAPABILITY_KEYS].sort(), engine.name);
     assert.equal(typeof engine.run, 'function');
