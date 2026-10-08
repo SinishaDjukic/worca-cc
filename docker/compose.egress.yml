@@ -7,10 +7,13 @@
 # Tools that honour HTTPS_PROXY (claude, git, gh, npm, pip, curl) work for
 # allowed hosts; a raw socket from `node -e` or `python -c` cannot leave.
 #
-#   WORCA_EGRESS_ALLOW   comma-separated hosts; ".example.com" allows subdomains.
+#   WORCA_EGRESS_ALLOW   comma-separated hosts; ".example.com" allows subdomains
+#                        and example.com itself.
 #                        Default: api.anthropic.com, github.com, .github.com,
 #                        .githubusercontent.com, registry.npmjs.org
 #                        Azure DevOps: add dev.azure.com,.visualstudio.com,vssps.dev.azure.com
+#   WORCA_EGRESS_MODE    leave unset here: it is a hosting platform's policy
+#                        (docs/remote-access.md), with its own matching rules.
 
 services:
   worca:

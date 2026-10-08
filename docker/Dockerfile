@@ -67,9 +67,12 @@ RUN test -n "${CLAUDE_CODE_VERSION}" || { echo "CLAUDE_CODE_VERSION build arg is
 
 # Worca, from the packed tarball.
 COPY ${WORCA_TARBALL} /tmp/worca.tgz
+# The egress overlay's sidecar runs the policy proxy from the package as one standalone
+# file (docker/compose.egress.yml; src/core/egress-proxy.mjs imports node: modules only).
 RUN npm install -g /tmp/worca.tgz \
  && rm /tmp/worca.tgz \
- && npm cache clean --force
+ && npm cache clean --force \
+ && install -m 755 "$(npm root -g)/@worca/app/src/core/egress-proxy.mjs" /usr/local/lib/worca-egress-proxy.mjs
 
 # Non-root user. uid/gid 1000 matches the default first user on Linux and in a
 # WSL2 distro, so bind-mounted project files keep their owner. The node base
@@ -108,7 +111,6 @@ RUN groupadd -g 1001 worca-share \
 # entrypoint's "not writable" branch only fires for a volume made by hand.
 
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/worca-entrypoint
-COPY --chmod=755 docker/egress-proxy.mjs /usr/local/lib/worca-egress-proxy.mjs
 
 # HOME is pinned: a uid with no passwd entry (a Linux host user's id passed
 # through `user:`) would otherwise get HOME=/ and Claude Code could not write

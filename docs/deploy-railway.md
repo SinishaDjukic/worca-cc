@@ -354,4 +354,8 @@ registers it (remove it in Projects afterwards).
   credentials.
 - The deployment has one MCP registry and one MCP secrets file in its volume
   ([mcp-servers.md](mcp-servers.md)): every signed-in person's runs and chats use the same sets.
+- Railway has no internal-only network, so an outbound network policy (`WORCA_EGRESS_MODE`, set by
+  a hosting platform) is enforced by a proxy inside the worca container: tools that ignore
+  `HTTPS_PROXY` or open raw sockets are not held to it
+  ([remote-access.md → Outbound network policy](remote-access.md#outbound-network-policy-hosting-platform)).
 - One replica only; deploys pause running agents (see [Operate your deployment](#operate-your-deployment)).
