@@ -202,7 +202,7 @@ import {
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
@@ -2239,7 +2239,7 @@ const startRunHandler = async (req, res) => {
             mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
       }
@@ -2367,7 +2367,7 @@ const startRunHandler = async (req, res) => {
             claude: { mock, ...runEngine },
           });
           const refusal = await probe.engineStartRefusal();
-          if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
         }
         return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
       }
@@ -2431,7 +2431,7 @@ const startRunHandler = async (req, res) => {
     // arrive as the run's error event.
     if (runEngine.engine) {
       const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -3114,7 +3114,7 @@ app.post('/api/schedules/resume', async (req, res) => {
         claude: { permissionMode: 'acceptEdits', mock: serverMockMode(), engine }, resume: saved,
       });
       const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
-      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine });
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
     }
     const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}`;
     const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
@@ -4237,7 +4237,8 @@ app.post('/api/resume', async (req, res) => {
     });
     res.json(out);
   } catch (err) {
-    if (err instanceof ResumeError) return res.status(err.status).json(err.body);
+    // The engine gate's refusal is the run's CLI wording; this answer is the UI's.
+    if (err instanceof ResumeError) return res.status(err.status).json(err.body.code === 'engine-refused' ? { ...err.body, error: engineRefusalFor(err.body.error, 'ui') } : err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });

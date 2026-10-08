@@ -94,6 +94,8 @@ test('engine: codex on a set with permission rules is refused at once, with the 
   assert.equal(data.code, 'engine-refused');
   assert.equal(data.overridable, true);
   assert.match(data.error, /^engine codex: guardrail set "normal" has permission rules this engine cannot enforce/);
+  assert.match(data.error, /tick Allow unguarded/, 'the UI\'s consent, not the CLI flag');
+  assert.doesNotMatch(data.error, /--allow-unguarded-engine/);
   assert.equal(runs.size, before, 'no run entry is left behind');
 });
 

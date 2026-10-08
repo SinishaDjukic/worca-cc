@@ -159,6 +159,7 @@ test('engine: a scheduled resume on another engine stores it, fires on it, and a
   assert.equal(refused.status, 409, 'checked when scheduled, not only when it fires');
   const body = await refused.json();
   assert.equal(body.code, 'engine-refused');
+  assert.doesNotMatch(body.error, /--allow-unguarded-engine/, 'worded for the UI');
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs WHERE json_extract(request, \'$.internal.resumePipelineId\') = ?').get(guarded.id).n, 0);
 });
 

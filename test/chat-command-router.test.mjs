@@ -556,8 +556,9 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
   assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude, codex or cursor/);
   assert.equal(got.length, n, 'nothing resumed');
 
-  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce' };
+  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them' };
   const refused = text(await send('/resume *3333 codex'));
   assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
-  assert.match(refused, /resume it from the worca-cc UI and tick Allow unguarded/);
+  assert.match(refused, /or resume it from the worca-cc UI with Allow unguarded to run it without them/, 'the consent is the UI\'s, never a chat word');
+  assert.doesNotMatch(refused, /--allow-unguarded-engine/, 'no CLI flag in chat');
 });

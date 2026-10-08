@@ -57,6 +57,16 @@ export function engineSwitchNote(engine) {
   return `Starts the paused step fresh; the model falls back to ${engineLabel(engine)}'s default.`;
 }
 
+/** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("pass
+ *  --allow-unguarded-engine"); the UI names its checkbox, and chat sends the person to the UI (it never
+ *  sends the consent). Any other text is returned as is. */
+export function engineRefusalFor(text, surface) {
+  const s = String(text ?? '');
+  if (surface === 'ui') return s.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
+  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it from the worca-cc UI with Allow unguarded');
+  return s;
+}
+
 /** "Codex or Cursor" / "Claude, Codex or Cursor"; `label` maps each name (default engineLabel). */
 export function engineList(engines, label = engineLabel) {
   const l = engines.map(label);
