@@ -70,6 +70,14 @@ test('normalizer (capture): an MCP tool is mcp__server__tool; text deltas join i
   assert.deepEqual(events.filter((e) => e.type === 'text').map((t) => t.text), ['`PING (token=s3cr3t)`']);
 });
 
+test('normalizer: a relative file path is made absolute against the spawn\'s cwd (Gemini passes cwd-relative paths)', () => {
+  const n = createGeminiNormalizer({ cwd: '/w/run' });
+  const [e] = n.push({ type: 'tool_use', tool_name: 'write_file', tool_id: 't1', parameters: { file_path: 'src/b.txt', content: 'x' } });
+  assert.deepEqual(e.calls[0].input, { file_path: '/w/run/src/b.txt', content: 'x' });
+  const [d] = n.push({ type: 'tool_use', tool_name: 'list_directory', tool_id: 't2', parameters: { dir_path: '/abs' } });
+  assert.deepEqual(d.calls[0].input, { dir_path: '/abs' });
+});
+
 test('normalizer: a server name with an underscore is matched whole when worca named it', () => {
   const n = createGeminiNormalizer({ mcpNames: ['github_work'] });
   const [e] = n.push({ type: 'tool_use', tool_name: 'mcp_github_work_get_issue', tool_id: 't1', parameters: { n: 1 } });
@@ -237,6 +245,16 @@ test('spawn: folders worca hands the agent are workspace folders; one inside Wor
   assert.equal(fake.args()[fake.args().indexOf('--include-directories') + 1], out);
   const inHome = join(worcaHome(), 'plugins');
   await assert.rejects(runGeminiProcess({ cwd: tmp(), bin: fakeGemini(tmp(), 'ok').bin, prompt: 'go', writableDirs: [inHome] }), /inside Worca's home/);
+});
+
+test('spawn: a folder in the run store brings its project\'s store folder, so plans and earlier outputs are readable', POSIX, async () => {
+  const fake = fakeGemini(tmp(), 'ok');
+  const project = join(worcaHome(), 'store', 'proj-1a2b3c4d');
+  const memory = join(project, 'pipelines', 'run-1', 'memory');
+  mkdirSync(memory, { recursive: true });
+  await runGeminiProcess({ cwd: tmp(), bin: fake.bin, prompt: 'go', addDirs: [memory] });
+  const a = fake.args();
+  assert.deepEqual(a.filter((x, i) => a[i - 1] === '--include-directories'), [memory, project]);
 });
 
 test('read-only and Ask spawns refuse', async () => {

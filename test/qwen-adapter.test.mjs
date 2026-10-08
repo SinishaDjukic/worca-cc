@@ -53,6 +53,12 @@ test('normalizer (capture): the Claude normalizer reads Qwen\'s frames; tools in
   assert.deepEqual(final, { text: 'DONE', error: null });
 });
 
+test('normalizer: a relative file path is made absolute against the spawn\'s cwd', () => {
+  const n = createQwenNormalizer({ cwd: '/w/run' });
+  const out = n.push({ type: 'assistant', session_id: 's', parent_tool_use_id: null, message: { id: 'm', role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'read_file', input: { file_path: 'a.txt' } }] } });
+  assert.deepEqual(out.find((e) => e.type === 'tool').calls[0].input, { file_path: '/w/run/a.txt' });
+});
+
 test('normalizer (capture): a denied call is an error result naming the rule', () => {
   const { events } = replay('denied.jsonl');
   const denied = events.filter((e) => e.type === 'toolResult').flatMap((e) => e.results).filter((r) => /denied by permission rules/.test(r.text));

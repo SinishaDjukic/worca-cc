@@ -30,7 +30,7 @@ import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
 import {
   claudeToolName, commandRuleBody, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
-  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT,
+  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT, absolutePaths,
 } from './gemini-family.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
@@ -128,13 +128,13 @@ export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, 
 // ── stream ───────────────────────────────────────────────────────────────────
 
 /** One Qwen tool_use block in Claude's names; a `tool_call` meta call becomes the call it makes. */
-function claudeBlock(b, mcpNames) {
+function claudeBlock(b, mcpNames, cwd) {
   if (b?.type !== 'tool_use') return b;
   if (b.name === 'tool_call' && typeof b.input?.name === 'string') {
     const args = b.input.arguments && typeof b.input.arguments === 'object' ? b.input.arguments : {};
-    return { ...b, name: claudeToolName(b.input.name, mcpNames), input: args };
+    return { ...b, name: claudeToolName(b.input.name, mcpNames), input: absolutePaths(args, cwd) };
   }
-  return { ...b, name: claudeToolName(b.name, mcpNames) };
+  return { ...b, name: claudeToolName(b.name, mcpNames), input: absolutePaths(b.input, cwd) };
 }
 
 /**
@@ -142,7 +142,7 @@ function claudeBlock(b, mcpNames) {
  * session id engine-qualified, tool names in Claude's vocabulary). push(line|object) returns the events for that
  * line; finish() returns { text, error }. A failed result emits no result event (the runner rejects instead).
  */
-export function createQwenNormalizer({ mcpNames = [] } = {}) {
+export function createQwenNormalizer({ mcpNames = [], cwd = null } = {}) {
   const claude = createClaudeNormalizer();
   const texts = [];
   let failed = null; let resultText = null;
@@ -156,7 +156,7 @@ export function createQwenNormalizer({ mcpNames = [] } = {}) {
     if (!evt || typeof evt !== 'object' || typeof evt.type !== 'string') return [];
     const raw = { ...evt };
     if (typeof raw.session_id === 'string' && raw.session_id) raw.session_id = QWEN_SESSION_PREFIX + raw.session_id;
-    if (raw.type === 'assistant' && Array.isArray(raw.message?.content)) raw.message = { ...raw.message, content: raw.message.content.map((b) => claudeBlock(b, mcpNames)) };
+    if (raw.type === 'assistant' && Array.isArray(raw.message?.content)) raw.message = { ...raw.message, content: raw.message.content.map((b) => claudeBlock(b, mcpNames, cwd)) };
     const out = claude({ type: raw.type, raw });
     for (const e of out) if (e.type === 'text' && e.from === 'assistant' && e.parentId === null) texts.push(e.text);
     if (raw.type !== 'result') return out;

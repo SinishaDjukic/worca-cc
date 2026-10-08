@@ -642,7 +642,7 @@ async function attachAndDrive(orch, flags, start) {
         if (ev.kind !== 'task') e.costUsd = mine.reduce((a, s) => a + (s.costUsd || 0), 0);
       }
     }
-    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c });
+    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
     if (line) out(line);
   });
 

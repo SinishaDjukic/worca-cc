@@ -36,7 +36,7 @@ import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
 import {
   claudeToolName, commandRuleBody, mcpRuleParts, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
-  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER,
+  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths,
 } from './gemini-family.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
@@ -166,7 +166,7 @@ function usageOf(stats) {
  * (a message ends at the next tool call or the result). `error` is set by a failed result, or by the last `error`
  * event when no result arrived.
  */
-export function createGeminiNormalizer({ model, mcpNames = [] } = {}) {
+export function createGeminiNormalizer({ model, mcpNames = [], cwd = null } = {}) {
   const texts = [];
   let buf = [];
   let failed = null; let lastError = null; let resulted = false;
@@ -194,7 +194,7 @@ export function createGeminiNormalizer({ model, mcpNames = [] } = {}) {
       case 'tool_use': {
         const id = str(evt.tool_id);
         if (!id) return flush();
-        const input = evt.parameters && typeof evt.parameters === 'object' ? evt.parameters : {};
+        const input = absolutePaths(evt.parameters && typeof evt.parameters === 'object' ? evt.parameters : {}, cwd);
         return [...flush(), { type: 'tool', parentId: null, calls: [{ name: claudeToolName(evt.tool_name, mcpNames), input, toolUseId: id }] }];
       }
       case 'tool_result': {

@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
@@ -56,6 +56,20 @@ export function claudeToolName(name, mcpNames = []) {
     return n;
   }
   return TOOL_NAMES[n] || n;
+}
+
+/** The path arguments of the family's file tools. */
+const PATH_KEYS = Object.freeze(['file_path', 'dir_path', 'path', 'absolute_path']);
+/** A tool input with its relative path arguments made absolute against `cwd`: both CLIs may pass cwd-relative paths,
+ *  and worca reads a tool row's path as absolute (Claude Code always passes one). No cwd: the input as given. */
+export function absolutePaths(input, cwd) {
+  if (!cwd || !input || typeof input !== 'object' || Array.isArray(input)) return input;
+  let out = input;
+  for (const k of PATH_KEYS) {
+    const v = input[k];
+    if (typeof v === 'string' && v && !isAbsolute(v) && !v.startsWith('~')) out = { ...out, [k]: resolve(cwd, v) };
+  }
+  return out;
 }
 
 // ── rules ────────────────────────────────────────────────────────────────────
@@ -179,6 +193,19 @@ export function familyPreflight({ bin, env = process.env, timeoutMs = 10000, lab
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
+/** The store project folders (`<worca home>/store/<project>`) that hold any of `dirs`. */
+export function storeProjectDirs(dirs, home = worcaHome()) {
+  const store = resolve(home, 'store');
+  const out = [];
+  for (const d of dirs) {
+    const rel = relative(store, resolve(d));
+    if (!rel || rel.startsWith('..') || isAbsolute(rel)) continue;
+    const p = join(store, rel.split(sep)[0]);
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
 /** One argv string's limit: Linux caps a single argument at 128 KiB (MAX_ARG_STRLEN); Windows a whole command line at 32 K. */
 export const FAMILY_ARGV_LIMIT = process.platform === 'win32' ? 8000 : 100_000;
 
@@ -226,6 +253,10 @@ export async function runFamilyProcess(spec, {
   const inHome = writableRootsInWorcaHome({ cwd, roots: includeDirs });
   if (inHome.length) throw new Error(`${bin}: refusing to start ${label} — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; ${label} cannot hold the rules that protect them`);
 
+  // The agent's prompt names files in its project's store folder (plans, earlier steps' outputs) that Claude reads
+  // wherever they are; these CLIs' file tools read only the workspace, so a folder in the store brings its project's.
+  for (const p of storeProjectDirs(includeDirs)) if (!includeDirs.includes(p)) includeDirs.push(p);
+
   const servers = readMcpServers(mcpConfigPath, bin);
   const guardOn = hostGuardEnabled();
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
@@ -250,7 +281,7 @@ export async function runFamilyProcess(spec, {
     const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
 
     const attempt = async (id, resume) => {
-      const normalizer = spec.createNormalizer({ model, mcpNames });
+      const normalizer = spec.createNormalizer({ model, mcpNames, cwd });
       const ctrl = new AbortController();
       let toolCalls = 0; let capped = false; let fatal = null; let sawOutput = false;
       const spawnSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
