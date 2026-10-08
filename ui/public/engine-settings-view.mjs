@@ -17,7 +17,7 @@ export function renderEngineSection(host, options) {
   // One card per engine that owns catalog models: Copilot owns none, so it has no step or helper slots to set.
   for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;
-    const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge amber beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     const noteText = [options.notes?.[engine], engine === 'cursor' ? CURSOR_HELPERS_NOTE : null].filter(Boolean).join(' ');

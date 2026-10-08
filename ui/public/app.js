@@ -3924,7 +3924,7 @@ if (el.engineSeg) {
   for (const b of el.engineSeg.querySelectorAll('button[data-engine]')) {
     if (!isBetaEngine(b.dataset.engine)) continue;
     const beta = document.createElement('span');
-    beta.className = 'badge amber beta-badge';
+    beta.className = 'badge violet beta-badge';
     beta.textContent = 'Beta';
     b.append(beta);
   }
