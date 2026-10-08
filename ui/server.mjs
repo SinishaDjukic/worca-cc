@@ -100,7 +100,7 @@ import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
-import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf } from '../src/core/ask/models.mjs';
+import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
@@ -10375,14 +10375,12 @@ function askChatEngine(threadId, thread) {
 }
 
 /** An event turn's model: the thread's own pick, else the default of the engine the chat is locked to (never the
- *  other engine's), else the user's Ask default. null when none is available. */
+ *  other engine's), else the user's Ask default. null when none is available. A fallback is said in the chat. */
 async function askEventPick(threadId, thread) {
-  const lockedEngine = askChatEngine(threadId, thread);
-  const mv = await validateModelEffort(thread.model, thread.effort, { engine: lockedEngine });
-  if (mv.ok) return mv;
-  const cat = await askCatalog({ withSecrets: false });
-  const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
-  return d ? { ok: true, ...d } : null;
+  const mv = await askEventPickOf(thread, askChatEngine(threadId, thread));
+  const notice = mv && eventFallbackNotice(mv);
+  if (notice) postAskSystemNotice(threadId, notice);
+  return mv;
 }
 
 /**
@@ -10437,7 +10435,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
     // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
     // the selector on reopen and what the MCP child reads for tool defaulting.
-    askUpdateThread(id, { context: ctx, model, effort, ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
+    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
+    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
     // untitled (the header reads "Ask Worca") until the D13 background title
     // announces itself. titleWasAuto gates that call: a title given at THREAD
@@ -10865,12 +10864,8 @@ async function startTerminalEventTurn(threadId, block) {
   const id = `${block.sessionId}:${block.seq}`;
   const text = terminalEventPrompt(block);
   const notice = terminalNoticeText(block);
-  let mv = await validateModelEffort(thread.model, thread.effort);
-  if (!mv.ok) {
-    const d = (await askCatalog({ withSecrets: false })).default;
-    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-    mv = { ok: true, ...d };
-  }
+  const mv = await askEventPick(threadId, thread);
+  if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = async () => {
     if (askCommands.seen(id)) return { ok: false, skipped: true };
     return startAskTurn({ threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
