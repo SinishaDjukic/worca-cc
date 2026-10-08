@@ -149,7 +149,8 @@ export function renderMcpRunsPop(preview, optOut, { doc = globalThis.document, p
       const v = mcpSkipView(s);
       row(v.name, null, v.why, ` is-skipped${v.problem ? ' is-problem' : ''}`);
     }
-    for (const s of skills) row(s.qualifiedName, box(!off.has(skillKeyOf(s)), [skillKeyOf(s)], 'row'), '', ' is-skill');
+    // On another engine the name its `.agents/skills` would give it (`agentName`), else the one Claude's agents call.
+    for (const s of skills) row(s.agentName || s.qualifiedName, box(!off.has(skillKeyOf(s)), [skillKeyOf(s)], 'row'), '', ' is-skill');
     for (const s of skippedSkills) {
       const v = skillSkipView(s);
       row(v.name, null, v.why, ` is-skill is-skipped${v.problem ? ' is-problem' : ''}`);

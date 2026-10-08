@@ -2518,6 +2518,7 @@ app.post('/api/run', startRunHandler);
 // a target's set skills. Namespaced imports (ES imports are hoisted), kept beside their only users so no
 // other region's imports can collide with these names.
 import * as runSkillResolve from '../src/core/skills-registry/resolve.mjs';
+import { previewSetSkillNames } from '../src/core/run-context.mjs';
 import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
@@ -2539,15 +2540,25 @@ async function skillTeamFor(target) {
   return t?.requiredSkills?.length ? { home: t.home, required: t.requiredSkills } : null;
 }
 
-/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. The layer
- *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag
- *  support is probed at run start). */
-async function skillRunPreview(target, { optOut = [] } = {}) {
+/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. On Claude the layer
+ *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag support is
+ *  probed at run start). Another engine mounts them in `.agents/skills`: `agentNames` maps each one's
+ *  qualifiedName to the name it would get there. */
+async function skillRunPreview(target, { optOut = [], engine = 'claude' } = {}) {
   const team = await skillTeamFor(target);
   const result = await runSkillResolve.resolveSkillRegistry({
     surface: 'pipeline', targets: [target], teams: { [target.kind === 'project' ? target.key : `ws:${target.id}`]: team },
     optOut, skillCap: runSkillResolve.SKILL_CAP.pipeline,
   });
+  if (engine !== 'claude') {
+    const keys = new Set(target.kind === 'project' ? [target.key] : target.members.map((m) => m.key));
+    const dirs = (await listProjects()).filter((p) => keys.has(p.key)).map((p) => p.path);
+    const root = getProjectsRoot();
+    if (root && path.resolve(root) !== path.resolve(os.homedir())) dirs.push(root);
+    const agentNames = await previewSetSkillNames({ dirs, homeDir: os.homedir(),
+      setSkills: result.mounted.map((m) => ({ key: m.qualifiedName, name: m.name, prefix: `${m.setSlug || m.pluginName}-` })) });
+    return { result, team, blocked: null, agentNames };
+  }
   const blocked = result.mounted.length && runSkillHost.skillHostFacts().sideloadDisabled ? 'sideload-disabled' : null;
   return { result, team, blocked };
 }
@@ -2605,6 +2616,7 @@ app.post('/api/mcp/preview', async (req, res) => {
   if (b.models != null && (!Array.isArray(b.models) || b.models.length > 100 || !b.models.every((m) => typeof m === 'string'))) {
     return badRequest(res, 'models must be an array of model ids');
   }
+  if (b.engine != null && !ENGINE_NAMES.includes(b.engine)) return badRequest(res, `engine must be one of ${ENGINE_NAMES.join(', ')}`);
   try {
     const target = await mcpTargetOf(b.target);
     if (target === undefined) return badRequest(res, 'target must be { projectKey } or { workspaceId }');
@@ -2613,7 +2625,7 @@ app.post('/api/mcp/preview', async (req, res) => {
     const why = (sk) => skipReasonText(sk, catalog);
     // Skills registry §4.5: the set skills beside the servers. A skills fault leaves `skills` null and the
     // servers' answer intact (the run resolves again at start).
-    const sr = await skillRunPreview(target, { optOut: opt.list }).catch(() => null);
+    const sr = await skillRunPreview(target, { optOut: opt.list, engine: b.engine || 'claude' }).catch(() => null);
     const count = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
     const skillSets = new Map((sr?.result.sets || []).map((s) => [s.id, s]));
     // Both halves collect the target's sets with one rule (P2 collectSets; the Team input carries the required skills
@@ -2634,7 +2646,8 @@ app.post('/api/mcp/preview', async (req, res) => {
           ? runSkillPolicy.skillDeviations(sr.team ? { 'skills.required': { value: sr.team.required } } : {}, sr.result, skillWhy) : []),
       ],
       skills: sr && {
-        mounted: sr.result.mounted.map(({ dir, ...m }) => m),   // never a host path to the browser
+        // never a host path to the browser; on another engine, the name `.agents/skills` would give it
+        mounted: sr.result.mounted.map(({ dir, ...m }) => (sr.agentNames ? { ...m, agentName: sr.agentNames[m.qualifiedName] } : m)),
         plugins: sr.result.plugins,
         skipped: sr.result.skipped.map((s) => ({ ...s, message: runSkillTexts.skillSkipMessage(s), why: skillWhy(s) })),
         started: sr.blocked ? 0 : sr.result.mounted.length,

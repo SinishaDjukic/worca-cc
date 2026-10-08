@@ -408,6 +408,31 @@ async function skillCandidates(dir, onError) {
     .map((name) => ({ name, source: join(dir, '.claude', 'skills', name) }));
 }
 
+/** The name a skill gets in a mount where `taken` names are in use: its own, else `<prefix><name>`, then `-2`, `-3`… */
+function freeSkillName(taken, name, prefix) {
+  if (!taken.has(name)) return name;
+  const base = `${prefix}${name}`;
+  let effective = base;
+  for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
+  return effective;
+}
+
+/**
+ * The names another engine's set skills would get in its `.agents/skills` (assembleSkills' rule), for a preview
+ * before the run exists: after the skills of `dirs` (each a member or the root layer, its `.claude/skills`) and the
+ * user's own, each set skill in order. Names the checkout tracks and the skills a workflow requires are known only
+ * at run start, so a run can still rename one more.
+ * @param {{dirs?: string[], homeDir?: string|null, setSkills?: Array<{key:string, name:string, prefix:string}>}} a
+ * @returns {Promise<Record<string,string>>} each set skill's key → its name
+ */
+export async function previewSetSkillNames({ dirs = [], homeDir = null, setSkills = [] } = {}) {
+  const taken = new Set();
+  for (const d of [...dirs, homeDir].filter(Boolean)) for (const c of await skillCandidates(d)) taken.add(c.name);
+  const out = {};
+  for (const s of setSkills) taken.add((out[s.key] = freeSkillName(taken, s.name, s.prefix)));
+  return out;
+}
+
 /**
  * Mount every skill entry into ONE target `.claude/skills` dir (§5.6).
  *
@@ -504,12 +529,7 @@ export async function assembleSkills({
       );
       continue;
     }
-    let effective = cand.name;
-    if (taken.has(effective)) {
-      const base = `${cand.prefix}${cand.name}`;
-      effective = base;
-      for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
-    }
+    const effective = freeSkillName(taken, cand.name, cand.prefix);
     const renamed = effective !== cand.name;
     const dest = join(target, effective);
     // Symlink mode cannot carry a rename: the frontmatter rewrite would land in the

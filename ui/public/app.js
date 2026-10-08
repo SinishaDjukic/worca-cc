@@ -3877,8 +3877,12 @@ function setRunEngine(engine) {
   }
   paintEngineHints();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine.
-  if (prev !== state.engine) void renderWorkflowConfig(state.workflowId);
+  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
+  // picker too: another engine names set skills as its .agents/skills mount would.
+  if (prev !== state.engine) {
+    void renderWorkflowConfig(state.workflowId);
+    if (currentView() === 'new') schedulePolicyLine();
+  }
 }
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
@@ -18169,7 +18173,7 @@ async function paintMcpRuns() {
     try {
       const r = await fetch('/api/mcp/preview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels() }),
+        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels(), engine: state.engine }),
       });
       data = r.ok ? await safeJson(r) : null;
     } catch { data = null; }
