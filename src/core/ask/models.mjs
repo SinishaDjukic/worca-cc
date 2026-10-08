@@ -8,7 +8,7 @@ import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSe
 import { ASK_LIMITS } from './limits.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
-import { effortsForEngine } from '../model-env.mjs';
+import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
 
@@ -102,9 +102,12 @@ export function createAskModels({
       // project-selection design first. Everything else — built-in, global,
       // plugin — is offered.
       if (m.custom === 'project') continue;
-      // D12: both engines are offered; the panel groups them and locks a chat to its own. Codex rows only when this
+      // D12: both Ask engines are offered; the panel groups them and locks a chat to its own. Codex rows only when this
       // codex can be locked down (plans/ask-on-codex-spike.md (a)) — otherwise a Codex chat could never start.
-      const engine = m.engine === 'codex' ? 'codex' : 'claude';
+      // D5: only engines an Ask chat can be locked down on (model-env.mjs ASK_ENGINES). A Cursor row stays out, so a
+      // hand-made pick of one is an unknown model.
+      const engine = m.engine || 'claude';
+      if (!ASK_ENGINES.includes(engine)) continue;
       if (engine === 'codex' && !codexAvailable()) continue;
       const custom = m.custom === 'global' || m.custom === 'plugin' ? m.custom : false;
       const entry = {

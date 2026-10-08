@@ -93,7 +93,7 @@ test('a Codex custom model takes Codex efforts and refuses env, a non-Responses 
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'x', openrouter: { models: ['a/b'] } } }), /openrouter is not available on a codex model/);
   await assert.rejects(() => addGlobalModel({ id: 'claude-opus-5-5', engine: 'codex' }), /is a Claude model id/);
   await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is a Codex built-in/);
-  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex/);
+  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| cursor/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { engine: 'claude' }), /engine cannot change/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { env: { X: '1' } }), /a codex model takes no env/);
   assert.deepEqual((await updateGlobalModel('cx-tune', { efforts: ['minimal'] })).efforts, ['minimal']);
@@ -131,4 +131,19 @@ test('a hand-edited Codex entry with env or upstream reads without them, loudly'
 test('a Claude entry is stored and read exactly as before', async () => {
   const m = await addGlobalModel({ id: 'glm-4.7', efforts: ['medium'] });
   assert.deepEqual(m, { id: 'glm-4.7', label: 'glm-4.7', efforts: ['medium'] });
+});
+
+test('a custom Cursor model: no efforts, no env, no upstream, never a built-in id; the catalog row decides the owner', async () => {
+  const m = await addGlobalModel({ id: 'sonnet-4.5', engine: 'cursor' });
+  assert.deepEqual(m, { id: 'sonnet-4.5', label: 'sonnet-4.5', efforts: [], engine: 'cursor' });
+  assert.equal(engineOfModel('sonnet-4.5'), 'cursor');
+  assert.equal((await listModels('')).find((r) => r.id === 'sonnet-4.5').engine, 'cursor');
+  await assert.rejects(() => addGlobalModel({ id: 'cu-1', engine: 'cursor', env: { X: '1' } }), /a cursor model takes no env/);
+  await assert.rejects(() => addGlobalModel({ id: 'cu-2', engine: 'cursor', upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
+  await assert.rejects(() => addGlobalModel({ id: 'cu-3', engine: 'cursor', efforts: ['high'] }), /Cursor takes no effort/);
+  for (const id of ['claude-sonnet-4-6', 'claude-sonnet-4-6[1m]', 'gpt-5.6-sol']) {
+    await assert.rejects(() => addGlobalModel({ id, engine: 'cursor' }), /is a built-in model id/, id);
+  }
+  await assert.rejects(() => updateGlobalModel('sonnet-4.5', { env: { X: '1' } }), /a cursor model takes no env/);
+  assert.equal((await listModels('')).some((r) => r.engine === 'cursor' && r.builtin), false, 'no Cursor built-ins');
 });

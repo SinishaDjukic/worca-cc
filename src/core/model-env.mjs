@@ -17,11 +17,22 @@
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-export const MODEL_ENGINES = ['claude', 'codex'];
+/** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
+export const CURSOR_EFFORTS = [];
+export const MODEL_ENGINES = ['claude', 'codex', 'cursor'];
 /** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
  *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
-export const RUN_ENGINES = [...MODEL_ENGINES, 'copilot'];
-export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : EFFORTS; }
+export const RUN_ENGINES = ['claude', 'codex', 'copilot', 'cursor'];
+/** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
+export const HELPER_ENGINES = ['claude', 'codex'];
+/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
+ *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+ *  the workspace scan are agent nodes of the run, not helper jobs. */
+export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && engine !== 'cursor' ? engine : 'claude'; }
+/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex only while
+ *  CODEX_ASK_LOCKDOWN is set; ask/models.mjs checks that). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+export const ASK_ENGINES = ['claude', 'codex'];
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models

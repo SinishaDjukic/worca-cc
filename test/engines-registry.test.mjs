@@ -3,6 +3,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { getEngine, listEngines, CAPABILITY_KEYS } from '../src/core/engines/index.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
+import { CURSOR_RULE_TERMS } from '../src/core/engines/cursor.mjs';
+import { CODEX_COMMAND_RULE_REACH } from '../src/core/engines/codex.mjs';
 
 afterEach(() => { delete process.env.WORCA_MOCK; });
 
@@ -13,22 +15,29 @@ test('claude is the default engine', () => {
 });
 
 test('an unknown engine is a hard error, even in mock mode', () => {
-  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, copilot, mock\)/);
+  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, copilot, cursor, mock\)/);
   assert.throws(() => getEngine('codx', { mock: true }), /unknown engine "codx"/);
 });
 
 test('mock:true resolves any known engine to the mock adapter', () => {
-  assert.equal(getEngine('claude', { mock: true }).name, 'mock');
-  assert.equal(getEngine('codex', { mock: true }).name, 'mock');
+  for (const n of ['claude', 'codex', 'cursor']) assert.equal(getEngine(n, { mock: true }).name, 'mock');
 });
 
 test('every engine is a full adapter', () => {
-  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'copilot', 'mock']);
+  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'copilot', 'cursor', 'mock']);
   for (const engine of listEngines()) {
     assert.deepEqual(Object.keys(engine.capabilities).sort(), [...CAPABILITY_KEYS].sort(), engine.name);
     assert.equal(typeof engine.run, 'function');
     assert.equal(typeof engine.classifyError, 'function');
   }
+});
+
+test('partial-rule terms: Cursor names its own, Codex keeps its command-rule wording, Copilot adds write rules', () => {
+  assert.equal(getEngine('cursor').ruleKind, CURSOR_RULE_TERMS.kind);
+  assert.equal(getEngine('cursor').ruleReach, CURSOR_RULE_TERMS.reach);
+  assert.equal(getEngine('codex').ruleKind, 'command rules');
+  assert.equal(getEngine('codex').ruleReach, CODEX_COMMAND_RULE_REACH);
+  assert.equal(getEngine('copilot').ruleKind, 'command and write rules');
 });
 
 test('the capability keys are the thirteen the design lists', () => {

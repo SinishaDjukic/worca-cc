@@ -2172,6 +2172,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
     limitEngine: row.limit_engine ?? null,
+    runEngine: row.run_engine || 'claude',
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     survived,
@@ -2247,7 +2248,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
+           ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2284,7 +2286,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
+           ${RUN_ENGINE_SQL} AS run_engine
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2585,6 +2588,10 @@ function buildAuditMarkdown(row) {
 
 /** The engine a run ran on (D8): `outcome.runEngine` (written for a non-Claude run), else the
  *  resume point's `claude.engine` (a run from before the field), else 'claude'. */
+/** runEngineOfRow as a SELECT expression (NULL means 'claude'): the History list reads no outcome or resume point. */
+const RUN_ENGINE_SQL = `COALESCE(
+             json_extract(CASE WHEN json_valid(outcome) THEN outcome END, '$.runEngine'),
+             json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.claude.engine'))`;
 export function runEngineOfRow(row) {
   if (!row) return 'claude';
   const outcome = j(row.outcome, null);

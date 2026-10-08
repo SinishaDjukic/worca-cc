@@ -153,3 +153,16 @@ test('createRunProgressCard: head, stats, chips, graph, question banner, error r
     } },
   ]);
 });
+
+test('a Cursor run\'s card reads cost unknown (REST snapshot and live snapshot), never $0.00', () => {
+  const snap = snapshotFromState(STATE({ runEngine: 'cursor' }), { now: 0 });
+  assert.equal(snap.costUsd, null);
+  assert.equal(snapshotFromState(STATE({ runEngine: 'codex' }), { now: 0 }).costUsd, 0.42);
+  const doc = dom();
+  const card = createRunProgressCard({ doc, ident: IDENT, onOpen: () => {} });
+  doc.body.appendChild(card.el);
+  card.update({ ...snap, source: 'live', runId: 'run-uuid-1' }, 0);
+  assert.equal(card.el.querySelector('.ask-rc-cost').textContent, 'cost unknown');
+  card.update({ ...snapshotFromState(STATE(), { now: 0 }), source: 'live', runId: 'run-uuid-1', costUsd: null }, 0);
+  assert.equal(card.el.querySelector('.ask-rc-cost').textContent, 'cost unknown', 'a live snapshot with no cost too');
+});

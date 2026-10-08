@@ -184,3 +184,21 @@ test('catalog models: a Codex entry keeps its engine, Codex efforts and a Respon
   assert.ok(warnings.some((w) => w.includes('acme-codex-literal') && w.includes('${VAR} reference')), warnings.join('\n'));
   assert.ok(warnings.some((w) => w.includes('acme-odd') && w.includes('engine')), warnings.join('\n'));
 });
+
+test('catalog models: a Cursor entry keeps its engine with no efforts; env or an upstream drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'acme-cursor', engine: 'cursor', efforts: ['high'] },
+      { id: 'acme-cursor-env', engine: 'cursor', env: { X: 'y' } },
+      { id: 'acme-cursor-up', engine: 'cursor', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen' } },
+      { id: 'acme-claude' },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [
+    { id: 'acme-cursor', label: 'acme-cursor', efforts: [], engine: 'cursor' },
+    { id: 'acme-claude', label: 'acme-claude', efforts: ['medium', 'high'] },
+  ]);
+  assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-cursor-up') && w.includes('a cursor model takes no upstream')), warnings.join('\n'));
+});

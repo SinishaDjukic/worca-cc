@@ -201,7 +201,9 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { engineLabel, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -3816,6 +3818,13 @@ app.get('/api/night-decisions', (req, res) => {
 // layer when a project is given), where each field comes from, what an empty field falls back to,
 // the live status (toggle, and hereSince: when "I'm here" was last said) and the raw layers the forms edit. Every surface renders its text from this
 // through src/shared/away-mode/describe.mjs.
+// The run engines and whether each is ready now (engines/readiness.mjs: the adapter's own preflight, cached 60 s).
+// ?recheck=1 forces a fresh check. Feeds the usage-limit "continue on…" offers and the engine cards.
+app.get('/api/engines', async (req, res) => {
+  try { res.json({ engines: await engineReadiness({ force: req.query.recheck === '1' }) }); }
+  catch (err) { res.status(500).json({ error: String(err?.message || err) }); }
+});
+
 app.get('/api/run-defaults', (req, res) => {
   const raw = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
   const projectDir = raw ? resolveProjectDir(raw) : null;
@@ -3823,7 +3832,7 @@ app.get('/api/run-defaults', (req, res) => {
   try {
     const result = resolveSetting('run.engine', projectDir ? { projectDir } : null);
     res.json({ engine: { value: result.value, source: result.source },
-      steps: { claude: stepSlotDefaults('claude', { projectDir }), codex: stepSlotDefaults('codex', { projectDir }) } });
+      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])) });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
 });
 
@@ -4591,14 +4600,14 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     key = projectKey(projectDir);
   }
   const force = req.query.force === '1' || req.query.force === 'true';
-  // The run's own engine (§4.3): only a Claude run's failure can be the Claude sign-in.
+  // The run's own engine (§4.3): only a failure on Claude can be the Claude sign-in (a Cursor run's overview runs on Claude).
   const runEngine = runEngineOfRow(lookupPipelineRow(key, id));
   try {
     const overview = await generateOverview(key, id, { force });
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    if (msg !== 'pipeline not found' && runEngine === 'claude' && await failedBecauseSignedOut({ message: msg })) {
+    if (msg !== 'pipeline not found' && helperEngineFor(runEngine) === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     const code = msg === 'pipeline not found' ? 404 : 500;
@@ -6899,7 +6908,7 @@ app.post('/api/pr/describe', async (req, res) => {
     if (life.signal.aborted) return;                 // the client is gone; nobody to answer
     const msg = err && err.message ? err.message : String(err);
     // Only a Claude run's failure can be the Claude sign-in (§4.3).
-    if (msg !== 'pipeline not found' && (state.runEngine || 'claude') === 'claude' && await failedBecauseSignedOut({ message: msg })) {
+    if (msg !== 'pipeline not found' && helperEngineFor(state.runEngine || 'claude') === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     res.status(msg === 'pipeline not found' ? 404 : 500).json({ error: msg });
@@ -8389,14 +8398,15 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * Settings › Models' utility pickers (title, Auto classifier, PR description, memory defragment,
- * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex id there is
+ * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
-function refuseCodexUtilityModel(key, value) {
+function refuseNonClaudeUtilityModel(key, value) {
   const id = typeof value === 'string' ? value.trim()
     : (value && typeof value === 'object' ? String(value.model ?? value.scanModel ?? '').trim() : '');
-  if (id && engineOfModel(id) === 'codex') throw new Error(`${key}: "${id}" is a Codex model — this setting picks a Claude model`);
+  const e = id ? engineOfModel(id) : null;   // null: no catalog knows the id — allowed, as today
+  if (e && e !== 'claude') throw new Error(`${key}: "${id}" is a ${engineLabel(e)} model — this setting picks a Claude model`);
 }
 
 app.post('/api/settings', async (req, res) => {
@@ -8457,7 +8467,7 @@ app.post('/api/settings', async (req, res) => {
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
-      if (has(key)) asSettingsField(key, () => refuseCodexUtilityModel(key, body[key]));
+      if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
     // so the 400 can name the field (#555). Every argument is exactly as before. With no budget
@@ -8834,6 +8844,7 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
+    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -9328,7 +9339,9 @@ app.get('/api/workflows/:id', async (req, res) => {
     // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
     // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
     if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
-      const engine = req.query.engine === 'codex' ? 'codex' : 'claude';
+      const engine = ENGINE_NAMES.includes(req.query.engine) ? req.query.engine : 'claude';
+      // An engine with no helper slots (Cursor): no stored pair, the defrag runs on that engine's default.
+      if (!HELPER_ENGINES.includes(engine)) return res.json(defragWorkflowView(wf, null));
       const dir = typeof req.query.projectDir === 'string' && req.query.projectDir ? resolveProjectDir(req.query.projectDir) : null;
       const stored = defragSlotPair(engine, dir);
       const models = stored.model ? (await listModels(dir || '')).filter((m) => (m.engine || 'claude') === engine) : [];
@@ -10399,6 +10412,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
+  // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
+  const modelEngine = model ? engineOfModel(model) : null;
+  if (modelEngine && !ASK_ENGINES.includes(modelEngine)) return { ok: false, status: 400, error: `Ask on ${engineLabel(modelEngine)} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {

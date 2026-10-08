@@ -10,6 +10,7 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, modelForEngine } from './config.mjs';
 import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { safeParseJson } from './protocol.mjs';
+import { helperEngineFor } from './model-env.mjs';
 import {
   lookupPipelineRow, runDirForRow, upsertSubAgent, readPipelineExtras, runEngineOfRow,
 } from './artifacts.mjs';
@@ -85,7 +86,7 @@ export async function generateOverview(key, id, { model, signal, force = false, 
   const row = lookupPipelineRow(key, id);
   if (!row) throw new Error('pipeline not found');
   const dir = await runDirForRow(row);
-  const engine = runEngineOfRow(row);
+  const engine = helperEngineFor(runEngineOfRow(row));   // a Cursor run's overview runs on Claude
   const onClaude = engine === 'claude';
   const slot = utilityModelFor(engine, 'overview', scopeForRunKey(key));
   // The caller's model, else the engine's overview slot; else none — a Claude overview keeps the

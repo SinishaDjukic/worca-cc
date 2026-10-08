@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { resolveSetting, resolveAll, settingIds, settingEntry } from '../src/core/settings-cascade.mjs';
+import { resolveSetting, resolveAll, settingIds, settingEntry, utilityModelFor } from '../src/core/settings-cascade.mjs';
 import { writeTeamPolicyPrefs } from '../src/core/config.mjs';
 import { getDb, prepare } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -166,4 +166,13 @@ test('a workspace run skips only the project layer: the team default still appli
   assert.deepEqual(pick(resolveSetting('models.claude.steps.planner', ws)), { value: { model: 'claude-opus-5-5', effort: 'high' }, source: 'team' }, 'the project pick is skipped, the team default is not');
   assert.deepEqual(pick(resolveSetting('askMaxTurns', ws)), { value: 12, source: 'team' });
   assert.equal(resolveSetting('askMaxTurns', ws).layers.project, undefined);
+});
+
+test('Cursor: step slots only, and no helper slot borrowed from Claude', () => {
+  const ids = settingIds({ roles: ['plan'] });
+  assert.deepEqual(ids.filter((id) => id.startsWith('models.cursor.')), ['models.cursor.steps.plan']);
+  writeUser({ titleModel: 'claude-haiku-4-5', utilityModels: { claude: { title: { model: 'claude-haiku-4-5' }, workspaceScan: { model: 'claude-haiku-4-5' } } } });
+  assert.deepEqual(utilityModelFor('cursor', 'workspaceScan'), { model: null, effort: null, source: 'default' });
+  assert.deepEqual(utilityModelFor('cursor', 'title'), { model: null, effort: null, source: 'default' });
+  writeUser({});
 });

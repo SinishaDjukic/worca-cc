@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, readlinkSync, existsSync, statSync } from 'n
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API, WORCA_MCP_API } from './plugin-api.mjs';
-import { EFFORTS, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem } from './model-env.mjs';
+import { EFFORTS, MODEL_ENGINES, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
@@ -478,11 +478,11 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       collectUnknown(m, KNOWN_MODEL, at, warnings);
       const id = str(m.id);
       if (!id) { errors.push(`${at}: "id" is required`); return; }
-      if (m.engine !== undefined && m.engine !== 'claude' && m.engine !== 'codex') {
-        errors.push(`${at} ("${id}"): "engine" must be "claude" or "codex"`);
+      if (m.engine !== undefined && !MODEL_ENGINES.includes(m.engine)) {
+        errors.push(`${at} ("${id}"): "engine" must be "claude", "codex" or "cursor"`);
         return;
       }
-      const engine = m.engine === 'codex' ? 'codex' : 'claude';
+      const engine = MODEL_ENGINES.includes(m.engine) ? m.engine : 'claude';
       const allowedEfforts = effortsForEngine(engine);
       const efforts = [];
       if (m.efforts !== undefined) {
@@ -548,6 +548,15 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): a codex model takes no env — codex ignores routing env`);
         return;
       }
+      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream, no effort.
+      if (engine === 'cursor' && Object.keys(env).length) {
+        errors.push(`${at} ("${id}"): a cursor model takes no env — cursor-agent connects with its own sign-in`);
+        return;
+      }
+      if (engine === 'cursor' && upstream) {
+        errors.push(`${at} ("${id}"): a cursor model takes no upstream — cursor-agent connects with its own sign-in`);
+        return;
+      }
       const codexWhy = engine === 'codex' ? codexUpstreamProblem(upstream) : null;
       if (codexWhy) {
         errors.push(`${at} ("${id}"): ${codexWhy}`);
@@ -555,7 +564,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       }
       models.push({
         id, label: str(m.label) || id,
-        ...(engine === 'codex' ? { engine } : {}),
+        ...(engine !== 'claude' ? { engine } : {}),
         efforts: efforts.length ? efforts : [...allowedEfforts],
         ...(Object.keys(env).length ? { env } : {}),
         ...(cost ? { cost } : {}),

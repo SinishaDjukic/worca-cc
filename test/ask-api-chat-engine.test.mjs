@@ -83,3 +83,12 @@ test('GET a thread: the payload names the engine the chat is locked to, null bef
   const fresh = store.createThread();
   assert.equal((await (await fetch(`${base}/api/ask/threads/${fresh.id}`)).json()).thread.engine, null);
 });
+
+test('a Cursor catalog model is an unknown model to Ask: refused before anything is stored', async () => {
+  await (await import('../src/core/settings.mjs')).addGlobalModel({ id: 'cursor-m', engine: 'cursor' });
+  const t = store.createThread();
+  const post = await send('POST', `/api/ask/threads/${t.id}/messages`, { text: 'hi', model: 'cursor-m', effort: 'high' });
+  assert.equal(post.status, 400);
+  assert.equal(post.body.error, 'unknown model "cursor-m"');
+  assert.equal(store.getThread(t.id).model ?? null, null);
+});

@@ -57,5 +57,5 @@ test('the user setting validates on write', () => {
   assert.equal(assertRunEngineInput('copilot'), 'copilot');
   assert.equal(assertRunEngineInput(null), null);
   assert.equal(assertRunEngineInput(''), null);
-  assert.throws(() => assertRunEngineInput('gpt'), /^Error: runEngine must be one of claude \| codex \| copilot$/);
+  assert.throws(() => assertRunEngineInput('gpt'), /^Error: runEngine must be one of claude \| codex \| copilot \| cursor$/);
 });

@@ -825,7 +825,12 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   const chat = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } }] });
   assert.ok(chat.errors.some((e) => /"cx".*Responses API only/.test(e)), JSON.stringify(chat.errors));
   const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
-  assert.ok(bad.errors.some((e) => /"engine" must be "claude" or "codex"/.test(e)), JSON.stringify(bad.errors));
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex" or "cursor"/.test(e)), JSON.stringify(bad.errors));
+  const cursor = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor' }] });
+  assert.equal(cursor.ok, true, JSON.stringify(cursor.errors));
+  assert.deepEqual(cursor.manifest.models[0], { id: 'cu', label: 'cu', engine: 'cursor', efforts: [] });
+  const cursorEnv = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor', env: { X: '1' } }] });
+  assert.ok(cursorEnv.errors.some((e) => /"cu".*a cursor model takes no env/.test(e)), JSON.stringify(cursorEnv.errors));
   const eff = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', efforts: ['max'] }] });
   assert.ok(eff.errors.some((e) => /unknown effort "max" — must be one of minimal \| low \| medium \| high/.test(e)), JSON.stringify(eff.errors));
 });

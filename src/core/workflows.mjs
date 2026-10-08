@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
-import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine } from './model-env.mjs';
+import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
  *  is `undefined` so firstDefined falls through to the next layer. */
@@ -605,7 +605,7 @@ function ownedPair(sel, engine, projectDir) {
   if (!sel || typeof sel !== 'object') return {};
   const model = typeof sel.model === 'string' && sel.model ? sel.model : undefined;
   if (model && !modelForEngine(model, engine, { projectDir: projectDir || null })) return {};
-  const effort = typeof sel.effort === 'string' && sel.effort && (engine !== 'codex' || effortsForEngine('codex').includes(sel.effort)) ? sel.effort : undefined;
+  const effort = typeof sel.effort === 'string' && sel.effort && (engine === 'claude' || effortsForEngine(engine).includes(sel.effort)) ? sel.effort : undefined;
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
@@ -644,7 +644,7 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
   const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
-  const engine = opts.engine === 'codex' ? 'codex' : 'claude';
+  const engine = MODEL_ENGINES.includes(opts.engine) ? opts.engine : 'claude';
   const slotDefaults = ignore ? {} : stepSlotDefaults(engine, { projectDir: projectDir || null, workspace: isWorkspace });
   const owned = (selection) => ownedPair(selection, engine, projectDir);
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
