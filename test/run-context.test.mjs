@@ -762,8 +762,8 @@ test('an approved committed server an engine cannot attach meets the same engine
     assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers).sort(), ['a', 'bad.name', 'web'], engine);
     lines[engine] = createOrchestrator({ projectDir: member.projectDir, claude: { mock: true, engine } })._engineMcpWarnings(rc);
   }
-  assert.deepEqual(lines.codex, ['engine codex: remote MCP servers are not attached on codex (stdio only): bad.name, web']);
-  assert.deepEqual(lines.copilot, ['engine copilot: MCP servers copilot cannot attach are not attached: bad.name']);
+  assert.deepEqual(lines.codex, ['engine codex: MCP servers not attached on codex — remote, and codex attaches stdio servers only: web; a name codex cannot use (only letters, digits, _ and -, at most 64 characters): bad.name']);
+  assert.deepEqual(lines.copilot, ['engine copilot: MCP servers not attached on copilot — a name copilot cannot use (only letters, digits, _ and -, at most 64 characters): bad.name']);
   assert.deepEqual(lines.cursor, [], 'cursor attaches every server of mcp.json');
 });
 

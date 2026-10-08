@@ -23,7 +23,7 @@ import { execFile } from 'node:child_process';
 import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
@@ -281,10 +281,22 @@ export function codexInvestigatorRole({ agents, subagentSystemPrompt, inheritMod
 const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
-/** The servers of an --mcp-config document that codex cannot attach: it takes stdio servers only. */
+/** The servers of an --mcp-config document that codex cannot attach, each with its reason (capabilities.mjs
+ *  describeUnattachableMcp): `remote` (codex takes stdio servers only), `name` (outside MCP_NAME_RE, which codex's
+ *  `-c mcp_servers.<name>` key needs) or `incomplete` (no command and no url). */
+export function codexMcpProblems(servers) {
+  const out = [];
+  for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
+    const stdio = !!srv && typeof srv.command === 'string';
+    const reason = stdio ? (MCP_NAME_RE.test(name) ? null : 'name') : srv && typeof srv.url === 'string' ? 'remote' : 'incomplete';
+    if (reason) out.push({ name, reason });
+  }
+  return out;
+}
+
+/** The names of the servers codexMcpProblems finds. */
 export function codexUnattachableMcp(servers) {
-  return Object.entries(servers && typeof servers === 'object' ? servers : {})
-    .filter(([name, srv]) => !MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string').map(([name]) => name);
+  return codexMcpProblems(servers).map((p) => p.name);
 }
 
 /** The MCP registry's secret references: their values ride the spawn env only, never argv. */
@@ -733,8 +745,9 @@ export async function runCodexProcess({
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
-    const unattachable = new Set(codexUnattachableMcp(all));
-    if (unattachable.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] codex attaches stdio MCP servers only — not attached: ${[...unattachable].join(', ')}` });
+    const problems = codexMcpProblems(all);
+    const unattachable = new Set(problems.map((p) => p.name));
+    if (unattachable.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on codex — ${describeUnattachableMcp('codex', problems)}` });
     // `${VAR}` references expand from what Claude Code would expand them from: this spawn's env plus the run's spawn env
     // (the registry copies' MCPSECRET_* values), which reaches the servers only through those references.
     const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;

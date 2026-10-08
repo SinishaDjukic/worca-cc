@@ -149,7 +149,7 @@ test('runCodexProcess: a pipeline spawn attaches its stdio servers, fills ${VAR}
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.pg.required=true'));
   assert.equal(args.some((a) => a.startsWith('mcp_servers.web.')), false, 'codex takes stdio servers only');
-  assert.ok(events.some((e) => e.type === 'stderr' && /not attached: web/.test(e.text)));
+  assert.ok(events.some((e) => e.type === 'stderr' && /not attached on codex — remote, and codex attaches stdio servers only: web$/.test(e.text)));
   assert.equal(args.join(' ').includes('tok-SECRET'), false, 'values never ride argv');
   assert.equal(fake.env().MCPCHILD_PGPASS, 'tok-SECRET', 'the reference is filled from the spawn env');
   assert.equal(fake.env().MCPSECRET_PG, undefined, 'the secret reaches codex only through the reference');
