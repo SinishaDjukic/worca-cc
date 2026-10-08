@@ -100,7 +100,7 @@ import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
-import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf } from '../src/core/ask/models.mjs';
+import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
@@ -8169,13 +8169,14 @@ const askAwaySwitchFor = (person) => (awayPerPerson() && person && person !== 'l
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude' }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}) };
+  // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex', ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -10375,14 +10376,12 @@ function askChatEngine(threadId, thread) {
 }
 
 /** An event turn's model: the thread's own pick, else the default of the engine the chat is locked to (never the
- *  other engine's), else the user's Ask default. null when none is available. */
+ *  other engine's), else the user's Ask default. null when none is available. A fallback is said in the chat. */
 async function askEventPick(threadId, thread) {
-  const lockedEngine = askChatEngine(threadId, thread);
-  const mv = await validateModelEffort(thread.model, thread.effort, { engine: lockedEngine });
-  if (mv.ok) return mv;
-  const cat = await askCatalog({ withSecrets: false });
-  const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
-  return d ? { ok: true, ...d } : null;
+  const mv = await askEventPickOf(thread, askChatEngine(threadId, thread));
+  const notice = mv && eventFallbackNotice(mv);
+  if (notice) postAskSystemNotice(threadId, notice);
+  return mv;
 }
 
 /**
@@ -10437,7 +10436,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
     // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
     // the selector on reopen and what the MCP child reads for tool defaulting.
-    askUpdateThread(id, { context: ctx, model, effort, ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
+    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
+    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
     // untitled (the header reads "Ask Worca") until the D13 background title
     // announces itself. titleWasAuto gates that call: a title given at THREAD
@@ -10497,7 +10497,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
-    // mounts them and appends the prompt section naming exactly what it wrote (a Claude chat only: turn.mjs).
+    // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
     const agentOn = askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
@@ -10549,7 +10549,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
-        mcpJoinNotice: engine === 'codex' ? null : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model }),
+        // A Codex chat's notice names only the skills that join (#635): it starts no copy.
+        mcpJoinNotice: () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -10731,7 +10732,9 @@ app.post('/api/ask/mcp-preview', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: thread ? thread.mcpOff : null } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.model !== undefined && (typeof body.model !== 'string' || !body.model || body.model.length > 200)) return badRequest(res, 'model must be a model id');
-    res.json(await askMcpPreview({ ctx: cv.context, threadId: thread ? thread.id : null, off: mo.value, model: body.model ?? null }));
+    // The chat's engine (D12): the one it is locked to, else the picked model's — a Codex chat gets skills only (#635).
+    const previewEngine = (thread && askChatEngine(thread.id, thread)) || (body.model && engineOfModel(body.model) === 'codex' ? 'codex' : 'claude');
+    res.json(await askMcpPreview({ ctx: cv.context, threadId: thread ? thread.id : null, off: mo.value, model: body.model ?? null, engine: previewEngine }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10865,12 +10868,8 @@ async function startTerminalEventTurn(threadId, block) {
   const id = `${block.sessionId}:${block.seq}`;
   const text = terminalEventPrompt(block);
   const notice = terminalNoticeText(block);
-  let mv = await validateModelEffort(thread.model, thread.effort);
-  if (!mv.ok) {
-    const d = (await askCatalog({ withSecrets: false })).default;
-    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-    mv = { ok: true, ...d };
-  }
+  const mv = await askEventPick(threadId, thread);
+  if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = async () => {
     if (askCommands.seen(id)) return { ok: false, skipped: true };
     return startAskTurn({ threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},

@@ -2,12 +2,13 @@
 // D13, D15, D16; Task 0's record in plans/ask-on-codex-spike.md).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCodexArgs, createCodexNormalizer, codexMcpOverrides, mcpResultText, codexModelPriced, codexResumeNotFound,
-  CODEX_ASK_LOCKDOWN, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexRolloutUsage, estimateCodexCostUsd, expandMcpRefs,
+  CODEX_ASK_LOCKDOWN, CODEX_ASK_FEATURES, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexAskSupport, parseCodexFeatures,
+  codexRolloutUsage, estimateCodexCostUsd, expandMcpRefs,
 } from '../src/core/engines/codex.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
@@ -17,22 +18,43 @@ const dirs = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'worca-codex-ask-')); dirs.push(d); return d; };
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 
-// Task 0 (a) was NOT CONFIRMED on codex-cli 0.146.0-alpha.9.2 (view_image and sub-agents cannot be switched off,
-// plans/ask-on-codex-spike.md): the constant is null and every Ask spawn on Codex refuses. The spawn tests below pass
-// the candidate list explicitly (askLockdown accepts a list), so the MCP / image / env path stays covered.
+// The spawn tests below pass a short list explicitly (askLockdown accepts a list): what they cover is the MCP / image /
+// env path, not the list itself.
 const CANDIDATE_LOCKDOWN = ['--disable', 'shell_tool', '--disable', 'unified_exec', '-c', 'web_search="disabled"', '--ignore-rules'];
 
-test('the lockdown is null (Task 0 (a) NOT CONFIRMED); pipelines attach MCP servers (stdio only)', () => {
-  assert.equal(CODEX_ASK_LOCKDOWN, null);
+test('the lockdown (plans/ask-on-codex-spike.md (h)): no shell, no image viewer, no web search, sub-agent switches off; code mode stays on', () => {
+  for (const f of ['shell_tool', 'unified_exec', 'view_image', 'multi_agent', 'multi_agent_v2', 'apps', 'plugins', 'browser_use', 'computer_use', 'in_app_browser', 'image_generation', 'tool_suggest', 'goals', 'hooks']) {
+    assert.ok(CODEX_ASK_FEATURES.includes(f), f);
+  }
+  assert.equal(CODEX_ASK_FEATURES.includes('code_mode_host'), false, 'on codex 0.162 MCP tools are called through code mode');
+  assert.ok(CODEX_ASK_LOCKDOWN.includes('web_search="disabled"') && CODEX_ASK_LOCKDOWN.includes('--ignore-rules'));
   assert.equal(codexCapabilities.mcpTools, true);
 });
 
-test('runCodexProcess: askLockdown with no verified lockdown refuses before spawning', POSIX, async () => {
+test('runCodexProcess: askLockdown: true spawns with the shipped lockdown, on a fresh spawn and a resume alike', POSIX, async () => {
   const dir = tmp();
   const fake = fakeCodex(dir, 'ok');
-  await assert.rejects(() => runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', sandbox: 'read-only', askLockdown: true, usageDir: dir }),
-    /cannot be locked down/);
-  assert.equal(fake.args(), null, 'codex never ran');
+  for (const resumeSessionId of [undefined, 'codex:00000000-0000-4000-8000-0000000000aa']) {
+    await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', sandbox: 'read-only', askLockdown: true, usageDir: dir, resumeSessionId });
+    const args = fake.args();
+    const at = args.indexOf('--disable');
+    assert.deepEqual(args.slice(at, at + CODEX_ASK_LOCKDOWN.length), [...CODEX_ASK_LOCKDOWN]);
+  }
+});
+
+test('parseCodexFeatures: the first column of `codex features list`', () => {
+  assert.deepEqual([...parseCodexFeatures('apps   stable  true\nview_image                stable             true\n\nNot a feature line?\n')], ['apps', 'view_image']);
+});
+
+test('codexAskSupport: a codex with every lockdown feature passes; one missing a feature, or with no features command, says update codex', POSIX, async () => {
+  const dir = tmp();
+  const bin = (name, body) => { const p = join(dir, name); writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); return p; };
+  const all = CODEX_ASK_FEATURES.map((f) => `${f}  stable  true`).join('\n');
+  assert.deepEqual(await codexAskSupport({ bin: bin('new', `cat <<'X'\n${all}\nX`) }), {});
+  const old = await codexAskSupport({ bin: bin('old', `cat <<'X'\n${CODEX_ASK_FEATURES.filter((f) => f !== 'view_image').map((f) => `${f} stable true`).join('\n')}\nX`) });
+  assert.match(old.refusal, /cannot switch off view_image for a chat — update codex to 0\.162 or newer/);
+  assert.match((await codexAskSupport({ bin: bin('ancient', 'echo "unknown subcommand" >&2; exit 2') })).refusal, /update codex/);
+  assert.match((await codexAskSupport({ bin: join(dir, 'missing') })).refusal, /cannot run .*ENOENT/);
 });
 
 test('runCodexProcess: an empty lockdown list is no lockdown — refused before spawning', POSIX, async () => {
