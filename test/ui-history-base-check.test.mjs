@@ -96,6 +96,34 @@ test('clean: only Update branch + Re-check; Update branch posts once and repaint
   assert.equal(li.querySelector('.hd-base-msg').textContent, 'Merged and pushed to origin.');
 });
 
+test('after Update branch the publish button repaints: a refused push offers Push changes', async () => {
+  let publishState = 'published';
+  const publishGets = [];
+  const ctx = await bootDetail({ rows: [ROW], detail: withCheck(CLEAN), arms: (url, opts) => {
+    if (/\/api\/runs\/[^/]+\/publish\?/.test(url) && (!opts || !opts.method || opts.method === 'GET')) {
+      publishGets.push(url);
+      return ok({ ok: true, members: [{ memberKey: null, branch: 'worca-cc/log-ux-fcec04e8', remote: 'origin', state: publishState }] });
+    }
+    if (/\/update-branch\?/.test(url)) {
+      publishState = 'moved';                                // merged locally; the push was refused
+      return ok({ ok: true, baseCheck: UP, push: { pushed: false, remote: 'origin', error: 'rejected (fetch first)' } });
+    }
+    if (url.endsWith('/api/terminal')) return ok({ enabled: false, sessions: [] });
+    return null;
+  } });
+  await openDetail(ctx, null);
+  await settle(ctx.window, 6);
+  const pub = doc(ctx).querySelector('#hist-detail .hd-publish');
+  assert.equal(pub.hidden, true, 'published and current: no button');
+  const before = publishGets.length;
+  click(ctx.window, btn(items(ctx)[0], 'hd-base-update'));
+  await settle(ctx.window, 8);
+  assert.ok(publishGets.length > before, 'the publish state was asked again');
+  assert.equal(pub.hidden, false);
+  assert.equal(pub.textContent, 'Push changes');
+  assert.match(items(ctx)[0].querySelector('.hd-base-msg').textContent, /the push failed: rejected/);
+});
+
 test('a refusal shows its error in the member line', async () => {
   const ctx = await bootBase(CLEAN, { answer: () => fail(409, { code: 'RESOLVING', error: 'A run is resolving the conflicts.' }) });
   click(ctx.window, btn(items(ctx)[0], 'hd-base-update'));

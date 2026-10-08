@@ -21800,6 +21800,9 @@ async function hdBaseAction(screen, record, data, m, action, button) {
   } finally {
     button.disabled = false;
     paintHdBase(screen, record, data);
+    // A merge (Update branch, or a resolution Re-check settled) moves the branch: when its push did not
+    // go through, the header's publish button turns into Push changes.
+    if (action === 'update-branch' || action === 'base-check') paintHdPublish(screen, record, data);
   }
 }
 

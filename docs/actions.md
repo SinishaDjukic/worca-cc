@@ -230,7 +230,8 @@ timer.
 
 After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
 PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
-in the meantime, the push is refused and the merge stays local. A resolution that still has conflict
+in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
+pull their work into the branch first, or that push is refused too. A resolution that still has conflict
 markers (`<<<<<<<`, `>>>>>>>`) in its files is not pushed; the line reads "Conflict markers left in
 N files".
 
