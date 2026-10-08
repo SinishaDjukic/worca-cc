@@ -472,7 +472,7 @@ There is no sign-in status command, so worca checks only that the binary runs be
 **MCP, sub-agents and skills.**
 
 - A run's MCP servers attach to its Copilot nodes, stdio and remote (HTTP/SSE) alike. `${VAR}` references are filled by Copilot from its own environment, where worca puts the values. They never reach the command line or the config file.
-- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking, as on Codex: named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. The run names the ones it leaves out for want of approval.
+- The servers in the checkout's own `.mcp.json` attach only when Claude Code would run them without asking, as on Codex: named in `enabledMcpjsonServers`, or all of them with `enableAllProjectMcpServers: true`, minus those in `disabledMcpjsonServers`. The run names the ones it leaves out for want of approval. Copilot itself loads a project's `.mcp.json` and `.github/mcp.json` in a folder you trusted, so worca turns off every server in them that it does not attach.
 - Research fan-out uses Copilot's `task` tool. worca defines its read-only investigator as the custom agent `worca-investigator` for each call. The agent carries the run's memory pointers and runs on the node's model.
 - Skills mount at the run checkout's `.agents/skills`, as on Codex, skills from sets included (renamed `<set>-<skill>` on a clash). A set skill's hooks do not run.
 - Helper jobs (titles, overview, PR description, the Auto classifier, the night decider) run with no built-in tool at all. They get only the MCP servers worca hands them (the classifier's and night decider's read-only file tools), and a scrubbed environment.
