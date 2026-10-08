@@ -2800,11 +2800,11 @@ export class RunHarness extends EventEmitter {
     if (why) throw engineRefusal(this.claude.engine, why);
   }
 
-  /** What a non-Claude run's agents will not get of the merged MCP servers: the ones Claude Code loads on its own
-   *  (the checkout's .mcp.json, user scope, plugins — codex runs with --ignore-user-config) and, on Codex, the
-   *  project servers that are not stdio (a remote registry copy is refused instead, _engineMcpRefusal). On Codex the
-   *  checkout's .mcp.json servers Claude Code has approved are in mcp.json, and the others are named by the run
-   *  context (run-context.mjs attachCommittedMcp). Never throws. */
+  /** What a non-Claude run's agents will not get of the merged MCP servers: a granted server that is not in mcp.json
+   *  (Claude Code would load it on its own), and the servers in mcp.json the engine cannot attach (on Codex the ones
+   *  that are not stdio; a remote registry copy is refused instead, _engineMcpRefusal). The checkout's committed
+   *  .mcp.json servers Claude Code has approved are in mcp.json on every such engine, so they meet the same checks;
+   *  the others are named by the run context (run-context.mjs attachCommittedMcp). Never throws. */
   _engineMcpWarnings(rc) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude' || !rc) return [];

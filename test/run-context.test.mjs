@@ -32,6 +32,7 @@ import {
 } from '../src/core/run-context.mjs';
 import { readRunManifest, rescueModifiedMounts, removeInjectedPaths } from '../src/core/run-manifest.mjs';
 import { skipMessage } from '../src/core/mcp/registry.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -732,22 +733,38 @@ async function committedMcpMember({ user = {}, project = {}, local = {} } = {}) 
 
 const committedWarning = (ws) => ws.filter((w) => /not approved/.test(w));
 
-test('codex: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once', async () => {
+for (const engine of ['codex', 'copilot', 'cursor']) test(`${engine}: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once`, async () => {
   const { member, home, wt } = await committedMcpMember({
     user: { enabledMcpjsonServers: ['a'] }, project: { enabledMcpjsonServers: ['b', 'c'] }, local: { disabledMcpjsonServers: ['c'] },
   });
-  const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine: 'codex', platform: 'darwin' });
+  const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine, platform: 'darwin' });
   const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
   assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the project layer; c is disabled in the local layer');
   assert.deepEqual(file.b.args, [join(wt, 'srv', 'b.js')], 'resolved against the worktree, where Claude Code would load it');
   assert.deepEqual(rc.mcpServerNames, ['a', 'b'], 'the left-out servers are not granted');
   const w = committedWarning(rc.warnings);
   assert.equal(w.length, 1, JSON.stringify(rc.warnings));
-  assert.match(w[0], /^engine codex: .*: d\. /, 'only the unapproved one is named, not the disabled one');
+  assert.match(w[0], new RegExp(`^engine ${engine}: .*: d\\. `), 'only the unapproved one is named, not the disabled one');
   assert.match(w[0], /enabledMcpjsonServers/);
   const md = await readFile(rc.claudeMdPath, 'utf8');
   assert.match(md, /`b` — from the committed `\.mcp\.json` at cwd/);
   assert.doesNotMatch(md, /`[cd]` — from/);
+  const run = createOrchestrator({ projectDir: member.projectDir, claude: { mock: true, engine } });
+  assert.deepEqual(run._engineMcpWarnings(rc), [], 'nothing granted is missing from mcp.json, so no "loads on its own" line');
+});
+
+test('an approved committed server an engine cannot attach meets the same engine check as any other server', async () => {
+  const { member, home, wt } = await committedMcpMember({ user: { enableAllProjectMcpServers: true } });
+  await writeFile(join(wt, '.mcp.json'), JSON.stringify({ mcpServers: { web: { type: 'http', url: 'https://mcp.example/' }, 'bad.name': { command: 'node' } } }), 'utf8');
+  const lines = {};
+  for (const engine of ['codex', 'copilot', 'cursor']) {
+    const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine, platform: 'darwin' });
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers).sort(), ['a', 'bad.name', 'web'], engine);
+    lines[engine] = createOrchestrator({ projectDir: member.projectDir, claude: { mock: true, engine } })._engineMcpWarnings(rc);
+  }
+  assert.deepEqual(lines.codex, ['engine codex: remote MCP servers are not attached on codex (stdio only): bad.name, web']);
+  assert.deepEqual(lines.copilot, ['engine copilot: MCP servers copilot cannot attach are not attached: bad.name']);
+  assert.deepEqual(lines.cursor, [], 'cursor attaches every server of mcp.json');
 });
 
 test('codex: enableAllProjectMcpServers approves every committed server but a disabled one; the last layer to set it decides', async () => {

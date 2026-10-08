@@ -678,7 +678,7 @@ async function transformServer(name, raw, dir, platform) {
  *   The committed scan covers `nativeMembers` (default `members`): every member whose worktree is a
  *   spawn cwd, one whose real dir is missing (§8.20, left out of `members`) included.
  *   `committed` lists those committed servers as `{name, rawName, def, dir, projectDir}` (`def` untransformed,
- *   `dir` the worktree), for an engine that does not load them on its own (codexProjectMcp).
+ *   `dir` the worktree), for an engine that does not load them on its own (attachCommittedMcp).
  */
 export async function mergeMcpConfigs({
   members = [], projectsRoot, homeDir, isWorkspace = false, platform = process.platform, agentIsolated = false,
@@ -711,7 +711,7 @@ export async function mergeMcpConfigs({
   // recorded that the `--mcp-config` definition WINS (the native server's process
   // is never even spawned), so the generated entry is always the effective one.
   const committedByMember = new Map();
-  /** Every committed server as the CLI loads it natively, for an engine that reads no `.mcp.json` (codexProjectMcp). */
+  /** Every committed server as the CLI loads it natively, for an engine that reads no `.mcp.json` (attachCommittedMcp). */
   const committed = [];
   if (!isWorkspace) {
     for (const m of nativeMembers ?? sorted) {   // a worktree whose real dir is gone is still a cwd (§8.20)
@@ -925,13 +925,14 @@ export async function mcpjsonApproval(projectDir, homeDir, onError) {
 }
 
 /**
- * Codex reads no `.mcp.json`, so the committed servers Claude Code loads on its own at a single-mode cwd would go
- * missing there. Those Claude Code runs without asking (mcpjsonApproval) join mcp.json, transformed against the
- * worktree the CLI would load them from, and reach codex like any other server of the run. A server the real dir
+ * Codex, Copilot and Cursor read no `.mcp.json`, so the committed servers Claude Code loads on its own at a
+ * single-mode cwd would go missing on them. Those Claude Code runs without asking (mcpjsonApproval) join mcp.json,
+ * transformed against the worktree the CLI would load them from, and reach the engine like any other server of the
+ * run, through the same engine checks (run-harness.mjs _engineMcpWarnings). A server the real dir
  * already defines (the generated definition wins on Claude too, V3(d)) or a root layer took is left as it is. The
  * rest leave the grant list, and the unapproved ones are named once. Mutates `mcp`.
  */
-async function attachCommittedMcp(mcp, { homeDir, platform, onError, warnings }) {
+async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings }) {
   const approvals = new Map();
   const unapproved = [];
   for (const c of mcp.committed) {
@@ -951,7 +952,7 @@ async function attachCommittedMcp(mcp, { homeDir, platform, onError, warnings })
   }
   if (unapproved.length) {
     warnings.push(
-      `engine codex: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
+      `engine ${engine}: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
       'Approve them in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in the project\'s .claude/settings.local.json.',
     );
   }
@@ -1282,7 +1283,7 @@ export async function assembleRunContext({
     nativeMembers: sorted,                 // §5.5.6: every worktree cwd, a missing real dir included
   });
   for (const w of mcp.warnings) warnings.push(w);
-  if (engine === 'codex' && mcp.committed.length) await attachCommittedMcp(mcp, { homeDir, platform, onError, warnings });
+  if (engine && engine !== 'claude' && mcp.committed.length) await attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings });
   const merged = Object.keys(mcp.servers);
   // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
   // credential broker on they are left out by default, otherwise named.
