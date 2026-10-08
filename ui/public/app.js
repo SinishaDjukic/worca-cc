@@ -132,7 +132,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -3665,7 +3665,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, and Cursor has none.
+    // node's own model, and Cursor, Gemini CLI and Qwen Code have none worca uses.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
@@ -3886,8 +3886,8 @@ function paintEngineHints() {
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
     el.engineHint.textContent = state.engine === 'copilot'
       ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
-      : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Settings › Models › Cursor'}.`
+      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Settings › Models › ${engineLabel(state.engine)}`}.`
       : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -4125,7 +4125,7 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('settings', 'models');
@@ -15927,7 +15927,6 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
-    cursorEfforts: d.cursorEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
@@ -15960,7 +15959,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}) });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';

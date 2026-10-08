@@ -146,6 +146,8 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {((text:string) => string)|null} [o.redactText] the adapter's secret redactor: applied to each
  *   buffered stderr line and to the exit detail before the tail cut, which could leave a piece of a secret
  *   that no value matches
+ * @param {(line:string) => void} [o.onStderrLine] each raw stderr line, before it is classified or streamed (an
+ *   adapter that must stop the child on a line, e.g. Gemini CLI reporting that it ignored worca's policy file)
  * @param {(line:string) => boolean} [o.isBenignStderr] the engine's known-benign stderr notices:
  *   still streamed, but never classified and never the exit detail while other evidence exists
  * @param {(err:Error, prefix:string) => Error} o.spawnError
@@ -153,7 +155,7 @@ const STDERR_DETAIL_MAX = 2000;
  */
 export function superviseSpawn(o) {
   const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, cleanup, onEvent,
-    onStdoutLine, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
     // Agent isolation (agent-user.mjs): the same command under the agent's uid, via sudo, in its
@@ -239,6 +241,7 @@ export function superviseSpawn(o) {
     // `stream:'err'` tags the origin channel; the orchestrator decides the level.
     const rlErr = createInterface({ input: child.stderr });
     rlErr.on('line', (line) => {
+      if (onStderrLine) onStderrLine(line);
       // Classify BEFORE buffering: the class must see every line ever printed —
       // an early 401 or session-limit notice followed by hundreds of KB of MCP
       // chatter would otherwise scroll past both the trim and the tail cap.

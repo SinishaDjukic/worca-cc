@@ -1,9 +1,11 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
-export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
+import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+// The sign-in engines (Cursor, Gemini CLI, Qwen Code) have no effort flag.
+export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
+  ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, Object.freeze([])])) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const CURSOR_HELPERS_NOTE = "Helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) run on Claude on a Cursor run.";
+const helpersOnClaudeNote = (engine) => `Helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) run on Claude on a ${engineLabel(engine)} run.`;
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
@@ -20,11 +22,11 @@ export function renderEngineSection(host, options) {
     const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
-    const noteText = [options.notes?.[engine], engine === 'cursor' ? CURSOR_HELPERS_NOTE : null].filter(Boolean).join(' ');
+    const noteText = [options.notes?.[engine], SIGN_IN_ENGINE_NAMES.includes(engine) ? helpersOnClaudeNote(engine) : null].filter(Boolean).join(' ');
     if (noteText) { const note = doc.createElement('small'); note.className = 'hint'; note.textContent = noteText; card.append(note); }
     const row = (id, label, defaultLabel) => { const value = field(id); return renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: ENGINE_EFFORTS[engine], own: value.own, inherited: value.inherited, defaultLabel }); };
     const steps = doc.createElement('div'); steps.className = 'engine-steps'; const sh = doc.createElement('h4'); sh.textContent = 'Step models'; steps.append(sh);
-    for (const role of options.roles || []) steps.append(row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (engine === 'cursor' ? "Cursor's default model" : "the workflow's model"))); card.append(steps);
+    for (const role of options.roles || []) steps.append(row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (SIGN_IN_ENGINE_NAMES.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model"))); card.append(steps);
     const jobs = options.jobs?.[engine] || []; if (jobs.length) { const helpers = doc.createElement('div'); helpers.className = 'engine-helpers'; const hh = doc.createElement('h4'); hh.textContent = 'Helper models'; helpers.append(hh); for (const job of jobs) helpers.append(row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : null))); card.append(helpers); }
     const extra = doc.createElement('div'); extra.className = 'engine-card-extra'; card.append(extra); extras[engine] = extra; host.append(card);
   }
@@ -35,7 +37,7 @@ export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
-    let match = /^models\.(claude|codex|cursor)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
   }
   return body;

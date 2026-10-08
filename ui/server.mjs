@@ -201,7 +201,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
 import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -8844,7 +8844,6 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),

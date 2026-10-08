@@ -11,7 +11,7 @@ export const PROJECT_CARDS = Object.freeze([
   { key: 'context', title: 'Context and memory', fields: [{ id: 'contextMaxBytesPerFile', label: 'Run context: bytes per file', kind: 'number', min: 1 }, { id: 'contextMaxBytesTotal', label: 'Run context: bytes in total', kind: 'number', min: 1 }, { id: 'skillMount', label: 'Skill delivery', kind: 'select', options: [{ value: 'copy', label: 'Copy' }, { value: 'symlink', label: 'Symlink' }] }] },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): Cursor's helper jobs run on Claude.
+// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
 const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-mini pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; card.append(heading, body, save, msg); return { card, body, save, msg }; }
 export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options) }) {

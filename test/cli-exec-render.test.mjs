@@ -25,6 +25,14 @@ const M = { version: 2, template: { id: 'wf', name: 'W' }, graph: {
 const ev = (o) => ({ kind: 'cycle', agentKey: 'implementer', trigger: { wireIds: [], freshPorts: [] }, ...o });
 const line = (o) => formatExecLine(ev(o), M);
 
+test('done lines on an engine that reports no cost show no $0.00; a cost worca knows still shows', () => {
+  for (const engine of ['cursor', 'gemini', 'qwen']) {
+    assert.equal(formatExecLine(ev({ nodeId: 'n_impl', executionId: 'x:n_impl:1', ordinal: 1, status: 'done', costUsd: 0, durationMs: 1000 }), M, { engine }), '✓ Implementer #1  1s');
+  }
+  assert.equal(formatExecLine(ev({ nodeId: 'n_impl', executionId: 'x:n_impl:1', ordinal: 1, status: 'done', costUsd: 0.5, durationMs: 1000 }), M, { engine: 'gemini' }), '✓ Implementer #1  1s · $0.50');
+  assert.equal(formatExecLine(ev({ nodeId: 'n_impl', executionId: 'x:n_impl:1', ordinal: 1, status: 'done', costUsd: 0, durationMs: 1000 }), M, { engine: 'codex' }), '✓ Implementer #1  1s · $0.00');
+});
+
 test('start lines name the loop port and the node that published on the wire that delivered it', () => {
   assert.equal(line({ nodeId: 'n_impl', executionId: 'x:n_impl:2', ordinal: 2, status: 'start',
     trigger: { wireIds: ['w9'], freshPorts: ['fix'] } }), '▶ Implementer #2 · fix ← Reviewer');
@@ -177,6 +185,8 @@ test('formatResumeHints: the resume command, plus each other engine after a usag
     'Resume with: worca resume ab12cd34',
     'Or continue now on Claude: worca resume ab12cd34 --engine claude',
     'Or continue now on Cursor: worca resume ab12cd34 --engine cursor',
+    'Or continue now on Gemini CLI: worca resume ab12cd34 --engine gemini',
+    'Or continue now on Qwen Code: worca resume ab12cd34 --engine qwen',
   ]);
   const bold = formatResumeHints({ reason: 'usage_limit', limitEngine: 'claude' }, 'x', { color: (n, s) => `<${n}>${s}` });
   assert.equal(bold[1], 'Or continue now on Codex: <bold>worca resume x --engine codex');

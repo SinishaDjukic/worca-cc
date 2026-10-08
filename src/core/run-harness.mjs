@@ -81,7 +81,7 @@ import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
-import { CURSOR_PROJECT_FILES, cursorOwns, excludeLine } from './engines/cursor.mjs';
+import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
@@ -1536,7 +1536,7 @@ export class RunHarness extends EventEmitter {
       // mock included. AFTER 3e: the assembly rewrites injectedPaths and the mount registers
       // itself into that map.
       await this._mountMemory();
-      await this._registerEngineConfig();   // Cursor's .cursor files join the §8.8 set (both modes)
+      await this._registerEngineConfig();   // an engine's checkout config files (Cursor, Gemini CLI) join the §8.8 set (both modes)
       this._checkAbort();
       // D7: every setup step above is done — a pause from here on has nothing to
       // replay, so _completePaused strips any `setupIncomplete` stamp instead.
@@ -2148,7 +2148,7 @@ export class RunHarness extends EventEmitter {
         await this._reattachMemoryForStop();
         // Not inside _reattachMemoryForStop: it returns early when memory never mounted. A stop never fails on it.
         try { await this._registerEngineConfig(); }
-        catch (err) { this._log('orchestrator', 'warn', `stop: Cursor's .cursor config was not registered for removal (${err.message})`); }
+        catch (err) { this._log('orchestrator', 'warn', `stop: the engine's checkout config was not registered for removal (${err.message})`); }
       } catch (err) {
         // The stop stands — the row is already claimed. Settle with what is known (identity and
         // the pipeline dir at least), so the stopped path still persists, audits and emits done.
@@ -3492,21 +3492,21 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Cursor reads its deny rules and MCP servers from `<cwd>/.cursor/` (engines/cursor.mjs writes them per spawn).
+   * Cursor reads its deny rules and MCP servers from `<cwd>/.cursor/`, Gemini CLI its MCP servers from
+   * `<cwd>/.gemini/settings.json` (engines/project-files.mjs writes them per spawn).
    * They join the §8.8 set like the memory mount, in BOTH run-root modes: removed at teardown, never rescued (the
    * commit and the diffs keep them out through worca's info/exclude line and _engineConfigState, not a pathspec).
    * Scope rule as the memory mount (_mountMemoryUnguarded). Idempotent.
    * Which file is worca's is decided where it matters, by _injectedFor (the adapter's ownership ledger): a tracked
    * file or an agent's own .cursor/mcp.json is never worca's, so registering the path costs nothing and needs no git.
-   * Not only on a Cursor run: a resume that switched AWAY from Cursor (this.claude.engine is the resume target) still
+   * Not only on the run's engine: a resume that switched AWAY from Cursor (this.claude.engine is the resume target) still
    * has the earlier segment's files in the checkout, and both modes rebuild injectedPaths on resume.
    */
   async _registerEngineConfig() {
     const cwd = this.runCwd || null;
     if (!cwd || cwd === this.projectDir) return;
-    const onCursor = (this.claude.engine || 'claude') === 'cursor';
-    const paths = onCursor ? [...CURSOR_PROJECT_FILES]
-      : CURSOR_PROJECT_FILES.filter((p) => existsSync(join(cwd, p)) && cursorOwns(join(cwd, p)));
+    const own = ENGINE_PROJECT_FILES[this.claude.engine || 'claude'] || [];
+    const paths = [...own, ...ALL_PROJECT_FILES.filter((p) => !own.includes(p) && existsSync(join(cwd, p)) && worcaOwnsProjectFile(cwd, p))];
     if (!paths.length) return;
     const scope = (this.runRoot && cwd === this.runRoot) ? 'runRoot'
       : ([...this.workDirs.entries()].find(([, d]) => d === cwd)?.[0] ?? null);
@@ -3519,7 +3519,7 @@ export class RunHarness extends EventEmitter {
 
   /**
    * The §8.8 entries of `key` (a member's projectKey, or 'runRoot'), minus any `engineConfig` path whose file exists
-   * and is not worca's (engines/cursor.mjs cursorOwns): an agent may write .cursor/mcp.json as part of the task, and
+   * and is not worca's (engines/project-files.mjs worcaOwnsProjectFile): an agent may write .cursor/mcp.json as part of the task, and
    * that file must survive teardown. Every reader of the set for REMOVAL uses this; the commit and the diffs never
    * see an engineConfig pathspec (_excludePathspecs) and use _engineConfigState instead.
    */
@@ -3527,23 +3527,23 @@ export class RunHarness extends EventEmitter {
     const entries = this.injectedPaths?.[key] ?? [];
     if (!Array.isArray(entries)) return [];
     const base = dir || (key === 'runRoot' ? this.runRoot : this.workDirs?.get(key)) || null;
-    return entries.filter((e) => e?.kind !== 'engineConfig' || !base || cursorOwns(join(base, e.path)));
+    return entries.filter((e) => e?.kind !== 'engineConfig' || !base || worcaOwnsProjectFile(base, e.path));
   }
 
   /**
-   * The Cursor project files (engines/cursor.mjs CURSOR_PROJECT_FILES) present in checkout `dir`, split for the commit
-   * and the diffs. owned: worca wrote them (cursorOwns) — kept out (info/exclude hides them; callers also unstage
+   * The engine project files (engines/project-files.mjs ALL_PROJECT_FILES) present in checkout `dir`, split for the
+   * commit and the diffs. owned: worca wrote them (worcaOwnsProjectFile) — kept out (info/exclude hides them; callers also unstage
    * them). forced: worca did not write them, the index does not hold them, and ONLY worca's own info/exclude line
    * ignores them — an agent's deliverable, force-staged. Looks at the checkout, not at injectedPaths: the exclude line
-   * sits in the shared common-dir file and outlives the Cursor run that wrote it, so a later run on any engine needs
-   * this too. No .cursor file: no git command at all.
+   * sits in the shared common-dir file and outlives the run that wrote it, so a later run on any engine needs this
+   * too. No such file: no git command at all.
    * @returns {Promise<{owned:string[], forced:string[]}>}
    */
   async _engineConfigState(dir, { ignoreAbort = false } = {}) {
     const state = { owned: [], forced: [] };
     if (!dir) return state;
-    const present = CURSOR_PROJECT_FILES.filter((p) => existsSync(join(dir, p)));
-    for (const p of present) if (cursorOwns(join(dir, p))) state.owned.push(p);
+    const present = ALL_PROJECT_FILES.filter((p) => existsSync(join(dir, p)));
+    for (const p of present) if (worcaOwnsProjectFile(dir, p)) state.owned.push(p);
     let foreign = present.filter((p) => !state.owned.includes(p));
     if (!foreign.length) return state;
     const opts = { cwd: dir, ignoreAbort };
@@ -4496,12 +4496,12 @@ export class RunHarness extends EventEmitter {
       this._log('git', 'warn', `commit skipped: git add failed: ${message}`, errStreamAttr(add.stderr));
       return { ok: false, step: 'add', message, fromStderr: !!add.stderr.trim() };
     }
-    // An agent's own .cursor file that only worca's info/exclude line hides (_engineConfigState): force-staged.
+    // An agent's own engine config file (.cursor, .gemini) that only worca's info/exclude line hides (_engineConfigState): force-staged.
     if (forcePaths.length) {
       const f = await this._gitIndexWrite(['add', '-f', '--', ...forcePaths], gitOpts);
       if (!f.ok) this._log('git', 'warn', `git add -f ${forcePaths.join(' ')}: ${f.stderr.trim() || `exit ${f.code}`}`, errStreamAttr(f.stderr));
     }
-    // worca's own .cursor files, whatever staged them (a user rule un-ignoring them, an agent's `git add -f`).
+    // worca's own engine config files, whatever staged them (a user rule un-ignoring them, an agent's `git add -f`).
     if (unstagePaths.length) {
       await this._gitIndexWrite(['rm', '--cached', '-q', '--ignore-unmatch', '--', ...unstagePaths], gitOpts);
     }
@@ -5573,7 +5573,7 @@ export class RunHarness extends EventEmitter {
         untrackedFiles(dir, ex),
       ]);
       const listed = new Set(ns.map((r) => r.path));
-      // An agent's own .cursor file that only worca's info/exclude line hides is listed; worca's own never is.
+      // An agent's own engine config file that only worca's info/exclude line hides is listed; worca's own never is.
       const ec = await this._engineConfigState(dir);
       const fresh = [...new Set([...untracked, ...ec.forced])].filter((p) => !listed.has(p) && !ec.owned.includes(p));
       if (fresh.length > maxUntracked) untrackedCapped = true;
@@ -5833,7 +5833,7 @@ export class RunHarness extends EventEmitter {
         // warn, not debug: a failed staging hides the agent's new files from the reviewer's diff.
         this._log('git', 'warn', `git add -A -N (${dir}): ${res.stderr.trim()}`, ERR_STREAM);
       }
-      // Cursor's .cursor files: an agent's own file only worca's exclude line hides joins the diff; worca's stay out.
+      // Engine config files (.cursor, .gemini): an agent's own file only worca's exclude line hides joins the diff; worca's stay out.
       const ec = await this._engineConfigState(dir, { ignoreAbort });
       if (ec.forced.length) await this._gitIndexWrite(['add', '-N', '-f', '--', ...ec.forced], { cwd: dir, ignoreAbort });
       if (ec.owned.length) await this._gitIndexWrite(['rm', '--cached', '-q', '--ignore-unmatch', '--', ...ec.owned], { cwd: dir, ignoreAbort });
@@ -5849,9 +5849,9 @@ export class RunHarness extends EventEmitter {
    * Under legacy the set holds exactly the memory mount (`_registerMemoryMount`), so
    * `git add -A -- . :(exclude).claude/rules/worca` is the legacy argv since the
    * native-rules revision.
-   * `kind:'engineConfig'` entries (Cursor's `.cursor/*.json`) are excluded too: git exits 1 on an exclude pathspec
+   * `kind:'engineConfig'` entries (Cursor's `.cursor/*.json`, Gemini CLI's `.gemini/settings.json`) are excluded too: git exits 1 on an exclude pathspec
    * that names a path an ignore rule already matches ("paths are ignored … use -f"), which would fail every commit.
-   * worca's own info/exclude line keeps them out (engines/cursor.mjs writes one for every file it writes inside a
+   * worca's own info/exclude line keeps them out (engines/project-files.mjs writes one for every file it writes inside a
    * work tree), and the callers take them back out of the index (_engineConfigState `owned`).
    * @param {string} projectKey
    * @returns {string[]}

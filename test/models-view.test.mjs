@@ -444,7 +444,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
-  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'cursor', 'gemini', 'qwen']);
   setModelEngine(el, 'cursor');
   assert.equal(el.querySelector('.mv-engine').value, 'cursor');
   assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
@@ -466,6 +466,35 @@ test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fi
   assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false, 'efforts are back');
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
 });
+
+for (const [engine, label, title] of [['gemini', 'Gemini CLI', 'Gemini CLI default'], ['qwen', 'Qwen Code', 'Qwen Code default']]) {
+  test(`editor: ${label} is Cursor's shape — its own sign-in only, no env, no effort, no pricing`, () => {
+    const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+    setModelEngine(el, engine);
+    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
+    assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+    assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true);
+    const conn = el.querySelector('.mv-conn');
+    const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+    assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), [title]);
+    assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+    el.querySelector('.mv-id').value = 'm-1';
+    const { body } = collectModelEditor(el);
+    assert.equal(body.engine, engine);
+    assert.deepEqual(body.efforts, []);
+  });
+
+  test(`editor: editing a ${label} model shows no efforts`, () => {
+    const el = renderModelEditor({ id: 'm-1', label: 'm-1', engine, efforts: [] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0);
+    assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
+  });
+
+  test(`list: a ${label} model carries its badge and no effort summary of Claude's`, () => {
+    const el = renderModelsList({ globals: [{ id: 'm-1', label: 'm-1', efforts: [], engine }], predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS }, { doc });
+    assert.equal(el.querySelector('.mv-card[data-id="m-1"] .mv-engine').textContent, label);
+  });
+}
 
 test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
   const el = renderModelsList({

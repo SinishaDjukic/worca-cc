@@ -242,7 +242,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'qwen']);
   pick(ctx, 'cursor');
   assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'cursor');
   const hint = doc.getElementById('engine-hint');
@@ -269,3 +269,35 @@ test('engine: on Cursor the agent rows offer Cursor models only and no sub-agent
   assert.equal(model.options[0].textContent, '(default model)');
   assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
 });
+
+for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
+  test(`engine: ${label} is offered (beta); it sends engine ${engine} and says helper jobs run on Claude`, async () => {
+    const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
+    const doc = ctx.doc;
+    assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'qwen']);
+    const btn = doc.querySelector(`#engine-seg button[data-engine="${engine}"]`);
+    assert.ok(btn.querySelector('.beta-badge'), 'marked beta');
+    pick(ctx, engine);
+    const hint = doc.getElementById('engine-hint');
+    assert.equal(hint.textContent.trim(), `${label} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Settings › Models › ${label}.`);
+    await submit(ctx);
+    assert.equal(ctx.posted.at(-1).engine, engine);
+  });
+
+  test(`engine: on ${label} the agent rows offer ${label} models only and no sub-agent model`, async () => {
+    const ctx = await boot();
+    const np = ctx.window.__np;
+    np._setModels([
+      { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'] },
+      { id: `my-${engine}-m`, label: 'Mine', engine, efforts: [], custom: 'global' },
+      { id: 'my-cursor-m', label: 'My Cursor', engine: 'cursor', efforts: [], custom: 'global' },
+    ]);
+    pick(ctx, engine);
+    const def = { model: '', effort: '', fanOut: false, askQuestions: false, subagentModel: '' };
+    np.renderAgentRows([{ nodeId: 'n1', key: 'planner', label: 'Plan', color: '', stepIndex: 0, parallel: false,
+      model: '', effort: '', fanOut: false, subagentModel: '', askQuestions: null, def, override: {}, modified: false }]);
+    const model = ctx.doc.querySelector('#agents-rows .step-model');
+    assert.deepEqual([...model.options].map((o) => o.value).filter((v) => v !== '__add__'), ['', `my-${engine}-m`]);
+    assert.equal(ctx.doc.querySelector('#agents-rows .step-subagent').closest('.select-wrap').hidden, true);
+  });
+}

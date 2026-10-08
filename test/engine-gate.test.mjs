@@ -20,6 +20,7 @@ import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { writeCursorProjectFiles } from '../src/core/engines/cursor.mjs';
+import { writeProjectFiles } from '../src/core/engines/project-files.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
 import { removeInjectedPaths, writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
 import { readGuardrailSet } from '../src/core/guardrail-store.mjs';
@@ -43,7 +44,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, gemini, qwen\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {
@@ -980,7 +981,7 @@ test('stopPaused registers the Cursor files even when memory never mounted, and 
   o3.on('log', (l) => logs.push(String(l.text)));
   o3._registerEngineConfig = async () => { throw new Error('boom'); };
   assert.equal((await o3.stopPaused('ada')).status, 'stopped');
-  assert.ok(logs.some((t) => /stop: Cursor's \.cursor config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
+  assert.ok(logs.some((t) => /stop: the engine's checkout config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
 });
 
 test('legacy teardown on a cursor run: the kept branch carries the agent\'s .cursor/mcp.json and never worca\'s cli.json', { timeout: 120000 }, async () => {
@@ -1015,4 +1016,32 @@ test('legacy teardown on a cursor run: the kept branch carries the agent\'s .cur
   } finally {
     if (prevMode === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prevMode;
   }
+});
+
+// Gemini CLI reads its MCP servers from the checkout's .gemini/settings.json (engines/project-files.mjs): the same
+// §8.8 handling as Cursor's files, from the engine-neutral list.
+const GEMINI_SETTINGS = '{"mcpServers":{"gh":{"command":"gh-mcp"}}}\n';
+test('a Gemini CLI run registers .gemini/settings.json; teardown commits the agent\'s work and removes worca\'s file', async () => {
+  const { wt } = linkedWorktree();
+  const o = harnessOn(wt, { engine: 'gemini' });
+  await o._registerEngineConfig();
+  assert.deepEqual(o.injectedPaths.pk, [{ path: '.gemini/settings.json', kind: 'engineConfig', source: null }]);
+  writeProjectFiles('gemini', wt, { '.gemini/settings.json': GEMINI_SETTINGS });
+  writeFileSync(join(wt, 'a.txt'), 'agent work\n');
+  assert.deepEqual(await o._engineConfigState(wt), { owned: ['.gemini/settings.json'], forced: [] });
+  const commit = await teardownCommit(o, wt);
+  assert.equal(commit.committed, true, JSON.stringify(commit));
+  assert.ok(!tree(wt, 'HEAD').includes('.gemini/settings.json'), 'worca\'s file stays out');
+  assert.ok(!existsSync(join(wt, '.gemini', 'settings.json')), 'and is removed');
+});
+
+test('a resume that switched a Gemini CLI run to Claude still registers the earlier segment\'s file; an agent\'s own one is never worca\'s', async () => {
+  const { wt } = linkedWorktree();
+  writeProjectFiles('gemini', wt, { '.gemini/settings.json': GEMINI_SETTINGS });
+  const switched = harnessOn(wt, { engine: 'claude' });
+  await switched._registerEngineConfig();
+  assert.deepEqual(switched.injectedPaths.pk, [{ path: '.gemini/settings.json', kind: 'engineConfig', source: null }]);
+  writeFileSync(join(wt, '.gemini', 'settings.json'), '{"agent":true}\n');
+  assert.deepEqual(switched._injectedFor('pk', wt), [], 'the agent\'s file survives teardown');
+  assert.deepEqual(await switched._engineConfigState(wt), { owned: [], forced: ['.gemini/settings.json'] });
 });

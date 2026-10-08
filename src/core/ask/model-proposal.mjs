@@ -10,7 +10,7 @@
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in and its
 // notice stay on the Providers card.
-import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, SIGN_IN_ENGINES, SIGN_IN_CLI } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
 const MAX_IMPORT = 40;
@@ -128,7 +128,7 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+const connectionOf = (m) => (SIGN_IN_ENGINES.includes(m.engine) ? `${SIGN_IN_CLI[m.engine]}'s own sign-in` : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));
@@ -147,7 +147,7 @@ function entryRows(m) {
     if (m.upstream.capabilities) rows.push({ field: 'Limits', value: fmtCaps(m.upstream.capabilities) });
   }
   for (const [k, v] of Object.entries(m.env || {})) rows.push({ field: k, value: typeof v === 'string' ? maskEnvValue(k, v) : String(v) });
-  rows.push({ field: 'Efforts', value: m.engine === 'cursor' ? 'none' : fmtEfforts(m.efforts) });   // a Cursor model takes no effort
+  rows.push({ field: 'Efforts', value: SIGN_IN_ENGINES.includes(m.engine) ? 'none' : fmtEfforts(m.efforts) });   // a sign-in engine's model takes no effort
   const c = fmtCost(m.cost);
   if (c) rows.push({ field: 'Pricing', value: c });
   return rows;

@@ -1,0 +1,1 @@
+Please set an Auth method in your /tmp/spike/home/.gemini/settings.json or specify one of the following environment variables before running: GEMINI_API_KEY, GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_GENAI_USE_GCA

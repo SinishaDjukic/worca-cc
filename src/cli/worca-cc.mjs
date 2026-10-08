@@ -320,7 +320,7 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
+  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | qwen (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
@@ -642,7 +642,7 @@ async function attachAndDrive(orch, flags, start) {
         if (ev.kind !== 'task') e.costUsd = mine.reduce((a, s) => a + (s.costUsd || 0), 0);
       }
     }
-    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c });
+    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
     if (line) out(line);
   });
 

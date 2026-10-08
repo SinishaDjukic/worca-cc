@@ -97,7 +97,7 @@ const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine, SIGN_IN_ENGINES } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -374,11 +374,11 @@ function normalizeModels(raw, warnings) {
     const allowed = engine === 'claude' ? EFFORTS : effortsForEngine(engine);
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
     entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
-    if (engine === 'cursor') {
-      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream.
-      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
-      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
-      entry.engine = 'cursor';
+    if (SIGN_IN_ENGINES.includes(engine)) {
+      // A Cursor, Gemini CLI or Qwen Code model runs through its CLI's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a ${engine} model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a ${engine} model takes no upstream — entry dropped`); continue; }
+      entry.engine = engine;
     }
     if (codex) {
       // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.
