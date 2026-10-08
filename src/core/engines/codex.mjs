@@ -661,8 +661,8 @@ function storeUsage(dir, thread, usage) {
  * Options a codex spawn has no lever for (allowedTools, permissionRules,
  * appendSubagentSystemPrompt, maxBudgetUsd, …) are ignored; the run start logs
  * each of them as a degradation (the capability map). `maxTurns` caps the main
- * agent's tool calls (the Ask watchdog's count, turn.mjs): the call past it stops
- * the turn with an error.
+ * agent's tool calls of a helper job (never an Ask chat's: its watchdog owns that
+ * cap, turn.mjs): the call past it stops the turn with a `turnCap` error.
  */
 export async function runCodexProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model: namedModel, effort, onEvent = () => {}, signal,
@@ -790,8 +790,10 @@ export async function runCodexProcess({
     if (usage) storeUsage(usageDir, sawThread, usage);
     return f;
   };
-  // maxTurns: the main agent's tool calls, counted as the Ask watchdog counts them (sub-agent calls do not count).
-  const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
+  // maxTurns: the main agent's tool calls (sub-agent calls do not count). An Ask chat's cap is its watchdog's alone
+  // (turn.mjs _watch): it reads the live limit and ends the turn as a stop with the limit notice, so a spawn-time
+  // count here could only trip first, with a different number, as an error.
+  const cap = !askLockdown && Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const capCtrl = new AbortController();
   let toolCalls = 0; let capped = false;
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;

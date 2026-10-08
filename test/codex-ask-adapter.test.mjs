@@ -268,6 +268,15 @@ test('runCodexProcess: a resume after a stopped turn is charged only its own tur
   assert.equal(after.find((e) => e.type === 'result').usage.input_tokens, 500);
 });
 
+test('runCodexProcess: an Ask chat\'s turn cap is its watchdog\'s, never the adapter\'s', POSIX, async () => {
+  const lines = [{ type: 'thread.started', thread_id: CAPPED }, { type: 'turn.started' }, ...cmd('i1'), ...cmd('i2'),
+    { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'done' } }, { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 1 } }];
+  const dir = tmp();
+  const fake = fakeCodex(dir, null, { lines });
+  const ok = await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', maxTurns: 1, usageDir: dir, askLockdown: CANDIDATE_LOCKDOWN });
+  assert.equal(ok.text, 'done');
+});
+
 test('runClaude forwards images and askLockdown to the codex adapter', POSIX, async () => {
   const dir = tmp();
   const fake = fakeCodex(dir, 'ok');
