@@ -28,6 +28,8 @@ const withLock = (id, fn) => {
   locks.set(id, tail);
   return next;
 };
+/** #620: the same per-run lock, so Update branch never races a Check out / Discard of the run. */
+export const withRunLock = withLock;
 const cerr = (msg, code, extra = {}) => Object.assign(new Error(msg), { code, ...extra });
 const parse = (t) => { if (t && typeof t === 'object') return t; try { return JSON.parse(t); } catch { return null; } };
 /** D27: git prints realpaths; the Worca home or a temp dir may sit behind a symlink (/var → /private/var). */
@@ -80,8 +82,12 @@ async function pruneWorktrees(projectDir) {
  * that folder instead of refusing. A linked folder is never Worca's: it is recorded as checkout.dir (never
  * br.worktreeDir, which teardown and the run-root sweep may delete), and Discard only unlinks it.
  */
-export function checkoutRun({ id, members = null, by = null, policy = 'on-demand', isLive = () => false, isFinishing = () => false, useExisting = false }) {
-  return withLock(id, async () => {
+export function checkoutRun(opts) {
+  return withLock(opts.id, () => checkoutRunUnderLock(opts));
+}
+
+/** Checkout implementation for callers that already hold `withRunLock(id)`; never call it unlocked. */
+export async function checkoutRunUnderLock({ id, members = null, by = null, policy = 'on-demand', isLive = () => false, isFinishing = () => false, useExisting = false }) {
     const row = findPipelineRowById(id);
     assertEligible(row, isLive);
     const all = membersOfRow(row);
@@ -139,7 +145,6 @@ export function checkoutRun({ id, members = null, by = null, policy = 'on-demand
     }
     for (const k of kept) out.push({ projectKey: k.m.projectKey, worktreeDir: k.target, branch: k.feature, state: 'checked-out', ...(k.external ? { external: true } : {}) });
     return { members: out, warnings };
-  });
 }
 
 /** Targeted UPDATE (pipeline-delete.mjs:388 pattern): never writeState. mutate(br, projectKey). */

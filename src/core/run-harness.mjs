@@ -175,6 +175,10 @@ function errDetail(res, max = 200) {
 
 /** The parenthetical of a workspace member's teardown audit line. Scan + kept wording is
  *  unchanged; an unchanged member's dropped branch says why. */
+/** #620: the `branch.resolves` marker of a Resolve-in-a-pipeline run, or null. */
+const validResolves = (r) => (r && typeof r === 'object' && typeof r.runId === 'string' && r.runId
+  ? { runId: r.runId, member: typeof r.member === 'string' && r.member ? r.member : null } : null);
+
 function memberBranchNote(branch, { readOnly, dropped }) {
   if (readOnly) return `deleted branch \`${branch}\``;
   if (dropped) return `deleted branch \`${branch}\` — no changes`;
@@ -824,6 +828,8 @@ export class RunHarness extends EventEmitter {
     this.branchOpts = {
       source: (this.opts.branch && this.opts.branch.source) || null,
       feature: (this.opts.branch && this.opts.branch.feature) || null,
+      // #620: a "Resolve in a pipeline" run names the run it resolves (server-only, never from HTTP).
+      resolves: validResolves(this.opts.branch && this.opts.branch.resolves),
     };
     // Sync before run (#527): absent → disabled, so the CLI, resume and every existing caller
     // keep today's behaviour; the UI server passes per-member options on a fresh start.
@@ -1598,6 +1604,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -1882,6 +1889,7 @@ export class RunHarness extends EventEmitter {
       if (this.state.status !== 'paused' && this.state.status !== 'pausing') {
         await this._teardownRunRoot().catch(() => {});
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
@@ -2104,7 +2112,10 @@ export class RunHarness extends EventEmitter {
     } finally {
       this._stopHeartbeat();
       // resume()'s teardown on a stop: commit the work onto the kept branch, remove the checkout.
-      if (reattached) await this._teardownRunRoot().catch(() => {});
+      if (reattached) {
+        await this._teardownRunRoot().catch(() => {});
+        await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));   // #620
+      }
       await this.logWriter.close().catch(() => {}); // last, to capture the teardown's log lines
     }
   }
@@ -2334,7 +2345,8 @@ export class RunHarness extends EventEmitter {
                                                 ...(baseSha ? { baseSha } : {}),
                                                 ...(!freshStart && diffBase ? { diffBase, diffBaseFrom: recreated ? null : (reuseBase?.against || null) } : {}),
                                                 ...(keptStart ? { startRef: keptStart } : {}),
-                                                ...(syncRecord ? { sync: syncRecord } : {}) };
+                                                ...(syncRecord ? { sync: syncRecord } : {}),
+                                                ...(this.branchOpts.resolves ? { resolves: this.branchOpts.resolves } : {}) };
           const short = (s) => String(s).slice(0, 10);
           if ((freshStart || recreated) && diffBase && (baseMoved || (checkoutHead && diffBase !== checkoutHead))) {
             await appendAudit(this.pipeline.dir, `Diff base for \`${m.projectKey}\` moved to the run's start \`${short(diffBase)}\`.`).catch(() => {});
@@ -3748,6 +3760,12 @@ export class RunHarness extends EventEmitter {
     if (!kept) return;
     // _teardownRunRoot already _persist()ed the pre-checkout branch record. keepAfterRun stamped the
     // checkout with a targeted UPDATE, so mirror it into memory: a later _persist() must not erase it.
+    await this._mirrorBranchRecords();
+  }
+
+  /** A targeted UPDATE (checkout.mjs updateBranchRecords) wrote branch records: copy them into memory so a later
+   *  _persist() (writeState re-serializes branch / workspace_meta) never erases them. */
+  async _mirrorBranchRecords() {
     const { findPipelineRowById } = await import('./artifacts.mjs');
     const row = findPipelineRowById(this.state.id);
     const parse = (t) => { try { return typeof t === 'string' ? JSON.parse(t) : t; } catch { return null; } };
@@ -3758,6 +3776,14 @@ export class RunHarness extends EventEmitter {
       const br = parse(row.branch);
       if (br) this.state.branch = br;
     }
+  }
+
+  /** #620 (D9): after teardown the branch holds the run's final commit; check it against its fetched base. */
+  async _checkBaseAfterRun() {
+    if (this._isWorkspaceScan() || !this.state.id || !['done', 'stopped', 'error'].includes(this.state.status)) return;
+    const { afterRunBaseCheck } = await import('./base-conflicts.mjs');   // lazy, like checkout.mjs
+    await afterRunBaseCheck(this.state.id, { log: (m) => this._log('git', 'info', m) });
+    await this._mirrorBranchRecords();
   }
 
   /** A Workspace scan run (wf_workspace_scan on a workspace target) is READ-ONLY: nothing is

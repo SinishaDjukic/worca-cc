@@ -821,6 +821,10 @@
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
+                <!-- Base conflicts (#620): the stored check of each branch against its base. Painted by paintHdBase. -->
+                <div class="hd-base-check" hidden>
+                  <ul class="hd-base-members"></ul>
+                </div>
                 <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" aria-label="Pull requests per repository"></ul>
@@ -2489,6 +2493,8 @@
         </div>
         <!-- Sync before run (#527): the base moved on the remote since this run started. -->
         <small class="hint warn" id="shipit-base-warn" hidden></small>
+        <!-- Base conflicts (#620): the stored local check while no PR exists. Painted by paintShipItBaseCheck. -->
+        <small class="hint shipit-basecheck" hidden></small>
         <!-- Fork support: where the branch is pushed and which repo the PR opens in
              (GitHub's "compare across forks"; Azure DevOps opens PRs within one repository). Filled from GET /api/pr/remotes on
              open; hidden until the list arrives and stays hidden when it cannot be

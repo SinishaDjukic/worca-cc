@@ -201,6 +201,35 @@ Discard saves uncommitted changes first, as `checkout-discard-<projectKey>-<time
 the run's artifact folder (or `<worca home>/actions/patches/<runId>/`). If that save fails, Discard
 stops and asks before it throws the changes away.
 
+## Conflicts with the base branch
+
+When a run finishes (done, stopped or failed), Worca checks whether its branch still merges into its
+base. It fetches the base from the project's sync remote (`origin/dev`, say). If there is no remote, it
+uses the local base. If the fetch fails, it uses the last fetched copy and says "offline". The check
+runs `git merge-tree` against the branch refs, so no checkout or worktree changes.
+
+The History detail shows one line per branch (one per repository in a workspace run), with when it
+was checked:
+
+- **Up to date with dev**: nothing to do.
+- **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
+  the branch.
+- **Conflicts in N files**, with the file list: resolve them in one of two ways.
+  - **Resolve in a pipeline** starts a new run on the same branch, with the same workflow. Its task
+    tells the agent to merge the base and resolve the listed files.
+  - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
+    the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
+    commit the merge, then click **Re-check**.
+
+The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
+resolve run ends, and on **Re-check**. It does not run on a timer.
+
+After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
+in the meantime, the push is refused and the merge stays local. A resolution that still has conflict
+markers (`<<<<<<<`, `>>>>>>>`) in its files is not pushed; the line reads "Conflict markers left in
+N files".
+
 ## Workspace stacks
 
 A workspace's Actions tab defines **stacks**: one start for actions across members, in order.

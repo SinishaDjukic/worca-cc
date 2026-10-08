@@ -4125,6 +4125,21 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .publish-status{margin:0;font-size:12px;}
 .publish-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:22px;}
 
+/* Base conflicts (#620) */
+.hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
+.hd-base-members { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.hd-base-pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+.hd-base-pill.tone-green { background: var(--green-bg); color: var(--green-ink); }
+.hd-base-pill.tone-blue { background: var(--blue-bg); color: var(--blue-ink); }
+.hd-base-pill.tone-red { background: var(--red-bg); color: var(--red-ink); }
+.hd-base-pill.tone-amber { background: var(--amber-bg); color: var(--amber-ink); }
+.hd-base-pill.tone-grey { background: var(--field); color: var(--ink-2); }   /* the .chip colours */
+.hd-base-msg { flex-basis: 100%; }
+.hd-base-msg-err { color: var(--red-ink); }
+.hd-base-files { flex-basis: 100%; margin: 2px 0 0 12px; padding: 0; font-size: 12px; }
+.shipit-basecheck.tone-red { color: var(--red-ink); }
+
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,
    the textarea (or its rendered preview) under it. Left-aligned inside the centered
    card like the remotes. `.btn` sets display:inline-flex and `.hint` display:block,
