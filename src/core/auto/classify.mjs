@@ -14,7 +14,7 @@ import { classifyError } from '../recoverable-error.mjs';
 import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
 import { RECIPE_GUIDE, WORKSPACE_GUIDE, mockShapeFor } from './recipes.mjs';
 import { rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { writeFilesMcpConfig } from '../engines/codex-files-mcp.mjs';
 
@@ -159,15 +159,17 @@ export function shapeForPrompt(shape) {
   return { ...shape, stages: (Array.isArray(shape.stages) ? shape.stages : []).map((u) => (isObject(u) && Array.isArray(u.parallel) ? { ...u, parallel: u.parallel.map(flatStage) } : flatStage(u))) };
 }
 
-/** The workspace section: the members, which of them have a readable checkout (repo look only), and the guide. */
-function workspaceSection(workspace, repoLook) {
+/** The workspace section: the members, which of them have a readable checkout (repo look only), and the guide.
+ *  `repoRoot` (an engine without its own file tools: worca's take absolute paths only): checkouts are named absolute. */
+function workspaceSection(workspace, repoLook, repoRoot = null) {
   const members = Array.isArray(workspace?.members) ? workspace.members : [];
   const lines = ['', '## Workspace',
     `The task targets the workspace "${cleanText(workspace.name, 80) || 'workspace'}" — ${members.length} repositories: ${members.map((m) => `${cleanText(m.projectName, 60) || m.projectKey} (${m.projectKey})`).join(', ')}. The fingerprint has one block per repository.`];
   if (repoLook) {
     const seen = members.filter((m) => m.checkout);
     const unseen = members.filter((m) => !m.checkout);
-    if (seen.length) lines.push(`Readable checkouts: ${seen.map((m) => `${m.projectKey} at ${m.checkout}`).join('; ')}.${unseen.length ? ` No checkout for ${unseen.map((m) => m.projectKey).join(', ')} — size those from the fingerprint.` : ''}`);
+    const at = (c) => (repoRoot && !isAbsolute(c) ? resolve(repoRoot, c) : c);
+    if (seen.length) lines.push(`Readable checkouts: ${seen.map((m) => `${m.projectKey} at ${at(m.checkout)}`).join('; ')}.${unseen.length ? ` No checkout for ${unseen.map((m) => m.projectKey).join(', ')} — size those from the fingerprint.` : ''}`);
   }
   lines.push('', WORKSPACE_GUIDE);
   return lines;
@@ -199,10 +201,10 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
       '',
       '## Repository',
       repoRoot
-        ? `${repoRoot} ${workspace ? 'holds read-only checkouts of the repositories listed under Workspace' : 'is a read-only checkout of the repository the task targets'}. Before you decide, you may use the read_file, grep and glob tools (absolute paths under that folder) — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`
+        ? `${repoRoot} ${workspace ? 'holds read-only checkouts of the repositories listed under Workspace' : 'is a read-only checkout of the repository the task targets'}. Before you decide, you may use the read_file, grep and glob tools (absolute paths under ${workspace ? 'the readable checkouts listed there' : 'that folder'}) — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`
         : `${workspace ? 'Your working directory holds read-only checkouts of the repositories listed under Workspace' : 'Your working directory is a read-only checkout of the repository the task targets'}. Before you decide, you may use Read, Grep and Glob — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`,
     ] : []),
-    ...(workspace ? workspaceSection(workspace, repoLook) : []),
+    ...(workspace ? workspaceSection(workspace, repoLook, repoRoot) : []),
     '',
     RECIPE_GUIDE,
     '',
