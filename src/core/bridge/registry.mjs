@@ -17,6 +17,9 @@ export function keyOptional(provider, baseUrl) {
   return provider === 'openai' && isLocalBaseUrl(baseUrl);
 }
 
+/** A Codex entry's upstream is an endpoint codex connects to itself (engines/codex-endpoint.mjs): never bridged. */
+const bridgedUpstream = (m) => (m.upstream && m.engine !== 'codex' ? m.upstream : null);
+
 /**
  * The bridged catalog entry for `id` (user global → plugin → team policy), or
  * null when the id is unknown or not bridged. Shape:
@@ -27,12 +30,12 @@ export function findBridgedEntry(id) {
   const key = typeof id === 'string' ? id.trim().toLowerCase() : '';
   if (!key) return null;
   const g = listGlobalModels().find((m) => m.id.toLowerCase() === key);
-  if (g) return g.upstream ? { id: g.id, label: g.label, upstream: g.upstream, cost: g.cost, source: 'global' } : null;
+  if (g) return bridgedUpstream(g) ? { id: g.id, label: g.label, upstream: g.upstream, cost: g.cost, source: 'global' } : null;
   const p = listPluginModels().find((m) => m.id.toLowerCase() === key);
-  if (p) return p.upstream ? { id: p.id, label: p.label, upstream: p.upstream, cost: p.cost, source: 'plugin', plugin: p.plugin } : null;
+  if (p) return bridgedUpstream(p) ? { id: p.id, label: p.label, upstream: p.upstream, cost: p.cost, source: 'plugin', plugin: p.plugin } : null;
   let t = null;
   try { t = policyCatalogModels().find((m) => m.id.toLowerCase() === key); } catch { t = null; }
-  if (t && t.upstream) return { id: t.id, label: t.label, upstream: t.upstream, source: 'policy' };
+  if (t && bridgedUpstream(t)) return { id: t.id, label: t.label, upstream: t.upstream, source: 'policy' };
   return null;
 }
 

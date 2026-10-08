@@ -159,3 +159,28 @@ test('ask.webEnabled / ask.webAllowedDomains', () => {
   assert.equal(validateValue(d, ['docs.example.com', '*.mdn.io']), null);
   assert.match(validateValue(d, ['not a host']), /host name/);
 });
+
+test('catalog models: a Codex entry keeps its engine, Codex efforts and a Responses endpoint; routing env drops it', () => {
+  const { doc, warnings } = normalizePolicyDoc({
+    schema: 1,
+    catalogs: { models: [
+      { id: 'acme-codex', engine: 'codex', efforts: ['low', 'max'] },
+      { id: 'acme-codex-env', engine: 'codex', env: { ANTHROPIC_BASE_URL: 'https://x' } },
+      { id: 'acme-codex-local', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', baseUrl: 'http://gw.acme:8000/v1', apiKey: '${ACME_KEY}' } },
+      { id: 'acme-codex-chat', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } },
+      { id: 'acme-codex-literal', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', apiKey: 'sk-literal-key-123456' } },
+      { id: 'acme-odd', engine: 'gemini' },
+      { id: 'acme-claude', efforts: ['high'] },
+    ] },
+  });
+  assert.deepEqual(doc.catalogs.models, [
+    { id: 'acme-codex', label: 'acme-codex', efforts: ['low'], engine: 'codex' },
+    { id: 'acme-codex-local', label: 'acme-codex-local', efforts: ['minimal', 'low', 'medium', 'high'], engine: 'codex',
+      upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', baseUrl: 'http://gw.acme:8000/v1', apiKey: '${ACME_KEY}' } },
+    { id: 'acme-claude', label: 'acme-claude', efforts: ['high'] },
+  ]);
+  assert.ok(warnings.some((w) => w.includes('acme-codex-env') && w.includes('a codex model takes no env')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-codex-chat') && w.includes('Responses API only')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-codex-literal') && w.includes('${VAR} reference')), warnings.join('\n'));
+  assert.ok(warnings.some((w) => w.includes('acme-odd') && w.includes('engine')), warnings.join('\n'));
+});

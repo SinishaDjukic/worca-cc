@@ -97,7 +97,7 @@ const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, CODEX_EFFORTS } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -368,8 +368,16 @@ function normalizeModels(raw, warnings) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) { warnings.push(`catalogs.models: duplicate id ${m.id} dropped`); continue; }
     const entry = { id: m.id, label: clip(typeof m.label === 'string' && m.label.trim() ? m.label : m.id, 80) };
-    const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => EFFORTS.includes(e)) : [];
-    entry.efforts = efforts.length ? efforts : ['medium', 'high'];
+    if (m.engine !== undefined && m.engine !== 'claude' && m.engine !== 'codex') { warnings.push(`catalogs.models: ${m.id}: engine must be claude or codex — entry dropped`); continue; }
+    const codex = m.engine === 'codex';
+    const allowed = codex ? CODEX_EFFORTS : EFFORTS;
+    const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
+    entry.efforts = efforts.length ? efforts : (codex ? [...CODEX_EFFORTS] : ['medium', 'high']);
+    if (codex) {
+      // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a codex model takes no env — entry dropped`); continue; }
+      entry.engine = 'codex';
+    }
     if (m.env != null) {
       if (!isPlainObject(m.env)) { warnings.push(`catalogs.models: ${m.id}: env is not an object — dropped`); continue; }
       const env = {}; let bad = null;
@@ -391,6 +399,8 @@ function normalizeModels(raw, warnings) {
       try {
         upstream = assertModelUpstream(m.upstream);
         if (upstream && upstream.apiKey && !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(upstream.apiKey)) throw new Error('upstream.apiKey must be a ${VAR} reference');
+        const codexWhy = codex ? codexUpstreamProblem(upstream) : null;
+        if (codexWhy) throw new Error(codexWhy);
         const clash = upstream ? upstreamEnvConflict(entry.env) : null;
         if (clash) throw new Error(`env key ${clash} is set by the bridge for an upstream entry`);
       } catch (e) {

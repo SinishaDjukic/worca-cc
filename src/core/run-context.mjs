@@ -384,12 +384,15 @@ function rewriteSkillName(text, name) {
   return s.slice(0, m.index) + `---\n${next}\n---` + s.slice(m.index + m[0].length);
 }
 
-/** Top-level entry names tracked under `.claude/skills` in a checkout (§5.6 guard). */
-function trackedSkillNames(worktreeDir) {
+/** The skills folder an engine reads from its cwd: Claude Code's `.claude/skills`, codex's `.agents/skills`. */
+export const skillsRelFor = (engine) => (engine && engine !== 'claude' ? join('.agents', 'skills') : join('.claude', 'skills'));
+
+/** Top-level entry names tracked under the skills folder `rel` in a checkout (§5.6 guard). */
+function trackedSkillNames(worktreeDir, rel = join('.claude', 'skills')) {
   if (!worktreeDir) return new Set();
-  const out = gitOut(worktreeDir, ['ls-files', '--', join('.claude', 'skills')]);
+  const out = gitOut(worktreeDir, ['ls-files', '--', rel]);
   if (!out) return new Set();
-  const prefix = `${join('.claude', 'skills')}/`;
+  const prefix = `${rel}/`;
   return new Set(
     out.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith(prefix))
       .map((l) => l.slice(prefix.length).split('/')[0]).filter(Boolean),
@@ -428,7 +431,7 @@ async function skillCandidates(dir, onError) {
  */
 export async function assembleSkills({
   target, members = [], projectsRoot, resolutions, homeDir,
-  mount = 'copy', trackedNames = new Set(), skipRoot = false,
+  mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'),
 }) {
   const warnings = [];
   const onError = fsWarner(warnings);        // ENOENT stays silent; a real error is named
@@ -454,6 +457,13 @@ export async function assembleSkills({
   if (!rootIsHome && projectsRoot) {
     for (const c of await skillCandidates(projectsRoot, onError)) {
       candidates.push({ ...c, cls: 'root', prefix: 'root-', origin: `root layer \`${projectsRoot}\`` });
+    }
+  }
+  // An engine that reads another folder (codex: `.agents/skills`) does not see the user's `~/.claude/skills`
+  // on its own, so those join the mount after the root layer (renamed `user-` on a clash).
+  if (rel !== join('.claude', 'skills') && homeDir) {
+    for (const c of await skillCandidates(homeDir, onError)) {
+      candidates.push({ ...c, cls: 'user', prefix: 'user-', origin: `your skills (\`~/.claude/skills\`)` });
     }
   }
   for (const [name, r] of resolutionEntries(resolutions)) {
@@ -521,7 +531,7 @@ export async function assembleSkills({
     taken.add(effective);
     names.push(effective);
     records.push({
-      path: join('.claude', 'skills', effective),
+      path: join(rel, effective),
       source: cand.source,
       kind: 'skill',
       ...(asLink ? { mount: 'symlink' } : {}),
@@ -1057,7 +1067,7 @@ export function generateClaudeMd({
 export async function assembleRunContext({
   runRoot, members = [], projectsRoot, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
-  platform = process.platform, agentIsolated = false, registry = null,
+  platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1067,9 +1077,9 @@ export async function assembleRunContext({
   const pipelineId = basename(resolve(runRoot));
   // Each cap is read ONCE per assembly: a malformed persisted value warns on every
   // read, so a per-source read would print the same warning N times (Phase 2 note).
-  const maxBytesPerFile = contextMaxBytesPerFile();
-  const maxBytesTotal = contextMaxBytesTotal();
-  const mount = skillMount();
+  const maxBytesPerFile = contextMaxBytesPerFile(settingsScope);
+  const maxBytesTotal = contextMaxBytesTotal(settingsScope);
+  const mount = skillMount(settingsScope);
 
   const sorted = [...members].sort(byProjectKey);
   await mkdir(runRoot, { recursive: true });
@@ -1136,25 +1146,27 @@ export async function assembleRunContext({
   const previousRecords = (await readRunManifest(runRoot))?.injectedPaths || {};
 
   // ── 1) skills (§5.6) ─────────────────────────────────────────────────────
+  // Mounted where the run's engine reads skills from its cwd (skillsRelFor).
+  const skillsRel = skillsRelFor(engine);
   const injectedPaths = {};
   let skillMountDir = null;
   let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [] };
   const primary = sorted[0] || null;
   if (isWorkspace) {
-    skillMountDir = join(runRoot, '.claude', 'skills');
+    skillMountDir = join(runRoot, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
     });
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
   } else if (primary?.worktreeDir) {
     // E4/P3b: the skills ancestor walk stops at a git repository root, so a run-root
     // mount would be invisible to a process whose cwd is the worktree.
-    skillMountDir = join(primary.worktreeDir, '.claude', 'skills');
+    skillMountDir = join(primary.worktreeDir, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome,
-      trackedNames: trackedSkillNames(primary.worktreeDir),
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
+      trackedNames: trackedSkillNames(primary.worktreeDir, skillsRel),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
   } else if (primary) {

@@ -4,7 +4,7 @@
 // _buildWorktreeGraph guards, and the end-to-end leak-safety guarantees.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, readFile } from 'node:fs/promises';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -366,3 +366,78 @@ test('integration: in-worktree graph is present but never leaks (reviewer diff, 
   assert.notEqual(graphOnMain.status, 0, '(d) main tree has no graphify-out');
   assert.ok(!existsSync(join(repo, 'graphify-out')), '(d) main working dir has no graphify-out');
 });
+
+test('integration: a repo that does NOT gitignore graphify-out/ still never gets the graph (reviewer diff, kept commit)', POSIX_SHIM, async () => {
+  const repo = await makeTmpDir('worca-cc-int-');
+  const g = (args) => spawnSync('git', args, { cwd: repo });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t']);
+  g(['config', 'user.name', 't']);
+  await writeFile(join(repo, 'seed.txt'), 'seed\n', 'utf8');            // no .gitignore at all
+  g(['add', '-A']);
+  g(['commit', '-qm', 'init']);
+  const pipelineDir = await makeTmpDir('worca-cc-pipe-');
+  const orch = createOrchestrator({
+    projectDir: repo, prompt: 'integration', auto: true, claude: { mock: true },
+    branch: { source: 'main', feature: 'feat/graph-unignored' },
+  });
+  orch.pipeline = { id: 'p-unig', dir: pipelineDir, promptText: 'integration' };
+  orch.state.id = 'p-unig';
+  orch.state.pipelineDir = pipelineDir;
+  orch.checkpointRef = spawnSync('git', ['-C', repo, 'rev-parse', 'HEAD']).stdout.toString().trim();
+  await orch._setupRunRoot();
+  const wt = orch.workDir;
+  assert.notEqual(wt, repo, 'a worktree should have been created');
+
+  // The real build path: runGraphifyUpdate with a graphify that writes a graph, then an agent edit.
+  const binDir = await makeTmpDir('worca-cc-bin-');
+  await fakeGraphify(binDir, '#!/bin/sh\nmkdir -p "$2/graphify-out/cache"\necho "{}" > "$2/graphify-out/graph.json"\necho x > "$2/graphify-out/cache/stat-index.json"\nexit 0\n');
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    const res = await runGraphifyUpdate({ dir: wt, cwd: wt, timeoutMs: 10000 });
+    assert.equal(res.ok, true);
+  } finally {
+    process.env.PATH = prevPath;
+  }
+  assert.equal(await readFile(join(wt, 'graphify-out', '.gitignore'), 'utf8'), '*\n', 'the output ignores itself');
+  writeFileSync(join(wt, 'agent-output.txt'), 'work from the agent\n');
+
+  // An agent's own `git add -A` skips it.
+  assert.equal(spawnSync('git', ['-C', wt, 'status', '--porcelain', '--untracked-files=all']).stdout.toString(), '?? agent-output.txt\n');
+  // Reviewer surface.
+  await orch._stageWorkingTree();
+  const diff = spawnSync('git', ['-C', wt, 'diff', '--name-only', orch.checkpointRef]).stdout.toString();
+  assert.match(diff, /agent-output\.txt/);
+  assert.doesNotMatch(diff, /graphify-out/, 'reviewer diff excludes the graph');
+  // Kept-branch commit.
+  orch.state.status = 'done';
+  await orch._teardownWorktree();
+  const feature = orch.getState().branch.feature;
+  assert.equal(spawnSync('git', ['-C', repo, 'show', `${feature}:agent-output.txt`]).status, 0, 'the agent file is committed');
+  const tree = spawnSync('git', ['-C', repo, 'ls-tree', '-r', '--name-only', feature]).stdout.toString();
+  assert.doesNotMatch(tree, /graphify-out/, 'no graph file (and no sentinel) in the kept-branch commit');
+});
+
+test('runGraphifyUpdate: a missing dir is not created for the sentinel', async () => {
+  const missing = join(await makeTmpDir(), 'gone');
+  const res = await runGraphifyUpdate({ dir: missing, cwd: tmpdir(), timeoutMs: 5000 });
+  assert.equal(typeof res.ok, 'boolean');
+  assert.ok(!existsSync(missing), 'runGraphifyUpdate did not create the dir');
+});
+
+test('runGraphifyUpdate: a repo that tracks graphify-out/ gets no sentinel (it commits its graph on purpose)', async () => {
+  const repo = await makeTmpDir('worca-cc-tracked-');
+  const g = (args) => spawnSync('git', args, { cwd: repo });
+  g(['init', '-q', '-b', 'main']);
+  mkdirSync(join(repo, 'graphify-out'));
+  writeFileSync(join(repo, 'graphify-out', 'graph.json'), '{}\n');
+  g(['add', '-A']);
+  g(['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init']);
+  const binDir = await makeTmpDir('worca-cc-bin-');      // an empty PATH dir: no graphify, so the build itself fails
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':/usr/bin:/bin';
+  try { await runGraphifyUpdate({ dir: repo, cwd: repo, timeoutMs: 5000 }); } finally { process.env.PATH = prevPath; }
+  assert.ok(!existsSync(join(repo, 'graphify-out', '.gitignore')));
+});
+

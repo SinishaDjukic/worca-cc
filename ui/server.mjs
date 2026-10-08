@@ -21,6 +21,7 @@ import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
@@ -29,7 +30,7 @@ import {
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
   persistMemberPrState, readMemberPrStates,
-  checkoutRecordsFor, retainedWorkFor,
+  checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
@@ -67,7 +68,12 @@ import {
   awayPerPerson, nightModeToggleFor, nightModeHereSinceFor, setPersonNightModeToggle,
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
+  runEngineSetting, assertRunEngineInput, setRunEngineSetting,
+  stepModelsSetting, assertStepModelsInput, setStepModels,
+  utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
+  askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
 } from '../src/core/settings.mjs';
+import { resolveSetting, resolveAll, writeProjectSettings, assertProjectSettingsPatch, resolveRunEngine, defragSlotPair } from '../src/core/settings-cascade.mjs';
 import { resolveNightConfig, validateNightPatch } from '../src/core/night/config.mjs';
 import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.mjs';
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
@@ -94,7 +100,7 @@ import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
-import { askCatalog, validateModelEffort } from '../src/core/ask/models.mjs';
+import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
@@ -187,7 +193,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, agentSteps, EFFORTS, catalogHasModel,
+  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
@@ -195,7 +201,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -961,6 +967,10 @@ function summarizeRuns() {
     // The clipped failure message behind reason 'error', or null — so a
     // reload/reconnect restores the "Paused · error" detail, not a bare card.
     pauseDetail: r.pauseDetail || null,
+    // A usage limit's own engine (engine-switch.mjs), and the run's engine: a reload keeps
+    // the run page's "Resume on <other engine>" offer.
+    limitEngine: r.limitEngine || null,
+    runEngine: r.orch?.state?.runEngine || null,
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
     // Who last stopped / paused / resumed it ({ kind, by, at }), or null.
@@ -1056,6 +1066,7 @@ function wireRun(entry) {
         entry.pauseReason = (payload && payload.reason) || null;
         // ...and WHAT went wrong for an error-pause, reset alongside it.
         entry.pauseDetail = (payload && payload.detail) || null;
+        entry.limitEngine = (payload && payload.limitEngine) || null;
         resolvePending(entry, { reason: entry.status });
         // B29: ANY run that mounted memory may have synced into its scopes (P1 syncs the mount back
         // at the run end on done, error, stopped and paused alike) — poke every mounted scope so open
@@ -1118,6 +1129,7 @@ function wireRun(entry) {
             pipelineId: entry.pipelineId || null,
             reason: (payload && payload.reason) || null,
             detail: (payload && (payload.detail || payload.message)) || null,
+            limitEngine: (payload && payload.limitEngine) || null,
           });
           emitChanged('schedules-changed', 'outcome');
         } catch (err) { console.error(`[worca-ui] schedule outcome failed: ${err && err.message ? err.message : err}`); }
@@ -1565,6 +1577,24 @@ app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 
 function badRequest(res, message) {
   res.status(400).json({ error: message });
+}
+
+/**
+ * The run body's engine fields (harness bridge §10.4): `engine` names the harness for the
+ * pipeline's agent nodes (the CLI's --engine), `allowUnguardedEngine` is the consent that
+ * lifts the gate's rule refusals (--allow-unguarded-engine). Both are passed on only for an
+ * engine other than Claude, so a default run's options stay exactly as they were.
+ * @returns {{ error: string } | { opts: { engine?: string, allowUnguardedEngine?: true } }}
+ */
+function runEngineOpts(body, scope = {}) {
+  if (body.allowUnguardedEngine !== undefined && typeof body.allowUnguardedEngine !== 'boolean') {
+    return { error: 'allowUnguardedEngine must be true or false' };
+  }
+  if (body.engine != null && body.engine !== '' && typeof body.engine !== 'string') return { error: 'engine must be a string' };
+  let engine;
+  try { engine = selectRunEngine(resolveRunEngine({ explicit: typeof body.engine === 'string' ? body.engine : null, ...scope }).engine); } catch (err) { return { error: err.message }; }
+  if (engine === 'claude') return { opts: {} };
+  return { opts: { engine, ...(body.allowUnguardedEngine === true ? { allowUnguardedEngine: true } : {}) } };
 }
 
 // A workspace id/key is "wks-<nameSlug>-<sha1[:8]>". WORKSPACE_KEY_RE is imported
@@ -2097,6 +2127,12 @@ const startRunHandler = async (req, res) => {
     const optOut = parseMcpOptOut(body.mcpOptOut);
     if (optOut.error) return badRequest(res, optOut.error);
 
+    // Run body's engine/consent fields (harness bridge §10.4). `{}` for a default/Claude body,
+    // so both `claude:` blocks below keep exactly today's keys.
+    const engineShape = runEngineOpts(body, hasWorkspace ? { workspace: true } : { projectDir: resolveProjectDir(body.projectDir) });
+    if (engineShape.error) return badRequest(res, engineShape.error);
+    const runEngine = engineShape.opts;
+
     // Budget gate: no new pipelines while the total window is spent (F6).
     const budget = budgetStatus();
     if (budget.blocked && !sched) {
@@ -2228,7 +2264,7 @@ const startRunHandler = async (req, res) => {
         sync,
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
         humanInLoop: bodyHumanInLoop ?? true,
-        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock },
+        claude: { permissionMode: stored.permissionMode || 'acceptEdits', ...(stored.model ? { model: stored.model } : {}), mock, ...runEngine },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
         ...(nightMode ? { nightMode: true } : {}),
@@ -2342,6 +2378,7 @@ const startRunHandler = async (req, res) => {
           permissionMode: stored.permissionMode || 'acceptEdits',
           ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : (stored.model ? { model: stored.model } : {})),
           mock,
+          ...runEngine,
         },
         // A CLI-made ticket may carry `--yes`: the explicit non-interactive choice survives the wait.
         ...(stored.auto ? { auto: true } : {}),
@@ -2360,6 +2397,15 @@ const startRunHandler = async (req, res) => {
         events: [],
         pendingQuestion: null,
       };
+    }
+
+    // The engine gate's early refusals answer here, before the run is registered or
+    // announced, so New pipeline can show them inline and offer the consent when it
+    // lifts them. run() checks them all again, with the node-level ones, which still
+    // arrive as the run's error event.
+    if (runEngine.engine) {
+      const refusal = await orch.engineStartRefusal();
+      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -3398,9 +3444,12 @@ const chatActions = {
   // The long chain of budget/worktree/double-resume guards lives in resumeRun();
   // call it in-process. (It used to be reached by POSTing to 127.0.0.1:PORT — a
   // loopback self-fetch that breaks under WORCA_HOST and can hit another instance.)
-  resume: async (pipelineId, by) => {
-    try { return await resumeRun(pipelineId, { by: by || 'local' }); }
-    catch (err) { return { ok: false, error: err?.body?.error || err?.message || String(err) }; }
+  resume: async (pipelineId, by, { engine = null } = {}) => {
+    try { return await resumeRun(pipelineId, { by: by || 'local', ...(engine ? { engine } : {}) }); }
+    catch (err) {
+      return { ok: false, error: err?.body?.error || err?.message || String(err),
+        ...(err?.body?.code ? { code: err.body.code } : {}), ...(err?.body?.overridable ? { overridable: true } : {}) };
+    }
   },
   // Chat reads only DB fields (id/title/status/cost/activeMs/pauseReason), so bound the
   // rows in SQL and skip git enrichment — /status no longer spawns 2 git procs per pipeline.
@@ -3767,6 +3816,17 @@ app.get('/api/night-decisions', (req, res) => {
 // layer when a project is given), where each field comes from, what an empty field falls back to,
 // the live status (toggle, and hereSince: when "I'm here" was last said) and the raw layers the forms edit. Every surface renders its text from this
 // through src/shared/away-mode/describe.mjs.
+app.get('/api/run-defaults', (req, res) => {
+  const raw = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
+  const projectDir = raw ? resolveProjectDir(raw) : null;
+  if (raw && !projectDir) return badRequest(res, 'invalid projectDir');
+  try {
+    const result = resolveSetting('run.engine', projectDir ? { projectDir } : null);
+    res.json({ engine: { value: result.value, source: result.source },
+      steps: { claude: stepSlotDefaults('claude', { projectDir }), codex: stepSlotDefaults('codex', { projectDir }) } });
+  } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
+});
+
 app.get('/api/away-mode', (req, res) => {
   const raw = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
   const projectDir = raw ? resolveProjectDir(raw) : null;          // same key as PATCH /api/config (~ expanded)
@@ -3863,9 +3923,28 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
   } catch { return []; /* never block a resume on a read error */ }
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false } = {}) {
+/**
+ * A resume's engine fields: `engine` continues the run on that engine instead of its saved
+ * one (the CLI's `worca resume --engine`), `allowUnguardedEngine` the consent that lifts the
+ * gate's rule refusals. Unlike runEngineOpts, a named Claude is passed on: without it the
+ * harness falls back to the SAVED engine, and "Resume on Claude" of a Codex run would stay
+ * on Codex. Nothing named keeps the saved engine and its saved consent.
+ * @returns {{ engine?: string, allowUnguardedEngine?: true }}
+ */
+function resumeEngineOpts(engine, allowUnguardedEngine) {
+  if (allowUnguardedEngine !== undefined && typeof allowUnguardedEngine !== 'boolean') {
+    throw new ResumeError(400, { error: 'allowUnguardedEngine must be true or false' });
+  }
+  if (engine != null && engine !== '' && typeof engine !== 'string') throw new ResumeError(400, { error: 'engine must be a string' });
+  const opts = allowUnguardedEngine === true ? { allowUnguardedEngine: true } : {};
+  if (typeof engine !== 'string' || !engine) return opts;
+  try { return { engine: selectRunEngine(engine), ...opts }; } catch (err) { throw new ResumeError(400, { error: err.message }); }
+}
+
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
+  const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
@@ -3990,19 +4069,26 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     if (live) throw new ResumeError(409, { error: 'a defragment run for this memory scope is already live', runId: live.id });
   }
 
-  // A scheduled resume for this run is moot the moment any resume is committed.
-  cancelScheduledResumes(pipelineId, { by, reason: `the run was resumed${byActor(by || 'local')}` });
-
   const effMock = mock || serverMockMode();
   const runId = randomUUID();
   const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
     agentsDir: AGENTS_DIR,
-    claude: { permissionMode: 'acceptEdits', mock: effMock },
+    claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts },
     resume: saved,
     resumedBy: by || 'local',
   });
+  // The engine gate's refusals answer here, before the resume is committed, like POST
+  // /api/run's: the run stays paused, and the UI can show why and offer the consent when
+  // it lifts the refusal. resume() checks them all again.
+  if ((orch.claude?.engine || 'claude') !== 'claude') {
+    const refusal = await orch.engineResumeRefusal();
+    if (refusal) throw new ResumeError(409, { error: refusal.error, code: 'engine-refused', overridable: refusal.overridable, engine: orch.claude.engine });
+  }
+
+  // A scheduled resume for this run is moot the moment any resume is committed.
+  cancelScheduledResumes(pipelineId, { by, reason: `the run was resumed${byActor(by || 'local')}` });
   // A stop may have claimed the row while the gates above awaited (claimPausedForStop flips
   // it to stopped atomically). Re-read it with NOTHING awaited between here and runs.set, so
   // either the stop sees this entry (stopPausedPipeline's beforeStop, and refuses) or this
@@ -4080,7 +4166,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/resume { pipelineId } — rehydrate a paused pipeline from the DB (works
+// POST /api/resume { pipelineId, engine?, allowUnguardedEngine? } — rehydrate a paused pipeline from the DB (works
 // across server restarts) and continue it as a NEW live run entry with the SAME
 // pipeline id / history row.
 // ---------------------------------------------------------------------------
@@ -4094,6 +4180,8 @@ app.post('/api/resume', async (req, res) => {
       by: actorOf(req),
       baseCheck: req.body?.baseCheck === true,
       baseAck: req.body?.baseAck === true,
+      engine: req.body?.engine,
+      allowUnguardedEngine: req.body?.allowUnguardedEngine,
     });
     res.json(out);
   } catch (err) {
@@ -4491,7 +4579,7 @@ app.get('/api/runs/:id/recovery-patch', async (req, res) => {
 // POST /api/runs/:id/overview  -> Layer-2 on-demand overview agent.
 // Accepts ?key=<storeKey> (preferred; history detail uses it) or ?projectDir=...
 // ?force=1 bypasses the cached overview.json. 200 { overview } | 404 | 500, or
-// 409 code 'claude-signed-out' when the CLI is signed out (a cached overview
+// 409 code 'claude-signed-out' when a Claude run's CLI is signed out (a cached overview
 // needs no Claude, so this maps the failure instead of probing up front).
 // ---------------------------------------------------------------------------
 app.post('/api/runs/:id/overview', async (req, res) => {
@@ -4503,12 +4591,14 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     key = projectKey(projectDir);
   }
   const force = req.query.force === '1' || req.query.force === 'true';
+  // The run's own engine (§4.3): only a Claude run's failure can be the Claude sign-in.
+  const runEngine = runEngineOfRow(lookupPipelineRow(key, id));
   try {
     const overview = await generateOverview(key, id, { force });
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    if (msg !== 'pipeline not found' && await failedBecauseSignedOut({ message: msg })) {
+    if (msg !== 'pipeline not found' && runEngine === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     const code = msg === 'pipeline not found' ? 404 : 500;
@@ -4997,6 +5087,33 @@ function syncPrefsView(key) {
   return { own: readSyncPrefs(key) || {}, defaults: syncDefaults(), settings: effectiveSyncSettings(key) };
 }
 // All projects' chip blocks (no network) + Sync all.
+function projectSettingsState(projectDir) {
+  const roles = agentSteps().map(({ key, label }) => ({ key, label }));
+  const all = resolveAll({ projectDir }, { roles: roles.map((role) => role.key) });
+  const own = {}; const effective = {}; const layers = {};
+  for (const [id, result] of Object.entries(all)) {
+    if (result.layers.project !== undefined) own[id] = result.layers.project;
+    effective[id] = { value: result.value, source: result.source };
+    layers[id] = result.layers;
+  }
+  return { own, effective, layers, roles };
+}
+app.get('/api/projects/:key/settings', async (req, res) => {
+  const project = await tmProject(req, res); if (!project) return;
+  try { res.json(projectSettingsState(project.path)); } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
+});
+app.patch('/api/projects/:key/settings', async (req, res) => {
+  const project = await tmProject(req, res); if (!project) return;
+  try {
+    const roles = agentSteps().map(({ key }) => key);
+    const items = assertProjectSettingsPatch(req.body, { roles });
+    await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
+    writeProjectSettings({ projectDir: project.path }, req.body, { roles });
+    emitChanged('settings-changed');
+    res.json(projectSettingsState(project.path));
+  } catch (error) { badRequest(res, error?.message || String(error)); }
+});
+
 app.get('/api/sync/projects', syncRoute(async (_req, res) => {
   const ps = (await listProjects()).filter((p) => p.exists);
   const blocks = await mapWithCap(ps, fanoutCap(), (p) => projectSyncBlock({ dir: p.path, projectKey: p.key, mode: 'status' }));
@@ -6781,7 +6898,8 @@ app.post('/api/pr/describe', async (req, res) => {
   } catch (err) {
     if (life.signal.aborted) return;                 // the client is gone; nobody to answer
     const msg = err && err.message ? err.message : String(err);
-    if (msg !== 'pipeline not found' && await failedBecauseSignedOut({ message: msg })) {
+    // Only a Claude run's failure can be the Claude sign-in (§4.3).
+    if (msg !== 'pipeline not found' && (state.runEngine || 'claude') === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     res.status(msg === 'pipeline not found' ? 404 : 500).json({ error: msg });
@@ -7190,7 +7308,7 @@ function registerMemoryRoutes(prefix, { family }) {
   const onError = (p, err) => console.warn(`[worca-ui] memory: ${p}: ${err && err.message ? err.message : err}`);
 
   app.get(prefix, scoped(async (_req, res, { scope, key, project }) => {
-    const report = await memoryScopeReport(memoryRoot(), scope, memoryCaps(), { onError });
+    const report = await memoryScopeReport(memoryRoot(), scope, memoryCaps(project ? { projectDir: project.path } : null), { onError });
     res.json({
       scope: key, project, files: report.entries, state: report.state, health: report.health, defragRunId: liveDefragRun(key)?.id || null,
       defragModel: await defragModelState(project ? project.path : ''),
@@ -7202,12 +7320,12 @@ function registerMemoryRoutes(prefix, { family }) {
     if (!f) return res.status(404).json({ error: 'memory file not found' });
     res.json({ name, text: f.text, meta: f.meta, body: f.body });
   }));
-  app.put(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+  app.put(`${prefix}/files/:name`, scoped(async (req, res, { scope, key, project }) => {
     const name = named(req, res); if (name === null) return;
     const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
     if (text === null) return badRequest(res, 'text (string) is required');
     if (defragLocked(res, key)) return;
-    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps() }));
+    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
     emitMemoryChanged(key);
     res.json({ ok: true, name, created: r.created, bytes: r.bytes });
   }));
@@ -7244,11 +7362,10 @@ function registerMemoryRoutes(prefix, { family }) {
 // hashes every file of every registered project's scope (I2-#16).
 app.get('/api/memory/health', async (_req, res) => {
   try {
-    const caps = memoryCaps();
-    const g = await memoryScopeReport(memoryRoot(), GLOBAL_SCOPE, caps);
+    const g = await memoryScopeReport(memoryRoot(), GLOBAL_SCOPE, memoryCaps());
     const projects = [];
     for (const p of await listProjects()) {
-      const r = await memoryScopeReport(memoryRoot(), projectScope(p.key), caps);
+      const r = await memoryScopeReport(memoryRoot(), projectScope(p.key), memoryCaps({ projectDir: p.path }));
       projects.push({ key: p.key, name: p.name, health: r.health, defragRunId: liveDefragRun(`projects/${p.key}`)?.id || null });
     }
     res.json({ global: { health: g.health, defragRunId: liveDefragRun('global')?.id || null }, projects });
@@ -7922,6 +8039,11 @@ const settingsState = () => ({
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
   workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
+  runEngine: runEngineSetting() ?? null,
+  stepModels: stepModelsSetting(),
+  utilityModels: utilityModelsSetting(),
+  askEngine: askEngineSetting() ?? null,                  // Ask Worca: the engine new chats start on (D17)
+  askModels: askModelsSetting(),                          // Ask Worca: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
@@ -8038,13 +8160,13 @@ const askAwaySwitchFor = (person) => (awayPerPerson() && person && person !== 'l
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude' }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  const env = { ...process.env, ...askWebMcpEnv(web) };
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -8265,6 +8387,18 @@ app.get('/api/budget', (_req, res) => {
   res.json({ ...budget, ...savings });
 });
 
+/**
+ * Settings › Models' utility pickers (title, Auto classifier, PR description, memory defragment,
+ * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex id there is
+ * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
+ * @throws {Error}
+ */
+function refuseCodexUtilityModel(key, value) {
+  const id = typeof value === 'string' ? value.trim()
+    : (value && typeof value === 'object' ? String(value.model ?? value.scanModel ?? '').trim() : '');
+  if (id && engineOfModel(id) === 'codex') throw new Error(`${key}: "${id}" is a Codex model — this setting picks a Claude model`);
+}
+
 app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
@@ -8287,6 +8421,11 @@ app.post('/api/settings', async (req, res) => {
   const hasMemoryDefragKey = has('memoryDefrag');
   const defragModels = hasMemoryDefragKey ? (autoModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
+  const hasRunEngineKey = has('runEngine');
+  const hasStepModelsKey = has('stepModels');
+  const hasUtilityModelsKey = has('utilityModels');
+  const hasAskEngineKey = has('askEngine');
+  const hasAskModelsKey = has('askModels');
   const hasActionsKey = has('actions');
   // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
   if (hasActionsKey && agentMayBeCaller(req)) return refuseAgentCaller(res);
@@ -8317,6 +8456,9 @@ app.post('/api/settings', async (req, res) => {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
+      if (has(key)) asSettingsField(key, () => refuseCodexUtilityModel(key, body[key]));
+    }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
     // so the 400 can name the field (#555). Every argument is exactly as before. With no budget
     // or ask key the object is {}, which both set-validators accept, so the guards change nothing.
@@ -8349,6 +8491,23 @@ app.post('/api/settings', async (req, res) => {
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
+    if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
+    if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
+    if (hasAskModelsKey) await asSettingsField('askModels', async () => {
+      const patch = assertAskModelsInput(body.askModels);
+      await assertSlotModels(Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })));
+    });
+    if (hasStepModelsKey) await asSettingsField('stepModels', async () => {
+      const patch = assertStepModelsInput(body.stepModels);
+      const items = [];
+      for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `stepModels.${engine}.${role}`, engine, value });
+      await assertSlotModels(items);
+    });
+    if (hasUtilityModelsKey) await asSettingsField('utilityModels', async () => {
+      const patch = assertUtilityModelsInput(body.utilityModels); const items = [];
+      for (const [engine, jobs] of Object.entries(patch)) for (const [job, value] of Object.entries(jobs)) if (value) items.push({ id: `utilityModels.${engine}.${job}`, engine, value });
+      await assertSlotModels(items);
+    });
     if (has('nightMode') && body.nightMode !== null) asSettingsField('nightMode', () => {
       const { __unset, ...patch } = body.nightMode && typeof body.nightMode === 'object' && !Array.isArray(body.nightMode) ? body.nightMode : { __invalid: true };
       if (patch.__invalid) throw new Error('nightMode must be an object or null');
@@ -8386,6 +8545,11 @@ app.post('/api/settings', async (req, res) => {
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
+    if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
+    if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
+    if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
+    if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
+    if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(awayPersonOf(req), body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
@@ -8396,7 +8560,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || hasActionsKey || hasNightKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -8605,12 +8769,14 @@ const maskEnvValue = (v) => (modelEnvRef(v) ? v : maskModelEnvValue(v));
 // A bridged entry's `upstream.apiKey` is masked like an env secret; the rest of
 // the block is routing config and passes through. `bridged`/`needsSignIn` are
 // the picker/card facts (model-bridge-design.md §8.5), one readiness check
-// per provider per response.
+// per provider, key and base URL per response (an entry's own key or base URL
+// can decide it, as in config.mjs composeCatalog).
 const bridgeFacts = (m, readiness) => {
   if (!m.upstream) return {};
   const p = m.upstream.provider;
-  if (!readiness.has(p)) readiness.set(p, providerReadiness(m.upstream));
-  const r = readiness.get(p);
+  const key = `${p}\n${m.upstream.apiKey || ''}\n${m.upstream.baseUrl || ''}`;
+  if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
+  const r = readiness.get(key);
   return { bridged: p, needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason, signInMessage: r.message }) };
 };
 const maskedGlobalModel = (m, readiness = new Map()) => ({
@@ -8667,6 +8833,7 @@ app.get('/api/models', (req, res) => {
   const readiness = new Map();
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
+    codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -8677,7 +8844,7 @@ app.get('/api/models', (req, res) => {
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost, upstream: upstreamInput(b.upstream) });
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost, upstream: upstreamInput(b.upstream), engine: b.engine });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
     // addGlobalModel throws only on validation (empty/dup id, unknown effort,
@@ -9161,8 +9328,11 @@ app.get('/api/workflows/:id', async (req, res) => {
     // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
     // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
     if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
-      const stored = memoryDefragModel();
-      const pair = stored.model ? resolveDefragModel({ stored, models: await listModels('') }) : null;
+      const engine = req.query.engine === 'codex' ? 'codex' : 'claude';
+      const dir = typeof req.query.projectDir === 'string' && req.query.projectDir ? resolveProjectDir(req.query.projectDir) : null;
+      const stored = defragSlotPair(engine, dir);
+      const models = stored.model ? (await listModels(dir || '')).filter((m) => (m.engine || 'claude') === engine) : [];
+      const pair = stored.model ? resolveDefragModel({ stored, models }) : null;
       return res.json(defragWorkflowView(wf, pair));
     }
     res.json(wf);
@@ -9675,7 +9845,9 @@ app.get('/api/ask/threads/:id', (req, res) => {
     if (!thread) return res.status(404).json({ error: 'thread not found' });
     const job = askInFlight(id);
     res.json({
-      thread,
+      // `engine`: the lock the server enforces (D12), so the panel locks on the same answer even when the chat's model
+      // has left the catalog.
+      thread: { ...thread, engine: askChatEngine(id, thread) },
       messages: askListMessages(id),
       attachments: askListAttachments(id),
       runLinks: askListRunLinks(id),
@@ -9735,7 +9907,7 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
     if (pick) {
       // The same check as the message POST. Awaited BEFORE the scope branch, so its
       // read-modify-write of the stored context stays synchronous.
-      const mv = await validateModelEffort(body.model, body.effort);
+      const mv = await validateModelEffort(body.model, body.effort, { engine: askChatEngine(id, askGetThread(id)) });
       if (!mv.ok) return badRequest(res, mv.error);
       patch.model = mv.model;
       patch.effort = mv.effort;
@@ -9965,8 +10137,8 @@ function askWebAccessFor(threadId, ctx) {
  *  actually has (the python probe, cached 60 s); plus the web section when `web` (askWebAccess()
  *  for this turn) is on, and the MCP servers section when the turn has registry copies (`mcp`,
  *  askMcpPromptInput()). Memory is mounted, not rendered. */
-async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false } = {}) {
-  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands });
+async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
+  return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
 }
 
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
@@ -10183,6 +10355,23 @@ function mockAskCard(ctx = {}, text = '') {
     note: 'Mock proposal — a fixed shape so the offline card can be exercised.' };
 }
 
+/** The engine an existing Ask chat is locked to (D12), or null before its first turn (any engine may start it). */
+function askChatEngine(threadId, thread) {
+  if (!thread) return null;
+  return askListMessages(threadId).some((m) => m && m.role === 'assistant') ? askChatEngineOf(thread) : null;
+}
+
+/** An event turn's model: the thread's own pick, else the default of the engine the chat is locked to (never the
+ *  other engine's), else the user's Ask default. null when none is available. */
+async function askEventPick(threadId, thread) {
+  const lockedEngine = askChatEngine(threadId, thread);
+  const mv = await validateModelEffort(thread.model, thread.effort, { engine: lockedEngine });
+  if (mv.ok) return mv;
+  const cat = await askCatalog({ withSecrets: false });
+  const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
+  return d ? { ok: true, ...d } : null;
+}
+
 /**
  * The ONE turn starter (spec §8.4): the typed-message route and the workflow-card event path both land here.
  * SYNCHRONOUS until the first write — the §6.2.2 guards + the slot reservation run before any await, so two callers
@@ -10285,12 +10474,17 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
     const mcp = await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
+    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
+    // and is told so once per chat.
+    const engine = engineOfModel(model) === 'codex' ? 'codex' : 'claude';
+    const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
+      && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
-    // mounts them and appends the prompt section naming exactly what it wrote.
+    // mounts them and appends the prompt section naming exactly what it wrote (a Claude chat only: turn.mjs).
     const skills = await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
     const agentOn = askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
-    const systemPrompt = await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn });
+    const systemPrompt = await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -10315,9 +10509,15 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: mcp.result,
+      mcp: engine === 'codex' ? null : mcp.result,
       skills: skills.result,
       agentMode: agentOn,
+      ...(engine === 'codex' ? {
+        engine,
+        mcpCodexNote,
+        // D16: this message's images ride the turn as `codex exec -i` (PDFs never reach here: the route refused them).
+        images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean),
+      } : {}),
       timeZone: ctx.timeZone || (thread.context && thread.context.timeZone) || null,   // scheduled runs: the user's clock
       memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
       mock: mockEnabled({}) ? { card: mockAskCard(ctx, text) } : null, // R-F
@@ -10325,14 +10525,14 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deps: {
         // Agents under their own users (agent-pool.mjs): the chat runs as the person's agent
         // user and its worca tools run here, through the relay. null = the classic MCP child.
-        agentRelay: agentIdentity() ? askAgentRelay : null,
+        agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
-        mcpJoinNotice: () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model }),
+        mcpJoinNotice: engine === 'codex' ? null : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -10408,9 +10608,10 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const body = req.body || {};
     const text = typeof body.text === 'string' ? body.text : '';
     if (!text.trim()) return badRequest(res, 'text is required');
-    const mv = await validateModelEffort(body.model, body.effort);
+    const mv = await validateModelEffort(body.model, body.effort, { engine: askChatEngine(id, thread) });
     if (!mv.ok) return badRequest(res, mv.error);
-    if (!mockEnabled({})) {
+    // The credential broker keeps Claude keys: a Codex chat spends codex's own sign-in (spec §9 "broker slots: Claude only").
+    if (!mockEnabled({}) && engineOfModel(mv.model) !== 'codex') {
       const refusal = await brokerStartRefusal(req, [String(body.model)]);
       if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
     }
@@ -10448,6 +10649,9 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         // does not match its claim is refused here, before any write.
         const cls = askClassifyExtension(ext);
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
+        // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
+        // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
+        if (cls.mime === 'application/pdf' && engineOfModel(mv.model) === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
@@ -10615,12 +10819,8 @@ async function startWorkflowEventTurn(threadId, block, { declined = false, thenR
     cardId: block.id, state, workflowId: block.workflowId, name: card.name, thenRun, projectKey: card.projectKey || '', workspaceId: card.workspaceId || '',
   });
   const notice = workflowNoticeText({ state, name: card.name, matched: !declined && card.adopted === true, thenRun });
-  let mv = await validateModelEffort(thread.model, thread.effort);
-  if (!mv.ok) {
-    const d = (await askCatalog({ withSecrets: false })).default;
-    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-    mv = { ok: true, ...d };
-  }
+  const mv = await askEventPick(threadId, thread);
+  if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = () => startAskTurn({
     threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
     model: mv.model, effort: mv.effort, text, synthetic: { notice },
@@ -10682,12 +10882,8 @@ async function startMetricsEventTurn(threadId, block) {
   const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
-  let mv = await validateModelEffort(thread.model, thread.effort);
-  if (!mv.ok) {
-    const d = (await askCatalog({ withSecrets: false })).default;
-    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-    mv = { ok: true, ...d };
-  }
+  const mv = await askEventPick(threadId, thread);
+  if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = () => startAskTurn({
     threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},
     model: mv.model, effort: mv.effort, text, synthetic: { notice },

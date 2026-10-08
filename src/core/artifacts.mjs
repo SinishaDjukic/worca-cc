@@ -1917,13 +1917,14 @@ function toPipelineRow(o) {
     started_by: o.startedBy ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
-    outcome: (o.engine === 2 || o.endReached !== undefined)
+    outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
       ? s({
           endReached: !!o.endReached,
           result: o.result ?? null,
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
+          ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
         })
       : null,
   };
@@ -2170,6 +2171,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     startedBy: row.started_by ?? null,
     pauseReason: row.pause_reason ?? null,
     pauseDetail: row.pause_detail ?? null,
+    limitEngine: row.limit_engine ?? null,
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     survived,
@@ -2244,7 +2246,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
     SELECT id, project_key, target, title, status, started_at, updated_at, total_cost_usd, total_active_ms,
            branch, workspace_meta, guardrails_id, started_by, pr_url,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2280,7 +2283,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, started_by, pr_url, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
-           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
+           json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'}
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2518,6 +2522,8 @@ function rowToState(row) {
   // Who paused it (run-harness _recordAction): { kind, by, at } or null.
   state.lastAction = rp && rp.lastAction && typeof rp.lastAction.by === 'string' ? { ...rp.lastAction } : null;
   state.pauseDetail = typeof rp?.pauseDetail === 'string' ? rp.pauseDetail : null;
+  state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
+  state.runEngine = runEngineOfRow(row);
   const outcome = j(row.outcome, null);
   if (outcome) {
     state.engine = 2;
@@ -2575,6 +2581,16 @@ function buildAuditMarkdown(row) {
     `\n## Timeline\n\n`;
   const lines = events.map((e) => `- \`${e.ts}\` ${e.text}\n`).join('');
   return header + lines;
+}
+
+/** The engine a run ran on (D8): `outcome.runEngine` (written for a non-Claude run), else the
+ *  resume point's `claude.engine` (a run from before the field), else 'claude'. */
+export function runEngineOfRow(row) {
+  if (!row) return 'claude';
+  const outcome = j(row.outcome, null);
+  if (outcome && typeof outcome.runEngine === 'string' && outcome.runEngine) return outcome.runEngine;
+  const rp = j(row.resume_point, null);
+  return typeof rp?.claude?.engine === 'string' && rp.claude.engine ? rp.claude.engine : 'claude';
 }
 
 /**

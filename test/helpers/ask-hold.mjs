@@ -1,5 +1,5 @@
 // test/helpers/ask-hold.mjs — hold a MOCK_SLOW Ask turn open at a chosen frame until the test releases it.
-import { _testing } from '../../src/core/claude-runner.mjs';
+import { _testing } from '../../src/core/engines/mock.mjs';
 
 /** Install a hold. Returns release(); release.reached() counts the frames held so far, and
  *  release.dispose() releases AND uninstalls the hook. Await reached() (e.g.

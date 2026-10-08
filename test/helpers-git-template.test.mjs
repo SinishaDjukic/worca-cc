@@ -86,3 +86,19 @@ test('templateWorld: the key is required and distinct keys give distinct worlds'
   const y = keep(templateWorld('two', (r) => writeFileSync(join(r, 'two'), '2')));
   assert.deepEqual([readFileSync(join(x, 'one'), 'utf8'), readFileSync(join(y, 'two'), 'utf8')], ['1', '2']);
 });
+
+test('a template build starts no background git maintenance (it would race the copy)', () => {
+  // A commit normally starts `git maintenance run --auto --detach`, which takes .git/objects/maintenance.lock
+  // while copyOf is still copying the template; cpSync then fails with ENOENT on the vanished lock.
+  const before = process.env.GIT_CONFIG_COUNT;
+  let trace = null;
+  keep(templateWorld('no-maintenance', (root) => {
+    g(root, 'init', '-q');
+    trace = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'x'],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, GIT_TRACE: '1' } }).stderr;
+  }));
+  assert.equal(/maintenance run/.test(trace), false, trace);
+  assert.equal(process.env.GIT_CONFIG_COUNT, before, 'the setting is scoped to the build');
+  keep(templateRepo('tpl-maint', { files: { 'a.md': 'a\n' } }));
+  assert.equal(process.env.GIT_CONFIG_COUNT, before);
+});

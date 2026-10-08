@@ -6,11 +6,12 @@
 // throws — the outcome is a result object either way.
 
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, engineOfModel } from './config.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { classifyError, isFreeDailyLimit, freeDailyHint } from './recoverable-error.mjs';
 import { failedBecauseSignedOut } from './claude-auth.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
+import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
 const REPLY_CAP = 100;
@@ -33,6 +34,9 @@ export function hintFor(errorClass) {
 }
 
 export const CLAUDE_SIGNED_OUT_HINT = "Claude Code isn't signed in — run `claude` in a terminal and type /login";
+export const CODEX_SIGNED_OUT_HINT = "codex isn't signed in — run `codex login` in a terminal";
+/** A Codex model on its own endpoint that the endpoint did not answer. */
+export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this model's Base URL, or the OpenAI-compatible provider's";
 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
@@ -52,7 +56,8 @@ export function bridgeHintFor(reason, provider = 'the provider') {
  *   `run` / `signedOut` are injectable for unit tests.
  * @returns {Promise<{ok:true, text:string}|{ok:false, errorClass:(string|null), message:string, hint?:string}>}
  */
-export async function testModel(id, { signal, bin, run = runClaude, signedOut = failedBecauseSignedOut } = {}) {
+export async function testModel(id, { signal, bin, run = runClaude, signedOut = failedBecauseSignedOut, engine = engineOfModel(id) || 'claude' } = {}) {
+  const onClaude = engine === 'claude';
   const ctrl = new AbortController();
   const onOuterAbort = () => ctrl.abort();
   if (signal) {
@@ -78,7 +83,8 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       systemPrompt: SYSTEM,
       prompt: 'Reply with exactly OK.',
       model: id,
-      modelEnv: resolveModelEnv(id),
+      modelEnv: onClaude ? resolveModelEnv(id) : undefined,
+      ...(onClaude ? {} : { engine, sandbox: 'read-only' }),
       effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
@@ -114,11 +120,13 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
     // A signed-out CLI is not this model's token: a first-party model needs the
     // Claude Code sign-in (and signed out the CLI may only say `unrecognized_model`),
     // so say that instead of the generic advice.
-    const cliSignedOut = !(err && err.bridgeReason) && !bridgeFailure
+    const cliSignedOut = onClaude && !(err && err.bridgeReason) && !bridgeFailure
       && await signedOut({ message, model: id, ...(bin ? { bin } : {}) });
     const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider)
       : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? ''
       : cliSignedOut ? CLAUDE_SIGNED_OUT_HINT
+      : !onClaude && hasCodexEndpoint(id) ? (errorClass === 'network' ? CODEX_ENDPOINT_NETWORK_HINT : hintFor(errorClass))
+      : !onClaude && errorClass === 'auth' ? CODEX_SIGNED_OUT_HINT
       : isFreeDailyLimit(message) ? freeDailyHint(message)
       : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };

@@ -6,6 +6,7 @@
 import { FIELD_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, KIND_LABELS, WHICH_RUNS_OPTIONS, GRACE_NO_HOURS, DECIDER_EFFORTS, DECIDER_WORDS, DECIDER_GROUPS } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { describeAwayMode } from '../../src/shared/away-mode/describe.mjs';
+import { inheritText } from './inherit-field.mjs';
 
 export const NIGHT_KINDS = ['clarify', 'questions', 'form', 'gate', 'workflow', 'recovery'];
 export const CRITERIA = ['matchesMemory', 'reversible', 'smallestScope', 'codebaseConventions', 'cost'];
@@ -14,7 +15,7 @@ const NUM_LIMITS = { graceMinutes: [1, 1440], minConfidence: [0, 100], minMargin
 // Where an empty field's value comes from (the inherited layer's source).
 const SOURCE_TAG = { default: '(default)', team: '(team default)', user: '(your setting)' };
 // The project level's empty choice: never "(undefined)" when nothing is inherited yet.
-const sameAs = (shown) => (shown == null || shown === '' ? 'Same as my settings' : `Same as my settings (${shown})`);
+const sameAs = (shown, source) => inheritText(source, shown);
 const CTX = new WeakMap();   // root → {level, inherited, toggle, hereSince, offset, projectName, models}
 
 function el(doc, tag, cls, text) {
@@ -43,7 +44,7 @@ function field(doc, label, hint) {
 }
 
 /** The placeholder of an empty input: the inherited value (project level: "Same as my settings (…)"). */
-const placeholderFor = (level, v) => (level === 'project' ? sameAs(v ?? null) : String(v ?? ''));
+const placeholderFor = (level, v, source) => (level === 'project' ? sameAs(v ?? null, source) : String(v ?? ''));
 
 /** "(default)" / "(team default)" / "(your setting)" after a field not set at this level. */
 function sourceHint(doc, wrap, values, inhSrc, f) {
@@ -51,18 +52,18 @@ function sourceHint(doc, wrap, values, inhSrc, f) {
   if (tag) wrap.append(el(doc, 'small', 'hint away-inherited', tag));
 }
 
-function numInput(doc, f, level, values, inh) {
+function numInput(doc, f, level, values, inh, inhSrc = {}) {
   const [min, max] = NUM_LIMITS[f];
   const inp = el(doc, 'input', 'input input-mini night-num'); inp.type = 'number'; inp.min = String(min); inp.max = String(max); inp.step = '1';
   inp.dataset.field = f; inp.value = values[f] == null ? '' : String(values[f]);
-  inp.placeholder = placeholderFor(level, inh[f]);
+  inp.placeholder = placeholderFor(level, inh[f], inhSrc[f]);
   return inp;
 }
 
 /** A number field: label, hint, `[prefix][input][ suffix]`, and where an empty value comes from. */
 function numField(doc, f, level, values, inh, inhSrc, { suffix = '', prefix = '' } = {}) {
   const w = field(doc, FIELD_LABELS[f].label, FIELD_LABELS[f].hint);
-  const inp = numInput(doc, f, level, values, inh);
+  const inp = numInput(doc, f, level, values, inh, inhSrc);
   const row = el(doc, 'div', 'away-input-row');
   if (prefix) row.append(doc.createTextNode(prefix));
   row.append(inp);
@@ -73,9 +74,9 @@ function numField(doc, f, level, values, inh, inhSrc, { suffix = '', prefix = ''
 }
 
 /** A tri-state select: '' (not set here) / on / off. */
-function triSelect(doc, cls, f, level, values, inhValue) {
+function triSelect(doc, cls, f, level, values, inhValue, inhSource) {
   const sel = el(doc, 'select', cls); sel.dataset.field = f;
-  const none = el(doc, 'option', null, level === 'project' ? sameAs(typeof inhValue === 'boolean' ? (inhValue ? 'On' : 'Off') : null) : 'Not set');
+  const none = el(doc, 'option', null, level === 'project' ? sameAs(typeof inhValue === 'boolean' ? (inhValue ? 'On' : 'Off') : null, inhSource) : 'Not set');
   none.value = ''; sel.append(none);
   for (const [v, t] of [['on', 'On'], ['off', 'Off']]) { const o = el(doc, 'option', null, t); o.value = v; sel.append(o); }
   sel.value = values[f] !== undefined ? (values[f] ? 'on' : 'off') : '';
@@ -92,7 +93,7 @@ function whichRuns(doc, level, own, inh, inhSrc) {
   const name = `away-which-${level}`;
   const known = typeof inh.enabled === 'boolean';                  // false when the fetch failed or has not answered
   const opts = level === 'project'
-    ? [{ value: '', label: sameAs(known ? WHICH_RUNS_OPTIONS.find((o) => o.value === inh.enabled).label : null), hint: '' }, ...WHICH_RUNS_OPTIONS]
+    ? [{ value: '', label: sameAs(known ? WHICH_RUNS_OPTIONS.find((o) => o.value === inh.enabled).label : null, inhSrc.enabled), hint: '' }, ...WHICH_RUNS_OPTIONS]
     : WHICH_RUNS_OPTIONS;
   const shown = own === undefined ? (level === 'project' ? '' : String(inh.enabled === true)) : String(own);
   for (const o of opts) {
@@ -108,9 +109,11 @@ function whichRuns(doc, level, own, inh, inhSrc) {
 }
 
 const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-/** The models "Decided by" offers, filtered and grouped like the Settings title-model picker
- *  (app.js buildTitleModelOptions): no legacy per-project entries; hidden built-ins and models that
- *  need a sign-in only when one IS the stored pick. @returns {Array<[string, object[]]>} non-empty groups */
+/** The models "Decided by" offers, grouped like the Settings title-model picker (app.js
+ *  buildTitleModelOptions): no legacy per-project entries; hidden built-ins and models that need a
+ *  sign-in only when one IS the stored pick. Both engines' models are offered: the review runs on the
+ *  run's engine and uses the pick only on a run of that engine (run-harness.mjs _nightDeciderPair).
+ *  @returns {Array<[string, object[]]>} non-empty groups */
 function pickerGroups(models, stored) {
   const ms = (Array.isArray(models) ? models : [])
     .filter((m) => m && typeof m.id === 'string' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
@@ -213,8 +216,8 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   const win = field(doc, FIELD_LABELS.window.label, FIELD_LABELS.window.hint);
   const [ws, we] = typeof values.window === 'string' ? values.window.split('-') : ['', ''];
   const [iws, iwe] = typeof inh.window === 'string' ? inh.window.split('-') : [null, null];
-  const start = el(doc, 'input', 'input input-mini night-window-start'); start.type = 'time'; start.value = ws || ''; start.placeholder = placeholderFor(level, iws);
-  const end = el(doc, 'input', 'input input-mini night-window-end'); end.type = 'time'; end.value = we || ''; end.placeholder = placeholderFor(level, iwe);
+  const start = el(doc, 'input', 'input input-mini night-window-start'); start.type = 'time'; start.value = ws || ''; start.placeholder = placeholderFor(level, iws, inhSrc.window);
+  const end = el(doc, 'input', 'input input-mini night-window-end'); end.type = 'time'; end.value = we || ''; end.placeholder = placeholderFor(level, iwe, inhSrc.window);
   const winRow = el(doc, 'div', 'away-input-row');
   winRow.append(start, doc.createTextNode(' to '), end);
   win.append(winRow);
@@ -227,7 +230,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   const tz = field(doc, FIELD_LABELS.timeZone.label, FIELD_LABELS.timeZone.hint);
   const tzIn = el(doc, 'input', 'input night-timezone'); tzIn.type = 'text'; tzIn.dataset.field = 'timeZone';
   tzIn.value = typeof values.timeZone === 'string' ? values.timeZone : '';
-  tzIn.placeholder = placeholderFor(level, inh.timeZone);
+  tzIn.placeholder = placeholderFor(level, inh.timeZone, inhSrc.timeZone);
   try {
     const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
     if (zones.length) {
@@ -254,7 +257,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
   const method = field(doc, FIELD_LABELS.strategy.label, FIELD_LABELS.strategy.hint);
   const stSel = el(doc, 'select', 'select night-strategy'); stSel.dataset.field = 'strategy';
   const m = METHOD_OPTIONS.find((o) => o.value === inh.strategy);
-  const none = el(doc, 'option', null, level === 'project' ? sameAs(m && m.label) : 'Not set'); none.value = ''; stSel.append(none);
+  const none = el(doc, 'option', null, level === 'project' ? sameAs(m && m.label, inhSrc.strategy) : 'Not set'); none.value = ''; stSel.append(none);
   for (const o of METHOD_OPTIONS) {
     const opt = el(doc, 'option', null, o.label); opt.value = o.value;
     if (o.hint) opt.title = o.hint;
@@ -288,7 +291,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
     const cap = field(doc, FIELD_LABELS.spendCapUsd.label, FIELD_LABELS.spendCapUsd.hint);
     const inp = el(doc, 'input', 'input input-mini night-spend-cap'); inp.type = 'number'; inp.min = '0.1'; inp.step = '0.1';
     inp.value = values.spendCapUsd == null ? '' : String(values.spendCapUsd);
-    inp.placeholder = placeholderFor(level, inh.spendCapUsd);
+    inp.placeholder = placeholderFor(level, inh.spendCapUsd, inhSrc.spendCapUsd);
     const row = el(doc, 'div', 'away-input-row');
     row.append(doc.createTextNode('$'), inp, doc.createTextNode(' spent while away'));
     cap.append(row);
@@ -299,7 +302,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
     limits.append(el(doc, 'small', 'hint', 'The spend cap is set once for you, not per project, because it counts spending across every run.'));
   }
   const ov = field(doc, FIELD_LABELS.allowCostCapOverride.label, FIELD_LABELS.allowCostCapOverride.hint);
-  ov.append(triSelect(doc, 'select night-override', 'allowCostCapOverride', level, values, inh.allowCostCapOverride));
+  ov.append(triSelect(doc, 'select night-override', 'allowCostCapOverride', level, values, inh.allowCostCapOverride, inhSrc.allowCostCapOverride));
   sourceHint(doc, ov, values, inhSrc, 'allowCostCapOverride');
   limits.append(ov);
   body.append(limits);

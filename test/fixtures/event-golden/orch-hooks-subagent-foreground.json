@@ -1,0 +1,165 @@
+{
+ "emitted": [
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "[init] model=claude-haiku-4-5-20251001",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "spawn",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "running",
+    "subagentType": "general-purpose",
+    "runModel": "haiku",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ Agent Test agent response",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner ▸ Test agent response",
+    "level": "info",
+    "text": "Reply with the single word: pong",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "sub": true
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "finish",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "finished",
+    "durationMs": "<T>",
+    "tokens": 20546,
+    "subagentType": "general-purpose",
+    "runModel": "haiku",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "update",
+    "id": "toolu_0001",
+    "label": "Test agent response",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "finished",
+    "durationMs": "<T>",
+    "tokens": 20479,
+    "subagentType": "general-purpose",
+    "runModel": "haiku",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "← result ok toolu_00",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "The agent returned: **pong**",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "The agent returned: **pong**",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  }
+ ],
+ "subAgents": [
+  {
+   "id": "toolu_0001",
+   "label": "Test agent response",
+   "nodeId": "n1",
+   "uiPhase": null,
+   "stepIndex": 0,
+   "cycle": 1,
+   "stepKey": "0:n1",
+   "status": "finished",
+   "startedAt": "<T>",
+   "finishedAt": "<T>",
+   "subagentType": "general-purpose",
+   "model": "sonnet",
+   "runModel": "haiku",
+   "durationMs": "<T>",
+   "tokens": 20479
+  }
+ ],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "modelUsed": "claude-haiku-4-5-20251001",
+  "costUsd": 0.0918
+ },
+ "totalCost": 0.0918
+}

@@ -1048,9 +1048,10 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
 });
 
 // The saved run's bar carries the Running bar's controls in its order (Run after, the
-// Resume split, Pause, Stop, then the terminal button), in both modes. The Details header keeps
-// only the PR controls and the ⋯ menu, and the glance card carries no run control.
-const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-pause', 'hd-stop', 'term-opener'];
+// Resume split, Pause, Stop, then the terminal button), in both modes, plus "Resume on <other
+// engine>" after the split (shown only after a usage limit the engine hit). The Details header
+// keeps only the PR controls and the ⋯ menu, and the glance card carries no run control.
+const HD_BAR_ORDER = ['hd-after', 'hd-resume-split', 'hd-resume-switch', 'hd-pause', 'hd-stop', 'term-opener'];
 test('History bar per finished/paused status: Run after, Resume split only when resumable, Stop only when paused, no Pause without a live run', async () => {
   const rows = [];
   for (const [status, resumable, finished] of [
@@ -1075,11 +1076,12 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.equal(end.querySelector('.hd-resume-split').hidden, !resumable);
       assert.equal(end.querySelector('.hd-resume').hidden, !resumable);
       assert.ok(end.querySelector('.hd-resume svg'), 'Resume leads with the play glyph');
+      assert.equal(end.querySelector('.hd-resume-switch').hidden, true, 'no usage limit: no engine switch');
       assert.equal(end.querySelector('.hd-pause').hidden, true, 'no live run: nothing to pause');
       assert.equal(end.querySelector('.hd-stop').hidden, status !== 'paused',
         status === 'paused' ? 'a paused saved run is stopped through its row' : 'no live run: nothing to stop');
       const header = hd.querySelector('.hd-header');
-      for (const sel of ['.hd-after', '.hd-resume-split', '.hd-resume', '.hd-pause', '.hd-stop']) {
+      for (const sel of ['.hd-after', '.hd-resume-split', '.hd-resume', '.hd-resume-switch', '.hd-pause', '.hd-stop']) {
         assert.equal(header.querySelector(sel), null, `${sel} is not in the Details header`);
       }
       assert.ok(header.querySelector('.hd-pr') && header.querySelector('.hd-pr-link') && header.querySelector('.hd-more'),

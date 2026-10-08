@@ -58,7 +58,8 @@ test('no brief, a garbage reference, no brief path at all: each writer still wri
   assert.deepEqual(read(join(dir, 'y.json')), { version: 1, overview: 'Mock overview of 0 projects.', roles: {}, coordination: [], orderNotes: '' });
 });
 
-const spawnedAgent = (events) => events.some((e) => e.type === 'assistant' && JSON.stringify(e.raw || {}).includes('"name":"Agent"'));
+// runClaude emits the normalized vocabulary: an Agent tool_use arrives as a sub-agent spawn.
+const spawnedAgent = (events) => events.some((e) => e.type === 'subagent' && e.event === 'spawn' && e.name === 'Agent');
 
 test('runMock serves workspace-usage (a fan-out role) and workspace-synth (not one) off MOCK_IN / MOCK_OUT', async () => {
   const dir = tmp();

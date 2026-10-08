@@ -24,7 +24,7 @@ const SETTINGS = {
 
 const settle = async (window, n = 3) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 
-async function boot({ configOk = true } = {}) {
+async function boot({ configOk = true, catalog = CATALOG } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -48,7 +48,7 @@ async function boot({ configOk = true } = {}) {
     if (u.includes('/api/projects'))
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [] }) });
     if (!configOk) return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'catalog unreachable' }) });
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: CATALOG, efforts: ['medium', 'high'] }) });
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: catalog, efforts: ['medium', 'high'] }) });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* keep */ }
@@ -125,4 +125,16 @@ test('a failed catalog GET never becomes a "no longer in the catalog" verdict', 
   edit(window, sel, '');
   save.click(); await settle(window);
   assert.deepEqual(posts.at(-1), { autoWorkflowModel: '' }, 'Save is not refused');
+});
+
+test('the Settings utility pickers list Claude models only (they are Claude\'s slots)', async () => {
+  const catalog = [...CATALOG, { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex' }];
+  const { window, openSettings } = await boot({ catalog }); await openSettings();
+  await settle(window);
+  for (const id of ['autoModel', 'titleModel']) {
+    const sel = window.document.getElementById(id);
+    assert.ok(sel, id);
+    assert.equal([...sel.options].some((o) => o.value === 'gpt-5.5'), false, `${id} offers no Codex model`);
+    assert.ok([...sel.options].some((o) => o.value === 'claude-opus-5-5'), `${id} still offers Claude models`);
+  }
 });

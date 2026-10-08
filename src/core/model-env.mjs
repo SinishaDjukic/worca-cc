@@ -16,6 +16,10 @@
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+export const MODEL_ENGINES = ['claude', 'codex'];
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : EFFORTS; }
+export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -149,7 +153,7 @@ export function isReservedModelEnvKey(key) {
     || RESERVED_MODEL_ENV_PREFIXES.some((p) => typeof key === 'string' && key.startsWith(p));
 }
 
-// A registry spawn's own env names (MCP registry §5.5.6): runReal merges the model env over the run env, so a
+// A registry spawn's own env names (MCP registry §5.5.6): composeSpawnEnv (engines/spawn.mjs) merges the model env over the run env, so a
 // model entry that set one would replace a copy's secret. Refused by prepareModelEnv and the plugin manifest —
 // deliberately NOT reserved: cleanRunEnv shares isReservedModelEnvKey and must keep the registry env.
 export function isMcpRegistryEnvKey(key) {
@@ -577,6 +581,23 @@ export function assertModelUpstream(upstream) {
     if (or) out.openrouter = or;
   }
   return out;
+}
+
+/** The wire protocols a Codex model's endpoint may speak. codex talks to the endpoint itself (no
+ *  bridge), and codex-cli 0.146 refuses `wire_api = "chat"`, so only the Responses API is left. */
+export const CODEX_UPSTREAM_APIS = Object.freeze(['openai-responses']);
+
+/**
+ * Why a validated `upstream` (assertModelUpstream's output) cannot sit on a Codex model, or null.
+ * codex connects to an OpenAI-compatible endpoint natively; the copilot and anthropic providers,
+ * chat completions and OpenRouter routing exist only in worca's bridge, which a Codex model never uses.
+ */
+export function codexUpstreamProblem(upstream) {
+  if (!upstream) return null;
+  if (upstream.provider !== 'openai') return 'a codex model connects to an OpenAI-compatible endpoint only (upstream.provider openai)';
+  if (!CODEX_UPSTREAM_APIS.includes(upstream.api)) return 'a codex model speaks the Responses API only (upstream.api openai-responses) — codex no longer supports chat completions';
+  if (upstream.openrouter) return 'upstream.openrouter is not available on a codex model';
+  return null;
 }
 
 /** The first env key an `upstream` entry may not also carry, or null. */

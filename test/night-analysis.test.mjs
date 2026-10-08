@@ -35,7 +35,7 @@ test('runNightAnalysis parses the reply and reports cost', async () => {
   let seen = null;
   const run = async (o) => {
     seen = o;
-    o.onEvent({ type: 'result', costUsd: 0.02, raw: { usage: { input_tokens: 10, output_tokens: 5 } } });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.02, isError: false, usage: { input_tokens: 10, output_tokens: 5 } });
     return { text: '```json\n{"decisions":[{"id":"q1","choice":"Redis","confidence":70,"rationale":"r","reversible":true,"scores":{}}]}\n```' };
   };
   const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['Redis'] }], cwd: '/tmp', run, memory: '', task: 't' });
@@ -96,22 +96,36 @@ test('memory: project rules come before global ones, so a cut drops global rules
 
 test('runNightAnalysis reports the fullest its own context got (sub-agent turns do not count)', async () => {
   const run = async (o) => {
-    const turn = (usage, parent = null) => o.onEvent({ type: 'assistant', raw: { type: 'assistant', parent_tool_use_id: parent, message: { usage } } });
+    const turn = (usage, parent = null) => o.onEvent({ type: 'usage', messageId: null, parentId: parent, usage, phase: 'message' });
     turn({ input_tokens: 1000, cache_read_input_tokens: 500, cache_creation_input_tokens: 200 });
     turn({ input_tokens: 300, cache_read_input_tokens: 2700 });
     turn({ input_tokens: 99_999 }, 'toolu_sub');
-    o.onEvent({ type: 'result', costUsd: 0.01, raw: { usage: { input_tokens: 1300, output_tokens: 40 } } });
+    // A partial-message start repeats the call's prompt usage; only completed messages count.
+    o.onEvent({ type: 'usage', messageId: 'msg_x', parentId: null, usage: { input_tokens: 88_888 }, phase: 'start' });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.01, isError: false, usage: { input_tokens: 1300, output_tokens: 40 } });
     return { text: '{"decisions":[]}' };
   };
   const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['a'] }], cwd: '/tmp', run, memory: '', task: 't' });
   assert.equal(r.peakContextTokens, 3000);
 });
 
+test('runNightAnalysis normalizes a raw Claude envelope handed to its onEvent (a test seam)', async () => {
+  const run = async (o) => {
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', usage: { input_tokens: 700, cache_read_input_tokens: 300 } } } });
+    o.onEvent({ type: 'result', costUsd: 0.01, raw: { type: 'result', total_cost_usd: 0.01, usage: { input_tokens: 700, output_tokens: 9 } } });
+    return { text: '{"decisions":[]}' };
+  };
+  const r = await runNightAnalysis({ questions: [{ id: 'q1', question: '?', options: ['a'] }], cwd: '/tmp', run, memory: '', task: 't' });
+  assert.equal(r.peakContextTokens, 1000);
+  assert.deepEqual(r.usage, { input_tokens: 700, output_tokens: 9 });
+  assert.ok(r.costUsd > 0);
+});
+
 test('an aborted analysis attaches the per-message usage it saw (deduped by message id), unpriced', async () => {
   const run = async (o) => {
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'a', usage: { input_tokens: 10, output_tokens: 1 } } } });
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'a', usage: { input_tokens: 10, output_tokens: 1 } } } });
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'b', usage: { input_tokens: 20, output_tokens: 2, cache_read_input_tokens: 5 } } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'a', usage: { input_tokens: 10, output_tokens: 1 } } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'a', usage: { input_tokens: 10, output_tokens: 1 } } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'b', usage: { input_tokens: 20, output_tokens: 2, cache_read_input_tokens: 5 } } } });
     throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   };
   const err = await runNightAnalysis({ questions: [{ id: 'q', question: 'Q?', options: ['x', 'y'] }], run, model: 'claude-sonnet-5-5' }).catch((e) => e);
@@ -122,8 +136,8 @@ test('an aborted analysis attaches the per-message usage it saw (deduped by mess
 test('priced: a result that carries a cost (even $0) is priced; no result, or a result with no cost, is not', async () => {
   const qs = [{ id: 'q', question: 'Q?', options: ['x'] }];
   const reply = { text: '{"decisions":[]}' };
-  const withCost = await runNightAnalysis({ questions: qs, run: async (o) => { o.onEvent({ type: 'result', costUsd: 0, raw: { usage: {} } }); return reply; } });
-  const noCost = await runNightAnalysis({ questions: qs, run: async (o) => { o.onEvent({ type: 'result', raw: { usage: {} } }); return reply; } });
+  const withCost = await runNightAnalysis({ questions: qs, run: async (o) => { o.onEvent({ type: 'result', costUsd: 0, raw: { type: 'result', usage: {} } }); return reply; } });
+  const noCost = await runNightAnalysis({ questions: qs, run: async (o) => { o.onEvent({ type: 'result', raw: { type: 'result', usage: {} } }); return reply; } });
   const noResult = await runNightAnalysis({ questions: qs, run: async () => reply });
   const mock = await runNightAnalysis({ mock: true, questions: [{ id: 'q', options: ['x'] }] });
   assert.deepEqual([withCost.priced, noCost.priced, noResult.priced, mock.priced], [true, false, false, true]);

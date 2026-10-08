@@ -250,8 +250,8 @@ test('analysis strategy books the nightDecider call on the run', async () => {
   await setNightModeToggle('on');
   const clock = fakeClock();
   const nightRunClaude = async (o) => {
-    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { usage: { input_tokens: 1200, cache_read_input_tokens: 800 } } } });
-    o.onEvent({ type: 'result', costUsd: 0.05, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    o.onEvent({ type: 'usage', messageId: null, parentId: null, usage: { input_tokens: 1200, cache_read_input_tokens: 800 }, phase: 'message' });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.05, isError: false, usage: { input_tokens: 3, output_tokens: 2 } });
     return { text: '{"decisions":[{"id":"a","choice":"y","confidence":90,"rationale":"fits","reversible":true,"scores":{}}]}' };
   };
   const orch = createOrchestrator({ projectDir: '/tmp/night-h12', nightClock: clock, nightRunClaude });
@@ -526,7 +526,7 @@ test('a failed night analysis still books what it cost', async () => {
   await setNightModeToggle('on');
   const clock = fakeClock();
   const nightRunClaude = async (o) => {
-    o.onEvent({ type: 'result', costUsd: 0.07, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    o.onEvent({ type: 'result', text: '', costUsd: 0.07, isError: false, usage: { input_tokens: 3, output_tokens: 2 } });
     throw new Error('claude exited with code 1');
   };
   const orch = createOrchestrator({ projectDir: '/tmp/night-h30', nightClock: clock, nightRunClaude });

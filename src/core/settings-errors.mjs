@@ -59,6 +59,11 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   uiLevel: 'Interface mode',
   hideBuiltinModels: 'Hide built-in models',
   chat: 'Chat notifications',
+  runEngine: 'Default engine',
+  stepModels: 'Step models',
+  utilityModels: 'Helper models',
+  askEngine: 'Engine for new chats',
+  askModels: 'Chat model',
 });
 
 // Stored-key spellings the schedule setter uses in its messages.
@@ -73,6 +78,8 @@ const SPECIAL = [
     (m) => `The ${m[1]} command must be at most 2000 characters.`],
   [/^unknown model "(.+)" — (?:pick one from the catalog|add it to the catalog first)$/, null,
     (m) => `The model “${m[1]}” is not in the catalog. Pick another one.`],
+  [/^utilityModels\.claude: Claude's helper models are /, 'utilityModels.claude',
+    'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.'],
   [/^path does not exist$/, null, 'That folder does not exist.'],
   [/^path is not a directory$/, null, 'That path is not a folder.'],
   [/^cannot use this folder as the Worca CC root: (.*)$/, null, (m) => `This folder can’t be the Worca root: ${m[1]}`],

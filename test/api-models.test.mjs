@@ -509,8 +509,9 @@ test('#422: hideBuiltinModels flags built-ins in /api/config, is echoed by /api/
   assert.equal(on.body.hideBuiltinModels, true);
   try {
     const cfg = await jfetch('/api/config');
-    const builtins = cfg.body.models.filter((m) => m.custom === false);
+    const builtins = cfg.body.models.filter((m) => m.custom === false && m.engine === 'claude');
     assert.ok(builtins.length > 0 && builtins.every((m) => m.hidden === true), 'unshadowed built-ins carry hidden:true');
+    assert.ok(cfg.body.models.filter((m) => m.engine === 'codex').every((m) => m.hidden === undefined), 'Codex built-ins are never hidden');
     assert.ok(cfg.body.models.filter((m) => m.custom).every((m) => m.hidden === undefined), 'owned entries never hidden');
     const models = await jfetch('/api/models');
     assert.equal(models.body.hideBuiltinModels, true);

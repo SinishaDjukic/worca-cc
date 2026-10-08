@@ -1,0 +1,35 @@
+{
+  "args": [
+    "-p",
+    "## Resumed session\n\nYou were interrupted mid-task and this session has been resumed. First verify the\nstate of your previous work (files/artifacts you already wrote), then continue the\nORIGINAL task below to completion. Do not redo work that is already done.\n\n<PROMPT>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--resume",
+    "sess-resume-1",
+    "--append-system-prompt",
+    "## Host process protection\nYou run under the worca app server (PID <PID>, `node ui/server.mjs`). Never kill it, and never kill any process you did not spawn yourself.\nPattern kills are forbidden and a PreToolUse hook blocks them on every OS: `pkill`, `killall`, `xargs kill`, `taskkill /IM`, `Stop-Process -Name`, `wmic process … delete`, and any `kill` fed from a pipe, variable, or substitution (e.g. `ps aux | grep … | while read p; do kill $p; done`).\nTo stop a process you started: record its PID when you spawn it (or list PIDs with `ps`, which is always allowed), then run `kill <literal pid>`.\n\n<SYSTEM_PROMPT>",
+    "--model",
+    "opus",
+    "--effort",
+    "high",
+    "--settings",
+    "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"\\\"<NODE>\\\" \\\"<REPO>/src/core/host-guard.mjs\\\"\"}]}]},\"permissions\":{\"deny\":[\"Bash(curl:*)\",\"Read(~/.ssh/**)\"],\"allow\":[\"Bash(npm test:*)\"]}}",
+    "--mcp-config",
+    "/abs/run/mcp.json",
+    "--allowedTools",
+    "Read,Write,Edit,MultiEdit,Bash,Grep,Glob,Skill,Task,Agent,mcp__worca,mcp__github",
+    "--append-subagent-system-prompt",
+    "## Worca memory\n\nRules live in .claude/rules/worca.",
+    "--add-dir",
+    "<MEMORY_MOUNT>"
+  ],
+  "stdin": "",
+  "files": {},
+  "envAdded": {
+    "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8",
+    "WORCA_HOST_PID": "<PID>"
+  }
+}

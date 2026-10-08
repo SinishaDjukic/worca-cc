@@ -1,5 +1,6 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
+import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, catalogHasModel } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
@@ -46,7 +47,7 @@ const MAX_LEN = 70;
  * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
  * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
  */
-export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = catalogHasModel, ready = modelReady } = {}) {
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const explicit = str(opts.model);
   if (explicit) return { model: explicit, source: 'explicit', stale: null };
@@ -139,24 +140,29 @@ export function isRefusalTitle(t) {
  * The return value stays '' so every existing caller is unchanged.
  * `deps` reaches resolveTitleModel (tests).
  * @param {string} prompt
- * @param {{cwd:string, signal?:AbortSignal, model?:string, runModel?:string, onError?:(info:{model:string|null, error:Error})=>void, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string, onCost?:(c:{costUsd:number, usage:object|null, model:string|null})=>void, run?:Function, bridgeTag?:string}} opts
+ * @param {{cwd:string, signal?:AbortSignal, model?:string, runModel?:string, storedTitle?:string, effort?:string, onError?:(info:{model:string|null, error:Error})=>void, bin?:string, mock?:boolean, envScrub?:boolean, envAllowlist?:string[], tools?:string[], strictMcpConfig?:boolean, settingSources?:string[], disableSlashCommands?:boolean, mcpConfigPath?:string, permissionMode?:string, onCost?:(c:{costUsd:number, usage:object|null, model:string|null})=>void, run?:Function, bridgeTag?:string}} opts
  * @param {Parameters<typeof resolveTitleModel>[1]} [deps]
  * @returns {Promise<string>}
  */
 export async function generateTitle(prompt, opts = {}, deps) {
   const text = String(prompt || '').trim();
   if (!text) return '';
-  const { model, source, stale } = resolveTitleModel(opts, deps);
+  const engine = typeof opts.engine === 'string' && opts.engine && opts.engine !== 'claude' ? opts.engine : null;
+  const storedTitle = typeof opts.storedTitle === 'string' && opts.storedTitle.trim() ? opts.storedTitle.trim() : null;
+  // Another engine titles on the model it was handed, or its own default — never the Claude catalog, never retried.
+  const { model, source, stale } = engine
+    ? { model: (typeof opts.model === 'string' && opts.model.trim()) || null, source: 'explicit', stale: null }
+    : resolveTitleModel(opts, storedTitle ? { ...deps, stored: () => storedTitle } : deps);
   if (stale) console.warn(`[worca] titleModel ${JSON.stringify(stale)} is no longer in the catalog — titles use ${model || CLI_DEFAULT_LABEL}`);
   const report = (m, error) => {
     if (typeof opts.onError !== 'function') return;
-    try { opts.onError({ model: m || null, error }); } catch { /* a logging sink must never fail the caller */ }
+    try { opts.onError({ model: m || (engine ? `${engine}'s default model` : null), error }); } catch { /* a logging sink must never fail the caller */ }
   };
   let tried = model;
-  let r = await titleAttempt(text, model || undefined, opts);
+  let r = await titleAttempt(text, model || undefined, opts, engine);
   if (r.thrown && source === 'builtin' && model && !opts.signal?.aborted) {
     tried = null;
-    r = await titleAttempt(text, undefined, opts);
+    r = await titleAttempt(text, undefined, opts, engine);
   }
   if (r.aborted) return '';
   if (r.error) report(tried, r.error);
@@ -167,9 +173,9 @@ export async function generateTitle(prompt, opts = {}, deps) {
  * One title spawn on `model` (undefined → no --model flag). Resolves `{title}`
  * on a usable title, `{aborted:true}` on a stop, `{error}` on an empty reply or
  * a refusal, and `{error, thrown:true}` when the call itself failed. Never
- * throws; every priced result is booked through opts.onCost as `model`.
+ * throws; every priced result is booked through opts.onCost as `model`. `engine`: null for Claude.
  */
-async function titleAttempt(text, model, opts) {
+async function titleAttempt(text, model, opts, engine = null) {
   try {
     // A provider 429 (a shared free pool) is retried with the recovery backoff;
     // nothing else is — a title is cosmetic, and an unspawnable CLI (stamped
@@ -182,8 +188,9 @@ async function titleAttempt(text, model, opts) {
       // Aux calls keep their model choice but still route through the catalog's
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
-      modelEnv: resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
-      effort: AUX_EFFORT,
+      modelEnv: engine ? undefined : resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
+      ...(engine ? { engine, sandbox: 'read-only' } : {}),
+      effort: (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
       signal: opts.signal,
@@ -208,14 +215,14 @@ async function titleAttempt(text, model, opts) {
       disableSlashCommands: opts.disableSlashCommands,
       mcpConfigPath: opts.mcpConfigPath,
       // Every priced result is real spend (a 429 retry spawns again): hand it to the caller to book.
-      onEvent: (e) => {
+      onEvent: normalizingOnEvent((e) => {
         if (e?.type !== 'result' || e.costUsd == null || typeof opts.onCost !== 'function') return;
-        const usage = e.raw && typeof e.raw === 'object' ? e.raw.usage ?? null : null;
+        const usage = e.usage ?? null;
         const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;   // a bridged model: the upstream's own figure wins
         if (up) forgetBridgeTag(opts.bridgeTag);
         const c = up ? up.costUsd : resolveModelCost(model, Number(e.costUsd), usage);
         try { opts.onCost({ costUsd: Number.isFinite(c) ? c : Number(e.costUsd), usage, model: model || null }); } catch { /* a sink never fails the title */ }
-      },
+      }),
     }), { classes: ['rate_limit'], signal: opts.signal });
     const title = sanitizeTitle(out);
     // An empty reply or a refusal is the model answering, not the model missing: not `thrown`, never retried.

@@ -17,10 +17,12 @@ import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './
 import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
+import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, attachRefusal } from './ask-engine.mjs';
 import { notify } from './feedback.mjs';
 
 /**
@@ -365,6 +367,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const model = st.pickerFromThread
       ? (readStoredModel() || { model: null }).model
       : (st.pickerFromStore ? st.picker.model : null);
+    if (st.storeOtherEngine && !st.pickerFromStore) return;   // the stored pair is the other engine's: kept whole
     const rec = { model, effort: st.picker.effort };
     try { storage.setItem('worca-cc.ask.model', JSON.stringify(rec)); } catch { /* ignore */ }
   }
@@ -633,6 +636,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
       const binMime = ASK_ATTACH_BINARY[ext];
       if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
+      const refused = attachRefusal({ ext, engine: pickerEngine() });   // D16
+      if (refused) { setComposerMsg(`${refused}: ${name}`); continue; }
       const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
       if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
       const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
@@ -1714,6 +1719,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- catalog + picker (D8) ------------------------------------------------
   function catalogEntry(id) { return st.catalog ? st.catalog.models.find((m) => m && m.id === id) || null : null; }
+  /** The engine this chat is locked to (D12), or null for a chat without a turn yet. */
+  function lockedEngine() {
+    const thread = st.model && typeof st.model.thread === 'function' ? st.model.thread() : null;
+    return chatEngineOf(st.model ? st.model.messages() : [], st.picker.model, st.catalog, thread && thread.engine);
+  }
+  /** The engine the next message will run on: the lock, else the picked model's. */
+  function pickerEngine() { return lockedEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
@@ -1750,8 +1762,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // default, and a stored EFFORT survives even when the model comes from the default.
     // (effortFromStore ⊇ pickerFromStore — a stored model always carries its effort.)
     // A thread's pick claims both slots.
+    // D12/D17: a new chat starts on the user's Ask engine; a stored pick of the OTHER engine does not override it.
+    const askEngine = st.catalog && st.catalog.askEngine === 'codex' ? 'codex' : 'claude';
+    const storeFits = st.pickerFromStore && (!catalogEntry(st.picker.model) || engineOfEntry(catalogEntry(st.picker.model)) === askEngine);
+    if (st.pickerFromStore && !storeFits && !st.pickerFromThread) {
+      // The stored pick is the other engine's: this chat claims neither its model nor its effort (the Ask slot's pair
+      // applies), and nothing short of an explicit model choice writes over it (storeModel).
+      st.pickerFromStore = false;
+      st.effortFromStore = false;
+      st.storeOtherEngine = true;
+    }
     const wanted = {
-      model: st.pickerFromThread || st.pickerFromStore ? st.picker.model : fallback.model,
+      model: st.pickerFromThread || storeFits ? st.picker.model : fallback.model,
       effort: st.pickerFromThread || st.effortFromStore ? st.picker.effort : fallback.effort,
     };
     const wantedEntry = catalogEntry(wanted.model);
@@ -1767,7 +1789,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // D11: persist ONLY a repair of a pick the user actually made. Writing the
     // backend default here would make it authoritative exactly once, ever — and a
     // thread's pick is never the browser's.
-    if (changed && st.pickerFromStore && !st.pickerFromThread) storeModel();
+    if (changed && storeFits && !st.pickerFromThread) storeModel();
     updatePickerButton();
   }
 
@@ -1777,6 +1799,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.picker = home.picker;
     st.pickerFromStore = home.pickerFromStore;
     st.effortFromStore = home.effortFromStore;
+    st.storeOtherEngine = false;
     st.pickerFromThread = false;
     if (st.catalog) applyCatalogToPicker();
     else updatePickerButton();
@@ -1842,11 +1865,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return 'other';
   }
 
-  function splitCatalog() {
+  function splitCatalog(list = st.catalog ? st.catalog.models : []) {
     const primary = [];
     const rest = [];
     const seen = new Set();
-    for (const m of st.catalog ? st.catalog.models : []) {
+    for (const m of list) {
       if (!m || typeof m.id !== 'string') continue;
       if (m.hidden && m.id !== st.picker.model) continue;         // hidden built-in (#422); the current pick stays
       if (m.needsSignIn && m.id !== st.picker.model) continue;    // bridged, provider not usable (model-bridge §8.5)
@@ -1863,6 +1886,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.picker = { model: id, effort: coerceEffort(catalogEntry(id), st.picker.effort) };
     st.pickerFromStore = true;                      // an explicit model choice claims the slot (D11)
     st.effortFromStore = true;
+    st.storeOtherEngine = false;
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
     storeModel();
     persistThreadPick();
@@ -1938,10 +1962,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const m of splitCatalog().rest) panel.appendChild(modelItem(m));
+        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) for (const m of splitCatalog(g.models).rest) panel.appendChild(modelItem(m));
       } else {
-        const { primary, rest } = splitCatalog();
-        for (const m of primary) panel.appendChild(modelItem(m));
+        // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
+        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
+        const rest = [];
+        for (const g of sections) {
+          if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
+          const split = splitCatalog(g.models);
+          for (const m of split.primary) panel.appendChild(modelItem(m));
+          rest.push(...split.rest);
+        }
         panel.appendChild(make('div', 'ask-pop-divider'));
         const noEffort = !!catalogEntry(st.picker.model)?.noEffort;
         const effortRow = menuItem('ask-effort-row', noEffort ? null : () => renderPane('effort'));
@@ -2008,7 +2039,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.mcp.preview = st.mcp.failed ? null : data;
     const p = st.mcp.preview;
     // A failed preview leaves the chip as it was (the open picker says so): the user can reopen it to retry.
-    if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0);
+    // §4.6: registry MCP servers and set skills are offered in Claude chats only.
+    if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0) || pickerEngine() === 'codex';
     el.mcpBtnLabel.textContent = p ? `Sets · ${p.started + ((p.skills && p.skills.started) || 0)}` : 'Sets · ?';
     if (st.mcp.render) st.mcp.render();
   }
@@ -2655,7 +2687,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     n.appendChild(make('span', null, b.text || ''));
     if (b.href) {
       n.appendChild(doc.createTextNode(' '));
-      const a = make('a', 'ask-notice-link', 'open');
+      const a = make('a', 'ask-notice-link', b.hrefLabel || 'open');
+      if (b.codexSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex setup docs
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
@@ -2787,18 +2820,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** The lane's three sources (spec D5): workflow template, registry, per-project config. null = unusable. */
   async function loadLane(workflowId, projectDir) {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
-    const [wf, agents, cfg] = await Promise.all([
+    const [wf, agents, cfg, defaults] = await Promise.all([
       fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
+      fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
+    // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).
+    const engine = defaults && defaults.engine && defaults.engine.value === 'codex' ? 'codex' : 'claude';
     const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
     if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
-    const models = Array.isArray(cfg.models) ? cfg.models : [];
-    // `models`: a pinned row's hidden pick is healed against this catalog (node-tunables.mjs).
-    const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}), models });
-    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir,
-      models, efforts: Array.isArray(cfg.efforts) ? cfg.efforts : [],
+    const allModels = Array.isArray(cfg.models) ? cfg.models : [];
+    const models = allModels.filter((m) => (m && m.engine === 'codex' ? 'codex' : 'claude') === engine);
+    // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
+    // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
+    // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
+    // inherit default is the run engine's step slot, as on New pipeline.
+    const slotDefaults = defaults && defaults.steps && defaults.steps[engine] ? defaults.steps[engine] : null;
+    const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
+      models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
+    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine,
+      models, efforts: engine === 'codex' ? [...ENGINE_EFFORTS.codex] : (Array.isArray(cfg.efforts) ? cfg.efforts : []),
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
@@ -2968,7 +3010,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       subSel.title = 'Model for the sub-agents this node spawns (needs fan-out)';
       subSel.addEventListener('change', () => { laneSet(lane, row, { subagentModel: subSel.value }); renderLane(laneSec, lane, lc); });
       subWrap.appendChild(subSel);
-      l2.appendChild(subWrap);
+      if (lane.engine !== 'codex') l2.appendChild(subWrap);   // §6: sub-agents are Claude only; a Codex run has none
       if (row.askQuestions !== null) {
         l2.appendChild(rpSwitch('questions', 'questions', c.askQuestions, row.questionsLocked, (v) => { laneSet(lane, row, { askQuestions: v }); renderLane(laneSec, lane, lc); }, lane.editable));
       }
@@ -4930,7 +4972,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             // A classified notice (errorClass on the block) IS the explanation —
             // it renders the human line and, at expert, the raw detail in its
             // own expander. The raw line here is only for the unclassified case.
-            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && b.errorClass);
+            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup));
             if (!classified) {
               const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
               if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));

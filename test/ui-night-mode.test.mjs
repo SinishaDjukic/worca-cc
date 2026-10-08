@@ -441,8 +441,8 @@ test('project card: Away mode for this project, its summary, and Save re-reads G
   const ctx = await boot({ away: (u) => (u.includes('projectDir=') ? body : { ...body, inherited: resolveNightConfig({}) }) });
   ctx.window.location.hash = 'projects/proj-1/away';
   await settle(12);
-  const card = ctx.window.document.querySelector('.pd-sec[data-sec="away"] .pd-night-card');
-  assert.ok(card, 'the card is on the project\'s Away mode tab');
+  const card = ctx.window.document.querySelector('.pd-sec[data-sec="settings"] .pd-night-card');
+  assert.ok(card, 'the card is on the project\'s Settings tab (the old away route lands there)');
   assert.equal(card.querySelector('.card-head b').textContent, 'Away mode for this project');
   assert.match(card.querySelector('.card-head').textContent, /Anything left as "Same as my settings" uses your Settings page/);
   assert.match(card.querySelector('.away-summary').textContent, /^For proj: /);

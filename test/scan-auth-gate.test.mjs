@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
+import { fakeCodex } from './helpers/fake-codex.mjs';
 import { CLAUDE_AUTH_ENV_KEYS, CLAUDE_AUTH_ENV_FLAGS, clearClaudeAuthCache } from '../src/core/preflight.mjs';
 
 const skip = process.platform === 'win32' ? 'the fake claude is a shell script' : false;
@@ -23,7 +24,7 @@ const skip = process.platform === 'win32' ? 'the fake claude is a shell script' 
 useTempHome(after);
 
 const saved = {};
-const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS];
+const ENV_KEYS = ['WORCA_MOCK', 'ORCH_MOCK', 'WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_CODEX_BIN', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS];
 // db-seed and ui/server.mjs load claude-runner, whose default bin is read at import:
 // both are imported only AFTER WORCA_CLAUDE_BIN points at the fake.
 let srv, base, runs, scratch, seedPipeline;
@@ -54,6 +55,9 @@ before(async () => {
   await chmod(bin, 0o755);
   for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
   process.env.WORCA_CLAUDE_BIN = bin;
+  // A signed-out codex: every turn fails 401. engines/codex.mjs reads its bin at import, so it
+  // is set here, before db-seed / ui/server.mjs load it.
+  process.env.WORCA_CODEX_BIN = fakeCodex(scratch, null, { fail: '401 Unauthorized' }).bin;
   clearClaudeAuthCache();
   ({ seedPipeline } = await import('./helpers/db-seed.mjs'));
   const mod = await import('../ui/server.mjs');
@@ -117,6 +121,26 @@ test('POST /api/runs/:id/overview: a signed-out CLI failure → 409 claude-signe
   assert.equal(r.status, 409, JSON.stringify(body));
   assert.equal(body.code, 'claude-signed-out');
   assert.match(body.error, /isn't signed in/);
+});
+
+test('POST /api/runs/:id/overview of a Codex run: codex\'s own error, never the Claude sign-in 409 (Review Focus 5)', { skip }, async () => {
+  const proj = await repo('g');
+  const { id, key } = await seedPipeline(proj, { title: 'overview codex', status: 'done', engine: 2, runEngine: 'codex' });
+  const r = await fetch(`${base}/api/runs/${id}/overview?key=${encodeURIComponent(key)}`, { method: 'POST' });
+  const body = await r.json();
+  assert.equal(r.status, 500, JSON.stringify(body));
+  assert.equal(body.code, undefined);
+  assert.match(body.error, /401 Unauthorized/);
+});
+
+test('POST /api/pr/describe of a Codex run: codex\'s own error, never the Claude sign-in 409', { skip }, async () => {
+  const proj = await repo('h');
+  const { id, key } = await seedPipeline(proj, { title: 'pr codex', status: 'done', engine: 2, runEngine: 'codex' });
+  const r = await post('/api/pr/describe', { id, projectKey: key });
+  const body = await r.json();
+  assert.equal(r.status, 500, JSON.stringify(body));
+  assert.equal(body.code, undefined);
+  assert.match(body.error, /401 Unauthorized/);
 });
 
 test('GET /api/onboarding: signed-out Claude is not ticked; ?recheck=1 answers the same', { skip }, async () => {

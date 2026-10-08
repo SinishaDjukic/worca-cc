@@ -364,3 +364,22 @@ test('workspaceFanOutDirective: endpointRouted swaps the explore arm off Explore
       `${s}: routed changes nothing (already general-purpose / names no type)`);
   }
 });
+
+test('workspaceFanOutDirective serial: the same per-unit work done by the agent itself, no sub-agents', () => {
+  // A node on an engine with no grantable sub-agent tool (codex) gets this variant.
+  for (const strategy of ['explore', 'task', 'review']) {
+    for (const relative of [false, true]) {
+      const d = workspaceFanOutDirective(strategy, WS, { relative, serial: true });
+      assert.ok(d.startsWith('## Workspace '), `${strategy}: a heading`);
+      assert.doesNotMatch(d, /sub-agent|dispatch|subagent_type/i, `${strategy}/${relative}: nothing to spawn`);
+      assert.match(d, /yourself/, `${strategy}: the agent does the work`);
+      assert.equal(d.includes('repos/<projectKey>'), relative, `${strategy}: the relative routing only on a detached run`);
+    }
+  }
+  assert.match(workspaceFanOutDirective('explore', WS, { serial: true }), /sorted `projectKey` order[\s\S]*`Projects: <projectKey>/);
+  assert.match(workspaceFanOutDirective('task', WS, { serial: true }), /\(`taskId`\) order[\s\S]*Do NOT edit any project not named by a task/);
+  assert.match(workspaceFanOutDirective('review', WS, { serial: true }), /skip a project whose diff against its checkpoint is empty[\s\S]*ONE verdict JSON/);
+  assert.equal(workspaceFanOutDirective('explore', null, { serial: true }), '');
+  assert.equal(workspaceFanOutDirective('ponder', WS, { serial: true }), '');
+  assert.equal(workspaceFanOutDirective('explore', WS, { serial: false }), workspaceFanOutDirective('explore', WS), 'the default is unchanged');
+});

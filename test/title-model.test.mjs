@@ -153,7 +153,7 @@ const seam = ({ fails = () => false, cost = null } = {}) => {
   const models = [];
   const run = async (o) => {
     models.push(o.model);
-    if (cost != null) o.onEvent({ type: 'result', costUsd: cost, raw: { usage: { input_tokens: 90, output_tokens: 8 } } });
+    if (cost != null) o.onEvent({ type: 'result', costUsd: cost, raw: { type: 'result', usage: { input_tokens: 90, output_tokens: 8 } } });
     if (fails(o.model)) throw new Error(`model ${o.model} is not available on this account (404)`);
     return { text: 'Fallback Title' };
   };

@@ -806,3 +806,26 @@ test('validatePluginDir: a plugin workflow may reference built-in scripts and it
   const ungated = mkPluginDir({ ...VALID_FILES, 'scripts/broken.meta.json': SCRIPT_META('broken', { runtime: 'ruby' }), 'workflows/b.json': SCRIPT_GRAPH('broken') });
   assert.match(validatePluginDir(ungated).problems.map((p) => p.message).join('\n'), /b\.json: references script key "broken" whose sidecar is not a valid meta v2 sidecar/);
 });
+
+test('models: a Codex model names its engine, takes Codex efforts and refuses routing env', () => {
+  const ok = normalizeManifest({ name: 'p', models: [{ id: 'acme-codex', engine: 'codex', efforts: ['high', 'low'] }, { id: 'acme-codex-2', engine: 'codex' }] });
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  const [a, b] = ok.manifest.models;
+  assert.equal(a.engine, 'codex');
+  assert.deepEqual(a.efforts, ['low', 'high'], 'Codex effort order');
+  assert.deepEqual(b.efforts, ['minimal', 'low', 'medium', 'high'], 'absent efforts -> the full Codex set');
+  const claude = normalizeManifest({ name: 'p', models: [{ id: 'bare' }] });
+  assert.equal('engine' in claude.manifest.models[0], false, 'a Claude model carries no engine key');
+  const env = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', env: { ANTHROPIC_BASE_URL: 'https://x' } }] });
+  assert.equal(env.ok, false);
+  assert.ok(env.errors.some((e) => /"cx".*a codex model takes no env/.test(e)), JSON.stringify(env.errors));
+  const up = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen', apiKey: '${P_KEY}' } }] });
+  assert.equal(up.ok, true, JSON.stringify(up.errors));
+  assert.equal(up.manifest.models[0].upstream.model, 'qwen', 'a Codex model may ship an OpenAI-compatible Responses endpoint');
+  const chat = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } }] });
+  assert.ok(chat.errors.some((e) => /"cx".*Responses API only/.test(e)), JSON.stringify(chat.errors));
+  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude" or "codex"/.test(e)), JSON.stringify(bad.errors));
+  const eff = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', efforts: ['max'] }] });
+  assert.ok(eff.errors.some((e) => /unknown effort "max" — must be one of minimal \| low \| medium \| high/.test(e)), JSON.stringify(eff.errors));
+});

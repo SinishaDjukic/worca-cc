@@ -25,6 +25,15 @@ export const PREDEFINED_LIST_PRICES = Object.freeze({
   'claude-haiku-4-5':  { input: 1,  output: 5,  cacheRead: 0.1,  cacheWrite: 1.25, cacheWrite1h: 2 },
 });
 
+export const CODEX_PRICES = Object.freeze({
+  'gpt-6-astra': [6, 36],
+  'gpt-5.6-sol': [5, 30],
+  'gpt-5.6-terra': [2.5, 15],
+  'gpt-5.6-luna': [1, 6],
+  'gpt-5.5': [1.25, 10],
+  'gpt-5.3-codex-spark': [0.5, 3],
+});
+
 /** The list-price row for a model id (`[1m]` twins and dated ids map to their base), or null. */
 export function listPriceFor(modelId) {
   const id = typeof modelId === 'string' ? modelId.trim().toLowerCase() : '';

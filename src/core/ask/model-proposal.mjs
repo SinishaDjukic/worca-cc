@@ -23,7 +23,7 @@ const SECRET_HEADER_RE = /authorization|api[-_]?key|token|secret|cookie|password
 
 export const MODEL_ERRORS = Object.freeze({
   kind: `kind must be one of ${MODEL_CHANGE_KINDS.join(', ')}`,
-  model: 'model must be an object: {id, label?, efforts?, env?, cost?, upstream?}',
+  model: 'model must be an object: {id, label?, engine?, efforts?, env?, cost?, upstream?}',
   idRequired: (kind) => `${kind} needs an id (the catalog model id from list_models)`,
   unknownModel: (id) => `unknown model "${id}" — list_models shows the catalog`,
   builtin: (id) => `"${id}" is a built-in model with no catalog entry — propose add_model with the same id to override it`,
@@ -128,7 +128,7 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+const connectionOf = (m) => (m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));
@@ -199,7 +199,9 @@ export function createModelChangeValidator(r) {
       if (!ready.ok && !keyRef) w.push(`${ready.message} — the model shows "needs sign-in" until then`);
       const caps = m.upstream.capabilities || {};
       const base = m.upstream.baseUrl || (m.upstream.provider !== 'copilot' ? r.providerConfig(m.upstream.provider).baseUrl : null);
-      if (isTranslatedApi(m.upstream.api) && !caps.maxPromptTokens) {
+      if (m.engine === 'codex') {
+        // codex reaches the endpoint itself: the bridge's prompt-limit advice does not apply.
+      } else if (isTranslatedApi(m.upstream.api) && !caps.maxPromptTokens) {
         w.push('no prompt limit (capabilities.maxPromptTokens) — the CLI then assumes a 200k window and compacts too late; set it to what the endpoint serves');
       } else if (base && isLocalBaseUrl(base) && caps.maxPromptTokens < LOCAL_MIN_WINDOW) {
         w.push(`a ${caps.maxPromptTokens}-token window is too small for pipelines — serve at least ${LOCAL_MIN_WINDOW} (llama.cpp -c ${LOCAL_MIN_WINDOW}) and raise the limit to match`);

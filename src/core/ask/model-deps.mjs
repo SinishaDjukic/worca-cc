@@ -47,7 +47,7 @@ export async function listModelsForAsk() {
     return {
       id: row.id, label: row.label, source: source[String(row.custom)] || String(row.custom),
       ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.policy ? { policyHome: row.policy } : {}),
-      editable: !!g, efforts: row.efforts,
+      editable: !!g, engine: row.engine || 'claude', efforts: row.efforts,
       connection: up ? 'provider' : row.routed ? 'env' : 'default',
       ...(row.bridged ? { provider: row.bridged, upstreamApi: row.upstreamApi, upstreamModel: row.upstreamModel } : {}),
       ...(row.bridged ? { ready: !row.needsSignIn, ...(row.needsSignIn && up ? { notReady: providerReadiness(up).message } : {}) } : {}),

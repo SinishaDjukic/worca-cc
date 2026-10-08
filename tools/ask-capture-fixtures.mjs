@@ -139,6 +139,25 @@ export function assertLiveClaudeAllowed(env = process.env) {
     + 'Re-run with WORCA_ALLOW_LIVE_CLAUDE=1 if that is what you want.');
 }
 
+/**
+ * One capture turn: spawn through the Claude adapter's RAW entry point, the
+ * credential broker included when it is on (runClaude emits the normalized
+ * vocabulary; the fixtures are raw stream-json)
+ * and record every frame and stderr line. Rejections propagate. With no `bin` it
+ * spawns what runClaude would: WORCA_CLAUDE_BIN / ORCH_CLAUDE_BIN, else `claude`.
+ * @param {object} options  runClaude-shaped options (buildAskSpawnOptions)
+ * @returns {Promise<{frames:object[], stderr:string[], result:{text:string, exitCode:number}}>}
+ */
+export async function runCaptureTurn(options, { frames = [], stderr = [] } = {}) {
+  const { runClaudeAdapter, DEFAULT_BIN } = await import('../src/core/engines/claude.mjs');   // lazily: main() sets WORCA_HOME first
+  const result = await runClaudeAdapter({
+    ...options,
+    bin: options.bin ?? DEFAULT_BIN,
+    onEvent: (e) => { if (e.type === 'stderr') stderr.push(e.text); else if (e.raw && typeof e.raw === 'object') frames.push(e.raw); },
+  });
+  return { frames, stderr, result };
+}
+
 async function main() {
   assertLiveClaudeAllowed();
   const args = parseArgs(process.argv.slice(2));
@@ -146,7 +165,6 @@ async function main() {
   if (mock && mock !== '0' && mock.toLowerCase() !== 'false') throw new Error('refusing to capture under WORCA_MOCK — this script needs the real claude CLI');
   const base = mkdtempSync(join(tmpdir(), 'worca-ask-capture-'));
   process.env.WORCA_HOME = base;                                   // before the first getDb() — the core reads it lazily
-  const { runClaude } = await import('../src/core/claude-runner.mjs');
   const { resolveModelEnv } = await import('../src/core/config.mjs');
   const { worcaHome, addProject } = await import('../src/core/projects.mjs');
   const { seedPipeline } = await import('../test/helpers/db-seed.mjs');
@@ -190,13 +208,12 @@ async function main() {
     const meta = { scenario: sc.name, prompt, model: args.model, exitCode: null, error: null, stderr, flags: { maxTurns: sc.maxTurns ?? 6, maxBudgetUsd: sc.maxBudgetUsd ?? 1, resume: sc.resume ?? null }, captured: new Date().toISOString(), claudeVersion: null };
     const options = buildAskSpawnOptions({
       thread: { id: thread.id, sessionId: sc.resume ?? null },
-      turn: { prompt, systemPrompt, model: args.model, effort: 'medium', modelEnv: resolveModelEnv(args.model), signal: ac.signal,
-        onEvent: (e) => { if (e.type === 'stderr') stderr.push(e.text); else if (e.raw && typeof e.raw === 'object') frames.push(e.raw); } },
+      turn: { prompt, systemPrompt, model: args.model, effort: 'medium', modelEnv: resolveModelEnv(args.model), signal: ac.signal },
       limits: { maxTurns: meta.flags.maxTurns, maxBudgetUsd: meta.flags.maxBudgetUsd },
       mcpConfigPath, scratchDir,
     });
     try {
-      const r = await runClaude(options);
+      const { result: r } = await runCaptureTurn(options, { frames, stderr });
       meta.exitCode = r.exitCode;
     } catch (err) {
       const m = /exited with code (\d+)/.exec(err.message);

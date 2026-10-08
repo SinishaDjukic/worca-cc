@@ -113,6 +113,18 @@ test('the person in the async context is who the broker bills (multi mode); no p
   assert.equal(multi.store.db.prepare('SELECT bill_to FROM tokens ORDER BY created_at DESC LIMIT 1').get().bill_to, 'ops@acme.dev');
 });
 
+test('runClaude forwards billTo, spawnKind, runId and threadId to the spawn token', POSIX, async () => {
+  // The facade's destructure and its engine.run call are a gate: an option named in
+  // only one of them never reaches the broker. Each of the four lands in the token row.
+  useBroker(single);
+  await runClaude({
+    bin: stub, prompt: 'hi', model: 'claude-sonnet-5',
+    billTo: 'ada@acme.dev', spawnKind: 'aux', runId: 'run_gate1', threadId: 'ask_gate1',
+  });
+  const row = single.store.db.prepare('SELECT bill_to, kind, run_id, thread_id FROM tokens ORDER BY created_at DESC LIMIT 1').get();
+  assert.deepEqual({ ...row }, { bill_to: 'ada@acme.dev', kind: 'aux', run_id: 'run_gate1', thread_id: 'ask_gate1' });
+});
+
 test('a model routed straight to a provider is refused (keys must not bypass the broker)', POSIX, async () => {
   useBroker(single);
   const err = await runClaude({ bin: stub, prompt: 'hi', model: 'gw', modelEnv: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } }).catch((e) => e);

@@ -3,11 +3,26 @@
 // catalog from config.mjs — built-ins ⊕ plugin models ⊕ the user's GLOBAL models,
 // with composeCatalog's precedence (global > plugin > built-in) already applied and
 // one entry per id. The only thing dropped here is `custom:'project'`.
-import { listModels as realListModels, EFFORTS } from '../config.mjs';
+import { listModels as realListModels, EFFORTS, engineOfModel as realEngineOf } from '../config.mjs';
 import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSecretStatus } from '../plugin-models.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
+import { effortsForEngine } from '../model-env.mjs';
+import { resolveSetting } from '../settings-cascade.mjs';
+import { CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+
+export const ENGINE_LABEL = Object.freeze({ claude: 'Claude', codex: 'Codex' });
+/** A chat's engine (cascading-settings-design.md D12): its model's engine; unknown or empty is Claude. No column stores it. */
+export function chatEngine(thread, { engineOf = realEngineOf } = {}) {
+  return (thread && typeof thread.model === 'string' && engineOf(thread.model)) === 'codex' ? 'codex' : 'claude';
+}
+/** The user's Ask engine and per-engine slots (D17); a settings failure reads as today's defaults. */
+function defaultAskPrefs() {
+  try {
+    return { engine: resolveSetting('askEngine').value, slots: { claude: resolveSetting('models.claude.ask').value, codex: resolveSetting('models.codex.ask').value } };
+  } catch { return { engine: 'claude', slots: {} }; }
+}
 
 /**
  * @param {{
@@ -16,6 +31,8 @@ import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
  *   secretStatus?: (plugin:string)=>Array<{key:string,set:boolean}>,
  *   defaults?: {defaultModel:string, defaultEffort:string},
  *   effortless?: ()=>Set<string>,
+ *   askPrefs?: ()=>{engine?:string, slots?:{claude?:object, codex?:object}},
+ *   codexAvailable?: ()=>boolean,
  * }} [deps]
  */
 export function createAskModels({
@@ -24,6 +41,8 @@ export function createAskModels({
   secretStatus = realSecretStatus,
   defaults = ASK_LIMITS,
   effortless = realEffortless,
+  askPrefs = defaultAskPrefs,
+  codexAvailable = () => !!CODEX_ASK_LOCKDOWN,
 } = {}) {
   /**
    * lc id -> the modelSecrets keys that model needs but that are NOT set.
@@ -48,21 +67,19 @@ export function createAskModels({
     return out;
   }
 
-  /** The D8 initial pick, validated against the live catalog (D5). */
-  function pickDefault(models) {
-    const want = String(defaults.defaultModel || '').toLowerCase();
-    // Hidden built-ins (#422) are never the initial pick: on an install that
-    // hides them the default is the first model the user actually owns. They
-    // stay in `models` so a stored thread on one keeps validating.
-    const visible = models.filter((m) => !m.hidden);
-    const pool = visible.length ? visible : models;
-    const hit = pool.find((m) => m.id.toLowerCase() === want) || pool[0] || null;
+  /** The initial pick for a new chat on `engine` (D8, D17): the Ask slot when the catalog has it; Claude falls back to
+   *  ASK_LIMITS.defaultModel, Codex to its first visible model. Hidden built-ins are never the initial pick (#422). */
+  function pickDefault(models, engine = 'claude', slot = null) {
+    const own = models.filter((m) => (m.engine || 'claude') === engine);
+    const visible = own.filter((m) => !m.hidden);
+    const pool = visible.length ? visible : own;
+    const byId = (id) => (id ? pool.find((m) => m.id.toLowerCase() === String(id).toLowerCase()) : null);
+    const hit = byId(slot && slot.model) || (engine === 'claude' ? byId(defaults.defaultModel) : null) || pool[0] || null;
     if (!hit) return null;
-    const efforts = hit.efforts.length ? hit.efforts : [...EFFORTS];
-    const effort = efforts.includes(defaults.defaultEffort)
-      ? defaults.defaultEffort
-      : (efforts.includes('high') ? 'high' : efforts[0]);
-    return { model: hit.id, effort };
+    const efforts = hit.efforts.length ? hit.efforts : [...effortsForEngine(engine)];
+    const want = (slot && slot.effort) || (engine === 'claude' ? defaults.defaultEffort : 'medium');
+    const fallback = engine === 'claude' ? (efforts.includes('high') ? 'high' : efforts[0]) : (efforts.includes('medium') ? 'medium' : efforts[0]);
+    return { model: hit.id, effort: efforts.includes(want) ? want : fallback };
   }
 
   /**
@@ -70,7 +87,8 @@ export function createAskModels({
    *   secret probe — the extra listPluginModels() + one manifest/config read per
    *   plugin, all synchronous. Only validateModelEffort passes it: that path keeps
    *   id/efforts and throws the rest away, and it runs on every message POST.
-   * @returns {Promise<{models:Array<object>, efforts:string[], default:{model:string,effort:string}|null}>}
+   * @returns {Promise<{models:Array<object>, efforts:string[], default:{model:string,effort:string}|null,
+   *   defaults:{claude:{model:string,effort:string}|null, codex:{model:string,effort:string}|null}, askEngine:'claude'|'codex'}>}
    */
   async function askCatalog({ withSecrets = true } = {}) {
     const all = await listModels('');
@@ -84,14 +102,19 @@ export function createAskModels({
       // project-selection design first. Everything else — built-in, global,
       // plugin — is offered.
       if (m.custom === 'project') continue;
+      // D12: both engines are offered; the panel groups them and locks a chat to its own. Codex rows only when this
+      // codex can be locked down (plans/ask-on-codex-spike.md (a)) — otherwise a Codex chat could never start.
+      const engine = m.engine === 'codex' ? 'codex' : 'claude';
+      if (engine === 'codex' && !codexAvailable()) continue;
       const custom = m.custom === 'global' || m.custom === 'plugin' ? m.custom : false;
       const entry = {
         id: m.id,
         label: typeof m.label === 'string' && m.label ? m.label : m.id,
-        efforts: Array.isArray(m.efforts) ? [...m.efforts] : [...EFFORTS],
+        efforts: Array.isArray(m.efforts) ? [...m.efforts] : [...effortsForEngine(engine)],
         custom,
         hasEnv: m.hasEnv === true,
       };
+      if (engine !== 'claude') entry.engine = engine;   // a Claude row keeps today's exact shape
       if (custom === 'plugin' && typeof m.plugin === 'string' && m.plugin) entry.plugin = m.plugin;
       if (m.hidden === true) entry.hidden = true;
       // Its upstream refused a reasoning effort (bridge/upstream.mjs leaves it out from then
@@ -124,7 +147,12 @@ export function createAskModels({
       }
       models.push(entry);
     }
-    return { models, efforts: [...EFFORTS], default: pickDefault(models) };
+    let prefs = { engine: 'claude', slots: {} };
+    try { prefs = askPrefs() || prefs; } catch { /* today's defaults */ }
+    const slots = prefs.slots || {};
+    const byEngine = { claude: pickDefault(models, 'claude', slots.claude || null), codex: pickDefault(models, 'codex', slots.codex || null) };
+    const askEngine = prefs.engine === 'codex' && byEngine.codex ? 'codex' : 'claude';
+    return { models, efforts: [...EFFORTS], default: byEngine[askEngine], defaults: byEngine, askEngine };
   }
 
   /**
@@ -132,7 +160,7 @@ export function createAskModels({
    * @param {unknown} effort
    * @returns {Promise<{ok:true, model:string, effort:string}|{ok:false, error:string}>}
    */
-  async function validateModelEffort(model, effort) {
+  async function validateModelEffort(model, effort, { engine = null } = {}) {
     if (typeof model !== 'string' || !model.trim()) return { ok: false, error: 'model is required' };
     if (typeof effort !== 'string' || !effort.trim()) return { ok: false, error: 'effort is required' };
     const id = model.trim();
@@ -141,6 +169,9 @@ export function createAskModels({
     if (!entry) return { ok: false, error: `unknown model "${id}"` };
     const e = effort.trim();
     if (!entry.efforts.includes(e)) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
+    // D12: inside a chat (engine given) only the chat's engine; switching engine means a new chat.
+    const own = entry.engine || 'claude';
+    if (engine && own !== engine) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
     return { ok: true, model: entry.id, effort: e };
   }
 

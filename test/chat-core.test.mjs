@@ -304,3 +304,14 @@ test('renderSchedule: problem vs info, clipped', () => {
   assert.equal(i.severity, 'info');
   assert.match(JSON.stringify(i.body), /…/);
 });
+
+test('renderDone: a usage limit an engine hit also offers /resume on the other engine', () => {
+  const limit = renderDone(META, { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
+  assert.equal(isValidMessage(limit), true);
+  assert.match(limit.body[0].value, /reply: \/resume \*2951\n/);
+  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude/);
+  for (const payload of [
+    { status: 'paused', reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" },
+    { status: 'paused', reason: 'error', detail: 'disk full', limitEngine: 'codex' },
+  ]) assert.doesNotMatch(renderDone(META, payload).body[0].value, /continue now on/, payload.reason);
+});

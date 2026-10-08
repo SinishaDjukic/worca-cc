@@ -175,6 +175,24 @@ test('summarizeRuns carries pauseReason (null when the run never cost-paused)', 
   }
 });
 
+test("wireRun: a usage limit's engine and the run's engine reach the hello summary", () => {
+  const orch = Object.assign(new EventEmitter(), { state: { runEngine: 'codex' } });
+  const entry = makeEntry({ id: 'uuid-PR8', orch });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('done', { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
+    assert.equal(entry.limitEngine, 'codex');
+    const sum = _testing.summarizeRuns().find((r) => r.runId === 'uuid-PR8');
+    assert.equal(sum.limitEngine, 'codex');
+    assert.equal(sum.runEngine, 'codex');
+    entry.orch.emit('done', { status: 'done' });
+    assert.equal(entry.limitEngine, null, 'a later finish clears it');
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
 test('end to end: wireRun done -> summarizeRuns is what a reloading client sees', () => {
   const entry = makeEntry({ id: 'uuid-PR5', pipelineId: 'pl_9' });
   runs.set(entry.id, entry);

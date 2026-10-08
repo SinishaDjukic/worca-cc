@@ -3331,6 +3331,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-conn{display:grid;gap:12px;}
 .mv-conn-modes{display:grid;gap:8px;}
 .mv-conn-mode{display:flex;align-items:flex-start;gap:8px;font-size:13px;cursor:pointer;}
+.mv-conn-mode[hidden]{display:none;}   /* a Codex model has no env mode (bridge-view applyConnectionMode) */
 .mv-conn-mode input{margin-top:3px;}
 .mv-conn-mode-text{display:grid;gap:2px;}
 .mv-conn-mode-text .hint{margin:0;}
@@ -3347,6 +3348,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-conn-adv-body{display:grid;gap:10px;}
 .mv-conn-adv-body .input,.mv-conn-adv-body .textarea{font-family:var(--mono);font-size:12.5px;}
 .mv-conn-caps{display:grid;gap:6px;}
+.mv-conn-caps[hidden]{display:none;}
 .mv-conn-caps-row{display:flex;gap:14px;flex-wrap:wrap;align-items:center;}
 .mv-conn-cap{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;}
 .mv-conn-limit{display:flex;align-items:center;gap:6px;font-size:12.5px;}
@@ -4366,6 +4368,12 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .hd-after[hidden],.rd-after[hidden]{display:none;}
 .hd-after:hover,.rd-after:hover{border-color:var(--ink-2);color:var(--ink);}
 .hd-after:focus-visible,.rd-after:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* "Resume on <other engine>" after a usage limit (.hd-resume-switch): the same quiet pill. */
+.hd-resume-switch{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
+  border-radius:999px;background:var(--panel);font:600 12.5px var(--sans);color:var(--ink-2);cursor:pointer;}
+.hd-resume-switch[hidden]{display:none;}
+.hd-resume-switch:hover:not([disabled]){border-color:var(--ink-2);color:var(--ink);}
+.hd-resume-switch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 @media (prefers-reduced-motion: reduce){
   .runs-shell > *,.runs-chev{transition:none !important;}
   .runs-ic-run .runs-glyph{animation:none;}
@@ -5952,6 +5960,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
 .ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
 .ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
+.ask-pop-group { padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); }
 .ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:0;border-radius:12px;
   background:transparent;text-align:left;font-family:inherit;cursor:pointer;transition:.15s;}
 .ask-pop-item:hover,.ask-pop-item:focus-visible{background:var(--hover);outline:none;}
@@ -6250,6 +6259,10 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
    selectors are what win. */
 .check-row{display:inline-flex;align-items:center;gap:9px;cursor:pointer;user-select:none;
   font-weight:500;font-size:12.5px;color:var(--ink-2);}
+/* The engine field's hint and the gate refusal's consent row: hidden must win over
+   .hint's display:block and .check-row's inline-flex. */
+#engine-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
 /* Same trap for a switch row labelled inside a .field (the schedule sheet's Auto-sync). */
@@ -8130,3 +8143,9 @@ span.act-running-title{cursor:default}
 .shipit-try{display:flex;gap:8px;align-items:center;margin:10px 0}
 .shipit-try[hidden]{display:none}
 .act-port-range .input{width:110px}
+.inherit-field .label-row{gap:8px;align-items:center}
+.inherit-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink)}
+.inherit-badge[hidden],.inherit-clear[hidden]{display:none}
+.inherit-row{display:flex;gap:8px;flex-wrap:wrap}
+.engine-card{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.engine-card h3{margin:0 0 6px}.engine-card h4{margin:12px 0 4px;font-size:13px}.pd-settings-card{margin-top:14px}

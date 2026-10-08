@@ -16,7 +16,7 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
+import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
@@ -26,9 +26,10 @@ import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plug
 import { brokerEnabled } from './broker-client.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
 import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
-import { PREDEFINED_LIST_PRICES } from './list-prices.mjs';
+import { PREDEFINED_LIST_PRICES, CODEX_PRICES } from './list-prices.mjs';
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
+import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -103,6 +104,17 @@ export const PREDEFINED_MODELS = [
   { id: 'claude-haiku-5-5',       label: 'Haiku 5.5',       efforts: ['medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-haiku-4-5',       label: 'Haiku 4.5',       efforts: ['medium', 'high'] },
 ];
+
+export function codexModelLabel(id) {
+  const [, version = '', ...rest] = String(id).split('-');
+  const word = (w) => (w ? w[0].toUpperCase() + w.slice(1) : w);
+  return `GPT-${version}${rest.length ? ` ${rest.map(word).join(' ')}` : ''}`;
+}
+export const CODEX_BUILTIN_MODELS = Object.freeze(Object.keys(CODEX_PRICES).map((id) => Object.freeze({
+  id, label: codexModelLabel(id), efforts: Object.freeze([...CODEX_EFFORTS]),
+})));
+const engineTag = (m) => (m && m.engine === 'codex' ? 'codex' : 'claude');
+const CLAUDE_ID_RE = /^(claude-|opus|sonnet|haiku|fable)/i;
 
 /** @deprecated config moved to the DB (project_config). Kept for import-compat only. */
 export function configDir(projectDir) { return String(projectDir ?? ''); }
@@ -204,6 +216,8 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   const globalByIdLc = new Map(globals.map((m) => [m.id.toLowerCase(), m]));
   const plugins = listPluginModels();
   const pluginByIdLc = new Map(plugins.map((m) => [m.id.toLowerCase(), m]));
+  const policyModels = policyCatalogModels();
+  const policyByIdLc = new Map(policyModels.map((m) => [m.id.toLowerCase(), m]));
   const flagged = costUnreliableModelIds();
   const out = [];
   const seen = new Set();
@@ -238,7 +252,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   };
   const routedOrBridged = (m) => routedOf(m.env) || !!m.upstream;
   const pluginShape = (id, m, lc) => ({
-    id, label: m.label, efforts: [...m.efforts], custom: 'plugin', plugin: m.plugin,
+    id, label: m.label, efforts: [...m.efforts], engine: engineTag(m), custom: 'plugin', plugin: m.plugin,
     hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m),
   });
   for (const m of PREDEFINED_MODELS) {
@@ -246,17 +260,31 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     const shadow = globalByIdLc.get(lc);
     const pshadow = pluginByIdLc.get(lc);
     out.push(shadow
-      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
       : pshadow
         ? pluginShape(m.id, pshadow, lc)
-        : { ...m, custom: false, hasEnv: false, routed: false, ...hidden });
+        : { ...m, engine: 'claude', custom: false, hasEnv: false, routed: false, ...hidden });
+    seen.add(lc);
+  }
+  // One row per id: a stored pick names a bare id, so two engines' rows for one id would be
+  // ambiguous. Every user layer (global, plugin, team policy) shadows a Codex built-in of the
+  // same id — the row keeps the owner's engine, and engineOfModel agrees (catalogEngineRows).
+  for (const m of CODEX_BUILTIN_MODELS) {
+    const lc = m.id.toLowerCase();
+    if (seen.has(lc) || policyByIdLc.has(lc)) continue;   // a policy twin is emitted with the policy rows
+    const shadow = globalByIdLc.get(lc);
+    const pshadow = pluginByIdLc.get(lc);
+    out.push(shadow
+      ? { id: m.id, label: shadow.label, efforts: [...shadow.efforts], engine: engineTag(shadow), custom: 'global', hasEnv: !!shadow.env, routed: routedOrBridged(shadow), ...unreliable(lc), ...bridgeShape(shadow) }
+      : pshadow ? pluginShape(m.id, pshadow, lc)
+        : { id: m.id, label: m.label, efforts: [...m.efforts], engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false });
     seen.add(lc);
   }
   for (const m of globals) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue; // predefined shadow, already emitted
     seen.add(lc);
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'global', hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], engine: engineTag(m), custom: 'global', hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of plugins) {
     const lc = m.id.toLowerCase();
@@ -266,17 +294,17 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
   }
   // Team-policy catalog entries (team-policy design §8): after global and plugin, before the
   // legacy per-project ones. Read-only rows with a policy badge; `home` names the policy.
-  for (const m of policyCatalogModels()) {
+  for (const m of policyModels) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) continue;
     seen.add(lc);
-    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], custom: 'policy', policy: m.home,
+    out.push({ id: m.id, label: m.label, efforts: [...m.efforts], engine: engineTag(m), custom: 'policy', policy: m.home,
       hasEnv: !!m.env, routed: routedOrBridged(m), ...unreliable(lc), ...bridgeShape(m) });
   }
   for (const m of projectCustom) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
     seen.add(m.id.toLowerCase());
-    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], custom: 'project', hasEnv: false, routed: false });
+    out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], engine: 'claude', custom: 'project', hasEnv: false, routed: false });
   }
   return out;
 }
@@ -534,7 +562,9 @@ export function liveCostRates(modelId) {
   if (cfg && cfg.free === true) return FREE_RATES;
   if (cfg && cfg.perMtok && typeof cfg.perMtok === 'object') return cfg.perMtok;
   const base = id.toLowerCase().replace(/\[1m\]$/, '').replace(/-\d{8}$/, '');
-  return PREDEFINED_LIST_PRICES[base] ?? null;
+  if (PREDEFINED_LIST_PRICES[base]) return PREDEFINED_LIST_PRICES[base];
+  const cx = CODEX_PRICES[id.toLowerCase()];
+  return cx ? { input: cx[0], output: cx[1], cacheRead: cx[0] / 10, cacheWrite: cx[0], cacheWrite1h: cx[0] } : null;
 }
 
 /**
@@ -663,20 +693,62 @@ export function resolveModelEnv(modelId, { tag } = {}) {
   return withProviderModesOff(withTierModelEnv(env, canonicalId));
 }
 
+/** Every catalog id with its engine, in composeCatalog's precedence (first hit wins): global,
+ *  plugin, Claude built-ins, team policy, then Codex built-ins — a user layer of any kind owns an
+ *  id a Codex built-in also has. Synchronous; never throws. */
+function catalogEngineRows(projectDir = null) {
+  return [
+    ...listGlobalModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
+    ...listPluginModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
+    ...PREDEFINED_MODELS.map((m) => ({ id: m.id, engine: 'claude' })),
+    ...policyCatalogModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
+    ...CODEX_BUILTIN_MODELS.map((m) => ({ id: m.id, engine: 'codex' })),
+    ...(projectDir ? readRaw(projectDir).customModels.map((m) => ({ id: m.id, engine: 'claude' })) : []),
+  ];
+}
+
+export function engineOfModel(modelId, { projectDir = null } = {}) {
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  if (!id) return null;
+  const lc = id.toLowerCase();
+  const hit = catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc);
+  return hit ? hit.engine : (CLAUDE_ID_RE.test(id) ? 'claude' : null);
+}
+
+setCascadeModelOwnerReader((id, { projectDir = null } = {}) => engineOfModel(id, { projectDir }));
+
 /**
- * Whether `modelId` names a catalog member — built-in, global, or plugin —
- * regardless of the hide-built-ins flag (hidden entries still resolve).
+ * Whether `modelId` names a catalog member — built-in, global, plugin or policy — regardless of
+ * the hide-built-ins flag (hidden entries still resolve), optionally of one engine.
  * Case-insensitive like every other id lookup here. Synchronous; never throws.
- * @param {string} modelId
  */
-export function catalogHasModel(modelId) {
+export function catalogHasModel(modelId, { engine, projectDir = null } = {}) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return false;
   const lc = id.toLowerCase();
-  return PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc)
-    || listGlobalModels().some((m) => m.id.toLowerCase() === lc)
-    || listPluginModels().some((m) => m.id.toLowerCase() === lc)
-    || policyCatalogModels().some((m) => m.id.toLowerCase() === lc);
+  const effective = catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc);
+  return !!effective && (!engine || effective.engine === engine);
+}
+
+export function modelForEngine(modelId, engine = 'claude', { projectDir = null } = {}) {
+  if (typeof modelId !== 'string' || !modelId.trim()) return undefined;
+  const owner = engineOfModel(modelId, { projectDir });
+  return owner && owner !== engine ? undefined : modelId;
+}
+
+const ENGINE_NAME = Object.freeze({ claude: 'Claude', codex: 'Codex' });
+export async function assertSlotModels(items, { projectDir = '' } = {}) {
+  const list = (Array.isArray(items) ? items : []).filter((item) => item?.value?.model);
+  if (!list.length) return;
+  const models = await listModels(projectDir || '');
+  for (const { id, engine, value } of list) {
+    const bad = (message) => Object.assign(new Error(`${id}: ${message}`), { status: 400 });
+    const hit = models.find((model) => model?.id?.toLowerCase() === value.model.toLowerCase());
+    if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
+    const owner = hit.engine || 'claude';
+    if (owner !== engine) throw bad(`"${hit.id}" is a ${ENGINE_NAME[owner] || owner} model — this slot picks a ${ENGINE_NAME[engine] || engine} model`);
+    if (value.effort && !hit.efforts?.includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}"`);
+  }
 }
 
 /**
@@ -685,15 +757,42 @@ export function catalogHasModel(modelId) {
  * global fallback, so it is undefined when unset.
  * @returns {Promise<Record<string,{model:(string|undefined),effort:(string|undefined)}>>}
  */
-export async function resolveStepModels(projectDir, fallbackModel) {
-  const cfg = readRaw(projectDir);
-  // Team policy `models.steps` (a default): starts a role the project has NOT configured.
-  const team = teamDefault(projectDir, 'models.steps') || {};
+export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspace = false } = {}) {
+  const eng = engine === 'codex' ? 'codex' : 'claude'; const out = {};
+  for (const { key } of agentSteps()) {
+    let layers; try { layers = resolveSetting(`models.${eng}.steps.${key}`, projectDir ? { projectDir, workspace } : { workspace }).layers; } catch { continue; }
+    const pick = eng === 'claude' ? (layers.user !== undefined ? ['user', layers.user] : layers.team !== undefined ? ['team', layers.team] : null)
+      : (!workspace && layers.project !== undefined ? ['project', layers.project] : layers.user !== undefined ? ['user', layers.user] : null);
+    if (pick) out[key] = { ...pick[1], source: pick[0] };
+  }
+  return out;
+}
+export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
+  const eng = engine === 'codex' ? 'codex' : 'claude'; const cfg = readRaw(projectDir);
+  const slots = stepSlotDefaults(eng, { projectDir });
+  const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
   const out = {};
   for (const { key } of agentSteps()) {
-    const own = cfg.steps[key] || {};
-    const sel = own.model || own.effort ? own : (team[key] || {});
-    out[key] = { model: sel.model || fallbackModel || undefined, effort: sel.effort || undefined };
+    const own = eng === 'claude' ? (cfg.steps[key] || {}) : {};
+    const sel = own.model || own.effort ? own : (slots[key] || {});
+    out[key] = { model: sel.model || fallback || undefined, effort: sel.effort || undefined };
+  }
+  return out;
+}
+
+const SLOT_SOURCE_TEXT = Object.freeze({ project: 'project settings', user: 'your settings', team: 'the team policy' });
+/**
+ * Cascading settings §7: one line per agent node whose model came from its engine's step slot, naming the slot and
+ * where it was set — logged and audited at run start, so a model the engine rejects is traceable to its setting.
+ */
+export function slotSourceLines(engine, nodes, slots) {
+  const out = [];
+  for (const nc of Object.values(nodes || {})) {
+    if (!nc || nc.kind !== 'agent' || !nc.model) continue;
+    const role = nc.authoredKey || nc.key;
+    const s = slots && slots[role];
+    if (!s || s.model !== nc.model) continue;
+    out.push(`${engine} model "${nc.model}" for ${role} from ${SLOT_SOURCE_TEXT[s.source] || s.source} (models.${engine}.steps.${role})`);
   }
   return out;
 }
@@ -770,7 +869,7 @@ export async function setStep(projectDir, step, selection = {}) {
   const entry = model ? models.find((m) => m.id === model) : null;
   if (model && !entry) throw new Error(`unknown model "${model}"`);
   if (effort) {
-    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
     if (!entry) throw new Error('select a model before choosing an effort');
     if (!entry.efforts.includes(effort)) {
       throw new Error(`model "${model}" does not support effort "${effort}"`);
@@ -985,7 +1084,7 @@ export async function readRunConfig(projectDir) {
   // Forward any OTHER unknown keys verbatim too (future-proof, matches "preserve unknown").
   // prRemotes is the ship-it dialog's own preference (readPrRemotePrefs), not run config.
   for (const [k, v] of Object.entries(extra)) {
-    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && k !== TEAM_POLICY_KEY && k !== NIGHT_MODE_KEY && k !== SYNC_PREFS_KEY && k !== 'humanInLoopSet' && k !== ACTIONS_KEY && k !== ACTIONS_META_KEY && !(k in out)) out[k] = v;
+    if (k !== 'webUiTesting' && k !== PR_REMOTES_KEY && k !== TEAM_METRICS_KEY && k !== TEAM_POLICY_KEY && k !== NIGHT_MODE_KEY && k !== SYNC_PREFS_KEY && k !== PROJECT_SETTINGS_KEY && k !== 'humanInLoopSet' && k !== ACTIONS_KEY && k !== ACTIONS_META_KEY && !(k in out)) out[k] = v;
   }
   const active = row && typeof row.active_workflow_id === 'string' ? row.active_workflow_id.trim() : '';
   // Spec §6.1 / D16: a project with no remembered New-pipeline choice starts on Auto — unless a
@@ -1026,7 +1125,7 @@ export async function setNodeModel(projectDir, workflowId, nodeId, selection = {
   const entry = model ? models.find((m) => m.id === model) : null;
   if (model && !entry) throw new Error(`unknown model "${model}"`);
   if (effort) {
-    if (!EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
+    if (!ALL_EFFORTS.includes(effort)) throw new Error(`unknown effort "${effort}"`);
     if (!entry) throw new Error('select a model before choosing an effort');
     if (!entry.efforts.includes(effort)) {
       throw new Error(`model "${model}" does not support effort "${effort}"`);
@@ -1343,6 +1442,7 @@ export function writeTeamPolicyPrefs(key, patch) {
 
 // ── Night mode project layer (project_config.extra.nightMode) ────────────────
 // The project's own night mode fields (night/config.mjs); precedence project > user > team.
+export const PROJECT_SETTINGS_KEY = 'settings';
 export const NIGHT_MODE_KEY = 'nightMode';
 
 /** @returns {object|null} the project's night mode layer (only fields it set) */

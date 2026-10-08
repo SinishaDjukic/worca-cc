@@ -186,7 +186,7 @@ test('_titleGenOpts mirrors the run\'s claude policy: bin + mock travel with the
 });
 
 // ── Away mode cost visibility (T4): the run-title call is worca's own AI spend during the run ──
-const titleResult = (o) => o.onEvent({ type: 'result', costUsd: 0.0021, raw: { usage: { input_tokens: 90, output_tokens: 8 } } });
+const titleResult = (o) => o.onEvent({ type: 'result', costUsd: 0.0021, raw: { type: 'result', usage: { input_tokens: 90, output_tokens: 8 } } });
 
 test('the run-title call is booked (row, aux title, total) whether it settles before or after run() returns, and persists to the DB', async () => {
   await checkRows([

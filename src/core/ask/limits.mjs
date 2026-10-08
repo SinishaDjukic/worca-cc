@@ -5,6 +5,7 @@
 import { askMaxTurns as readAskMaxTurns, askMaxBudgetUsd as readAskMaxBudgetUsd, readSettings } from '../settings.mjs';
 import { cachedPolicyForKey } from '../policy/cache.mjs';
 import { fieldsForRun } from '../policy/effective.mjs';
+import { resolveSetting } from '../settings-cascade.mjs';
 import { TEXT_EXTENSIONS, BINARY_EXTENSIONS } from './attachment-kind.mjs';
 
 export const ASK_LIMITS = Object.freeze({
@@ -93,6 +94,9 @@ export const ASK_LIMITS = Object.freeze({
  * @returns {{maxTurns:number, maxBudgetUsd:number|null}}
  */
 export function askLimits({ readMaxTurns = readAskMaxTurns, readMaxBudgetUsd = readAskMaxBudgetUsd, projectKey = null, readStored = readSettings } = {}) {
+  if (projectKey && readMaxTurns === readAskMaxTurns && readMaxBudgetUsd === readAskMaxBudgetUsd && readStored === readSettings) {
+    return { maxTurns: resolveSetting('askMaxTurns', { projectKey }).value, maxBudgetUsd: resolveSetting('askMaxBudgetUsd', { projectKey }).value };
+  }
   const out = { maxTurns: readMaxTurns(), maxBudgetUsd: readMaxBudgetUsd() };
   // Team policy defaults (team-policy design §5 `ask.*`): start a thread pinned to a governed
   // project off the team's numbers, but only where the developer has stored nothing of their own.

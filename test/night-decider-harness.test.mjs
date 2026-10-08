@@ -56,7 +56,8 @@ function recordingRun() {
   const seen = [];
   const run = async (o) => {
     seen.push(o);
-    o.onEvent({ type: 'result', costUsd: 0.05, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    // The engine adapters emit the normalized vocabulary (claude-events.mjs): a result carries its own usage.
+    o.onEvent({ type: 'result', text: '', costUsd: 0.05, isError: false, usage: { input_tokens: 3, output_tokens: 2 } });
     return { text: '{"decisions":[{"id":"a","choice":"y","confidence":90,"rationale":"fits","reversible":true,"scores":{}}]}' };
   };
   return { run, seen };
@@ -163,6 +164,32 @@ test('mock mode is unchanged: no spawn, the recommended-else-first answer, $0', 
   assert.deepEqual(booked, [0]);
 });
 
+test('a Codex run: the decider runs on Codex — a Codex Decided by pick is used, read-only, with the file tools over the checkout', async () => {
+  await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderModel: 'gpt-5.5' });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const { run, seen } = recordingRun();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-dm-codex', nightClock: clock, nightRunClaude: run, claude: { model: 'gpt-5.6-sol', engine: 'codex' } });
+  await answerOne(orch, clock, 'cx1');
+  assert.equal(seen[0].model, 'gpt-5.5');
+  assert.equal(seen[0].engine, 'codex');
+  assert.equal(seen[0].sandbox, 'read-only');
+  assert.equal(seen[0].modelEnv, undefined, 'no Claude routing env');
+  assert.ok(seen[0].mcpConfigPath, 'its repo look is worca\'s read_file/grep/glob');
+  assert.match(seen[0].systemPrompt, /read_file, grep and glob/);
+});
+
+test('a Codex run: a Claude Decided by pick reads as stale, and the run\'s Codex model weighs the options', async () => {
+  await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderModel: 'claude-sonnet-5' });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const { run, seen } = recordingRun();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-dm-codex2', nightClock: clock, nightRunClaude: run, claude: { model: 'gpt-5.6-sol', engine: 'codex' } });
+  await answerOne(orch, clock, 'cx2');
+  assert.equal(seen[0].model, 'gpt-5.6-sol');
+  assert.equal(seen[0].engine, 'codex');
+});
+
 // ── Away mode cost visibility (T2): every review is booked as its own "away" share ─────────────
 const U1200 = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 /** A review that streams ONE message as two content blocks (same id, same usage) and then blocks:
@@ -170,8 +197,8 @@ const U1200 = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens:
 function streamingRun(onAbort = (rej) => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))) {
   const st = { entered: false };
   st.run = (o) => new Promise((res, rej) => {
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
     const fire = () => onAbort(rej, res, o);
     if (o.signal.aborted) fire(); else o.signal.addEventListener('abort', fire, { once: true });
     st.entered = true;
@@ -271,7 +298,7 @@ test('the user answered as the result landed: the failed review is still booked,
   await setNightModeToggle('on');
   const clock = fakeClock();
   const r = streamingRun((rej, _res, o) => {
-    o.onEvent({ type: 'result', costUsd: 0.05, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    o.onEvent({ type: 'result', costUsd: 0.05, raw: { type: 'result', usage: { input_tokens: 3, output_tokens: 2 } } });
     rej(Object.assign(new Error('aborted'), { name: 'AbortError' }));
   });
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux5'), nightClock: clock, nightRunClaude: r.run, claude: { model: 'claude-sonnet-5-5' } });
@@ -293,7 +320,7 @@ test('a review that times out still answers (flagged); the answer says it was st
   await setNightModeToggle('on');
   const clock = fakeClock();
   const run = async (o) => {                                     // the 5-min timeout aborts the CLI from inside
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
     throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   };
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux6'), nightClock: clock, nightRunClaude: run, claude: { model: 'claude-sonnet-5-5' } });
@@ -314,8 +341,8 @@ test('a reply with no priced result frame is a stopped review with a lower bound
   await setNightModeToggle('on');
   const clock = fakeClock();
   const run = async (o) => {
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
-    o.onEvent({ type: 'result', raw: { usage: U1200 } });       // a result that carried no cost
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'result', raw: { type: 'result', usage: U1200 } });       // a result that carried no cost
     return { text: '{"decisions":[{"id":"a","choice":"y","confidence":90,"rationale":"fits","reversible":true,"scores":{}}]}' };
   };
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux7'), nightClock: clock, nightRunClaude: run, claude: { model: 'claude-sonnet-5-5' } });
@@ -334,7 +361,7 @@ test('a {free} review that fails after its result is a $0 booked review, not a s
   await setNightModeToggle('on');
   const clock = fakeClock();
   const run = async (o) => {
-    o.onEvent({ type: 'result', costUsd: 0.05, raw: { usage: { input_tokens: 3, output_tokens: 2 } } });
+    o.onEvent({ type: 'result', costUsd: 0.05, raw: { type: 'result', usage: { input_tokens: 3, output_tokens: 2 } } });
     throw new Error('claude exited with code 1');
   };
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux8'), nightClock: clock, nightRunClaude: run, claude: { model: 'claude-sonnet-5-5' } });
@@ -351,7 +378,7 @@ test('a {free} review stopped before its result has a $0 lower bound, not "not p
   await setNightModeToggle('on');
   const clock = fakeClock();
   const run = async (o) => {
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
     throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   };
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux9'), nightClock: clock, nightRunClaude: run, claude: { model: 'claude-sonnet-5-5' } });
@@ -367,7 +394,7 @@ test('a decider model with no list price: the stopped review is counted, not pri
   await setNightModeToggle('on');
   const clock = fakeClock();
   const run = async (o) => {
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', usage: U1200 } } });
     throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   };
   const orch = createOrchestrator({ projectDir: join(tmpdir(), 'night-aux10'), nightClock: clock, nightRunClaude: run, claude: { model: 'some-unpriced-model' } });
@@ -383,7 +410,7 @@ test('no model configured (the CLI\'s default): the lower bound is priced at the
   await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1 });
   await setNightModeToggle('on');
   const stopAfter = (model) => async (o) => {                    // one streamed message, then the timeout
-    o.onEvent({ type: 'assistant', raw: { message: { id: 'm1', ...(model ? { model } : {}), usage: U1200 } } });
+    o.onEvent({ type: 'assistant', raw: { type: 'assistant', message: { id: 'm1', ...(model ? { model } : {}), usage: U1200 } } });
     throw Object.assign(new Error('aborted'), { name: 'AbortError' });
   };
   const floorFor = async (run, claude, qid) => {

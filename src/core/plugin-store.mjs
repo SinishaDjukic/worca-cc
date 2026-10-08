@@ -174,7 +174,7 @@ export function buildInstallInventory(versionDir) {
   const models = (manifest.models || []).map((m) => {
     const bu = m.env?.ANTHROPIC_BASE_URL;
     return {
-      id: m.id, label: m.label, efforts: m.efforts,
+      id: m.id, label: m.label, efforts: m.efforts, engine: m.engine || 'claude',
       envKeys: Object.keys(m.env ?? {}),
       baseUrl: typeof bu === 'string' ? bu : bu ? `(from secret "${bu.secret}")` : null,
     };

@@ -527,3 +527,23 @@ test('Auto workflow proposal: /status names it; /approve accepts, /answer revise
     } },
   ]);
 });
+
+test('/resume [*ref] [engine]: an engine continues the run on it; the refusal says where the consent is', async () => {
+  const got = [];
+  let answer = { ok: true };
+  const { send } = fixture({ resume: async (pipelineId, by, opts) => { got.push([pipelineId, opts]); return answer; } });
+  assert.match(text(await send('/resume *3333 claude')), /Resuming `\*3333` on Claude/);
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'claude' }]);
+  assert.match(text(await send('/resume Codex')), /Resuming `\*3333` on Codex/, 'bare, with the engine first');
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'codex' }]);
+  await send('/resume *3333');
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', undefined], 'no engine named: the saved one');
+  const n = got.length;
+  assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude or codex/);
+  assert.equal(got.length, n, 'nothing resumed');
+
+  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce' };
+  const refused = text(await send('/resume *3333 codex'));
+  assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
+  assert.match(refused, /resume it from the worca-cc UI and tick Allow unguarded/);
+});

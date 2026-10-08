@@ -17,7 +17,7 @@ import {
   readPrRemotePrefs, setPrRemotePrefs,
   readTeamMetricsPrefs, writeTeamMetricsPrefs,
 } from '../src/core/config.mjs';
-import { PREDEFINED_MODELS } from '../src/core/config.mjs';
+import { PREDEFINED_MODELS, CODEX_BUILTIN_MODELS } from '../src/core/config.mjs';
 import { getDb, _resetForTests } from '../src/core/db.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -58,8 +58,9 @@ test('a fresh project: readConfig empty default, readRunConfig empty workflows o
     } },
     { name: 'listModels returns predefined + custom (custom flagged), even on a fresh project', run: async () => {
       const models = await listModels(p);
-      assert.equal(models.length, PREDEFINED_MODELS.length, 'all predefined present');
-      assert.ok(models.every((m) => m.custom === false), 'all predefined flagged custom:false');
+      assert.equal(models.filter((m) => m.engine === 'claude').length, PREDEFINED_MODELS.length, 'all predefined present');
+      assert.equal(models.filter((m) => m.engine === 'codex').length, CODEX_BUILTIN_MODELS.length, 'every Codex built-in present');
+      assert.ok(models.every((m) => m.custom === false), 'all built-ins flagged custom:false');
     } },
   ]);
 });

@@ -45,6 +45,7 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
+import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
@@ -53,14 +54,15 @@ import {
   scanStrayEntries, copyRunManifestTo, removeInjectedPaths, stripClaudeMdFence,
   RETAIN_REASONS,
 } from './run-manifest.mjs';
-import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE } from './run-context.mjs';
+import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, catalogHasModel, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
@@ -78,6 +80,11 @@ import { syncBaseForRun, ensureLocalBranch, fetchRemote, isSafeBranchName, runSy
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
 import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
+import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH, codexUnattachableMcp } from './engines/codex.mjs';
+import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
+import { hostGuardEnabled } from './host-guard.mjs';
+import { isNormalized } from './engines/events.mjs';
+import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
 import { brokerEnabled, brokerInfo, personSlots } from './broker-client.mjs';
@@ -98,7 +105,7 @@ import { writePolicyState, hasPipelineOverride, readTotalAck } from './policy/st
 import { installedPluginsMap, WORCA_VERSION as POLICY_WORCA_VERSION } from './policy/local.mjs';
 import { readSettings as readRawSettings } from './settings.mjs';
 import { byActor } from './identity.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
@@ -126,6 +133,7 @@ import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, 
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
 import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey } from './settings.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
+import { usageLimitSwitch, engineLabel } from '../shared/engine-switch.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -171,6 +179,28 @@ export const ERR_STREAM = Object.freeze({ stream: 'err' });
 function errDetail(res, max = 200) {
   const text = (res?.stderr || '').trim().replace(/\s+/g, ' ');
   return text ? `: ${clip(text, max)}` : '';
+}
+
+/** The engine gate's refusal (RunHarness#_engineGate): a plain error, no recovery class.
+ *  `engineRefused` lets engineStartRefusal tell a preflight refusal from any other error. */
+function engineRefusal(name, why) {
+  return Object.assign(new Error(`engine ${name}: ${why}`), { errorClass: null, engineRefused: true });
+}
+
+/** A rule list for a log line: the first three rules, then how many more. */
+function ruleList(rules) {
+  const all = Object.values(rules || {}).flat().filter((r) => typeof r === 'string');
+  return all.slice(0, 3).join(', ') + (all.length > 3 ? ` (+${all.length - 3} more)` : '');
+}
+
+/** A list of rules for a log line: the first three, then how many more. */
+function ruleNames(list) {
+  return list.slice(0, 3).join(', ') + (list.length > 3 ? ` (+${list.length - 3} more)` : '');
+}
+
+/** Whether a permission-rules object carries any rule at all. */
+function hasPermissionRules(rules) {
+  return !!rules && Object.values(rules).some((a) => Array.isArray(a) && a.length);
 }
 
 /** The parenthetical of a workspace member's teardown audit line. Scan + kept wording is
@@ -323,87 +353,51 @@ function subAgentCostModel(inputModel, parentModel) {
   return parentModel ?? null;
 }
 
-/**
- * Record id -> short description for every Task/Agent tool_use block in a
- * MAIN-agent event, so a sub-agent's later events (which carry that id as
- * parent_tool_use_id) can be labeled by the job they were given. Safe when
- * `raw` is a string (non-JSON runner line): raw?.message?.content is undefined.
- */
-function registerSubAgents(raw, labels) {
-  const content = raw?.message?.content;
-  if (!Array.isArray(content)) return;
-  for (const c of content) {
-    if (c?.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent') && c.id && !labels.has(c.id)) {
-      const desc = clip(c.input?.description || c.input?.prompt, SUBAGENT_LABEL_MAX);
-      if (desc) labels.set(c.id, desc); // empty desc left unset → fallback assigns sub-agent-N
-    }
-  }
-}
-
-function describeToolUses(raw, projectDir) {
-  const content = raw?.message?.content;
-  if (!Array.isArray(content)) return [];
-  const calls = [];
-  for (const c of content) {
-    if (c?.type === 'tool_use' && typeof c.name === 'string') {
-      const target = toolTarget(c.name, c.input, projectDir);
-      calls.push(target ? `${c.name} ${target}` : c.name);
-    }
-  }
-  return calls;
+/** One `→ Tool target` line per call of a normalized `tool` event. */
+function describeToolUses(calls, projectDir) {
+  return calls.filter((c) => typeof c.name === 'string').map((c) => {
+    const target = toolTarget(c.name, c.input, projectDir);
+    return target ? `${c.name} ${target}` : c.name;
+  });
 }
 
 /**
- * Describe tool_result blocks in a stream-json event as short outcome one-liners
- * (`result ok <id8>` / `result error <id8>`). Scans message.content for
- * {type:'tool_result', tool_use_id, is_error?}. Returns [] when `raw` is a string
- * (non-JSON runner line) or carries no tool_result blocks (assistant turns, the
- * init event), so the caller adds no line. The 8-char tool_use_id prefix matches
- * worca's contract and is enough to correlate a result with its call within one
- * turn. Mirrors describeToolUses: the `← ` arrow prefix is added by the caller.
+ * Describe the results of a normalized `toolResult` event as short outcome
+ * one-liners (`result ok <id8>` / `result error <id8>`). The 8-char tool_use_id
+ * prefix matches worca's contract and is enough to correlate a result with its
+ * call within one turn. Mirrors describeToolUses: the `← ` arrow prefix is added
+ * by the caller.
  */
-function describeToolResults(raw) {
-  const content = raw?.message?.content;
-  if (!Array.isArray(content)) return [];
-  const lines = [];
-  for (const b of content) {
-    if (b?.type !== 'tool_result') continue;
-    const id = typeof b.tool_use_id === 'string' ? b.tool_use_id.slice(0, 8) : '?';
-    lines.push(`result ${b.is_error ? 'error' : 'ok'} ${id}`);
-  }
-  return lines;
+function describeToolResults(results) {
+  return results.map((r) => `result ${r.isError ? 'error' : 'ok'} ${typeof r.toolUseId === 'string' ? r.toolUseId.slice(0, 8) : '?'}`);
 }
 
 /**
- * Describe a `system`/`api_retry` frame: the CLI retries a failed API call on its
- * own and this frame is its ONLY report of it (no text, nothing on stderr). Shape
- * on 2.1.281: {attempt, max_retries, retry_delay_ms, error_status: number|null,
- * error: 'overloaded'|'rate_limit'|'authentication_failed'|'server_error'|
- * 'cloud_credential_error'|'unknown', no_response?: {waited_ms}}. The error
- * message itself is not carried; a status-less 'unknown' is a request that never
- * got an HTTP response — a timeout or a dropped connection. null for any other frame.
+ * Describe a normalized `retry` event: the CLI retried a failed API call on its own
+ * (for Claude, the `system`/`api_retry` frame, its ONLY report of it: no text, nothing
+ * on stderr). `reason` is the CLI's category ('overloaded', 'rate_limit', …, or
+ * 'unknown'); the error message itself is not carried. A status-less 'unknown' is a
+ * request that never got an HTTP response — a timeout or a dropped connection.
  */
-function describeApiRetry(raw) {
-  if (raw?.type !== 'system' || raw?.subtype !== 'api_retry') return null;
+function describeApiRetry(e) {
   const secs = (ms) => `${(Number(ms) / 1000).toFixed(1)}s`;
-  const status = Number.isFinite(raw.error_status) ? raw.error_status : null;
-  const category = typeof raw.error === 'string' && raw.error ? raw.error : 'unknown';
-  let reason = status != null
-    ? `${category} (HTTP ${status})`
+  const category = typeof e.reason === 'string' && e.reason ? e.reason : 'unknown';
+  let reason = e.httpStatus != null
+    ? `${category} (HTTP ${e.httpStatus})`
     : category === 'unknown' ? 'no HTTP response (timeout or connection error)' : category;
-  if (Number.isFinite(raw.no_response?.waited_ms)) reason += ` after ${secs(raw.no_response.waited_ms)}`;
-  const of = Number.isFinite(raw.max_retries) ? `/${raw.max_retries}` : '';
-  const wait = Number.isFinite(raw.retry_delay_ms) ? ` in ${secs(raw.retry_delay_ms)}` : '';
-  return `API call failed: ${reason}; retry ${raw.attempt ?? '?'}${of}${wait}`;
+  if (Number.isFinite(e.waitedMs)) reason += ` after ${secs(e.waitedMs)}`;
+  const of = Number.isFinite(e.maxRetries) ? `/${e.maxRetries}` : '';
+  const wait = Number.isFinite(e.delayMs) ? ` in ${secs(e.delayMs)}` : '';
+  return `API call failed: ${reason}; retry ${e.attempt ?? '?'}${of}${wait}`;
 }
 
 /** The tools whose `file_path` can be a memory write. */
 const MEMORY_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
-/** The human text of a tool_result block: a string, or the first text block; `<tool_use_error>`
+/** The human text of a tool result: a string, or the FIRST text block; `<tool_use_error>`
  *  tags stripped (the CLI wraps some errors in them). '' when there is none. */
-function toolResultText(block) {
-  const c = block?.content;
+function toolResultText(result) {
+  const c = result?.content;
   const raw = typeof c === 'string' ? c
     : Array.isArray(c) ? (c.find((x) => x?.type === 'text' && typeof x.text === 'string')?.text || '') : '';
   return raw.replace(/<\/?tool_use_error>/g, '').trim();
@@ -493,15 +487,12 @@ export function skillLabel(name, input) {
   return ''; // Read/Write/Edit/Bash/Grep/Glob/Task/Agent/WebFetch/WebSearch/… excluded
 }
 
-/** All kind-tagged skill labels in ONE stream-json envelope (deduped within the
+/** All kind-tagged skill labels in ONE `tool` event's calls (deduped within the
  *  turn, order-preserving). */
-function extractSkillLabels(raw) {
-  const content = raw?.message?.content;
-  if (!Array.isArray(content)) return [];
+function extractSkillLabels(calls) {
   const out = [];
   const seen = new Set();
-  for (const c of content) {
-    if (c?.type !== 'tool_use') continue;
+  for (const c of calls) {
     const label = skillLabel(c.name, c.input);
     if (label && !seen.has(label)) { seen.add(label); out.push(label); }
   }
@@ -519,14 +510,12 @@ function extractSkillLabels(raw) {
 // `sh -c "graphify …"` — graphify there is an argument, not the command word.
 const GRAPHIFY_CMD_RE = /(?:^|[;&|\n(]|&&|\|\|)\s*(?:\w+=\S+\s+)*(?:[^\s;&|()]*\/)?graphify(?=\s|$)/g;
 
-/** How many graphify CLI invocations the Bash tool_use blocks of ONE stream-json
- *  envelope contain (0 when none / not a tool turn). Pure + module-scoped. */
-function countGraphifyBashCalls(raw) {
-  const content = raw?.message?.content;
-  if (!Array.isArray(content)) return 0;
+/** How many graphify CLI invocations the Bash calls of ONE `tool` event
+ *  contain (0 when none). Pure + module-scoped. */
+function countGraphifyBashCalls(calls) {
   let n = 0;
-  for (const c of content) {
-    if (c?.type !== 'tool_use' || c.name !== 'Bash') continue;
+  for (const c of calls) {
+    if (c.name !== 'Bash') continue;
     const cmd = c.input?.command;
     if (typeof cmd !== 'string') continue;
     const m = cmd.match(GRAPHIFY_CMD_RE);
@@ -749,29 +738,55 @@ export class RunHarness extends EventEmitter {
     this.projectDir = this.isWorkspace
       ? resolve(this.members[0].projectDir)
       : resolve(this.opts.projectDir || process.cwd());
+    // A resumed run keeps the engine it was started on and the consent to run it unguarded,
+    // like its model below: both ride the resume point's `claude` blob, which
+    // _buildResumePoint writes only when they differ from the default (a missing engine is
+    // Claude). An engine the resume names itself wins; the saved consent then applies only
+    // if it is the engine the consent was given for.
+    const savedClaude = this.opts.resume?.resumePoint?.claude;
+    const savedEngine = typeof savedClaude?.engine === 'string' && savedClaude.engine ? savedClaude.engine : 'claude';
     this.claude = {
       bin: this.opts.claude?.bin,
       permissionMode: this.opts.claude?.permissionMode || 'acceptEdits',
       model: this.opts.claude?.model,
       effort: this.opts.claude?.effort,
       mock: !!this.opts.claude?.mock,
+      // The harness that runs this pipeline's agent nodes (engines/index.mjs).
+      // Validated here: an unknown name, or the mock (only --mock reaches it), fails
+      // before anything is created.
+      engine: selectRunEngine(this.opts.claude?.engine || savedEngine),
     };
+    // Kept off this.claude, which is spread into spawn options.
+    this._allowUnguardedEngine = !!this.opts.claude?.allowUnguardedEngine
+      || (savedClaude?.allowUnguardedEngine === true && this.claude.engine === savedEngine);
+    this._resumeEngineSwitch = this.opts.resume && this.claude.engine !== savedEngine
+      ? { from: savedEngine, to: this.claude.engine }
+      : null;
     // A resumed run keeps the model it was started with (`worca --model`, the UI's
     // start pair): the resume sites pass none, so it rides the resume point — which
     // _buildResumePoint rewrites at every pause from this.claude — like memoryScope
-    // below. A resume that names its own model wins. A saved model that left the
-    // catalog is dropped (the run falls back to the default, as before) and
-    // resume() says so once the run log is bound.
+    // below. A resume that names its own model wins. A model is kept only for the
+    // engine that owns it (cascading-settings-design.md §4.2): a Claude id never
+    // reaches codex and a codex catalog id never reaches Claude. On Claude it must
+    // still be a Claude catalog entry (one that left the catalog is dropped, the run
+    // falls back to the default, as before). An id no catalog knows is kept while the
+    // run stays on the non-Claude engine it was saved on: that engine checks its own
+    // ids, as it did at run start. resume() says what was dropped once the log is bound.
     this._staleResumeModel = null;
-    {
-      const saved = this.opts.resume?.resumePoint?.claude;
-      if (saved && !this.claude.model && typeof saved.model === 'string' && saved.model) {
-        if (catalogHasModel(saved.model)) {
-          this.claude.model = saved.model;
-          if (!this.claude.effort && typeof saved.effort === 'string' && saved.effort) this.claude.effort = saved.effort;
-        } else {
-          this._staleResumeModel = saved.model;
-        }
+    this._staleResumeOwner = null;
+    if (savedClaude && !this.claude.model && typeof savedClaude.model === 'string' && savedClaude.model) {
+      const saved = savedClaude.model;
+      const engine = this.claude.engine;
+      const owner = engineOfModel(saved);
+      const keep = owner === engine
+        ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
+        : (owner === null && engine !== 'claude' && engine === savedEngine);
+      if (keep) {
+        this.claude.model = saved;
+        if (!this.claude.effort && typeof savedClaude.effort === 'string' && savedClaude.effort) this.claude.effort = savedClaude.effort;
+      } else {
+        this._staleResumeModel = saved;
+        this._staleResumeOwner = owner && owner !== engine ? owner : null;
       }
     }
     // A mock run stays mock across every resume (a restart's auto-resume, Resume, Away lifting):
@@ -865,6 +880,7 @@ export class RunHarness extends EventEmitter {
     this.pauseAbort = new AbortController(); // aborts ONLY node children on pause
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
+    this.limitEngine = null;                 // 'usage_limit' only: the engine whose own limit it is (_pauseFor)
     // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
     // stamped into the persisted resume point at every pause and re-seeded in resume().
     // pausedMs: time the run spent parked (paused, or dead between a crash and its resume);
@@ -897,7 +913,7 @@ export class RunHarness extends EventEmitter {
     this._memoryWarned = new Set();
     this._memoryTail = null;     // per-run sync chain: one syncBack at a time (F1)
     // Failed-write bookkeeping (memory-write-split design §4): executionId -> { calls: Map<toolUseId, key>,
-    // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryWrites from every stream frame,
+    // last: Map<key.id, { ...key, ok, reason }> }. Filled by _trackMemoryCalls/_trackMemoryResults from every tool event,
     // drained by _takeFailedMemoryWrites at sync time.
     this._memoryWrites = new Map();
     this._ledgerSeq = 0;         // monotonic: two ledger writes must never share a temp name
@@ -923,11 +939,17 @@ export class RunHarness extends EventEmitter {
     // so their fallback tag (sub-agent-N) is an honest "Nth undescribed sub-agent",
     // independent of how many described sub-agents share the map.
     this._subAgentFallbackSeq = 0;
+    // Legacy runner envelopes (tests, tools, a script node's result) are normalized on the way in, one
+    // Claude normalizer per execution (it remembers that stream's Task/Agent ids),
+    // dropped at the execution's terminal marker (orchestrator.mjs `_execStep`).
+    this._legacyNormalizers = new Map();
 
     this.state = {
       id: this.opts.pipelineId || null,
       title: this.opts.title || null,
       projectDir: this.projectDir,
+      runEngine: this.claude.engine,
+      ...(this._projectPipelineCap() !== undefined ? { pipelineCapUsd: this._projectPipelineCap() } : {}),
       status: 'idle',
       phase: 'idle',
       cycle: 0,
@@ -951,6 +973,7 @@ export class RunHarness extends EventEmitter {
       memoryRules: null, // <runCwd>/.claude/rules/worca — the read-only copy the CLI loads natively
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
+      limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1144,20 +1167,24 @@ export class RunHarness extends EventEmitter {
    * rule every _pauseFor site follows). Mirrored onto state so every
    * `state` event and getState() carry it. @returns {boolean} true when recorded
    */
-  _setPauseReason(reason, detail = null) {
+  _setPauseReason(reason, detail = null, limitEngine = null) {
     if (this.pauseReason) return false;
     this.pauseReason = String(reason);
     this.pauseDetail = detail == null || detail === '' ? null : String(detail);
+    this.limitEngine = limitEngine || null;
     this.state.pauseReason = this.pauseReason;
     this.state.pauseDetail = this.pauseDetail;
+    this.state.limitEngine = this.limitEngine;
     return true;
   }
 
   _clearPauseReason() {
     this.pauseReason = null;
     this.pauseDetail = null;
+    this.limitEngine = null;
     this.state.pauseReason = null;
     this.state.pauseDetail = null;
+    this.state.limitEngine = null;
   }
 
   /**
@@ -1197,7 +1224,11 @@ export class RunHarness extends EventEmitter {
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
     }
     if (this.pauseRequested || this.state.status === 'stopped' || this.abort.signal.aborted) return false;
-    this._setPauseReason(reason, text);
+    // The engine whose own session/usage limit this is: an agent execution hit it, and it is
+    // not a spent free-model allowance (that is the provider's, not the engine's). Every pause
+    // surface offers to continue on the other engine from it (engine-switch.mjs).
+    const limitEngine = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? (this.claude.engine || 'claude') : null;
+    this._setPauseReason(reason, text, limitEngine);
     let audit;
     if (reason === REASON.ERROR) {
       audit = ctx
@@ -1205,7 +1236,8 @@ export class RunHarness extends EventEmitter {
         : `Pipeline **paused**: ${line}. Fix the cause, then resume.`;
     } else if (reason === REASON.USAGE_LIMIT) {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
-      audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset.`;
+      const other = usageLimitSwitch({ reason, limitEngine });
+      audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset${other ? `, or continue now on ${engineLabel(other)}` : ''}.`;
     } else if (reason === REASON.RECOVERABLE) {
       this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}${hint ? ` — ${hint}` : ''}`,
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -1267,7 +1299,7 @@ export class RunHarness extends EventEmitter {
       const [agentPrompts, tools, stepModels] = await Promise.all([
         this._loadAgentPrompts(),
         detectTools(this.projectDir),
-        resolveStepModels(this.projectDir, this.claude.model), // never throws
+        resolveStepModels(this.projectDir, this.claude.model, this.claude.engine || 'claude'), // never throws
       ]);
       this.agentPrompts = agentPrompts;
       this.toolInstruction = tools.instruction || '';
@@ -1278,6 +1310,11 @@ export class RunHarness extends EventEmitter {
       await this._brokerPreflight(topology.manifest, stepModels);
       await this._resolveGuardrails();
       await this._resolvePolicy();
+      // The engine's own run-start check (binary, sign-in) and the project deny rules
+      // it could not enforce, then the gate's refusals and audit lines.
+      this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false);
+      await this._engineMcpGate();
+      this._pendingAudits.push(...this._engineGate());
       this._log(
         'preflight',
         'info',
@@ -1442,7 +1479,7 @@ export class RunHarness extends EventEmitter {
           // user's working tree.
           const candidates = this.isWorkspace ? [...this.workDirs.values()] : [this.workDir];
           const worktrees = candidates.filter((d) => d && d !== this.projectDir);
-          const injected = await injectSkills(resolvedSkills, { targets: worktrees });
+          const injected = await injectSkills(resolvedSkills, { targets: worktrees, rel: skillsRelFor(this.claude.engine) });
           if (injected.length) {
             await appendAudit(
               this.pipeline.dir,
@@ -1640,9 +1677,13 @@ export class RunHarness extends EventEmitter {
     // may be async; v1's synchronous return is awaited unchanged.
     const rehydrated = await this._engineRehydrate(rp);
     if (!rehydrated || typeof rehydrated.audit !== 'string' || !Array.isArray(rehydrated.memberWorktrees)) throw new Error('engine hook contract: _engineRehydrate must return { checkpointRef, memberWorktrees:[], audit }');
+    // Engine gate refusals (§10.3) reject resume() here too, outside the try: inside it
+    // the 'resume' site below would end the paused run. The row stays paused, so the
+    // user can resume again with the missing flag.
+    const engineGateNodes = await this._engineResumeGate(rp);
     // The snapshot can be stale: a stop (claimPausedForStop, in this process or another) may have
-    // claimed the row since it was read. Take the row over ATOMICALLY, here: after the engine hook,
-    // so a rejected point leaves the row alone, and before the rehydration awaits anything.
+    // claimed the row since it was read. Take the row over ATOMICALLY, here: after the engine hooks,
+    // so a rejected point or gate leaves the row alone, and before the rehydration awaits anything.
     if (!claimForResume(row.id)) {
       const now = findPipelineRowById(row.id)?.status ?? 'gone';
       throw new Error(`resume(): pipeline is "${now}", not resumable`);
@@ -1694,7 +1735,13 @@ export class RunHarness extends EventEmitter {
       this.logWriter.bind(rp.pipelineDir);
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       if (this._staleResumeModel) {
-        this._log('orchestrator', 'warn', `model ${JSON.stringify(this._staleResumeModel)} the run was started with is no longer in the catalog — resuming on the default model`);
+        this._log('orchestrator', 'warn', this._staleResumeOwner
+          ? `model ${JSON.stringify(this._staleResumeModel)} the run was started with is a ${this._staleResumeOwner} model — resuming on ${this.claude.engine}'s default model`
+          : `model ${JSON.stringify(this._staleResumeModel)} the run was started with is no longer in the catalog — resuming on the default model`);
+      }
+      if (this._resumeEngineSwitch) {
+        const { from, to } = this._resumeEngineSwitch;
+        this._log('orchestrator', 'warn', `the run's saved engine is ${from} — resuming on ${to} as asked; a paused step starts a fresh session`);
       }
       this.stepModels = rp.stepModels || null;
       this.workflowId = rp.workflowId || this.workflowId;
@@ -1718,6 +1765,7 @@ export class RunHarness extends EventEmitter {
       this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
       await this._resolveGuardrails();
       await this._resolvePolicy();
+      for (const line of this._engineGate(engineGateNodes)) await appendAudit(this.pipeline.dir, line);
       // Restore the EFFECTIVE instruction from the resume point — by dispatch time
       // run() has replaced the detect-time tools.instruction with the in-worktree
       // graph-build outcome (worktreeGraphInstruction() or ''). Falling back to
@@ -2487,6 +2535,381 @@ export class RunHarness extends EventEmitter {
     try { writePolicyState(this.pipeline.id, { ...base, ...patch }); } catch (err) { this._log('policy', 'warn', `could not record policy state: ${err?.message || err}`); }
   }
 
+  /**
+   * Engine gate (plans/harness-bridge-design.md §10.3). A non-Claude engine runs
+   * only what it can govern, and says what it cannot. Refused before any spawn
+   * (_engineRefusal): guardrail permission rules it cannot enforce (unless this run
+   * passed allowUnguardedEngine), a node that needs MCP tools, and a model routed to
+   * a custom endpoint or through the model bridge (both speak the Anthropic API to
+   * Claude Code). Every capability the engine lacks becomes one warn log line, and so
+   * does every Claude model the run names (the engine runs its own default model
+   * instead, see _engineModel); the returned lines are the audit trail's copy.
+   * @param {object[]} [nodes] the run's node ctxs; a resume passes the ones
+   *   _engineResumeGate read off its point, since its graph is not restored yet
+   * @returns {string[]}
+   */
+  _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude') return [];
+    const projectRules = this._engineProjectRules ?? null;
+    const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
+    if (why) throw engineRefusal(name, why);
+    const caps = getEngine(name).capabilities;
+    const lines = Object.entries(caps).filter(([, v]) => v === false)
+      .map(([k]) => `engine ${name}: no ${k} — ${CAPABILITY_FALLBACKS[k] || 'not available'}`);
+    if (caps.permissionRules === false && hasPermissionRules(this.guardrailPermissionRules)) {
+      lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
+    }
+    if (caps.permissionRules === false && hasPermissionRules(projectRules)) {
+      lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleList(projectRules)}`);
+    }
+    if (caps.permissionRules !== false) {
+      // An engine that holds part of the rules: say which it holds, which it holds only in part and which it does
+      // not (those two passed the gate only with --allow-unguarded-engine).
+      const both = (f) => [...new Set([...f(this.guardrailPermissionRules), ...f(projectRules)])];
+      const partial = both((r) => this._enginePartial(r));
+      const enforced = both((r) => (Array.isArray(r?.deny) ? r.deny : []).filter((x) => !this._engineUnenforced(r).includes(x) && !this._enginePartial(r).includes(x)));
+      if (enforced.length) lines.push(`engine ${name}: deny rules enforced on ${name}: ${ruleNames(enforced)}`);
+      if (partial.length) lines.push(`engine ${name}: deny rules held on ${name} only in part, as command rules — ${CODEX_COMMAND_RULE_REACH} (--allow-unguarded-engine): ${ruleNames(partial)}`);
+      const gSkip = this._engineUnenforced(this.guardrailPermissionRules);
+      if (gSkip.length) lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(gSkip)}`);
+      const pSkip = this._engineUnenforced(projectRules);
+      if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
+      if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
+    }
+    for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'claude')) {
+      lines.push(name === 'codex'
+        ? `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
+        : `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, so their cost stays unknown`);
+    }
+    for (const l of lines) this._log('orchestrator', 'warn', l);
+    return lines;
+  }
+
+  /**
+   * Why this run's engine refuses the run, or null. PURE over its arguments and the
+   * run's options. `rules` are the guardrail set's permission rules; `projectRules` the
+   * deny rules of the members' own `.claude/settings.json` (Claude Code reads that file
+   * itself, another engine does not), from _engineChecks.
+   */
+  _engineRefusal({ rules, guardrailsId, projectRules = null, nodes, allowed = this._allowUnguardedEngine }) {
+    const name = this.claude.engine || 'claude';
+    const caps = getEngine(name).capabilities;
+    // The credential broker's promise is that worca holds no model credential; this engine
+    // signs in with its own, which the broker can neither bill nor revoke.
+    if (brokerEnabled()) {
+      return `the credential broker is on, and ${name} signs in with its own credentials, which the broker cannot bill or revoke`;
+    }
+    if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+    }
+    if (caps.permissionRules === false && hasPermissionRules(projectRules) && !allowed) {
+      return `the project's .claude/settings.json denies ${ruleList(projectRules)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
+    }
+    const gSkip = caps.permissionRules === false ? [] : this._engineUnenforced(rules);
+    if (gSkip.length && !allowed) {
+      return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce (${ruleNames(gSkip)}) — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
+    }
+    const pSkip = caps.permissionRules === false ? [] : this._engineUnenforced(projectRules);
+    if (pSkip.length && !allowed) {
+      return `the project's .claude/settings.json denies ${ruleNames(pSkip)}, which this engine cannot enforce — pass --allow-unguarded-engine to run it without them`;
+    }
+    // Command rules hold only in part (CODEX_COMMAND_RULE_REACH): running on them is a choice, like running without a rule.
+    const gPart = caps.permissionRules === false ? [] : this._enginePartial(rules);
+    if (gPart.length && !allowed) {
+      return `guardrail set "${guardrailsId}" has command rules this engine holds only in part (${ruleNames(gPart)}): ${CODEX_COMMAND_RULE_REACH} — run it with the Permissive set, or pass --allow-unguarded-engine to run it with them as a partial guard`;
+    }
+    const pPart = caps.permissionRules === false ? [] : this._enginePartial(projectRules);
+    if (pPart.length && !allowed) {
+      return `the project's .claude/settings.json denies ${ruleNames(pPart)}, which this engine holds only in part: ${CODEX_COMMAND_RULE_REACH} — pass --allow-unguarded-engine to run it with them as a partial guard`;
+    }
+    if (caps.mcpTools === false) {
+      const n = nodes.find((nc) => Array.isArray(nc?.tools) && nc.tools.some((t) => String(t).startsWith('mcp__')));
+      if (n) return `node "${n.key || n.nodeId}" needs MCP tools, which this engine cannot attach`;
+    }
+    // A model routed to a custom endpoint or through the model bridge speaks the Anthropic API for Claude Code.
+    // A Claude model never runs on another engine anyway (_engineModel drops it, and the audit says so), so
+    // only a routed model this engine itself owns is refused — except a Codex model on its own
+    // OpenAI-compatible endpoint, which codex connects to itself (engines/codex-endpoint.mjs).
+    for (const m of this._engineGateModels(nodes)) {
+      if (name === 'codex' && hasCodexEndpoint(m)) continue;
+      if ((modelHasBaseUrlRouting(m) || bridgedModelInfo(m)) && engineOfModel(m, { projectDir: this.projectDir }) === name) {
+        return `model "${m}" is routed to a custom endpoint for Claude Code and cannot run on ${name}`;
+      }
+    }
+    return null;
+  }
+
+  /** The deny rules of `rules` this run's engine cannot hold: all of them on an engine without permission
+   *  rules, the adapter's answer on one that holds part (codex: command prefixes), none on Claude. */
+  _engineUnenforced(rules) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude' || !hasPermissionRules(rules)) return [];
+    const adapter = getEngine(name);
+    if (adapter.capabilities.permissionRules === false) return Object.values(rules).flat().filter((r) => typeof r === 'string');
+    return typeof adapter.unenforcedRules === 'function' ? adapter.unenforcedRules(rules) : [];
+  }
+
+  /** The deny rules of `rules` this run's engine holds only in part (codex: command rules, CODEX_COMMAND_RULE_REACH). */
+  _enginePartial(rules) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude' || !hasPermissionRules(rules)) return [];
+    const adapter = getEngine(name);
+    return adapter.capabilities.permissionRules !== false && typeof adapter.partialRules === 'function' ? adapter.partialRules(rules) : [];
+  }
+
+  /** The distinct models a run names: the run's own, then each node's. */
+  _engineGateModels(nodes) {
+    return [...new Set([this.claude.model, ...nodes.map((nc) => nc?.model)].filter(Boolean))];
+  }
+
+  /**
+   * The engine gate's refusals for a resume, checked BEFORE resume()'s try (like
+   * _engineRehydrate): a refusal rejects resume() and leaves the paused row, its
+   * resume point and its checkout as they were, so the user can resume again with
+   * the missing flag. Reads the guardrail set the point names without logging, and
+   * the nodes through _engineGateNodes. Returns those nodes for the gate's audit lines.
+   * @returns {Promise<object[]>}
+   */
+  async _engineResumeGate(rp) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude') return [];
+    const { id, rules, projectRules } = await this._engineSetRules(rp.guardrailsId || this.guardrailsId);
+    const nodes = await this._engineGateNodes(rp);
+    const why = this._engineRefusal({ rules, guardrailsId: id, projectRules, nodes });
+    if (why) throw engineRefusal(name, why);
+    this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
+    await this._engineMcpGate();
+    return nodes;
+  }
+
+  /**
+   * The rules the gate weighs, read the way _resolveGuardrails reads them (the set, else
+   * Permissive; one honorProjectSettings for every member) but without logging the
+   * fallback: the set's permission rules, and through _engineChecks the engine's
+   * preflight and the deny rules of each honoring member's own .claude/settings.json.
+   */
+  async _engineSetRules(guardrailsId, { quiet = false } = {}) {
+    const id = guardrailsId || 'permissive';
+    const set = (await readGuardrailSet(id)) || (await readGuardrailSet('permissive'));
+    const rules = guardrailsToPermissionRules(unionGuardrails([set.settings]));
+    const honor = set.settings.honorProjectSettings !== false;
+    this._engineProjectRules = await this._engineChecks(() => honor, { quiet });
+    return { id, rules, projectRules: this._engineProjectRules };
+  }
+
+  /**
+   * The engine gate's run-start refusals that need no resolved graph — the credential
+   * broker, the engine's own preflight (codex missing or signed out), the guardrail set's
+   * and the project's rules, the MCP registry layer — checked before the run exists, so
+   * the UI server can answer at once instead of through the run's error event. run()
+   * checks them all again, with the node-level ones and the team policy's MCP copies.
+   * Null when the gate lets the run through, or when the check itself failed for another
+   * reason (run() then reports that on the run); else the refusal and whether
+   * allowUnguardedEngine would lift it.
+   * @returns {Promise<{error:string, overridable:boolean}|null>}
+   */
+  async engineStartRefusal() {
+    return this._engineEarlyRefusal(this.guardrailsId, async () => []);
+  }
+
+  /**
+   * engineStartRefusal for a resume: the same refusals _engineResumeGate makes, read off
+   * the resume point (its guardrail set, its frozen agent nodes, its MCP opt-outs), so the
+   * UI server can answer a refused resume — a switch to another engine, say — before it
+   * replies, instead of through the run's error event. Null on Claude, or when the gate
+   * lets the resume through.
+   * @returns {Promise<{error:string, overridable:boolean}|null>}
+   */
+  async engineResumeRefusal() {
+    const rp = this.resumeOpts?.resumePoint;
+    if (!rp) return null;
+    this.mcpOptOut = Array.isArray(rp.mcpOptOut) ? rp.mcpOptOut : [];
+    return this._engineEarlyRefusal(rp.guardrailsId || this.guardrailsId, () => this._engineGateNodes(rp));
+  }
+
+  /** The shared body of engineStartRefusal / engineResumeRefusal. */
+  async _engineEarlyRefusal(guardrailsId, gateNodes) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude') return null;
+    let args, mcp;
+    try {
+      const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
+      args = { rules, guardrailsId: id, projectRules, nodes: await gateNodes() };
+      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+    } catch (err) {
+      // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
+      if (err?.engineRefused) return { error: err.message, overridable: false };
+      return null;
+    }
+    const strict = this._engineRefusal(args) || mcp;
+    if (!strict) return null;
+    const lenient = this._engineRefusal({ ...args, allowed: true }) || mcp;
+    return lenient
+      ? { error: `engine ${name}: ${lenient}`, overridable: false }
+      : { error: `engine ${name}: ${strict}`, overridable: true };
+  }
+
+  /**
+   * MCP registry layer on an engine that cannot attach MCP servers (§10.3): the copies a
+   * project or the team policy attaches would silently go missing, so the run is refused
+   * before any spawn. The layer is resolved here only to look (a store read, no network);
+   * _assembleContext resolves it for the run, and refuses too if this early look missed a
+   * copy (a resume, whose team policy is resolved later).
+   */
+  async _engineMcpGate() {
+    const why = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+    if (why) throw engineRefusal(this.claude.engine, why);
+  }
+
+  /** What a non-Claude run's agents will not get of the merged MCP servers: the ones Claude Code loads on its own
+   *  (the checkout's .mcp.json, user scope, plugins — codex runs with --ignore-user-config) and, on Codex, the
+   *  project servers that are not stdio (a remote registry copy is refused instead, _engineMcpRefusal). Never throws. */
+  _engineMcpWarnings(rc) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude' || !rc) return [];
+    let written = {};
+    try { if (rc.mcpConfigPath) written = JSON.parse(readFileSync(rc.mcpConfigPath, 'utf8'))?.mcpServers || {}; } catch { /* unreadable: nothing to say */ }
+    const out = [];
+    const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
+    if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
+    const remote = name === 'codex' ? codexUnattachableMcp(written) : [];
+    if (remote.length) out.push(`engine ${name}: remote MCP servers are not attached on ${name} (stdio only): ${remote.join(', ')}`);
+    return out;
+  }
+
+  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null.
+   *  Codex attaches stdio servers only, so a remote (http/sse) copy is refused there. */
+  _engineMcpRefusal(layer) {
+    const name = this.claude.engine || 'claude';
+    const copies = layer?.copies;
+    if (name === 'claude' || !copies?.length) return null;
+    if (getEngine(name).capabilities.mcpTools === false) {
+      return `this run attaches MCP servers (${copies.map((c) => c.name).join(', ')}), which this engine cannot attach`;
+    }
+    if (name !== 'codex') return null;
+    const servers = layer.servers || {};
+    const remote = codexUnattachableMcp(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
+    return remote.length ? `this run attaches remote MCP servers (${remote.join(', ')}), and ${name} attaches stdio servers only` : null;
+  }
+
+  /**
+   * Whether this Codex run needs codex's own sign-in (codexPreflight `signIn`). It does not when every
+   * Codex model its spawns can name runs on its own endpoint (engines/codex-endpoint.mjs): the run's
+   * model, each step's and workflow node's, the helper jobs' Codex models (title, overview, PR
+   * description, memory defragment) and the Away-mode decider's. A helper with no model set, like a
+   * run with none, runs codex's default model, which needs the sign-in; so does an Auto run, whose
+   * classifier may pick any Codex model. Never throws: anything unreadable counts as "needs it".
+   */
+  async _codexNeedsSignIn() {
+    try {
+      if (this.workflowId === AUTO_WORKFLOW_ID) return true;
+      const own = (m) => modelForEngine(m || undefined, 'codex', { projectDir: this.projectDir }) || null;
+      const runModel = own(this.claude.model) || CODEX_DEFAULT_MODEL;
+      const steps = this.stepModels || await resolveStepModels(this.projectDir, this.claude.model, 'codex');
+      const named = [
+        ...Object.values(steps || {}).map((s) => s?.model),
+        ...manifestModels(this.state?.stepper || []),
+        ...['title', 'overview', 'prDescription', 'memoryDefrag'].map((job) => this._utilitySlot(job).model || CODEX_DEFAULT_MODEL),
+        effectiveNightConfig(this.projectDir).config?.deciderModel,
+      ];
+      const models = new Set([runModel, ...named.filter(Boolean).map((m) => own(m) || runModel)]);
+      return ![...models].every((m) => hasCodexEndpoint(m));
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * The engine gate's async half, before its refusals: the engine's own run-start check
+   * (adapter `preflight`; codex: the binary runs and is signed in), skipped by a mock run,
+   * which spawns nothing; then the DENY rules of each honoring member's own
+   * `.claude/settings.json` (run-context.mjs#discoverProjectSettings, the file Claude
+   * Code reads itself). A preflight refusal throws. Returns the merged deny rules, or null.
+   * @param {(member:object)=>boolean} honors whether a member's project settings are honored
+   * @param {{quiet?:boolean}} [opts] quiet: skip the preflight's warning line (a
+   *   check made before the run exists; run() checks again and warns then)
+   * @returns {Promise<{deny:string[]}|null>}
+   */
+  async _engineChecks(honors, { quiet = false } = {}) {
+    const name = this.claude.engine || 'claude';
+    if (name === 'claude') return null;
+    const adapter = getEngine(name);
+    if (!this.claude.mock && typeof adapter.preflight === 'function') {
+      const r = await adapter.preflight({ ...(this.claude.bin ? { bin: this.claude.bin } : {}), ...(name === 'codex' ? { signIn: await this._codexNeedsSignIn() } : {}) });
+      if (r?.refusal) throw engineRefusal(name, r.refusal);
+      if (r?.warning && !quiet) this._log('orchestrator', 'warn', `engine ${name}: ${r.warning}`);
+    }
+    let rules = null;
+    for (const m of this.members) {
+      if (!honors(m)) continue;
+      const s = await discoverProjectSettings(m.projectDir);
+      if (s?.permissions) rules = mergePermissionRules(rules, s.permissions);
+    }
+    return rules;
+  }
+
+  /** Engine hook: the agent nodes a resume point will run, as `{nodeId, key, model, tools}`
+   *  (the gate's view of a node ctx). The base has no graph: []. */
+  async _engineGateNodes(_rp) {
+    return [];
+  }
+
+  /** The model a node's spawn gets on this run's engine. A Claude model means nothing to
+   *  another engine, so it is dropped there and that engine runs its own default model
+   *  (the gate says so at run start). */
+  _engineModel(model) {
+    return modelForEngine(model, this.claude.engine || 'claude', { projectDir: this.projectDir });
+  }
+
+  /** The permission rules a node's spawn carries. Claude Code reads each checkout's .claude/settings.json itself;
+   *  another engine does not, so there the members' own deny rules (_engineChecks) join the guardrail set's — on a
+   *  workspace run the run context has merged them already, on a single-project or legacy run nothing else does. */
+  _spawnPermissionRules() {
+    const rules = (this.claude.engine || 'claude') === 'claude'
+      ? this.guardrailPermissionRules
+      : mergePermissionRules(this.guardrailPermissionRules, this._engineProjectRules);
+    return rules || undefined;
+  }
+
+  _nodeModelPair(nc) {
+    const own = this._engineModel(nc?.model);
+    if (own) return { model: own, effort: nc.effort };
+    return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
+  }
+
+  _settingsScope() { return this.isWorkspace ? null : this.projectDir; }
+
+  _projectPipelineCap() {
+    const scope = this._settingsScope();
+    return scope && hasProjectSetting('pipelineCostLimitUsd', scope) ? pipelineCostLimitUsd(scope) : undefined;
+  }
+
+  _utilitySlot(job) {
+    const scope = this._settingsScope();
+    return utilityModelFor(this.claude.engine || 'claude', job, scope ? { projectDir: scope } : { workspace: true });
+  }
+
+  _titleSlotOpts() {
+    const slot = this._utilitySlot('title');
+    if ((this.claude.engine || 'claude') === 'claude') return slot.source === 'project' && slot.model ? { storedTitle: slot.model } : {};
+    return slot.model ? { model: slot.model, ...(slot.effort ? { effort: slot.effort } : {}) } : {};
+  }
+
+  /** The run's model for a call on Claude (the run title on a Claude run). Another engine's model means nothing to Claude,
+   *  so it is dropped there and Claude runs its default. */
+  _claudeCallModel() {
+    return modelForEngine(this.claude.model || null, 'claude', { projectDir: this.projectDir }) || null;
+  }
+
+  /** What a node's dispatch ctx carries for the run's engine: its name, whether it
+   *  has a grantable sub-agent tool, and no fan-out when it has none. */
+  _engineNodeOpts(nc) {
+    const engine = this.claude.engine || 'claude';
+    const subagents = getEngine(engine).capabilities.subagents !== false;
+    return { engine, subagents, fanOut: !!nc?.fanOut && subagents };
+  }
+
   async _resolveGuardrails() {
     let set = await readGuardrailSet(this.guardrailsId || 'permissive');
     if (!set) {
@@ -2550,6 +2973,8 @@ export class RunHarness extends EventEmitter {
       homeDir: homedir(),
       honorByKey: this.guardrailHonorByKey,
       agentIsolated: !!agentIdentity(),
+      settingsScope: this._settingsScope(),
+      engine: this.claude.engine || 'claude',
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
     });
     this.runContext = rc;
@@ -2571,7 +2996,10 @@ export class RunHarness extends EventEmitter {
       // §5.5.1: a scrubbed spawn keeps the launcher's keep-list when a stdio copy runs.
       allowlist: Object.values(reg.result.servers).some((s) => typeof s.command === 'string') ? keepListNames() : [],
       copies: reg.result.copies,
+      servers: reg.result.servers,
     };
+    const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
+    if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
     // §11.4: MCP deviations need the resolution, so they land here, after _resolvePolicy (which
     // resets the list on resume). Persisted now, with the WHOLE list: when this is the run's first
     // _persistPolicyState (a saved workflow; an Auto run's classifier spawn persists earlier), the
@@ -2629,6 +3057,7 @@ export class RunHarness extends EventEmitter {
       if (alreadyReported.has(w)) continue;
       this._log('context', 'warn', w);
     }
+    for (const w of this._engineMcpWarnings(rc)) if (!alreadyReported.has(w)) await this._recordRunWarning(w);
     await this._recordCapabilities();
     // Skills registry (§4.3): after the capability probe and after the assembly rewrote
     // run.json.warnings; before the audit line, which closes with the layer's clause.
@@ -2685,9 +3114,11 @@ export class RunHarness extends EventEmitter {
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
   _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this.claude.bin)); }
 
-  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. */
+  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Another
+   *  engine has no --plugin-dir (and this.claude.bin is its binary, never probed as claude): no. */
   async _pluginDirSupported() {
     if (this.claude.mock) return true;
+    if ((this.claude.engine || 'claude') !== 'claude') return false;
     return (await this._claudeCaps()).pluginDir === true;
   }
 
@@ -3002,7 +3433,7 @@ export class RunHarness extends EventEmitter {
    *  mounted scope. Depends on dirs + mount only (never on file contents), so one render per mount. */
   _refreshMemoryBlock() {
     if (!this.memory) { this.memoryBlock = ''; return; }
-    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })));
+    this.memoryBlock = renderMemoryBlock(this.memory.dirs.map((d) => ({ label: d.label, dir: join(this.memory.mount, d.rel) })), { engine: this.claude.engine });
   }
 
   /** The `onError` every memory listing gets. A junk NAME is not an I/O failure — phrasing it
@@ -3045,7 +3476,7 @@ export class RunHarness extends EventEmitter {
     const now = new Date().toISOString();
     const res = await syncBack({
       root: memoryRoot(), mount, dirs, baseline, source: `${this.memoryScope ? 'defrag' : 'run'}:${this.pipeline.id}`, now,
-      caps: memoryCaps(), onWarn: (w) => this._log('memory', 'warn', w),
+      caps: memoryCaps(this._settingsScope()), onWarn: (w) => this._log('memory', 'warn', w),
       onError: (p, err) => this._memoryReadWarn(p, err),
     });
     // `mount` equals this.memory.mount for every in-run sync and for a same-process resume;
@@ -3126,26 +3557,30 @@ export class RunHarness extends EventEmitter {
     return null;
   }
 
-  _trackMemoryWrites(raw, attr) {
+  _trackMemoryCalls(calls, attr) {
     if (!this.memory) return;
-    const content = raw?.message?.content;
-    if (!Array.isArray(content)) return;
     const exec = attr?.executionId ?? '(no execution)';
-    for (const b of content) {
-      if (b?.type === 'tool_use' && MEMORY_WRITE_TOOLS.has(b.name) && typeof b.id === 'string') {
-        const key = this._memoryWriteKey(b.input?.file_path || b.input?.path || b.input?.notebook_path);
-        if (!key) continue;
-        const rec = this._memoryWrites.get(exec) || { calls: new Map(), last: new Map() };
-        rec.calls.set(b.id, key);
-        this._memoryWrites.set(exec, rec);
-      } else if (b?.type === 'tool_result' && typeof b.tool_use_id === 'string') {
-        const rec = this._memoryWrites.get(exec);
-        const key = rec?.calls.get(b.tool_use_id);
-        if (!key) continue;
-        // 400: the CLI's refusal quotes the absolute path and ends with the cause ("… which is a
-        // sensitive file.") — a deep run-root path must not clip the cause away.
-        rec.last.set(key.id, { ...key, ok: !b.is_error, reason: b.is_error ? clip(toolResultText(b), 400) : '' });
-      }
+    for (const c of calls) {
+      if (!MEMORY_WRITE_TOOLS.has(c.name) || typeof c.toolUseId !== 'string') continue;
+      const key = this._memoryWriteKey(c.input?.file_path || c.input?.path || c.input?.notebook_path);
+      if (!key) continue;
+      const rec = this._memoryWrites.get(exec) || { calls: new Map(), last: new Map() };
+      rec.calls.set(c.toolUseId, key);
+      this._memoryWrites.set(exec, rec);
+    }
+  }
+
+  _trackMemoryResults(results, attr) {
+    if (!this.memory) return;
+    const exec = attr?.executionId ?? '(no execution)';
+    for (const r of results) {
+      if (typeof r.toolUseId !== 'string') continue;
+      const rec = this._memoryWrites.get(exec);
+      const key = rec?.calls.get(r.toolUseId);
+      if (!key) continue;
+      // 400: the CLI's refusal quotes the absolute path and ends with the cause ("… which is a
+      // sensitive file.") — a deep run-root path must not clip the cause away.
+      rec.last.set(key.id, { ...key, ok: !r.isError, reason: r.isError ? clip(toolResultText(r), 400) : '' });
     }
   }
 
@@ -3186,7 +3621,7 @@ export class RunHarness extends EventEmitter {
   async _defragBrief() {
     if (!this.memoryScope || !this.memory?.dirs?.length) return '';
     try {
-      const caps = memoryCaps();
+      const caps = memoryCaps(this._settingsScope());
       const { health } = await memoryScopeReport(memoryRoot(), this.memory.dirs[0].scope, caps, { onError: (p, err) => this._memoryReadWarn(p, err) });
       return renderDefragBrief(health, caps);
     } catch (err) {
@@ -3246,6 +3681,14 @@ export class RunHarness extends EventEmitter {
       });
       return;
     }
+    // The probe asks the `claude` binary: a run on another engine spawns no claude (and this.claude.bin is that
+    // engine's binary), so its MCP config is never dropped on what claude says.
+    if ((this.claude.engine || 'claude') !== 'claude') {
+      await updateRunManifest(this.runRoot, {
+        capabilities: { mcpGrants: MCP_GRANT_MODE, mcpConfig: null, version: null, probed: false, engine: this.claude.engine },
+      });
+      return;
+    }
     const caps = await this._claudeCaps();
     if (caps.version === null) {
       // No `claude --version` at all. The first node fails loudly anyway; when the
@@ -3300,8 +3743,9 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Build a graphify AST graph INSIDE the worktree so agents (which run with
-   * cwd=workDir) can query it. graphify-out/ is gitignored, so it never reaches
-   * the reviewer diff, the kept-branch commit, or survives teardown.
+   * cwd=workDir) can query it. graphify-out/ ignores itself (runGraphifyUpdate's
+   * .gitignore sentinel), so it never reaches the reviewer diff or the kept-branch
+   * commit, and it does not survive teardown.
    *
    * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
    * offline); no worktree was created; or the graphify binary is not on PATH.
@@ -4045,7 +4489,7 @@ export class RunHarness extends EventEmitter {
     // Team policy (design §7): the tighter of the developer's cap and a soft team cap applies;
     // a team default only starts the developer off. `binding` says whose number tripped.
     const teamPipe = teamFields['cost.pipelineLimitUsd'] || null;
-    const pipe = effectiveCap({ local: pipelineCostLimitUsd(), team: teamPipe });
+    const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamPipe });
     // The developer's own cap (or a team DEFAULT, which is the same thing): the existing
     // pause + the existing per-pipeline override. A team-bound fold has no "own" cap here.
     const ownCap = pipe.binding === 'team' ? null : pipe.cap;
@@ -4751,7 +5195,7 @@ export class RunHarness extends EventEmitter {
         task: this.pipeline?.promptText ?? this.opts.prompt ?? '', planPaths: await this._nightPlanPaths(),
         memory: await readMemoryText(projectKey(this.projectDir)), criteria: config.criteria,
         context: q.kind === 'questions' ? `Asked by ${q.agent || 'an agent'} mid-step.` : '', model: pair.model, effort: pair.effort,
-        bin: this.claude.bin, mock: !!this.claude.mock, envScrub: this.guardrails?.envScrub, signal: this._nightSignal(),
+        engine: this.claude.engine || 'claude', bin: this.claude.bin, mock: !!this.claude.mock, envScrub: this.guardrails?.envScrub, signal: this._nightSignal(),
         run: this.opts.nightRunClaude,          // test seam; undefined → runClaude
         bridgeTag: id,                          // a bridged decider model: its upstream cost comes back under this tag
       });
@@ -4788,7 +5232,14 @@ export class RunHarness extends EventEmitter {
   async _nightDeciderPair(config) {
     let models = [];
     try { models = await listModels(''); } catch { /* unreadable catalog: a configured id reads as not in it */ }
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: this.claude.model }, { models });
+    // The decider runs on the run's engine, like every other run-scoped helper job: only that engine's catalog rows
+    // can be picked, the run's model counts only when that engine owns it, and on Codex an unnamed model is
+    // codex's own default, named so the decision record and the cost say which model weighed the options.
+    const engine = this.claude.engine || 'claude';
+    const runModel = modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir }) || null;
+    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel },
+      { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
+    if (!pair.model && engine === 'codex') { pair.model = CODEX_DEFAULT_MODEL; pair.source = 'default'; }
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
       this._nightWarned.add(text);
@@ -5611,102 +6062,157 @@ export class RunHarness extends EventEmitter {
     }
   }
 
-  /** Translate a low-level claude/mock event into a pipeline 'log' event. */
+  /**
+   * Translate one agent event into pipeline state and 'log' events. Real spawns
+   * deliver the normalized vocabulary (src/core/engines/events.mjs); a legacy
+   * runner envelope (tests, tools) goes through the Claude normalizer first.
+   */
   _onAgentEvent(role, e, attr = null) {
     if (!e) return;
-    // Sub-agent telemetry (feature-detected, gated by WORCA_SUBAGENT_HOOKS). A
-    // surfaced PostToolUse:Agent hook-event carries the parent tool_use_id +
-    // tool_response telemetry; enrich the matching record's columns, keyed by
-    // tool_use_id (the canonical key — never agent_id). Returns early: a hook
-    // event has no human text and no cost to attribute.
-    if (e.type === 'hook-event') {
-      this._recordSubAgentTelemetry(e.raw);
+    if (!isNormalized(e)) {
+      const key = attr?.executionId ?? '(no execution)';
+      let normalize = this._legacyNormalizers.get(key);
+      if (!normalize) { normalize = createClaudeNormalizer(); this._legacyNormalizers.set(key, normalize); }
+      for (const n of normalize(e)) this._onAgentEvent(role, n, attr);
       return;
     }
-    // Pause/Resume: stamp the claude session id on the step that spawned it, and
-    // persist eagerly — a later pause (or even a crash) must find it in the DB.
-    if (e.type === 'session' && typeof e.sessionId === 'string') {
-      const key = attr?.stepKey;
-      const step = key ? this.state.steps.find((s) => s.key === key) : null;
-      if (step && step.sessionId !== e.sessionId) {
-        step.sessionId = e.sessionId;
-        this._persist().catch(() => {});
-      }
-      return;
+    switch (e.type) {
+      // Sub-agent telemetry (feature-detected, gated by WORCA_SUBAGENT_HOOKS). A
+      // surfaced PostToolUse:Agent hook_response carries, as the hook's echoed stdout,
+      // the parent tool_use_id + tool_response telemetry; enrich the matching record's
+      // columns, keyed by tool_use_id (the canonical key — never agent_id). A hook has
+      // no human text and no cost.
+      case 'hook': this._recordSubAgentTelemetry(e.raw); return;
+      case 'session': this._onSessionEvent(role, e, attr); return;
+      case 'stderr': this._onStderrEvent(role, e, attr); return;
+      case 'log': this._onTextEvent(role, { parentId: null, text: e.text }, attr); return;
+      case 'result': this._onResultEvent(role, e, attr); return;
+      case 'subagent': this._onSubAgentEvent(e, attr); return;
+      case 'text': this._onTextEvent(role, e, attr); return;
+      case 'tool': this._onToolEvent(role, e, attr); return;
+      case 'toolResult': this._onToolResultEvent(role, e, attr); return;
+      case 'retry': this._onRetryEvent(role, e, attr); return;
+      case 'usage': this._onUsageEvent(e, attr); return;
+      default: return;
     }
-    // Agent stderr (`stream:'err'`), one framed line per event. Handled HERE,
-    // beside the other envelope guards, because a stderr event carries no `raw`:
-    // routing it through the cost block and the five lifecycle reducers below
-    // only to have each no-op is noise. It is always main-stream (stderr has no
-    // parent_tool_use_id), so the source is the plain role and `sub` is never set.
-    //
-    // Level is `warn`, not `error`: what actually lands here is mostly 429/529
-    // retry text and subprocess chatter. Genuine failures arrive as a `result`
-    // event with is_error on STDOUT — see the non-zero-exit path in
-    // claude-runner.mjs — and are logged at `error` by the node failure handler.
-    if (e.type === 'stderr') {
-      const text = (e.text || '').trim();
-      if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
-      return;
+  }
+
+    // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id
+    // = the id of the parent's Task tool_use block; main-agent events carry null/
+    // absent. parent_tool_use_id is a TOP-LEVEL stream-json field; the message-
+    // nested read is defensive. On a string `raw`, both reads yield undefined.
+  _sourceFor(role, parentId, attr) {
+    if (parentId == null) return { source: role, logAttr: attr };
+    let label = this._subAgentLabels.get(parentId);
+    if (!label) {
+      label = `sub-agent-${++this._subAgentFallbackSeq}`;
+      this._subAgentLabels.set(parentId, label); // stamp so the ordinal stays stable for this id
     }
-    // I1: a turn the CLI never closes with a `result` (pause, stop, a crash, a retried attempt) was
-    // still billed. Keep the latest usage per top-level message id (the CLI repeats it on every content
-    // block) until the step's `result` books the real figure; _execStep closes what is left.
-    const am = e.raw && typeof e.raw === 'object' && e.raw.type === 'assistant' && !e.raw.parent_tool_use_id ? e.raw.message : null;
-    if (am && am.usage && attr?.stepKey) this._noteOpenTurn(attr.stepKey, attr.model, am);
-    // Capture actual spend before anything returns early. The runner tags the
-    // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
-    // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
-    // (non-JSON line) — `.type` on it is just undefined, so this never throws.
-    // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
-    const isResult = !!(e.raw && typeof e.raw === 'object' && e.raw.type === 'result');
-    const rawCost = e.costUsd != null
-      ? Number(e.costUsd)
-      : (isResult ? Number(e.raw.total_cost_usd ?? e.raw.cost_usd) : NaN);
-    // A per-model cost override (config.mjs) wins over the CLI's own figure — so a
-    // CLI that prices an on-prem/proxied model by name can't inflate the ledger.
-    // With no override this is `rawCost` unchanged (default behavior preserved).
-    //
-    // Gated on `isResult` — NOT merely on attr.model. Every stream frame reaches
-    // here, and only the terminal `result` carries cost; on the others rawCost is
-    // NaN and falls through untouched today. A {free} override answers 0 for any
-    // input, so resolving unconditionally would turn each of those into a real $0
-    // and fire _recordCost — a full writeState + 'state' broadcast — per FRAME
-    // instead of once per node. Looked up ONCE and shared with observeModelCost
-    // below: modelCostConfig re-reads settings.json on every call.
-    const costCfg = isResult && attr?.model ? modelCostConfig(attr.model) : null;
+    // Preserve the step attribution (nodeId/stepIndex/cycle) carried by attr so a
+    // sub-agent line stays pinned to the right pipeline step/cycle in the UI; just
+    // add `sub`. {...null} === {}, so attr === null (the clarify pre-step) is safe.
+    return { source: `${role} ▸ ${label}`, logAttr: { ...attr, sub: true } };
+  }
+
+  // Pause/Resume: stamp the claude session id on the step that spawned it, and
+  // persist eagerly — a later pause (or even a crash) must find it in the DB.
+  // The session's init also surfaces the model (parity with worca's
+  // `[init] model=<model>`).
+  _onSessionEvent(role, e, attr) {
+    const key = attr?.stepKey;
+    const step = key ? this.state.steps.find((s) => s.key === key) : null;
+    // The runner reports the session id on its own `session` event; the init
+    // event's copy is for Ask Worca, which reads raw captures that lack it.
+    if (!e.init && typeof e.sessionId === 'string' && step && step.sessionId !== e.sessionId) {
+      step.sessionId = e.sessionId;
+      this._persist().catch(() => {});
+    }
+    if (!e.init) return;
+    this._log(role, 'debug', `[init] model=${e.model || '?'}`, attr);
+    // §4.7: stamp the session's ACTUAL model on the step (mirrors the
+    // sessionId stamp above) so the UI can resolve the "default" caption to
+    // a concrete name. Display-only; sub-agent events never carry init.
+    if (step && e.model && step.modelUsed !== e.model) {
+      step.modelUsed = e.model;
+      this._persist().catch(() => {});
+    }
+    // §10: an init without an `mcpServers` list says nothing about the copies (never "absent").
+    if (Array.isArray(e.mcpServers) && this.mcpLayer?.copies.length) this._recordMcpInit(e.mcpServers);
+  }
+
+  // I1: a turn the CLI never closes with a `result` (pause, stop, a crash, a retried attempt) was
+  // still billed. Keep the latest usage per top-level message id (the CLI repeats it on every content
+  // block) until the step's `result` books the real figure; _execStep closes what is left.
+  _onUsageEvent(e, attr) {
+    if (e.phase !== 'message' || (e.parentId ?? null) !== null || !e.usage || !attr?.stepKey) return;
+    this._noteOpenTurn(attr.stepKey, attr.model, { id: e.messageId ?? undefined, usage: e.usage, model: e.model });
+  }
+
+  // Agent stderr (`stream:'err'`), one framed line per event. Handled HERE,
+  // beside the other envelope guards, because a stderr event carries no `raw`:
+  // routing it through the cost block and the five lifecycle reducers below
+  // only to have each no-op is noise. It is always main-stream (stderr has no
+  // parent_tool_use_id), so the source is the plain role and `sub` is never set.
+  //
+  // Level is `warn`, not `error`: what actually lands here is mostly 429/529
+  // retry text and subprocess chatter. Genuine failures arrive as a `result`
+  // event with is_error on STDOUT — see the non-zero-exit path in
+  // claude-runner.mjs — and are logged at `error` by the node failure handler.
+  _onStderrEvent(role, e, attr) {
+    const text = (e.text || '').trim();
+    if (text) this._log(role, 'warn', text, { ...attr, stream: 'err' });
+  }
+
+  // Capture actual spend before anything returns early. The runner tags the
+  // terminal stream-json `result` with costUsd (Claude's total_cost_usd; 0 in
+  // mock). Fall back to raw.total_cost_usd defensively. e.raw may be a string
+  // (non-JSON line) — `.type` on it is just undefined, so this never throws.
+  // `e.costUsd != null` keeps a genuine 0 (which `!= null` is true for).
+  // A per-model cost override (config.mjs) wins over the CLI's own figure — so a
+  // CLI that prices an on-prem/proxied model by name can't inflate the ledger.
+  // With no override this is `rawCost` unchanged (default behavior preserved).
+  //
+  // Gated on `isResult` — NOT merely on attr.model. Every stream frame reaches
+  // here, and only the terminal `result` carries cost; on the others rawCost is
+  // NaN and falls through untouched today. A {free} override answers 0 for any
+  // input, so resolving unconditionally would turn each of those into a real $0
+  // and fire _recordCost — a full writeState + 'state' broadcast — per FRAME
+  // instead of once per node. Looked up ONCE and shared with observeModelCost
+  // below: modelCostConfig re-reads settings.json on every call.
+  // §4.6 cost-reliability observation: only terminal result events of REAL
+  // runs, only for the dispatched model (attr.model — the legacy role path
+  // carries no attr and is skipped), and only env-routed models inside
+  // observeModelCost. One warning per model per run; the observation itself
+  // is derived state and must never fail the run.
+  _onResultEvent(role, e, attr) {
+    const rawCost = e.costUsd != null ? Number(e.costUsd) : NaN;
+    const costCfg = attr?.model ? modelCostConfig(attr.model) : null;
     // A bridged node whose upstream reported what its calls cost (OpenRouter's
     // usage.cost, booked per execution id) records that figure: the CLI prices an
     // id it does not know at $0, and a pinned price is only an estimate of it.
     // Read before _recordBridgeCalls forgets the tag.
-    const upstreamCost = isResult && attr?.executionId ? bridgeCostFor(attr.executionId) : null;
+    const upstreamCost = attr?.executionId ? bridgeCostFor(attr.executionId) : null;
     const cost = upstreamCost
       ? upstreamCost.costUsd
       : costCfg
-        ? resolveModelCost(attr.model, rawCost, e.raw.usage, costCfg)
+        ? resolveModelCost(attr.model, rawCost, e.usage, costCfg)
         : rawCost;
-    if (isResult) this._openTurns?.delete(attr?.stepKey);        // the result prices every turn it closes
-    if (isResult) this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
+    this._openTurns?.delete(attr?.stepKey);        // the result prices every turn it closes
+    this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     // Booked here, so never again at _closeOpenTurns' flush: _recordBridgeCalls keeps a tag under which
     // no call was counted, and the call and cost maps evict apart (bridge/telemetry.mjs MAX_TAGS).
     if (upstreamCost) forgetBridgeTag(attr.executionId);
     if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
-    else if (isResult && !this.claude.mock) {
+    else if (!this.claude.mock) {
       // A {perMtok} model prices from tokens alone, so a result with no usage is
       // unpriceable (NaN) — say so plainly rather than blaming a missing cost field.
       this._log('orchestrator', 'warn', costCfg?.perMtok
         ? `model "${attr.model}" is priced per-Mtok but the result carried no token usage — this step's spend is unaccounted`
         : 'result event carried no cost estimate (total_cost_usd absent)', attr);
     }
-
-    // §4.6 cost-reliability observation: only terminal result events of REAL
-    // runs, only for the dispatched model (attr.model — the legacy role path
-    // carries no attr and is skipped), and only env-routed models inside
-    // observeModelCost. One warning per model per run; the observation itself
-    // is derived state and must never fail the run.
-    if (isResult && !this.claude.mock && attr?.model) {
+    if (!this.claude.mock && attr?.model) {
       try {
-        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.raw.usage, costCfg);
+        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.usage, costCfg);
         if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
           this._costUnreliableWarned.add(attr.model);
           this._log('orchestrator', 'warn',
@@ -5714,114 +6220,80 @@ export class RunHarness extends EventEmitter {
         }
       } catch { /* derived state — never fail the run over it */ }
     }
-
-    // Agent memory (memory-write-split design §4): pair every Write/Edit aimed at a memory directory
-    // with its tool_result, main stream and sub-agent frames alike (same cwd, same dirs), so a write
-    // the CLI refused — or that failed for any other reason — is reported at sync time instead of
-    // vanishing. Never throws; never mutates run state.
-    this._trackMemoryWrites(e.raw, attr);
-
-    // Sub-agent attribution. A child (Task/Agent) event carries parent_tool_use_id
-    // = the id of the parent's Task tool_use block; main-agent events carry null/
-    // absent. parent_tool_use_id is a TOP-LEVEL stream-json field; the message-
-    // nested read is defensive. On a string `raw`, both reads yield undefined.
-    const subId = e.raw?.parent_tool_use_id ?? e.raw?.message?.parent_tool_use_id ?? null;
-
-    // Learn Task/Agent descriptions from MAIN-agent events (subId == null) so the
-    // child events below can be labeled by what their sub-agent was asked to do.
-    if (subId == null) {
-      registerSubAgents(e.raw, this._subAgentLabels);
-      // Lifecycle: a NEW Task/Agent tool_use on the MAIN stream = a sub-agent spawn.
-      // Needs `attr` to pin nodeId/stepIndex/cycle/stepKey; the clarify pre-step
-      // (attr === null) carries no node, so it is logged but not lifecycle-tracked.
-      if (attr) this._recordSubAgentSpawns(e.raw, attr);
-      // Finish: a tool_result on the MAIN stream whose tool_use_id is a tracked
-      // sub-agent → finished/error. These `user` envelopes were previously dropped.
-      this._recordSubAgentFinishes(e.raw);
-      // Background-agent completion: the system/task_notification frame arrives
-      // on the main stream long after the launch-ack tool_result.
-      this._recordAsyncTaskClose(e.raw);
-    }
-
-    // Capture named-skill / MCP-tool usage for the Sub-agents dropdown pills
-    // (main agent -> its step; sub-agent -> its record). Independent of the
-    // text/tool log branches below (it runs BEFORE the `if (text) return`), so a
-    // mixed text+tool_use turn is still caught.
-    this._recordSkills(e.raw, subId, attr);
-    // Count graphify CLI invocations (Bash only) per agent / sub-agent. Bash-only
-    // by design: the graphify skill runs the CLI itself, so counting the Skill tool
-    // too would double-count; the bash invocation is the ground truth and also
-    // catches direct CLI use with no skill.
-    this._recordGraphify(e.raw, subId, attr);
-
-    // Display source: parent role for main events; "role ▸ label" for sub-agent
-    // events. `sub` drives the indented/dimmed web styling.
-    let source = role;
-    let sub = false;
-    if (subId != null) {
-      let label = this._subAgentLabels.get(subId);
-      if (!label) {
-        label = `sub-agent-${++this._subAgentFallbackSeq}`;
-        this._subAgentLabels.set(subId, label); // stamp so the ordinal stays stable for this id
-      }
-      source = `${role} ▸ ${label}`;
-      sub = true;
-    }
-    // Preserve the step attribution (nodeId/stepIndex/cycle) carried by attr so a
-    // sub-agent line stays pinned to the right pipeline step/cycle in the UI; just
-    // add `sub`. {...null} === {}, so attr === null (the clarify pre-step) is safe.
-    const logAttr = sub ? { ...attr, sub: true } : attr;
-
-    // Human-readable assistant text (if any). NO early return: a single
-    // assistant turn can carry BOTH a text block and tool_use blocks — fall
-    // through so each tool call is logged too. A text-only turn has no
-    // tool_use/tool_result blocks, so the loops below are empty and its output
-    // is identical to the pre-change path.
     const text = (e.text || '').trim();
-    if (text) this._log(source, 'info', text, logAttr);
-
-    // The `system`/init event has no text and no tool blocks — surface the
-    // model (parity with worca's `[init] model=<model>`) instead of dropping it.
-    if (e.raw && e.raw.type === 'system' && e.raw.subtype === 'init') {
-      this._log(source, 'debug', `[init] model=${e.raw.model || '?'}`, logAttr);
-      // §4.7: stamp the session's ACTUAL model on the step (mirrors the
-      // sessionId stamp above) so the UI can resolve the "default" caption to
-      // a concrete name. Display-only; sub-agent events never carry init.
-      const step = !sub && e.raw.model && attr?.stepKey
-        ? this.state.steps.find((s) => s.key === attr.stepKey) : null;
-      if (step && step.modelUsed !== e.raw.model) {
-        step.modelUsed = e.raw.model;
-        this._persist().catch(() => {});
-      }
-      // §10: an init without an `mcp_servers` list says nothing about the copies (never "absent").
-      if (!sub && Array.isArray(e.raw.mcp_servers) && this.mcpLayer?.copies.length) this._recordMcpInit(e.raw.mcp_servers);
-    }
+    if (text) this._log(role, 'info', text, attr);
     // §10: a first-party 400 on an over-long MCP tool name fails the whole turn; name the
     // registry copies whose tools were never checked (no current Test), once per run.
-    if (isResult && e.raw.is_error && !this._mcpNameWarned && this.mcpLayer?.copies.length) {
-      const text = [e.raw.result, ...(Array.isArray(e.raw.errors) ? e.raw.errors : [])].filter((t) => typeof t === 'string').map((t) => t.slice(0, 4096)).join(' ');
+    if (e.isError && !this._mcpNameWarned && this.mcpLayer?.copies.length) {
+      const errText = [e.text, ...(Array.isArray(e.errors) ? e.errors : [])].filter((t) => typeof t === 'string').map((t) => t.slice(0, 4096)).join(' ');
       const untested = this.mcpLayer.copies.filter((c) => c.untested);
-      if (untested.length && MCP_NAME_400_RE.test(text)) {
+      if (untested.length && MCP_NAME_400_RE.test(errText)) {
         this._mcpNameWarned = true;
         const sets = [...new Set(untested.map((c) => c.setName))].join(', ');
         this._mcpChain(() => this._recordRunWarning(`${MCP_NAME_WARNING} — Test the servers in ${sets} (${untested.map((c) => c.name).join(', ')})`));
       }
     }
+  }
 
-    // The CLI's silent API retries (`system`/`api_retry`): without this line a call
-    // that keeps timing out leaves the run log dead for as long as the retries last.
-    const retry = describeApiRetry(e.raw);
-    if (retry) this._log(source, 'warn', retry, logAttr);
+  /** Sub-agent lifecycle: a spawn learns its label (for the child lines' "▸"
+   *  tag) and, with a node in scope, records it; an ack, a finish or an error
+   *  moves the record. The clarify pre-step (attr === null) carries no node, so
+   *  its sub-agents are logged but not lifecycle-tracked. */
+  _onSubAgentEvent(e, attr) {
+    if (e.event === 'spawn') {
+      if (!this._subAgentLabels.has(e.toolUseId)) {
+        const desc = clip(e.label, SUBAGENT_LABEL_MAX);
+        if (desc) this._subAgentLabels.set(e.toolUseId, desc); // empty desc left unset → fallback assigns sub-agent-N
+      }
+      if (attr) this._recordSubAgentSpawn(e, attr);
+      return;
+    }
+    if (e.event === 'ack') { this._recordSubAgentAck(e); return; }
+    this._recordSubAgentClose(e);
+  }
 
-    // Concrete tool calls the agent made this turn (assistant.tool_use blocks).
-    for (const call of describeToolUses(e.raw, this.projectDir)) {
+  // Human-readable assistant text (if any). NO early return: a single
+  // assistant turn can carry BOTH a text block and tool_use blocks — fall
+  // through so each tool call is logged too. A text-only turn has no
+  // tool_use/tool_result blocks, so the loops below are empty and its output
+  // is identical to the pre-change path.
+  _onTextEvent(role, e, attr) {
+    if (e.delta) return; // the pipeline never asks for partial messages
+    const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
+    const text = (e.text || '').trim();
+    if (text) this._log(source, 'info', text, logAttr);
+  }
+
+  // Agent memory (memory-write-split design §4): pair every Write/Edit aimed at a memory directory
+  // with its tool_result, main stream and sub-agent frames alike (same cwd, same dirs), so a write
+  // the CLI refused — or that failed for any other reason — is reported at sync time instead of
+  // vanishing. Never throws; never mutates run state.
+  _onToolEvent(role, e, attr) {
+    this._trackMemoryCalls(e.calls, attr);
+    // Named-skill / MCP-tool usage for the Sub-agents dropdown pills (main agent
+    // -> its step; sub-agent -> its record), and graphify CLI invocations (Bash
+    // only: the graphify skill runs the CLI itself, so counting the Skill tool too
+    // would double-count).
+    this._recordSkills(e.calls, e.parentId, attr);
+    this._recordGraphify(e.calls, e.parentId, attr);
+    const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
+    for (const call of describeToolUses(e.calls, this.projectDir)) {
       this._log(source, 'debug', `→ ${call}`, logAttr);
     }
+  }
 
-    // Tool-result outcomes (`user`-envelope + child tool_result blocks).
-    // ADDITIVE ONLY — _recordSubAgentFinishes (above) still owns sub-agent
-    // lifecycle state; this loop never mutates state, it only logs.
-    for (const line of describeToolResults(e.raw)) {
+  // The CLI's silent API retries: without this line a call that keeps timing out
+  // leaves the run log dead for as long as the retries last.
+  _onRetryEvent(role, e, attr) {
+    const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
+    this._log(source, 'warn', describeApiRetry(e), logAttr);
+  }
+
+  // Tool-result outcomes. Log-only: sub-agent lifecycle arrives as `subagent` events.
+  _onToolResultEvent(role, e, attr) {
+    this._trackMemoryResults(e.results, attr);
+    const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
+    for (const line of describeToolResults(e.results)) {
       this._log(source, 'debug', `← ${line}`, logAttr);
     }
   }
@@ -5859,140 +6331,100 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Lifecycle spawn reducer: for every NEW Task/Agent tool_use block in a
-   * MAIN-stream event, push a `running` sub-agent record (attributed to the
-   * step via `attr`), mirror it to the sub_agents table, and emit a `spawn`
-   * delta. Idempotent per tool_use id (re-seen ids are skipped). `attr` is
-   * required (the caller only invokes this when a node is in scope).
+   * Lifecycle spawn reducer: for a NEW main-stream Task/Agent spawn, push a
+   * `running` sub-agent record (attributed to the step via `attr`), mirror it to
+   * the sub_agents table, and emit a `spawn` delta. Idempotent per tool_use id
+   * (a re-seen id is skipped). `attr` is required (the caller only invokes this
+   * when a node is in scope).
    */
-  _recordSubAgentSpawns(raw, attr) {
-    const content = raw?.message?.content;
-    if (!Array.isArray(content)) return;
-    for (const c of content) {
-      if (c?.type !== 'tool_use' || (c.name !== 'Task' && c.name !== 'Agent') || !c.id) continue;
-      if (this.state.subAgents.some((s) => s.id === c.id)) continue; // idempotent
-      const label = this._subAgentLabels.get(c.id) || clip(c.input?.description || c.input?.prompt, SUBAGENT_LABEL_MAX);
-      const rec = {
-        id: c.id,
-        label: label || null,
-        nodeId: attr.nodeId ?? null,
-        uiPhase: attr.uiPhase ?? null,
-        stepIndex: attr.stepIndex ?? null,
-        cycle: attr.cycle ?? null,
-        stepKey: attr.stepKey ?? null,
-        status: 'running',
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        subagentType: c.input?.subagent_type ?? null,
-        // In-memory only (no column): lets _recordSubAgentTelemetry price this
-        // child. A sub-agent runs on the PARENT node's endpoint, so the parent's
-        // model is the right price — UNLESS the Task input names a model that
-        // itself carries an explicit override, which then governs the child.
-        // A bare alias ('haiku') with no catalog entry is not one, so it keeps
-        // the parent's rather than silently reverting to the CLI's figure.
-        model: subAgentCostModel(c.input?.model, attr.model),
-        // PERSISTED (sub_agents.run_model): the model this child actually ran on —
-        // the alias its Task call named (the sub-agent model directive asks for an
-        // explicit one on every call), else the parent node's model, which is what
-        // a child with no `model` inherits. KNOWN GAP: an agent definition's own
-        // `model:` frontmatter outranks an omitted param and is invisible in the
-        // stream, so such a child records the parent's model. Deliberately NOT
-        // `model` above: that one is the PRICING model, which can differ for an
-        // explicit alias carrying its own catalog cost entry.
-        runModel: (typeof c.input?.model === 'string' && c.input.model.trim())
-          ? c.input.model.trim()
-          : (attr.model ?? null),
-      };
-      this.state.subAgents.push(rec);
+  _recordSubAgentSpawn(e, attr) {
+    if (!e.toolUseId || this.state.subAgents.some((s) => s.id === e.toolUseId)) return; // idempotent
+    const label = this._subAgentLabels.get(e.toolUseId) || clip(e.label, SUBAGENT_LABEL_MAX);
+    const rec = {
+      id: e.toolUseId,
+      label: label || null,
+      nodeId: attr.nodeId ?? null,
+      uiPhase: attr.uiPhase ?? null,
+      stepIndex: attr.stepIndex ?? null,
+      cycle: attr.cycle ?? null,
+      stepKey: attr.stepKey ?? null,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      subagentType: e.subagentType ?? null,
+      // In-memory only (no column): lets _recordSubAgentTelemetry price this
+      // child. A sub-agent runs on the PARENT node's endpoint, so the parent's
+      // model is the right price — UNLESS the Task input names a model that
+      // itself carries an explicit override, which then governs the child.
+      // A bare alias ('haiku') with no catalog entry is not one, so it keeps
+      // the parent's rather than silently reverting to the CLI's figure.
+      model: subAgentCostModel(e.model, attr.model),
+      // PERSISTED (sub_agents.run_model): the model this child actually ran on —
+      // the alias its Task call named (the sub-agent model directive asks for an
+      // explicit one on every call), else the parent node's model, which is what
+      // a child with no `model` inherits. KNOWN GAP: an agent definition's own
+      // `model:` frontmatter outranks an omitted param and is invisible in the
+      // stream, so such a child records the parent's model. Deliberately NOT
+      // `model` above: that one is the PRICING model, which can differ for an
+      // explicit alias carrying its own catalog cost entry.
+      runModel: (typeof e.model === 'string' && e.model.trim())
+        ? e.model.trim()
+        : (attr.model ?? null),
+    };
+    this.state.subAgents.push(rec);
+    this._upsertSubAgent(rec);
+    this._subAgentTransition('spawn', rec);
+  }
+
+  /**
+   * A background sub-agent's launch ack (the `subagent` event `ack`: its
+   * tool_result frame carries a top-level `tool_use_result` with
+   * {isAsync:true, status:'async_launched'}). NOT a finish: the record stays
+   * `running` until _recordSubAgentClose sees the task_notification.
+   */
+  _recordSubAgentAck(e) {
+    const rec = this.state.subAgents.find((s) => s.id === e.toolUseId);
+    if (!rec || rec.status !== 'running') return; // unknown id or already terminal
+    // Launch ack — still running in the background; task_notification (or
+    // the execution backstop) closes it. resolvedModel closes a spawn-time
+    // gap: an agent definition's `model:` frontmatter is invisible in the
+    // Task input, so a record with no runModel learns it here. Never
+    // overwrites a spawn-set alias (the UI pill renders the value verbatim).
+    if (rec.runModel == null && e.resolvedModel) {
+      rec.runModel = e.resolvedModel;
       this._upsertSubAgent(rec);
-      this._subAgentTransition('spawn', rec);
+      this._subAgentTransition('update', rec);
     }
   }
 
   /**
-   * Lifecycle finish reducer: scan a MAIN-stream event's content for a
-   * tool_result whose tool_use_id is a tracked sub-agent. Set status =
-   * is_error ? 'error' : 'finished' and stamp finishedAt, but ONLY while the
-   * record is still 'running' (a late/duplicate tool_result must not flip a
-   * terminal record back or re-emit). Mirrors to the table + emits a `finish`
-   * delta. The finish envelope is `{type:'user', message:{content:[{type:
-   * 'tool_result', tool_use_id, is_error?:true}]}}` — previously dropped.
-   * A background launch ack (frame-level `tool_use_result.isAsync`/
-   * `status:'async_launched'`) is NOT a finish; `_recordAsyncTaskClose` owns
-   * that close.
+   * Lifecycle finish reducer, fed by `subagent` finish/error events. Two sources
+   * produce them:
+   * - a foreground sub-agent's tool_result (with the frame's tool_use_result
+   *   telemetry: totalDurationMs, totalTokens, resolvedModel);
+   * - a background sub-agent's system/task_notification, the one stop marker
+   *   keyed by tool_use_id (probed on claude 2.1.251, 2026-08-31). Its
+   *   usage.{duration_ms,total_tokens} is OPTIONAL: without it durationMs stays
+   *   null and the UI's timestamp fallback is real wall time. A resumable agent
+   *   may notify more than once; anything but status==='completed' closes as
+   *   'error'.
+   * Sets status and finishedAt ONLY while the record is still 'running' (a
+   * late/duplicate result must not flip a terminal record back or re-emit),
+   * mirrors to the table and emits a `finish` delta. No cost figure exists in
+   * either source; costUsd stays hook-gated.
    */
-  _recordSubAgentFinishes(raw) {
-    const content = raw?.message?.content;
-    if (!Array.isArray(content)) return;
-    // Probed (claude 2.1.251, 2026-08-31; ask/events.mjs saw the same shape on
-    // 2.1.239): the user tool_result frame carries a TOP-LEVEL `tool_use_result`
-    // object. Background mode marks it {isAsync:true, status:'async_launched'} —
-    // that tool_result is only a LAUNCH ACK; the real completion arrives later
-    // as a system/task_notification frame (_recordAsyncTaskClose). One frame per
-    // tool_result in practice, so applying the frame's object to each block is
-    // safe (ask/events.mjs makes the same assumption).
-    const tur = raw?.tool_use_result;
-    const obj = tur && typeof tur === 'object' && !Array.isArray(tur) ? tur : null;
-    const isAck = !!obj && (obj.isAsync === true || obj.status === 'async_launched');
-    for (const b of content) {
-      if (b?.type !== 'tool_result' || !b.tool_use_id) continue;
-      const rec = this.state.subAgents.find((s) => s.id === b.tool_use_id);
-      if (!rec || rec.status !== 'running') continue; // unknown id or already terminal
-      if (isAck) {
-        // Launch ack — still running in the background; task_notification (or
-        // the execution backstop) closes it. resolvedModel closes a spawn-time
-        // gap: an agent definition's `model:` frontmatter is invisible in the
-        // Task input, so a record with no runModel learns it here. Never
-        // overwrites a spawn-set alias (the UI pill renders the value verbatim).
-        if (rec.runModel == null && typeof obj.resolvedModel === 'string' && obj.resolvedModel) {
-          rec.runModel = obj.resolvedModel;
-          this._upsertSubAgent(rec);
-          this._subAgentTransition('update', rec);
-        }
-        continue;
-      }
-      if (obj) {
-        // Foreground completion telemetry — the same durationMs/tokens fields the
-        // gated PostToolUse hook fills; tool_use_result carries no cost. With
-        // WORCA_SUBAGENT_HOOKS on, _recordSubAgentTelemetry may re-write these
-        // after the finish (it does not gate on status): last writer wins, and
-        // both sources quote the same CLI figures — deliberate, not a race to fix.
-        if (Number.isFinite(Number(obj.totalDurationMs))) rec.durationMs = Number(obj.totalDurationMs);
-        if (Number.isFinite(Number(obj.totalTokens))) rec.tokens = Number(obj.totalTokens);
-        if (rec.runModel == null && typeof obj.resolvedModel === 'string' && obj.resolvedModel) rec.runModel = obj.resolvedModel;
-      }
-      rec.status = b.is_error ? 'error' : 'finished';
-      rec.finishedAt = new Date().toISOString();
-      this._upsertSubAgent(rec);
-      this._subAgentTransition('finish', rec);
-    }
-  }
-
-  /**
-   * Background sub-agent completion. Probed (claude 2.1.251, 2026-08-31): when a
-   * backgrounded Task/Agent stops, the MAIN stream emits
-   *   {type:'system', subtype:'task_notification', task_id, tool_use_id,
-   *    status:'completed'|…, output_file, summary, usage?}
-   * — the one stop marker keyed by tool_use_id (task_started / task_updated /
-   * background_tasks_changed frames surround it and are ignored). A resumable
-   * agent may notify more than once for the same task; the status!=='running'
-   * guard makes repeats no-ops. Anything but status==='completed' closes as
-   * 'error'. finishedAt = arrival time (observed ≤30ms after the agent stops).
-   * usage.{duration_ms,total_tokens} rode along on the 2.1.239 capture
-   * (test/fixtures/ask/task-subagent.jsonl:41) but is OPTIONAL — without it,
-   * durationMs stays null and the UI's timestamp fallback is real wall time
-   * for an async agent. No cost figure exists here; costUsd stays hook-gated.
-   */
-  _recordAsyncTaskClose(raw) {
-    if (raw?.type !== 'system' || raw?.subtype !== 'task_notification' || !raw.tool_use_id) return;
-    const rec = this.state.subAgents.find((s) => s.id === raw.tool_use_id);
-    if (!rec || rec.status !== 'running') return;
-    const u = raw.usage;
-    if (u && typeof u === 'object' && !Array.isArray(u)) {
-      if (Number.isFinite(Number(u.duration_ms))) rec.durationMs = Number(u.duration_ms);
-      if (Number.isFinite(Number(u.total_tokens))) rec.tokens = Number(u.total_tokens);
-    }
-    rec.status = raw.status === 'completed' ? 'finished' : 'error';
+  _recordSubAgentClose(e) {
+    const rec = this.state.subAgents.find((s) => s.id === e.toolUseId);
+    if (!rec || rec.status !== 'running') return; // unknown id or already terminal
+    // Foreground completion telemetry — the same durationMs/tokens fields the
+    // gated PostToolUse hook fills; tool_use_result carries no cost. With
+    // WORCA_SUBAGENT_HOOKS on, _recordSubAgentTelemetry may re-write these
+    // after the finish (it does not gate on status): last writer wins, and
+    // both sources quote the same CLI figures — deliberate, not a race to fix.
+    if (e.durationMs != null) rec.durationMs = e.durationMs;
+    if (e.tokens != null) rec.tokens = e.tokens;
+    if (rec.runModel == null && e.resolvedModel) rec.runModel = e.resolvedModel;
+    rec.status = e.event === 'error' ? 'error' : 'finished';
     rec.finishedAt = new Date().toISOString();
     this._upsertSubAgent(rec);
     this._subAgentTransition('finish', rec);
@@ -6006,8 +6438,8 @@ export class RunHarness extends EventEmitter {
    * set actually changed. No-op when there is nothing to attribute to (e.g. the
    * clarify pre-step has no step; a child event seen before its spawn).
    */
-  _recordSkills(raw, subId, attr) {
-    const labels = extractSkillLabels(raw);
+  _recordSkills(calls, subId, attr) {
+    const labels = extractSkillLabels(calls);
     if (!labels.length) return;
     if (subId == null) {
       const key = attr?.stepKey;
@@ -6043,8 +6475,8 @@ export class RunHarness extends EventEmitter {
    * emits a `subagent` update. No-op when the event invoked graphify zero times or
    * there is nothing to attribute to (clarify pre-step; child seen before spawn).
    */
-  _recordGraphify(raw, subId, attr) {
-    const n = countGraphifyBashCalls(raw);
+  _recordGraphify(calls, subId, attr) {
+    const n = countGraphifyBashCalls(calls);
     if (!n) return;
     if (subId == null) {
       const key = attr?.stepKey;
@@ -6102,19 +6534,29 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Telemetry enrichment from a surfaced PostToolUse:Agent hook-event. Reads the
-   * parent tool_use_id + tool_response.{totalDurationMs,totalTokens,usage} and
-   * fills the matching sub-agent record's durationMs/tokens/costUsd (only those
-   * present), mirrors to the table, and emits an `update` delta. No-op for an
-   * unknown id or a non-Agent hook. Strictly additive — the baseline lifecycle
-   * needs none of this.
+   * Telemetry enrichment from a surfaced PostToolUse:Agent hook-event. The CLI's
+   * hook line is `{type:'system', subtype:'hook_response', hook_name:
+   * 'PostToolUse:Agent', hook_event:'PostToolUse', stdout, output, …}`; the
+   * PostToolUse payload is NOT on that envelope, it is the hook command's echoed
+   * stdout (buildHookSettings runs `cat`). Reads the payload's tool_use_id +
+   * tool_response.{totalDurationMs,totalTokens,usage} and fills the matching
+   * sub-agent record's durationMs/tokens/costUsd (only those present), mirrors to
+   * the table, and emits an `update` delta. No-op for hook_started/hook_progress,
+   * a non-PostToolUse hook, non-JSON output, an unknown id, or a background
+   * launch ack (task_notification closes those). Strictly additive — the
+   * baseline lifecycle needs none of this.
    */
   _recordSubAgentTelemetry(raw) {
-    const id = raw?.tool_use_id ?? raw?.tool_response?.tool_use_id ?? null;
+    if (raw?.subtype !== 'hook_response' || raw.hook_event !== 'PostToolUse') return;
+    const out = typeof raw.stdout === 'string' && raw.stdout.trim() ? raw.stdout : raw.output;
+    let payload;
+    try { payload = JSON.parse(out); } catch { return; } // a hook that printed non-JSON is not telemetry
+    const id = payload?.tool_use_id ?? null;
     if (!id) return;
     const rec = this.state.subAgents.find((s) => s.id === id);
     if (!rec) return;
-    const tr = raw?.tool_response || {};
+    const tr = payload.tool_response;
+    if (!tr || typeof tr !== 'object' || tr.isAsync === true || tr.status === 'async_launched') return;
     if (Number.isFinite(Number(tr.totalDurationMs))) rec.durationMs = Number(tr.totalDurationMs);
     if (Number.isFinite(Number(tr.totalTokens))) rec.tokens = Number(tr.totalTokens);
     const cost = tr.usage?.cost_usd ?? tr.usage?.total_cost_usd ?? tr.cost_usd;
@@ -6319,8 +6761,11 @@ export class RunHarness extends EventEmitter {
       bin: this.claude.bin,
       mock: this.claude.mock,
       // The run's own model is the title default (#422, title.mjs#resolveTitleModel):
-      // an install with no first-party model titles its runs with no setup.
-      runModel: this.claude.model,
+      // an install with no first-party model titles its runs with no setup. The title
+      // always runs on Claude, so another engine's model is not passed.
+      engine: this.claude.engine || 'claude',
+      runModel: (this.claude.engine || 'claude') === 'claude' ? this._claudeCallModel() : null,
+      ...this._titleSlotOpts(),
       run: this.opts.titleRunClaude,            // test seam (like nightRunClaude); undefined → runClaude
       bridgeTag: `run-title:${this.pipeline?.id || 'run'}`,   // a bridged title model: its upstream cost comes back under this tag
       onCost: (c) => this._bookTitleCost(c),
@@ -6551,6 +6996,7 @@ export class RunHarness extends EventEmitter {
       pipelineDir: this.pipeline.dir,
       reason: this.pauseReason || null,
       detail: this.pauseDetail || null,
+      limitEngine: this.limitEngine || null,
     };
     this._emit('done', payload);
     return { ...payload };
@@ -6601,6 +7047,7 @@ export class RunHarness extends EventEmitter {
       snapshot: scrubErrorRows(source.snapshot ?? null),
       pauseReason: this.pauseReason,
       pauseDetail: this.pauseDetail,
+      ...(this.limitEngine ? { limitEngine: this.limitEngine } : {}),
       pausedAt: new Date().toISOString(),
     };
     return await this._completePaused();

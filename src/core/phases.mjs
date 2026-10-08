@@ -19,7 +19,7 @@ import { SUBAGENT_AUTO, SUBAGENT_INHERIT, SUBAGENT_MODELS, EFFORTS, effectiveSub
 import { readClarify, readReview } from './protocol.mjs';
 import { writeClarify, readClarifyRow } from './artifacts.mjs';
 import { renderDirectionsBlock } from './directions.mjs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { LIMITS } from '../shared/workspace-map/limits.mjs';
 import { QUOTED_TEXT_NOTE, ROLE_QUOTE_LABELS } from '../shared/workspace-map/render.mjs';
 
@@ -103,7 +103,7 @@ const FOREGROUND_FANOUT = Object.freeze(['workspaceScanner', 'workspaceUsageMapp
  * (as Ask Worca's ASK_SPAWN_ENV does): every dispatch runs in the foreground, and the CLI drops
  * `run_in_background` from the Agent, Bash and PowerShell tools' schemas. undefined for every node
  * that cannot fan out ⇒ that spawn env stays byte-identical. Never part of modelEnv: a catalog entry
- * that sets either variable wins over it (claude-runner.mjs runReal merge order). Pure (the env is a
+ * that sets either variable wins over it (engines/spawn.mjs composeSpawnEnv merge order). Pure (the env is a
  * parameter) + exported for testing.
  * @param {object} ctx
  * @param {Record<string, string|undefined>} [env] the parent env
@@ -314,8 +314,9 @@ function relRepo(p) {
  * promised — it is inherited env and remains true. Single mode (both run-root modes)
  * and legacy workspace runs keep today's byte-identical sentence.
  */
-export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false } = {}) {
+export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
   if (!fanOut) return '';
+  if (engine && engine !== 'claude') return codexFanOutDirective();
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
   // custom endpoint cannot serve — swap the sentence AND the model block.
@@ -363,6 +364,29 @@ export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentMod
 }
 
 /**
+ * fanOutDirective on Codex: its own spawn_agent tool, and worca's investigator defined as the codex agent role
+ * `worca_investigator` (engines/codex.mjs codexInvestigatorRole: read-only instructions, the pinned model and
+ * effort, the memory pointers). No model block: the role carries the model. Skills come from `.agents/skills`,
+ * which codex lists for the agent itself. Pure + exported for testing.
+ */
+export function codexFanOutDirective() {
+  return (
+    '## Fan-out ENABLED — parallelize your research\n\n' +
+    'You can spawn sub-agents this run (`spawn_agent`, then `wait` for them). For any non-trivial task that ' +
+    'spans more than one file or area, DISPATCH parallel read-only research sub-agents NOW — one per distinct ' +
+    'area (e.g. UI vs. server vs. store vs. tests) — let them explore concurrently, then synthesize their ' +
+    'reports yourself. Do NOT investigate every area serially when the work splits into independent areas.\n\n' +
+    'Spawn EVERY sub-agent with `agent_type: "worca_investigator"` and WITHOUT forking your history — the operator ' +
+    'defined it for this run (read-only instructions, its model, and this run\'s memory pointers). Give each one a ' +
+    'self-contained task: the area, the question, and the directories to look in.\n\n' +
+    'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — read a skill\'s ' +
+    '`SKILL.md` and use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
+    'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
+    'trivial, single-file change.\n\n'
+  );
+}
+
+/**
  * The `## Workspace Context` preamble injected into EVERY agent on a workspace run,
  * after the toolInstruction and before the role body. Pure + exported. Returns ''
  * when there is no workspace (or no description), so single-project system prompts
@@ -402,13 +426,17 @@ export function workspaceContextBlock(ws) {
  * explore arm's `Explore` steering for a `general-purpose` investigator, so a
  * routed node is never ordered into a model-pinned agent one paragraph after
  * the same-endpoint block forbade it; legacy/default bytes are unchanged.
+ * `serial` (a node on an engine with no grantable sub-agent tool, e.g. codex) keeps
+ * the same per-unit work, order and merge rules but has the agent do each unit
+ * itself, one at a time (workspaceSerialDirective).
  * @param {'explore'|'task'|'review'} strategy
  * @param {{projects?:Array<{projectName?:string,projectKey?:string}>}|null|undefined} ws
- * @param {{relative?:boolean, endpointRouted?:boolean}} [opts]
+ * @param {{relative?:boolean, endpointRouted?:boolean, serial?:boolean}} [opts]
  * @returns {string}
  */
-export function workspaceFanOutDirective(strategy, ws, { relative = false, endpointRouted = false } = {}) {
+export function workspaceFanOutDirective(strategy, ws, { relative = false, endpointRouted = false, serial = false } = {}) {
   if (!ws) return '';
+  if (serial) return workspaceSerialDirective(strategy, relative);
   const ANTI_RECURSION =
     'Sub-agents are strictly single-level: a sub-agent MUST NOT re-fan-out ' +
     '(it must never spawn its own Task/Agent sub-agents). YOU synthesize every ' +
@@ -467,6 +495,56 @@ export function workspaceFanOutDirective(strategy, ws, { relative = false, endpo
   return '';
 }
 
+
+/**
+ * workspaceFanOutDirective's `serial` variant: the agent has no sub-agent tool, so it
+ * works through the units itself, in the order the fan-out variant merges them.
+ * Returns '' for an unknown strategy. Pure.
+ */
+function workspaceSerialDirective(strategy, relative) {
+  if (strategy === 'explore') {
+    return (
+      '## Workspace survey — explore across member projects\n\n' +
+      'Survey each member project yourself, one at a time in sorted `projectKey` order: ' +
+      (relative
+        ? 'its checkout at `./repos/<projectKey>` inside the shared cwd (modules, public ' +
+          'API, deps) — read files there directly and use `git -C repos/<projectKey> …` ' +
+          'for history. '
+        : 'its worktree (modules, public API, deps). ') +
+      'Then write the SINGLE unified plan, with findings under per-project headings and ' +
+      'every plan TASK tagged `Projects: <projectKey>[, ...]` for the project(s) it ' +
+      'touches.\n\n'
+    );
+  }
+  if (strategy === 'task') {
+    return (
+      '## Workspace tasks — one plan task at a time\n\n' +
+      'Read the plan\'s `## Tasks` and implement them yourself in plan-task (`taskId`) ' +
+      'order, each editing ONLY the worktree(s) ' +
+      (relative
+        ? 'of the project(s) named in that task\'s `Projects:` tag — operate in ' +
+          '`./repos/<projectKey>` (edit files there and run git as ' +
+          '`git -C repos/<projectKey> …`; NEVER chdir out of the run root). '
+        : 'of the project(s) named in that task\'s `Projects:` tag. ') +
+      'Do NOT edit any project not named by a task.\n\n'
+    );
+  }
+  if (strategy === 'review') {
+    return (
+      '## Workspace review — one touched project at a time\n\n' +
+      'Review each TOUCHED member project yourself in sorted `projectKey` order — skip a ' +
+      'project whose diff against its checkpoint is empty — reading ' +
+      (relative
+        ? 'its diff with `git -C repos/<projectKey> diff <checkpointRef>` (the refs are ' +
+          'listed in `## Workspace projects` above) '
+        : 'its `checkpointRef...feature` diff ') +
+      'against the plan. Then write ONE review markdown + ONE verdict JSON: every ' +
+      'critical/major issue (never collapse or drop one), sorted by `projectKey` then ' +
+      'severity, each issue location prefixed with `"<projectKey>: "`.\n\n'
+    );
+  }
+  return '';
+}
 
 /**
  * Build the full appended system prompt: toolInstruction first (if any), then — on
@@ -655,6 +733,29 @@ export function workspaceWriteTargetsFor(ctx) {
 }
 
 /** Map the orchestrator's claudeOpts into runClaude options shared by every role. */
+/**
+ * The unique directories a node writes to, in first-seen order; [] when none: the dirs of
+ * its allocated outputs (a review handle has mdPath + jsonPath), its verdict, its questions
+ * file and a form-repair file, then the pipeline dir itself (the clarify step writes
+ * clarify.json there), then — on a legacy workspace run, whose cwd is the primary member's
+ * worktree — every member worktree (a detached workspace run's cwd, the run root, already
+ * holds them at repos/<key>). PURE.
+ */
+function nodeWritableDirs(ctx) {
+  const files = [
+    ...Object.values(ctx.outputs || {}).flatMap((o) => [o?.path, o?.mdPath, o?.jsonPath]),
+    ctx.verdict?.path,
+    ctx.questionsFile,
+    ctx.formRepair?.file,
+  ];
+  const dirs = files.filter((f) => typeof f === 'string' && f).map((f) => dirname(f));
+  if (typeof ctx.pipelineDir === 'string' && ctx.pipelineDir) dirs.push(ctx.pipelineDir);
+  if (!isDetachedRun(ctx)) {
+    for (const p of wsMembers(ctx)) if (typeof p?.worktreeDir === 'string' && p.worktreeDir) dirs.push(p.worktreeDir);
+  }
+  return [...new Set(dirs)];
+}
+
 export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   // MCP registry (design §6.1): the copies' secret env joins the fan-out env, and the tools
@@ -693,6 +794,11 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // nothing from that dir (CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD is never set here).
     // undefined when the run has no mount ⇒ buildClaudeArgs emits nothing and the argv is byte-identical.
     addDirs: typeof ctx.memoryMount === 'string' && ctx.memoryMount ? [ctx.memoryMount] : undefined,
+    // The directories this node writes to outside the cwd (its outputs, verdict, questions
+    // file and clarify.json live in the store and the pipeline dir). Claude ignores it: acceptEdits
+    // already allows those writes. codex's workspace-write sandbox allows only the cwd, so its
+    // adapter adds each one as a writable root.
+    writableDirs: nodeWritableDirs(ctx),
     model: c.model,
     effort: c.effort,          // per-role effort from the orchestrator
     // Per-model routing env (design §4.4), resolved HERE — the one funnel every
@@ -735,6 +841,7 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // Every role and node is a pipeline agent: under WORCA_AGENT_USER when the container has one.
     asAgent: true,
     bin: c.bin,
+    engine: c.engine,
     mock: c.mock,
     signal: ctx.signal,
     onEvent: (e) => {
@@ -776,7 +883,12 @@ export function taskHeader(ctx, title) {
   // project + root skills are COPIED into `<cwd>/.claude/skills` for the run (§5.7);
   // legacy delivers neither (skills.mjs copies bundle/plugin entries only), so the
   // legacy sentence stays exactly as today.
-  const skillsHint = detached
+  const onCodex = !!(ctx.node?.engine && ctx.node.engine !== 'claude');
+  const skillsHint = onCodex
+    ? `Project, root and your personal skills are mounted at .agents/skills for this run and are listed for ` +
+      `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
+      `skills) rather than guessing conventions.\n\n`
+    : detached
     ? `Project and root skills are mounted at .claude/skills for this run (in addition to your ` +
       `personal ~/.claude/skills) and are available via the Skill tool — invoke any that fit ` +
       `(e.g. design, framework-pattern, or knowledge-graph skills) rather than guessing ` +
@@ -885,7 +997,7 @@ export function buildClarifyPrompt(ctx, opts = {}) {
     'pad, and never split one decision. For low-impact details, pick a sensible default rather ' +
     'than asking. If you have no material open questions, write { "questions": [] } to that ' +
     'same path.\n\n' +
-    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx), endpointRouted: ctxEndpointRouted(ctx) }) +
+    fanOutDirective(ctxFanOut(ctx), { omitProjectAgents: isDetachedWorkspace(ctx), subagentModel: ctxSubagentModel(ctx), endpointRouted: ctxEndpointRouted(ctx), engine: ctx?.node?.engine || ctx?.engine }) +
     `Write the clarify JSON to: ${outPath}\n\n` +
     answered +
     mockMarkers({

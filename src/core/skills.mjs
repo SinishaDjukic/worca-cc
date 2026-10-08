@@ -217,15 +217,15 @@ export function validateSkills(required, ctx) {
  * `detached` this function is not the delivery path at all — it stays the byte-
  * identical LEGACY one (§10 rollback contract).
  * @param {Map<string, {source:string, path:string}>} resolutions
- * @param {{targets:string[]}} ctx
+ * @param {{targets:string[], rel?:string}} ctx  rel: the skills folder the engine reads (run-context.mjs skillsRelFor)
  * @returns {Promise<string[]>} skill names actually injected
  */
-export async function injectSkills(resolutions, { targets }) {
+export async function injectSkills(resolutions, { targets, rel = join('.claude', 'skills') }) {
   const injected = [];
   for (const [skill, r] of resolutions) {
     if (r.source !== 'bundle' && !String(r.source || '').startsWith('plugin:')) continue;
     for (const t of targets || []) {
-      await cp(r.path, join(t, '.claude', 'skills', skill), { recursive: true });
+      await cp(r.path, join(t, rel, skill), { recursive: true });
     }
     injected.push(skill);
   }

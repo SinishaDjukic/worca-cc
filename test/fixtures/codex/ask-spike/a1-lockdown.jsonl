@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll read the requested file, then return only the callable tool names as requested."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"NO_SHELL\nfunctions.wait\nfunctions.request_user_input\nfunctions.exec\nfunctions.apply_patch\nfunctions.update_plan\nfunctions.view_image\ncollaboration.followup_task\ncollaboration.interrupt_agent\ncollaboration.list_agents\ncollaboration.send_message\ncollaboration.spawn_agent\ncollaboration.wait_agent"}}
+{"type":"turn.completed","usage":{"input_tokens":22439,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":275,"reasoning_output_tokens":159}}

@@ -16,6 +16,8 @@ function h(doc, tag, cls, text) {
 
 /** Mirrors model-env.mjs PROVIDER_APIS — the server validates; this is the form. */
 export const PROVIDER_APIS = { copilot: ['anthropic', 'openai-chat', 'openai-responses'], openai: ['openai-chat', 'openai-responses'], anthropic: ['anthropic'] };
+/** Mirrors model-env.mjs CODEX_UPSTREAM_APIS: a Codex model reaches an OpenAI-compatible endpoint itself, Responses only. */
+export const CODEX_PROVIDER_APIS = ['openai-responses'];
 /** Mirrors model-env.mjs TRANSLATED_APIS: the apis the bridge translates (no passthrough). */
 export const TRANSLATED_APIS = ['openai-chat', 'openai-responses'];
 export const PROVIDER_LABELS = { copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' };
@@ -69,7 +71,8 @@ export const COPILOT_TERMS = Object.freeze({
 
 /** One-line degradation copy for a translated (openai-chat / openai-responses) model, '' otherwise (§8.5). */
 export function degradationLine(m) {
-  if (!m || !m.upstream || !TRANSLATED_APIS.includes(m.upstream.api)) return '';
+  // A Codex model is not translated: codex speaks the endpoint's Responses API itself.
+  if (!m || !m.upstream || m.engine === 'codex' || !TRANSLATED_APIS.includes(m.upstream.api)) return '';
   const caps = m.upstream.capabilities || {};
   const limit = caps.maxPromptTokens ? `, prompt limit ~${Math.round(caps.maxPromptTokens / 1000)}k tokens` : '';
   const lead = m.upstream.api === 'openai-responses'
@@ -84,6 +87,11 @@ export function degradationLine(m) {
 /** The `bridged: <provider>` badge for a catalog card, or null. */
 export function bridgedBadge(m, { doc = globalThis.document } = {}) {
   if (!m || !m.bridged) return null;
+  if (m.engine === 'codex') {
+    const e = h(doc, 'span', 'badge blue mv-bridged', `endpoint: ${m.bridged}`);
+    e.title = `Codex connects to this ${PROVIDER_LABELS[m.bridged] || m.bridged} endpoint itself${m.upstreamModel ? ` as ${m.upstreamModel}` : ''}, no bridge and no codex sign-in.`;
+    return e;
+  }
   const b = h(doc, 'span', 'badge blue mv-bridged', `bridged: ${m.bridged}`);
   b.title = `Worca's in-process bridge forwards this model's calls to ${PROVIDER_LABELS[m.bridged] || m.bridged}${m.upstream ? ` as ${m.upstream.model} (${API_LABELS[m.upstream.api] || m.upstream.api})` : ''}.`;
   return b;
@@ -785,6 +793,19 @@ function collectOpenRouter(conn) {
   return Object.keys(out).length ? out : undefined;
 }
 
+/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env). */
+const MODE_TEXT = {
+  claude: {
+    direct: ['Anthropic API / CLI default', "Today's behaviour: the claude CLI reaches the endpoint its own login or env names."],
+    env: ['Custom endpoint via env', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
+    provider: ['Through a provider', "Worca's own bridge: GitHub Copilot, or an OpenAI-compatible endpoint. No LiteLLM needed."],
+  },
+  codex: {
+    direct: ['Codex default', "codex's own sign-in (`codex login`) reaches OpenAI."],
+    provider: ['OpenAI-compatible endpoint', 'An endpoint that serves the Responses API — vLLM, LM Studio, Ollama, a gateway. Codex connects to it itself; no codex sign-in needed.'],
+  },
+};
+
 /**
  * The Connection block for the model editor. `model` is the MASKED entry or
  * null; `providers` the GET /api/providers payload (for the readiness hints);
@@ -800,18 +821,15 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
 
   const modes = h(doc, 'div', 'mv-conn-modes');
   const startMode = upstream ? 'provider' : (editing && model.env && Object.keys(model.env).length ? 'env' : 'direct');
-  for (const [value, text, hint] of [
-    ['direct', 'Anthropic API / CLI default', "Today's behaviour: the claude CLI reaches the endpoint its own login or env names."],
-    ['env', 'Custom endpoint via env', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
-    ['provider', 'Through a provider', "Worca's own bridge: GitHub Copilot, or an OpenAI-compatible endpoint. No LiteLLM needed."],
-  ]) {
+  for (const value of ['direct', 'env', 'provider']) {
+    const [text, hint] = MODE_TEXT.claude[value];
     const lab = h(doc, 'label', 'mv-conn-mode');
     const rb = h(doc, 'input', 'mv-conn-mode-rb');
     rb.type = 'radio'; rb.name = groupName; rb.value = value; rb.checked = value === startMode;
     lab.appendChild(rb);
     const txt = h(doc, 'span', 'mv-conn-mode-text');
-    txt.appendChild(h(doc, 'b', null, text));
-    txt.appendChild(h(doc, 'small', 'hint', hint));
+    txt.appendChild(h(doc, 'b', 'mv-conn-mode-title', text));
+    txt.appendChild(h(doc, 'small', 'hint mv-conn-mode-hint', hint));
     lab.appendChild(txt);
     modes.appendChild(lab);
   }
@@ -939,9 +957,8 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
   return wrap;
 }
 
-/** The api options a provider allows; keeps the current pick when still legal. */
-function refillApiSelect(sel, provider, keep) {
-  const apis = PROVIDER_APIS[provider] || [];
+/** The api options `apis` (what the provider and engine allow); keeps the current pick when still legal. */
+function refillApiSelect(sel, apis, keep) {
   const cur = keep || sel.value;
   sel.innerHTML = '';
   for (const a of apis) {
@@ -965,19 +982,38 @@ function refillApiSelect(sel, provider, keep) {
 export function applyConnectionMode(connEl) {
   const conn = connEl && (connEl.classList && connEl.classList.contains('mv-conn') ? connEl : connEl.querySelector && connEl.querySelector('.mv-conn'));
   if (!conn) return;
+  // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
+  // provider only, the Responses API only, and none of the bridge's capability pins.
+  const codex = conn.dataset.engine === 'codex';
+  for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
+    const rb = lab.querySelector('.mv-conn-mode-rb');
+    const text = MODE_TEXT[codex ? 'codex' : 'claude'][rb.value];
+    lab.hidden = !text;
+    if (!text) { if (rb.checked) { rb.checked = false; conn.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true; } continue; }
+    lab.querySelector('.mv-conn-mode-title').textContent = text[0];
+    lab.querySelector('.mv-conn-mode-hint').textContent = text[1];
+  }
   const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
   const body = conn.querySelector('.mv-conn-body');
   if (body) body.hidden = mode !== 'provider';
-  const provider = conn.querySelector('.mv-conn-provider')?.value || 'copilot';
+  const provSel = conn.querySelector('.mv-conn-provider');
+  if (provSel) {
+    for (const o of provSel.options) o.hidden = o.disabled = codex && o.value !== 'openai';
+    if (codex) provSel.value = 'openai';
+    provSel.disabled = codex;
+  }
+  const provider = provSel?.value || 'copilot';
   conn.dataset.provider = mode === 'provider' ? provider : '';
   const apiSel = conn.querySelector('.mv-conn-api');
-  if (apiSel) refillApiSelect(apiSel, provider, apiSel.dataset.keep || apiSel.value);
+  if (apiSel) refillApiSelect(apiSel, codex ? CODEX_PROVIDER_APIS : PROVIDER_APIS[provider] || [], apiSel.dataset.keep || apiSel.value);
   delete apiSel?.dataset.keep;
   const api = apiSel ? apiSel.value : '';
   const adv = conn.querySelector('.mv-conn-adv');
   if (adv) adv.hidden = provider === 'copilot';
   const orBox = conn.querySelector('.mv-conn-or');
-  if (orBox) orBox.hidden = !openRouterApplies(conn);
+  if (orBox) orBox.hidden = codex || !openRouterApplies(conn);
+  const capsBox = conn.querySelector('.mv-conn-caps');
+  if (capsBox) capsBox.hidden = codex;
   const hint = conn.querySelector('.mv-conn-provider-hint');
   const p = conn._providers;
   if (hint) {
@@ -989,7 +1025,9 @@ export function applyConnectionMode(connEl) {
   const note = conn.querySelector('.mv-conn-note');
   if (note) {
     const copilotPricing = provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : '';
-    note.textContent = mode !== 'provider' ? '' : api === 'openai-chat'
+    note.textContent = mode !== 'provider' ? '' : codex
+      ? 'Codex calls the endpoint’s Responses API itself — no translation, every Codex tool kept. The key reaches codex through its environment, never its command line. Cost stays unknown unless Pricing sets one.'
+      : api === 'openai-chat'
       ? `Translated: reasoning the endpoint streams (OpenRouter, vLLM) is shown as thinking but not carried across turns, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
       : api === 'openai-responses'
         ? `Translated to the Responses API: reasoning summaries arrive as thinking, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
@@ -1001,7 +1039,7 @@ export function applyConnectionMode(connEl) {
   const editor = conn.closest ? conn.closest('.mv-editor') : null;
   const effCbs = editor ? [...editor.querySelectorAll('.mv-effort-cb')] : [];
   const effHint = editor ? editor.querySelector('.mv-efforts-hint') : null;
-  const translated = mode === 'provider' && TRANSLATED_APIS.includes(api);
+  const translated = !codex && mode === 'provider' && TRANSLATED_APIS.includes(api);
   const translatedNoReasoning = translated && !reasoning;
   // The model's own effort levels (carried from Import): offer only the Worca efforts it lists.
   const levels = translated && reasoning ? storedReasoningEfforts(conn, provider) : null;
@@ -1060,7 +1098,8 @@ export function collectConnection(connEl) {
   if (!conn) return { upstream: undefined };
   const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
   if (mode !== 'provider') return { upstream: null };
-  const provider = conn.querySelector('.mv-conn-provider')?.value || 'copilot';
+  const codex = conn.dataset.engine === 'codex';
+  const provider = codex ? 'openai' : conn.querySelector('.mv-conn-provider')?.value || 'copilot';
   const api = conn.querySelector('.mv-conn-api')?.value || '';
   const model = (conn.querySelector('.mv-conn-model')?.value || '').trim();
   const upstream = { provider, api, model };
@@ -1077,9 +1116,10 @@ export function collectConnection(connEl) {
     }
     if (Object.keys(headers).length) upstream.headers = headers;
     // Only while the entry resolves to OpenRouter: another endpoint would reject the fields.
-    const or = openRouterApplies(conn) ? collectOpenRouter(conn) : undefined;
+    const or = !codex && openRouterApplies(conn) ? collectOpenRouter(conn) : undefined;
     if (or) upstream.openrouter = or;
   }
+  if (codex) return { upstream };   // the capability pins steer the bridge only
   const capabilities = {};
   for (const cb of conn.querySelectorAll('.mv-conn-cap-cb')) capabilities[cb.dataset.cap] = !!cb.checked;
   for (const inp of conn.querySelectorAll('.mv-conn-limit-in')) {

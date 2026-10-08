@@ -14,8 +14,8 @@ import { join } from 'node:path';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
-import { isSubagentModelValue, SUBAGENT_MODELS } from './model-env.mjs';
+import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
+import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
  *  is `undefined` so firstDefined falls through to the next layer. */
@@ -24,7 +24,6 @@ import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 import { loadScriptRegistry } from './script-registry.mjs';
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
-import { teamDefault } from './policy/cache.mjs';                     // team-policy models.steps defaults
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
@@ -107,7 +106,7 @@ export function sanitizeNodeDefaults(raw, nodeId = '?') {
   }
   if (raw.effort !== undefined) {
     const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
-    if (EFFORTS.includes(effort)) out.effort = effort;
+    if (ALL_EFFORTS.includes(effort)) out.effort = effort;
     else if (effort) warn('effort', `unknown effort "${effort}"`);
   }
   // An effort without a model is meaningless (it is filtered by the model's
@@ -602,6 +601,13 @@ export function workspaceVariants(registry) {
  * `nodes`/`wires` to buildGraphManifest as `overlays`.
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
+function ownedPair(sel, engine, projectDir) {
+  if (!sel || typeof sel !== 'object') return {};
+  const model = typeof sel.model === 'string' && sel.model ? sel.model : undefined;
+  if (model && !modelForEngine(model, engine, { projectDir: projectDir || null })) return {};
+  const effort = typeof sel.effort === 'string' && sel.effort && (engine !== 'codex' || effortsForEngine('codex').includes(sel.effort)) ? sel.effort : undefined;
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
@@ -638,10 +644,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
   const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
-  // Team policy `models.steps` (a default, team-policy design §8): model and effort per ROLE for
-  // roles the project has not configured — below the project's own node and per-role config,
-  // above the template's authored config. Cache-only read; absent without a policy.
-  const teamSteps = (!ignore && projectDir) ? (teamDefault(projectDir, 'models.steps') || {}) : {};
+  const engine = opts.engine === 'codex' ? 'codex' : 'claude';
+  const slotDefaults = ignore ? {} : stepSlotDefaults(engine, { projectDir: projectDir || null, workspace: isWorkspace });
+  const owned = (selection) => ownedPair(selection, engine, projectDir);
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
   // pick (the setting is global by design: no per-project override), and it carries its own
@@ -699,8 +704,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // Legacy per-role config is keyed by the AUTHORED key, so a substituted
     // variant still inherits the user's model/effort for that role.
     const legacy = stepsCfg[authored] || {};
-    const team = (sel.model || sel.effort || legacy.model || legacy.effort) ? {} : (teamSteps[authored] || {});
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
+    const selP = owned(sel);
+    const legacyP = engine === 'claude' ? owned(legacy) : {};
+    const cfgP = owned(cfg);
+    const team = (selP.model || selP.effort || legacyP.model || legacyP.effort) ? {} : owned(slotDefaults[authored]);
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -713,10 +721,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: pair ? pair.model : firstDefined(sel.model, legacy.model, team.model, cfg.model),
+      model: pair ? pair.model : firstDefined(selP.model, legacyP.model, team.model, cfgP.model),
       // An effort only travels with the model that advertises it: an override
       // naming its own model must not inherit the lower layer's effort.
-      effort: pair ? pair.effort : firstDefined(sel.effort, legacy.effort, team.effort, (sel.model || legacy.model || team.model) ? undefined : cfg.effort),
+      effort: pair ? pair.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (selP.model || legacyP.model || team.model) ? undefined : cfgP.effort),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

@@ -55,8 +55,8 @@ const MODELS = [
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
 ];
 // The real GET /api/config envelope: {config, models, steps, efforts, subagentModels} (ui/server.mjs:3044-3050).
-function configBody() {
-  return { config: { steps: {}, customModels: [], workflows: {} }, models: MODELS, steps: [], efforts: ['medium', 'high', 'xhigh', 'max'],
+function configBody(recorder = {}) {
+  return { config: { steps: {}, customModels: [], workflows: recorder.configWorkflows || {} }, models: [...MODELS, ...(recorder.extraModels || [])], steps: [], efforts: ['medium', 'high', 'xhigh', 'max'],
     subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'] };
 }
 
@@ -72,7 +72,7 @@ function apiHandler(recorder = {}) {
     if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: [] }) };
     if (path === '/api/config' && method === 'GET') {
       recorder.configGets = [...(recorder.configGets || []), url];
-      return { ok: true, status: 200, json: async () => configBody() };
+      return { ok: true, status: 200, json: async () => configBody(recorder) };
     }
     if (path === '/api/config' && (method === 'PATCH' || method === 'POST')) {
       recorder.configWrites = [...(recorder.configWrites || []), { method, body: JSON.parse(opts.body) }];
@@ -80,6 +80,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -465,6 +466,43 @@ test('ask-panel-card v2: Start writes every edited row (pruned) BEFORE /api/run 
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.deepEqual(rec.order, ['config:PATCH', 'run']);
       assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
+    } },
+  ]);
+});
+
+const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] };
+
+test('ask-panel-card v2: the lane follows the run engine — Codex models only on a Codex run, none on a Claude run', async () => {
+  await checkRows([
+    { name: 'on a Codex run the agent rows offer Codex models only, heal a Claude pick and hide sub-agents', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { runEngine: 'codex', extraModels: [GPT] });
+      const lane = await laneOf(ctx);
+      const plan = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
+      assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5']);
+      assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the workflow\'s Claude pick is skipped on Codex');
+      assert.equal(lane.querySelector('.ask-rp-subagent'), null);
+      assert.deepEqual([...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-effbtn')].map((b) => b.textContent), ['minimal', 'low', 'medium', 'high']);
+    } },
+    { name: 'on a Claude run a Codex model is not offered', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { extraModels: [GPT] });
+      const lane = await laneOf(ctx);
+      assert.equal([...lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model').options].some((o) => o.value === 'gpt-5.5'), false);
+      assert.ok(lane.querySelector('.ask-rp-subagent'));
+    } },
+    { name: 'on a Codex run, saving another tunable re-sends the project\'s Claude pick instead of erasing it', run: async () => {
+      const rec = { runEngine: 'codex', extraModels: [GPT],
+        configWorkflows: { wf_review: { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } }, feedbacks: {} } } };
+      const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
+      const lane = await laneOf(ctx);
+      assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the Claude pick shows as inherit on Codex');
+      const fan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
+      fan.checked = !fan.checked;
+      fan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      const impl = rec.configWrites[0].body.nodes.n_impl;
+      assert.equal(impl.model, 'claude-opus-5-5');
+      assert.equal(impl.effort, 'high');
     } },
   ]);
 });
