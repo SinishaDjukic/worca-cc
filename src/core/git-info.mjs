@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import { join, isAbsolute } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor, githubOnlyEnv, hostLookupNeeded, stripHostCredentials } from './host-credentials.mjs';
-import { parseRemoteUrl, remoteRepoSlug, forgeOf, forgeOfPrUrl, FORGE_LABEL } from './forge.mjs';
+import { parseRemoteUrl, parseGithubPrUrl, remoteRepoSlug, forgeOf, forgeOfPrUrl, FORGE_LABEL } from './forge.mjs';
+import { redactSecrets } from './redact.mjs';
 import * as azurePr from './pr/azure.mjs';
 import { readAzureCredentials } from './azure-credentials.mjs';
 import { parseAzurePrUrl } from '../shared/azure-remote.mjs';
@@ -701,6 +702,124 @@ export async function branchTips(projectDir, branch, remote) {
 export async function restoreBranchFromRemote(projectDir, branch, remote) {
   const r = await _run('git', ['branch', '--', branch, `refs/remotes/${remote}/${branch}`], { cwd: projectDir });
   return r.ok;
+}
+
+// stderr only: stdout can carry a GraphQL payload whose fields ("author") read like an auth failure.
+const ghWatchFailure = (r) => {
+  const text = String(r?.stderr || '').toLowerCase();
+  if (/rate.?limit|secondary rate|abuse detection/.test(text)) return 'rate-limit';
+  if (/\bauth(?:entication|orization)?\b|credential|login|\b40[13]\b|resource not accessible/.test(text)) return 'auth';
+  return 'failed';
+};
+const pageOk = (p) => p && typeof p.hasNextPage === 'boolean'
+  && (!p.hasNextPage || (typeof p.endCursor === 'string' && p.endCursor));
+
+async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
+  const cred = await githubEnv(role, { repo });
+  if (cred.error) return { ok: false, class: 'auth', error: cred.error };
+  const args = ['api', 'graphql', '-f', `query=${query}`];
+  for (const [k, v] of Object.entries(vars)) if (v != null) args.push(typeof v === 'string' ? '-f' : '-F', `${k}=${v}`);
+  const r = await _run('gh', args, { cwd: projectDir, env: cred.env });
+  if (!r.ok) return { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  let body; try { body = JSON.parse(r.stdout); } catch { return { ok: false, class: 'failed', error: 'GitHub returned invalid JSON' }; }
+  if (!body || (Array.isArray(body.errors) && body.errors.length)) return { ok: false, class: 'failed', error: 'GitHub GraphQL returned errors' };
+  return { ok: true, data: body.data };
+}
+
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
+const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
+
+export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
+  const p = parseGithubPrUrl(prUrl);
+  if (!p) return { ok: false, class: 'failed', error: 'invalid GitHub pull request URL' };
+  const repo = `${p.owner}/${p.repo}`;
+  // Each connection pages on its own cursor; a finished one is left out of later pages (@include), so
+  // uneven page counts never re-read (and re-collect) a page that was already taken.
+  const cursor = { contexts: null, threads: null, reviews: null };
+  const open = { contexts: true, threads: true, reviews: true };
+  const contexts = []; const threads = []; const reviews = []; let facts = null;
+  for (let pages = 0; pages < 100; pages++) {
+    const q = await watchGraphql(WATCH_QUERY, { owner: p.owner, repo: p.repo, number: p.number,
+      contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
+      withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews }, { projectDir, repo });
+    if (!q.ok) return q;
+    const pr = q.data?.repository?.pullRequest;
+    if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
+    facts ||= { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null };
+    const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
+    const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
+    if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
+    for (const c of cc.nodes) {
+      if (typeof c.isRequired !== 'boolean') return { ok: false, class: 'failed', error: 'GitHub omitted isRequired' };
+      contexts.push(c.__typename === 'StatusContext' ? { ...c, type: 'status', headSha: facts.headSha } : { ...c, type: 'check' });
+    }
+    for (const t of tt.nodes) {
+      if (!t?.id || !t.comments || !Array.isArray(t.comments.nodes) || !pageOk(t.comments.pageInfo)) return { ok: false, class: 'failed', error: 'malformed review thread' };
+      threads.push({ nodeId: t.id, isResolved: !!t.isResolved, comments: [...t.comments.nodes], _page: t.comments.pageInfo });
+    }
+    reviews.push(...rr.nodes);
+    for (const [k, conn] of [['contexts', cc], ['threads', tt], ['reviews', rr]]) {
+      if (!open[k]) continue;
+      open[k] = conn.pageInfo.hasNextPage;
+      if (open[k]) cursor[k] = conn.pageInfo.endCursor;
+    }
+    if (!open.contexts && !open.threads && !open.reviews) break;
+    if (pages === 99) return { ok: false, class: 'failed', error: 'GitHub pagination ceiling exceeded' };
+  }
+  for (const thread of threads) {
+    let cursor = thread._page.hasNextPage ? thread._page.endCursor : null;
+    for (let pages = 0; cursor && pages < 100; pages++) {
+      const q = await watchGraphql(COMMENTS_QUERY, { threadId: thread.nodeId, commentsCursor: cursor }, { projectDir, repo });
+      if (!q.ok) return q;
+      const c = q.data?.node?.comments;
+      if (!c || !Array.isArray(c.nodes) || !pageOk(c.pageInfo)) return { ok: false, class: 'failed', error: 'malformed review comments' };
+      thread.comments.push(...c.nodes); cursor = c.pageInfo.hasNextPage ? c.pageInfo.endCursor : null;
+      if (pages === 99 && cursor) return { ok: false, class: 'failed', error: 'GitHub pagination ceiling exceeded' };
+    }
+    delete thread._page;
+  }
+  return { ok: true, pr: { ...facts, contexts, threads, reviews } };
+}
+
+export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {
+  const p = parseGithubPrUrl(prUrl); if (!p || !databaseId) return { ok: false, class: 'failed', error: 'invalid job log request' };
+  const repo = `${p.owner}/${p.repo}`; const cred = await githubEnv('read', { repo });
+  if (cred.error) return { ok: false, class: 'auth', error: cred.error };
+  const r = await _run('gh', ['run', 'view', '--job', String(databaseId), '--log-failed', '--repo', repo], { cwd: projectDir, env: cred.env });
+  if (!r.ok) return { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+  // `--log-failed` prefixes every line with "<job>\t<step>\t<timestamp> ": keep only the message.
+  const text = redactSecrets(String(r.stdout || '').replace(/^[^\t\n]*\t[^\t\n]*\t(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?/gm, ''));
+  return { ok: true, text: capBytes(text, PR_WATCH_LOG_BYTES) };
+}
+
+export const PR_WATCH_LOG_BYTES = 12 * 1024;
+/** The longest prefix of `text` that fits in `max` UTF-8 bytes. */
+export function capBytes(text, max) {
+  const buf = Buffer.from(String(text || ''));
+  return buf.length <= max ? buf.toString() : buf.subarray(0, max).toString().replace(/�$/, '');
+}
+
+async function watchMutation({ projectDir, prUrl, query, vars }) {
+  const p = parseGithubPrUrl(prUrl); if (!p) return { ok: false, class: 'failed', error: 'invalid GitHub pull request URL' };
+  return watchGraphql(query, vars, { projectDir, repo: `${p.owner}/${p.repo}`, role: 'write' });
+}
+export async function ghReplyToThread({ projectDir, prUrl, threadId, body } = {}) {
+  const r = await watchMutation({ projectDir, prUrl, query: 'mutation($threadId:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId,body:$body}){comment{id}}}', vars: { threadId, body } });
+  return r.ok ? { ok: true } : r;
+}
+export async function ghPrComment({ projectDir, prUrl, body } = {}) {
+  const p = parseGithubPrUrl(prUrl); if (!p) return { ok: false, class: 'failed', error: 'invalid GitHub pull request URL' };
+  const repo = `${p.owner}/${p.repo}`; const cred = await githubEnv('write', { repo });
+  if (cred.error) return { ok: false, class: 'auth', error: cred.error };
+  const r = await _run('gh', ['pr', 'comment', String(p.number), '--repo', repo, '--body', String(body || '')], { cwd: projectDir, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
+}
+export async function commitSubjects(projectDir, from, to) {
+  if (!projectDir || !from || !to) return { ok: false, subjects: [], error: 'projectDir, from and to are required' };
+  const r = await _run('git', ['log', '--format=%s', `${from}..${to}`], { cwd: projectDir });
+  return r.ok ? { ok: true, subjects: String(r.stdout || '').split(/\r?\n/).filter(Boolean) }
+    : { ok: false, subjects: [], error: (r.stderr || '').trim() || `git exited ${r.code}` };
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.

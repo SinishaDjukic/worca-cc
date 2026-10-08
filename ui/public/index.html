@@ -944,6 +944,8 @@
                   <button type="button" class="hd-publish btn-ghost" hidden data-min-level="advanced">Publish branch</button>
                   <span class="act-pill-slot"></span>
                   <a class="hd-pr-link" hidden data-min-level="advanced" target="_blank" rel="noopener"></a>
+                  <button type="button" class="hd-pr-watch btn-ghost" hidden data-min-level="advanced">Watch PR</button>
+                  <span class="hd-pr-watch-state hint" hidden data-min-level="advanced"></span>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
                 <p class="hd-published hint mono" hidden data-min-level="advanced"></p>
@@ -2511,6 +2513,7 @@
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="check-row" for="shipit-draft-input"><input id="shipit-draft-input" class="shipit-draft-input" type="checkbox" /> Open as draft</label>
+          <label class="check-row" for="shipit-watch-input"><input id="shipit-watch-input" class="shipit-watch-input" type="checkbox" /> Watch PR</label>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>

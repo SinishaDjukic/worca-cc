@@ -4200,6 +4200,9 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-pr-repo-link:hover{text-decoration:underline;}
 .hd-pr-repo-link.merged{color:var(--ink-3);}
 .hd-pr-repo-note{color:var(--ink-3);}
+/* Watch PR (#619): a member row's failed toggle alert takes its own line under the row. */
+.hd-pr-repo{flex-wrap:wrap;}
+.hd-pr-repo>.card-alert{flex-basis:100%;}
 .hd-after{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;flex:0 0 auto;}
 .hd-after[hidden]{display:none;}
 

@@ -959,7 +959,7 @@ export const setHumanRateUsdPerHour = (input) => setUsdCap('humanRateUsdPerHour'
 
 // ── chat notification preferences (chat-connectivity-design.md §4.5) ─────────
 
-const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away'];
+const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWatch'];
 
 /**
  * Effective chat preferences. Every notification event defaults ON; channels default

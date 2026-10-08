@@ -58,7 +58,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 54;
+export const SCHEMA_VERSION = 55;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1002,6 +1002,35 @@ CREATE TABLE IF NOT EXISTS pipeline_member_prs (
 );
 `;
 
+const PR_WATCH_DDL = `
+CREATE TABLE IF NOT EXISTS pr_watches (
+  pr_url TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL,
+  member_key TEXT NOT NULL DEFAULT '',
+  push_remote TEXT NOT NULL DEFAULT 'origin',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'watching',
+  reason TEXT,
+  fix_runs INTEGER NOT NULL DEFAULT 0,
+  active_run_id TEXT,
+  active_pipeline_id TEXT,
+  handled TEXT NOT NULL DEFAULT '[]',
+  pending TEXT,
+  retry_state TEXT NOT NULL DEFAULT '{}',
+  enabled_by TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS pr_watch_runs (
+  run_id TEXT PRIMARY KEY,
+  pr_url TEXT NOT NULL,
+  pipeline_id TEXT UNIQUE,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (pr_url) REFERENCES pr_watches(pr_url) ON DELETE CASCADE,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1023,6 +1052,8 @@ const INCREMENTAL_TABLES = {
   pipeline_commands: PIPELINE_COMMANDS_DDL,
   notification_reads: NOTIFICATION_READS_DDL,
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
+  pr_watches: PR_WATCH_DDL,
+  pr_watch_runs: PR_WATCH_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2082,6 +2113,7 @@ export function migrate(db) {
     if (current < 52) applySchemaV52(db);            // workspace PRs: pipeline_member_prs + gated backfill
     // v53 (#635): ask_threads.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v54 (Workflows view): ask_threads.mode + composer — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 55) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

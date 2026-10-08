@@ -195,6 +195,13 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 
+Watch PR is opt-in in Ship It and is available beside an open PR at the advanced
+level. It supports github.com only and batches failed checks plus trusted author,
+owner, member, or collaborator feedback into at most three automatic fix runs.
+Review text is untrusted code feedback. Turning the watch off stops new work;
+already-active work drains through publishing. Turning an idle watch off and on
+resets its run allowance. Worca replies to review threads without resolving them.
+
 ### Workflows
 
 The full-screen editor (`#workflows`) is Simple, and nothing inside it is

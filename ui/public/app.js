@@ -1247,6 +1247,18 @@ function handleServerMessage(msg) {
     return;
   }
 
+  if (msg.type === 'pr-watch-changed') {
+    // Exact identity only: the open detail's project and run, then the matching member row.
+    const { record, screen } = histDetailState;
+    if (record && screen && record.id === msg.pipelineId && record.projectKey === msg.projectKey) {
+      const host = msg.memberKey
+        ? [...screen.querySelectorAll('.hd-pr-repo')].find((li) => li.dataset.memberKey === msg.memberKey)
+        : (record.target === 'workspace' ? null : screen.querySelector('.hd-header'));
+      if (host && !host.querySelector('.hd-pr-watch')?.hidden) void paintHdPrWatch(screen, record, host, msg.memberKey || '');
+    }
+    return;
+  }
+
   // Sidebar-count mutations (pipeline delete, project/workspace create+delete) are
   // broadcast globally with NO runId. Re-read the authoritative counts; if the affected
   // view is open, also reload it so its rows reflect the change. Handle BEFORE the
@@ -20596,6 +20608,7 @@ function openShipItModal(record, data) {
   cardAlert(card, null);
   resetShipItDesc(modal);
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
+  q('.shipit-watch-input').checked = false;
   const okBtn = q('.shipit-ok');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
@@ -20711,6 +20724,7 @@ function openShipItModal(record, data) {
     if (description.trim()) payload.body = description;
     // Draft only when ticked; unticked sends nothing (the server's default is not a draft).
     if (q('.shipit-draft-input').checked) payload.draft = true;
+    if (q('.shipit-watch-input').checked) payload.watch = true;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -20981,6 +20995,7 @@ function openShipItWsModal(record, data) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return;
   const q = (sel) => modal.querySelector(sel);
+  q('.shipit-watch-input').checked = false;
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
@@ -21047,6 +21062,7 @@ function openShipItWsModal(record, data) {
   // ticked, so the next click retries exactly those. Cancel stops before the next repo.
   const onOk = async () => {
     const batch = picked();
+    const watch = q('.shipit-watch-input').checked;
     if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
@@ -21060,7 +21076,7 @@ function openShipItWsModal(record, data) {
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(shipItRowPayload(record, r)),
+          body: JSON.stringify({ ...shipItRowPayload(record, r), ...(watch ? { watch: true } : {}) }),
         });
         const dd = await safeJson(res);
         if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -21410,6 +21426,10 @@ function paintHdLive(screen, record, data) {
 function paintHdPr(screen, record, data) {
   const btn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
+  const watchBtn = screen.querySelector('.hd-pr-watch');
+  const watchState = screen.querySelector('.hd-pr-watch-state');
+  if (watchBtn) watchBtn.hidden = true;
+  if (watchState) watchState.hidden = true;
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
@@ -21424,6 +21444,7 @@ function paintHdPr(screen, record, data) {
     link.href = pr.url;
     link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
     link.classList.toggle('merged', prState === 'MERGED');
+    if (prState === 'OPEN') void paintHdPrWatch(screen, record, screen.querySelector('.hd-header'));
     return;
   }
   if (!histPrEligible(record) || record.pr === undefined) return;
@@ -21435,13 +21456,74 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
+// Watch PR (#619): detail-local state keyed by project + run + member, never stored on the record
+// (refreshHdFromRow replaces records). Each key has its own generation, so a stale GET or POST
+// response, or one for a screen that has since closed, never repaints.
+const hdPrWatchGen = new Map();
+const hdPrWatchKey = (record, memberKey = '') => `${record.projectKey || ''}\u0000${record.id}\u0000${memberKey}`;
+const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
+function hdPrWatchLabel(state) {
+  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : 'Not watching';
+  if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
+  return state.status === 'needs-person' ? 'Needs a person' : 'Watching';
+}
+/** Paint one Watch PR control. `host` owns the button, its state label and its inline alert. */
+async function paintHdPrWatch(screen, record, host, memberKey = '') {
+  const btn = host?.querySelector('.hd-pr-watch');
+  const label = host?.querySelector('.hd-pr-watch-state');
+  if (!btn || !label) return;
+  const key = hdPrWatchKey(record, memberKey);
+  const bump = () => { const g = (hdPrWatchGen.get(key) || 0) + 1; hdPrWatchGen.set(key, g); return g; };
+  const live = (g) => hdPrWatchGen.get(key) === g && histDetailState.screen === screen && histDetailState.record?.id === record.id;
+  const scope = { id: record.id, projectKey: record.projectKey, ...(memberKey ? { memberKey } : {}) };
+  let shown = null;
+  const render = (state) => {
+    shown = state;
+    label.textContent = hdPrWatchLabel(state);
+    label.hidden = false;
+    btn.textContent = state.watching ? 'Stop watching' : 'Watch PR';
+    btn.setAttribute('aria-pressed', String(!!state.watching));
+    btn.hidden = false;
+  };
+  const gen = bump();
+  try {
+    const res = await fetch(`/api/pr/watch?${new URLSearchParams(scope)}`);
+    const state = await safeJson(res);
+    if (!res.ok || !state) throw new Error(state?.error || `HTTP ${res.status}`);
+    if (!live(gen)) return;
+    render(state);
+  } catch {
+    // Not watchable here (another forge or host, a closed PR) or an older server: no control.
+    if (live(gen)) { btn.hidden = true; label.hidden = true; }
+    return;
+  }
+  btn.onclick = async () => {
+    const g = bump();
+    btn.disabled = true;
+    cardAlert(host, null);
+    try {
+      const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...scope, watch: !shown.watching }) });
+      const next = await safeJson(r);
+      if (!r.ok || !next) throw new Error(next?.error || `HTTP ${r.status}`);
+      if (live(g)) render(next);
+    } catch (err) {
+      if (live(g)) cardAlert(host, { title: 'Could not change Watch PR', detail: err.message });
+    } finally { btn.disabled = false; }
+  };
+}
+
 // Workspace header: every member repo on its own line (clarification: per-repo links
 // live here, the card shows the aggregate), plus Create PR while any can still ship.
 function paintHdWsPr(record, data, btn, repos) {
   const members = histWsMembers(record);
   if (wsPrPending(record)) return;                   // enrichment pending (row or any member)
   if (repos && members.length) {
-    for (const m of members) repos.appendChild(hdWsRepoItem(m));
+    for (const m of members) {
+      const li = repos.appendChild(hdWsRepoItem(m));
+      // Each open member PR is watched on its own (#619).
+      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') void paintHdPrWatch(histDetailState.screen, record, li, m.memberKey);
+    }
     repos.hidden = false;
   }
   if (!histPrEligible(record)) return;
@@ -21470,6 +21552,14 @@ function hdWsRepoItem(m) {
     pill.dataset.minLevel = 'expert';
     pill.hidden = true;
     li.appendChild(pill);
+    if (prStateOf(m.pr) === 'OPEN') {
+      const watch = document.createElement('button');
+      watch.type = 'button'; watch.className = 'hd-pr-watch btn-ghost'; watch.hidden = true;
+      watch.textContent = 'Watch PR'; watch.dataset.minLevel = 'advanced';
+      const state = document.createElement('span');
+      state.className = 'hd-pr-watch-state hint'; state.hidden = true; state.dataset.minLevel = 'advanced';
+      li.append(' ', watch, ' ', state);
+    }
   } else {
     const note = document.createElement('span');
     note.className = 'hd-pr-repo-note';

@@ -336,3 +336,52 @@ test('histPrEligible: workspace eligibility is computed across members', async (
   assert.equal(histPrEligible(ws([member(WEB, 'web', { affected: false })])), false, 'no changes');
   assert.equal(histPrEligible({ target: 'workspace' }), false, 'no member facts (legacy/lite row)');
 });
+
+// ---- Watch PR (#619) ----------------------------------------------------------
+test('workspace Ship it: Watch PR resets on open and one snapshot applies to every member request', async () => {
+  const arms = (url, opts) => {
+    if (url.endsWith('/api/pr/crosslink')) return ok({ ok: true, edited: [], failed: [] });
+    if (!(url.endsWith('/api/pr') && opts.method === 'POST')) return null;
+    const b = JSON.parse(opts.body);
+    // Unticking while the batch runs must not split it.
+    modalOf(globalThis.window).querySelector('.shipit-watch-input').checked = false;
+    return ok({ ok: true, url: `https://github.com/o/${b.memberKey}/pull/1`, mergeable: 'MERGEABLE', existed: false, memberKey: b.memberKey, watching: !!b.watch });
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  let modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-watch-input').checked, false);
+  modal.querySelector('.shipit-watch-input').checked = true;
+  click(ctx.window, modal.querySelector('.shipit-cancel')); await settle(ctx.window);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-watch-input').checked, false, 'reset on the next open');
+  modal.querySelector('.shipit-watch-input').checked = true;
+  click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 10);
+  assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
+});
+
+test('workspace detail: each open member PR gets its own watch control and state', async () => {
+  const states = { [API]: { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1' },
+    [WEB]: { watching: false, status: null, reason: null, activePipelineId: null } };
+  const arms = (url, opts) => {
+    if (/\/api\/pr\/watch\?/.test(url)) return ok(states[new URL(url, 'http://x').searchParams.get('memberKey')]);
+    if (url.endsWith('/api/pr/watch') && opts.method === 'POST') return fail(500, { error: 'nope' });
+    return null;
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } }),
+    member(DOC, 'doc', { pr: { state: 'MERGED', url: 'https://github.com/o/doc/pull/3' } })])] });
+  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
+  const lis = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')];
+  const stateOf = (li) => li.querySelector('.hd-pr-watch-state')?.textContent ?? null;
+  assert.deepEqual(lis.map(stateOf), ['Fixing', 'Not watching', null], 'merged members get no control');
+  // Same level gate as the run-level control in the header.
+  for (const el of lis[0].querySelectorAll('.hd-pr-watch, .hd-pr-watch-state')) assert.equal(el.dataset.minLevel, 'advanced');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-header .hd-row1 .hd-pr-watch').hidden, true, 'no run-level control on a workspace');
+  click(ctx.window, lis[1].querySelector('.hd-pr-watch')); await settle(ctx.window);
+  assert.match(cardAlertOf(lis[1]).detail, /nope/);
+  assert.equal(cardAlertOf(lis[0]), null, 'the alert belongs to the member row');
+});

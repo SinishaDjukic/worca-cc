@@ -233,6 +233,12 @@ export function renderAway(text) {
   return mdMsg(`\u{1F552} **Away mode:** ${String(text || '').slice(0, 300)}`, 'info');
 }
 
+export function renderPrWatch({ kind = 'needs-person', title = 'Pull request', message = '' } = {}) {
+  const icon = kind === 'published' ? '✅' : kind === 'started' ? '🔧' : '⚠️';
+  const severity = kind === 'needs-person' ? 'warning' : 'info';
+  return mdMsg(`${icon} **PR watch — ${String(title).slice(0, 80)}:** ${String(message).slice(0, 300)}`, severity);
+}
+
 export function renderTest() {
   return {
     title: 'Worca test message',

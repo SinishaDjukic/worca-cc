@@ -24,6 +24,7 @@ import { readRunLedger } from './metrics/ledger.mjs';
 import { readPolicyState } from './policy/state.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
+import { attachWatchPipeline } from './pr-watch.mjs';
 
 // ── DB row <-> state object mapping (Phase 3) ──────────────────────────────────
 // JSON columns are TEXT; (de)serialize at THIS boundary only. Reads are fail-safe:
@@ -1154,7 +1155,7 @@ export async function createPipeline(projectDir, opts = {}) {
   const {
     prompt, promptFile, extras = [], title,
     promptText: precomputedPromptText = null, sourceType = null, sourceMeta = null,
-    guardrailsId = null, startedBy = null,
+    guardrailsId = null, startedBy = null, prWatchRunId = null,
     workspaceKey = null, workspaceId = null, workspaceName = null,
     workspaceDescription = '', projects = null,
   } = opts;
@@ -1288,7 +1289,7 @@ export async function createPipeline(projectDir, opts = {}) {
   // no more state.json on disk. writeState also seeds the dir->id cache
   // (rememberDir) so appendAudit resolves this run without any call-site change
   // (A4). recordArtifact runs AFTER the row exists (FK -> pipelines).
-  await writeState(dir, state);
+  await writeState(dir, state, { prWatchRunId });
   recordArtifact(id, 'prompt', 'prompt.md');
   if (workspaceKey) recordArtifact(id, 'workspace-description', 'workspace-description.md');
   for (const rel of copiedExtras) recordArtifact(id, 'extra', rel);
@@ -1392,7 +1393,7 @@ function rememberDir(dir, id) { if (dir && id) _dirIdCache.set(resolve(dir), id)
  * @param {object} stateObj
  * @returns {Promise<object>}
  */
-export async function writeState(pipelineDir, stateObj) {
+export async function writeState(pipelineDir, stateObj, { prWatchRunId = null } = {}) {
   const obj = { ...stateObj, updatedAt: new Date().toISOString() };
   const id = obj.id;
   if (!id) return obj; // pre-id state (constructor default): nothing to persist yet
@@ -1419,6 +1420,9 @@ export async function writeState(pipelineDir, stateObj) {
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run(toPipelineRow(obj));
+
+    // A Watch PR fix run (#619): ownership lands in the same transaction that creates the row.
+    if (prWatchRunId) attachWatchPipeline(prWatchRunId, id, obj.updatedAt);
 
     getDb().prepare('DELETE FROM pipeline_steps WHERE pipeline_id = ?').run(id);
     const ins = getDb().prepare(`
