@@ -16,7 +16,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile, readFile, realpath, lstat, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 
@@ -735,11 +735,11 @@ const committedWarning = (ws) => ws.filter((w) => /not approved/.test(w));
 
 for (const engine of ['codex', 'copilot', 'cursor']) test(`${engine}: the committed .mcp.json servers Claude Code approved by name join mcp.json; disabled ones never do; unapproved ones are named once`, async () => {
   const { member, home, wt } = await committedMcpMember({
-    user: { enabledMcpjsonServers: ['a'] }, project: { enabledMcpjsonServers: ['b', 'c'] }, local: { disabledMcpjsonServers: ['c'] },
+    user: { enabledMcpjsonServers: ['a'] }, local: { enabledMcpjsonServers: ['b', 'c'], disabledMcpjsonServers: ['c'] },
   });
   const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, engine, platform: 'darwin' });
   const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
-  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the project layer; c is disabled in the local layer');
+  assert.deepEqual(Object.keys(file).sort(), ['a', 'b'], 'approved in the user and the untracked local layer; c is disabled there too');
   assert.deepEqual(file.b.args, [join(wt, 'srv', 'b.js')], 'resolved against the worktree, where Claude Code would load it');
   assert.deepEqual(rc.mcpServerNames, ['a', 'b'], 'the left-out servers are not granted');
   const w = committedWarning(rc.warnings);
@@ -790,13 +790,35 @@ test('codex: a Claude run of the same checkout is unchanged — the committed se
   assert.deepEqual(committedWarning(rc.warnings), []);
 });
 
+test('mcpjsonApproval: the committed .claude/settings.json (and a tracked settings.local.json) can only restrict; user and managed settings approve', async () => {
+  const NO_MANAGED = { managed: [] };
+  // A repository approving its own servers: ignored, as Claude Code ignores it in a folder the user has not trusted.
+  const repo = await committedMcpMember({ project: { enabledMcpjsonServers: ['a'], enableAllProjectMcpServers: true, disabledMcpjsonServers: ['d'] } });
+  const v = await mcpjsonApproval(repo.member.projectDir, repo.home, undefined, NO_MANAGED);
+  assert.equal(v('a'), 'unapproved', 'a committed enabledMcpjsonServers does not approve');
+  assert.equal(v('b'), 'unapproved', 'a committed enableAllProjectMcpServers: true does not approve');
+  assert.equal(v('d'), 'disabled', 'a committed disable still counts');
+  // A settings.local.json the repository tracks is the repository's too.
+  const tracked = await committedMcpMember({ local: { enabledMcpjsonServers: ['a'] } });
+  execFileSync('git', ['init', '-q'], { cwd: tracked.member.projectDir });
+  execFileSync('git', ['add', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });
+  assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'unapproved', 'tracked: no approval');
+  execFileSync('git', ['rm', '-q', '--cached', '.claude/settings.local.json'], { cwd: tracked.member.projectDir });
+  assert.equal((await mcpjsonApproval(tracked.member.projectDir, tracked.home, undefined, NO_MANAGED))('a'), 'approved', 'untracked in a repository: approves');
+  // Managed settings approve, and come last.
+  const managedDir = await tmp('worca-cc-rc-managed-');
+  const managed = join(managedDir, 'managed-settings.json');
+  await writeFile(managed, JSON.stringify({ enabledMcpjsonServers: ['c'] }), 'utf8');
+  assert.equal((await mcpjsonApproval(repo.member.projectDir, repo.home, undefined, { managed: [managed] }))('c'), 'approved');
+});
+
 test('mcpjsonApproval: lists add up across the layers, disabled wins, absent files are silent', async () => {
   const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['x'] }, local: { enabledMcpjsonServers: ['y'], disabledMcpjsonServers: ['x'] } });
   const verdict = await mcpjsonApproval(member.projectDir, home);
   assert.equal(verdict('x'), 'disabled');
   assert.equal(verdict('y'), 'approved');
   assert.equal(verdict('z'), 'unapproved');
-  const none = await mcpjsonApproval(await emptyDir(), await emptyDir(), () => assert.fail('absence is silent'));
+  const none = await mcpjsonApproval(await emptyDir(), await emptyDir(), () => assert.fail('absence is silent'), { managed: [] });
   assert.equal(none('x'), 'unapproved');
 });
 
