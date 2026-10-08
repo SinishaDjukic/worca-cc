@@ -21680,6 +21680,29 @@ function paintHdBase(screen, record, data) {
   const members = BASE_FINISHED.has(status) && record.id ? hdBaseMembers(record, data) : [];
   box.hidden = !members.length;
   list.replaceChildren(...members.map((m) => hdBaseItem(screen, record, data, m)));
+  if (members.length) hdBaseAuto(screen, record, data, members);
+}
+
+/** The check runs by itself once per open of the detail when a branch was never checked, or was checked
+ *  over BASE_AUTO_MS ago. Quiet: no result line, a failed request leaves the stored line as it was. */
+const BASE_AUTO_MS = 5 * 60_000;
+let hdBaseAutoFor = null;          // the run whose open may still auto-check (setupHdActions arms it)
+
+function hdBaseAuto(screen, record, data, members) {
+  if (hdBaseAutoFor !== record.id) return;
+  const stale = (rec) => !rec || !(Date.now() - Date.parse(rec.at || '') < BASE_AUTO_MS);
+  if (!members.some((m) => stale(m.rec))) return;
+  hdBaseAutoFor = null;
+  const ws = data && data.state && data.state.target === 'workspace';
+  fetch(`/api/runs/${encodeURIComponent(record.id)}/base-check?${runActionQuery(record.projectDir || null, record).toString()}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ auto: true }) })
+    .then(async (res) => {
+      const d = res.ok ? await safeJson(res) : null;
+      if (!d || !Array.isArray(d.members)) return;
+      for (const x of d.members) hdBaseStore(data, ws ? x.projectKey : null, x.baseCheck);
+      if (hdBaseMsgsFor === record.id) paintHdBase(screen, record, data);   // still this run's detail
+    })
+    .catch(() => {});
 }
 
 function hdBaseItem(screen, record, data, m) {
@@ -21979,6 +22002,7 @@ function setupHdActions(screen, record, data) {
   paintHdPr(screen, record, data);
   paintHdAfter(screen, record, data);
   paintHdPublish(screen, record, data);
+  hdBaseAutoFor = record.id;
   paintHdBase(screen, record, data);
 }
 

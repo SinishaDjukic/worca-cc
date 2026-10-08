@@ -222,7 +222,10 @@ was checked:
     commit the merge, then click **Re-check**.
 
 The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
-resolve run ends, and on **Re-check**. It does not run on a timer.
+resolve run ends, on **Re-check**, and when you open the run's details if the branch was never checked
+or was last checked more than 5 minutes ago. That automatic check reuses a fetch from the last minute
+and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
+timer.
 
 After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
 PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch

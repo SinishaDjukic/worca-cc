@@ -144,6 +144,37 @@ test('workspace: one line per member with its name; buttons post { member }', as
   assert.match(items(ctx)[1].querySelector('.hd-base-msg').textContent, /Merged locally/);
 });
 
+test('auto check on open: a branch never checked is checked once, quietly, and repaints', async () => {
+  const ctx = await bootBase(null, { answer: (action) => (action === 'base-check'
+    ? ok({ ok: true, members: [{ projectKey: KEY, baseCheck: CONFLICTS }], settled: {} }) : null) });
+  assert.equal(ctx.posts.length, 1);
+  assert.equal(ctx.posts[0].action, 'base-check');
+  assert.deepEqual(ctx.posts[0].body, { auto: true });
+  const [li] = items(ctx);
+  assert.equal(li.querySelector('.hd-base-pill').textContent, 'Conflicts in 2 files');
+  assert.equal(li.querySelector('.hd-base-msg'), null, 'no result line for an automatic check');
+  await deliverRows(ctx, [ROW]);                          // a repaint of the same open does not check again
+  assert.equal(ctx.posts.length, 1);
+});
+
+test('auto check on open: a check older than 5 minutes is redone; a recent one is not', async () => {
+  const old = { ...CLEAN, at: new Date(Date.now() - 10 * 60_000).toISOString() };
+  let ctx = await bootBase(old, { answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: UP }], settled: {} }) });
+  assert.deepEqual(ctx.posts.map((x) => x.action), ['base-check']);
+  assert.equal(items(ctx)[0].querySelector('.hd-base-pill').textContent, 'Up to date with feat/log-ux');
+  ctx = await bootBase(CLEAN);
+  assert.equal(ctx.posts.length, 0);
+});
+
+test('auto check on open: a failed request leaves the stored line alone', async () => {
+  const old = { ...CLEAN, at: new Date(Date.now() - 10 * 60_000).toISOString() };
+  const ctx = await bootBase(old, { answer: () => fail(500, { error: 'boom' }) });
+  assert.equal(ctx.posts.length, 1);
+  const [li] = items(ctx);
+  assert.equal(li.querySelector('.hd-base-pill').textContent, 'feat/log-ux is 2 commits ahead, merges cleanly');
+  assert.equal(li.querySelector('.hd-base-msg'), null);
+});
+
 test('a running run shows no block', async () => {
   const ctx = await bootBase(CONFLICTS, { detail: withCheck(CONFLICTS, { status: 'running' }), rows: [{ ...ROW, status: 'running' }] });
   assert.equal(box(ctx).hidden, true);

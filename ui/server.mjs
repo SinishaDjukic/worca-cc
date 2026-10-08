@@ -6779,8 +6779,10 @@ const mockOfRow = (row) => { try { return JSON.parse(row.resume_point || 'null')
 /** D18: a resolve run (its LIVE run UUID, as POST /api/run answered) has not settled yet. A restart forgets it. */
 const resolveRunActive = (runId) => { const e = runs.get(runId); return !!e && !e.settled; };
 
-// POST /api/runs/:id/base-check?projectKey=|workspaceId=|projectDir=  body: { member? }
+// POST /api/runs/:id/base-check?projectKey=|workspaceId=|projectDir=  body: { member?, auto? }
 // -> { ok, members:[{ projectKey, name, branch, baseCheck }], settled:{ [projectKey]: { baseCheck, push } } }
+// `auto` is the check the History detail runs on open: it reuses a recent fetch and settles nothing
+// (no push from just looking at a run); Re-check settles.
 app.post('/api/runs/:id/base-check', async (req, res) => {
   try {
     const row = runRowForScope(req, res); if (!row) return;
@@ -6790,8 +6792,9 @@ app.post('/api/runs/:id/base-check', async (req, res) => {
       return res.status(400).json({ error: 'That project is not part of this run.', code: 'MEMBER_REQUIRED' });
     }
     const by = actorOf(req);
-    const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by });
-    const settled = await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
+    const auto = req.body?.auto === true;
+    const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
+    const settled = auto ? {} : await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
     emitChanged('pipelines-changed', 'updated');
     // A settle that found leftover markers recorded `conflicts/markers`: answer what is stored.
     res.json({ ok: true, members: members.map((m) => ({ ...publicMember(m), baseCheck: settled[m.projectKey]?.baseCheck || m.baseCheck })), settled });

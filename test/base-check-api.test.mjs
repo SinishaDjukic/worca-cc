@@ -90,6 +90,22 @@ test('POST base-check on a running run is 409 NOT_FINISHED; unknown run 404', as
   assert.equal(r.status, 404);
 });
 
+test('POST base-check { auto: true } records the check but settles nothing (no push, the mark stays)', async () => {
+  updateBranchRecords(upToDate.id, [upToDate.key], (br) => { br.baseResolve = { via: 'terminal', at: 'x', files: [], fileCount: 0 }; });
+  try {
+    let r = await post('base-check', upToDate.id, { projectKey: upToDate.key }, { auto: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.members[0].baseCheck.status, 'up-to-date');
+    assert.deepEqual(r.json.settled, {});
+    assert.ok(brOf(upToDate.id).baseResolve, 'an automatic check leaves the resolution to Re-check');
+    r = await post('base-check', upToDate.id, { projectKey: upToDate.key });
+    assert.ok(r.json.settled[upToDate.key], 'Re-check settles it');
+    assert.equal(brOf(upToDate.id).baseResolve, undefined);
+  } finally {
+    updateBranchRecords(upToDate.id, [upToDate.key], (br) => { delete br.baseResolve; });
+  }
+});
+
 test('POST update-branch: clean -> merge commit (two parents), pushed without --force; conflicts -> 409 CONFLICTS', async () => {
   let r = await post('update-branch', clean.id, { projectKey: clean.key });
   assert.equal(r.status, 200, JSON.stringify(r.json));
