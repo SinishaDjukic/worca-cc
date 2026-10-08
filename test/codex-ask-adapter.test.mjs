@@ -2,12 +2,13 @@
 // D13, D15, D16; Task 0's record in plans/ask-on-codex-spike.md).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCodexArgs, createCodexNormalizer, codexMcpOverrides, mcpResultText, codexModelPriced, codexResumeNotFound,
   CODEX_ASK_LOCKDOWN, CODEX_ASK_FEATURES, CODEX_DEFAULT_MODEL, runCodexProcess, codexCapabilities, codexAskSupport, parseCodexFeatures,
+  codexRolloutUsage, estimateCodexCostUsd, expandMcpRefs,
 } from '../src/core/engines/codex.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
@@ -170,12 +171,34 @@ test('runCodexProcess: a pipeline spawn attaches its stdio servers, fills ${VAR}
   const args = fake.args();
   assert.ok(args.includes('mcp_servers.pg.required=true'));
   assert.equal(args.some((a) => a.startsWith('mcp_servers.web.')), false, 'codex takes stdio servers only');
-  assert.ok(events.some((e) => e.type === 'stderr' && /not attached: web/.test(e.text)));
+  assert.ok(events.some((e) => e.type === 'stderr' && /not attached on codex — remote, and codex attaches stdio servers only: web$/.test(e.text)));
   assert.equal(args.join(' ').includes('tok-SECRET'), false, 'values never ride argv');
   assert.equal(fake.env().MCPCHILD_PGPASS, 'tok-SECRET', 'the reference is filled from the spawn env');
   assert.equal(fake.env().MCPSECRET_PG, undefined, 'the secret reaches codex only through the reference');
   assert.equal(res.text.includes('tok-SECRET'), false, 'the reply is redacted');
   assert.equal(JSON.stringify(events).includes('tok-SECRET'), false, 'so is every event');
+});
+
+test('expandMcpRefs: ${VAR} and ${VAR:-default} in command, args and env, as Claude Code expands them; registry secrets never on argv', () => {
+  const from = { ROOT: '/srv', TOOL: '/opt/tool', MCPSECRET_K: 'tok' };
+  const out = expandMcpRefs({ x: { command: '${TOOL}/bin/run', args: ['--root', '${ROOT}', '--port=${PORT:-8080}', '${NOPE}', '${MCPSECRET_K}', 7],
+    env: { A: '${ROOT}/a', K: '${MCPSECRET_K}', D: '${NOPE:-d}' } } }, from);
+  assert.equal(out.x.command, '/opt/tool/bin/run');
+  assert.deepEqual(out.x.args, ['--root', '/srv', '--port=8080', '', '${MCPSECRET_K}', 7]);
+  assert.deepEqual(out.x.env, { A: '/srv/a', K: 'tok', D: 'd' });
+});
+
+test('runCodexProcess: ${VAR} in a server\'s command and args reaches codex filled', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeCodex(dir, 'ok');
+  const cfg = join(dir, 'mcp.json');
+  writeFileSync(cfg, JSON.stringify({ mcpServers: { fs: { command: '${CODEX_TEST_BIN}', args: ['--root', '${CODEX_TEST_ROOT:-/fallback}'] } } }));
+  const prev = process.env.CODEX_TEST_BIN; process.env.CODEX_TEST_BIN = '/usr/bin/true';
+  try { await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', mcpConfigPath: cfg, usageDir: dir }); }
+  finally { if (prev === undefined) delete process.env.CODEX_TEST_BIN; else process.env.CODEX_TEST_BIN = prev; }
+  const args = fake.args();
+  assert.ok(args.includes('mcp_servers.fs.command="/usr/bin/true"'));
+  assert.ok(args.includes('mcp_servers.fs.args=["--root","/fallback"]'));
 });
 
 test('runCodexProcess: two registry copies of one server (one env name, two values) both attach, each reading its own', POSIX, async () => {
@@ -227,6 +250,75 @@ test('runCodexProcess: maxTurns caps the main agent\'s tool calls with a turnCap
   await assert.rejects(runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', maxTurns: 1, usageDir: dir }), (e) => e.turnCap === true && /stopped after 1 tool calls/.test(e.message));
   const ok = await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', maxTurns: 2, usageDir: dir });
   assert.equal(ok.text, 'done', 'at the cap, not past it: the turn runs out');
+});
+
+// A turn stopped before `turn.completed` (the only usage `exec --json` reports) still ran: codex recorded its usage in
+// the thread's session file under CODEX_HOME, as `token_count` events (total_token_usage, cumulative for the thread).
+const CAPPED = '00000000-0000-4000-8000-0000000000ae';
+const tokenCount = (input, output, cached = 0) => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count',
+  info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, cache_write_input_tokens: 0, output_tokens: output, reasoning_output_tokens: 0 } } } });
+function codexHomeWithRollout(lines) {
+  const home = tmp();
+  const d = join(home, 'sessions', '2026', '10', '08');
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, `rollout-2026-10-08T10-00-00-${CAPPED}.jsonl`), [JSON.stringify({ type: 'session_meta' }), ...lines].join('\n') + '\n');
+  return home;
+}
+async function withCodexHome(home, fn) {
+  const prev = process.env.CODEX_HOME; process.env.CODEX_HOME = home;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prev; }
+}
+const cmd = (id) => [
+  { type: 'item.started', item: { id, type: 'command_execution', command: 'ls', aggregated_output: '', exit_code: null, status: 'in_progress' } },
+  { type: 'item.completed', item: { id, type: 'command_execution', command: 'ls', aggregated_output: '', exit_code: 0, status: 'completed' } },
+];
+
+test('codexRolloutUsage: the last token_count of the thread\'s session file; null when codex wrote none', () => {
+  const home = codexHomeWithRollout([tokenCount(100, 5), tokenCount(900, 40, 300), '{"torn']);
+  assert.deepEqual(codexRolloutUsage(home, CAPPED), { input: 900, cached: 300, cacheWrite: 0, output: 40, reasoning: 0 });
+  assert.equal(codexRolloutUsage(codexHomeWithRollout([]), CAPPED), null);
+  assert.equal(codexRolloutUsage(tmp(), CAPPED), null);
+});
+
+test('runCodexProcess: a capped turn books what it spent (from the session file) and stores it for the next resume', POSIX, async () => {
+  const home = codexHomeWithRollout([tokenCount(5000, 100)]);
+  const lines = [{ type: 'thread.started', thread_id: CAPPED }, { type: 'turn.started' }, ...cmd('i1'), ...cmd('i2')];
+  const dir = tmp();
+  const fake = fakeCodex(dir, null, { lines });
+  const events = [];
+  await withCodexHome(home, () => assert.rejects(runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', maxTurns: 1, usageDir: dir, onEvent: (e) => events.push(e) }),
+    (e) => e.turnCap === true));
+  const result = events.find((e) => e.type === 'result');
+  assert.ok(result, 'the stopped turn is booked');
+  assert.equal(result.isError, true);
+  assert.equal(result.usage.input_tokens, 5000);
+  assert.equal(result.costUsd, estimateCodexCostUsd(CODEX_DEFAULT_MODEL, { input: 5000, cached: 0, output: 100 }));
+  assert.equal(JSON.parse(readFileSync(join(dir, `${CAPPED}.json`), 'utf8')).input, 5000, 'the next resume is charged only its own turn');
+});
+
+test('runCodexProcess: a resume after a stopped turn is charged only its own turn', POSIX, async () => {
+  const dir = tmp();
+  writeFileSync(join(dir, `${CAPPED}.json`), JSON.stringify({ input: 1000, cached: 0, cacheWrite: 0, output: 10, reasoning: 0 }));
+  // The stopped turn reached 3000/50; the run then stops on a failed turn, still before turn.completed.
+  const home = codexHomeWithRollout([tokenCount(1000, 10), tokenCount(3000, 50)]);
+  const fake = fakeCodex(dir, null, { lines: [{ type: 'thread.started', thread_id: CAPPED }, { type: 'turn.failed', error: { message: 'boom' } }] });
+  const events = [];
+  await withCodexHome(home, () => assert.rejects(runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', usageDir: dir, resumeSessionId: `codex:${CAPPED}`,
+    onEvent: (e) => events.push(e) }), /boom/));
+  assert.equal(events.find((e) => e.type === 'result').usage.input_tokens, 2000, 'the delta since the stored usage');
+  const next = fakeCodex(dir, null, { lines: [{ type: 'thread.started', thread_id: CAPPED }, { type: 'turn.completed', usage: { input_tokens: 3500, output_tokens: 60 } }] });
+  const after = [];
+  await withCodexHome(home, () => runCodexProcess({ cwd: dir, bin: next.bin, prompt: 'P', usageDir: dir, resumeSessionId: `codex:${CAPPED}`, onEvent: (e) => after.push(e) }));
+  assert.equal(after.find((e) => e.type === 'result').usage.input_tokens, 500);
+});
+
+test('runCodexProcess: an Ask chat\'s turn cap is its watchdog\'s, never the adapter\'s', POSIX, async () => {
+  const lines = [{ type: 'thread.started', thread_id: CAPPED }, { type: 'turn.started' }, ...cmd('i1'), ...cmd('i2'),
+    { type: 'item.completed', item: { id: 'i3', type: 'agent_message', text: 'done' } }, { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 1 } }];
+  const dir = tmp();
+  const fake = fakeCodex(dir, null, { lines });
+  const ok = await runCodexProcess({ cwd: dir, bin: fake.bin, prompt: 'P', maxTurns: 1, usageDir: dir, askLockdown: CANDIDATE_LOCKDOWN });
+  assert.equal(ok.text, 'done');
 });
 
 test('runClaude forwards images and askLockdown to the codex adapter', POSIX, async () => {

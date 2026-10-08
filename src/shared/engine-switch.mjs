@@ -12,6 +12,19 @@ export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
 
 const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot', cursor: 'Cursor' });
 
+/** The engines still in beta: every engine picker marks them. */
+export const BETA_ENGINES = Object.freeze(['codex', 'copilot', 'cursor']);
+
+/** Is `engine` in beta? A missing engine is Claude. */
+export function isBetaEngine(engine) {
+  return BETA_ENGINES.includes(engine || 'claude');
+}
+
+/** An engine's name where only text fits (a select option, an optgroup): 'Codex (beta)'. */
+export function engineChoiceLabel(engine) {
+  return isBetaEngine(engine) ? `${engineLabel(engine)} (beta)` : engineLabel(engine);
+}
+
 /** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
 export function engineLabel(engine) {
   const e = engine || 'claude';
