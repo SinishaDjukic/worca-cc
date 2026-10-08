@@ -60,7 +60,8 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
   assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor'], 'Copilot owns no models: no card');
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
-  assert.equal(card.querySelector('h3').textContent, 'Cursor');
+  assert.equal(card.querySelector('h3').firstChild.textContent, 'Cursor');
+  assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
   const plan = card.querySelector('[data-setting="models.cursor.steps.planner"] .inherit-model');
   assert.deepEqual([...plan.options].map((o) => o.value), ['', 'my-cursor-m']);
   assert.match(plan.options[0].textContent, /Cursor's default model/);

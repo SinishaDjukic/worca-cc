@@ -1377,6 +1377,8 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .badge.red,.badge.error,.badge.stopped{background:var(--red-bg);color:var(--red-ink);}
 .badge.waiting{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.amber{background:var(--amber-bg);color:var(--amber-ink);}
+/* An engine still in beta (src/shared/engine-switch.mjs BETA_ENGINES), beside its name. */
+.badge.beta-badge{margin-left:6px;vertical-align:middle;}
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge[hidden]{display:none;}

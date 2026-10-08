@@ -5,7 +5,7 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
-import { ENGINE_NAMES, engineLabel } from '../../../src/shared/engine-switch.mjs';
+import { ENGINE_NAMES, engineChoiceLabel } from '../../../src/shared/engine-switch.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
@@ -68,7 +68,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     // D10: a node knows no run engine, so with another engine's models in the catalog the list is grouped
     // per engine (Claude / Codex / Cursor); a pick of another engine is skipped at run time (§4.2).
     const itemsOf = (engine) => offered.filter((m) => (m.engine || 'claude') === engine).map((m) => ({ value: m.id, text: m.label || m.id }));
-    const groups = ENGINE_NAMES.map((e) => ({ group: engineLabel(e), items: itemsOf(e) })).filter((g) => g.items.length);
+    const groups = ENGINE_NAMES.map((e) => ({ group: engineChoiceLabel(e), items: itemsOf(e) })).filter((g) => g.items.length);
     const modelItems = groups.some((g) => g.group !== 'Claude') ? groups : itemsOf('claude');
     body.appendChild(select(doc, 'ins-model', 'model', 'Model', [{ value: '', text: 'inherit' }, ...modelItems], node.config.model));
     // Efforts are per engine: the picked model's own list, else the catalog-wide one.
