@@ -109,7 +109,7 @@ import { readSettings as readRawSettings } from './settings.mjs';
 import { byActor } from './identity.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
-import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText } from './mcp/registry.mjs';
+import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -2767,6 +2767,14 @@ export class RunHarness extends EventEmitter {
     return this._engineEarlyRefusal(rp.guardrailsId || this.guardrailsId, () => this._engineGateNodes(rp));
   }
 
+  /** This run target's Team set input from the policy cache (mcp/registry.mjs cachedTeamFor); null when none or unreadable. */
+  async _cachedTeam() {
+    try {
+      const t = await cachedTeamFor(this.isWorkspace ? { workspaceId: this.workspace?.id } : { projectKey: this.members[0]?.projectKey });
+      return t?.required?.length ? { home: t.home, required: t.required } : null;
+    } catch { return null; }
+  }
+
   /** The shared body of engineStartRefusal / engineResumeRefusal. */
   async _engineEarlyRefusal(guardrailsId, gateNodes) {
     const name = this.claude.engine || 'claude';
@@ -2775,7 +2783,10 @@ export class RunHarness extends EventEmitter {
     try {
       const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
       args = { rules, guardrailsId: id, projectRules, nodes: await gateNodes() };
-      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+      // The run's team policy is resolved only once it runs: before that, the copies its Team set
+      // attaches come from the policy cache, as the previews read them.
+      const team = this.policyRun ? undefined : await this._cachedTeam();
+      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set(), { team }))?.result);
     } catch (err) {
       // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
       if (err?.engineRefused) return { error: err.message, overridable: false };
@@ -3139,16 +3150,18 @@ export class RunHarness extends EventEmitter {
    * Team set from the resolved policy, the opt-out and the tool-name limit of every model the run
    * may dispatch. Workspace scans and memory-defrag runs get none (designer default 3).
    * @param {string[]} taken  names the spawn already loads (run-context.mjs)
+   * @param {{team?: object|null}} [o]  the Team set input when the policy is not resolved yet (the engine gate's
+   *        early look reads it from the policy cache); omitted, it comes from this.policyRun
    * @returns {Promise<{result:object, catalog:object[]}|null>}
    */
-  async _resolveMcp(taken) {
+  async _resolveMcp(taken, { team } = {}) {
     if (this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return null;
     const { target, teamKey } = this._registryTarget();
     const required = requiredOf(this.policyRun);
     const [result, catalog] = await Promise.all([
       resolveRegistry({
         surface: 'pipeline', targets: [target],
-        teams: { [teamKey]: required.length ? { home: this.policyRun.home, required } : null },
+        teams: { [teamKey]: team !== undefined ? team : required.length ? { home: this.policyRun.home, required } : null },
         optOut: this.mcpOptOut, toolNameLimit: toolNameLimitFor([...this._mcpModels()]), copyCap: 24, taken,
         mcpTimeoutMs: MCP_STARTUP_MS.pipeline,
       }),

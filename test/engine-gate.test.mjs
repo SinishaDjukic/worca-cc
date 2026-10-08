@@ -565,6 +565,26 @@ test('engineStartRefusal reports an MCP registry layer as not liftable', async (
   assert.match(r.error, /attaches remote MCP servers \(pg\)/);
 });
 
+test('engineStartRefusal sees the Team set\'s copies before the run resolves its policy (from the policy cache)', async () => {
+  const HTTP = { type: 'http', url: 'https://mcp.example/' };
+  const team = { home: 'acme/platform', required: [{ name: 'github', type: 'http', url: 'https://gh.example.com/mcp' }] };
+  const o = createOrchestrator({ projectDir: tmp(), claude: { mock: true, engine: 'codex' } });
+  let asked = null;
+  o._cachedTeam = async () => team;
+  o._resolveMcp = async (_taken, opts) => {
+    asked = opts;
+    return opts?.team ? { result: { copies: [{ name: 'github', setName: 'Team' }], servers: { github: HTTP } }, catalog: {} } : { result: { copies: [], servers: {} }, catalog: {} };
+  };
+  assert.deepEqual(await o.engineStartRefusal(), {
+    error: 'engine codex: this run attaches remote MCP servers (github), and codex attaches stdio servers only',
+    overridable: false,
+  });
+  assert.deepEqual(asked, { team }, 'the cached Team set reaches the early look');
+  o.policyRun = { home: 'acme/platform', fields: {}, deviations: [] };
+  await o.engineStartRefusal();
+  assert.deepEqual(asked, { team: undefined }, 'a resolved policy is the run\'s own');
+});
+
 test('engineStartRefusal reports a failed preflight as not liftable', POSIX, async () => {
   // A non-mock run, so the adapter preflight runs. The same signed-out fake binary as the
   // real-preflight test below (:328-338), written inline.
