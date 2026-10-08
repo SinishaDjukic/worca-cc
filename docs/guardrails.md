@@ -157,7 +157,11 @@ enforces the set's latest definition.
   `python -c` with a fetch — tests need them) or from the browser MCP tools
   (`browser_navigate` accepts any URL, and the manual web-UI-testing agent
   needs them). The real egress control is the container egress overlay
-  ([`docs/docker.md`](docker.md), `docker/compose.egress.yml`).
+  ([`docs/docker.md`](docker.md), `docker/compose.egress.yml`). A hosting
+  platform's outbound network policy (`WORCA_EGRESS_MODE`) uses the same proxy
+  without the overlay's internal network, so it holds only tools that honour
+  `HTTPS_PROXY`: an interpreter's raw socket still goes direct there
+  ([remote-access.md → Outbound network policy](remote-access.md#outbound-network-policy-hosting-platform)).
 - Exempt from scrub/deny: UI-triggered utility agents outside pipeline runs
   (overview generation, agent generation), the `graphify` graph-build
   subprocess, and the `claude --help`/`--version`

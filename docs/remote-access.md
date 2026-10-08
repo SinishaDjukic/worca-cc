@@ -320,6 +320,44 @@ both set, worca posts a few seconds after start and then every 60 s:
   turn, terminal, action or setup job.
 - The body holds counts, the version and true/false values only: no titles, projects or names.
 
+## Outbound network policy (hosting platform)
+
+A platform that hosts worca instances can limit which hosts an instance's agents and tools reach.
+It sets three variables on the worca service (never on the broker or `cloudflared`):
+
+| Variable | Meaning |
+| --- | --- |
+| `WORCA_EGRESS_MODE` | `open`: no limit. `block`: every host except the blocklist. `allow`: only the allowlist, minus the blocklist. Unset: `open` (an instance set up before the policy existed). Any other value fails closed: `allow`. |
+| `WORCA_EGRESS_ALLOW` | Comma-separated hosts, read in `allow` mode only. The platform puts its own hosts first (its control plane, the broker's private address). |
+| `WORCA_EGRESS_DENY` | Comma-separated hosts. Always wins over the allowlist. `.invalid` stands for an empty list. |
+
+Hosts match exactly, ignoring case, a trailing dot and the port. A leading dot means every
+subdomain and **not** the name itself: `.example.com` matches `api.example.com` but not
+`example.com` (list both for both). The Docker overlay's own `WORCA_EGRESS_ALLOW` keeps its older
+meaning (the leading dot also matches the name itself) as long as `WORCA_EGRESS_MODE` is unset.
+
+In `block` and `allow` mode worca starts the egress proxy (`src/core/egress-proxy.mjs`, the one the
+[Docker overlay](docker.md#egress-allowlist) runs as a sidecar) on a loopback port inside its own
+process at boot, before anything else, and sets `HTTPS_PROXY`, `HTTP_PROXY` and their lower-case
+forms to it for every process it starts: agents, tools, the terminal, actions, MCP servers and a
+`worca` CLI started under it. `NO_PROXY` is replaced with loopback only, so no other host goes
+around the proxy. worca's own outbound calls (`fetch`) go through it too. The overlay's default
+allowlist never applies under a mode. If the proxy can't start, worca does not start (exit 78).
+`open` or no mode: no proxy, nothing changes.
+
+A refused host gets a `403` whose body names the host and says the organization's outbound
+network policy blocked it, so an agent's tool error says why (`curl`, `git` and `npm` show it as
+a failed `CONNECT`). worca's log has one `egress: … DENY CONNECT host:443` line per refusal, and
+a boot line with the mode and list sizes. Ask Worca's context shows the mode (`egress=allow`).
+
+**What it does not cover.** The proxy is the only control on a host such as Railway, which has no
+internal-only network to put the container on. A program that ignores the proxy variables, or opens
+a raw socket (`node -e`, `python -c`, a binary with its own DNS and TCP), goes direct, and so does
+an agent that unsets the variables. DNS lookups are not filtered. Treat the policy as a guard
+against mistakes and well-behaved tools leaving the list, not as containment of a hostile task.
+For that, run worca in Docker with the [egress overlay](docker.md#egress-allowlist): its internal
+network has no route out, so nothing but the proxy reaches the internet.
+
 ## Limits
 
 - **Every allowed person is an administrator.** Worca has one user: settings, credentials (the
@@ -333,6 +371,8 @@ both set, worca posts a few seconds after start and then every 60 s:
 - To share one deployment as a team without sharing a model key, run the
   [credential broker](credential-broker.md) in multi mode: each person saves their own keys on
   its key page, agents never hold a key, and costs are charged to whoever caused them.
+- An outbound network policy set by a hosting platform (`WORCA_EGRESS_MODE`) holds only programs
+  that honour `HTTPS_PROXY`; see [Outbound network policy](#outbound-network-policy-hosting-platform).
 - Desktop features act on the server: the folder picker becomes a text field
   (`WORCA_NO_NATIVE_DIALOG=1`).
 - The in-app folder browser, adding a project by path and installing agents into a folder stay inside
