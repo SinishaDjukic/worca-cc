@@ -206,8 +206,9 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
 }
 
 /**
- * A Codex chat's spawn (cascading-settings-design.md D13, §4.6): read-only sandbox, the lockdown (no shell, no native
- * web search, no browser/apps/sub-agents — codex.mjs CODEX_ASK_LOCKDOWN), the worca MCP server from the same per-turn
+ * A Codex chat's spawn (cascading-settings-design.md D13, §4.6): read-only sandbox, the lockdown (no shell, no image
+ * viewer, no native web search, no browser/apps — codex.mjs CODEX_ASK_LOCKDOWN; codex keeps its sub-agent tools, which the
+ * watchdog stops the turn on), the worca MCP server from the same per-turn
  * config file, approval `never` (exec has no other mode), and NO writable dir: memory is read through read_file, never
  * an --add-dir root. Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd, routing env) do not
  * exist on codex; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the adapter.

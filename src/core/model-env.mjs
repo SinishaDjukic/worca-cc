@@ -29,8 +29,8 @@ export const HELPER_ENGINES = ['claude', 'codex'];
  *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && engine !== 'cursor' ? engine : 'claude'; }
-/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex only while
- *  CODEX_ASK_LOCKDOWN is set; ask/models.mjs checks that). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
+ *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
 export const ASK_ENGINES = ['claude', 'codex'];
 export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];

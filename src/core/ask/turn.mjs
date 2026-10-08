@@ -49,7 +49,7 @@ import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { codexPreflight, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
 import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -187,6 +187,7 @@ class AskTurn extends EventEmitter {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
       codexPreflight: deps.codexPreflight ?? ((o) => codexPreflight(o)),
+      codexAskSupport: deps.codexAskSupport ?? ((o) => codexAskSupport(o)),
       codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
       codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
       askSlot: deps.askSlot ?? askSlotOf,
@@ -1033,7 +1034,8 @@ class AskTurn extends EventEmitter {
     return null;
   }
 
-  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14) and a ready codex (§4.6). Returns
+  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14), a codex that has every lockdown
+   *  flag, and a ready codex (§4.6). Returns
    *  the completed result when it refuses, else null. The mock never asks the real binary. */
   async _codexGate(limitsNow) {
     const d = this.deps;
@@ -1041,16 +1043,23 @@ class AskTurn extends EventEmitter {
     if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
       return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
     }
+    if (this.mock) return null;
+    const refuse = (refusal) => {
+      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
+      return this._complete({ kind: 'error', message: refusal, code: CODEX_NOT_READY_CODE });
+    };
+    // The lockdown's flags must all exist in this codex (codexAskSupport): a property of the binary, so a relayed turn,
+    // which runs the same binary as the person's agent user, is checked too.
+    let support = null;
+    try { support = await d.codexAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
+    if (support && support.refusal) return refuse(support.refusal);
     // A relayed turn runs codex as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a check
     // run here would ask about the server user's codex instead. Its sign-in failure surfaces from the turn itself.
-    if (this.mock || this.relay) return null;
+    if (this.relay) return null;
     let pf = null;
     // A chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
     try { pf = await d.codexPreflight({ signIn: !hasCodexEndpoint(this.model) }); } catch (err) { pf = { warning: err?.message || String(err) }; }
-    if (pf && pf.refusal) {
-      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${pf.refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
-      return this._complete({ kind: 'error', message: pf.refusal, code: CODEX_NOT_READY_CODE });
-    }
+    if (pf && pf.refusal) return refuse(pf.refusal);
     return null;
   }
 

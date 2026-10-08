@@ -62,13 +62,25 @@ const CODEX_FALSE = new Set(['allowedTools', 'hookTelemetry', 'turnBudget']);
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
 export const codexCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CODEX_FALSE.has(k)])));
 
-/** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no native web search,
- *  no browser / apps / plugins / sub-agents. null = this codex cannot be locked down, and an Ask turn on Codex refuses
- *  (turn.mjs). Task 0 (plans/ask-on-codex-spike.md (a)) found codex-cli 0.146.0-alpha.9.2 cannot be: under
- *  `--disable shell_tool --disable unified_exec …` the shell is gone, but `view_image` still reads any image file on
- *  disk and sub-agents still spawn, and no flag or config key switches them off. When a codex version can, set this
- *  to the verified list (valid on `exec` and `exec resume` alike) and re-run the spike. */
-export const CODEX_ASK_LOCKDOWN = null;
+/** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no image viewer, no native
+ *  web search, no browser / apps / plugins / goals / hooks, and no rules of its own, valid on `exec` and `exec resume`
+ *  alike. Verified on codex-cli 0.162.0-alpha.2 (plans/ask-on-codex-spike.md (h)) from the request codex sends: under
+ *  these flags `exec`'s nested tools are worca's MCP tools, the MCP resource tools and `apply_patch` (the read-only
+ *  sandbox rejects its writes). Code mode stays on: on 0.162 MCP tools are called through it, and its JavaScript has no
+ *  file system or network. codex keeps its sub-agent tools under every flag and key tried; a sub-agent inherits these
+ *  flags (no shell, no image viewer), and the turn's watchdog stops the chat when one appears (turn.mjs _watch).
+ *  A codex that does not know every feature named here refuses the flag at start-up; codexAskSupport says so first. */
+export const CODEX_ASK_LOCKDOWN = Object.freeze([
+  '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'view_image',
+  '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'in_app_browser',
+  '--disable', 'image_generation', '--disable', 'multi_agent', '--disable', 'multi_agent_v2', '--disable', 'tool_suggest',
+  '--disable', 'goals', '--disable', 'hooks', '-c', 'web_search="disabled"', '--ignore-rules',
+]);
+/** The codex features CODEX_ASK_LOCKDOWN switches off: every one must exist in the installed codex. */
+export const CODEX_ASK_FEATURES = Object.freeze(CODEX_ASK_LOCKDOWN.filter((a, i, all) => all[i - 1] === '--disable'));
+/** The oldest codex the Ask lockdown was verified on. */
+export const CODEX_ASK_MIN_VERSION = '0.162';
+
 /** Every read-only spawn — a utility job over untrusted input (a diff, a task text — D11) — runs with codex's shell off.
  *  The read-only sandbox still lets the shell read the whole disk, so a prompt-injected task could otherwise read a key
  *  file into its answer. Verified to remove the shell on codex-cli 0.146 (plans/ask-on-codex-spike.md (a)). An Ask
@@ -551,6 +563,33 @@ export function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000, sig
       else if (signedIn === false) resolve({ refusal: `${bin} is not signed in — run \`codex login\`` });
       else if (signedIn === null) resolve({ warning: `could not tell whether ${bin} is signed in (\`codex login status\` said nothing recognizable)` });
       else resolve({});
+    });
+  });
+}
+
+/** The feature names `codex features list` prints (its first column). */
+export function parseCodexFeatures(stdout = '') {
+  return new Set(String(stdout).split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((n) => /^[a-z][a-z0-9_]*$/.test(n)));
+}
+
+/**
+ * Can this codex be locked down for an Ask chat? Every feature CODEX_ASK_LOCKDOWN switches off must exist: a codex
+ * without one refuses the flag at start-up with a bare "Unknown feature flag", and one older than the lockdown's
+ * verification may have tools no flag here removes (codex-cli 0.146 has no `view_image` switch). Never rejects:
+ * resolves `{refusal}` (no binary, an older codex) or `{}`.
+ */
+export function codexAskSupport({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000 } = {}) {
+  return new Promise((resolve) => {
+    execFile(bin, ['features', 'list'], { timeout: timeoutMs }, (err, stdout) => {
+      if (err && typeof err.code !== 'number') {
+        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install codex, or point WORCA_CODEX_BIN at it` : `could not ask ${bin} which features it has (${err.message})` });
+        return;
+      }
+      const have = err ? new Set() : parseCodexFeatures(stdout);
+      const missing = CODEX_ASK_FEATURES.filter((f) => !have.has(f));
+      resolve(missing.length
+        ? { refusal: `this codex cannot switch off ${missing.join(', ')} for a chat — update codex to ${CODEX_ASK_MIN_VERSION} or newer` }
+        : {});
     });
   });
 }
