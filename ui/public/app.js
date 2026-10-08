@@ -21665,10 +21665,10 @@ function hdBaseMembers(record, data) {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
-      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck) }));
+      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck), resolving: !!br.baseResolve }));
   }
   const br = st.branch || {};
-  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck) }] : [];
+  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve }] : [];
 }
 
 function paintHdBase(screen, record, data) {
@@ -21678,8 +21678,11 @@ function paintHdBase(screen, record, data) {
   if (hdBaseMsgsFor !== record.id) { hdBaseMsgs.clear(); hdBaseMsgsFor = record.id; }
   const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
   const members = BASE_FINISHED.has(status) && record.id ? hdBaseMembers(record, data) : [];
-  box.hidden = !members.length;
-  list.replaceChildren(...members.map((m) => hdBaseItem(screen, record, data, m)));
+  // Only branches that need something show a line: up to date and not-yet-checked stay quiet (the
+  // check runs on open), unless an action's result or a pending resolution has something to say.
+  const shown = members.filter((m) => hdBaseNeedsLine(m));
+  box.hidden = !shown.length;
+  list.replaceChildren(...shown.map((m) => hdBaseItem(screen, record, data, m)));
   if (members.length) hdBaseAuto(screen, record, data, members);
 }
 
@@ -21705,6 +21708,11 @@ function hdBaseAuto(screen, record, data, members) {
     .catch(() => {});
 }
 
+function hdBaseNeedsLine(m) {
+  const st = baseCheckModel(m.rec).status;
+  return !['none', 'up-to-date', 'no-branch'].includes(st) || m.resolving || hdBaseMsgs.has(m.key || '');
+}
+
 function hdBaseItem(screen, record, data, m) {
   const md = baseCheckModel(m.rec);
   const li = document.createElement('li');
@@ -21712,17 +21720,21 @@ function hdBaseItem(screen, record, data, m) {
   if (m.key) li.dataset.memberKey = m.key;
   const el = (tag, cls, text) => { const x = document.createElement(tag); x.className = cls; if (text) x.textContent = text; return x; };
   if (m.name) li.append(el('span', 'hd-base-name mono', m.name));
-  li.append(el('span', `hd-base-pill tone-${md.tone}`, md.label));
-  if (md.when) li.append(el('span', 'hd-base-when hint', md.when));
-  // Buttons are advanced-level like Publish branch (index.html); the status line shows at every level.
-  // A rendered element is gated the same way as static markup: dataset.minLevel.
-  const btn = (cls, text, show, fn) => { const b = el('button', `${cls} btn-ghost`, text); b.type = 'button'; b.hidden = !show;
+  const pill = el('span', `hd-base-pill tone-${md.tone}`, md.label);
+  if (md.when) pill.title = md.when;
+  li.append(pill);
+  // The house small ghost button, compact as in other inline rows; advanced-level like Publish branch
+  // (index.html), while the status line shows at every level. Gated like static markup: dataset.minLevel.
+  const btn = (cls, text, show, fn) => { const b = el('button', `${cls} btn btn-ghost btn-mini`, text); b.type = 'button'; b.hidden = !show;
     b.dataset.minLevel = 'advanced'; b.onclick = () => fn(b); return b; };
+  // The check runs on open, so Re-check is only offered where it does something more: after a failed
+  // check, and to finish a resolution (it settles and pushes; the automatic check does not).
+  const recheck = md.status === 'error' || m.resolving;
   li.append(
-    btn('hd-base-recheck', 'Re-check', true, (b) => hdBaseAction(screen, record, data, m, 'base-check', b)),
     btn('hd-base-update', 'Update branch', md.canUpdate, (b) => hdBaseAction(screen, record, data, m, 'update-branch', b)),
     btn('hd-base-pipeline', 'Resolve in a pipeline', md.canResolve, (b) => hdBaseAction(screen, record, data, m, 'resolve-pipeline', b)),
     btn('hd-base-terminal', 'Resolve in a terminal', md.canResolve, (b) => hdBaseAction(screen, record, data, m, 'resolve-terminal', b)),
+    btn('hd-base-recheck', 'Re-check', recheck, (b) => hdBaseAction(screen, record, data, m, 'base-check', b)),
   );
   // D19: the last action's result or refusal for this member (kept across repaints by member key).
   const msg = hdBaseMsgs.get(m.key || '');
@@ -21744,6 +21756,13 @@ function hdBaseStore(data, key, rec) {
   const st = data && data.state; if (!st || !rec) return;
   if (st.target === 'workspace') { if (st.branches && st.branches[key]) st.branches[key].baseCheck = rec; }
   else if (st.branch) st.branch.baseCheck = rec;
+}
+
+/** The loaded detail learns of a resolution the server just marked, so Re-check shows without a reload. */
+function hdBaseMarkResolving(data, key) {
+  const st = data && data.state; if (!st) return;
+  const br = st.target === 'workspace' ? st.branches && st.branches[key] : st.branch;
+  if (br && !br.baseResolve) br.baseResolve = { via: 'terminal' };
 }
 
 const BASE_ACTION_TITLE = { 'base-check': 'Could not check the branch', 'update-branch': 'Could not update the branch',
@@ -21772,6 +21791,7 @@ async function hdBaseAction(screen, record, data, m, action, button) {
     }
     if (action === 'resolve-pipeline' && d.runId) { location.hash = `running/${d.runId}`; return; }
     if (action === 'resolve-terminal' && d.session) {
+      hdBaseMarkResolving(data, m.key);              // the server marked it: Re-check now settles it
       say(`Merge started: ${(d.conflicts || []).length} conflicting file(s). Commit it in the terminal, then Re-check.`);
       terminalPane?.showSession(d.session.id);
     }

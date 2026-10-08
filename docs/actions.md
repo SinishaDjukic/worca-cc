@@ -208,10 +208,10 @@ base. It fetches the base from the project's sync remote (`origin/dev`, say). If
 uses the local base. If the fetch fails, it uses the last fetched copy and says "offline". The check
 runs `git merge-tree` against the branch refs, so no checkout or worktree changes.
 
-The History detail shows one line per branch (one per repository in a workspace run), with when it
-was checked:
+The History detail shows a short line under the title for each branch that needs something (one per
+repository in a workspace run). Hover the status for when it was checked. A branch that is up to date
+shows no line.
 
-- **Up to date with dev**: nothing to do.
 - **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
   the branch.
 - **Conflicts in N files**, with the file list: resolve them in one of two ways.
@@ -220,6 +220,7 @@ was checked:
   - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
     the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
     commit the merge, then click **Re-check**.
+- **Could not check against dev**: the check failed (the reason follows). **Re-check** tries again.
 
 The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
 resolve run ends, on **Re-check**, and when you open the run's details if the branch was never checked

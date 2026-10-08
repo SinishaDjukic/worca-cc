@@ -4127,17 +4127,20 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 
 /* Base conflicts (#620) */
 .hd-base-check[hidden], .hd-base-check [hidden], .shipit-basecheck[hidden] { display: none; }
-.hd-base-members { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
-.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.hd-base-pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; }
-.hd-base-pill.tone-green { background: var(--green-bg); color: var(--green-ink); }
-.hd-base-pill.tone-blue { background: var(--blue-bg); color: var(--blue-ink); }
-.hd-base-pill.tone-red { background: var(--red-bg); color: var(--red-ink); }
-.hd-base-pill.tone-amber { background: var(--amber-bg); color: var(--amber-ink); }
-.hd-base-pill.tone-grey { background: var(--field); color: var(--ink-2); }   /* the .chip colours */
-.hd-base-msg { flex-basis: 100%; }
+.hd-base-members { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+/* One quiet line per branch that needs something: a tone dot, the status text, then compact buttons. */
+.hd-base-member { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font: 500 12.5px var(--sans); color: var(--ink-2); }
+.hd-base-name { color: var(--ink); }
+.hd-base-pill { display: inline-flex; align-items: center; gap: 7px; }
+.hd-base-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.hd-base-pill.tone-green::before { background: var(--green-ink); }
+.hd-base-pill.tone-blue::before { background: var(--blue-ink); }
+.hd-base-pill.tone-red::before { background: var(--red-ink); }
+.hd-base-pill.tone-amber::before { background: var(--amber-ink); }
+.hd-base-member .btn-mini { padding: 5px 10px; font-size: 12px; }
+.hd-base-msg { flex-basis: 100%; font-size: 12px; }
 .hd-base-msg-err { color: var(--red-ink); }
-.hd-base-files { flex-basis: 100%; margin: 2px 0 0 12px; padding: 0; font-size: 12px; }
+.hd-base-files { flex-basis: 100%; margin: 0 0 0 14px; padding: 0; list-style: none; font-size: 12px; color: var(--ink-3); }
 .shipit-basecheck.tone-red { color: var(--red-ink); }
 
 /* The PR description: label, Write / Preview tabs and Generate with AI on one row,

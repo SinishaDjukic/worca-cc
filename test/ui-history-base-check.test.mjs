@@ -43,12 +43,29 @@ test('conflicts: the pill, the files and both Resolve buttons; no Update branch'
   const [li] = items(ctx);
   assert.equal(items(ctx).length, 1);
   assert.equal(li.querySelector('.hd-base-pill').textContent, 'Conflicts in 2 files');
-  assert.match(li.querySelector('.hd-base-when').textContent, /checked 3 min ago/);
+  assert.match(li.querySelector('.hd-base-pill').title, /checked 3 min ago/);
   assert.deepEqual([...li.querySelectorAll('.hd-base-files li')].map((x) => x.textContent), ['a.js', 'b.js']);
   assert.equal(shown(btn(li, 'hd-base-update')), false);
   assert.equal(shown(btn(li, 'hd-base-pipeline')), true);
   assert.equal(shown(btn(li, 'hd-base-terminal')), true);
-  assert.equal(shown(btn(li, 'hd-base-recheck')), true);
+  assert.equal(shown(btn(li, 'hd-base-recheck')), false, 'the check runs on open: no Re-check here');
+  assert.ok(['btn', 'btn-ghost', 'btn-mini'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
+});
+
+test('quiet when nothing needs doing: up to date shows no line', async () => {
+  const ctx = await bootBase(UP);
+  assert.equal(box(ctx).hidden, true);
+  assert.equal(items(ctx).length, 0);
+});
+
+test('Re-check is offered after a failed check and while a resolution waits to be settled', async () => {
+  const ERR = { status: 'error', base: 'feat/log-ux', error: 'fetch failed', at: AT };
+  let ctx = await bootBase(ERR);
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-recheck')), true);
+  const detail = { ...DETAIL, state: { ...DETAIL.state, branch: { ...DETAIL.state.branch, baseCheck: UP, baseResolve: { via: 'terminal', at: 'x' } } } };
+  ctx = await bootBase(UP, { detail });
+  assert.equal(items(ctx).length, 1, 'a pending resolution keeps the line');
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-recheck')), true);
 });
 
 test('the status line is ungated; only the buttons are advanced-level', async () => {
@@ -89,7 +106,7 @@ test('a refusal shows its error in the member line', async () => {
 });
 
 test('Re-check posts base-check and repaints from members[0].baseCheck', async () => {
-  const ctx = await bootBase(CLEAN, { answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: CONFLICTS }], settled: {} }) });
+  const ctx = await bootBase({ status: 'error', base: 'feat/log-ux', error: 'fetch failed', at: AT }, { answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: CONFLICTS }], settled: {} }) });
   click(ctx.window, btn(items(ctx)[0], 'hd-base-recheck'));
   await settle(ctx.window, 6);
   assert.equal(ctx.posts[0].action, 'base-check');
@@ -122,6 +139,7 @@ test('Resolve in a terminal posts the size, says what to do next and shows the s
   assert.equal(ctx.posts[0].action, 'resolve-terminal');
   assert.deepEqual(ctx.posts[0].body, { cols: 100, rows: 30 });
   assert.match(items(ctx)[0].querySelector('.hd-base-msg').textContent, /Merge started: 2 conflicting file\(s\)/);
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-recheck')), true, 'Re-check is offered to finish the resolution');
   const i = ctx.calls.findIndex((c) => /resolve-terminal/.test(c.url));
   assert.ok(ctx.calls.slice(i + 1).some((c) => c.url.endsWith('/api/terminal')), 'the pane looked the session up (showSession)');
 });
@@ -161,7 +179,7 @@ test('auto check on open: a check older than 5 minutes is redone; a recent one i
   const old = { ...CLEAN, at: new Date(Date.now() - 10 * 60_000).toISOString() };
   let ctx = await bootBase(old, { answer: () => ok({ ok: true, members: [{ projectKey: KEY, baseCheck: UP }], settled: {} }) });
   assert.deepEqual(ctx.posts.map((x) => x.action), ['base-check']);
-  assert.equal(items(ctx)[0].querySelector('.hd-base-pill').textContent, 'Up to date with feat/log-ux');
+  assert.equal(box(ctx).hidden, true, 'now up to date: the line goes away');
   ctx = await bootBase(CLEAN);
   assert.equal(ctx.posts.length, 0);
 });
