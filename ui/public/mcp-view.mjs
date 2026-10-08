@@ -1000,10 +1000,11 @@ export function renderResolution(doc, title, preview, sets, what = 'project') {
 const SKILL_LAYER_WORDS = {
   'sideload-disabled': 'this machine’s managed Claude Code settings turn off --plugin-dir',
   'cli-no-plugin-dir': 'this Claude Code has no --plugin-dir',
+  'engine-no-skill-mount': 'this run has no .agents/skills mount for its engine',
 };
-/** `blocked`: this machine loads no set skill (preview.skills.layer.blocked) — a row with no skip reason still never loads. */
+/** `blocked`: no set skill loads (preview.skills.layer.blocked) — a row with no skip reason still never loads. */
 function skillStatus(r, blocked = false) {
-  if (!r.reason) return blocked ? 'not loaded on this machine' : 'ok';
+  if (!r.reason) return blocked ? 'not loaded' : 'ok';
   if (r.reason === 'off') return 'off';
   if (r.reason === 'needs-consent') return `off — ${r.why || 'turn it on in the team checklist'}`;
   return r.why || r.reason;
@@ -1033,7 +1034,7 @@ function skillLayerNote(doc, preview) {
   const sk = preview.skills || {};
   if (sk.newer) return h(doc, 'p', 'hint err', 'Set files need a newer Worca: no skills from sets reach runs');
   const b = sk.layer && sk.layer.blocked;
-  return b ? h(doc, 'p', 'hint warn', `skills from sets not loaded on this machine: ${sk.layer.text || SKILL_LAYER_WORDS[b] || b}`) : null;
+  return b ? h(doc, 'p', 'hint warn', `skills from sets not loaded: ${sk.layer.text || SKILL_LAYER_WORDS[b] || b}`) : null;
 }
 /** "Skills in runs on X" (spec §6.5): the name agents call · set link · status or skip reason. */
 export function renderSkillResolution(doc, title, preview, what = 'project') {
@@ -1044,7 +1045,8 @@ export function renderSkillResolution(doc, title, preview, what = 'project') {
   const rows = skillRows(doc, preview);
   if (!rows.length) { if (preview.skills !== null) card.appendChild(h(doc, 'p', 'hint', `No skills in runs on this ${what}`)); return card; }
   card.append(...rows, h(doc, 'small', 'hint',
-    'Each set reaches a run as a plugin of its own: agents call /<set>:<skill>. A skill the project commits under .claude/skills keeps its bare /name.'));
+    'Each set reaches a run as a plugin of its own: agents call /<set>:<skill>. A skill the project commits under .claude/skills keeps its bare /name. '
+    + 'A run on an engine other than Claude gets them in its .agents/skills by name, <set>-<skill> when the name is taken.'));
   return card;
 }
 

@@ -3,17 +3,33 @@
 // and which report a cost. ONE source for the harness, the CLI, the chat notifier, the scheduler feed and the browser.
 // Import-free: served to the browser as-is under /src/shared.
 
-/** The run engines (src/core/engines/index.mjs without the mock; src/core/model-env.mjs RUN_ENGINES — kept equal by a test). */
-export const ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor']);
-/** The engines that own catalog models (src/core/model-env.mjs MODEL_ENGINES, kept equal by a test). Copilot owns none. */
-export const MODEL_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'cursor']);
+/**
+ * Every run engine and what the rest of worca needs to know about it, in list order. The one place an engine is
+ * named: the lists below, src/core/model-env.mjs and the UI's engine pickers derive from it, and a test keeps it equal
+ * to the adapter registry (src/core/engines/index.mjs, which adds the mock).
+ *   label     its display name
+ *   models    it owns catalog models (step, helper and Ask slots; a switch falls back to its catalog default)
+ *   cost      its runs report a cost (adapter capability `cost`); where not, a cost shows as unknown, never $0.00
+ *   helpers   it runs a run's helper jobs itself (title, overview, PR description, Auto classifier, night decider);
+ *             else they run on Claude
+ *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
+ */
+export const ENGINES = Object.freeze({
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
+  copilot: Object.freeze({ label: 'Copilot', models: false, cost: false, helpers: true, beta: true }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
+});
+
+/** The run engines. */
+export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
+/** The engines that own catalog models. Copilot owns none. */
+export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
 
-const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot', cursor: 'Cursor' });
-
 /** The engines still in beta: every engine picker marks them. */
-export const BETA_ENGINES = Object.freeze(['codex', 'copilot', 'cursor']);
+export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].beta));
 
 /** Is `engine` in beta? A missing engine is Claude. */
 export function isBetaEngine(engine) {
@@ -28,13 +44,11 @@ export function engineChoiceLabel(engine) {
 /** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
 export function engineLabel(engine) {
   const e = engine || 'claude';
-  return LABELS[e] || String(e);
+  return Object.hasOwn(ENGINES, e) ? ENGINES[e].label : String(e);
 }
 
-const NO_COST_ENGINES = Object.freeze(['copilot', 'cursor']);
-/** Whether runs on `engine` report a cost (capability `cost`; a test keeps this equal to the registry). Where not,
- *  a cost shows as unknown, never $0.00. */
-export function engineReportsCost(engine) { return !NO_COST_ENGINES.includes(engine || 'claude'); }
+/** Whether runs on `engine` report a cost. Where not, a cost shows as unknown, never $0.00. An unknown engine does. */
+export function engineReportsCost(engine) { const e = engine || 'claude'; return !Object.hasOwn(ENGINES, e) || ENGINES[e].cost; }
 
 /** A run's cost as text for the CLI and chat: `fmt(costUsd)`, or "cost unknown" on an engine that reports none. A
  *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. */
@@ -68,6 +82,16 @@ export function usageLimitSwitches({ reason = null, limitEngine = null } = {}, r
 /** What switching a paused run to `engine` does, in one line. */
 export function engineSwitchNote(engine) {
   return `Starts the paused step fresh; the model falls back to ${engineLabel(engine)}'s default.`;
+}
+
+/** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("pass
+ *  --allow-unguarded-engine"); the UI names its checkbox, and chat sends the person to the UI (it never
+ *  sends the consent). Any other text is returned as is. */
+export function engineRefusalFor(text, surface) {
+  const s = String(text ?? '');
+  if (surface === 'ui') return s.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
+  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it from the worca-cc UI with Allow unguarded');
+  return s;
 }
 
 /** "Codex or Cursor" / "Claude, Codex or Cursor"; `label` maps each name (default engineLabel). */

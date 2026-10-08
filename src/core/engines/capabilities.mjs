@@ -1,5 +1,5 @@
 // src/core/engines/capabilities.mjs
-// The capability keys an engine adapter declares (plans/harness-bridge-design.md §6).
+// The capability keys an engine adapter declares.
 // Declared, never probed at spawn. A missing key means capable; only a literal
 // `false` degrades (the first false arrives with a non-Claude adapter).
 export const CAPABILITY_KEYS = Object.freeze([

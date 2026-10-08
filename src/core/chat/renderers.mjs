@@ -76,8 +76,12 @@ export function renderDone(meta, payload = {}) {
     }
     pushAway(parts, meta);
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
-    // A usage limit the engine hit: each other engine has its own allowance.
-    for (const e of usageLimitSwitches(payload, readyEnginesCached())) parts.push(`   Or continue now on ${engineLabel(e)}: /resume ${runRef(meta.runId)} ${e}`);
+    // A usage limit the engine hit: each other engine has its own allowance. Chat never sends the engine gate's
+    // consent, and whether the gate refuses is known only at resume (the target engine's preflight, the guardrail set
+    // and project rules it reads then), so the hint says the switch may need the UI.
+    for (const e of usageLimitSwitches(payload, readyEnginesCached())) {
+      parts.push(`   Or continue now on ${engineLabel(e)}: /resume ${runRef(meta.runId)} ${e} (may need Allow unguarded in the worca-cc UI)`);
+    }
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {

@@ -408,15 +408,42 @@ async function skillCandidates(dir, onError) {
     .map((name) => ({ name, source: join(dir, '.claude', 'skills', name) }));
 }
 
+/** The name a skill gets in a mount where `taken` names are in use: its own, else `<prefix><name>`, then `-2`, `-3`… */
+function freeSkillName(taken, name, prefix) {
+  if (!taken.has(name)) return name;
+  const base = `${prefix}${name}`;
+  let effective = base;
+  for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
+  return effective;
+}
+
+/**
+ * The names another engine's set skills would get in its `.agents/skills` (assembleSkills' rule), for a preview
+ * before the run exists: after the skills of `dirs` (each a member or the root layer, its `.claude/skills`) and the
+ * user's own, each set skill in order. Names the checkout tracks and the skills a workflow requires are known only
+ * at run start, so a run can still rename one more.
+ * @param {{dirs?: string[], homeDir?: string|null, setSkills?: Array<{key:string, name:string, prefix:string}>}} a
+ * @returns {Promise<Record<string,string>>} each set skill's key → its name
+ */
+export async function previewSetSkillNames({ dirs = [], homeDir = null, setSkills = [] } = {}) {
+  const taken = new Set();
+  for (const d of [...dirs, homeDir].filter(Boolean)) for (const c of await skillCandidates(d)) taken.add(c.name);
+  const out = {};
+  for (const s of setSkills) taken.add((out[s.key] = freeSkillName(taken, s.name, s.prefix)));
+  return out;
+}
+
 /**
  * Mount every skill entry into ONE target `.claude/skills` dir (§5.6).
  *
  * Entry order IS the collision-precedence order: (1) each member's real dir,
  * members sorted by projectKey; (2) `<projectsRoot>/.claude/skills` (skipped in the
  * home special case — E4 puts `~/.claude/skills` on the scan path regardless of
- * cwd); (3) `requiresSkills` resolutions whose source is `bundle` / `plugin:*`.
+ * cwd); (3) `requiresSkills` resolutions whose source is `bundle` / `plugin:*`;
+ * (4) `setSkills`, another engine's set skills (skills registry: Claude loads them
+ * through --plugin-dir instead), each `{ key, name, source, prefix, origin }`.
  * First occupant keeps the bare name; later occupants are renamed by SOURCE CLASS
- * (`<memberSlug>-`, `root-`, `worca-cc-`) with a deterministic numeric tiebreak, and
+ * (`<memberSlug>-`, `root-`, `worca-cc-`, `<set slug>-`) with a deterministic numeric tiebreak, and
  * their SKILL.md frontmatter `name:` is rewritten to match (gated on V2, PASSED).
  * Dropping is forbidden — R2 requires the skills of ALL members.
  *
@@ -427,11 +454,13 @@ async function skillCandidates(dir, onError) {
  * user's real source file.
  *
  * @returns {Promise<{names:string[], records:Array<object>, renames:Record<string,string>,
- *                    roster:Array<object>, warnings:string[]}>}
+ *                    roster:Array<object>, warnings:string[], setNames:Record<string,string>}>}
+ *          `setNames`: each mounted set skill's `key` → the name it got
  */
 export async function assembleSkills({
   target, members = [], projectsRoot, resolutions, homeDir,
   mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'), linkUserSkills = false,
+  setSkills = [],
 }) {
   const warnings = [];
   const onError = fsWarner(warnings);        // ENOENT stays silent; a real error is named
@@ -487,6 +516,8 @@ export async function assembleSkills({
     if (!r?.path) continue;
     candidates.push({ name, source: r.path, cls: 'worca-cc', prefix: 'worca-cc-', origin: `worca-cc ${src}` });
   }
+  for (const c of setSkills) candidates.push({ ...c, cls: 'set' });
+  const setNames = {};
 
   // Tracked names occupy the namespace: a rename may never land on one either.
   const taken = new Set(trackedNames);
@@ -499,12 +530,7 @@ export async function assembleSkills({
       );
       continue;
     }
-    let effective = cand.name;
-    if (taken.has(effective)) {
-      const base = `${cand.prefix}${cand.name}`;
-      effective = base;
-      for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
-    }
+    const effective = freeSkillName(taken, cand.name, cand.prefix);
     const renamed = effective !== cand.name;
     const dest = join(target, effective);
     // Symlink mode cannot carry a rename: the frontmatter rewrite would land in the
@@ -538,6 +564,7 @@ export async function assembleSkills({
       ...(asLink ? { mount: 'symlink' } : {}),
     });
     roster.push({ name: effective, origin: cand.origin, renamedFrom: renamed ? cand.name : null });
+    if (cand.cls === 'set') setNames[cand.key] = effective;
   }
 
   if (mount === 'symlink' && names.length) {
@@ -547,7 +574,7 @@ export async function assembleSkills({
       'to restore isolation.',
     );
   }
-  return { names, records, renames, roster, warnings };
+  return { names, records, renames, roster, warnings, setNames };
 }
 
 /** Accept the resolutions map as a Map (fresh run) or a plain object (from run.json). */
@@ -1143,12 +1170,15 @@ export function generateClaudeMd({
  * @param {((taken:string[]) => Promise<{result:object, catalog:object[]}|null>)|null} [a.registry]
  *        the MCP registry layer (MCP registry design §6.1): called with the names the spawn
  *        already uses; null (or a null answer) adds nothing
+ * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
+ *        `setSkillNames` maps each mounted one's key to the name it got
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
   runRoot, members = [], projectsRoot, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
+  setSkills = [],
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1231,7 +1261,7 @@ export async function assembleRunContext({
   const skillsRel = skillsRelFor(engine);
   const injectedPaths = {};
   let skillMountDir = null;
-  let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [] };
+  let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [], setNames: {} };
   const primary = sorted[0] || null;
   // Copying the whole of the user's `~/.claude/skills` into every Codex run's checkout costs a copy per run and per
   // resume, so those entries are linked. A link stays read-only to the agent: codex's sandbox checks the real path,
@@ -1243,7 +1273,7 @@ export async function assembleRunContext({
     skillMountDir = join(runRoot, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
     });
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
   } else if (primary?.worktreeDir) {
@@ -1252,7 +1282,7 @@ export async function assembleRunContext({
     skillMountDir = join(primary.worktreeDir, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
       trackedNames: trackedSkillNames(primary.worktreeDir, skillsRel),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
@@ -1521,6 +1551,7 @@ export async function assembleRunContext({
     mcpServerNames,
     skillMountDir,
     injectedSkillNames: skillsOut.names,
+    setSkillNames: skillsOut.setNames,
     injectedPaths,
     renames,
     warnings,
@@ -1546,7 +1577,8 @@ export async function assembleRunContext({
 
 /**
  * Skills registry (design §4.3): the set-skill clause of a run's audit line — "3 set skills in 2
- * plugins (1 skipped)", or "2 set skills not loaded (sideload-disabled; 1 skipped)" for a blocked
+ * plugins (1 skipped)", on another engine "2 set skills in .agents/skills (deploy, billing-notes;
+ * 1 skipped)", or "2 set skills not loaded (sideload-disabled; 1 skipped)" for a blocked
  * layer. '' without a layer (a run whose target brings no set skill).
  * @param {{mounted:object[], plugins:object[], skipped:object[], blocked:string|null}|null} layer  run-harness `skillLayer`
  * @returns {string}
@@ -1557,6 +1589,8 @@ export function renderSkillAudit(layer) {
   const n = layer.mounted?.length || 0;
   const k = layer.skipped?.length || 0;
   if (layer.blocked) return `${plural(n, 'set skill')} not loaded (${layer.blocked}; ${k} skipped)`;
+  // Another engine: mounted under the names its `.agents/skills` gave them (`<set slug>-<name>` on a clash).
+  if (layer.rel) return `${plural(n, 'set skill')} in ${layer.rel} (${n ? `${(layer.names || []).join(', ')}; ` : ''}${k} skipped)`;
   return `${plural(n, 'set skill')} in ${plural(layer.plugins?.length || 0, 'plugin')} (${k} skipped)`;
 }
 

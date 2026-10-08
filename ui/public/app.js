@@ -132,7 +132,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -3702,11 +3702,13 @@ function renderAgentRows(rows) {
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
-      // The model's own engine; a pick the catalog no longer holds is the other engine's (Codex on a Claude run).
-      const owner = entry ? engineLabel(entry.engine || 'claude') : (state.engine === 'claude' ? 'Codex' : 'Claude');
+      // The model's own engine; a pick the catalog no longer holds belongs to an engine this run is not on.
+      const owner = entry ? engineLabel(entry.engine || 'claude') : null;
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
-      kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
+      kept.textContent = owner
+        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`
+        : `Your pick ${row.enginePair.model} is kept for runs on its own engine — choose a model here to replace it.`;
       body.appendChild(kept);
     }
 
@@ -3875,8 +3877,12 @@ function setRunEngine(engine) {
   }
   paintEngineHints();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine.
-  if (prev !== state.engine) void renderWorkflowConfig(state.workflowId);
+  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
+  // picker too: another engine names set skills as its .agents/skills mount would.
+  if (prev !== state.engine) {
+    void renderWorkflowConfig(state.workflowId);
+    if (currentView() === 'new') schedulePolicyLine();
+  }
 }
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
@@ -18174,7 +18180,7 @@ async function paintMcpRuns() {
     try {
       const r = await fetch('/api/mcp/preview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels() }),
+        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels(), engine: state.engine }),
       });
       data = r.ok ? await safeJson(r) : null;
     } catch { data = null; }
@@ -18297,23 +18303,26 @@ async function confirmPastTeamCap(runId, btn) {
 // the saved run, and the run page's usage-limit banner. The consent is New pipeline's own.
 const ENGINE_UNGUARDED_LABEL = 'Allow unguarded: run without the rules this engine cannot enforce';
 
-/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and one
- *  "Resume on <engine>" per other engine, whose line says what switching does. Every other engine is
- *  listed (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
+/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and, when the pause
+ *  offers the switch (a usage limit the engine hit, as the banner and the History bar), one "Resume on
+ *  <engine>" per other engine, whose line says what switching does. Every other engine is listed, ready
+ *  or not (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
  *  hidden template; clones go before it, and the menu's one delegated listener handles them. Every frame
  *  repaints, so an unchanged menu is left alone: re-cloning under an open menu would lose a click. */
-function paintResumeEngineItems(menu, runEngine) {
+function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
-  if (menu.dataset.engineSig === saved) return;
-  menu.dataset.engineSig = saved;
+  const offers = usageLimitSwitches(pause || {});
+  const sig = `${saved}|${offers.join(',')}`;
+  if (menu.dataset.engineSig === sig) return;
+  menu.dataset.engineSig = sig;
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
   if (!tpl) return;
   tpl.dataset.template = '1'; tpl.hidden = true;
   menu.querySelectorAll('.resume-on-other:not([data-template])').forEach((b) => b.remove());
-  for (const e of otherEngines(saved)) {
+  for (const e of offers) {
     const item = tpl.cloneNode(true);
     delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
     item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
@@ -21270,7 +21279,7 @@ function paintHdLive(screen, record, data) {
   gateHdResume(resumeBtn, gate);
   // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
   // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
-  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data));
+  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
   const resumeAtItem = screen.querySelector('.hd-resume-at-item');
   if (resumeAtItem) {
     const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
@@ -21786,8 +21795,12 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
  * user may still pick "Start it late"), then POSTs the ticket.
  */
-async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null }, btn) {
+async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
+  // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
+  const saved = runEngine || 'claude';
+  const others = usageLimitSwitches(pause || {});
   const res = await openScheduleSheet({
+    engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
     allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
@@ -21804,6 +21817,7 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       body: JSON.stringify({
         pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
         ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        ...(res.engine ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -22071,7 +22085,8 @@ function setupHdActions(screen, record, data) {
       if (resumeAtItem.disabled) return;
       closeResumeMenu();
       const r = hdCurrentRecord(record);   // never the load-time object (record-identity rule)
-      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null }, resumeAtItem);
+      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null,
+        runEngine: hdRunEngine(r, data), pause: hdPauseOf(hdLiveRun(r), screen, data, r) }, resumeAtItem);
     });
     resumeMenu.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); closeResumeMenu(); resumeMore.focus(); }
@@ -25137,7 +25152,8 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
     if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
-    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+    const whose = r.limitEngine ? `${engineLabel(r.limitEngine)}'s ` : '';
+    return `Paused — ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
     // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
@@ -26338,7 +26354,7 @@ function statusPill(r) {
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
-    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: r.limitEngine ? `Paused · ${engineLabel(r.limitEngine)} usage limit` : 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
@@ -28197,7 +28213,8 @@ function openRunDetail(runId, { instant = false } = {}) {
     if (rdResumeAt.disabled) return;
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
-    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null }, rdResumeAt);
+    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null,
+      runEngine: r.runEngine, pause: { reason: r.pauseReason, limitEngine: r.limitEngine } }, rdResumeAt);
   });
   rdResumeMenu.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeRdResumeMenu(); rdResumeMore.focus(); }
@@ -29537,7 +29554,7 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine);
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
   const ns = screen.querySelector('.rd-night');

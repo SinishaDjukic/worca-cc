@@ -1,5 +1,5 @@
 // src/core/engines/codex.mjs
-// The codex CLI adapter (plans/harness-bridge-design.md §10): `codex exec --json`
+// The codex CLI adapter: `codex exec --json`
 // argv, the JSONL stream normalized into worca's event vocabulary, cost estimated
 // from codex's cumulative per-thread usage, error classification, and the spawn
 // path on the shared supervisor (engines/spawn.mjs).
@@ -100,7 +100,7 @@ function bashPrefix(rule) {
   return body.split(/\s+/);
 }
 
-/** How far a codex command rule reaches (plans/harness-bridge-design.md §10.3; verified on codex-cli 0.146). codex
+/** How far a codex command rule reaches (verified on codex-cli 0.146). codex
  *  splits a shell script into commands only when it is plain words: a redirect, a `$(…)`, a `$VAR` or a `VAR=x cmd`
  *  makes it match the whole `bash -lc …` argv instead, so the rule never sees the command. The gate and the run log
  *  say so in these words. */

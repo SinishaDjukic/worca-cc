@@ -202,7 +202,7 @@ import {
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
@@ -2230,7 +2230,19 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
+            prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
@@ -2346,7 +2358,19 @@ const startRunHandler = async (req, res) => {
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
-      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 }),
+            claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -2407,7 +2431,7 @@ const startRunHandler = async (req, res) => {
     // arrive as the run's error event.
     if (runEngine.engine) {
       const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -2494,6 +2518,7 @@ app.post('/api/run', startRunHandler);
 // a target's set skills. Namespaced imports (ES imports are hoisted), kept beside their only users so no
 // other region's imports can collide with these names.
 import * as runSkillResolve from '../src/core/skills-registry/resolve.mjs';
+import { previewSetSkillNames } from '../src/core/run-context.mjs';
 import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
@@ -2515,15 +2540,25 @@ async function skillTeamFor(target) {
   return t?.requiredSkills?.length ? { home: t.home, required: t.requiredSkills } : null;
 }
 
-/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. The layer
- *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag
- *  support is probed at run start). */
-async function skillRunPreview(target, { optOut = [] } = {}) {
+/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. On Claude the layer
+ *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag support is
+ *  probed at run start). Another engine mounts them in `.agents/skills`: `agentNames` maps each one's
+ *  qualifiedName to the name it would get there. */
+async function skillRunPreview(target, { optOut = [], engine = 'claude' } = {}) {
   const team = await skillTeamFor(target);
   const result = await runSkillResolve.resolveSkillRegistry({
     surface: 'pipeline', targets: [target], teams: { [target.kind === 'project' ? target.key : `ws:${target.id}`]: team },
     optOut, skillCap: runSkillResolve.SKILL_CAP.pipeline,
   });
+  if (engine !== 'claude') {
+    const keys = new Set(target.kind === 'project' ? [target.key] : target.members.map((m) => m.key));
+    const dirs = (await listProjects()).filter((p) => keys.has(p.key)).map((p) => p.path);
+    const root = getProjectsRoot();
+    if (root && path.resolve(root) !== path.resolve(os.homedir())) dirs.push(root);
+    const agentNames = await previewSetSkillNames({ dirs, homeDir: os.homedir(),
+      setSkills: result.mounted.map((m) => ({ key: m.qualifiedName, name: m.name, prefix: `${m.setSlug || m.pluginName}-` })) });
+    return { result, team, blocked: null, agentNames };
+  }
   const blocked = result.mounted.length && runSkillHost.skillHostFacts().sideloadDisabled ? 'sideload-disabled' : null;
   return { result, team, blocked };
 }
@@ -2581,6 +2616,7 @@ app.post('/api/mcp/preview', async (req, res) => {
   if (b.models != null && (!Array.isArray(b.models) || b.models.length > 100 || !b.models.every((m) => typeof m === 'string'))) {
     return badRequest(res, 'models must be an array of model ids');
   }
+  if (b.engine != null && !ENGINE_NAMES.includes(b.engine)) return badRequest(res, `engine must be one of ${ENGINE_NAMES.join(', ')}`);
   try {
     const target = await mcpTargetOf(b.target);
     if (target === undefined) return badRequest(res, 'target must be { projectKey } or { workspaceId }');
@@ -2589,7 +2625,7 @@ app.post('/api/mcp/preview', async (req, res) => {
     const why = (sk) => skipReasonText(sk, catalog);
     // Skills registry §4.5: the set skills beside the servers. A skills fault leaves `skills` null and the
     // servers' answer intact (the run resolves again at start).
-    const sr = await skillRunPreview(target, { optOut: opt.list }).catch(() => null);
+    const sr = await skillRunPreview(target, { optOut: opt.list, engine: b.engine || 'claude' }).catch(() => null);
     const count = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
     const skillSets = new Map((sr?.result.sets || []).map((s) => [s.id, s]));
     // Both halves collect the target's sets with one rule (P2 collectSets; the Team input carries the required skills
@@ -2610,7 +2646,8 @@ app.post('/api/mcp/preview', async (req, res) => {
           ? runSkillPolicy.skillDeviations(sr.team ? { 'skills.required': { value: sr.team.required } } : {}, sr.result, skillWhy) : []),
       ],
       skills: sr && {
-        mounted: sr.result.mounted.map(({ dir, ...m }) => m),   // never a host path to the browser
+        // never a host path to the browser; on another engine, the name `.agents/skills` would give it
+        mounted: sr.result.mounted.map(({ dir, ...m }) => (sr.agentNames ? { ...m, agentName: sr.agentNames[m.qualifiedName] } : m)),
         plugins: sr.result.plugins,
         skipped: sr.result.skipped.map((s) => ({ ...s, message: runSkillTexts.skillSkipMessage(s), why: skillWhy(s) })),
         started: sr.blocked ? 0 : sr.result.mounted.length,
@@ -2848,9 +2885,11 @@ async function fireResumeTicket(ticket, pipelineId) {
   }
   const scheduledBy = ticket.createdBy || null;
   try {
+    const engine = ticket.request && ticket.request.internal && ticket.request.internal.resumeEngine;
     const out = await resumeRun(pipelineId, {
       by: scheduledBy || 'local',
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
+      ...(engine ? { engine } : {}),
     });
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
@@ -3052,9 +3091,10 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin? } — a one-off
+// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine? } — a one-off
 // "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
+// `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
 app.post('/api/schedules/resume', async (req, res) => {
   try {
     const body = req.body || {};
@@ -3074,8 +3114,23 @@ app.post('/api/schedules/resume', async (req, res) => {
       if (!Number.isSafeInteger(body.graceMin) || body.graceMin < 0 || body.graceMin > 10080) return badRequest(res, 'graceMin must be a whole number of minutes from 0 to 10080');
       graceMin = body.graceMin;
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’`;
-    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by } };
+    let engine = null;
+    if (body.engine != null) {
+      try { engine = resumeEngineOpts(body.engine).engine || null; } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+    }
+    if (engine) {
+      const saved = readPipelineForResume(v.row.id);
+      let dirs;
+      try { dirs = await resumeTargetDirs(saved); } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+      const probe = await createOrchestratorFor({
+        projectDir: dirs.projectDir, ...(dirs.workspace ? { workspace: dirs.workspace } : {}), agentsDir: AGENTS_DIR,
+        claude: { permissionMode: 'acceptEdits', mock: serverMockMode(), engine }, resume: saved,
+      });
+      const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
+    }
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}`;
+    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
       runAtMs: at.ms, request, ifMissed, graceMin,
@@ -3950,6 +4005,23 @@ function resumeEngineOpts(engine, allowUnguardedEngine) {
   try { return { engine: selectRunEngine(engine), ...opts }; } catch (err) { throw new ResumeError(400, { error: err.message }); }
 }
 
+/** A saved run's resume target: workspace runs carry their dirs in workspace_meta; single-project runs map
+ *  project_key back through the registry. Throws a ResumeError when neither resolves. */
+async function resumeTargetDirs(saved) {
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    return {
+      projectDir: projects[0].projectDir,
+      workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
+    };
+  }
+  const projectDir = await projectDirForKey(saved.row.project_key);
+  if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  return { projectDir, workspace: undefined };
+}
+
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
@@ -4013,23 +4085,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
   }
 
-  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-  // runs map project_key back through the registry.
-  let projectDir = null;
-  let workspace;
-  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
-    const meta = JSON.parse(saved.row.workspace_meta);
-    const projects = (meta.projects || []).map((p) => ({ ...p }));
-    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
-    projectDir = projects[0].projectDir;
-    workspace = {
-      id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
-      description: meta.workspaceDescription || '', projects,
-    };
-  } else {
-    projectDir = await projectDirForKey(saved.row.project_key);
-    if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
-  }
+  const { projectDir, workspace } = await resumeTargetDirs(saved);
 
   // Base check (opt-in, plan D7) BEFORE the team gates, which save acknowledgements and audit
   // lines a cancelled "base moved" confirmation must not leave behind. A memory-defrag run keeps
@@ -4194,7 +4250,8 @@ app.post('/api/resume', async (req, res) => {
     });
     res.json(out);
   } catch (err) {
-    if (err instanceof ResumeError) return res.status(err.status).json(err.body);
+    // The engine gate's refusal is the run's CLI wording; this answer is the UI's.
+    if (err instanceof ResumeError) return res.status(err.status).json(err.body.code === 'engine-refused' ? { ...err.body, error: engineRefusalFor(err.body.error, 'ui') } : err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });

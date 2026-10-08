@@ -41,12 +41,16 @@ export function renderRunSkills(mount, { doc = globalThis.document } = {}) {
     root.append(d);
   };
   line('hd-ov-label', 'SKILLS FROM SETS');
-  const names = plugins.flatMap((p) => (Array.isArray(p.skills) ? p.skills : []).map((s) => `${p.pluginName}:${s}`));
-  if (blocked) line('hint hd-ov-skills-blocked', `skills from sets not loaded on this machine: ${mount.layer.text || blocked}`);
+  // Another engine records the names its `.agents/skills` mount gave them (`rel`, `names`); Claude's are `<plugin>:<skill>`.
+  const names = Array.isArray(mount.names) ? mount.names
+    : plugins.flatMap((p) => (Array.isArray(p.skills) ? p.skills : []).map((s) => `${p.pluginName}:${s}`));
+  if (blocked) line('hint hd-ov-skills-blocked', `skills from sets not loaded: ${mount.layer.text || blocked}`);
   else if (names.length) line('mono hd-ov-skills-names', names.join(', '));
   if (skipped.length) line('hint hd-ov-skills-skipped', `skipped: ${skipped.map((s) => `${s.qualifiedName ?? s.name} (${s.setName} — ${s.why || s.reason})`).join(', ')}`);
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-  line('hint', blocked ? 'Your personal Claude Code skills still load.'
+  // A run on another engine with no `.agents/skills` mount gets no skill from a folder at all: no note.
+  if (blocked !== 'engine-no-skill-mount') line('hint', blocked ? 'Your personal Claude Code skills still load.'
+    : mount.rel ? `${plural(names.length, 'set skill')} in ${mount.rel} · plus your project and personal skills`
     : `${plural(names.length, 'set skill')} in ${plural(plugins.length, 'plugin')} · plus your personal Claude Code skills`);
   return root;
 }
@@ -120,7 +124,7 @@ export function renderMcpRunsPop(preview, optOut, { doc = globalThis.document, p
   if (blocked) {
     const line = doc.createElement('div');
     line.className = 'mcp-runs-row is-skipped mcp-runs-blocked';
-    line.textContent = `skills from sets not loaded on this machine: ${preview.skills.layer.text || blocked}`;
+    line.textContent = `skills from sets not loaded: ${preview.skills.layer.text || blocked}`;
     root.append(line);
   }
   const skillsOn = !blocked && preview.skills ? preview.skills : { mounted: [], skipped: [] };
@@ -145,7 +149,8 @@ export function renderMcpRunsPop(preview, optOut, { doc = globalThis.document, p
       const v = mcpSkipView(s);
       row(v.name, null, v.why, ` is-skipped${v.problem ? ' is-problem' : ''}`);
     }
-    for (const s of skills) row(s.qualifiedName, box(!off.has(skillKeyOf(s)), [skillKeyOf(s)], 'row'), '', ' is-skill');
+    // On another engine the name its `.agents/skills` would give it (`agentName`), else the one Claude's agents call.
+    for (const s of skills) row(s.agentName || s.qualifiedName, box(!off.has(skillKeyOf(s)), [skillKeyOf(s)], 'row'), '', ' is-skill');
     for (const s of skippedSkills) {
       const v = skillSkipView(s);
       row(v.name, null, v.why, ` is-skill is-skipped${v.problem ? ' is-problem' : ''}`);

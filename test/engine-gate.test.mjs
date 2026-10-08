@@ -1,4 +1,4 @@
-// test/engine-gate.test.mjs — choosing an engine for a run (plans/harness-bridge-design.md §10):
+// test/engine-gate.test.mjs — choosing an engine for a run:
 // the run-start gate (refusals + degradation audit), the per-node ctx a non-Claude engine
 // gets, and runClaude's dispatch by engine name.
 import { test, after, beforeEach, afterEach } from 'node:test';
@@ -583,6 +583,26 @@ test('engineStartRefusal reports an MCP registry layer as not liftable', async (
   const r = await both.engineStartRefusal();
   assert.equal(r.overridable, false);
   assert.match(r.error, /codex cannot attach — remote, and codex attaches stdio servers only: pg$/);
+});
+
+test('engineStartRefusal sees the Team set\'s copies before the run resolves its policy (from the policy cache)', async () => {
+  const HTTP = { type: 'http', url: 'https://mcp.example/' };
+  const team = { home: 'acme/platform', required: [{ name: 'github', type: 'http', url: 'https://gh.example.com/mcp' }] };
+  const o = createOrchestrator({ projectDir: tmp(), claude: { mock: true, engine: 'codex' } });
+  let asked = null;
+  o._cachedTeam = async () => team;
+  o._resolveMcp = async (_taken, opts) => {
+    asked = opts;
+    return opts?.team ? { result: { copies: [{ name: 'github', setName: 'Team' }], servers: { github: HTTP } }, catalog: {} } : { result: { copies: [], servers: {} }, catalog: {} };
+  };
+  assert.deepEqual(await o.engineStartRefusal(), {
+    error: 'engine codex: this run attaches MCP servers codex cannot attach — remote, and codex attaches stdio servers only: github',
+    overridable: false,
+  });
+  assert.deepEqual(asked, { team }, 'the cached Team set reaches the early look');
+  o.policyRun = { home: 'acme/platform', fields: {}, deviations: [] };
+  await o.engineStartRefusal();
+  assert.deepEqual(asked, { team: undefined }, 'a resolved policy is the run\'s own');
 });
 
 test('engineStartRefusal reports a failed preflight as not liftable', POSIX, async () => {

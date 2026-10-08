@@ -14,9 +14,9 @@ import { basename } from 'node:path';
 import { getDb } from '../core/db.mjs';
 import { listAllPipelines, readPipelineByKey, readStoreMeta } from '../core/artifacts.mjs';
 import { readUiInstance } from '../core/ui-instance.mjs';
-import { fmtDur, executionCount, loopDeliveries } from './render.mjs';
+import { fmtDur, executionCount, loopDeliveries, formatResumeHints } from './render.mjs';
 import { formatInstant } from '../shared/schedule/recurrence.mjs';
-import { runCostLabel } from '../shared/engine-switch.mjs';
+import { runCostLabel, engineLabel } from '../shared/engine-switch.mjs';
 
 export const RUNS_HELP = `worca runs — list and inspect pipeline runs
 
@@ -151,19 +151,19 @@ async function runsList(rest, { out, c, fail }) {
     const st = r.pauseReason
       ? `${r.status} (${String(r.pauseReason).replace(/_/g, ' ')})`
       : String(r.status || 'unknown');
-    rows.push({ id: r.id, status: st, color: STATUS_COLOR[r.status] || '', started: ago(r.startedAt), project: oneLine(r.projectName || r.projectKey || '—', 24), title: oneLine(r.title) });
+    rows.push({ id: r.id, status: st, color: STATUS_COLOR[r.status] || '', engine: engineLabel(r.runEngine), started: ago(r.startedAt), project: oneLine(r.projectName || r.projectKey || '—', 24), title: oneLine(r.title) });
   }
   // Padded columns, widths from the data (capped where a value can be long).
   // Widths are computed on PLAIN text; the status cell is colored after padding,
   // so ANSI codes never break the alignment.
-  const HEADER = ['ID', 'STATUS', 'STARTED', 'PROJECT', 'TITLE'];
-  const cell = (r) => [r.id, r.status, r.started, r.project, r.title];
+  const HEADER = ['ID', 'STATUS', 'ENGINE', 'STARTED', 'PROJECT', 'TITLE'];
+  const cell = (r) => [r.id, r.status, r.engine, r.started, r.project, r.title];
   const width = (i) => Math.max(HEADER[i].length, ...rows.map((r) => cell(r)[i].length));
-  const [wId, wStatus, wStarted, wProject] = [width(0), width(1), width(2), width(3)];
-  out(c('bold', `  ${'ID'.padEnd(wId)}  ${'STATUS'.padEnd(wStatus)}  ${'STARTED'.padEnd(wStarted)}  ${'PROJECT'.padEnd(wProject)}  TITLE`));
+  const [wId, wStatus, wEngine, wStarted, wProject] = [width(0), width(1), width(2), width(3), width(4)];
+  out(c('bold', `  ${'ID'.padEnd(wId)}  ${'STATUS'.padEnd(wStatus)}  ${'ENGINE'.padEnd(wEngine)}  ${'STARTED'.padEnd(wStarted)}  ${'PROJECT'.padEnd(wProject)}  TITLE`));
   for (const r of rows) {
-    const [id, status, started, project, title] = cell(r);
-    out(`  ${id.padEnd(wId)}  ${c(r.color, status.padEnd(wStatus))}  ${started.padEnd(wStarted)}  ${project.padEnd(wProject)}  ${title}`);
+    const [id, status, engine, started, project, title] = cell(r);
+    out(`  ${id.padEnd(wId)}  ${c(r.color, status.padEnd(wStatus))}  ${engine.padEnd(wEngine)}  ${started.padEnd(wStarted)}  ${project.padEnd(wProject)}  ${title}`);
   }
   return 0;
 }
@@ -223,6 +223,8 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
       cycle: row.cycle,
       pauseReason: row.pause_reason ?? null,
       pauseDetail: row.pause_detail ?? null,
+      engine: st.runEngine || 'claude',
+      limitEngine: st.limitEngine ?? null,
       startedAt: row.started_at ?? null,
       updatedAt: row.updated_at ?? null,
       costUsd: Number(row.total_cost_usd) || 0,
@@ -248,6 +250,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   // The cycle scalar is harness-local (run-harness _phase) — the UI never shows
   // it either; it surfaces loop traffic as "N loop deliveries" instead. JSON keeps it.
   out(`  phase    ${row.phase || '—'}`);
+  out(`  engine   ${engineLabel(st.runEngine)}`);
   out(`  started  ${ago(row.started_at)}${startedClock ? ` (${startedClock})` : ''}`);
   const updatedClock = Number.isFinite(Date.parse(row.updated_at))
     ? formatInstant(Date.parse(row.updated_at), tz)
@@ -276,6 +279,10 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   const task = oneLine(row.prompt, 100);
   if (task) out(`  task     ${task}`);
   if (link) out(c('gray', `  open     ${link}`));  // only when a Worca server is recorded — no nag line otherwise
+  // A paused or interrupted run: how to pick it up again, and after a usage limit its engine hit, on each other engine.
+  if (row.status === 'paused' || row.status === 'interrupted') {
+    for (const l of formatResumeHints({ reason: row.pause_reason, limitEngine: st.limitEngine }, row.id, { color: c })) out(`  ${l}`);
+  }
   return 0;
 }
 

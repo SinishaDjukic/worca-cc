@@ -175,13 +175,19 @@ _testing.broadcast({ type: 'question', runId, ...ASK });
 
 for (const theme of ['light', 'dark']) {
   await send('Page.navigate', { url: `${base}/#running/${runId}` });
-  await sleep(900);
-  await evalJs(`document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)}); true`);
-  _testing.broadcast({ type: 'question', runId, ...ASK });   // the reload dropped the frame
-  await sleep(600);
+  // Wait for the form, not for a fixed time: on a loaded CI runner the page and its socket can take
+  // longer than any fixed sleep, and a question broadcast before the socket is up is lost. The
+  // broadcast is repeated until the form mounts (the reload dropped the frame; a repeat is harmless).
+  const mountedJs = `!!document.querySelector('#run-detail .rd-questions .qpanel .af-form')`;
+  for (let t0 = Date.now(); Date.now() - t0 < 15000;) {
+    await evalJs(`document.documentElement && document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)}); true`).catch(() => {});
+    _testing.broadcast({ type: 'question', runId, ...ASK });
+    await sleep(300);
+    if (await evalJs(mountedJs).catch(() => false)) break;
+  }
 
   check(`${theme}: the form mounts in the run page's question panel`,
-    await evalJs(`!!document.querySelector('#run-detail .rd-questions .qpanel .af-form')`));
+    await evalJs(mountedJs));
   // W19 — the check the prototype needed: `hidden` must actually hide, against an
   // author display:flex. jsdom computes no layout, so this is the only real proof.
   check(`${theme}: EVERY hidden .af- node computes display:none under real CSS`,

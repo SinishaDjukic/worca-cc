@@ -18,7 +18,7 @@ import { runRef, fmtRunCost, fmtMs } from './renderers.mjs';
 import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 import { chatActor } from '../identity.mjs';
-import { SWITCH_ENGINES, engineLabel, engineList } from '../../shared/engine-switch.mjs';
+import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor } from '../../shared/engine-switch.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -365,9 +365,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const out = engine ? await actions.resume(t.row.id, actor, { engine }) : await actions.resume(t.row.id, actor);
       const on = engine ? ` on ${engineLabel(engine)}` : '';
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\`${on} — ${String(t.row.title || '').slice(0, 50)}`);
-      // The engine gate's consent is a UI checkbox, never a chat word.
-      const consent = out?.code === 'engine-refused' && out.overridable ? ' To run it without those rules, resume it from the worca-cc UI and tick Allow unguarded.' : '';
-      return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${out?.error || 'unknown error'}${consent}`, 'error');
+      // The engine gate's consent is a UI checkbox, never a chat word: the refusal sends the person there.
+      const why = out?.code === 'engine-refused' ? engineRefusalFor(out.error, 'chat') : out?.error;
+      return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${why || 'unknown error'}`, 'error');
     },
 
     approve: async (env) => answerDecision(env, 'approve'),
