@@ -3,12 +3,14 @@
 // and which report a cost. ONE source for the harness, the CLI, the chat notifier, the scheduler feed and the browser.
 // Import-free: served to the browser as-is under /src/shared.
 
-/** The run engines (src/core/engines/index.mjs without the mock; src/core/model-env.mjs MODEL_ENGINES — kept equal by a test). */
-export const ENGINE_NAMES = Object.freeze(['claude', 'codex', 'cursor']);
-/** The engines a run can switch between: all of them. */
-export const SWITCH_ENGINES = ENGINE_NAMES;
+/** The run engines (src/core/engines/index.mjs without the mock; src/core/model-env.mjs RUN_ENGINES — kept equal by a test). */
+export const ENGINE_NAMES = Object.freeze(['claude', 'codex', 'copilot', 'cursor']);
+/** The engines that own catalog models (src/core/model-env.mjs MODEL_ENGINES, kept equal by a test). Copilot owns none. */
+export const MODEL_ENGINE_NAMES = Object.freeze(['claude', 'codex', 'cursor']);
+/** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
+export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
 
-const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', cursor: 'Cursor' });
+const LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot', cursor: 'Cursor' });
 
 /** The display name of an engine ('codex' -> 'Codex'); a missing engine is Claude. */
 export function engineLabel(engine) {
@@ -16,9 +18,10 @@ export function engineLabel(engine) {
   return LABELS[e] || String(e);
 }
 
+const NO_COST_ENGINES = Object.freeze(['copilot', 'cursor']);
 /** Whether runs on `engine` report a cost (capability `cost`; a test keeps this equal to the registry). Where not,
  *  a cost shows as unknown, never $0.00. */
-export function engineReportsCost(engine) { return (engine || 'claude') !== 'cursor'; }
+export function engineReportsCost(engine) { return !NO_COST_ENGINES.includes(engine || 'claude'); }
 
 /** A run's cost as text for the CLI and chat: `fmt(costUsd)`, or "cost unknown" on an engine that reports none. A
  *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. */

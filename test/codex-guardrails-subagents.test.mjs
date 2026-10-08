@@ -9,8 +9,9 @@ import { join, dirname } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import {
-  codexRulePlan, codexRulesFile, unenforcedRules, partialRules, guardedCodexHome, codexRootsInWorcaHome, codexInvestigatorRole, runCodexProcess, CODEX_INVESTIGATOR_ROLE,
+  codexRulePlan, codexRulesFile, unenforcedRules, partialRules, guardedCodexHome, codexInvestigatorRole, runCodexProcess, CODEX_INVESTIGATOR_ROLE,
 } from '../src/core/engines/codex.mjs';
+import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
 import { fanOutDirective } from '../src/core/phases.mjs';
 import { assembleSkills, skillsRelFor } from '../src/core/run-context.mjs';
 import { renderMemoryBlock, MEMORY_BLOCK_INTRO } from '../src/core/memory-store.mjs';
@@ -94,21 +95,21 @@ parentPort.postMessage(bad);
   }
 });
 
-test('codexRootsInWorcaHome: only the run store and a run\'s own folder may be writable inside Worca\'s home', POSIX, () => {
+test('writableRootsInWorcaHome: only the run store and a run\'s own folder may be writable inside Worca\'s home', POSIX, () => {
   const home = join(tmp(), '.worca-cc'); const out = tmp();
   mkdirSync(join(home, 'store', 'proj-1', 'pipelines', 'p1'), { recursive: true });
   const ok = [join(home, 'store', 'proj-1', 'plans'), join(home, 'store', 'proj-1', 'pipelines', 'p1'), join(home, 'store', 'proj-1', 'pipelines', 'p1', 'memory'),
     join(home, 'store', 'workspaces', 'ws-1', 'reviews'), join(home, 'runs', 'p1'), join(home, 'runs', 'p1', 'repos', 'a'), join(out, 'mem')];
-  assert.deepEqual(codexRootsInWorcaHome({ cwd: join(home, 'runs', 'p1'), roots: ok, home }), []);
+  assert.deepEqual(writableRootsInWorcaHome({ cwd: join(home, 'runs', 'p1'), roots: ok, home }), []);
   // The home itself, its state folders, the store or runs folder as a whole, and anything that holds the home.
   const bad = [home, join(home, 'plugins', 'x'), join(home, 'mcp'), join(home, 'policy'), join(home, 'engines', 'codex'),
     join(home, 'store'), join(home, 'runs'), dirname(home), join(home, 'store', '..', 'scripts')];
-  assert.deepEqual(codexRootsInWorcaHome({ roots: bad, home }), bad);
-  assert.deepEqual(codexRootsInWorcaHome({ cwd: dirname(home), roots: [], home }), [dirname(home)], 'a cwd holding the home is writable too');
-  assert.deepEqual(codexRootsInWorcaHome({ cwd: join(home, 'tmp', 'job'), roots: [], home }), [], 'a cwd inside the home is the job\'s own');
+  assert.deepEqual(writableRootsInWorcaHome({ roots: bad, home }), bad);
+  assert.deepEqual(writableRootsInWorcaHome({ cwd: dirname(home), roots: [], home }), [dirname(home)], 'a cwd holding the home is writable too');
+  assert.deepEqual(writableRootsInWorcaHome({ cwd: join(home, 'tmp', 'job'), roots: [], home }), [], 'a cwd inside the home is the job\'s own');
   // Through a link: the real path decides.
   const link = join(out, 'link'); symlinkSync(home, link);
-  assert.deepEqual(codexRootsInWorcaHome({ roots: [join(link, 'plugins'), join(link, 'store', 'proj-1', 'plans')], home }), [join(link, 'plugins')]);
+  assert.deepEqual(writableRootsInWorcaHome({ roots: [join(link, 'plugins'), join(link, 'store', 'proj-1', 'plans')], home }), [join(link, 'plugins')]);
 });
 
 test('runCodexProcess refuses a writable root inside Worca\'s home before it spawns or writes anything', POSIX, async () => {

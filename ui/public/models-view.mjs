@@ -9,7 +9,7 @@
 
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
-import { engineLabel, ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -443,7 +443,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   const root = h(doc, 'section', 'card mv-editor');
   // Both engines' effort lists ride the root so setModelEngine can swap them (§3.1a).
   root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts });
-  const engineNow = editing && ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
+  const engineNow = editing && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
   root.dataset.mode = editing ? 'edit' : 'create';
   if (editing) {
     root.dataset.id = model.id;
@@ -478,7 +478,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   // §3.1a: which engine runs the model. Codex takes no routing env (codex ignores it), and its connection
   // can only be an OpenAI-compatible endpoint; the engine is part of the entry, so it is fixed once created.
   const engineSel = h(doc, 'select', 'select mv-engine');
-  for (const [v, t] of ENGINE_NAMES.map((e) => [e, engineLabel(e)])) {
+  for (const [v, t] of MODEL_ENGINE_NAMES.map((e) => [e, engineLabel(e)])) {
     const o = doc.createElement('option');
     o.value = v; o.textContent = t;
     engineSel.appendChild(o);
@@ -605,7 +605,7 @@ function effortBoxes(doc, list, selected) {
 export function setModelEngine(rootEl, engine) {
   const sel = rootEl && rootEl.querySelector('.mv-engine');
   if (!sel) return;
-  const next = ENGINE_NAMES.includes(engine) ? engine : 'claude';
+  const next = MODEL_ENGINE_NAMES.includes(engine) ? engine : 'claude';
   sel.value = next;
   if (rootEl.dataset.engine !== next) {
     let lists = {};
@@ -682,7 +682,7 @@ export function collectModelEditor(rootEl) {
   const efforts = [...rootEl.querySelectorAll('.mv-effort-cb')].filter((c) => c.checked).map((c) => c.value);
   const allCount = rootEl.querySelectorAll('.mv-effort-cb').length;
   const engineValue = rootEl.querySelector('.mv-engine')?.value;
-  const engine = ENGINE_NAMES.includes(engineValue) ? engineValue : 'claude';
+  const engine = MODEL_ENGINE_NAMES.includes(engineValue) ? engineValue : 'claude';
 
   const env = {};
   const seen = new Set();

@@ -145,6 +145,23 @@ test('engine: Codex sends engine only, and shows the hint', async () => {
   assert.equal('allowUnguardedEngine' in second, false);
 });
 
+test('engine: Copilot sends engine copilot, says it runs on its default model, and carries the consent after a refusal', async () => {
+  const refusal = { error: 'engine copilot: guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true };
+  const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
+  const doc = ctx.doc;
+  pick(ctx, 'copilot');
+  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'copilot');
+  assert.equal(doc.getElementById('engine-hint').hidden, false);
+  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model/);
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'copilot');
+  await waitFor(() => !doc.getElementById('engineRefusal').hidden);
+  doc.getElementById('engineAllowUnguarded').checked = true;
+  await submit(ctx);
+  assert.equal(ctx.posted.at(-1).engine, 'copilot');
+  assert.equal(ctx.posted.at(-1).allowUnguardedEngine, true);
+});
+
 test('engine: a liftable refusal shows inline with the consent; ticking it and starting again sends it', async () => {
   const refusal = { error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce', code: 'engine-refused', overridable: true };
   const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
@@ -225,7 +242,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
   pick(ctx, 'cursor');
   assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'cursor');
   const hint = doc.getElementById('engine-hint');

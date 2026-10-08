@@ -15,7 +15,7 @@ test('claude is the default engine', () => {
 });
 
 test('an unknown engine is a hard error, even in mock mode', () => {
-  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, cursor, mock\)/);
+  assert.throws(() => getEngine('codx'), /unknown engine "codx" \(known: claude, codex, copilot, cursor, mock\)/);
   assert.throws(() => getEngine('codx', { mock: true }), /unknown engine "codx"/);
 });
 
@@ -24,7 +24,7 @@ test('mock:true resolves any known engine to the mock adapter', () => {
 });
 
 test('every engine is a full adapter', () => {
-  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'cursor', 'mock']);
+  assert.deepEqual(listEngines().map((e) => e.name), ['claude', 'codex', 'copilot', 'cursor', 'mock']);
   for (const engine of listEngines()) {
     assert.deepEqual(Object.keys(engine.capabilities).sort(), [...CAPABILITY_KEYS].sort(), engine.name);
     assert.equal(typeof engine.run, 'function');
@@ -32,9 +32,12 @@ test('every engine is a full adapter', () => {
   }
 });
 
-test('partial-rule terms: Cursor names its own, Codex keeps its command-rule wording', () => {
-  assert.equal(getEngine('cursor').partialRuleTerms, CURSOR_RULE_TERMS);
-  assert.deepEqual(getEngine('codex').partialRuleTerms, { kind: 'command rules', reach: CODEX_COMMAND_RULE_REACH });
+test('partial-rule terms: Cursor names its own, Codex keeps its command-rule wording, Copilot adds write rules', () => {
+  assert.equal(getEngine('cursor').ruleKind, CURSOR_RULE_TERMS.kind);
+  assert.equal(getEngine('cursor').ruleReach, CURSOR_RULE_TERMS.reach);
+  assert.equal(getEngine('codex').ruleKind, 'command rules');
+  assert.equal(getEngine('codex').ruleReach, CODEX_COMMAND_RULE_REACH);
+  assert.equal(getEngine('copilot').ruleKind, 'command and write rules');
 });
 
 test('the capability keys are the thirteen the design lists', () => {

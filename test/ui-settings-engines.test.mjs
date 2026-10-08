@@ -57,7 +57,8 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   const host = doc.getElementById('h');
   renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
     fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor'], 'Copilot owns no models: no card');
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
   assert.equal(card.querySelector('h3').textContent, 'Cursor');
   const plan = card.querySelector('[data-setting="models.cursor.steps.planner"] .inherit-model');

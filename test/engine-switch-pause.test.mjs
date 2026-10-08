@@ -12,8 +12,8 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { SWITCH_ENGINES, ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel } from '../src/shared/engine-switch.mjs';
-import { MODEL_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine } from '../src/core/model-env.mjs';
+import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel } from '../src/shared/engine-switch.mjs';
+import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine } from '../src/core/model-env.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 
 useTempHome(after);
@@ -31,7 +31,9 @@ const okVerifier = async () => ({ status: 'ok', issues: [], review: { issues: []
 
 test('one engine list for the switch, the catalog and the registry', () => {
   assert.deepEqual([...SWITCH_ENGINES], MODEL_ENGINES);
+  assert.deepEqual([...MODEL_ENGINE_NAMES], MODEL_ENGINES);
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));
+  assert.deepEqual([...ENGINE_NAMES], RUN_ENGINES);
 });
 
 test('every other engine, in order, filtered by readiness', () => {
@@ -75,6 +77,7 @@ test('helper jobs run on the run engine when it runs them, else on Claude', () =
   assert.equal(helperEngineFor('claude'), 'claude');
   assert.equal(helperEngineFor('codex'), 'codex');
   assert.equal(helperEngineFor('cursor'), 'claude');
+  assert.equal(helperEngineFor('copilot'), 'copilot', 'Copilot runs its own helper jobs on its default model');
   assert.equal(helperEngineFor(undefined), 'claude');
   for (const e of HELPER_ENGINES) assert.ok(MODEL_ENGINES.includes(e));
   assert.deepEqual(ASK_ENGINES, ['claude', 'codex'], 'Ask never runs on Cursor (CURSOR_ASK_LOCKDOWN = null)');

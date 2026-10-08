@@ -420,6 +420,62 @@ What an Ask chat on Codex will be able to do, and what it cannot do, once a code
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
 - If Codex is not installed or not signed in, the chat says "Codex isn't ready" with the reason. It never falls back to Claude.
 
+## GitHub Copilot CLI
+
+worca can run pipelines on GitHub's own Copilot CLI (`copilot`). This is a separate engine from the Copilot *provider* above. The provider routes Claude Code's requests to Copilot's API through worca's bridge, as an editor client. The engine runs GitHub's own supported CLI as the agent, so the notice above does not apply to it. Your plan's AI-credit (premium request) allowance still does.
+
+1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
+2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
+3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine in Settings › Models (Engines) or a project's Settings.
+
+There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
+
+**Models.** Copilot names its models its own way (`gpt-5.4`, `claude-sonnet-4.6`, `auto`) and owns no catalog entries.
+
+- Steps run the run's model (`--model`), else Copilot's default. Helper jobs run Copilot's default; Away mode's night decider uses the run's model when it has one.
+- A catalog model of another engine, or a Claude Code id or alias (`opus`, `claude-opus-4-8`), is dropped on Copilot, and the run log says so.
+- Copilot bills AI credits, not tokens at list prices. worca records each node's tokens but leaves the dollar cost unknown, unless the model has a price override.
+
+**How a node runs.**
+
+- The prompt goes on stdin.
+- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions.
+- Files can be read and written in the run checkout, the memory folder and the node's output folders. Copilot refuses any other path, and in a non-interactive run nothing can approve one.
+- Copilot's built-in GitHub MCP server is turned off, so it never acts with your GitHub identity. So are the servers in your own `~/.copilot/mcp-config.json`, which worca's guardrails never saw.
+- Copilot also reads the checkout's `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`, as Claude Code reads `CLAUDE.md`.
+- Copilot has no switch to ignore your user configuration, so the plugins and settings you installed in `~/.copilot` still load on a run (only its MCP servers are turned off).
+
+**Guardrails on Copilot.**
+
+- These deny rules hold fully:
+  - a bare `Bash` (the shell is denied);
+  - `WebSearch` (the tool is removed);
+  - MCP tool rules such as `mcp__github__create_issue` or `mcp__github`.
+- A `WebFetch` rule removes Copilot's fetch tool, but Copilot can still fetch a page with its shell (`curl`) or its web search. It holds only when the same set also has a bare `Bash` and a `WebSearch` rule. Otherwise it is not held.
+- These hold only in part:
+  - Command rules such as `Bash(git push:*)` or `Bash(curl)` become Copilot shell rules. They catch the command wherever it sits in a shell line (an `&&` chain, a redirect, a `$(…)`, a `VAR=x` prefix), but not one run through `bash -c "…"` or another interpreter.
+  - `Edit(path)` and `Write(path)` become Copilot write rules. These cover Copilot's file tools but not a shell redirect.
+- These cannot be held:
+  - `Read(…)` rules;
+  - globs in a path;
+  - a command rule with a flag in it (`Bash(rm -rf:*)`), because Copilot matches a command and its sub-command, never its flags.
+- As on Codex, a run with rules held only in part or not at all needs **Allow unguarded** (`--allow-unguarded-engine`). The partial rules still apply, and the run log lists each group.
+- The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` are path rules Copilot cannot hold. Copilot writes only the run checkout and the folders worca adds, and worca refuses to start Copilot when any of them is inside `~/.worca-cc`, other than the run store and the run's own folder.
+- The host guard's kill-check hook does not run on Copilot; its instructions to the agent still apply.
+
+**MCP, sub-agents and skills.**
+
+- A run's MCP servers attach to its Copilot nodes, stdio and remote (HTTP/SSE) alike. `${VAR}` references are filled by Copilot from its own environment, where worca puts the values. They never reach the command line or the config file.
+- Research fan-out uses Copilot's `task` tool. worca defines its read-only investigator as the custom agent `worca-investigator` for each call. The agent carries the run's memory pointers and runs on the node's model.
+- Skills mount at the run checkout's `.agents/skills`, as on Codex.
+- Helper jobs (titles, overview, PR description, the Auto classifier, the night decider) run with no built-in tool at all. They get only the MCP servers worca hands them (the classifier's and night decider's read-only file tools), and a scrubbed environment.
+
+**Not on Copilot yet:**
+
+- Ask Worca chats.
+- Per-engine step and helper model slots in Settings.
+- Resuming a paused run on another engine from the usage-limit banner. `worca resume <id> --engine copilot` (or `claude`) still works.
+
 ## Cursor
 
 worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run on Cursor.

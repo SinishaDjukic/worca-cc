@@ -16,16 +16,15 @@
 // - A failed turn ends with `error` + `turn.failed`, and codex may still exit 0. A
 //   top-level `error` alone is not a failure: codex also reports its stream retries
 //   that way ("Reconnecting... 1/5 (…)") and may go on to complete the turn.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { join, resolve, dirname, basename } from 'node:path';
+import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
-import { isWithin } from '../fs-scope.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
+import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
@@ -162,40 +161,6 @@ export function guardedCodexHome(rulesText, { base = join(worcaHome(), 'engines'
     if (!existsSync(auth) && existsSync(join(userHome, 'auth.json'))) symlinkSync(join(userHome, 'auth.json'), auth);
   } catch { /* the spawn then fails on its sign-in and says so */ }
   return dir;
-}
-
-/** `p` with symlinks resolved as far as it exists (a writable root may not be created yet). */
-function realPathOf(p) {
-  let head = resolve(p); const rest = [];
-  for (;;) {
-    try { return join(realpathSync(head), ...rest); } catch { /* not there yet: try its parent */ }
-    const up = dirname(head);
-    if (up === head) return resolve(p);
-    rest.unshift(basename(head)); head = up;
-  }
-}
-
-/**
- * The paths that would make Worca's own state writable to a codex spawn. Worca's deny rules for its home (the
- * database, settings.json, the MCP registry, plugin secrets, plugins / scripts / agents / workflows / policy) are
- * path rules codex cannot hold, so its workspace-write sandbox must not reach them: a writable root inside Worca's
- * home is allowed only inside the run store (`store/…`, a node's outputs, pipeline dir and memory copy) or a run's
- * own folder (`runs/<id>/…`, a detached run's checkout), and no root or cwd may contain the home. PURE over the fs.
- * @param {{cwd?:string, roots?:string[], home?:string}} o
- * @returns {string[]} the offending paths as given
- */
-export function codexRootsInWorcaHome({ cwd, roots = [], home = worcaHome() } = {}) {
-  const h = realPathOf(home);
-  const allowed = [join(h, 'store'), join(h, 'runs')];
-  const bad = [];
-  for (const r of roots) {
-    if (typeof r !== 'string' || !r) continue;
-    const p = realPathOf(r);
-    // A root that holds the home, or one inside it that is not strictly inside the store or a run's folder.
-    if (isWithin(h, p) || (isWithin(p, h) && !allowed.some((a) => p !== a && isWithin(p, a)))) bad.push(r);
-  }
-  if (typeof cwd === 'string' && cwd && isWithin(h, realPathOf(cwd))) bad.unshift(cwd);   // the cwd is writable too
-  return bad;
 }
 
 // ── sub-agents ───────────────────────────────────────────────────────────────
@@ -654,7 +619,7 @@ export async function runCodexProcess({
   // become writable roots (--add-dir fresh, writable_roots on resume).
   const dirs = [...new Set([...(addDirs || []), ...(writableDirs || [])])];
   if (sandbox !== 'read-only') {
-    const inHome = codexRootsInWorcaHome({ cwd, roots: dirs });
+    const inHome = writableRootsInWorcaHome({ cwd, roots: dirs });
     if (inHome.length) throw new Error(`${bin}: refusing to start codex — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; codex cannot hold the rules that protect them`);
   }
   // Any spawn's --mcp-config (a pipeline node's servers, a helper job's file tools, Ask's worca server) becomes

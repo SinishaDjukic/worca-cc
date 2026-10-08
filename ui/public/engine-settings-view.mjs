@@ -1,5 +1,5 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-import { engineLabel, ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
@@ -14,7 +14,8 @@ export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
   const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
   const extras = {};
-  for (const engine of ENGINE_NAMES) {
+  // One card per engine that owns catalog models: Copilot owns none, so it has no step or helper slots to set.
+  for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;
     const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); card.append(heading);
     // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.

@@ -316,7 +316,8 @@ function relRepo(p) {
  */
 export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
   if (!fanOut) return '';
-  // Codex has its own spawn_agent; Cursor has no sub-agents (fan-out never reaches it: _engineNodeOpts), so nothing.
+  // Codex and Copilot have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
+  if (engine === 'copilot') return copilotFanOutDirective();
   if (engine && engine !== 'claude') return engine === 'codex' ? codexFanOutDirective() : '';
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
@@ -382,6 +383,29 @@ export function codexFanOutDirective() {
     'self-contained task: the area, the question, and the directories to look in.\n\n' +
     'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — read a skill\'s ' +
     '`SKILL.md` and use any that fit (e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
+    'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
+    'trivial, single-file change.\n\n'
+  );
+}
+
+/**
+ * fanOutDirective on Copilot: its own `task` tool, and worca's investigator defined as the custom agent
+ * `worca-investigator` (engines/copilot.mjs copilotInvestigatorAgent: read-only instructions and tools, the
+ * memory pointers; it runs on the node's model). Skills come from `.agents/skills`, which copilot lists for
+ * the agent itself. Pure + exported for testing.
+ */
+export function copilotFanOutDirective() {
+  return (
+    '## Fan-out ENABLED — parallelize your research\n\n' +
+    'You can dispatch sub-agents this run (the `task` tool). For any non-trivial task that spans more than one ' +
+    'file or area, DISPATCH parallel read-only research sub-agents NOW — one per distinct area (e.g. UI vs. ' +
+    'server vs. store vs. tests) — let them explore concurrently, then synthesize their reports yourself. Do ' +
+    'NOT investigate every area serially when the work splits into independent areas.\n\n' +
+    'Dispatch EVERY sub-agent with `agent_type: "worca-investigator"` — the operator defined it for this run ' +
+    '(read-only instructions and tools, and this run\'s memory pointers). Use no other `agent_type`. Give each ' +
+    'one a self-contained task: the area, the question, and the directories to look in.\n\n' +
+    'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — use any that fit ' +
+    '(e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n'
   );

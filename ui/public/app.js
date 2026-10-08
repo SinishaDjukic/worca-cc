@@ -3664,7 +3664,8 @@ function renderAgentRows(rows) {
     const rowDef = row.def || {};
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
-    // Only a Claude run has a sub-agent tool to pick a model for (codex has its own spawn_agent, Cursor none).
+    // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
+    // node's own model, and Cursor has none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
@@ -3701,7 +3702,8 @@ function renderAgentRows(rows) {
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
-      const owner = engineLabel((entry && entry.engine) || 'claude');   // the model's own engine
+      // The model's own engine; a pick the catalog no longer holds is the other engine's (Codex on a Claude run).
+      const owner = entry ? engineLabel(entry.engine || 'claude') : (state.engine === 'claude' ? 'Codex' : 'Claude');
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
       kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
@@ -3882,7 +3884,9 @@ function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
-    el.engineHint.textContent = state.engine === 'cursor'
+    el.engineHint.textContent = state.engine === 'copilot'
+      ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
+      : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Settings › Models › Cursor'}.`
       : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
   }
