@@ -2548,7 +2548,7 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Engine gate (plans/harness-bridge-design.md §10.3). A non-Claude engine runs
+   * Engine gate. A non-Claude engine runs
    * only what it can govern, and says what it cannot. Refused before any spawn
    * (_engineRefusal): guardrail permission rules it cannot enforce (unless this run
    * passed allowUnguardedEngine), a node that needs MCP tools, and a model routed to

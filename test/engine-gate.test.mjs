@@ -1,4 +1,4 @@
-// test/engine-gate.test.mjs — choosing an engine for a run (plans/harness-bridge-design.md §10):
+// test/engine-gate.test.mjs — choosing an engine for a run:
 // the run-start gate (refusals + degradation audit), the per-node ctx a non-Claude engine
 // gets, and runClaude's dispatch by engine name.
 import { test, after, beforeEach, afterEach } from 'node:test';
