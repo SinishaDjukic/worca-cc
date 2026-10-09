@@ -117,13 +117,16 @@ async function submit(ctx) {
   await tick(); await tick();
 }
 
-const pick = (ctx, engine) => ctx.doc.querySelector(`#engine-seg button[data-engine="${engine}"]`).click();
+const pick = (ctx, engine) => { const s = ctx.doc.getElementById('engineSelect'); s.value = engine; s.dispatchEvent(new ctx.doc.defaultView.Event('change', { bubbles: true })); };
 
 test('engine: Claude is the default and sends nothing', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'claude');
+  assert.equal(doc.getElementById('engineSelect').value, 'claude');
   assert.equal(doc.getElementById('engine-hint').hidden, true);
+  // Advanced and up; on Claude nothing keeps it on screen in Simple.
+  assert.equal(doc.getElementById('engine-row').dataset.minLevel, 'advanced');
+  assert.equal(doc.getElementById('engine-row').dataset.levelKeep, undefined);
   await submit(ctx);
   const first = ctx.posted.at(-1);
   assert.equal('engine' in first, false);
@@ -136,8 +139,8 @@ test('engine: Codex sends engine only, and shows the hint', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
   pick(ctx, 'codex');
-  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'codex');
-  assert.equal(doc.querySelector('#engine-seg button[data-engine="codex"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(doc.getElementById('engineSelect').value, 'codex');
+  assert.equal(doc.getElementById('engine-row').dataset.levelKeep, '1', 'a non-Claude engine stays visible in Simple');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
   await submit(ctx);
   const second = ctx.posted.at(-1);
@@ -150,7 +153,7 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   const ctx = await boot({ run: (_body, n) => (n === 1 ? ok(refusal, 409) : ok({ runId: 'r2' })) });
   const doc = ctx.doc;
   pick(ctx, 'copilot');
-  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'copilot');
+  assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
   assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model/);
   await submit(ctx);
@@ -242,9 +245,9 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
-  assert.deepEqual([...doc.querySelectorAll('#engine-seg button')].map((b) => b.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor']);
   pick(ctx, 'cursor');
-  assert.equal(doc.querySelector('#engine-seg button.on').dataset.engine, 'cursor');
+  assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');
   assert.equal(hint.hidden, false);
   assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Settings › Models › Cursor.');

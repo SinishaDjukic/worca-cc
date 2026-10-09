@@ -110,3 +110,19 @@ test('R6: a gateway twin of a Codex built-in id gets an id of its own; the endpo
   assert.deepEqual(enginesOfModel('gw-gpt-5.5'), ['claude']);
   assert.deepEqual(enginesOfModel('gpt-5.5'), ['codex'], 'the built-in stays Codex’s');
 });
+
+// Ask Worca: list_models names every engine a model runs on, and the system prompt says to leave the engine to the
+// user's default and never pick a beta one unasked.
+test('Ask Worca knows the engines: list_models carries harnesses; the prompt keeps beta engines for when the user asks', async () => {
+  const { listModelsForAsk } = await import('../src/core/ask/model-deps.mjs');
+  const { buildSystemPrompt } = await import('../src/core/ask/prompt.mjs');
+  await addGlobalModel({ id: 'openai-gpt-5.5', upstream: RESPONSES });
+  const { models } = await listModelsForAsk();
+  const row = (id) => models.find((m) => m.id === id) || {};
+  assert.deepEqual(row('openai-gpt-5.5').harnesses, ['claude', 'codex']);
+  assert.deepEqual(row('gpt-5.5').harnesses, ['codex']);
+  assert.deepEqual(row('claude-haiku-4-5').harnesses, ['claude']);
+  const prompt = buildSystemPrompt('');
+  assert.match(prompt, /Leave engine out and the run starts on the user's default engine/);
+  assert.match(prompt, /never pick a beta engine on your own/);
+});

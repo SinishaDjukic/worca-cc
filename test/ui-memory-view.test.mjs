@@ -733,3 +733,21 @@ test('conflict-warning ordering: a settings-changed reload overtaking a memory-c
     } },
   ]);
 });
+
+test('an Ask card handoff carrying an engine picks it on New Pipeline, keeps it visible in Simple, and sends it', async () => {
+  const { window, calls } = await boot();
+  window.__np.openNewPipeline({
+    target: 'project', projectDir: '/Users/me/dev/alpha', workflowId: 'wf_default',
+    guardrailsId: 'normal', prompt: 'Fix the cart total rounding.', title: 'Fix rounding', featureBranch: '', engine: 'codex',
+  });
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick(); await tick(); await tick();
+  const doc = window.document;
+  assert.equal(doc.getElementById('engineSelect').value, 'codex');
+  assert.equal(doc.getElementById('engine-row').dataset.levelKeep, '1', 'a non-Claude engine shows even in Simple');
+  doc.getElementById('start-btn').closest('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(); await tick(); await tick();
+  const run = calls.find((c) => c.url.endsWith('/api/run') && c.method === 'POST');
+  assert.ok(run, 'the form posted');
+  assert.equal(run.body.engine, 'codex');
+});

@@ -239,32 +239,42 @@
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Workflow picker (Default + saved). app.js populates from GET
-                     /api/workflows. Choosing a workflow is a run decision, so it
-                     stays here; tuning its agents is not, and lives in Advanced.
-                     Own full-width line ABOVE the task source: the workflow frames
-                     what the run does, the source only says how the task arrives. -->
-                <div class="field field-compact">
-                  <label for="workflowSelect">Workflow</label>
-                  <div class="select-wrap">
-                    <select id="workflowSelect" class="select" aria-label="Workflow">
-                      <option value="wf_default">Default</option>
-                    </select>
+                <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
+                     workflow takes 60%, the engine 40%. app.js populates the workflows from GET
+                     /api/workflows. Choosing a workflow is a run decision, so it stays here; tuning its
+                     agents is not, and lives in Advanced. Own line ABOVE the task source: the workflow
+                     frames what the run does, the source only says how the task arrives. -->
+                <div class="wf-engine-row">
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
-                     the default and adds nothing to the run body; on Codex the run's titles, classifier, overview and PR description run on Codex too. Per run, never remembered. -->
-                <div class="field field-compact" id="engine-row">
-                  <label>Engine</label>
-                  <div class="seg" id="engine-seg" role="group" aria-label="Engine">
-                    <button type="button" data-engine="claude" class="on" aria-pressed="true">Claude</button>
-                    <button type="button" data-engine="codex" aria-pressed="false">Codex</button>
-                    <button type="button" data-engine="copilot" aria-pressed="false">Copilot</button>
-                    <button type="button" data-engine="cursor" aria-pressed="false">Cursor</button>
+                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
+                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
+                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
+                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <div class="field field-compact" id="engine-row" data-min-level="advanced">
+                    <label for="engineSelect">Engine</label>
+                    <div class="select-wrap">
+                      <select id="engineSelect" class="select" aria-label="Engine">
+                        <option value="claude" selected>Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="copilot">Copilot</option>
+                        <option value="cursor">Cursor</option>
+                      </select>
+                    </div>
                   </div>
-                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
-                  <small class="hint" id="engine-default-hint" hidden></small>
+
+                  <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
+                  <div class="wf-engine-hints">
+                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
+                    <small class="hint" id="engine-default-hint" hidden></small>
+                  </div>
                 </div>
 
                 <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->

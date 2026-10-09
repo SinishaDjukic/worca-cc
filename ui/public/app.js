@@ -345,7 +345,7 @@ const el = {
   nightMode: $('#nightMode'),
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
-  engineSeg: $('#engine-seg'),
+  engineSelect: $('#engineSelect'),
   engineHint: $('#engine-hint'),
   engineDefaultHint: $('#engine-default-hint'),
   engineRefusal: $('#engineRefusal'),
@@ -3873,11 +3873,8 @@ if (el.memoryScopeSeg) {
 function setRunEngine(engine) {
   const prev = state.engine;
   state.engine = ENGINE_NAMES.includes(engine) ? engine : 'claude';
-  for (const b of el.engineSeg ? el.engineSeg.querySelectorAll('button[data-engine]') : []) {
-    const on = b.dataset.engine === state.engine;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
+  if (el.engineSelect) el.engineSelect.value = state.engine;
+  keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
   showEngineRefusal(null);
   // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
@@ -3929,19 +3926,12 @@ function showEngineRefusal(data) {
   if (!data || !data.overridable) el.engineAllowUnguarded.checked = false;
 }
 
-if (el.engineSeg) {
-  for (const b of el.engineSeg.querySelectorAll('button[data-engine]')) {
-    if (!isBetaEngine(b.dataset.engine)) continue;
-    const beta = document.createElement('span');
-    beta.className = 'badge violet beta-badge';
-    beta.textContent = 'Beta';
-    b.append(beta);
-  }
-  el.engineSeg.addEventListener('click', (e) => {
-    const btn = e.target.closest && e.target.closest('button[data-engine]');
-    if (!btn) return;
+if (el.engineSelect) {
+  // An <option> holds text only: a beta engine says so in its label.
+  for (const o of el.engineSelect.options) if (isBetaEngine(o.value)) o.textContent += ' (Beta)';
+  el.engineSelect.addEventListener('change', () => {
     state.engineTouched = true;
-    setRunEngine(btn.dataset.engine);
+    setRunEngine(el.engineSelect.value);
   });
 }
 
@@ -31117,6 +31107,8 @@ async function applyAskPrefill() {
   if (!p) return;
   newPipelinePrefill = null;
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
+  // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
+  if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // force the prompt source — the three-step reset of the segment handler
   state.activePluginSource = null;
   el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });

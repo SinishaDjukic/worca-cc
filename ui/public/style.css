@@ -702,6 +702,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .split-row .seg{flex-wrap:wrap;}
 .target-panes{min-width:0;}
 @media (max-width:760px){ .split-row{grid-template-columns:1fr;} }
+/* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
+.wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
+.wf-engine-row > *{min-width:0;}
+.wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
+.wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
+.wf-engine-hints .hint{margin-top:0;font-size:11.5px;}
+@media (max-width:760px){ .wf-engine-row{grid-template-columns:1fr;} }
 
 /* Two fields sharing one row (New pipeline: source + feature branch). Equal
    columns with min-width:0 so a long branch name ellipsizes inside its own
@@ -5588,6 +5595,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-rp .ask-card-seg-btn.on{background:var(--ink);color:var(--on-ink);}
 .ask-rp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;}
 .ask-rp-grid.two{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;}
+/* Workflow, Engine, Guardrails: the workflow takes half the row. */
+.ask-rp-grid.wf-row{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);margin-top:10px;}
 .ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .ask-rp-label{font-weight:600;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);}
 .ask-rp-hint{font-weight:400;text-transform:none;letter-spacing:0;}
@@ -5647,7 +5656,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
-@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two{grid-template-columns:1fr;}}
+@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
 
 /* ---------- workflow card chrome (ui/public/ask-panel.mjs buildWorkflowCard; mockup 2026-09-05 §A-§C) ---------- */
@@ -6263,7 +6272,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   font-weight:500;font-size:12.5px;color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
-#engine-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
 #engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
@@ -6756,6 +6765,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
    would drop it into the narrow first track, so the row becomes one full-width column. */
 :root[data-level="simple"] .split-row:not(:has(#target-field[data-level-keep])){grid-template-columns:minmax(0,1fr);}
+/* …and the Engine picker (Advanced and up), leaving the workflow the whole row. */
+:root[data-level="simple"] .wf-engine-row:not(:has(#engine-row[data-level-keep])){grid-template-columns:minmax(0,1fr);}
 
 /* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
 .mock-row{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}

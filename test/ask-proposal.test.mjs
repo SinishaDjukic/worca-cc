@@ -240,3 +240,12 @@ test('#527 sourceBranch: remote-only/behind/stale annotate, missing names the re
     } },
   ]);
 });
+
+// Engines: a card names one only when the proposal did; omitted, /api/run starts the user's default.
+test('engine: omitted keeps the card shape, a known engine rides the card, an unknown one is refused', async () => {
+  assert.equal('engine' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), false);
+  assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'Codex ' })).engine, 'codex');
+  assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'claude' })).engine, 'claude');
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gemini' })), [PROPOSAL_ERRORS.unknownEngine('gemini')]);
+  assert.match(PROPOSAL_ERRORS.unknownEngine('gemini'), /one of claude, codex, copilot, cursor/);
+});
