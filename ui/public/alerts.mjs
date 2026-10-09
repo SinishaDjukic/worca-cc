@@ -1,9 +1,10 @@
 // ui/public/alerts.mjs — Alerts: desktop notifications and a waiting badge (Settings › General ›
 // Alerts). Only waits that need a person notify (a run's pending question, a run paused on a
-// usage limit, an error or a cost cap, a schedule problem);
-// never while the tab is visible and focused, never for what was already pending when the page
-// loaded, and never twice for one wait (tag worca:<runId>:<questionId>, shared across tabs). The
-// body names the run, never the question. The badge — tab title, favicon dot and, where the
+// usage limit, an error or a cost cap, an Ask Worca card waiting for an OK, a schedule problem).
+// A wait that lands while the tab is visible and focused is held, and notifies when the person
+// looks away if it is still waiting. What was already pending when a looked-at page loaded never
+// notifies (a page that loads hidden does), and no wait notifies twice (tag
+// worca:<runId>:<questionId>, shared across tabs). The body names the run, never the question. The badge — tab title, favicon dot and, where the
 // browser has it, the app icon — counts runs waiting plus unread schedule problems.
 // Per browser (permission belongs to the browser): the settings live in localStorage and every
 // access is try/catch'd. `Notification`, `doc`, `nav`, `storage` and `win` are injected.
@@ -21,6 +22,15 @@ export const KIND_TITLES = Object.freeze({
   'cost-cap': 'Cost cap reached',
 });
 export const GENERIC_TITLE = 'Waiting for you';
+/** Ask Worca card → notification title (a run proposal carries no `type`, only its workflow). */
+export const ASK_CARD_TITLES = Object.freeze({
+  run: 'Ask Worca: run to approve',
+  web: 'Ask Worca: web access to approve',
+  workflow: 'Ask Worca: workflow to review',
+  schedule: 'Ask Worca: schedule to approve',
+});
+export const ASK_GENERIC_TITLE = 'Ask Worca proposal to review';
+export const ASK_BODY = 'Open the chat to review it.';
 /** Pause reason (failure-policy REASON) → notification title. A reason not listed — no reason
  * (Pause pressed) or 'drain' (the server stopping) — waits on nobody, so it never notifies. */
 export const PAUSE_TITLES = Object.freeze({
@@ -46,6 +56,18 @@ export function questionTag(runId, questionId) { return `worca:${runId}:${questi
 /** The title for a pause that waits on a person, or null. */
 export function pauseTitle(reason) {
   return typeof reason === 'string' && Object.hasOwn(PAUSE_TITLES, reason) ? TITLE_PREFIX + PAUSE_TITLES[reason] : null;
+}
+export function askCardTitle(card) {
+  const c = card && typeof card === 'object' ? card : {};
+  const key = typeof c.type === 'string' ? c.type : (c.workflowId ? 'run' : '');
+  return TITLE_PREFIX + (Object.hasOwn(ASK_CARD_TITLES, key) ? ASK_CARD_TITLES[key] : ASK_GENERIC_TITLE);
+}
+/** The card blocks an Ask frame carries: `ask-card` (live, during a turn) or `ask-message` (a card flipped after it). */
+export function askCardsIn(frame) {
+  if (!frame || typeof frame.threadId !== 'string') return [];
+  const blocks = frame.type === 'ask-card' ? [frame.block]
+    : frame.type === 'ask-message' && frame.message && Array.isArray(frame.message.blocks) ? frame.message.blocks : [];
+  return blocks.filter((b) => b && b.kind === 'card' && b.id != null).map((block) => ({ threadId: frame.threadId, block }));
 }
 /** A resume starts a new runId, so one pause tag per run is enough. */
 export function pauseTag(runId) { return questionTag(runId, 'pause'); }
@@ -104,6 +126,7 @@ export function canvasFavicon(doc, href) {
  */
 export function createAlerts({ Notification: N = null, doc, nav = {}, storage = null, win = {}, onOpen = null, drawFavicon = null }) {
   const notified = new Set();          // tags already notified or deliberately skipped (D7, D8)
+  const held = new Map();              // tag -> {title, body, target}: landed while the person was looking
   const open = new Map();              // tag -> the Notification this tab is showing
   const counts = { waitingRuns: 0, unreadProblems: 0 };
   let appBadge = 0;
@@ -135,17 +158,31 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
     return n;
   }
   function close(tag) {
+    held.delete(tag);
     const n = open.get(tag);
     open.delete(tag);
     try { if (n) n.close(); } catch { /* already gone */ }
   }
-  // One wait notifies at most once: the first sighting is remembered whether or not it notified.
+  // One wait notifies at most once. Seen while looking, it is held until the person looks away
+  // (flushHeld); `quiet` (a backfill on a looked-at page) and notifications off settle it at once.
   function notifyOnce(tag, title, body, target, quiet) {
-    if (notified.has(tag)) return;
+    if (notified.has(tag) || held.has(tag)) return;
+    if (quiet || !canNotify()) { notified.add(tag); return; }
+    if (looking()) { held.set(tag, { title, body, target }); return; }
     notified.add(tag);
-    if (quiet || !canNotify() || looking()) return;
     show(tag, title, body, target);
   }
+  function flushHeld() {
+    if (!held.size || looking()) return;   // a blur into an iframe keeps the document focused
+    const due = [...held];
+    held.clear();
+    for (const [tag, h] of due) {
+      notified.add(tag);
+      if (canNotify()) show(tag, h.title, h.body, h.target);
+    }
+  }
+  try { if (doc && typeof doc.addEventListener === 'function') doc.addEventListener('visibilitychange', flushHeld); } catch { /* no events */ }
+  try { if (win && typeof win.addEventListener === 'function') win.addEventListener('blur', flushHeld); } catch { /* no events */ }
 
   const shown = () => (settings().badge ? badgeCount(counts) : 0);
   function applyBadge() {
@@ -187,23 +224,34 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
     },
     setNotify(on) { writeKey(storage, ALERT_KEYS.notify, !!on); applyBadge(); },
     setBadge(on) { writeKey(storage, ALERT_KEYS.badge, !!on); applyBadge(); },
-    /** A run's question. `backfill`: it was already pending when the page loaded (D7). */
+    /** A run's question. `backfill`: it was already pending when the page loaded (D7): quiet
+     *  when the page is looked at, a notification when it loaded hidden. */
     onQuestion(run, msg, { backfill = false } = {}) {
       if (!run || !run.runId || !msg) return;
       const tag = questionTag(run.runId, msg.id != null ? msg.id : msg.kind);
-      notifyOnce(tag, kindTitle(msg.kind), run.title || run.runId, { runId: run.runId }, backfill);
+      notifyOnce(tag, kindTitle(msg.kind), run.title || run.runId, { runId: run.runId }, backfill && looking());
     },
-    /** A run paused for `reason`. `backfill`: it was already paused when the page loaded (D7). */
+    /** A run paused for `reason`. `backfill`: as for onQuestion. */
     onPaused(run, reason, { backfill = false } = {}) {
       const title = pauseTitle(reason);
       if (!run || !run.runId || !title) return;
-      notifyOnce(pauseTag(run.runId), title, run.title || run.runId, { runId: run.runId }, backfill);
+      notifyOnce(pauseTag(run.runId), title, run.title || run.runId, { runId: run.runId }, backfill && looking());
+    },
+    /** Any Ask Worca frame: a card that is `proposed` waits for an OK; any other state settles it. */
+    onAskFrame(frame) {
+      for (const { threadId, block } of askCardsIn(frame)) {
+        const tag = `worca:ask:${threadId}:${block.id}`;
+        if (block.state === 'proposed') { notifyOnce(tag, askCardTitle(block.card), ASK_BODY, { askThread: threadId }, false); continue; }
+        if (block.state === 'building') continue;   // not waiting yet
+        close(tag);
+        notified.delete(tag);                       // a canceled start flips the card back to proposed
+      }
     },
     onResolved(run, msg) {
       if (!run || !run.runId) return;
       if (msg && msg.id != null) { close(questionTag(run.runId, msg.id)); return; }
       const prefix = questionTag(run.runId, '');
-      for (const tag of [...open.keys()]) if (tag.startsWith(prefix)) close(tag);
+      for (const tag of [...open.keys(), ...held.keys()]) if (tag.startsWith(prefix)) close(tag);
     },
     /** A row of the notification log; only an unread-able `problem` notifies. */
     onScheduleNotification(row) {

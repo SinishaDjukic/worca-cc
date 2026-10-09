@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 import {
   KIND_TITLES, kindTitle, questionTag, titleWithCount, badgeCount, readAlertSettings,
   createAlerts, mountAlertsCard, ALERT_KEYS, BLOCKED_HINT, PAUSE_TITLES, pauseTitle, pauseTag,
+  askCardTitle, askCardsIn,
 } from '../ui/public/alerts.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -54,7 +55,7 @@ function setup({ notify = true, badge, permission = 'granted', answer, visible =
   const Notif = N === undefined ? fakeNotification({ permission, answer }) : N;
   const { doc, look, window } = fakeDoc({ visible, focused, html });
   const opened = [];
-  const win = { focused: 0, focus() { this.focused += 1; } };
+  const win = Object.assign(new window.EventTarget(), { focused: 0, focus() { this.focused += 1; } });
   const drawn = [];
   const alerts = createAlerts({
     Notification: Notif, doc, nav, storage: store, win,
@@ -65,6 +66,12 @@ function setup({ notify = true, badge, permission = 'granted', answer, visible =
 }
 
 const RUN = { runId: 'r1', title: 'Fix the login bug' };
+/** The person looks away: the tab is hidden (visibilitychange), or the window loses focus (blur). */
+function leave(a, how = 'hide') {
+  a.look.focused = false;
+  if (how === 'hide') { a.look.visible = false; a.doc.dispatchEvent(new a.window.Event('visibilitychange')); }
+  else a.win.dispatchEvent(new a.window.Event('blur'));
+}
 const Q = (id, kind = 'gate', extra = {}) => ({ type: 'question', runId: 'r1', id, kind, ...extra });
 
 // ── pure parts ────────────────────────────────────────────────────────────────
@@ -139,13 +146,44 @@ test('none when the setting is off, permission is not granted, or Notification i
   assert.doesNotThrow(() => none.alerts.onQuestion(RUN, Q('q1')));
 });
 
-test('D7: a backfilled question sets nothing off, and its live replay does not notify either', () => {
-  const a = setup();
+test('D7: a question backfilled while the page is looked at sets nothing off, ever; its live replay does not notify either', () => {
+  const a = setup({ visible: true, focused: true });
   a.alerts.onQuestion(RUN, Q('q1'), { backfill: true });
   a.alerts.onQuestion(RUN, Q('q1'));
-  assert.equal(a.N.shown.length, 0);
+  leave(a);
+  assert.equal(a.N.shown.length, 0, 'no burst when the person leaves a page they opened');
   a.alerts.onQuestion(RUN, Q('q2'));
   assert.equal(a.N.shown.length, 1, 'a NEW question after the backfill still notifies');
+});
+
+test('a page that loads hidden (a tab the browser reloaded in the background) notifies what is waiting', () => {
+  const a = setup({ visible: false });
+  a.alerts.onQuestion(RUN, Q('q1'), { backfill: true });
+  a.alerts.onPaused({ runId: 'r2', title: 'Limited' }, 'usage_limit', { backfill: true });
+  assert.deepEqual(a.N.shown.map((n) => n.tag), ['worca:r1:q1', 'worca:r2:pause']);
+});
+
+test('a wait that lands while the tab is looked at notifies when the person looks away, if it is still waiting', () => {
+  for (const how of ['hide', 'blur']) {
+    const a = setup({ visible: true, focused: true });
+    a.alerts.onQuestion(RUN, Q('q1'));
+    a.alerts.onPaused({ runId: 'r2', title: 'Limited' }, 'usage_limit');
+    a.alerts.onQuestion({ runId: 'r3', title: 'Answered' }, Q('q3'));
+    assert.equal(a.N.shown.length, 0, 'nothing while looking');
+    a.alerts.onResolved({ runId: 'r3' }, { id: 'q3' });
+    leave(a, how);
+    assert.deepEqual(a.N.shown.map((n) => n.tag), ['worca:r1:q1', 'worca:r2:pause'], `${how}: the answered one stays quiet`);
+    leave(a, how);
+    a.alerts.onQuestion(RUN, Q('q1'));
+    assert.equal(a.N.shown.length, 2, `${how}: never twice`);
+  }
+});
+
+test('a blur that keeps the document focused (focus moved into an iframe) does not flush', () => {
+  const a = setup({ visible: true, focused: true });
+  a.alerts.onQuestion(RUN, Q('q1'));
+  a.win.dispatchEvent(new a.window.Event('blur'));
+  assert.equal(a.N.shown.length, 0);
 });
 
 test('D8: the same runId/questionId twice gives one notification', () => {
@@ -190,13 +228,16 @@ test('a usage-limit pause notifies with the run title, once, and never while the
   assert.equal(b.N.shown.length, 0);
 });
 
-test('a pause with no reason (Pause pressed) or a drain does not notify; a backfilled pause does not either', () => {
+test('a pause with no reason (Pause pressed) or a drain does not notify; a pause backfilled on a looked-at page does not either', () => {
   const a = setup();
   a.alerts.onPaused(RUN, null);
   a.alerts.onPaused(RUN, 'drain');
-  a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error', { backfill: true });
-  a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error');
   assert.equal(a.N.shown.length, 0);
+  const b = setup({ visible: true, focused: true });
+  b.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error', { backfill: true });
+  b.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error');
+  leave(b);
+  assert.equal(b.N.shown.length, 0);
 });
 
 test('a pause notification clicks through to the run and closes when the run is resolved', () => {
@@ -207,6 +248,39 @@ test('a pause notification clicks through to the run and closes when the run is 
   a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error');
   a.N.shown[1].onclick({ preventDefault() {} });
   assert.deepEqual(a.opened, [{ runId: 'r2' }]);
+});
+
+test('ask cards: a proposed card notifies once with a title by card type; leaving "proposed" closes it; a re-proposed card notifies again', () => {
+  assert.equal(askCardTitle({}), 'Worca: Ask Worca proposal to review');
+  assert.equal(askCardTitle({ workflowId: 'wf_x' }), 'Worca: Ask Worca: run to approve');
+  assert.equal(askCardTitle({ type: 'web' }), 'Worca: Ask Worca: web access to approve');
+  assert.equal(askCardTitle({ type: 'workflow' }), 'Worca: Ask Worca: workflow to review');
+  assert.equal(askCardTitle({ type: 'schedule' }), 'Worca: Ask Worca: schedule to approve');
+  assert.equal(askCardTitle({ type: 'model' }), 'Worca: Ask Worca proposal to review');
+  const a = setup();
+  const card = (state, extra = {}) => ({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state, card: { type: 'web', host: 'secret.example', ...extra } } });
+  a.alerts.onAskFrame({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state: 'building', card: { type: 'workflow' } } });
+  assert.equal(a.N.shown.length, 0, 'a card still being built waits on nobody');
+  a.alerts.onAskFrame(card('proposed'));
+  a.alerts.onAskFrame(card('proposed'));
+  assert.equal(a.N.shown.length, 1);
+  assert.equal(a.N.shown[0].title, 'Worca: Ask Worca: web access to approve');
+  assert.equal(a.N.shown[0].body, 'Open the chat to review it.', 'never the card content');
+  assert.equal(a.N.shown[0].tag, 'worca:ask:t1:c1');
+  a.alerts.onAskFrame({ type: 'ask-message', threadId: 't1', message: { id: 'm1', blocks: [{ kind: 'text' }, { kind: 'card', id: 'c1', state: 'applied', card: { type: 'web' } }] } });
+  assert.equal(a.N.shown[0].closed, true);
+  a.alerts.onAskFrame(card('proposed'));
+  assert.equal(a.N.shown.length, 2, 'proposed again (a canceled start flips it back)');
+  a.N.shown[1].onclick({ preventDefault() {} });
+  assert.deepEqual(a.opened, [{ askThread: 't1' }]);
+});
+
+test('askCardsIn reads ask-card and ask-message frames and ignores the rest', () => {
+  assert.deepEqual(askCardsIn({ type: 'ask-delta', threadId: 't1', text: 'x' }), []);
+  assert.deepEqual(askCardsIn({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c1', state: 'proposed', card: {} } }).map((c) => c.block.id), ['c1']);
+  assert.deepEqual(askCardsIn({ type: 'ask-message', threadId: 't1', message: { blocks: [{ kind: 'text' }, { kind: 'card', id: 'c2', state: 'proposed', card: {} }] } }).map((c) => c.block.id), ['c2']);
+  assert.deepEqual(askCardsIn({ type: 'ask-message', threadId: 't1', message: { blocks: null } }), []);
+  assert.deepEqual(askCardsIn(null), []);
 });
 
 test('D6: the body never carries the question text, answers or code; a run with no title falls back to its id', () => {

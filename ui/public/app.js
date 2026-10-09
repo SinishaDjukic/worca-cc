@@ -658,7 +658,10 @@ const alerts = createAlerts({
   nav: navigator,
   storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
   win: window,
-  onOpen: (target) => { location.hash = target.schedule ? 'schedules' : rdHash(target.runId); },
+  onOpen: (target) => {
+    if (target.askThread) { askPanel?.openThread(target.askThread); return; }
+    location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
+  },
 });
 /** The run as alerts.mjs names it: makeRun's '(untitled)' placeholder is no title (the id stands in). */
 const alertRun = (r) => ({ runId: r.runId, title: r.title === '(untitled)' ? '' : r.title });
@@ -1157,6 +1160,7 @@ function handleServerMessage(msg) {
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
     askPanel?.pushServerFrame(msg);
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
