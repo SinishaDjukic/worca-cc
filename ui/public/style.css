@@ -158,8 +158,9 @@ body{
              width .2s cubic-bezier(.65,.02,.28,1);
 }
 /* The fixed top band: the wordmark and the mock pill (the collapse toggle is in the top bar). Its border is
-   transparent at rest and turns --line while the pages scroll under it (.under-top). */
-.brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 0 20px;
+   transparent at rest and turns --line while the pages scroll under it (.under-top). It is 48px tall, border
+   included, like .topnav, so the two hairlines meet on one row in the column and on the rail alike. */
+.brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;height:48px;padding:0 10px 0 20px;
   border-bottom:1px solid transparent;transition:border-color .15s;}
 .sidebar.under-top .brand{border-bottom-color:var(--line);}
 .brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
@@ -5161,11 +5162,12 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .sidebar.collapsed{width:60px;flex:0 0 60px;}
 .sidebar.collapsed .side-scroll{scrollbar-width:none;}
 .sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
-/* The logo row stacks: the round mark on top, the mock pill under it. */
-.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:6px;padding:16px 0 10px;}
+/* The logo row stacks: the round mark on top, the mock pill under it, both inside the band's 48px
+   (26 + 3 + a 15px pill), so the rail's hairline stays level with the top bar's. */
+.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:3px;padding:0;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
-.sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;letter-spacing:.02em;}
+.sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;line-height:11px;letter-spacing:.02em;}
 
 /* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
    the open page keep the column's greys. Child combinators only (`.nav > button`, and

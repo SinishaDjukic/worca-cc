@@ -37,7 +37,7 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
   assert.match(side, /overflow:hidden;/);
   assert.doesNotMatch(side, /overflow-y|padding/, 'the bands own the padding and the scrolling');
   assert.match(ruleBody('.brand'), /flex:none;/);
-  assert.match(ruleBody('.brand'), /padding:12px 10px 0 20px;/);
+  assert.match(ruleBody('.brand'), /height:48px;padding:0 10px 0 20px;/, 'as tall as .topnav (48px, border-box) so the hairlines line up');
   assert.match(ruleBody('.brand .logo'), /height:32px;/);
   assert.match(ruleBody('.side-scroll'), /flex:1 1 auto;min-height:0;/);
   assert.match(ruleBody('.side-scroll'), /overflow-y:auto;/);
@@ -45,7 +45,9 @@ test('the column is 254px and never scrolls itself; #side-scroll is the one scro
   assert.match(ruleBody('.side-foot'), /flex:none;/);
   assert.match(ruleBody('.side-foot'), /padding:8px 10px 10px;/);
   assert.match(ruleBody('.sidebar.collapsed'), /width:60px;flex:0 0 60px;/);
-  assert.match(ruleBody('.sidebar.collapsed .brand'), /padding:16px 0 10px;/);
+  assert.match(ruleBody('.sidebar.collapsed .brand'), /gap:3px;padding:0;/, 'the rail keeps the 48px band');
+  assert.doesNotMatch(ruleBody('.sidebar.collapsed .brand'), /height:/, 'it inherits the column\'s 48px');
+  assert.match(ruleBody('.topnav'), /height:48px;/);
   assert.match(ruleBody('.brand .logo-mark'), /width:26px;height:26px;/);
 });
 
