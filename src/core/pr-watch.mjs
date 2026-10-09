@@ -3,6 +3,9 @@ import { getDb, tx } from './db.mjs';
 import { capBytes } from './git-info.mjs';
 
 export const MAX_FIX_RUNS = 3;
+/** Every fix run is an unattended Implement ⇄ Review: the origin's own workflow may start with
+ *  Clarify (blocks unattended) and re-plan the whole feature for one review comment. */
+export const FIX_WORKFLOW_ID = 'wf_implement-review';
 export const WATCH_MARKER = '<!-- worca:pr-watch -->';
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const PASSING = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
@@ -149,6 +152,17 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
   return out.join('\n');
 }
 
+const SUMMARY_SUBJECTS = 10;
+/** The reply's short summary: the pushed sha and the fix run's commit subjects (oldest first), capped. */
+export function fixSummary(sha, subjects = []) {
+  const head = `Worca pushed ${String(sha).slice(0, 7)} to address this`;
+  const list = subjects.map((x) => String(x).trim()).filter(Boolean).reverse();
+  if (!list.length) return `${head}.`;
+  const lines = list.slice(0, SUMMARY_SUBJECTS).map((x) => `- ${x.slice(0, 120)}`);
+  if (list.length > SUMMARY_SUBJECTS) lines.push(`- and ${list.length - SUMMARY_SUBJECTS} more`);
+  return `${head}:\n${lines.join('\n')}`;
+}
+
 export function replyBody({ runUrl = null, summary = 'Fixed in the latest push.' } = {}) {
   return `${WATCH_MARKER}\n${summary}${runUrl ? `\n\nWorca run: ${runUrl}` : ''}`;
 }
@@ -181,12 +195,12 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 
 /**
  * The Watch PR state machine. Every side effect is injected so the server owns the IO:
- *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, stepper, guardrailsId, workspace } | null
+ *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, guardrailsId, engine, mock } | null
  *   gh.{snapshot, jobLog, reply, comment}
- *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote })
+ *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *   liveOnBranch({ projectDir, branch }) → true while a live, paused or finishing run uses that exact branch
  *   freeCheckout({ projectDir, branch })   → releases a verified idle Worca checkout, throws coded errors
- *   startRun(body, { startedBy, runId, prWatchRunId, frozenStepper }) → { status, body }
+ *   startRun(body, { startedBy, runId, prWatchRunId }) → { status, body }
  *   liveRun({ runId, pipelineId }) → { status, finishing } | null  (by pipeline once one exists: a resume
  *                             runs under a new run id; by the reserved run id only before that)
  *   pipelineStatus(id)      → durable pipeline status | null
@@ -262,6 +276,7 @@ export function createPrWatcher(deps = {}) {
       // The branch moved between the snapshot and the fetch: one fresh look, then one more try.
       const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
       if (!snap?.ok) return retry(w, 'read', snap);
+      w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
       pr = snap.pr; triggers = collectTriggers(pr, w.handled);
       if (!triggers.fire) return w;
@@ -269,7 +284,7 @@ export function createPrWatcher(deps = {}) {
     }
     if (pre.retry || pre.moved) return retry(w, 'preflight', pre.retry || { class: 'failed' });
     if (pre.stop) return needsPerson(w, pre.stop);
-    w = resetRetry(resetRetry(w, 'read'), 'preflight');
+    w = resetRetry(w, 'preflight');
 
     const logs = [];
     for (const f of triggers.failures) {
@@ -284,21 +299,22 @@ export function createPrWatcher(deps = {}) {
     const reserved = reserveBatch(w.prUrl, { fixRuns: w.fixRuns, handled: w.handled }, pending, runId);
     if (!reserved) return getWatch(w.prUrl);           // someone else changed the watch first
     try { deps.onChange?.(reserved); } catch { /* broadcast only */ }
+    // The origin's per-node models do not map onto another workflow: the project defaults apply.
     const body = {
       prompt: buildFixTask({ pr, triggers, logs }),
       title: `Fix PR #${String(pr.url || w.prUrl).split('/').pop()} feedback`,
       projectDir: origin.projectDir,
-      workflowId: origin.stepper?.template?.id,
+      workflowId: FIX_WORKFLOW_ID,
+      humanInLoop: false,
       ...(origin.guardrailsId ? { guardrailsId: origin.guardrailsId } : {}),
+      ...(origin.engine ? { engine: origin.engine } : {}),
+      ...(origin.mock ? { mock: true } : {}),
       ...(origin.sourceBranch ? { sourceBranch: origin.sourceBranch } : {}),
       featureBranch: origin.branch,
       syncBeforeStart: false,
     };
-    // A workspace origin's manifest was resolved for the workspace (workspace-only variants, forced fan-out):
-    // the single-project fix run resolves the same workflow fresh instead.
-    const frozenStepper = origin.workspace ? null : origin.stepper;
     let r;
-    try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId, frozenStepper }); }
+    try { r = await deps.startRun(body, { startedBy: 'pr-watch', runId, prWatchRunId: runId }); }
     catch { r = { status: 500 }; }
     const cur = getWatch(w.prUrl);
     if (r?.status !== 200) {
@@ -310,8 +326,8 @@ export function createPrWatcher(deps = {}) {
     return cur;
   }
 
-  function endWatch(w, state) {
-    return transition(w, { enabled: false, status: 'ended', reason: String(state || 'closed').toLowerCase() });
+  function endWatch(w, state, patch = {}) {
+    return transition(w, { ...patch, enabled: false, status: 'ended', reason: String(state || 'closed').toLowerCase() });
   }
 
   /** A reserved run with no pipeline yet: map it from durable provenance or the live run. */
@@ -358,6 +374,10 @@ export function createPrWatcher(deps = {}) {
       p = { ...p, prAttached: true }; w = transition(w, { pending: p });
     }
     if (!p.pushedSha) {
+      // A PR merged or closed while the fix ran gets no push and no replies.
+      const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+      if (!snap?.ok) return retry(w, 'publish', snap || {});
+      if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state, { activeRunId: null, activePipelineId: null, pending: null });
       const where = { projectDir: origin.projectDir, branch: origin.branch, remote: remoteOf(w) };
       const f = await deps.git.fetch(where);
       if (!f?.ok) return retry(w, 'publish', f || {});
@@ -367,9 +387,10 @@ export function createPrWatcher(deps = {}) {
       if (s.remoteSha !== p.expectedRemoteSha) return needsPerson(w, 'remote-moved', { activeRunId: null, activePipelineId: null, pending: null });
       const pushed = await deps.git.push(where);
       if (!pushed?.ok) return retry(w, 'publish', pushed || {});
-      p = { ...p, pushedSha: s.headSha }; w = transition(w, { pending: p });
+      const log = await deps.git.subjects?.({ projectDir: origin.projectDir, from: p.startSha, to: s.headSha });
+      p = { ...p, pushedSha: s.headSha, summary: fixSummary(s.headSha, log?.ok ? log.subjects : []) }; w = transition(w, { pending: p });
     }
-    const body = replyBody({ summary: `Worca pushed ${String(p.pushedSha).slice(0, 7)} to address this.` });
+    const body = replyBody({ summary: p.summary || fixSummary(p.pushedSha) });
     for (const t of [...(p.threads || [])]) {
       const r = await deps.gh.reply({ projectDir: origin.projectDir, prUrl: w.prUrl, threadId: t.nodeId, body });
       if (!r?.ok) return retry(w, 'publish', r || {});
@@ -394,9 +415,10 @@ export function createPrWatcher(deps = {}) {
     if (!due(w, 'read') || !due(w, 'preflight')) return w;
     const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
     if (!snap?.ok) return retry(w, 'read', snap || {});
+    w = resetRetry(w, 'read');
     if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
     const triggers = collectTriggers(snap.pr, w.handled);
-    if (!triggers.fire) return resetRetry(w, 'read');
+    if (!triggers.fire) return w;
     if (w.fixRuns >= MAX_FIX_RUNS) return needsPerson(w, 'cap');
     return prepareAndStart(w, origin, snap.pr, triggers);
   }

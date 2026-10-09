@@ -273,7 +273,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  ghPrWatchSnapshot, ghFailedJobLog, ghReplyToThread, ghPrComment } from '../src/core/git-info.mjs';
+  ghPrWatchSnapshot, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -2074,11 +2074,6 @@ const startRunHandler = async (req, res) => {
     } catch (err) {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
-    let frozenStepper = null;
-    if (req._frozenStepper) {
-      try { frozenStepper = structuredClone(req._frozenStepper); } catch { return badRequest(res, 'invalid frozen workflow snapshot'); }
-      if (frozenStepper?.template?.id !== workflowId) return badRequest(res, 'frozen workflow snapshot does not match workflowId');
-    }
 
     // The Workspace scan workflow starts only through scanRequest: a hand-built body would run
     // a read-only scan the launch never validated (D2).
@@ -2280,7 +2275,6 @@ const startRunHandler = async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         template: workflowRow,
-        ...(frozenStepper ? { frozenStepper } : {}),
         ...(scanTarget && scanTarget.models ? { scanModels: scanTarget.models } : {}),
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
@@ -2409,7 +2403,6 @@ const startRunHandler = async (req, res) => {
         agentsDir: AGENTS_DIR,
         workflowId,
         template: workflowRow,
-        ...(frozenStepper ? { frozenStepper } : {}),
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
@@ -2863,7 +2856,7 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, frozenStepper = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
@@ -2871,7 +2864,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
   await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, _frozenStepper: frozenStepper }, res);
+    _prWatchRunId: prWatchRunId }, res);
   return out;
 }
 
@@ -5871,18 +5864,28 @@ function liveRunOnBranch({ projectDir, branch }) {
     if (!r.pipelineId) { if (r.workspaceId || (r.projectDir && canon(r.projectDir) === dir)) return true; continue; }
     if (holds(findPipelineRowById(r.pipelineId))) return true;
   }
-  return getDb().prepare("SELECT * FROM pipelines WHERE status = 'paused' AND archived_at IS NULL").all().some(holds);
+  // Only what membersOfRow reads: this runs on every watcher tick.
+  return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
+    .all().some(holds);
 }
-/** The watched PR's origin run: its member project, branch and frozen workflow, or null when gone. */
+/** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
+ *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
 function prWatchOrigin(w) {
   const row = findPipelineRowById(w.pipelineId);
   if (!row || row.archived_at) return null;
-  const state = readPipelineStateById(w.pipelineId);
   const m = memberFor(row, w.memberKey || null);
-  if (!m?.projectDir || !m.br?.feature || !state?.stepper?.template?.id) return null;
+  if (!m?.projectDir || !m.br?.feature) return null;
+  let rp = null; try { rp = JSON.parse(row.resume_point || 'null'); } catch { /* unreadable point: not mock */ }
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
-    sourceBranch: m.br.source || null, stepper: state.stepper, guardrailsId: state.guardrailsId || null,
-    workspace: row.target === 'workspace' };
+    sourceBranch: m.br.source || null, guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
+    mock: rp?.mock === true };
+}
+/** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
+ *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
+function prWatchFrame(pipelineId, memberKey) {
+  const row = findPipelineRowById(pipelineId);
+  const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
 }
 const prWatcher = createPrWatcher({
   originOf: prWatchOrigin,
@@ -5892,6 +5895,7 @@ const prWatcher = createPrWatcher({
     status: ({ projectDir, branch, remote }) => syncStatus(projectDir, { base: branch, remote }),
     fastForward: ({ projectDir, branch, remote }) => fastForward(projectDir, { base: branch, remote }),
     push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
+    subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
   },
   liveOnBranch: liveRunOnBranch,
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
@@ -5914,8 +5918,7 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
-  onChange: (w) => broadcast({ type: 'pr-watch-changed', projectKey: findPipelineRowById(w.pipelineId)?.project_key || null,
-    pipelineId: w.pipelineId, memberKey: w.memberKey || null }),
+  onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
 /** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
@@ -6948,7 +6951,7 @@ app.post('/api/pr', async (req, res) => {
       try {
         const w = setWatch({ prUrl: pr.url, pipelineId: pipelineIdForPr, memberKey: memberKey || '', pushRemote, enabled: true, enabledBy: actorOf(req) });
         watching = !!w.enabled;
-        broadcast({ type: 'pr-watch-changed', projectKey: state.projectKey, pipelineId: pipelineIdForPr, memberKey: memberKey || null });
+        broadcast(prWatchFrame(pipelineIdForPr, memberKey));
         kickPrWatch();
       } catch (err) { console.error(`[worca-ui] could not watch PR: ${err?.message || err}`); }
     }
@@ -6985,7 +6988,7 @@ app.post('/api/pr/watch', async (req, res) => {
     const pushRemote = getWatch(t.pr.url)?.pushRemote || published?.remote || 'origin';
     const w = setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '', pushRemote, enabled: body.watch,
       enabledBy: actorOf(req) });
-    broadcast({ type: 'pr-watch-changed', projectKey: t.state.projectKey, pipelineId: t.id, memberKey: t.target.memberKey || null });
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
     if (w.enabled) kickPrWatch();
     res.json(watchView(w));
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
@@ -13799,6 +13802,6 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

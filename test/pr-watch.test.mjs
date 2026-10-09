@@ -5,7 +5,7 @@ import { getDb, tx } from '../src/core/db.mjs';
 import { writeState } from '../src/core/artifacts.mjs';
 import {
   collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, updateWatch,
-  attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, _testing,
+  attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, _testing,
 } from '../src/core/pr-watch.mjs';
 
 useTempHome(after, 'pr-watch-');
@@ -40,7 +40,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
     now: () => clock.t,
     newId: () => `run-${++seq}`,
     originOf: (w) => ({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main',
-      stepper: { version: 2, template: { id: 'wf1' } }, guardrailsId: 'g1' }),
+      guardrailsId: 'g1', engine: 'codex', mock: true }),
     gh: {
       snapshot: async () => { calls.snapshot++; return io.snapshotResult ? io.snapshotResult() : { ok: true, pr: io.pr }; },
       jobLog: async ({ databaseId }) => ({ ok: true, text: `log ${databaseId}` }),
@@ -52,6 +52,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
       status: async () => ({ ok: true, checkedOutHere: false, checkedOutElsewhere: [], ...repo }),
       fastForward: async () => { calls.ff.push(1); if (repo.ahead > 0) return { ok: false, kind: 'diverged' }; repo.headSha = repo.remoteSha; repo.behind = 0; repo.hasLocal = true; return { ok: true }; },
       push: async () => { calls.push.push(repo.headSha); repo.remoteSha = repo.headSha; return { ok: true }; },
+      subjects: async ({ from, to }) => { calls.subjects = [from, to]; return io.subjects ? { ok: true, subjects: io.subjects } : { ok: false, subjects: [] }; },
     },
     liveOnBranch: async () => io.liveOnBranch,
     freeCheckout: async (a) => { calls.free.push(a); return { released: false }; },
@@ -169,11 +170,13 @@ test('one fix run batches failures, review threads and change requests, then pub
   const { body, opts } = io.calls.start[0];
   assert.match(body.prompt, /log 11/); assert.match(body.prompt, /> fix 22/); assert.match(body.prompt, /> redo/);
   assert.match(body.prompt, /untrusted/);
+  assert.equal(FIX_WORKFLOW_ID, 'wf_implement-review');
   assert.deepEqual([body.projectDir, body.workflowId, body.guardrailsId, body.featureBranch, body.sourceBranch, body.syncBeforeStart],
-    ['/repo', 'wf1', 'g1', 'feat/x', 'main', false]);
-  assert.equal(opts.startedBy, 'pr-watch');
-  assert.equal(opts.runId, opts.prWatchRunId);
-  assert.deepEqual(opts.frozenStepper, { version: 2, template: { id: 'wf1' } });
+    ['/repo', FIX_WORKFLOW_ID, 'g1', 'feat/x', 'main', false]);
+  // Unattended Implement ⇄ Review on the origin's engine and mock flag; per-node models stay project defaults.
+  assert.deepEqual([body.humanInLoop, body.engine, body.mock], [false, 'codex', true]);
+  assert.equal(Object.hasOwn(body, 'model'), false);
+  assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId });
   let w = getWatch(URL);
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
   assert.deepEqual(w.handled.sort(), ['check:11', 'check:12', 'comment:21', 'comment:22', 'review:31']);
@@ -313,6 +316,8 @@ test('crash recovery: starting maps provenance, waits for a live launch, else fa
   io.clock.t += 11 * 60_000;
   await watcher.tick();
   assert.deepEqual([getWatch(URL).status, getWatch(URL).reason], ['needs-person', 'start-lost']);
+  // Recovery only maps or fails a reservation: it never reads the PR again nor starts a second run.
+  assert.deepEqual([io.calls.start.length, io.calls.snapshot], [0, 0]);
 });
 
 test('crash recovery: fixing reads the durable row when no live run exists', async () => {
@@ -402,6 +407,20 @@ test('preflight: exact branch, live work defers, fast-forward when behind, diver
   assert.deepEqual([getWatch(URL).status, getWatch(URL).reason, h.io.calls.start.length], ['needs-person', 'diverged', 0]);
 });
 
+test('each phase keeps its own backoff: a good snapshot clears only read, a preflight retry only counts preflight', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const h = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
+  const past = new Date(h.io.clock.t - 1000).toISOString();
+  updateWatch(URL, { retryState: { read: { count: 3, class: 'failed', retryAt: past }, publish: { count: 2, class: 'failed', retryAt: past } } });
+  h.io.repo.remoteSha = 'R2';                              // preflight sees a moved remote twice
+  await h.watcher.tick();
+  const rs = getWatch(URL).retryState;
+  assert.equal(rs.read, undefined);
+  assert.equal(rs.preflight.count, 1);
+  assert.equal(rs.publish.count, 2);
+});
+
 test('a remote that moved after the snapshot gets one fresh snapshot, then a retry', async () => {
   const origin = seedOrigin();
   setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
@@ -417,6 +436,40 @@ test('a remote that moved after the snapshot gets one fresh snapshot, then a ret
   assert.equal(getWatch(URL).retryState.preflight, undefined);
 });
 
+test('publishing re-reads the PR first: a PR closed meanwhile ends the watch with no push and no replies', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
+  await watcher.tick();
+  finishRun(io, getWatch(URL));
+  await watcher.tick();
+  assert.equal(getWatch(URL).status, 'publishing');
+  io.pr = openPr({ state: 'MERGED' });
+  const before = io.calls.snapshot;
+  await watcher.tick();
+  const w = getWatch(URL);
+  assert.equal(io.calls.snapshot, before + 1);
+  assert.deepEqual([w.enabled, w.status, w.reason, w.activeRunId, w.activePipelineId, w.pending], [false, 'ended', 'merged', null, null, null]);
+  assert.deepEqual([io.calls.push, io.calls.reply, io.calls.comment], [[], [], []]);
+});
+
+test('the reply names what the fix commits did, under the watch marker', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, watcher } = harness({ pr: openPr({ reviews: [{ databaseId: 9, state: 'CHANGES_REQUESTED', body: 'x', authorAssociation: 'OWNER' }] }) });
+  io.subjects = ['Fix the lint error', 'Handle a null config'];
+  await watcher.tick();
+  finishRun(io, getWatch(URL), 'C1234567890');
+  await watcher.tick(); await watcher.tick();
+  assert.deepEqual(io.calls.subjects, ['R1', 'C1234567890']);
+  assert.equal(io.calls.comment.length, 1);
+  const body = io.calls.comment[0];
+  assert.ok(body.startsWith('<!-- worca:pr-watch -->\n'));
+  assert.match(body, /Worca pushed C123456 to address this:/);
+  assert.match(body, /^- Fix the lint error$/m);
+  assert.match(body, /^- Handle a null config$/m);
+});
+
 test('a refused start needs a person and still counts toward the cap', async () => {
   const origin = seedOrigin();
   setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
@@ -428,7 +481,37 @@ test('a refused start needs a person and still counts toward the cap', async () 
   assert.deepEqual(h.io.calls.notify, ['needs-person']);    // "started" only after the start is accepted
 });
 
-test('a workspace-member origin resolves its workflow fresh for the single project, never the workspace manifest', async () => {
+test('start outcomes: a 200 is only accepted, a throw is refused, a busy checkout waits, a foreign one needs a person', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const h = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
+  let reserved = null;
+  h.deps.startRun = async (body, opts) => { h.io.calls.start.push({ body, opts }); reserved = opts.prWatchRunId; return { status: 200, body: {} }; };
+  let watcher = createPrWatcher(h.deps);
+  await watcher.tick();                                     // accepted, no pipeline yet: still starting
+  assert.deepEqual([getWatch(URL).status, h.io.calls.notify], ['starting', ['started']]);
+  const fix = seedOrigin(); tx(() => attachWatchPipeline(reserved, fix));
+  assert.deepEqual([getWatch(URL).status, getWatch(URL).activePipelineId], ['fixing', fix]);
+
+  getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  h.deps.startRun = async () => { throw new Error('boom'); };
+  await createPrWatcher(h.deps).tick();
+  assert.deepEqual([getWatch(URL).status, getWatch(URL).reason, getWatch(URL).fixRuns], ['needs-person', 'start-refused', 1]);
+
+  getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const coded = (code) => async () => { throw Object.assign(new Error(code), { code }); };
+  h.deps.freeCheckout = coded('BUSY');
+  watcher = createPrWatcher(h.deps);
+  await watcher.tick();
+  assert.deepEqual([getWatch(URL).status, getWatch(URL).fixRuns], ['watching', 0]);
+  h.deps.freeCheckout = coded('FOREIGN_HOLDER');
+  await createPrWatcher(h.deps).tick();
+  assert.deepEqual([getWatch(URL).status, getWatch(URL).reason, getWatch(URL).fixRuns], ['needs-person', 'checkout-foreign_holder', 0]);
+});
+
+test('a workspace-member origin starts the same single-project Implement ⇄ Review fix run', async () => {
   const origin = seedOrigin();
   setWatch({ prUrl: URL, pipelineId: origin, memberKey: 'web', enabled: true });
   const h = harness({ pr: openPr({ threads: [thread('T1', 1)] }) });
@@ -438,8 +521,8 @@ test('a workspace-member origin resolves its workflow fresh for the single proje
   await watcher.tick();
   assert.equal(h.io.calls.start.length, 1);
   const { body, opts } = h.io.calls.start[0];
-  assert.equal(body.workflowId, 'wf1');
-  assert.equal(opts.frozenStepper, null);
+  assert.equal(body.workflowId, FIX_WORKFLOW_ID);
+  assert.equal(Object.hasOwn(opts, 'frozenStepper'), false);
   assert.equal(getWatch(URL).status, 'fixing');
 });
 

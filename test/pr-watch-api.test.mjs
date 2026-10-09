@@ -6,13 +6,15 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app, _testing as server } from '../ui/server.mjs';
+import { app, runs, _testing as server } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, persistMemberPrState } from '../src/core/artifacts.mjs';
-import { getWatch, updateWatch } from '../src/core/pr-watch.mjs';
+import { getWatch, updateWatch, setWatch, reserveBatch, watchRun } from '../src/core/pr-watch.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { stopAndSettle } from './helpers/stop-and-settle.mjs';
 
 const GH = 'https://github.com/me/repo/pull/7';
 const WK = 'wks-team-w-00000001';
@@ -140,16 +142,19 @@ test('POST /api/pr rejects a non-boolean watch before doing any work', async () 
   assert.equal(seen.filter((c) => c[1] === 'push').length, 0);
 });
 
-test('the watcher origin is the run\'s member project, branch and frozen workflow; archived means gone', async () => {
+test('the watcher origin is the run\'s member project, branch, guardrails, engine and mock flag; archived means gone', async () => {
   const o = server.prWatchOrigin({ pipelineId: seeded.id, memberKey: '' });
   assert.equal(o.projectDir, repo);
   assert.equal(o.branch, 'worca-cc/watch-me');
   assert.equal(o.sourceBranch, 'main');
-  assert.equal(o.stepper.template.id, 'wf_default');
+  assert.deepEqual([o.engine, o.mock, Object.hasOwn(o, 'stepper')], ['claude', false, false]);
   const w = server.prWatchOrigin({ pipelineId: wsId, memberKey: 'web-00000002' });
   assert.deepEqual([w.projectDir, w.branch, w.sourceBranch], [webDir, 'worca-cc/feat-web', 'dev']);
-  // A workspace origin is flagged: its manifest was resolved for the workspace, not for one project.
-  assert.deepEqual([o.workspace, w.workspace], [false, true]);
+  // The engine the origin ran on, and a mock origin's persisted flag, carry over to its fix runs.
+  const codex = await seedRun('Codex mock', { runEngine: 'codex', resumePoint: { mock: true } });
+  getDb().prepare("UPDATE pipelines SET guardrails_id='g-strict' WHERE id=?").run(codex.id);   // set at creation only
+  const c = server.prWatchOrigin({ pipelineId: codex.id, memberKey: '' });
+  assert.deepEqual([c.engine, c.mock, c.guardrailsId], ['codex', true, 'g-strict']);
   const gone = await seedRun('Gone');
   getDb().prepare("UPDATE pipelines SET archived_at='2026-06-02T00:00:00Z' WHERE id=?").run(gone.id);
   assert.equal(server.prWatchOrigin({ pipelineId: gone.id, memberKey: '' }), null);
@@ -162,6 +167,13 @@ test('a paused run on the exact project and branch makes the branch busy; anothe
   assert.equal(server.liveRunOnBranch({ projectDir: repo, branch: 'worca-cc/other' }), false);
   assert.equal(server.liveRunOnBranch({ projectDir: apiDir, branch: 'worca-cc/watch-me' }), false);
   getDb().prepare("UPDATE pipelines SET status='done' WHERE id=?").run(paused.id);
+  // A paused workspace run holds only its own members' branches.
+  assert.equal(server.liveRunOnBranch({ projectDir: webDir, branch: 'worca-cc/feat-web' }), false);
+  getDb().prepare("UPDATE pipelines SET status='paused' WHERE id=?").run(wsId);
+  try {
+    assert.equal(server.liveRunOnBranch({ projectDir: webDir, branch: 'worca-cc/feat-web' }), true);
+    assert.equal(server.liveRunOnBranch({ projectDir: webDir, branch: 'worca-cc/feat-api' }), false);
+  } finally { getDb().prepare("UPDATE pipelines SET status='done' WHERE id=?").run(wsId); }
 });
 
 test('the background loop is not started by importing the server; kicks are no-ops then', async () => {
@@ -207,4 +219,29 @@ test('POST /api/pr: watch:true watches the new github.com PR; omitting watch kee
   assert.equal(r.status, 200, JSON.stringify(body));
   assert.equal(Object.hasOwn(body, 'watching'), false);
   assert.equal(getWatch(body.url), null);
+});
+
+test('a reserved fix run id reaches its new pipeline: the start links it inside pipeline creation', async () => {
+  const prUrl = 'https://github.com/me/repo/pull/99';
+  setWatch({ prUrl, pipelineId: seeded.id, enabled: true });
+  assert.ok(reserveBatch(prUrl, { fixRuns: 0, handled: [] }, { version: 1, handledKeys: ['comment:1'] }, 'run-wire-1'));
+  let out = null;
+  const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { out = { status: this.statusCode, body: b }; return this; } };
+  await server.startRunHandler({ body: { prompt: 'fix', projectDir: gitDir('prwatch-wire'), workflowId: 'wf_default', mock: true },
+    headers: {}, _startedBy: 'pr-watch', _runId: 'run-wire-1', _prWatchRunId: 'run-wire-1' }, res);
+  try {
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+    const t0 = Date.now();
+    while (!watchRun('run-wire-1').pipelineId && Date.now() - t0 < 60_000) await new Promise((r) => setTimeout(r, 25));
+    const pid = watchRun('run-wire-1').pipelineId;
+    assert.ok(pid, 'the pipeline was linked to its reservation');
+    assert.deepEqual([getWatch(prUrl).status, getWatch(prUrl).activePipelineId], ['fixing', pid]);
+  } finally { await stopAndSettle(runs, (e) => e.id === 'run-wire-1'); }
+});
+
+test('pr-watch-changed frames carry the store key History uses: a workspace run\'s is workspaces/<wk>', () => {
+  assert.deepEqual(server.prWatchFrame(wsId, 'web-00000002'),
+    { type: 'pr-watch-changed', projectKey: KEY, pipelineId: wsId, memberKey: 'web-00000002' });
+  assert.deepEqual(server.prWatchFrame(seeded.id, ''),
+    { type: 'pr-watch-changed', projectKey: seeded.key, pipelineId: seeded.id, memberKey: null });
 });

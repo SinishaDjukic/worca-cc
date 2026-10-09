@@ -145,21 +145,6 @@ export class GraphOrchestrator extends RunHarness {
    */
   async _resolveTopology(registry) {
     this.scriptRegistry = loadScriptRegistry({ scriptsDir: this.opts.scriptsDir, agentKeys: Object.keys(registry || {}) });
-    if (this.opts.frozenStepper) {
-      const manifest = jsonClone(this.opts.frozenStepper);
-      if (manifest?.version !== 2 || manifest?.template?.id !== this.workflowId) {
-        throw new Error('the frozen workflow snapshot does not match workflowId');
-      }
-      this._adoptResolvedGraph(resolvedFromManifest(manifest, registry, this.scriptRegistry));
-      this._preflightScriptKeys(this.resolved.scriptKeys);
-      await this._preflightScriptRuntimes();
-      for (const nc of Object.values(this.resolved.nodeCtx)) {
-        if (nc.kind !== 'agent') continue;
-        const loaded = await loadAgentFile(this.agentsDir, nc.meta?.agentFile ?? null, nc.meta?.agentPath ?? null);
-        nc.agentPrompt = loaded.prompt; nc.tools = loaded.tools;
-      }
-      return { manifest, agentKeys: new Set(this.resolved.agentKeys), workflow: { id: this.workflowId, name: manifest.template.name || this.workflowId } };
-    }
     if (this.workflowId === AUTO_WORKFLOW_ID) return this._autoBootstrapTopology();
     // Settings › Memory: a defragment run (memoryScope ⇔ wf_memory_defrag, checked in the
     // constructor) resolves its model/effort pair HERE — the one place every entry point reaches

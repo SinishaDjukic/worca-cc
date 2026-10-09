@@ -198,7 +198,11 @@ The **Auto** workflow option is available for both targets — a project and a w
 Watch PR is opt-in in Ship It and is available beside an open PR at the advanced
 level. It supports github.com only and batches failed checks plus trusted author,
 owner, member, or collaborator feedback into at most three automatic fix runs.
-Review text is untrusted code feedback. Turning the watch off stops new work;
+Review text is untrusted code feedback. Each fix run is an unattended
+Implement ⇄ Review (`wf_implement-review`) on the PR's own branch: it keeps the
+original run's guardrails and engine (and a mock run's mock flag), never asks a
+person, and uses the project's default agent models. A PR merged or closed while
+a fix ran is not pushed to. Turning the watch off stops new work;
 already-active work drains through publishing. Turning an idle watch off and on
 resets its run allowance. Worca replies to review threads without resolving them.
 

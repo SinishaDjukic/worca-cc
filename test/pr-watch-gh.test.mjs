@@ -4,6 +4,7 @@ import { test, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGithubPrUrl } from '../src/core/forge.mjs';
 import { ghPrWatchSnapshot, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects, _testing as gitInfo } from '../src/core/git-info.mjs';
+import { collectTriggers } from '../src/core/pr-watch.mjs';
 
 const PR = 'https://github.com/acme/app/pull/7';
 const ENV_KEYS = ['GH_TOKEN', 'GITHUB_TOKEN', 'WORCA_GH_READ_TOKEN', 'WORCA_GH_WRITE_TOKEN', 'WORCA_GH_APP_ID', 'WORCA_BROKER_URL'];
@@ -23,14 +24,14 @@ const ok = (data) => ({ ok: true, stdout: JSON.stringify(data), stderr: '', code
 const fail = (stderr, code = 1) => ({ ok: false, stdout: '', stderr, code });
 const page = (nodes, next = null) => ({ nodes, pageInfo: { hasNextPage: !!next, endCursor: next } });
 
-/** Parse `gh api graphql -f query=… -f k=v -F n=1` back into { query, vars }. */
+/** Parse `gh api graphql -f query=… -f k=v -F n=1` back into { query, vars, flags } (flags: k -> '-f' | '-F'). */
 function graphqlArgs(args) {
-  const vars = {}; let query = null;
+  const vars = {}; const flags = {}; let query = null;
   for (let i = 2; i < args.length; i += 2) {
     const [k, ...rest] = args[i + 1].split('='); const v = rest.join('=');
-    if (k === 'query') query = v; else vars[k] = v;
+    if (k === 'query') query = v; else { vars[k] = v; flags[k] = args[i]; }
   }
-  return { query, vars };
+  return { query, vars, flags };
 }
 
 function runner(answer) {
@@ -183,4 +184,32 @@ test('commitSubjects lists subjects between two SHAs', async () => {
   const calls = runner(async () => ({ ok: true, stdout: 'fix a\nfix b\n', stderr: '', code: 0 }));
   assert.deepEqual(await commitSubjects('/p', 'a1', 'b2'), { ok: true, subjects: ['fix a', 'fix b'] });
   assert.deepEqual(calls[0].args, ['log', '--format=%s', 'a1..b2']);
+});
+
+test('GraphQL variables are typed explicitly: strings raw (-f), booleans and the PR number typed (-F)', async () => {
+  const calls = runner(async () => ok(prNode()));
+  assert.equal((await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR })).ok, true);
+  const { query, vars, flags } = graphqlArgs(calls[0].args);
+  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', withContexts: '-F', withThreads: '-F', withReviews: '-F' });
+  assert.deepEqual([vars.number, vars.withContexts, vars.withThreads, vars.withReviews], ['7', 'true', 'true', 'true']);
+  // Required-check detection asks GitHub per pull request, on both check kinds.
+  assert.match(query, /CheckRun\{[^}]*isRequired\(pullRequestNumber:\$number\)/);
+  assert.match(query, /StatusContext\{[^}]*isRequired\(pullRequestNumber:\$number\)/);
+});
+
+test('a thread\'s later comment pages are read with the read credential', async () => {
+  const calls = runner(async (cmd, args) => (graphqlArgs(args).query.startsWith('query PrWatchComments')
+    ? ok({ data: { node: { comments: page([comment(12)]) } } })
+    : ok(prNode({ threads: page([{ id: 'T1', isResolved: false, comments: page([comment(11)], 'tc1') }]) }))));
+  assert.equal((await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR })).ok, true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((c) => c.opts.env.GH_TOKEN), ['read-token', 'read-token']);
+});
+
+test('a PR with no checks at all (null rollup) still fires its review triggers', async () => {
+  runner(async () => ok(prNode({ rollup: null, threads: page([{ id: 'T1', isResolved: false, comments: page([comment(11)]) }]) })));
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  const t = collectTriggers(snap.pr, []);
+  assert.deepEqual([t.fire, t.checksSettled, t.handledKeys], [true, true, ['comment:11']]);
 });

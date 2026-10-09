@@ -718,7 +718,15 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
   const cred = await githubEnv(role, { repo });
   if (cred.error) return { ok: false, class: 'auth', error: cred.error };
   const args = ['api', 'graphql', '-f', `query=${query}`];
-  for (const [k, v] of Object.entries(vars)) if (v != null) args.push(typeof v === 'string' ? '-f' : '-F', `${k}=${v}`);
+  // `-f` sends a raw string; `-F` types its value, and only the literals true/false and an integer
+  // become a GraphQL Boolean!/Int! (the @include switches and the PR number). Nothing else is typed.
+  for (const [k, v] of Object.entries(vars)) {
+    if (v == null) continue;
+    if (typeof v === 'string') args.push('-f', `${k}=${v}`);
+    else if (typeof v === 'boolean') args.push('-F', `${k}=${v ? 'true' : 'false'}`);
+    else if (Number.isSafeInteger(v)) args.push('-F', `${k}=${v}`);
+    else return { ok: false, class: 'failed', error: `GraphQL variable ${k} has an unsupported type` };
+  }
   const r = await _run('gh', args, { cwd: projectDir, env: cred.env });
   if (!r.ok) return { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
   let body; try { body = JSON.parse(r.stdout); } catch { return { ok: false, class: 'failed', error: 'GitHub returned invalid JSON' }; }

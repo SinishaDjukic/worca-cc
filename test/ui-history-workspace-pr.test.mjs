@@ -385,3 +385,20 @@ test('workspace detail: each open member PR gets its own watch control and state
   assert.match(cardAlertOf(lis[1]).detail, /nope/);
   assert.equal(cardAlertOf(lis[0]), null, 'the alert belongs to the member row');
 });
+
+test('workspace detail: pr-watch-changed for the run\'s store key refetches only the named member', async () => {
+  const arms = (url) => (/\/api\/pr\/watch\?/.test(url) ? ok({ watching: true, status: 'watching', reason: null, activePipelineId: null }) : null);
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } })])] });
+  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
+  const gets = (mk) => ctx.calls.filter((c) => /\/api\/pr\/watch\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === mk).length;
+  const before = [gets(API), gets(WEB)];
+  const send = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', pipelineId: ROW.id, ...msg }) });
+  send({ projectKey: KEY, memberKey: API });                  // a member's own project key is not the run's store key
+  await settle(ctx.window);
+  assert.deepEqual([gets(API), gets(WEB)], before);
+  send({ projectKey: WKS_KEY, memberKey: API });
+  await settle(ctx.window);
+  assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
+});
