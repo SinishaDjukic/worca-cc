@@ -151,3 +151,39 @@ test('Settings › Models: each non-Claude card says whether its engine is ready
   const { doc: none } = await boot({}, { hash: 'settings/models' });
   assert.equal(none.querySelector('.engine-card[data-engine="cursor"] .engine-card-status').textContent, '', 'no engines array: an empty line');
 });
+
+// Scale: one engine card at a time (the default engine's first), and each card lists only the slots set at this
+// level; the rest are summed up in one line, "+ Override a step…" reveals one, Show all reveals every slot.
+test('renderEngineSection: one card at a time, only the changed steps, one-line summary, override and show all', () => {
+  const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+  const host = doc.getElementById('h');
+  const roles = [{ key: 'planner', label: 'Plan' }, { key: 'implementer', label: 'Implement' }, { key: 'reviewer', label: 'Review' }];
+  const fields = {
+    'run.engine': { own: undefined, inherited: { value: 'codex', source: 'user' } },
+    'models.codex.steps.reviewer': { own: { model: 'gpt-5.5', effort: 'high' }, inherited: { value: undefined, source: 'default' } },
+  };
+  renderEngineSection(host, { level: 'project', roles, catalog: CATALOG, fields, jobs: { claude: [], codex: [], cursor: [] } });
+  const cards = () => [...host.querySelectorAll('.engine-card')].filter((c) => !c.hidden).map((c) => c.dataset.engine);
+  assert.deepEqual(cards(), ['codex'], 'the default engine\'s card first');
+  assert.equal(host.querySelector('.engine-switch').dataset.minLevel, 'expert');
+  assert.equal(host.querySelector('.engine-card').dataset.minLevel, 'advanced');
+  const codex = host.querySelector('.engine-card[data-engine="codex"]');
+  const visible = () => [...codex.querySelectorAll('.engine-slot')].filter((r) => !r.hidden).map((r) => r.dataset.setting);
+  assert.deepEqual(visible(), ['models.codex.steps.reviewer']);
+  assert.equal(codex.querySelector('.engine-slot-rest').textContent, '2 other steps follow your settings.');
+  const add = codex.querySelector('.engine-slot-add');
+  assert.deepEqual([...add.options].map((o) => o.textContent), ['+ Override a step…', 'Plan', 'Implement']);
+  add.value = 'models.codex.steps.planner';
+  add.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  assert.deepEqual(visible(), ['models.codex.steps.planner', 'models.codex.steps.reviewer']);
+  assert.equal(codex.querySelector('.engine-slot-rest').textContent, '1 other step follows your settings.');
+  const all = codex.querySelector('.engine-slot-all');
+  all.click();
+  assert.equal(visible().length, 3);
+  assert.equal(all.textContent, 'Show only changes');
+  all.click();
+  assert.deepEqual(visible(), ['models.codex.steps.reviewer'], 'an untouched revealed row folds away again');
+  host.querySelector('.engine-switch button[data-engine="claude"]').click();
+  assert.deepEqual(cards(), ['claude']);
+  assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-slot-rest').textContent, 'Every step follows your settings.');
+});

@@ -8171,6 +8171,29 @@ span.act-running-title{cursor:default}
 .inherit-sub .select{width:100%;min-width:0;}
 @media (max-width:560px){ .inherit-row.inherit-pair{grid-template-columns:1fr;} }
 .engine-card{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+/* Engines: one card at a time behind the switch; each card a compact slot table (engine-settings-view.mjs slotTable). */
+.engine-switch{margin:4px 0 2px;flex-wrap:wrap;}
+/* Expert shows the switch, which already names the card: the heading would repeat it. */
+:root[data-level="expert"] .engine-card > h3{display:none;}
+.engine-card[hidden],.engine-slot[hidden],.engine-slot-head[hidden],.engine-slot-rest[hidden],.engine-slot-add[hidden],.engine-slot-all[hidden]{display:none;}
+.engine-slot-head,.engine-slots .inherit-field.engine-slot{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,2fr) minmax(0,1fr);column-gap:10px;align-items:center;}
+.engine-slot-head{font-size:11.5px;font-weight:600;color:var(--ink-2);padding:0 0 4px;}
+.engine-slots .inherit-field.engine-slot{margin:0;padding:6px 0;border-top:1px solid var(--line);}
+.engine-slots .engine-slot .label-row{min-width:0;flex-wrap:wrap;}
+.engine-slots .engine-slot .inherit-row{grid-column:2 / 4;}
+.engine-slots .engine-slot .inherit-sub-cap{display:none;}
+.engine-slot-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding-top:8px;}
+.engine-slot-foot .engine-slot-rest{margin:0;flex:1 1 220px;}
+.engine-slot-foot .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
+.engine-helpers-fold{margin-top:12px;}
+.engine-helpers-fold > summary{cursor:pointer;font-weight:600;font-size:13px;}
+.engine-helpers-fold .engine-helpers > h4{display:none;}
+@media (max-width:640px){
+  .engine-slot-head{display:none;}
+  .engine-slots .inherit-field.engine-slot{grid-template-columns:1fr;row-gap:6px;}
+  .engine-slots .engine-slot .inherit-row{grid-column:1;}
+  .engine-slots .engine-slot .inherit-sub-cap{display:block;}
+}
 .engine-card h3{margin:0 0 6px}.engine-card h4{margin:12px 0 4px;font-size:13px}.pd-settings-card{margin-top:14px}
 /* A non-Claude engine card's readiness line (GET /api/engines): text only. */
 .engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
