@@ -532,7 +532,7 @@ test('Defragment model card paints the stored pair (\'(default)\' first, the mod
       const msel = doc.getElementById('memDefragModel');
       const esel = doc.getElementById('memDefragEffort');
       assert.ok(msel.closest('.settings-pane[data-tab="memory"]'), 'on the global Memory tab');
-      assert.deepEqual([...msel.options].map((o) => [o.value, o.textContent]), [['', '(default)'], ['claude-haiku-4-5', 'Haiku 4.5'], ['claude-opus-5-5', 'Opus 5.5']]);
+      assert.deepEqual([...msel.options].map((o) => [o.value, o.textContent]), [['', '(default)'], ['claude-opus-5-5', 'Opus 5.5'], ['claude-haiku-4-5', 'Haiku 4.5']]);
       assert.equal(msel.value, 'claude-opus-5-5');
       assert.deepEqual([...esel.options].map((o) => o.value), ['', 'medium', 'high', 'xhigh', 'max']);
       assert.equal(esel.value, 'high');

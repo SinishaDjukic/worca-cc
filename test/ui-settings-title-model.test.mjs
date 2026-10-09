@@ -23,8 +23,8 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const CATALOG = [
   { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false, hasEnv: false },
-  { id: 'corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true },
-  { id: 'plug-model', label: 'Plug', efforts: ['high'], custom: 'plugin', plugin: 'vendor', hasEnv: true },
+  { id: 'corp-model', label: 'Corp', efforts: ['high'], custom: 'global', hasEnv: true, routed: true },
+  { id: 'plug-model', label: 'Plug', efforts: ['high'], custom: 'plugin', plugin: 'vendor', hasEnv: true, bridged: 'openai', upstreamApi: 'openai-chat' },
   { id: 'legacy-model', label: 'Legacy', efforts: ['high'], custom: 'project', hasEnv: false },
 ];
 
@@ -88,9 +88,9 @@ async function boot({ initial = {}, catalog = CATALOG, postResponse, testRespons
 const optionsOf = ($) => [...$('#titleModel').options].map((o) => ({ value: o.value, text: o.textContent, group: o.parentElement.tagName === 'OPTGROUP' ? o.parentElement.label : null, disabled: o.disabled }));
 
 // One boot per stored value and catalog (cuts the count, not the time).
-test('the title model select: "Same as the run\'s model" default, three optgroups, legacy project models excluded; a stored id is selected and hidden built-ins appear only when stored', async () => {
+test('the title model select: "Same as the run\'s model" default, grouped by connection, legacy project models excluded; a stored id is selected and hidden built-ins appear only when stored', async () => {
   await checkRows([
-    { name: 'ui-settings-title-model: default paints "Same as the run\'s model" selected + the three optgroups, legacy project models excluded', run: async () => {
+    { name: 'ui-settings-title-model: default paints "Same as the run\'s model" selected + grouped by connection, legacy project models excluded', run: async () => {
       const { $, openSettings } = await boot();
       await openSettings();
       const sel = $('#titleModel');
@@ -99,9 +99,9 @@ test('the title model select: "Same as the run\'s model" default, three optgroup
       const opts = optionsOf($);
       assert.deepEqual(opts[0], { value: '', text: "Same as the run's model", group: null, disabled: false });
       assert.deepEqual(opts.filter((o) => o.group).map((o) => [o.group, o.value]), [
-        ['Your models', 'corp-model'], ['From plugins', 'plug-model'], ['Built-in', 'claude-haiku-4-5'], ['Built-in', 'claude-opus-5-5'],
+        ['Claude sign-in', 'claude-opus-5-5'], ['Claude sign-in', 'claude-haiku-4-5'], ['Custom endpoint', 'corp-model'], ['OpenAI-compatible', 'plug-model'],
       ]);
-      assert.equal(opts.find((o) => o.value === 'plug-model').text, 'Plug (vendor)', 'plugin provenance suffix');
+      assert.equal(opts.find((o) => o.value === 'plug-model').text, 'Plug · vendor', 'who added it, as a suffix');
       assert.ok(!opts.some((o) => o.value === 'legacy-model'), 'legacy per-project models are not global');
       assert.equal($('#titleModelTest').disabled, true, 'nothing to test on the default');
       assert.equal($('#titleModelEnvNote').textContent, '');
@@ -112,7 +112,7 @@ test('the title model select: "Same as the run\'s model" default, three optgroup
       await openSettings();
       assert.equal($('#titleModel').value, 'claude-opus-5-5');
       const opts = optionsOf($);
-      assert.ok(opts.some((o) => o.value === 'claude-opus-5-5' && o.group === 'Built-in'), 'the stored built-in stays');
+      assert.ok(opts.some((o) => o.value === 'claude-opus-5-5' && o.group === 'Claude sign-in'), 'the stored built-in stays');
       assert.ok(!opts.some((o) => o.value === 'claude-haiku-4-5'), 'other hidden built-ins are gone');
       assert.equal($('#titleModelTest').disabled, false);
     } },

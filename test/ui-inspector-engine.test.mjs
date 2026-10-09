@@ -23,9 +23,9 @@ test('the agent inspector groups models by provider, names a harness other than 
   assert.deepEqual([...el.querySelector('[data-field="effort"]').options].map((o) => o.value), ['', 'minimal', 'low', 'medium', 'high']);
 });
 
-test('one engine in the catalog: a flat list and the given efforts, as before', () => {
+test('one connection in the catalog: still its group (every model picker groups by connection), and the given efforts', () => {
   const el = renderNodeInspector({ id: 'n_agent', kind: 'agent', key: 'planner', config: {} }, opts([MODELS[0]]));
-  assert.equal(el.querySelectorAll('[data-field="model"] optgroup').length, 0);
+  assert.deepEqual([...el.querySelectorAll('[data-field="model"] optgroup')].map((g) => g.label), ['Claude sign-in']);
   assert.deepEqual([...el.querySelector('[data-field="effort"]').options].map((o) => o.value), ['', 'medium', 'high', 'xhigh', 'max']);
 });
 
