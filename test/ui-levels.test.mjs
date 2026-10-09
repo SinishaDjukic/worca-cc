@@ -44,12 +44,12 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
         assert.match(b.dataset.minLevel || '', LEVEL_RE, `nav item "${b.textContent.trim()}" has no data-min-level`);
       }
     } },
-    { name: 'every Settings tab and every Settings card carries an explicit level', run: () => {
+    { name: 'every Settings tab and every Settings card (the Models page\'s included) carries an explicit level', run: () => {
       const doc = shell();
       const tabs = [...doc.querySelectorAll('#settings-tabs button[data-tab]')];
       assert.ok(tabs.length >= 5);
       for (const b of tabs) assert.match(b.dataset.minLevel || '', LEVEL_RE, `Settings tab "${b.dataset.tab}"`);
-      const cards = [...doc.querySelectorAll('.settings-pane .settings-card')];
+      const cards = [...doc.querySelectorAll('.settings-pane .settings-card, [data-view="models"] .settings-card')];
       assert.ok(cards.length >= 10);
       for (const c of cards) {
         const name = c.id || (c.querySelector('h2') || {}).textContent;

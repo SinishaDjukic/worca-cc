@@ -208,9 +208,9 @@ test('ui-settings-title-model: Test posts to /api/models/:id/test and paints the
   assert.equal(bad.$('#titleModelTest').textContent, 'Test', 'a failure skips "Works"');
 });
 
-test('ui-settings-title-model: on the Models tab (no loadSettings) the painted card is clean, also after a window focus', async () => {
+test('ui-settings-title-model: on the Models page the painted card is clean, also after a window focus', async () => {
   const { window, $, tick } = await boot({ initial: { titleModel: 'corp-model', titleModelEffective: { model: 'corp-model', source: 'settings', stale: null } } });
-  window.location.hash = 'settings/models';
+  window.location.hash = 'models';
   window.dispatchEvent(new window.Event('hashchange'));
   for (let i = 0; i < 10; i++) await tick();
   assert.equal($('#titleModel').value, 'corp-model', 'paintHelperModelCards ran');

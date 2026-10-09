@@ -53,18 +53,18 @@ export function providerReadiness(upstream) {
   // is the broker's question, answered per spawn. Copilot's terms stay an install setting.
   if (brokerEnabled()) {
     if (p === 'copilot' && !copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Providers' };
+      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
     }
     const r = routeBridgedUpstream(upstream);
     return r.error ? { ok: false, reason: 'no_key', message: `provider ${p}: ${r.error}` } : { ok: true };
   }
   if (p === 'copilot') {
     if (!copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Providers' };
+      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
     }
     const cfg = providerConfig('copilot');
     if (!resolveProviderSecret(cfg.githubToken)) {
-      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Settings › Providers' };
+      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open the Providers page' };
     }
     return { ok: true };
   }
@@ -79,7 +79,7 @@ export function providerReadiness(upstream) {
       ok: false, reason: 'no_key',
       message: has
         ? `provider ${p}: the API key's \${VAR} is not set in worca's environment`
-        : `provider ${p}: no API key — open Settings › Providers`,
+        : `provider ${p}: no API key — open the Providers page`,
     };
   }
   return { ok: true };

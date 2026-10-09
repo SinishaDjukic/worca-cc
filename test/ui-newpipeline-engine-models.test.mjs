@@ -142,3 +142,15 @@ test('a row healed for the run says which pick of the other engine it keeps (rev
   await waitFor(() => kept());
   assert.equal(kept().textContent, 'Your Claude pick Haiku 4.5 is kept for Claude runs — choose a model here to replace it.');
 });
+
+test('"+ Add model…" in an agent row opens the Models page with the model editor', async () => {
+  const { window } = await boot(apiFetch());
+  await openWf(window);
+  const doc = window.document;
+  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
+  sel.value = '__add__';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
+  assert.equal(window.location.hash, '#models');
+  assert.equal(doc.querySelector('.view[data-view="models"]').classList.contains('hidden'), false);
+});

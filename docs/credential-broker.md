@@ -152,7 +152,7 @@ slot is `per-person` (each person saves their own) or `operator` (one credential
 meant for keyless local models; a real team key is off unless `WORCA_BROKER_ALLOW_TEAM_KEYS=1`).
 
 **Every provider goes through it.** Claude models go straight to their slot. Models on
-Settings › Providers (OpenAI, OpenRouter, Copilot, a gateway) still go through worca's
+the Providers page (OpenAI, OpenRouter, Copilot, a gateway) still go through worca's
 translation bridge, which forwards to `<broker>/p/<slot>` with the spawn's token; the slot is
 the one whose pinned origin matches the model's base URL, and when two slots share an origin
 the one speaking the model's API wins. Discovery and imports go through the broker too.
@@ -378,7 +378,7 @@ credential is still within agents' reach:
 - a model in the catalog whose env holds a key or routes around the broker with
   `ANTHROPIC_BASE_URL` (a plugin model on its own [plugin slot](#plugin-slots) doesn't);
 - a bridged model with its own `apiKey` or a remote `baseUrl` no slot pins;
-- a provider key or Copilot sign-in in Settings › Providers;
+- a provider key or Copilot sign-in on the Providers page;
 - a plugin's Model secret that holds a value.
 
 It also exits when the broker can't be reached within 60 seconds, or the secrets differ.
@@ -444,7 +444,7 @@ on purpose.
 The check makes the exposure visible; it can't make an MCP secret safe. Prefer MCP servers
 that need no secret, or accept the risk with `warn`.
 
-**MCP registry secrets** (Settings › Sets, [mcp-servers.md](mcp-servers.md)) are outside K1: the
+**MCP registry secrets** (the Connectors page, [mcp-servers.md](mcp-servers.md)) are outside K1: the
 broker delivers them to the runs and chats that use their sets. A registry copy's definition
 carries only `${MCPSECRET_…}` references, so the check above skips the registry servers and
 screens project and local servers as before; a project or local server that references a

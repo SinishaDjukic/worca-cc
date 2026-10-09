@@ -1932,7 +1932,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Settings › Models › Providers.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
       }
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
@@ -2195,7 +2195,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           for (const m of skills) pickerMember(panel, set, setOff, m);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(mcpManageItem(`Manage ${set.name} in Settings › Sets`, `#settings/mcp/sets/${encodeURIComponent(set.id)}`));
+        panel.appendChild(mcpManageItem(`Manage in Connectors › ${set.name}`, `#connectors/sets/${encodeURIComponent(set.id)}`));
       } else {
         pane = null;
         // Level 1: one row per set in play, in the resolver's picker order (General, user sets by rank, Team).
@@ -2220,7 +2220,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
         panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(mcpManageItem('Manage in Settings › Sets', '#settings/mcp'));
+        panel.appendChild(mcpManageItem('Manage on the Connectors page', '#connectors'));
       }
       if (first || keep !== null) {
         const items = menuItems(panel);
@@ -3477,8 +3477,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
     else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
     if (block.state !== 'proposed') {
-      const open = make('a', 'ask-card-sched-link', 'Settings › Models');
-      open.href = '#settings/models';
+      const open = make('a', 'ask-card-sched-link', 'Models');
+      open.href = '#models';
       body.appendChild(open);
     }
     rootEl.appendChild(body);

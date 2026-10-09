@@ -98,7 +98,7 @@ const MESSAGE_FOLDER_RE = /^askm_[0-9a-f]{8}$/;
  *  one. Pure, exported for tests. */
 export function humanErrorText(errorClass) {
   switch (errorClass) {
-    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model in Settings › Models (Expert mode).";
+    case 'model': return "This model isn't available in your environment — Claude Code couldn't use it. Try another model, or add your custom model on the Models page (Expert mode).";
     case 'auth': return 'Authentication failed — check the credentials behind this model.';
     case 'usage_limit': return 'A usage limit was reached — wait for it to reset.';
     case 'rate_limit': return 'The endpoint is rate-limiting — try again shortly.';

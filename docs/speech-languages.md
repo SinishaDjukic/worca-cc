@@ -128,7 +128,7 @@ language Kokoro cannot speak, Kokoro for English.
 
 - Disk: each extra language adds one Piper voice (~20–60 MB); a larger Whisper adds
   hundreds of MB to over a GB. Everything stays in `~/.worca-cc/speech-cache`, shown
-  and removable in Settings.
+  and removable in Providers › Speech.
 - Memory: a Piper voice is far smaller than Kokoro fp32; a larger Whisper is the
   main memory cost.
 - Nothing changes for users who do not use voice: all of it downloads on first use.

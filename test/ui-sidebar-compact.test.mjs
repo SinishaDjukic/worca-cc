@@ -83,8 +83,8 @@ test('the open page is a soft grey fill and hover the lighter field grey; nothin
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
 });
 
-test('the first group has no label: "Activity" is gone, Build and Manage remain', () => {
-  assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Manage']);
+test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain', () => {
+  assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Add-ons', 'Manage']);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'new');
   assert.equal(doc.querySelector('.nav button[data-nav="new"]').nextElementSibling.dataset.nav, 'runs');
 });

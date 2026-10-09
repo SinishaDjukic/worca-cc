@@ -3082,7 +3082,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
-/* Settings › Models: Title generation, Auto workflow model and PR description model side by side
+/* The Models page: Title generation, Auto workflow model and PR description model side by side
    above the catalog, so short cards do not push it a screen down; one column once they would squeeze. */
 .models-helpers{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-bottom:18px;}
 .models-helpers > .settings-card{max-width:none;margin:0;}
@@ -3917,7 +3917,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:11.5px;color:var(--ink-2);}
 
 /* Settings → Memory and the project page's Memory tab (agent-memory-design.md §10).
-   The namespace is `mem-*`: `mv-*` is Settings → Models. */
+   The namespace is `mem-*`: `mv-*` is the Models page. */
 .mem-host{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:18px;align-items:start;}
 .mem-host > .mem-health{grid-column:1 / -1;}
 .mem-health-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
@@ -7860,7 +7860,7 @@ input.gv-name:focus-visible{outline:none;}
 /* History meta segment (board 10) */
 .hd-policy.st-info{color:var(--blue-ink);}
 /* Plugins page strip + checklist (boards 10, 11) */
-/* Settings › Plugins: what the team policy asks for, as one panel of compact rows (it scales to
+/* Marketplace: what the team policy asks for, as one panel of compact rows (it scales to
    however many plugins a policy names) with the mass action in the head. */
 .pl-required-card{margin:18px 0 14px;}
 .pl-required-card .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-bottom:6px;}
@@ -7912,9 +7912,9 @@ input.gv-name:focus-visible{outline:none;}
 /* Team metrics: an actor may be a full email (attribution) — clip it to the column, full name in the tooltip. */
 .tm-person{display:inline-block;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;}
 
-/* Settings › MCP servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
+/* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
    switches and buttons are the shared ones. */
-.settings-pane[data-tab="mcp"] .topbar{flex-wrap:wrap;}
+[data-view="connectors"] .topbar{flex-wrap:wrap;}
 .mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
 .mcp-setlist{padding:8px;display:flex;flex-direction:column;gap:2px;}
 .mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:12px;background:none;font:inherit;color:inherit;cursor:pointer;}
@@ -7929,7 +7929,7 @@ input.gv-name:focus-visible{outline:none;}
 .mcp-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;}
 .mcp-member{padding:14px 16px;margin-top:10px;}
 .mcp-member .pl-enable{margin-left:0;}
-.settings-pane[data-tab="mcp"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
+[data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
 .mcp-fld{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:12px;margin-top:8px;}
 .mcp-secret{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .mcp-state{margin-top:10px;}
@@ -7943,7 +7943,7 @@ input.gv-name:focus-visible{outline:none;}
 .mcp-resolution,.mcp-proj-sets{margin-bottom:14px;}
 @media (max-width:760px){.mcp-sets{grid-template-columns:1fr;}}
 
-/* Settings › Sets: skills (mcp-view.mjs, skill-import.mjs; docs/skills.md). Layout only: cards, chips, badges,
+/* Connectors › Skills (mcp-view.mjs, skill-import.mjs; docs/skills.md). Layout only: cards, chips, badges,
    switches and buttons are the shared ones, and every colour is a theme token, so light and dark both hold. */
 .sk-row{padding:14px 18px;}
 .sk-member{padding:14px 16px;margin-top:10px;}

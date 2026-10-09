@@ -7,9 +7,9 @@ gets into the catalog, how it reaches its endpoint, and what Worca's built-in
 first, then any OpenAI-compatible endpoint — with no LiteLLM and no second
 daemon.
 
-Two Settings tabs hold all of it, both **Expert**-level (see
-[ui-levels.md](ui-levels.md)): **Settings › Models** is the catalog — the model
-rows, the editor and the import dialog — and **Settings › Providers** is the
+Two pages in the sidebar's Add-ons group hold all of it, both **Expert**-level (see
+[ui-levels.md](ui-levels.md)): the **Models** page is the catalog — the model
+rows, the editor and the import dialog — and the **Providers** page is the
 account-level state those rows share. Anything that blocks a run shows at every
 level.
 
@@ -42,14 +42,14 @@ response (timeout or connection error); retry 5/10 in 4.1s`.
 
 ## The catalog
 
-Settings › Models is the catalog and nothing else. Above the rows sit a search
+The Models page is the catalog and nothing else. Above the rows sit a search
 box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
 
 ## Providers
 
-The **Providers** card has its own **Expert**-level tab, Settings › Providers. A
+The **Providers** card has a page of its own, **Providers** (Expert level). A
 provider is account-level state that every model bridged through it shares.
 
 **GitHub Copilot.** *Sign in…* reads you the notice below, then shows an
@@ -58,7 +58,7 @@ flips to *connected as @you*. Worca stores the GitHub token in
 `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
 exchanges it for Copilot's short-lived token in memory, refreshed before it
 expires. *Refresh usage* shows the premium-request quota. *Import models…* is a
-shortcut: it jumps to Settings › Models and opens the import dialog there on
+shortcut: it jumps to the Models page and opens the import dialog there on
 the Copilot source. The account type (Individual / Business / Enterprise) picks
 the API host when the sign-in does not name one.
 
@@ -158,7 +158,7 @@ per-million-token price on it.
 ## Importing models
 
 One dialog does both imports: **Import models…**, beside *Add model* on
-Settings › Models. It has a *From* picker with two sources — GitHub Copilot's
+the Models page. It has a *From* picker with two sources — GitHub Copilot's
 catalog (offered once you are signed in) and any OpenAI-compatible server you
 run — and, for the second, a **Base URL** field. *List models* asks the source
 what it has, you tick what you want, and *Import selected* writes the rows into
@@ -249,7 +249,7 @@ fallbacks. The run log shows OpenRouter's own explanation rather than "Provider
 returned error", a rate-limited step backs off and retries before it pauses, and
 Worca's small helper calls — the title and the Auto workflow classifier — retry
 too; a classifier that still fails falls back to the default workflow instead of
-failing the run. Settings › Models picks the model for each helper call — *Title model*,
+failing the run. The Models page picks the model for each helper call — *Title model*,
 *Auto workflow model* (`WORCA_AUTO_MODEL` overrides it) and *PR description model*
 (the Create PR dialog's Generate with AI; Sonnet-class by default) — so pointing them at
 a steadier model leaves a flaky free model touching only the pipeline steps.
@@ -265,7 +265,7 @@ tool round trip, each helper call and each retry — so a small pipeline run tak
 | Sidebar, under the spend block | *OpenRouter free today 941 / 1000*; amber below 10%, red at 0, the reset on hover. Only with a `:free` model in the catalog |
 | A run's cost pill | *$0 · 87 free requests* for a run that used `:free` models |
 | New pipeline form | a warning when a node's model is `:free` and fewer requests are left than this install's typical run (the median of its recent runs; 90 before it has any) |
-| Settings › Providers | the allowance under the OpenAI-compatible card, read when the tab opens |
+| The Providers page | the allowance under the OpenAI-compatible card, read when the page opens |
 
 The count is OpenRouter's own (`GET /api/v1/key`, `free_model_daily_requests`), read
 every 5 minutes; between readings every `:free` call through the bridge lowers it. With
@@ -368,7 +368,7 @@ worca can run pipelines and Ask Worca chats on OpenAI's Codex CLI.
 
 1. Install the `codex` CLI (or use the one bundled with the ChatGPT desktop app) and make sure worca finds it: on `PATH`, or `WORCA_CODEX_BIN=/path/to/codex` in worca's environment.
 2. Sign in once in a terminal: `codex login`. `codex login status` must say you are logged in.
-3. Pick Codex per run on New pipeline, or as a default in Settings › Models (Engines). For Ask Worca, Settings › Ask Worca › Engine & models.
+3. Pick Codex per run on New pipeline, or as a default on the Models page (Engines). For Ask Worca, Settings › Ask Worca › Engine & models.
 
 On a Codex run the helper jobs (titles, the run overview, the PR description, the Auto workflow classifier, and Away mode's night decider) run on Codex too, read-only with codex's shell switched off, because they read text worca did not write. These jobs need a codex that knows `--disable shell_tool` and `--disable unified_exec` (`codex-cli 0.146` does).
 
@@ -402,11 +402,11 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 
 **Claude models with custom endpoints.** A Claude model routed to a custom endpoint or through the model bridge no longer refuses a Codex run. Like any Claude model, it is dropped on Codex, and its nodes run on Codex's model. To run Codex itself against your own endpoint, give a Codex model a connection, below.
 
-**Custom endpoints for Codex models.** A Codex model can run on any OpenAI-compatible endpoint that serves the Responses API, such as vLLM, LM Studio, Ollama or a gateway. In Settings › Models, add a model with Engine **Codex**, pick **OpenAI-compatible endpoint** under Connection, and enter the model id the endpoint expects. The base URL and API key come from the OpenAI-compatible row on the Providers card unless you override them under Advanced, where extra headers go too. A key is a `${VAR}` reference or a stored secret, as for Claude models.
+**Custom endpoints for Codex models.** A Codex model can run on any OpenAI-compatible endpoint that serves the Responses API, such as vLLM, LM Studio, Ollama or a gateway. On the Models page, add a model with Engine **Codex**, pick **OpenAI-compatible endpoint** under Connection, and enter the model id the endpoint expects. The base URL and API key come from the OpenAI-compatible row on the Providers card unless you override them under Advanced, where extra headers go too. A key is a `${VAR}` reference or a stored secret, as for Claude models.
 
 - Codex connects to the endpoint itself; worca's bridge is not involved. Each call names the endpoint as a Codex model provider with `-c model_providers.…` settings. The key and header values reach codex through its environment, never its command line. Like codex's own `OPENAI_API_KEY`, they are visible to commands the agent runs, because `codex-cli 0.146` does not apply a shell environment policy in `codex exec`.
 - Only the Responses API is offered: `codex-cli 0.146` refuses chat completions (`wire_api = "chat"`). The model's own effort setting is sent as-is.
-- A run whose Codex models are all on endpoints does not need `codex login`, but only if no Codex call in it falls back to Codex's default model. That means the run has a model, and so does every Codex helper job (title, overview, PR description and memory defragment in Settings › Models, and Away mode's "Decided by" when it names a Codex model). An Auto workflow run still needs the sign-in, because its classifier may pick any Codex model.
+- A run whose Codex models are all on endpoints does not need `codex login`, but only if no Codex call in it falls back to Codex's default model. That means the run has a model, and so does every Codex helper job (title, overview, PR description and memory defragment on the Models page, and Away mode's "Decided by" when it names a Codex model). An Auto workflow run still needs the sign-in, because its classifier may pick any Codex model.
 - worca does not use OpenAI's list prices for an endpoint model, so its cost shows as unknown unless you set Pricing on the model.
 - The model's Test button checks the endpoint, and a model whose endpoint has no key shows "needs API key" in pickers, like a bridged model.
 
@@ -426,7 +426,7 @@ worca can run pipelines on GitHub's own Copilot CLI (`copilot`). This is a separ
 
 1. Install the CLI (`npm i -g @github/copilot`, version 1.0.92 or later) and make sure worca finds it: on `PATH`, or `WORCA_COPILOT_BIN=/path/to/copilot` in worca's environment.
 2. Sign in once in a terminal: `copilot login`. Or put a fine-grained token with the "Copilot Requests" permission in `COPILOT_GITHUB_TOKEN`. worca never hands `GH_TOKEN` or `GITHUB_TOKEN` to an agent, so Copilot does not pick those up.
-3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine in Settings › Models (Engines) or a project's Settings.
+3. Pick Copilot per run on New pipeline, run `worca --engine copilot …`, or set it as the default engine on the Models page (Engines) or in a project's Settings.
 
 There is no sign-in status command, so worca checks only that the binary runs before a run starts. A signed-out CLI fails at the first agent node with an auth error.
 
@@ -473,7 +473,7 @@ There is no sign-in status command, so worca checks only that the binary runs be
 **Not on Copilot yet:**
 
 - Ask Worca chats.
-- Per-engine step and helper model slots in Settings.
+- Per-engine step and helper model slots on the Models page.
 - Resuming a paused run on another engine from the usage-limit banner. `worca resume <id> --engine copilot` (or `claude`) still works.
 
 ## Cursor
@@ -486,13 +486,13 @@ worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run o
 
 1. Install the Cursor CLI (`cursor-agent`) and make sure worca finds it: on `PATH`, or `WORCA_CURSOR_BIN=/path/to/cursor-agent` in worca's environment. The `cursor` command that opens the editor is not the agent.
 2. Sign in once in a terminal: `cursor-agent login`. `cursor-agent status` must say you are logged in. Or set `CURSOR_API_KEY` in worca's own environment; worca passes it to Cursor and stores nothing.
-3. Pick Cursor per run on New pipeline, or as a default in Settings › Models (Engines). Each engine card shows whether that engine is ready.
+3. Pick Cursor per run on New pipeline, or as a default on the Models page (Engines). Each engine card shows whether that engine is ready.
 
-**Models.** worca ships no Cursor models. With no model set, Cursor runs your account's default. To pick one, add a model in Settings › Models with Engine **Cursor** and the id Cursor expects (for example `sonnet-4.5`). Cursor models take no env, no endpoint and no effort. A model id that looks like a Claude id (`sonnet-4.5`) only reaches Cursor when it is in the catalog with Engine Cursor; otherwise worca treats it as Claude's and the run uses Cursor's default (the run log says so). An id that is already a built-in (a Claude model or a Codex model such as `gpt-5.6-sol`) cannot be added as a Cursor model.
+**Models.** worca ships no Cursor models. With no model set, Cursor runs your account's default. To pick one, add a model on the Models page with Engine **Cursor** and the id Cursor expects (for example `sonnet-4.5`). Cursor models take no env, no endpoint and no effort. A model id that looks like a Claude id (`sonnet-4.5`) only reaches Cursor when it is in the catalog with Engine Cursor; otherwise worca treats it as Claude's and the run uses Cursor's default (the run log says so). An id that is already a built-in (a Claude model or a Codex model such as `gpt-5.6-sol`) cannot be added as a Cursor model.
 
 **Cost.** Cursor reports no cost, so a Cursor run's cost shows as *cost unknown*, never $0.00. A pipeline cost limit cannot count Cursor's spend; the run log says so.
 
-**Helper jobs run on Claude.** On a Cursor run, titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider run on Claude, as on a Claude run. They read text worca did not write, and Cursor's shell cannot be switched off. Their models are the Claude helper models in Settings. The memory defrag and a workspace scan run on Cursor itself, with Cursor's default model unless you name one at start.
+**Helper jobs run on Claude.** On a Cursor run, titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider run on Claude, as on a Claude run. They read text worca did not write, and Cursor's shell cannot be switched off. Their models are the Claude helper models on the Models page. The memory defrag and a workspace scan run on Cursor itself, with Cursor's default model unless you name one at start.
 
 **What Cursor holds, and what it does not.**
 
@@ -538,7 +538,7 @@ click Apply.
 - **Credentials never pass through the chat.** A key is a `${VAR}` reference to a
   variable in Worca's environment or nothing — a literal key, an env value that
   looks like a token, or an auth header is refused, and Ask Worca tells you to
-  paste it on Settings › Providers instead.
+  paste it on the Providers page instead.
 - Signing in to Copilot and acknowledging its notice stay on the Providers card;
   built-in, plugin and team-policy models are read-only (a user entry with the
   same id overrides a built-in).

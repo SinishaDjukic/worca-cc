@@ -738,7 +738,7 @@ export function brokerRouteFor(modelEnv, env = process.env) {
   if (isLoopbackUrl(base)) return { bridge: true };
   let host = base;
   try { host = new URL(base).host; } catch { /* keep the raw value */ }
-  return { error: `this model routes to ${host} directly; with the credential broker on, a model must use a broker slot (set its credential in Settings › Models)` };
+  return { error: `this model routes to ${host} directly; with the credential broker on, a model must use a broker slot (set its credential on the Models page)` };
 }
 
 const SPAWN_TTL_SEC = { aux: 600, test: 600, ask: 7200, phase: 86400 };

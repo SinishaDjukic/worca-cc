@@ -1,6 +1,7 @@
-// test/ui-settings-tabs.test.mjs — Guardrails/Models/Plugins are Settings TABS,
-// not views: the nav entries are gone, the panes live inside
-// [data-view="settings"] and the tab rides in the hash (#settings/<tab>).
+// test/ui-settings-tabs.test.mjs — Guardrails is a Settings TAB, not a view:
+// the nav entry is gone, the panes live inside [data-view="settings"] and the
+// tab rides in the hash (#settings/<tab>). Plugins, Sets, Models and Providers
+// left for pages of their own (test/ui-addons-pages.test.mjs).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -70,22 +71,22 @@ async function go(window, hash) {
 const paneOf = (window, tab) => window.document.querySelector(`.settings-pane[data-tab="${tab}"]`);
 const shown = (window, tab) => !paneOf(window, tab).classList.contains('hidden');
 
-test('Settings route normalisation: bare #settings shows General only; #settings/models opens Models with the Settings nav active; #settings/general and unknown tabs normalise to bare #settings', async () => {
+test('Settings route normalisation: bare #settings shows General only; #settings/guardrails opens Guardrails with the Settings nav active; #settings/general and unknown tabs normalise to bare #settings', async () => {
   // One boot per row (cuts the count, not the time).
   await checkRows([
     { name: 'bare #settings shows General and nothing else', run: async () => {
       const { window } = await boot();
       await go(window, 'settings');
       assert.equal(window.document.querySelector('[data-view="settings"]').classList.contains('hidden'), false);
-      assert.deepEqual(['general', 'guardrails', 'models', 'plugins', 'memory'].map((t) => shown(window, t)),
-        [true, false, false, false, false]);
+      assert.deepEqual(['general', 'guardrails', 'memory'].map((t) => shown(window, t)),
+        [true, false, false]);
       assert.ok(window.document.querySelector('#settings-tabs button[data-tab="general"]').classList.contains('on'));
       assert.ok(window.document.querySelector('#settingsRoot'), 'General still owns #settingsRoot');
     } },
-    { name: 'deep link #settings/models opens the Models tab; the nav Settings button is active', run: async () => {
+    { name: 'deep link #settings/guardrails opens the Guardrails tab; the nav Settings button is active', run: async () => {
       const { window } = await boot();
-      await go(window, 'settings/models');
-      assert.equal(shown(window, 'models'), true);
+      await go(window, 'settings/guardrails');
+      assert.equal(shown(window, 'guardrails'), true);
       assert.ok(window.document.querySelector('.nav button[data-nav="settings"]').classList.contains('active'));
     } },
     { name: '#settings/general and an unknown tab both normalise back to bare #settings', run: async () => {
@@ -119,18 +120,18 @@ test('a tab switch tears down the guardrail wizard (leave-guard now fires per TA
   await go(window, 'settings/guardrails/gr_org');
   const modal = window.document.querySelector('#plugin-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'deep link opened the wizard');
-  click(window, window.document.querySelector('#settings-tabs button[data-tab="models"]'));
+  click(window, window.document.querySelector('#settings-tabs button[data-tab="runs"]'));
   await tick(); await tick();
-  assert.equal(modal.classList.contains('hidden'), true, 'stale wizard must not float over the Models tab');
-  assert.equal(shown(window, 'models'), true);
+  assert.equal(modal.classList.contains('hidden'), true, 'stale wizard must not float over the Runs tab');
+  assert.equal(shown(window, 'runs'), true);
 });
 
-test('legacy #plugins / #models / #guardrails (incl. #guardrails/<id> and a boot-time deep link) redirect to their Settings tab, keeping the id', async () => {
+test('legacy #guardrails (incl. #guardrails/<id> and a boot-time deep link) redirects to its Settings tab, keeping the id', async () => {
   // One boot per row (cuts the count, not the time).
   await checkRows([
-    { name: 'legacy #plugins / #models / #guardrails redirect to their Settings tab', run: async () => {
+    { name: 'legacy #guardrails redirects to its Settings tab', run: async () => {
       const { window } = await boot();
-      for (const [legacy, tab] of [['plugins', 'plugins'], ['models', 'models'], ['guardrails', 'guardrails']]) {
+      for (const [legacy, tab] of [['guardrails', 'guardrails']]) {
         await go(window, legacy);
         assert.equal(window.location.hash, `#settings/${tab}`, `#${legacy} should redirect`);
         assert.equal(shown(window, tab), true);
@@ -152,8 +153,8 @@ test('legacy #plugins / #models / #guardrails (incl. #guardrails/<id> and a boot
   ]);
 });
 
-test('opening Runs or Ask Worca loads the settings payload; Models repaints its helper cards', async () => {
-  for (const tab of ['runs', 'ask', 'models']) {
+test('opening Runs or Ask Worca loads the settings payload', async () => {
+  for (const tab of ['runs', 'ask']) {
     const { window, calls } = await boot();
     await go(window, `settings/${tab}`);
     await tick(); await tick();

@@ -1,5 +1,5 @@
 // ui/public/mcp-view.mjs
-// Settings › Sets (tab key mcp; docs/mcp-servers.md, docs/skills.md): the Sets view (configure), the Servers and
+// The Connectors page (docs/mcp-servers.md, docs/skills.md): the Sets view (configure), the Servers and
 // Skills views (read-only catalogs), the member cards and Add server — plus the project Sets tab, the workspace
 // overview card and the Settings › Ask Worca block. The manual definition form is mcp-definition-form.mjs.
 // Every write goes through `api(method, path, body)` and repaints from the server's read models; no
@@ -23,9 +23,9 @@ function button(doc, cls, label, data = {}) {
   return b;
 }
 
-// ── routes: #settings/mcp (General), #settings/mcp/sets/<id>, #settings/mcp/servers, #settings/mcp/skills ──
+// ── routes: #connectors (General), #connectors/sets/<id>, #connectors/servers, #connectors/skills ──
 // The Skills view has its own constant: a set may be named "Skills", and mcpRoute('skills') is that set.
-export const MCP_SKILLS_ROUTE = 'settings/mcp/skills';
+export const MCP_SKILLS_ROUTE = 'connectors/skills';
 export function parseMcpParam(sub = '') {
   if (sub === 'servers') return { view: 'servers', setId: null };
   if (sub === 'skills') return { view: 'skills', setId: null };
@@ -37,8 +37,8 @@ export function parseMcpParam(sub = '') {
   return { view: 'sets', setId: 'general' };
 }
 export function mcpRoute(setId) {
-  if (setId === null) return 'settings/mcp/servers';
-  return setId === 'general' ? 'settings/mcp' : `settings/mcp/sets/${enc(setId)}`;
+  if (setId === null) return 'connectors/servers';
+  return setId === 'general' ? 'connectors' : `connectors/sets/${enc(setId)}`;
 }
 
 // The team-requirements strip (docs/team-policy.md) is filled by team-policy code: fn(el) after each render.
@@ -123,7 +123,7 @@ export function collectFieldInputs(root) {
   return { values, secrets };
 }
 
-// ── the Settings tab controller ──────────────────────────────────────────────────────────────────
+// ── the Connectors page controller ──────────────────────────────────────────────────────────────────
 export function createMcpView({ host, api, navigate, confirm, modal, doc = globalThis.document, now = () => Date.now(), notify = null }) {
   const st = { view: 'sets', setId: 'general', sets: null, set: null, servers: null, skills: null, testing: new Set(), msg: '', msgKind: '',
     md: new Map(), mdOpen: new Set() };   // SKILL.md drawers: the text (or error) per skill id, and the ids shown open
@@ -181,7 +181,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'h1', '', 'Sets'), h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
+    title.append(h(doc, 'h1', '', 'Connectors'), h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
@@ -870,7 +870,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (!first) {
       const why = cat.length ? 'Every skill in the catalog is in this set already.'
-        : 'No skills yet. Install a plugin that ships some, or Import skill in Settings › Sets › Skills.';
+        : 'No skills yet. Install a plugin that ships some, or Import skill in Connectors › Skills.';
       modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint', why), [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
       return;
     }
@@ -951,7 +951,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   host.addEventListener('focusout', (e) => { if (e.target.dataset && e.target.dataset.field) void onChange(e); });
 
   return {
-    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #settings/mcp/). */
+    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #connectors/). */
     show(sub = '') {
       const r = parseMcpParam(sub);
       st.view = r.view;
@@ -1185,7 +1185,7 @@ export async function paintAskMcpBlock(host, { api, doc = globalThis.document })
   }
   row.appendChild(h(doc, 'span', 'hint', 'plus the sets of the projects a chat works on'));
   const a = h(doc, 'a', '', 'Edit General set');
-  a.href = '#settings/mcp/sets/general';
+  a.href = '#connectors/sets/general';
   row.appendChild(a);
   const label = h(doc, 'div', 'label-row');
   label.appendChild(h(doc, 'label', '', 'Sets'));

@@ -268,8 +268,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### MCP servers & credential broker
 
 - **Worca's own MCP registry** — servers installed for Worca only, never written into your
-  Claude Code config, that pipeline agents and Ask Worca can call. **Settings › Sets**
-  (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
+  Claude Code config, that pipeline agents and Ask Worca can call. The **Connectors**
+  page (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
   with **Add MCP server** as `stdio`, `http` or `sse`, or required by a team policy), and
   **Sets**, where each server gets its values and secrets, so one server can sit in two sets
   with different credentials, and **Skills**, the skill catalog ([Skills](docs/skills.md)): skills that
@@ -347,7 +347,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc-plugin.json`. It can contribute task sources (e.g. GitHub Issues),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from **Settings › Plugins** (Advanced) or `worca plugin install`;
+  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
   **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
@@ -356,7 +356,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   diffstat, and flags new secrets, changed setup and changed model env, before
   you accept (`worca plugin update --diff` adds the full diff). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
-  Models tab; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
+  Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues task source, the four chat channels below,
@@ -546,7 +546,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Models
 
-- **Bring your own models** — *Add model* on **Settings › Models** registers any
+- **Bring your own models** — *Add model* on the **Models** page registers any
   model id (a proxy, a fine-tune, an alternative provider), declares which effort
   levels it supports, and attaches per-model routing env (e.g. `ANTHROPIC_BASE_URL`)
   that is merged into that model's agent spawns. *Share as plugin…* exports your
@@ -554,7 +554,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the repo as a secret each teammate enters once, after installing, under the
   plugin's *Model secrets*.
 - **No first-party account needed** — the *Title generation*, *Auto workflow model*
-  and *PR description model* cards on Settings › Models put Worca's own helper calls
+  and *PR description model* cards on the Models page put Worca's own helper calls
   on a model you pick (left empty, an Ask Worca chat titles itself with its own
   model, a `worca --model` run with that model, and other runs with the built-in
   Haiku); endpoint-routed models carry Claude Code's internal
@@ -566,9 +566,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Gemini and the rest translated to chat completions or the Responses API), any
   OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter) or an
   Anthropic-compatible gateway — no LiteLLM, no second daemon. Sign in or set keys
-  on **Settings › Providers**, then *Import models…* lists what a source serves,
+  on the **Providers** page, then *Import models…* lists what a source serves,
   windows and capabilities included; `worca models` does the same from a terminal.
-  Both tabs are Expert level. See [`docs/models.md`](docs/models.md).
+  Both pages are Expert level. See [`docs/models.md`](docs/models.md).
 
 ### Storage
 

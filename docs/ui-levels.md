@@ -35,7 +35,7 @@ anything.
    still shows it. Use `keepVisible()` on the control, or name it in the
    "still applied to this run" note on New pipeline.
 3. **The mode is a view preference, not a permission.** A deep link such as
-   `#settings/models` opens at Simple. The page shows a banner naming its level
+   `#models` opens at Simple. The page shows a banner naming its level
    and offering the switch. Never disable a control or refuse a route because of
    the mode.
 4. **An answer is never hidden.** A card Ask Worca emits (run, workflow or
@@ -95,11 +95,11 @@ and three selectors in `ui/public/style.css` are the whole gate.
 | Something that changes layout size (graph node footers) | gate it in the renderer, not in CSS (`applyDecor` in `graph/run-decor.mjs`) |
 | Copy that stands in for a control a higher mode shows | `data-max-level="simple"` (rare) |
 | A detail tab | add `level:` to its entry in `RD_TABS` / `HD_TABS` / `PD_TABS` |
-| A new page | add it to `VIEW_MIN_LEVEL` and `VIEW_TITLES` in `app.js` and tag its nav buttons |
+| A new page | add it to `VIEW_NAMES`, `VIEW_MIN_LEVEL` and `VIEW_TITLES` in `app.js` and tag its nav buttons; a page that takes over an old address (a Settings tab that became a page) maps it in `MOVED_ROUTES`, so links and bookmarks keep landing |
 | A new Settings tab | add it to `SETTINGS_TABS` and `SETTINGS_TAB_MIN_LEVEL`, tag its tab button, and keep the strip ordered Simple → Advanced → Expert |
 | A Getting started step | add `level:` to its entry in `GETTING_STARTED_STEPS` |
 
-`test/ui-levels.test.mjs` fails when a nav item, Settings tab, Settings card or
+`test/ui-levels.test.mjs` fails when a nav item, Settings tab, Settings or Models page card or
 detail tab has **no explicit level** — including `simple`. The decision cannot
 be skipped by forgetting it.
 
@@ -130,6 +130,8 @@ be skipped by forgetting it.
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
 | Ask Worca button, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
+| Add-ons: the group label, Marketplace, Connectors | A |
+| Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
 | Team metrics, Team policy, Nodes (Agents and Scripts, in a side flyout) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the row and its flyout stay hidden and the banner says where you are; Advanced keeps the Nodes row and its flyout with the open child |
 
@@ -229,11 +231,23 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 | Runs tab: Budget & cost limits | S |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
-| Guardrails tab (list, details); Plugins tab (installed, available, install); Memory tab (files) | A |
-| General: spawn diagnostics; Models tab: Title generation, Auto workflow model, PR description model; Memory tab: Defragment model | E — the Defragment model card stays visible while a model is set |
-| Guardrails create / delete; Models tab; Providers tab; marketplaces, Doctor, leftover data | E |
-| Models tab: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
-| Providers tab: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
+| Guardrails tab (list, details); Memory tab (files) | A |
+| General: spawn diagnostics; Memory tab: Defragment model | E — the Defragment model card stays visible while a model is set |
+| Guardrails create / delete | E |
+
+### Marketplace, Connectors, Models, Providers (the Add-ons pages)
+
+Settings tabs once, pages of their own now. The old addresses (`#settings/plugins`, `#settings/mcp/…`,
+`#settings/models/…`, `#settings/providers`, `#plugins`) land on the page they mean, sub-path kept.
+
+| Element | Level |
+|---|---|
+| Marketplace page: installed, available, install | A |
+| Marketplace page: Add marketplace, the Marketplaces list, Doctor, leftover data | E |
+| Connectors page: the Sets, Servers and Skills views | A |
+| Models page: the catalog, Engines, Title generation, Auto workflow model, PR description model | E |
+| Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
+| Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
 
 ### Statistics, Team metrics, Team policy, Ask Worca, Getting started
@@ -244,12 +258,12 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 | Team metrics page and every surface of it elsewhere | E |
 | Team policy page and its Policy / Plugins / Catalog tabs | E |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
-| Required-plugins strip and setup checklist (Settings › Plugins) | A — with the tab that holds them |
+| Required-plugins strip and setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
 | Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |
 | Ask: "Schedule…" on a plain run proposal | A |
-| Ask: a classified failure's human notice (what happened and where the remedy lives) | all — recovery instructions are never hidden (rule 1); Simple gets no Models-view navigation, the copy names the mode instead |
+| Ask: a classified failure's human notice (what happened and where the remedy lives) | all — recovery instructions are never hidden (rule 1); Simple gets no Models page navigation, the copy names the mode instead |
 | Ask: a classified failure's raw-detail expander ("Details") | E |
 | Ask: proposal cards themselves | all (rule 4) |
 | Ask: the context ring and its popover's window fill and topics | S |

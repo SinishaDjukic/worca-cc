@@ -169,7 +169,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     lastHintAt.set(key, t);
     return reply([
       `This chat gets worca notifications but is not allowed to send commands, so \`/${command}\` was ignored.`,
-      `To control runs from here, add \`${chatId}\` to **Allowed chat IDs** in worca → Plugins → ${plugin} → Settings.`,
+      `To control runs from here, add \`${chatId}\` to **Allowed chat IDs** in worca → Marketplace → ${plugin} → Settings.`,
     ].join('\n'), 'warning');
   }
 

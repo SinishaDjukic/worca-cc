@@ -939,7 +939,7 @@ function paintFreeDaily() {
   const node = railCollapsed() ? null : renderFreeDaily(freeDailyState.status);
   if (node) mount.appendChild(node);
   applyFreeDailyToNewView();
-  if (currentView() === 'settings' && currentSettingsTab === 'providers') paintProviderFreeDaily();
+  if (currentView() === 'providers') paintProviderFreeDaily();
 }
 
 /** The new-run form: warn when a node's model is :free and fewer requests are left than a run takes. */
@@ -1146,8 +1146,8 @@ function repaintPeople() {
 // <nav> that navLinks snapshots at boot — so route it from a container listener
 // rather than the [data-nav] delegation.
 document.getElementById('side-spend').addEventListener('click', (e) => {
-  // The OpenRouter free-request line (same mount) opens the Providers tab, where its key lives.
-  if (e.target.closest('.free-ind')) location.hash = 'settings/providers';
+  // The OpenRouter free-request line (same mount) opens the Providers page, where its key lives.
+  if (e.target.closest('.free-ind')) location.hash = 'providers';
   else if (e.target.closest('.spend-ind')) location.hash = 'stats';
 });
 
@@ -1313,8 +1313,8 @@ function handleServerMessage(msg) {
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
     if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
     if (currentView() === 'settings' && currentSettingsTab === 'runs') paintTeamCapsReadout(true);
-    if (currentView() === 'settings' && currentSettingsTab === 'plugins') paintPluginsPolicy(true);
-    if (currentView() === 'settings' && currentSettingsTab === 'mcp') refreshMcpSurfaces();   // the MCP strip and the Team set
+    if (currentView() === 'marketplace') paintPluginsPolicy(true);
+    if (currentView() === 'connectors') refreshMcpSurfaces();   // the MCP strip and the Team set
     if (currentView() === 'new') schedulePolicyLine();
     return;
   }
@@ -3189,7 +3189,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' — needs sign-in (Settings › Models › Providers)' : '');
+      + (model && model.needsSignIn ? ' — needs sign-in (the Providers page)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -3914,8 +3914,8 @@ function paintEngineHints() {
     el.engineHint.textContent = state.engine === 'copilot'
       ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
       : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Settings › Models › Cursor'}.`
-      : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
+      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -4148,7 +4148,7 @@ function goAddModel(restore) {
   // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
-  showView('settings', 'models');
+  showView('models');
 }
 
 // Delegated change handler for every config control inside #pipeline-config.
@@ -6106,9 +6106,9 @@ async function mountPluginSourcePane(src) {
     msg.className = 'hint err';
     msg.textContent = message;
     const link = document.createElement('a');
-    link.href = '#settings/plugins';
-    link.textContent = 'Open Plugins settings';
-    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'settings/plugins'; });
+    link.href = '#marketplace';
+    link.textContent = 'Open the Marketplace page';
+    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'marketplace'; });
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn btn-ghost btn-mini';
@@ -13139,6 +13139,12 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
+  // The Models page loads the same payload (its Engines card and helper pickers) but sits outside
+  // Settings, so the line above is not on screen there: say it on the page's own line, and take it
+  // back once a load works (only that message: the line also reports imports and deletes).
+  if (currentView() !== 'models') return;
+  if (text) setModelsMsg(`Could not load settings: ${text}`, 'err-inline');
+  else if (el.modelsMsg && el.modelsMsg.textContent.startsWith('Could not load settings: ')) setModelsMsg('');
 }
 
 async function loadSettings() {
@@ -16195,7 +16201,7 @@ async function exportPluginFlow() {
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`);
     mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Plugins view.`, 'ok');
+    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Marketplace page.`, 'ok');
     renderModelsViewBody();
   } catch (e) {
     say(e.message);
@@ -16209,7 +16215,7 @@ let modelsHelpersEl = null;
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  modelsHelpersEl ||= document.querySelector('.settings-pane[data-tab="models"] .models-helpers');
+  modelsHelpersEl ||= document.querySelector('[data-view="models"] .models-helpers');
   let cfg = {};
   try { cfg = await safeJson(await fetch('/api/config')); } catch {}
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
@@ -16221,9 +16227,9 @@ async function paintEngineSettings(data) {
   }
   const extras = renderEngineSection(root, { level: 'user', roles, catalog, fields, jobs: { claude: [], codex: CODEX_HELPER_JOBS, cursor: [] } });
   if (modelsHelpersEl) extras.claude.append(modelsHelpersEl);
-  // Each non-Claude card's readiness line (GET /api/engines). Only on the Settings view: a settings-changed
-  // broadcast repaints this from any view, and that must not spawn a preflight.
-  if (currentView() === 'settings') void paintEngineCardStatus(root);
+  // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
+  // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
+  if (currentView() === 'models') void paintEngineCardStatus(root);
 }
 /** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
  *  with no `engines` array leaves the lines empty. */
@@ -16275,8 +16281,8 @@ async function loadModelsView() {
   }
 }
 
-// Settings › Models › Title generation + Auto workflow model + PR description model: the pickers list
-// the catalog, so they repaint whenever it loads — a model added a moment ago is selectable without leaving the tab.
+// Models › Title generation + Auto workflow model + PR description model: the pickers list
+// the catalog, so they repaint whenever it loads — a model added a moment ago is selectable without leaving the page.
 async function paintHelperModelCards() {
   try {
     const res = await fetch('/api/settings');
@@ -16288,7 +16294,7 @@ async function paintHelperModelCards() {
   } catch { /* the cards keep their last paint */ }
 }
 
-/** The Providers tab: the same card, on a page of its own (§8.1). */
+/** The Providers page: the same card, on a page of its own (§8.1). */
 async function loadProvidersView() {
   if (!el.providersList) return;
   setProvidersMsg('');
@@ -16314,16 +16320,16 @@ function renderProvidersViewBody() {
   refreshFreeDaily({ force: true });
 }
 
-/** A page-level message, on whichever of the two tabs is showing. */
+/** A page-level message, on whichever of the two pages is showing. */
 function setTabMsg(text, kind) {
-  if (currentSettingsTab === 'providers') setProvidersMsg(text, kind);
+  if (currentView() === 'providers') setProvidersMsg(text, kind);
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own tab now, but its flows still repaint by name. */
+/** The providers card lives on its own page now, but its flows still repaint by name. */
 function repaintProviders() {
-  if (currentSettingsTab === 'providers') renderProvidersViewBody();
-  else if (currentSettingsTab === 'models') renderModelsViewBody();
+  if (currentView() === 'providers') renderProvidersViewBody();
+  else if (currentView() === 'models') renderModelsViewBody();
 }
 
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
@@ -16610,10 +16616,10 @@ function paintImportSource() {
 
 /**
  * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers tab's shortcut: the dialog opens over the catalog the import will fill.
+ *   Providers page's shortcut: the dialog opens over the catalog the import will fill.
  */
 function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentSettingsTab !== 'models') showView('settings', 'models');
+  if (goToModels && currentView() !== 'models') showView('models');
   mimp.lastFocus = document.activeElement;
   const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   mimp.source = source || (connected ? 'copilot' : 'openai');
@@ -16720,7 +16726,7 @@ async function importModelsFlow() {
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
     closeImportDialog();
-    if (currentSettingsTab !== 'models') showView('settings', 'models');
+    if (currentView() !== 'models') showView('models');
     setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
@@ -16733,9 +16739,9 @@ async function importModelsFlow() {
   }
 }
 
-/** A catalog row's "needs sign-in" now LEAVES for the Providers tab and lands on the row. */
+/** A catalog row's "needs sign-in" now LEAVES for the Providers page and lands on the row. */
 function goToProviders(provider) {
-  if (currentSettingsTab !== 'providers') showView('settings', 'providers');
+  if (currentView() !== 'providers') showView('providers');
   setTimeout(() => focusProviderRow(provider), 0);
 }
 
@@ -16752,9 +16758,9 @@ function focusProviderRow(provider) {
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
   await loadModelsView();
-  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // The Providers page shares mvState.providers with the catalog: a sign-in, a key or a cap that
   // just changed must show on whichever of the two the user is looking at.
-  if (currentSettingsTab === 'providers') renderProvidersViewBody();
+  if (currentView() === 'providers') renderProvidersViewBody();
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -16921,7 +16927,7 @@ async function testModelFlow(btn) {
   }
 }
 
-// The Providers tab's own delegation (§8.1): the same buttons, on the page that now owns them.
+// The Providers page's own delegation (§8.1): the same buttons, on the page that now owns them.
 if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
@@ -18471,7 +18477,7 @@ async function handlePolicyPluginClick(e) {
   // secrets blank) — the same pane the Plugins page opens from the card.
   if (t.classList.contains('pl-policy-configure')) {
     closePluginModal();
-    if (location.hash.slice(1) !== 'settings/plugins') location.hash = 'settings/plugins';
+    if (location.hash.slice(1) !== 'marketplace') location.hash = 'marketplace';
     const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
     await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
     return true;
@@ -18549,12 +18555,12 @@ async function paintMcpStrip(host) {
 }
 setMcpStripRenderer((host) => { void paintMcpStrip(host); });
 /** After a Team action, every surface that shows Team state reads it again: `openSetId` (Install, Set <field>) opens
- *  that Team set; on the MCP tab the pane reloads (its paint repaints the strip), so a card never contradicts the strip;
- *  the Team policy page reloads ("Yours", deviations). */
+ *  that Team set; on the Connectors page the view reloads (its paint repaints the strip), so a card never contradicts the
+ *  strip; the Team policy page reloads ("Yours", deviations). */
 function refreshMcpSurfaces(openSetId = null) {
-  const to = openSetId ? `settings/mcp/sets/${encodeURIComponent(openSetId)}` : null;
+  const to = openSetId ? `connectors/sets/${encodeURIComponent(openSetId)}` : null;
   if (to && location.hash.slice(1) !== to) { location.hash = to; return; }
-  if (currentView() === 'settings' && currentSettingsTab === 'mcp') { void mcpTab().show(location.hash.slice(1).replace(/^settings\/mcp\/?/, '')); return; }
+  if (currentView() === 'connectors') { void mcpTab().show(parseHash()[1]); return; }
   if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
 }
 async function runMcpTeamAction(r, action, { owner = null } = {}) {
@@ -30391,13 +30397,16 @@ const views = $$('.view');
 const navLinks = $$('.nav button[data-nav]');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-// plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
-// as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
+// guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
+// (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
+// Settings tabs once, pages of their own now.
+const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history']);
+// The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
+const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
 const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
@@ -30420,13 +30429,14 @@ const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
   'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
-  schedules: 'advanced',
+  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
 });
-const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', plugins: 'advanced', mcp: 'advanced', memory: 'advanced', models: 'expert', providers: 'expert' });
+const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
-  guardrails: 'Guardrails', plugins: 'Plugins', mcp: 'Sets', memory: 'Memory', models: 'Models', providers: 'Providers', ask: 'Ask Worca',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
+  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
 function pageMinLevel() {
@@ -30484,17 +30494,24 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory', 'plugins', 'mcp', 'models', 'providers'];
-// The tabs whose cards GET /api/settings paints (loadSettings paints every card, wherever it sits).
-// Models is not one: loadModelsView repaints its two helper-model cards with the catalog.
-// Tabs whose cards are painted from GET /api/settings (loadSettings). Models holds the Engines
-// card and the Claude helper pickers, so a link or reload straight to it must load them too.
-const SETTINGS_FORM_TABS = ['general', 'runs', 'ask', 'models'];
+const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory'];
+// Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
+// it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
+const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
-// Old top-level hashes keep working. The hashchange listener DROPS any view it
-// does not know, so without this map a bookmark or an old in-app link would
-// silently do nothing at all.
-const LEGACY_TAB_VIEWS = { plugins: 'plugins', guardrails: 'guardrails', models: 'models' };
+// Old addresses keep working. The hashchange listener DROPS a view it does not know
+// and parseSettingsParam reads an unknown tab as General, so without this map a
+// bookmark or an old in-app link would do nothing, or land on the wrong page. Each
+// old prefix maps to the address it means now; the rest of the path rides along
+// (#guardrails/<id> -> #settings/guardrails/<id>).
+const MOVED_ROUTES = Object.freeze({
+  plugins: 'marketplace',                 // top-level views from before Settings had tabs
+  guardrails: 'settings/guardrails',
+  'settings/plugins': 'marketplace',      // Settings tabs that became pages of their own
+  'settings/mcp': 'connectors',
+  'settings/models': 'models',
+  'settings/providers': 'providers',
+});
 
 // '' | 'bogus' | 'general' -> ['general', ''];  'guardrails/gr_x' -> ['guardrails', 'gr_x']
 function parseSettingsParam(param = '') {
@@ -30508,16 +30525,37 @@ function settingsParamFor(tab, sub = '') {
   if (tab === 'general') return '';
   return sub ? `${tab}/${sub}` : tab;
 }
-// null for a real view; otherwise the [view, param] the legacy hash maps to.
-function legacyTabRoute(view, param = '') {
-  const tab = LEGACY_TAB_VIEWS[view];
-  return tab ? ['settings', settingsParamFor(tab, param)] : null;
+// null for a page's own address; otherwise the [view, param] an old one means now.
+function redirectRoute(view, param = '') {
+  const path = param ? `${view}/${param}` : view;
+  for (const [from, to] of Object.entries(MOVED_ROUTES)) {
+    if (path !== from && !path.startsWith(`${from}/`)) continue;
+    const rest = path.slice(from.length + 1);
+    const hash = rest ? `${to}/${rest}` : to;
+    const i = hash.indexOf('/');
+    return i === -1 ? [hash, ''] : [hash.slice(0, i), hash.slice(i + 1)];
+  }
+  return null;
 }
+// Swap the old address for the new one IN PLACE: a pushed entry would send Back to the
+// old address, which redirects forward again, so Back could never get past it. Unlike
+// replaceRoute (a bounce, routed on a microtask), the caller routes right away.
+function rewriteHash([view, param]) {
+  try { window.history.replaceState(null, '', `#${param ? `${view}/${param}` : view}`); } catch { /* sandboxed */ }
+}
+// Test hook: lets a test call the router the way an in-app caller does.
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
 // The Settings tab currently painted, so the leave-guards below can fire on a
 // TAB transition and not only on a view transition.
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
+  // lands on that page: parseSettingsParam would read the unknown tab as General.
+  if (name === 'settings') {
+    const moved = redirectRoute(name, param);
+    if (moved) return showView(moved[0], moved[1]);
+  }
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -30577,8 +30615,13 @@ function showView(name, param = '') {
     // The Memory controller owns two delegated listeners and a painted host; a tab switch tears it
     // down so the next entry mounts a fresh one (and a stray frame paints nothing).
     if (currentSettingsTab === 'memory' && memoryTabCtl) { memoryTabCtl.destroy(); memoryTabCtl = null; }
-    // MCP servers' pickers and forms open in #plugin-modal, which lives outside the pane.
-    if (currentSettingsTab === 'mcp') closePluginModal();
+  }
+  // The Add-ons pages were Settings tabs, and their leave-guards came with them: the info-tip
+  // bubble lives on <body>, so nothing hides it with the page.
+  if (ADDON_VIEWS.includes(currentShownView) && name !== currentShownView) {
+    hideInfoTip();
+    // Connectors' pickers and forms open in #plugin-modal, which lives outside the page.
+    if (currentShownView === 'connectors') closePluginModal();
   }
   // Moving between the three Runs routes swaps the pane at once; going back to the bare
   // list (#runs) slides the detail away in the narrow layout and hands focus back to its
@@ -30720,6 +30763,15 @@ function showView(name, param = '') {
   }
   if (name === 'composer') initComposer();
   if (name === 'settings') showSettingsTab(param);
+  if (name === 'marketplace') loadPluginsView({ refresh: true });
+  if (name === 'connectors') void mcpTab().show(param);
+  if (name === 'models') {
+    // The Engines card and the helper-model pickers are painted from GET /api/settings, so a link
+    // or a reload straight to the page loads them too; '#models/<card>' scrolls to one of them.
+    void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
+    loadModelsView();
+  }
+  if (name === 'providers') loadProvidersView();
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -30773,24 +30825,24 @@ function showSettingsTab(param = '') {
   paintLevelBanner();
   if (SETTINGS_FORM_TABS.includes(tab)) {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
-    const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
-    void loadSettings().then(() => {
-      if (!card || card.closest('.settings-pane')?.dataset.tab !== tab) return;
-      card.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
-    });
+    void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
-  if (tab === 'models') loadModelsView(sub);
-  if (tab === 'providers') loadProvidersView();
-  if (tab === 'plugins') loadPluginsView({ refresh: true });
   if (tab === 'memory') loadMemoryTab(sub);
-  if (tab === 'mcp') void mcpTab().show(sub);
 }
 
-// Settings › Sets (tab key mcp; mcp-view.mjs): one controller, made on first entry; its sub-route
-// ('', 'sets/<id>', 'servers', 'skills') rides behind #settings/mcp/.
+// A link to one card ('#settings/runs/actions', '#models/title-model'): scroll to the
+// `<sub>-settings-card` inside `scope` and focus its first field. Any other sub is ignored.
+function focusSettingsCard(scope, sub) {
+  const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
+  if (!card || !scope || !scope.contains(card)) return;
+  card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+}
+
+// The Connectors page (mcp-view.mjs): one controller, made on first entry; its sub-route
+// ('', 'sets/<id>', 'servers', 'skills') rides behind #connectors/.
 async function mcpApi(method, path, body) {
   try {
     const res = await fetch(path, body === undefined ? { method }
@@ -30804,7 +30856,7 @@ let mcpViewCtl = null;
 function mcpTab() {
   if (!mcpViewCtl) {
     mcpViewCtl = createMcpView({
-      host: document.querySelector('.settings-pane[data-tab="mcp"]'),
+      host: document.querySelector('[data-view="connectors"]'),
       api: mcpApi,
       navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
       confirm: confirmModal,
@@ -30868,10 +30920,10 @@ window.addEventListener('hashchange', () => {
   // the single-render guarantee; genuine user-driven hash changes still route normally.
   if (syncingHash) { syncingHash = false; return; }
   const [view, param] = parseHash();
-  // A legacy top-level hash (#plugins, #guardrails/<id>, …) routes to its
-  // Settings tab; showView rewrites the hash to the canonical #settings/<tab>.
-  const legacy = legacyTabRoute(view, param);
-  if (legacy) { showView(legacy[0], legacy[1]); return; }
+  // An old address (#plugins, #guardrails/<id>, a Settings tab that became a page …) is
+  // swapped for the one it means now before anything renders (redirectRoute).
+  const moved = redirectRoute(view, param);
+  if (moved) { rewriteHash(moved); showView(moved[0], moved[1]); return; }
   if (VIEW_NAMES.includes(view)) showView(view, param);
 });
 
@@ -31304,8 +31356,8 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to New.
 const [bootView, bootParam] = parseHash();
-const bootLegacy = legacyTabRoute(bootView, bootParam);
-if (bootLegacy) showView(bootLegacy[0], bootLegacy[1]);
+const bootMoved = redirectRoute(bootView, bootParam);
+if (bootMoved) { rewriteHash(bootMoved); showView(bootMoved[0], bootMoved[1]); }
 else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
 refreshBudget();
@@ -31317,7 +31369,7 @@ loadWhoami();
 {
   const repaintPickers = () => {
     if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'settings' && currentSettingsTab === 'models') loadModelsView();
+    if (currentView() === 'models') loadModelsView();
   };
   loadCredentials().then((d) => { if (d) repaintPickers(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });
@@ -31727,7 +31779,7 @@ function bindExportModal() {
         exportShowDone({
           title: `Plugin "${applied.name}" v${applied.version} exported`,
           lines: [['Folder', applied.dir], ['Files', files]],
-          next: exportNextStep('Share the folder. The recipient pastes its path into Plugins → Add marketplace, or runs ',
+          next: exportNextStep('Share the folder. The recipient pastes its path into Add marketplace on the Marketplace page, or runs ',
             `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
         });
       } else {                                                    // Claude Code skill

@@ -87,7 +87,7 @@ local value where yours is looser than a soft team cap.
 
 A policy can add **marketplaces** (metadata only, done automatically once; a marketplace you
 remove is remembered and not re-added) and require **plugins** with a minimum version. Installing
-runs code, so Worca never installs without your click: the Plugins page shows a "Required by team
+runs code, so Worca never installs without your click: the Marketplace page shows a "Required by team
 policy" strip and a setup checklist with one combined consent per plugin (source, commit,
 inventory). A plugin that is installed but below the policy's floor gets **Update…** (the normal
 update preview) instead of Install…; **Install all…** / **Update all…** / **Install & update all…**
@@ -107,12 +107,12 @@ only when you save — and secrets are yours to enter.
 a command is absolute or on `PATH`, never `./`) with a `name` and optional non-secret `values`. An
 entry that breaks a rule is dropped with a warning; the other entries stay.
 
-- **The Team set.** Each home with at least one entry gets a `Team · <home>` set in Settings › Sets.
+- **The Team set.** Each home with at least one entry gets a `Team · <home>` set on the Connectors page.
   Its members are the entries installed on this machine; each teammate fills in the secrets.
   Project runs use their policy's Team set; workspace runs use only the workspace policy's, which is
   why the field is refused in the `workspaceRuns` block.
 - **Consent, never automatic.** The setup checklist lists every entry with its action, and the strip
-  on the Sets tab every entry still to set up: **Install** (an inline entry), **Turn on**,
+  on the Connectors page every entry still to set up: **Install** (an inline entry), **Turn on**,
   **Update** (the team definition changed; the dialog shows before and after), **Set <field>**, or
   *Needs plugin* (the plugin's own row). Install, a first Turn on and Update open a consent dialog:
   the command or URL, environment and headers, what each teammate fills in and the values the team
@@ -152,13 +152,13 @@ servers, and agents call them by that set, like every set skill (`/team-platfor:
   on opens a dialog with the SKILL.md, its scripts and shell blocks and the plugin's pinned commit (one turned off
   later turns back on at once); consent is recorded on exactly that `{ plugin, skill }`. A skill's content changes
   only through its plugin's update preview (`SKILL CHANGED: …`), so there is no Update here: to refuse a change, turn
-  the skill off on the Team set's page (Settings › Sets). **Forget** appears only once no project on this machine
+  the skill off on the Team set's page (Connectors › Team · <home>). **Forget** appears only once no project on this machine
   follows that home, or its policy requires no MCP server and no skill any more.
 - **Deviations.** A run whose policy requires a skill that cannot reach it warns and records why; it never blocks:
   `skill-missing:<plugin>/<skill>` (not installed), `skill-off:<plugin>/<skill>` (off, or never turned on),
   `skill-opted-out:<plugin>/<skill>` (switched off for that run) and `skill-skipped:<plugin>/<skill>` (any other
   reason, e.g. its plugin is disabled).
-- **Trusted homes.** Trusting a home on the Plugins page installs its missing required plugins without the
+- **Trusted homes.** Trusting a home on the Marketplace page installs its missing required plugins without the
   checklist, and updates to required skills apply without another review when you trust this home. Required skills are
   still never turned on automatically.
 - Refused in the `workspaceRuns` block, like `mcp.required`. Pair it with `worca.minVersion`: an older

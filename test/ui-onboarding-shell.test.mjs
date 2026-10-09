@@ -76,7 +76,7 @@ test('boot: the pill mounts under New pipeline and routes to the page (where the
   const pillHost = newRow.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census is untouched (Schedules, Team policy and Scripts included; Running and History are one Runs item)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 16, 'the nav census is untouched (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));

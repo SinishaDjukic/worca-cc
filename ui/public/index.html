@@ -105,6 +105,26 @@
               </button>
             </div>
 
+            <!-- Add-ons: four Settings tabs that became pages of their own (Plugins → Marketplace,
+                 Sets → Connectors, Models, Providers). Old #settings/<tab> addresses land here
+                 (app.js MOVED_ROUTES). -->
+            <div class="nav-sect" data-min-level="advanced">Add-ons</div>
+            <button type="button" data-nav="marketplace" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.2 12H6.2L5 8z"></path><path d="M9 10V6.5a3 3 0 0 1 6 0V10"></path></svg>
+              <span>Marketplace</span>
+            </button>
+            <button type="button" data-nav="connectors" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"></path><path d="M12 17v4"></path></svg>
+              <span>Connectors</span>
+            </button>
+            <button type="button" data-nav="models" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M4 7.5l8 4.5 8-4.5M12 12v9"></path></svg>
+              <span>Models</span>
+            </button>
+            <button type="button" data-nav="providers" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.5" rx="2"></rect><rect x="3.5" y="13.5" width="17" height="6.5" rx="2"></rect><path d="M7.5 7.25h.01M7.5 16.75h.01"></path></svg>
+              <span>Providers</span>
+            </button>
 
             <div class="nav-sect">Manage</div>
             <button type="button" data-nav="projects" data-min-level="simple">
@@ -276,7 +296,7 @@
                     <button type="button" data-engine="copilot" aria-pressed="false">Copilot</button>
                     <button type="button" data-engine="cursor" aria-pressed="false">Cursor</button>
                   </div>
-                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
+                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
                   <small class="hint" id="engine-default-hint" hidden></small>
                 </div>
 
@@ -1456,8 +1476,8 @@
         <!-- /view composer -->
 
         <!-- ===== VIEW: SETTINGS (tabbed) =====
-             Guardrails / Models / Plugins used to be top-level views; they are
-             now panes here. A pane deliberately carries NEITHER class="view" nor
+             Guardrails used to be a top-level view; it is a pane here now (the
+             Add-ons pages below went the other way). A pane deliberately carries NEITHER class="view" nor
              the routing attribute: showView()'s views.forEach() would force
              .hidden back on it at every navigation. The tab rides in the hash
              param (#settings/<tab>, #settings/guardrails/<id>) — parseHash splits
@@ -1467,16 +1487,12 @@
         <section class="view hidden" data-view="settings">
           <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
-                 strip; Models sits next to Providers. -->
+                 strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
             <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
-            <button type="button" data-tab="plugins" data-min-level="advanced" aria-pressed="false">Plugins</button>
-            <button type="button" data-tab="mcp" data-min-level="advanced" aria-pressed="false">Sets</button>
-            <button type="button" data-tab="models" data-min-level="expert" aria-pressed="false">Models</button>
-            <button type="button" data-tab="providers" data-min-level="expert" aria-pressed="false">Providers</button>
           </div>
           <p id="settingsLoadMsg" class="form-msg err settings-load-msg" role="alert" hidden></p>
 
@@ -2018,7 +2034,7 @@
                    card's Save button, and only when one of its fields was touched. -->
               <div class="field" id="ask-web-host"></div>
               <!-- Sets (docs/mcp-servers.md, docs/skills.md): the General set's servers and skills in one line, painted by
-                   mcp-view.mjs; the Edit General set link opens Settings › Sets under the level banner. -->
+                   mcp-view.mjs; the Edit General set link opens the Connectors page under the level banner. -->
               <div class="field" id="ask-mcp-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
@@ -2094,12 +2110,14 @@
             <div id="memory-host" class="mem-host"></div>
           </section>
           <!-- /pane memory -->
+        </section>
+        <!-- /view settings -->
 
-          <!-- ===== TAB: PLUGINS (was the top-level Plugins view) ===== -->
-          <section class="settings-pane hidden" data-tab="plugins">
+        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons; the Plugins view, then a Settings tab, before that) ===== -->
+        <section class="view hidden" data-view="marketplace">
             <div class="topbar">
               <div>
-                <h1>Plugins</h1>
+                <h1>Marketplace</h1>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
               <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
@@ -2122,19 +2140,20 @@
             <div class="run-list" id="plugins-available"></div>
             <h3 class="pl-sec-title" data-min-level="expert">Marketplaces</h3>
             <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
-          </section>
-          <!-- /pane plugins -->
+        </section>
+        <!-- /view marketplace -->
 
-          <!-- ===== TAB: SETS (key mcp; docs/mcp-servers.md, docs/skills.md) — painted whole by mcp-view.mjs ===== -->
-          <section class="settings-pane hidden" data-tab="mcp"></section>
-          <!-- /pane mcp -->
+        <!-- ===== VIEW: CONNECTORS (sidebar › Add-ons; docs/mcp-servers.md, docs/skills.md) — painted whole by
+             mcp-view.mjs: its Sets, Servers and Skills views ride behind #connectors/ ===== -->
+        <section class="view hidden" data-view="connectors"></section>
+        <!-- /view connectors -->
 
-          <!-- ===== TAB: MODELS (was the top-level Models view) ===== -->
-          <section class="settings-pane hidden" data-tab="models">
+        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) ===== -->
+        <section class="view hidden" data-view="models">
             <div class="topbar">
               <div>
                 <h1>Models</h1>
-                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers tab.</div>
+                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers page.</div>
               </div>
               <div style="display:flex;gap:8px;flex:0 0 auto">
                 <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Share as plugin…</button>
@@ -2242,25 +2261,23 @@
             </div>
             <p id="models-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="models-list"></div>
-          </section>
-          <!-- /pane models -->
+        </section>
+        <!-- /view models -->
 
-          <!-- ===== TAB: PROVIDERS (model-bridge-design.md §8.1) =====
-               Split out of Models: the card is account-level setup you touch rarely, and at
-               1000+px it buried the catalog it unlocks. Expert only, like Models. -->
-          <section class="settings-pane hidden" data-tab="providers">
+        <!-- ===== VIEW: PROVIDERS (model-bridge-design.md §8.1; sidebar › Add-ons) =====
+             Split out of Models: the card is account-level setup you touch rarely, and at
+             1000+px it buried the catalog it unlocks. Expert only, like Models. -->
+        <section class="view hidden" data-view="providers">
             <div class="topbar">
               <div>
                 <h1>Providers</h1>
-                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models tab.</div>
+                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models page.</div>
               </div>
             </div>
             <p id="providers-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="providers-list"></div>
-          </section>
-          <!-- /pane providers -->
         </section>
-        <!-- /view settings -->
+        <!-- /view providers -->
       </main>
     </div>
 
@@ -2273,8 +2290,8 @@
 
     <!-- ===== Import models (model-bridge-design.md §8.4) =====
          One dialog for both sources: GitHub Copilot's catalog and any OpenAI-compatible server
-         you run. It lives with the CATALOG (Settings › Models), because what it produces is
-         catalog rows; the Providers tab only links into it with its endpoint filled in. -->
+         you run. It lives with the CATALOG (the Models page), because what it produces is
+         catalog rows; the Providers page only links into it with its endpoint filled in. -->
     <div id="model-import-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mimp-title">
       <div class="card mimp">
         <h3 id="mimp-title" class="mv-editor-title">Import models</h3>

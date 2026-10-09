@@ -398,7 +398,7 @@ test('editor: a Codex Connection offers codex\'s default or an OpenAI-compatible
   assert.deepEqual([...conn.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
   assert.equal(conn.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
   assert.equal(conn.querySelector('.mv-conn-adv').hidden, false, 'Base URL, key and headers overrides stay');
-  assert.match(conn.querySelector('.mv-conn-provider-hint').textContent, /No provider key/);
+  assert.equal(conn.querySelector('.mv-conn-provider-hint').textContent, 'No provider key — set one on the Providers page, or override it under Advanced.');
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Codex calls the endpoint’s Responses API itself/);
   assert.ok([...el.querySelectorAll('.mv-effort-cb')].every((c) => !c.disabled), 'efforts are not collapsed as for a translated model');
   el.querySelector('.mv-id').value = 'cx-local';

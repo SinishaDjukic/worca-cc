@@ -66,13 +66,13 @@ async function boot({ configOk = true, catalog = CATALOG } = {}) {
   return { window, posts, tick, openSettings, setSettings };
 }
 
-test('the Auto model card (Models tab, after Title generation) lists the catalog with Default first, names the effective source, and Use default posts an empty autoWorkflowModel', async () => {
+test('the Auto model card (Models page, after Title generation) lists the catalog with Default first, names the effective source, and Use default posts an empty autoWorkflowModel', async () => {
   const { window, openSettings, posts, setSettings } = await boot(); await openSettings();
   await checkRows([
-    { name: 'the card sits after Title generation on the Models tab; options come from the catalog; the note names the effective source', run: async () => {
-      const ids = [...window.document.querySelectorAll('.view[data-view="settings"] section.card.settings-card')].map((c) => c.id);
+    { name: 'the card sits after Title generation on the Models page; options come from the catalog; the note names the effective source', run: async () => {
+      const ids = [...window.document.querySelectorAll('.view[data-view="models"] section.card.settings-card')].map((c) => c.id);
       assert.equal(ids[ids.indexOf('title-model-settings-card') + 1], 'auto-model-settings-card');
-      assert.equal(window.document.getElementById('auto-model-settings-card').closest('.settings-pane').dataset.tab, 'models');
+      assert.equal(window.document.getElementById('auto-model-settings-card').closest('[data-view]').dataset.view, 'models');
       const sel = window.document.getElementById('autoModel');
       assert.deepEqual([...sel.options].map((o) => o.value), ['', 'claude-opus-5-5', 'claude-sonnet-5']);
       assert.equal(sel.options[0].textContent, 'Default (Sonnet-class)');

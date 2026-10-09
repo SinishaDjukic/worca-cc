@@ -1,5 +1,5 @@
-// test/ui-skills-view.test.mjs — Settings › Sets (skills registry spec §6.1–§6.3): the tab label "Sets" (key mcp), the
-// Sets · Servers · Skills segments and #settings/mcp/skills, the Skills catalog (source and origin, badges, In sets,
+// test/ui-skills-view.test.mjs — Connectors (skills registry spec §6.1–§6.3): the page title "Connectors", the
+// Sets · Servers · Skills segments and #connectors/skills, the Skills catalog (source and origin, badges, In sets,
 // actions per source, the empty state, the read-only SKILL.md drawer), its actions, the set detail's Skills section
 // and Add skill; plus the booted app's deep link.
 import { test, afterEach } from 'node:test';
@@ -79,18 +79,18 @@ const action = (modal, label) => modal.opened.actions.find(([l]) => l === label)
 const rowOf = (host, id) => host.querySelector(`.sk-row[data-skill="${id}"]`);
 const acts = (row) => [...row.querySelectorAll('.pl-actions button')].map((b) => b.textContent);
 
-test('routes and labels: #settings/mcp/skills, the title "Sets", three segments, one primary button per view', async () => {
+test('routes and labels: #connectors/skills, the title "Connectors", three segments, one primary button per view', async () => {
   await checkRows([
     { name: 'hashes: skills is a view; a set named Skills keeps its own hash', run: () => {
       assert.deepEqual(parseMcpParam('skills'), { view: 'skills', setId: null });
-      assert.equal(MCP_SKILLS_ROUTE, 'settings/mcp/skills');
+      assert.equal(MCP_SKILLS_ROUTE, 'connectors/skills');
       assert.deepEqual(parseMcpParam('sets/skills'), { view: 'sets', setId: 'skills' });
-      assert.equal(mcpRoute('skills'), 'settings/mcp/sets/skills');
+      assert.equal(mcpRoute('skills'), 'connectors/sets/skills');
     } },
     { name: 'the Skills view: title, sub, segments, Import skill, GET /api/skills', run: async () => {
       const { host, ctl, calls } = mount();
       await ctl.show('skills');
-      assert.equal(host.querySelector('.topbar h1').textContent, 'Sets');
+      assert.equal(host.querySelector('.topbar h1').textContent, 'Connectors');
       assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects');
       const seg = [...host.querySelectorAll('.topbar .seg button')];
       assert.deepEqual(seg.map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Sets', 'false'], ['Servers', 'false'], ['Skills', 'true']]);
@@ -108,7 +108,7 @@ test('routes and labels: #settings/mcp/skills, the title "Sets", three segments,
       await ctl.show('servers');
       assert.equal(host.querySelector('.topbar .btn-go').textContent, 'Add MCP server');
       click(host.querySelector('[data-mcp-view="sets"]'));
-      assert.deepEqual(nav, [MCP_SKILLS_ROUTE, 'settings/mcp/servers', 'settings/mcp/sets/billing']);
+      assert.deepEqual(nav, [MCP_SKILLS_ROUTE, 'connectors/servers', 'connectors/sets/billing']);
     } },
   ]);
 });
@@ -125,7 +125,7 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
       assert.equal(row.querySelector('.pl-head .mono.hint').textContent, 'folder');
       assert.equal(row.querySelector('small.hint').textContent, 'Write, review and apply SQL migrations · 7 files · 2 scripts · 1 shell block');
       assert.deepEqual(acts(row), ['Add to set', 'Check for updates', 'Remove', 'View SKILL.md']);
-      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => [a.textContent, a.getAttribute('href')]), [['Billing', '#settings/mcp/sets/billing']]);
+      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => [a.textContent, a.getAttribute('href')]), [['Billing', '#connectors/sets/billing']]);
     } },
     { name: 'a pasted skill has no origin: no update action', run: () => {
       const row = rowOf(host, 'skill:library:frontend-design');
@@ -139,7 +139,7 @@ test('the Skills catalog: source and origin, badges, the counts line, In sets li
       assert.deepEqual(badges(row), ['-:Imported', 'amber:update available', 'amber:shell scripts — Windows']);
       assert.deepEqual(acts(row), ['Add to set', 'Update…', 'Remove', 'View SKILL.md']);
       assert.ok(row.querySelector('[data-skill-update]').classList.contains('btn-primary'));
-      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => a.getAttribute('href')), ['#settings/mcp/sets/billing', '#settings/mcp']);
+      assert.deepEqual([...row.querySelectorAll('a.chip')].map((a) => a.getAttribute('href')), ['#connectors/sets/billing', '#connectors']);
     } },
     { name: 'an invalid plugin skill: red badge, the problem, never mounted, Add to set disabled', run: () => {
       const row = rowOf(host, 'skill:plugin:acme/broken');
@@ -221,7 +221,7 @@ test('the counts line: files only when known, singular and plural', () => {
 
 test('the sk- CSS is layout on theme tokens: no left-edge accent line, no literal colour (light and dark both hold)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  const start = css.indexOf('/* Settings › Sets: skills');
+  const start = css.indexOf('/* Connectors › Skills');
   assert.ok(start > 0, 'the sk- block is in style.css');
   const block = css.slice(start, css.indexOf('\n\n', start));
   assert.match(block, /\.sk-row\{/);
@@ -240,7 +240,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
   addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } _open() { (this._l.open || []).forEach((fn) => fn({})); } }
 
-test('the booted app: the Settings tab reads "Sets" (key mcp) and #settings/mcp/skills lands on the Skills view', async () => {
+test('the booted app: Settings has no Sets tab, and #connectors/skills lands on the Skills view of the Connectors page', async () => {
   const dom = trackDom(new JSDOM(html, { url: 'http://localhost:4319/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -261,15 +261,15 @@ test('the booted app: the Settings tab reads "Sets" (key mcp) and #settings/mcp/
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
   if (WSStub.last) WSStub.last._open();
-  assert.equal(window.document.querySelector('#settings-tabs button[data-tab="mcp"]').textContent, 'Sets');
-  window.location.hash = 'settings/mcp/skills';
+  assert.equal(window.document.querySelector('#settings-tabs button[data-tab="mcp"]'), null);
+  window.location.hash = 'connectors/skills';
   window.dispatchEvent(new window.Event('hashchange'));
   await settle();
-  const pane = window.document.querySelector('.settings-pane[data-tab="mcp"]');
+  const pane = window.document.querySelector('.view[data-view="connectors"]');
   assert.equal(pane.classList.contains('hidden'), false);
   assert.ok(calls.includes('GET /api/skills'));
   assert.equal(pane.querySelectorAll('.sk-row').length, SKILLS.length);
-  assert.equal(window.location.hash, '#settings/mcp/skills');
+  assert.equal(window.location.hash, '#connectors/skills');
 });
 
 // ── Task 3: the Import modal in the booted app ───────────────────────────────
@@ -298,12 +298,12 @@ test('the booted app: a preview that lands after the modal\'s own Close opens no
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
   if (WSStub.last) WSStub.last._open();
-  window.location.hash = 'settings/mcp/skills';
+  window.location.hash = 'connectors/skills';
   window.dispatchEvent(new window.Event('hashchange'));
   await settle();
   const d = window.document;
   const modal = d.getElementById('plugin-modal');
-  d.querySelector('.settings-pane[data-tab="mcp"] [data-act="import-skill"]').click();
+  d.querySelector('.view[data-view="connectors"] [data-act="import-skill"]').click();
   await settle();
   assert.equal(modal.classList.contains('hidden'), false);
   const path = d.querySelector('#plugin-modal-body [data-imp="path"]');
@@ -321,7 +321,7 @@ test('the booted app: a preview that lands after the modal\'s own Close opens no
   // A preview on screen: the dialog's own Close is its Cancel (app.js `afterClose`), so the staged copy goes at once.
   const drops = () => calls.filter((c) => c === 'DELETE /api/skills/import/0123456789abcdef').length;
   const dropped = drops();
-  d.querySelector('.settings-pane[data-tab="mcp"] [data-act="import-skill"]').click();
+  d.querySelector('.view[data-view="connectors"] [data-act="import-skill"]').click();
   await settle();
   const again = d.querySelector('#plugin-modal-body [data-imp="path"]');
   again.value = '/src/alpha';
@@ -674,7 +674,7 @@ test('+ Add skill: a refusal shows in the modal; an empty catalog and a set hold
   await e.ctl.show('sets/shop');
   click(e.host.querySelector('[data-act="add-skill"]'));
   await settle();
-  assert.equal(e.modal.opened.body.textContent, 'No skills yet. Install a plugin that ships some, or Import skill in Settings › Sets › Skills.');
+  assert.equal(e.modal.opened.body.textContent, 'No skills yet. Install a plugin that ships some, or Import skill in Connectors › Skills.');
   assert.deepEqual(e.modal.opened.actions.map(([l]) => l), ['Close']);
   const full = mount({ setViews: SET_VIEWS, skills: [SKILLS[0], SKILLS[2]] });
   await full.ctl.show('sets/billing');

@@ -72,14 +72,14 @@ async function boot({ configOk = true } = {}) {
   return { window, posts, calls, tick, openSettings, setSettings };
 }
 
-test('the PR description model card (Models tab, after Auto, expert) lists the catalog with Default first; Use default posts an empty prDescriptionModel; Test sends one tiny prompt to the picked model', async () => {
+test('the PR description model card (Models page, after Auto, expert) lists the catalog with Default first; Use default posts an empty prDescriptionModel; Test sends one tiny prompt to the picked model', async () => {
   const { window, openSettings, posts, calls, setSettings } = await boot(); await openSettings();
   await checkRows([
-    { name: 'the card sits after the Auto workflow model on the Models tab; options come from the catalog; the note names the effective model', run: async () => {
-      const ids = [...window.document.querySelectorAll('.view[data-view="settings"] section.card.settings-card')].map((c) => c.id);
+    { name: 'the card sits after the Auto workflow model on the Models page; options come from the catalog; the note names the effective model', run: async () => {
+      const ids = [...window.document.querySelectorAll('.view[data-view="models"] section.card.settings-card')].map((c) => c.id);
       assert.equal(ids[ids.indexOf('auto-model-settings-card') + 1], 'pr-description-model-settings-card');
       const card = window.document.getElementById('pr-description-model-settings-card');
-      assert.equal(card.closest('.settings-pane').dataset.tab, 'models');
+      assert.equal(card.closest('[data-view]').dataset.view, 'models');
       assert.equal(card.dataset.minLevel, 'expert', 'an expert card, like its siblings');
       const sel = window.document.getElementById('prDescModel');
       assert.deepEqual([...sel.options].map((o) => o.value), ['', 'claude-opus-5-5', 'claude-sonnet-5']);

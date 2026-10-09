@@ -4,12 +4,12 @@ A **skill** is a folder with a `SKILL.md` (instructions, a name and a descriptio
 optionally, scripts and reference files. Worca's skills are registry members exactly like MCP servers: they
 sit in **sets** ([mcp-servers.md](mcp-servers.md)), sets are attached to projects, and every pipeline agent and
 Ask Worca turn gets the skills its project's sets hold — without anything being written into your repository
-or your Claude Code config. Everything lives in **Settings › Sets** (an Advanced tab) and under
+or your Claude Code config. Everything lives on the **Connectors** page (Advanced) and under
 `~/.worca-cc/skills/` ([storage.md](storage.md)).
 
 ## Where skills come from
 
-The **Skills** view (Settings › Sets › Skills) is the catalog:
+The **Skills** view (Connectors › Skills) is the catalog:
 
 - **Plugin skills** — every `skills/<name>/SKILL.md` an installed plugin ships. They come and go with the plugin;
   a disabled plugin's skills are listed (`plugin disabled`) and skipped in runs.
@@ -123,7 +123,7 @@ Each mounted skill's description enters the agent's prompt, so a long list costs
 A team policy can require plugin skills (`skills.required`, [team-policy.md](team-policy.md)): each developer
 turns each one on with consent (the dialog shows the SKILL.md, its scripts and shell blocks, and the plugin's
 pinned commit); never automatically — a skill turned off later turns back on without the dialog. A policy home you
-trust on the Plugins page installs its missing required plugins without the checklist, and
+trust on the Marketplace page installs its missing required plugins without the checklist, and
 updates to required skills apply without another review when you trust this home.
 
 ## Windows and managed machines

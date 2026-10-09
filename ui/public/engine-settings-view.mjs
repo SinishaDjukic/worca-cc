@@ -18,7 +18,7 @@ export function renderEngineSection(host, options) {
   for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;
     const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); card.append(heading);
-    // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.
+    // A non-Claude card's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     const noteText = [options.notes?.[engine], engine === 'cursor' ? CURSOR_HELPERS_NOTE : null].filter(Boolean).join(' ');
     if (noteText) { const note = doc.createElement('small'); note.className = 'hint'; note.textContent = noteText; card.append(note); }

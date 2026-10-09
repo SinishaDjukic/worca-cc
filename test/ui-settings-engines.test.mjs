@@ -111,10 +111,10 @@ async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
   return { window, doc: window.document, posts, tick };
 }
 
-test('Settings › Models: stored picks paint, the Claude helper cards sit in the Claude card, Save posts the changes', async () => {
+test('the Models page: stored picks paint, the Claude helper cards sit in the Claude card, Save posts the changes', async () => {
   const { doc, window, posts, tick } = await boot({ runEngine: 'codex', stepModels: { codex: { planner: { model: 'gpt-5.5', effort: 'low' } } }, utilityModels: {} });
   const root = doc.getElementById('engine-settings-root');
-  assert.ok(root, 'the section is on the Models tab');
+  assert.ok(root, 'the section is on the Models page');
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
   assert.equal(root.querySelector('[data-setting="models.codex.steps.planner"] .inherit-model').value, 'gpt-5.5');
   assert.ok(doc.querySelector('.engine-card[data-engine="claude"] .models-helpers #titleModel'), 'Title generation now lives in the Claude card');
@@ -130,15 +130,15 @@ test('Settings › Models: stored picks paint, the Claude helper cards sit in th
   assert.equal(doc.getElementById('engineSettingsMsg').textContent, 'Saved.');
 });
 
-test('opening Settings › Models directly paints the Engines card (a link or a reload lands there)', async () => {
-  const { doc } = await boot({ runEngine: 'codex' }, { hash: 'settings/models' });
+test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {
+  const { doc } = await boot({ runEngine: 'codex' }, { hash: 'models' });
   const root = doc.getElementById('engine-settings-root');
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input')?.value, 'codex', 'painted without visiting another Settings tab first');
   assert.ok(doc.querySelector('#titleModel')?.options.length > 1, 'the Claude helper pickers too');
 });
 
-test('Settings › Models: each non-Claude card says whether its engine is ready (GET /api/engines)', async () => {
-  const { doc } = await boot({}, { hash: 'settings/models', engines: [
+test('the Models page: each non-Claude card says whether its engine is ready (GET /api/engines)', async () => {
+  const { doc } = await boot({}, { hash: 'models', engines: [
     { name: 'claude', label: 'Claude', ready: true, reason: null },
     { name: 'codex', label: 'Codex', ready: true, reason: 'could not check the codex sign-in' },
     { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in' },
@@ -147,6 +147,6 @@ test('Settings › Models: each non-Claude card says whether its engine is ready
   assert.equal(status('cursor'), 'Not ready — cursor-agent is not signed in');
   assert.equal(status('codex'), 'Ready — could not check the codex sign-in');
   assert.equal(status('claude'), undefined, 'the Claude card has no status line');
-  const { doc: none } = await boot({}, { hash: 'settings/models' });
+  const { doc: none } = await boot({}, { hash: 'models' });
   assert.equal(none.querySelector('.engine-card[data-engine="cursor"] .engine-card-status').textContent, '', 'no engines array: an empty line');
 });

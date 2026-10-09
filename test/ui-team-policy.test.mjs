@@ -118,7 +118,7 @@ test('Team policy page: the Plugins tab lists what the policy expects and instal
 
 test('#555: a failed Team policy Install and a failed Check now are error toasts (with Retry), not lines on another page', async () => {
   await checkRows([
-    { name: '#555 D5: Team policy Install reports where the install happens — a failure is an error toast, not a line on the Plugins page', run: async () => {
+    { name: '#555 D5: Team policy Install reports where the install happens — a failure is an error toast, not a line on the Marketplace page', run: async () => {
       const MKT = { id: 'acme', name: 'acme', url: 'https://example.com/acme.git', lastSync: { sha: 'abc1234' }, plugins: [{ name: 'acme-jira', subdir: 'plugins/jira', inventory: {} }] };
       let installStatus = 500;
       const installs = [];
@@ -144,7 +144,7 @@ test('#555: a failed Team policy Install and a failed Check now are error toasts
       assert.equal(installs.length, 1);
       assert.equal(lastToast(doc).tone, 'err');
       assert.equal(lastToast(doc).title, 'clone failed');
-      assert.equal(doc.getElementById('plugins-msg').textContent, '', 'nothing lands on the Plugins page line');
+      assert.equal(doc.getElementById('plugins-msg').textContent, '', 'nothing lands on the Marketplace page line');
       assert.equal(doc.querySelectorAll('#toasts > .toast').length, 1, 'the progress toast was replaced by the result');
 
       installStatus = 200;
@@ -445,7 +445,7 @@ test('MCP rows in the setup checklist: Install opens the consent dialog, then po
     },
   });
   window.localStorage.setItem('worca.policy.trust.acme/gateway', '1');
-  await go('settings/plugins');
+  await go('marketplace');
   await settle(6);
   assert.equal(fetchCalls.some((c) => c.url.startsWith('/api/mcp/teams/')), false, 'trust covers plugins only');
   await go('team-policy');
@@ -465,7 +465,7 @@ test('MCP rows in the setup checklist: Install opens the consent dialog, then po
   install.click(); install.click();   // a double click posts once
   await settle(6);
   assert.deepEqual(posts, [{ url: '/api/mcp/teams/acme%2Fgateway/members/policy%3Aacme%2Fgateway%2Flinear/install', body: { expectHash: 'd'.repeat(64) } }]);
-  assert.equal(window.location.hash, '#settings/mcp/sets/team-acme-gateway-1a2b', 'Install opens its card');
+  assert.equal(window.location.hash, '#connectors/sets/team-acme-gateway-1a2b', 'Install opens its card');
   assert.equal(modal.classList.contains('hidden'), true, 'the consent dialog closes');
 });
 
@@ -482,9 +482,9 @@ test('the MCP tab strip: a Team action reloads the Sets view under it; a row tha
       return null;
     },
   });
-  await go(`settings/mcp/sets/${PG.setId}`);
+  await go(`connectors/sets/${PG.setId}`);
   await settle(8);
-  const strip = () => doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip] .tp-mcp-strip');
+  const strip = () => doc.querySelector('[data-view="connectors"] [data-mcp-strip] .tp-mcp-strip');
   const setGets = () => fetchCalls.filter((c) => c.url === `/api/mcp/sets/${PG.setId}`).length;
   assert.ok(strip(), 'the strip paints above the Sets view');
   const before = setGets();
@@ -506,7 +506,7 @@ test('the MCP tab strip: a Team action reloads the Sets view under it; a row tha
   assert.ok(setGets() > n, 'team-policy-changed reloads the MCP pane');
   // Every repaint of the pane (a token set, a switch on a card) reads the scopes again, never a copy up to 15 s old.
   rows = [];
-  await go('settings/mcp/servers');
+  await go('connectors/servers');
   await settle(8);
   assert.equal(strip(), null, 'nothing open: no strip');
 });
@@ -526,9 +526,9 @@ test('the MCP tab strip shows while an item is open and stays painted across a p
           return null;
         },
       });
-      await go(`settings/mcp/sets/${PG_OFF.setId}`);
+      await go(`connectors/sets/${PG_OFF.setId}`);
       await settle(8);
-      const host = () => doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip]');
+      const host = () => doc.querySelector('[data-view="connectors"] [data-mcp-strip]');
       assert.equal(host().hidden, false, 'an open item shows the strip');
       const setGets = () => fetchCalls.filter((c) => c.url === `/api/mcp/sets/${PG_OFF.setId}`).length;
       const before = setGets();
@@ -549,9 +549,9 @@ test('the MCP tab strip shows while an item is open and stays painted across a p
           return null;
         },
       });
-      await go(`settings/mcp/sets/${PG_OFF.setId}`);
+      await go(`connectors/sets/${PG_OFF.setId}`);
       await settle(8);
-      const host = () => doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip]');
+      const host = () => doc.querySelector('[data-view="connectors"] [data-mcp-strip]');
       assert.equal(host().hidden, false);
       let release; hold = new Promise((res) => { release = res; });
       recv({ type: 'team-policy-changed', action: 'updated' });   // reloads the pane: P6 hands the strip a fresh, hidden host
@@ -601,7 +601,7 @@ test('the checklist on the Team policy page closes and reloads the page after a 
   assert.equal(modal.querySelector('.tp-mcp-act[data-server="policy:acme/gateway/pg"]').dataset.action, 'update', 'the checklist repaints at the new state');
   modal.querySelector('.tp-mcp-act[data-server="policy:acme/gateway/github"]').click();   // Set Token
   await settle(8);
-  assert.equal(window.location.hash, `#settings/mcp/sets/${PG_OFF.setId}`, 'Set Token opens the Team set');
+  assert.equal(window.location.hash, `#connectors/sets/${PG_OFF.setId}`, 'Set Token opens the Team set');
   assert.equal(modal.classList.contains('hidden'), true, 'the checklist closes over the Team set it opens');
 });
 
@@ -614,9 +614,9 @@ test('with only MCP items open, the checklist is for their home, not the first h
       return null;
     },
   });
-  await go(`settings/mcp/sets/${PG_OFF.setId}`);
+  await go(`connectors/sets/${PG_OFF.setId}`);
   await settle(8);
-  doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip] .pl-policy-setup').click();
+  doc.querySelector('[data-view="connectors"] [data-mcp-strip] .pl-policy-setup').click();
   await settle(8);
   assert.equal(doc.getElementById('plugin-modal-title').textContent, 'Set up for acme/gateway');
   assert.equal(doc.querySelector('#plugin-modal .tp-trust').dataset.home, 'acme/gateway', 'trust is offered for the home the items come from');
@@ -633,9 +633,9 @@ test('a strip Turn on (no dialog) that lands later never closes a dialog opened 
       return null;
     },
   });
-  await go(`settings/mcp/sets/${PG_OFF.setId}`);
+  await go(`connectors/sets/${PG_OFF.setId}`);
   await settle(8);
-  const host = () => doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip]');
+  const host = () => doc.querySelector('[data-view="connectors"] [data-mcp-strip]');
   let release; hold = new Promise((res) => { release = res; });
   host().querySelector('.tp-mcp-act').click();   // Off · Turn on: consented, no dialog; its POST is still out
   await settle(8);
@@ -661,9 +661,9 @@ test('a consent dialog whose POST lands after the user moved on never closes the
       return null;
     },
   });
-  await go(`settings/mcp/sets/${NEW.setId}`);
+  await go(`connectors/sets/${NEW.setId}`);
   await settle(8);
-  const host = () => doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip]');
+  const host = () => doc.querySelector('[data-view="connectors"] [data-mcp-strip]');
   const modal = doc.getElementById('plugin-modal');
   const button = (label) => [...modal.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === label);
   const turnOn = host().querySelector('.tp-mcp-act');
@@ -746,9 +746,9 @@ test('required skills: the checklist row opens the consent dialog; Turn on posts
   assert.equal(modal.classList.contains('hidden'), false);
   assert.equal(modal.querySelector('.tp-skill-row .tp-skill-state').textContent, 'On', 'the checklist repainted');
   rows = [SKILL_NEW];
-  await go('settings/mcp');
+  await go('connectors');
   await settle(8);
-  const strip = doc.querySelector('.settings-pane[data-tab="mcp"] [data-mcp-strip]');
+  const strip = doc.querySelector('[data-view="connectors"] [data-mcp-strip]');
   assert.equal(strip.querySelector('.card-head b').textContent, 'acme/gateway requires the skill deploy-checklist · acme in its Team set');
   strip.querySelector('.tp-skill-act[data-consent="1"]').click();
   await settle(8);

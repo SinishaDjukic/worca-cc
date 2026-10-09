@@ -8397,7 +8397,7 @@ app.get('/api/budget', (_req, res) => {
 });
 
 /**
- * Settings › Models' utility pickers (title, Auto classifier, PR description, memory defragment,
+ * The Models page's utility pickers (title, Auto classifier, PR description, memory defragment,
  * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
@@ -8898,7 +8898,7 @@ app.patch('/api/providers/speech', async (req, res) => {
   }
 });
 
-// Settings › Providers › Speech: "Remove speech models" (the size shows on the card).
+// Providers › Speech: "Remove speech models" (the size shows on the card).
 app.delete('/api/speech/cache', async (_req, res) => {
   try {
     const bytes = speechAssetStore().clear();
@@ -9171,7 +9171,7 @@ app.post('/api/models/export-plugin', async (req, res) => {
     '',
     '## Install (teammates)',
     '',
-    'Worca CC → Plugins → Add repo → paste the repo URL → Install.',
+    'Worca CC → Marketplace → Add marketplace → paste the repo URL → Install.',
     'Model secrets are prompted in the plugin\'s configuration panel.',
     '',
   ].join('\n');
