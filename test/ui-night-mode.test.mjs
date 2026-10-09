@@ -673,7 +673,7 @@ test('answers card: a run seen only through hello after it ended reads its revie
   assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 1 answer · $0.05', 'repainted when the saved steps landed');
 });
 
-test('"Decided by"/"Effort" offer the catalog grouped like the title-model picker and read back; at project level empty is "Same as my settings (…)" and sent as __unset', async () => {
+test('"Decided by"/"Effort" offer the catalog grouped by connection and read back; at project level empty is "… (your setting)" and sent as __unset', async () => {
   await checkRows([
     { name: 'form: "Decided by" offers what the title-model picker offers; "Effort" the effort levels; both read back', run: async () => {
       const root = formRoot();
@@ -683,8 +683,8 @@ test('"Decided by"/"Effort" offer the catalog grouped like the title-model picke
       assert.equal(model.closest('.night-field').querySelector('.label-row label').textContent, 'Decided by');
       assert.equal(effort.closest('.night-field').querySelector('.label-row label').textContent, 'Effort');
       assert.ok(model.closest('details.away-adv'), 'inside "How worca picks an answer"');
-      assert.deepEqual(optionsOf(model), [['', 'Same as the run', false], ['corp-model', 'Corp', false], ['team-model', 'Team pick', false], ['plug-model', 'Plug (vendor)', false], ['claude-opus-5-5', 'Opus 5.5', false]]);
-      assert.deepEqual([...model.querySelectorAll('optgroup')].map((g) => g.label), ['Your models', 'Team policy', 'From plugins', 'Built-in'], 'grouped like the title-model picker');
+      assert.deepEqual(optionsOf(model), [['', 'Same as the run', false], ['claude-opus-5-5', 'Opus 5.5', false], ['corp-model', 'Corp', false], ['plug-model', 'Plug · vendor', false], ['team-model', 'Team pick · team policy', false]]);
+      assert.deepEqual([...model.querySelectorAll('optgroup')].map((g) => g.label), ['Claude sign-in'], 'grouped by connection, like every model picker');
       assert.deepEqual(optionsOf(effort), [['', 'Not set', false], ['medium', 'medium', false], ['high', 'high', false], ['xhigh', 'xhigh', false], ['max', 'max', false]]);
       assert.equal(model.closest('.night-field').querySelector('.away-inherited').textContent, '(default)');
       let p = readNightForm(root, { level: 'user' });
@@ -696,20 +696,20 @@ test('"Decided by"/"Effort" offer the catalog grouped like the title-model picke
       assert.ok(!p.__unset.includes('deciderModel') && !p.__unset.includes('deciderEffort'));
       assert.match(root.querySelector('.away-summary').textContent, /worca weighs the options with Opus 5\.5 at high effort\./, 'the live summary follows the pickers');
     } },
-    { name: 'form, project level: empty reads "Same as my settings (…)" with where it comes from, and is sent as __unset', run: async () => {
+    { name: 'form, project level: empty reads "… (your setting)" with where it comes from, and is sent as __unset', run: async () => {
       const root = formRoot();
       renderNightForm(root, { level: 'project', values: {}, inherited: resolveNightConfig({ user: { deciderModel: 'claude-opus-5-5' }, team: { deciderEffort: 'high' } }), now: 0, models: DM_MODELS });
       const model = root.querySelector('.night-decider-model'); const effort = root.querySelector('.night-decider-effort');
-      assert.equal(model.options[0].textContent, 'Same as my settings (Opus 5.5)');
-      assert.equal(effort.options[0].textContent, 'Same as my settings (high)');
+      assert.equal(model.options[0].textContent, 'Opus 5.5 (your setting)');
+      assert.equal(effort.options[0].textContent, 'high (your setting)');
       assert.equal(model.closest('.night-field').querySelector('.away-inherited').textContent, '(your setting)');
       assert.equal(effort.closest('.night-field').querySelector('.away-inherited').textContent, '(team default)');
       const p = readNightForm(root, { level: 'project' });
       assert.ok(p.__unset.includes('deciderModel') && p.__unset.includes('deciderEffort'));
       assert.equal('deciderModel' in p || 'deciderEffort' in p, false, 'never null: an empty choice removes the key');
       renderNightForm(root, { level: 'project', values: {}, inherited: resolveNightConfig({}), now: 0, models: DM_MODELS });
-      assert.equal(root.querySelector('.night-decider-model').options[0].textContent, "Same as my settings (the run's model)");
-      assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'Same as my settings (medium)');
+      assert.equal(root.querySelector('.night-decider-model').options[0].textContent, "the run's model (your setting)");
+      assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'medium (your setting)');
       renderNightForm(root, { level: 'project', values: {}, inherited: { config: null, sources: {} }, now: 0 });
       assert.equal(root.querySelector('.night-decider-model').options[0].textContent, 'Same as my settings', 'nothing inherited yet: no guess');
       assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'Same as my settings');
@@ -719,9 +719,9 @@ test('"Decided by"/"Effort" offer the catalog grouped like the title-model picke
 
 test('form: a stored hidden, signed-out or stale model stays visible and saving keeps it; an empty catalog condemns nothing', () => {
   const root = formRoot();
-  // Each group sorted by label: Haiku before Opus among the built-ins, Bridged before Corp among yours.
-  for (const [id, order] of [['claude-haiku-4-5', ['', 'corp-model', 'team-model', 'plug-model', 'claude-haiku-4-5', 'claude-opus-5-5']],
-    ['bridged-x', ['', 'bridged-x', 'corp-model', 'team-model', 'plug-model', 'claude-opus-5-5']]]) {
+  // Grouped by connection, catalog order inside a group: the bridged model in its provider's group after the sign-in.
+  for (const [id, order] of [['claude-haiku-4-5', ['', 'claude-opus-5-5', 'claude-haiku-4-5', 'corp-model', 'plug-model', 'team-model']],
+    ['bridged-x', ['', 'claude-opus-5-5', 'corp-model', 'plug-model', 'team-model', 'bridged-x']]]) {
     renderNightForm(root, { level: 'user', values: { deciderModel: id }, inherited: resolveNightConfig({}), now: 0, models: DM_MODELS });
     const sel = root.querySelector('.night-decider-model');
     assert.equal(sel.value, id);
@@ -751,7 +751,7 @@ test('settings card: "Decided by" lists the catalog and Save posts the pick with
   const doc = await openSettings(ctx);
   const host = doc.getElementById('night-mode-host');
   const sel = host.querySelector('.night-decider-model');
-  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'corp-model', 'team-model', 'plug-model', 'claude-opus-5-5']);
+  assert.deepEqual([...sel.options].map((o) => o.value), ['', 'claude-opus-5-5', 'corp-model', 'plug-model', 'team-model']);
   assert.equal(host.querySelector('.night-decider-effort').value, 'xhigh');
   sel.value = 'claude-opus-5-5';
   click(ctx, doc.getElementById('nightModeSave'));

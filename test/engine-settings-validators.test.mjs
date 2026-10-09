@@ -40,7 +40,7 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
     assert.equal(r.status, 400, key);
     const body = await r.json();
     // #555: the error names the setting by its visible label, and `field` by its key.
-    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" is a Codex model — this setting picks a Claude model\\.$`), key);
+    assert.match(body.error, new RegExp(`^“[^”]+”: "${id.replace(/\./g, '\\.')}" runs on Codex — this setting picks a model Claude Code can run\\.$`), key);
     assert.equal(body.field.split('.')[0], key);
   }
   const s = await get();
@@ -69,5 +69,5 @@ test('a Cursor id in a Claude utility setting is a 400 naming it', async () => {
   await addGlobalModel({ id: 'cursor-m', engine: 'cursor' });
   const r = await post({ titleModel: 'cursor-m' });
   assert.equal(r.status, 400);
-  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" is a Cursor model — this setting picks a Claude model\.$/);
+  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" runs on Cursor — this setting picks a model Claude Code can run\.$/);
 });

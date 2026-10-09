@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "name": "Live implement only",
+  "domain": "coding",
+  "nodes": [
+    { "id": "n_task", "kind": "task", "x": 40, "y": 200, "config": {} },
+    { "id": "n_impl", "kind": "agent", "key": "implementer", "x": 320, "y": 200, "config": {} },
+    { "id": "n_end", "kind": "end", "x": 600, "y": 200, "config": {} }
+  ],
+  "wires": [
+    { "id": "w1", "from": { "node": "n_task", "port": "task" }, "to": { "node": "n_impl", "port": "plan" } },
+    { "id": "w2", "from": { "node": "n_impl", "port": "done" }, "to": { "node": "n_end", "port": "result" } }
+  ]
+}

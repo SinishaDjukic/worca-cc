@@ -134,8 +134,11 @@ function spawnFailure(bin, err, prefix) {
 // id — so as exit detail it masked the real cause (a 429 carried on the stdout
 // result) and classified null, which kept the rate-limit retry from running.
 // Such a line is still streamed as a stderr event; it only stops being evidence.
+// Likewise the connectors notice: printed on every spawn that carries ANTHROPIC_API_KEY or another auth
+// source (every custom-endpoint model), it masked a 403 "Failed to authenticate" result as the exit detail.
 export const BENIGN_STDERR_PATTERNS = Object.freeze([
   /^\[claude-code:unrecognized_model\]/,
+  /^⚠ claude\.ai connectors are disabled because\b/,
 ]);
 
 /** Whether a stderr line is a known-benign CLI notice (BENIGN_STDERR_PATTERNS). */
@@ -820,7 +823,7 @@ async function runViaBroker(opts) {
   }
 }
 
-/** Claude Code declares every capability worca uses (plans/harness-bridge-design.md §6). */
+/** Claude Code declares every capability worca uses. */
 export const claudeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, true])));
 
 /** The adapter's run(): every spawn goes through the credential broker when it is

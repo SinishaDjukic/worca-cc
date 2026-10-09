@@ -58,7 +58,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 52;
+export const SCHEMA_VERSION = 53;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -858,7 +858,8 @@ const INCREMENTAL_COLUMNS = {
   ask_threads:            { created_by: 'TEXT',      // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
                             mcp_off: 'TEXT',         // v45: JSON {sets, members} the chat's MCP picker switched off; NULL = none
                             contexts: 'TEXT',        // v46: JSON [{kind,id,label,home?,pinned?,source?}] the chat was asked in / talked about, origin first; NULL = before v46 (no indicator)
-                            agent_mode: 'INTEGER' }, // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
+                            agent_mode: 'INTEGER',   // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
+                            engine: 'TEXT' },        // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -2077,6 +2078,7 @@ export function migrate(db) {
     if (current < 50) db.exec(TERMINAL_DDL);         // built-in terminal (#573) — IF NOT EXISTS, reconcile-safe
     // v51 (#574): ask_threads.agent_mode — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 52) applySchemaV52(db);            // workspace PRs: pipeline_member_prs + gated backfill
+    // v53 (#635): ask_threads.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

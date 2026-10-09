@@ -1,6 +1,6 @@
-// test/ui-settings-engines.test.mjs — Settings › Models engine section (plans/cascading-settings-design.md §6): a Default
-// engine row and a card per engine with step and helper rows; the Claude helper cards move into the Claude card; Save
-// posts runEngine / stepModels / utilityModels. Boot copied from test/ui-settings-title-model.test.mjs.
+// test/ui-settings-engines.test.mjs — the Models page's Engines card (plans/cascading-settings-design.md §6): a Default
+// engine row and a tab per engine with Step models and Helper jobs tables; Claude's helper jobs are its legacy settings
+// keys (titleModel, autoWorkflowModel, prDescriptionModel, memoryDefrag); Save posts runEngine / stepModels / utilityModels.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -48,8 +48,8 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
-  assert.equal(host.querySelector('[data-setting="models.claude.utility.title"]'), null, 'Claude helpers are the existing cards at your level');
-  assert.ok(extra.claude.classList.contains('engine-card-extra'));
+  assert.equal(host.querySelector('[data-setting="models.claude.utility.title"]'), null, 'no Claude jobs asked for, none rendered');
+  assert.deepEqual(extra, {});
 });
 
 test('renderEngineSection: the Cursor card has step rows, no helper rows, its own default label and the Claude-helpers note', () => {
@@ -60,12 +60,14 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
   assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'cursor'], 'Copilot owns no models: no card');
   const card = host.querySelector('.engine-card[data-engine="cursor"]');
-  assert.equal(card.querySelector('h3').textContent, 'Cursor');
+  assert.equal(card.querySelector('h3').firstChild.textContent, 'Cursor');
+  assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
   const plan = card.querySelector('[data-setting="models.cursor.steps.planner"] .inherit-model');
   assert.deepEqual([...plan.options].map((o) => o.value), ['', 'my-cursor-m']);
   assert.match(plan.options[0].textContent, /Cursor's default model/);
-  assert.equal(card.querySelector('.engine-helpers'), null, 'no helper rows');
-  assert.match(card.querySelector('.hint').textContent, /Helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) run on Claude on a Cursor run\./);
+  assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
+  assert.equal(card.querySelector('.engine-helpers h4').textContent, 'Helper jobs');
+  assert.match(card.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Cursor runs its helper jobs \(titles, overview, PR description, Auto classifier, Away mode's decider\) on Claude — see the Claude tab\.$/);
   assert.ok(card.querySelector('.engine-card-status'), 'a status line app.js fills');
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
@@ -75,7 +77,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex']);
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex'], 'Claude is the default option, listed once');
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
@@ -111,13 +113,16 @@ async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
   return { window, doc: window.document, posts, tick };
 }
 
-test('the Models page: stored picks paint, the Claude helper cards sit in the Claude card, Save posts the changes', async () => {
+test('the Models page: stored picks paint, Claude\'s helper jobs are rows of its tab, Save posts the changes', async () => {
   const { doc, window, posts, tick } = await boot({ runEngine: 'codex', stepModels: { codex: { planner: { model: 'gpt-5.5', effort: 'low' } } }, utilityModels: {} });
   const root = doc.getElementById('engine-settings-root');
   assert.ok(root, 'the section is on the Models page');
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
   assert.equal(root.querySelector('[data-setting="models.codex.steps.planner"] .inherit-model').value, 'gpt-5.5');
-  assert.ok(doc.querySelector('.engine-card[data-engine="claude"] .models-helpers #titleModel'), 'Title generation now lives in the Claude card');
+  const claude = doc.querySelector('.engine-card[data-engine="claude"]');
+  for (const job of ['utility.title', 'utility.classifier', 'utility.prDescription', 'memoryDefrag']) {
+    assert.ok(claude.querySelector(`.engine-helpers [data-setting="models.claude.${job}"]`), `${job} is a Helper jobs row`);
+  }
   const eng = root.querySelector('[data-setting="run.engine"] .inherit-input');
   eng.value = '';
   eng.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -130,11 +135,27 @@ test('the Models page: stored picks paint, the Claude helper cards sit in the Cl
   assert.equal(doc.getElementById('engineSettingsMsg').textContent, 'Saved.');
 });
 
+test('the Models page: a Claude helper row saves onto its legacy key (titleModel, a model only; memoryDefrag, a pair)', async () => {
+  const { doc, window, posts, tick } = await boot({ titleModel: null, memoryDefrag: { model: null, effort: null } }, { hash: 'models' });
+  const root = doc.getElementById('engine-settings-root');
+  const pick = (id, value, part = '.inherit-model') => {
+    const sel = root.querySelector(`[data-setting="${id}"] ${part}`);
+    sel.value = value; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  };
+  pick('models.claude.utility.title', 'claude-opus-5-5');
+  pick('models.claude.memoryDefrag', 'claude-opus-5-5');
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(posts.at(-1).titleModel, 'claude-opus-5-5');
+  assert.equal(posts.at(-1).memoryDefrag.model, 'claude-opus-5-5');
+  assert.equal(posts.at(-1).utilityModels, undefined, 'never under utilityModels.claude');
+});
+
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {
   const { doc } = await boot({ runEngine: 'codex' }, { hash: 'models' });
   const root = doc.getElementById('engine-settings-root');
   assert.equal(root.querySelector('[data-setting="run.engine"] .inherit-input')?.value, 'codex', 'painted without visiting another Settings tab first');
-  assert.ok(doc.querySelector('#titleModel')?.options.length > 1, 'the Claude helper pickers too');
+  assert.ok(root.querySelector('[data-setting="models.claude.utility.title"] .inherit-model')?.options.length > 1, 'the Claude helper rows too');
 });
 
 test('the Models page: each non-Claude card says whether its engine is ready (GET /api/engines)', async () => {
@@ -144,9 +165,45 @@ test('the Models page: each non-Claude card says whether its engine is ready (GE
     { name: 'cursor', label: 'Cursor', ready: false, reason: 'cursor-agent is not signed in' },
   ] });
   const status = (e) => doc.querySelector(`.engine-card[data-engine="${e}"] .engine-card-status`)?.textContent;
-  assert.equal(status('cursor'), 'Not ready — cursor-agent is not signed in');
-  assert.equal(status('codex'), 'Ready — could not check the codex sign-in');
+  assert.equal(status('cursor'), "Cursor can't start runs yet: cursor-agent is not signed in.");
+  assert.equal(status('codex'), 'Codex can start runs: its CLI is installed and signed in. Note: could not check the codex sign-in.');
   assert.equal(status('claude'), undefined, 'the Claude card has no status line');
   const { doc: none } = await boot({}, { hash: 'models' });
   assert.equal(none.querySelector('.engine-card[data-engine="cursor"] .engine-card-status').textContent, '', 'no engines array: an empty line');
+});
+
+// Scale: one engine card at a time (the default engine's first), and each card lists only the slots set at this
+// level; the rest are summed up in one line, "+ Override a step…" reveals one, Show all reveals every slot.
+test('renderEngineSection: one card at a time, only the changed steps, one-line summary, override and show all', () => {
+  const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+  const host = doc.getElementById('h');
+  const roles = [{ key: 'planner', label: 'Plan' }, { key: 'implementer', label: 'Implement' }, { key: 'reviewer', label: 'Review' }];
+  const fields = {
+    'run.engine': { own: undefined, inherited: { value: 'codex', source: 'user' } },
+    'models.codex.steps.reviewer': { own: { model: 'gpt-5.5', effort: 'high' }, inherited: { value: undefined, source: 'default' } },
+  };
+  renderEngineSection(host, { level: 'project', roles, catalog: CATALOG, fields, jobs: { claude: [], codex: [], cursor: [] } });
+  const cards = () => [...host.querySelectorAll('.engine-card')].filter((c) => !c.hidden).map((c) => c.dataset.engine);
+  assert.deepEqual(cards(), ['codex'], 'the default engine\'s card first');
+  assert.equal(host.querySelector('.engine-switch').dataset.minLevel, 'expert');
+  assert.equal(host.querySelector('.engine-card').dataset.minLevel, 'advanced');
+  const codex = host.querySelector('.engine-card[data-engine="codex"]');
+  const visible = () => [...codex.querySelectorAll('.engine-slot')].filter((r) => !r.hidden).map((r) => r.dataset.setting);
+  assert.deepEqual(visible(), ['models.codex.steps.reviewer']);
+  assert.equal(codex.querySelector('.engine-slot-rest').textContent, '2 other steps follow your settings.');
+  const add = codex.querySelector('.engine-slot-add');
+  assert.deepEqual([...add.options].map((o) => o.textContent), ['+ Override a step…', 'Plan', 'Implement']);
+  add.value = 'models.codex.steps.planner';
+  add.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true }));
+  assert.deepEqual(visible(), ['models.codex.steps.planner', 'models.codex.steps.reviewer']);
+  assert.equal(codex.querySelector('.engine-slot-rest').textContent, '1 other step follows your settings.');
+  const all = codex.querySelector('.engine-slot-all');
+  all.click();
+  assert.equal(visible().length, 3);
+  assert.equal(all.textContent, 'Show only changes');
+  all.click();
+  assert.deepEqual(visible(), ['models.codex.steps.reviewer'], 'an untouched revealed row folds away again');
+  host.querySelector('.engine-switch button[data-engine="claude"]').click();
+  assert.deepEqual(cards(), ['claude']);
+  assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-slot-rest').textContent, 'Every step follows your settings.');
 });

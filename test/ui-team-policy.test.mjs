@@ -347,7 +347,7 @@ test('New pipeline: MCP servers paints under Guardrails; an unticked membership 
   await settle();
   assert.equal(doc.getElementById('mcpRunsField').hidden, false);
   assert.equal(doc.getElementById('mcpRunsLabel').textContent, '2 of 2 MCP servers');
-  assert.deepEqual(JSON.parse(fetchCalls.findLast((c) => c.url === '/api/mcp/preview').opts.body), { target: { projectKey: 'gateway-00000001' }, models: ['gw-gpt'] }, 'the form\'s models set the preview\'s tool-name limit');
+  assert.deepEqual(JSON.parse(fetchCalls.findLast((c) => c.url === '/api/mcp/preview').opts.body), { target: { projectKey: 'gateway-00000001' }, models: ['gw-gpt'], engine: 'claude' }, 'the form\'s models set the preview\'s tool-name limit, its engine the set skills\' names');
   const rows = [...doc.querySelectorAll('#mcpRunsPop .mcp-runs-row')];
   assert.equal(rows.at(-1).textContent, 'jira_billingAPI token not set', 'the skipped membership is a row with its reason');
   rows[0].querySelector('input').focus();

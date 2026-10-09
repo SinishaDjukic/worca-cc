@@ -6,15 +6,18 @@
 import { listModels as realListModels, EFFORTS, engineOfModel as realEngineOf } from '../config.mjs';
 import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSecretStatus } from '../plugin-models.mjs';
 import { ASK_LIMITS } from './limits.mjs';
-import { brokerEnabled } from '../broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
 import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+import { harnessesOf, runsOn, effortsOn } from '../../shared/connections.mjs';
 
 export const ENGINE_LABEL = Object.freeze({ claude: 'Claude', codex: 'Codex' });
-/** A chat's engine (cascading-settings-design.md D12): its model's engine; unknown or empty is Claude. No column stores it. */
+/** A chat's engine (cascading-settings-design.md D12): the engine stored on the thread (v53), so a model that left the
+ *  catalog never moves the chat to another engine; a chat from before v53 reads its model's engine (unknown is Claude). */
 export function chatEngine(thread, { engineOf = realEngineOf } = {}) {
+  if (thread && ASK_ENGINES.includes(thread.engine)) return thread.engine;
   return (thread && typeof thread.model === 'string' && engineOf(thread.model)) === 'codex' ? 'codex' : 'claude';
 }
 /** The user's Ask engine and per-engine slots (D17); a settings failure reads as today's defaults. */
@@ -70,7 +73,7 @@ export function createAskModels({
   /** The initial pick for a new chat on `engine` (D8, D17): the Ask slot when the catalog has it; Claude falls back to
    *  ASK_LIMITS.defaultModel, Codex to its first visible model. Hidden built-ins are never the initial pick (#422). */
   function pickDefault(models, engine = 'claude', slot = null) {
-    const own = models.filter((m) => (m.engine || 'claude') === engine);
+    const own = models.filter((m) => runsOn(m, engine));
     const visible = own.filter((m) => !m.hidden);
     const pool = visible.length ? visible : own;
     const byId = (id) => (id ? pool.find((m) => m.id.toLowerCase() === String(id).toLowerCase()) : null);
@@ -106,9 +109,11 @@ export function createAskModels({
       // codex can be locked down (plans/ask-on-codex-spike.md (a)) — otherwise a Codex chat could never start.
       // D5: only engines an Ask chat can be locked down on (model-env.mjs ASK_ENGINES). A Cursor row stays out, so a
       // hand-made pick of one is an unknown model.
-      const engine = m.engine || 'claude';
-      if (!ASK_ENGINES.includes(engine)) continue;
-      if (engine === 'codex' && !codexAvailable()) continue;
+      // A row runs on every harness its connection reaches (src/shared/connections.mjs); a chat takes the ones Ask
+      // runs on. An endpoint model Codex reaches too is offered in both groups.
+      const harnesses = harnessesOf(m).filter((e) => ASK_ENGINES.includes(e) && (e !== 'codex' || (codexAvailable() && !brokerEngineRefusal('codex'))));
+      if (!harnesses.length) continue;
+      const engine = harnesses.includes(m.engine || 'claude') ? (m.engine || 'claude') : harnesses[0];
       const custom = m.custom === 'global' || m.custom === 'plugin' ? m.custom : false;
       const entry = {
         id: m.id,
@@ -148,6 +153,8 @@ export function createAskModels({
         const keys = missing.get(m.id.toLowerCase());
         if (keys && keys.length) entry.secretsMissing = [...keys];
       }
+      // The harnesses only when the row's own shape would say otherwise (a Claude row keeps today's exact shape).
+      if (JSON.stringify(harnessesOf(entry)) !== JSON.stringify(harnesses)) entry.harnesses = harnesses;
       models.push(entry);
     }
     let prefs = { engine: 'claude', slots: {} };
@@ -171,17 +178,44 @@ export function createAskModels({
     const entry = models.find((m) => m.id.toLowerCase() === id.toLowerCase());
     if (!entry) return { ok: false, error: `unknown model "${id}"` };
     const e = effort.trim();
-    if (!entry.efforts.includes(e)) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
-    // D12: inside a chat (engine given) only the chat's engine; switching engine means a new chat.
+    // A model on two harnesses keeps its own efforts; a chat on the other harness takes them mapped (effortsOn).
+    if (!entry.efforts.includes(e) && !(engine && effortsOn(entry, engine).includes(e))) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
+    // D12: inside a chat (engine given) only a model the chat's engine runs; switching engine means a new chat.
     const own = entry.engine || 'claude';
-    if (engine && own !== engine) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
+    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
     return { ok: true, model: entry.id, effort: e };
   }
 
-  return { askCatalog, validateModelEffort };
+  /**
+   * The model an automatic turn (a card event, a finished command) runs on: the chat's own pick, else the default of
+   * the engine the chat is locked to — never the other engine's — else, before the first reply, the user's Ask default.
+   * `fallback` is set when the chat's own model could not be used, so the caller can say so in the chat.
+   * @returns {Promise<{ok:true, model:string, effort:string, fallback?:{from:string, engine:string|null}}|null>}
+   */
+  async function eventPick(thread, lockedEngine = null) {
+    const mv = await validateModelEffort(thread && thread.model, thread && thread.effort, { engine: lockedEngine });
+    if (mv.ok) return mv;
+    const cat = await askCatalog({ withSecrets: false });
+    const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
+    if (!d) return null;
+    const from = thread && typeof thread.model === 'string' ? thread.model : '';
+    return { ok: true, ...d, ...(from ? { fallback: { from, engine: lockedEngine } } : {}) };
+  }
+
+  return { askCatalog, validateModelEffort, eventPick };
+}
+
+/** The chat notice for an eventPick fallback: which model was unavailable and what the reply runs on instead. */
+export function eventFallbackNotice({ fallback, model, effort }) {
+  if (!fallback) return null;
+  const on = fallback.engine ? `${ENGINE_LABEL[fallback.engine]}'s default, ${model} (${effort})` : `${model} (${effort})`;
+  return fallback.from.toLowerCase() === String(model).toLowerCase()
+    ? `This chat's effort is not available for ${fallback.from} any more, so this reply uses ${on}.`
+    : `This chat's model ${fallback.from} is not available any more, so this reply uses ${on}.`;
 }
 
 const bound = createAskModels();
 /** Bound to the real catalog — what ui/server.mjs uses for GET /api/ask/models and the message POST. */
 export const askCatalog = bound.askCatalog;
 export const validateModelEffort = bound.validateModelEffort;
+export const askEventPick = bound.eventPick;

@@ -310,7 +310,7 @@ test('renderDone: a usage limit an engine hit also offers /resume on each other 
   const limit = renderDone(META, { status: 'paused', reason: 'usage_limit', detail: "You've hit your usage limit", limitEngine: 'codex' });
   assert.equal(isValidMessage(limit), true);
   assert.match(limit.body[0].value, /reply: \/resume \*2951\n/);
-  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude\n   Or continue now on Cursor: \/resume \*2951 cursor$/);
+  assert.match(limit.body[0].value, /Or continue now on Claude: \/resume \*2951 claude \(may need Allow unguarded in the Worca UI\)\n   Or continue now on Cursor: \/resume \*2951 cursor \(may need Allow unguarded in the Worca UI\)\n   Or resume with another model in the Worca UI \(Resume › Resume with another model…\)$/);
   for (const payload of [
     { status: 'paused', reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" },
     { status: 'paused', reason: 'error', detail: 'disk full', limitEngine: 'codex' },

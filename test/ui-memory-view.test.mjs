@@ -520,85 +520,17 @@ function dmHandler(posts, stored = { model: 'claude-opus-5-5', effort: 'high' })
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
 
-// Each row boots its own app: the second needs a card nobody has saved yet.
-test('Defragment model card paints the stored pair (\'(default)\' first, the model\'s own efforts) and Save starts disabled until a change', async () => {
-  await checkRows([
-    { name: 'Settings › Memory: the Defragment model card paints the stored pair — "(default)" first, the effort list is the model\'s own', run: async () => {
-      const posts = [];
-      const { window } = await boot({ fetchHandler: dmHandler(posts) });
-      await go(window, 'settings/memory');
-      await settle();
-      const doc = window.document;
-      const msel = doc.getElementById('memDefragModel');
-      const esel = doc.getElementById('memDefragEffort');
-      assert.ok(msel.closest('.settings-pane[data-tab="memory"]'), 'on the global Memory tab');
-      assert.deepEqual([...msel.options].map((o) => [o.value, o.textContent]), [['', '(default)'], ['claude-haiku-4-5', 'Haiku 4.5'], ['claude-opus-5-5', 'Opus 5.5']]);
-      assert.equal(msel.value, 'claude-opus-5-5');
-      assert.deepEqual([...esel.options].map((o) => o.value), ['', 'medium', 'high', 'xhigh', 'max']);
-      assert.equal(esel.value, 'high');
-      assert.match(doc.getElementById('memDefragModelNote').textContent, /Every Memory defragment run uses Opus 5\.5 · high/);
-      // Another model: its own efforts; an effort it offers survives the switch.
-      edit(window, msel, 'claude-haiku-4-5');
-      assert.deepEqual([...esel.options].map((o) => o.value), ['', 'medium', 'high']);
-      assert.equal(esel.value, 'high');
-      edit(window, esel, 'medium');
-      doc.getElementById('memDefragModelSave').click();
-      await settle();
-      assert.deepEqual(posts.at(-1), { memoryDefrag: { model: 'claude-haiku-4-5', effort: 'medium' } });
-      assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Saved', detail: 'Applies to the next defragment run.', action: '' });
-      assert.equal(doc.getElementById('memDefragModelMsg').textContent, '', 'no grey "Saved." line');
-    } },
-    { name: 'Settings › Memory: the Defragment model Save starts disabled; picking another model enables it', run: async () => {
-      const { window } = await boot({ fetchHandler: dmHandler([]) });
-      await go(window, 'settings/memory');
-      await settle();
-      const doc = window.document;
-      const save = doc.getElementById('memDefragModelSave');
-      assert.equal(save.disabled, true, 'a freshly painted card is clean');
-      assert.equal(doc.querySelector('#mem-defrag-model-card .dirty-mark').hidden, true);
-      edit(window, doc.getElementById('memDefragModel'), 'claude-haiku-4-5');
-      assert.equal(save.disabled, false);
-      assert.equal(doc.querySelector('#mem-defrag-model-card .dirty-mark').hidden, false);
-    } },
-  ]);
-});
 
-test('Settings › Memory: clearing the model clears and disables the effort; Save sends the empty pair, Use default sends null; a save reloads the health card', async () => {
-  const posts = [];
-  const { window, calls } = await boot({ fetchHandler: dmHandler(posts) });
+
+
+test('Settings › Memory: the defragment model lives in Engines › Helper jobs; the Memory tab links there (Expert)', async () => {
+  const { window } = await boot({ fetchHandler: dmHandler([]) });
   await go(window, 'settings/memory');
   await settle();
-  const doc = window.document;
-  const msel = doc.getElementById('memDefragModel');
-  const esel = doc.getElementById('memDefragEffort');
-  edit(window, msel, '');
-  assert.equal(esel.value, '');
-  assert.equal(esel.disabled, true, 'an effort without a model means nothing');
-  const before = getCount(calls);
-  doc.getElementById('memDefragModelSave').click();
-  await settle();
-  assert.deepEqual(posts.at(-1), { memoryDefrag: { model: '', effort: '' } });
-  assert.equal(getCount(calls), before + 1, 'the health card refetched: its host hint names the model');
-  click(window, doc.getElementById('memDefragModelReset'));
-  await settle();
-  assert.deepEqual(posts.at(-1), { memoryDefrag: null });
-});
-
-test('Settings › Memory: a stored model that left the catalog paints disabled and "not installed", and Save refuses it without a request', async () => {
-  const posts = [];
-  const { window } = await boot({ fetchHandler: dmHandler(posts, { model: 'gone-model', effort: null }) });
-  await go(window, 'settings/memory');
-  await settle();
-  const doc = window.document;
-  const msel = doc.getElementById('memDefragModel');
-  const opt = [...msel.options].find((o) => o.value === 'gone-model');
-  assert.equal(opt.textContent, 'gone-model — not installed');
-  assert.equal(opt.disabled, true);
-  assert.match(doc.getElementById('memDefragModelNote').textContent, /no longer in the catalog — defragment runs fall back to claude-sonnet-5, or the model a project picked for the Memory defragmenter\./);
-  assert.equal(doc.getElementById('memDefragModelSave').disabled, true, 'the painted card is clean');
-  doc.getElementById('memDefragModelSave').click();
-  await settle();
-  assert.equal(posts.length, 0, 'no request for a model that cannot run');
+  assert.equal(window.document.getElementById('mem-defrag-model-card'), null, 'no card of its own');
+  const link = window.document.querySelector('.mem-model-link a');
+  assert.equal(link.getAttribute('href'), '#models');
+  assert.equal(link.closest('.mem-model-link').dataset.minLevel, 'expert');
 });
 
 test('Settings › Memory: a settings-changed frame re-reads the card and reloads the scope — keeping a draft, with no conflict warning', async () => {
@@ -617,80 +549,8 @@ test('Settings › Memory: a settings-changed frame re-reads the card and reload
   assert.doesNotMatch(window.document.getElementById('memory-msg').textContent, /changed on disk/, 'a settings change is not a memory conflict');
 });
 
-test('Settings › Memory: when the model list did not load, Save refuses instead of clearing the stored pair', async () => {
-  const posts = [];
-  const base = dmHandler(posts);
-  const { window } = await boot({ fetchHandler: (u, o) => (u === '/api/config' ? Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) : base(u, o)) });
-  await go(window, 'settings/memory');
-  await settle();
-  edit(window, window.document.getElementById('memDefragModel'), '');
-  window.document.getElementById('memDefragModelSave').click();
-  await settle();
-  assert.equal(posts.length, 0, 'no request: the empty select would have posted { model: "", effort: "" } — a clear');
-  assert.deepEqual(cardAlertOf(window.document.getElementById('mem-defrag-model-card')),
-    { title: 'Not saved', detail: 'The model list did not load. Reload the page to change this.' });
-});
 
-test('Settings › Memory: a hand-edited id in another case IS the catalog entry (a run matches it the same way)', async () => {
-  const { window } = await boot({ fetchHandler: dmHandler([], { model: 'CLAUDE-OPUS-5-5', effort: 'high' }) });
-  await go(window, 'settings/memory');
-  await settle();
-  const msel = window.document.getElementById('memDefragModel');
-  assert.equal(msel.value, 'claude-opus-5-5');
-  assert.ok(![...msel.options].some((o) => /not installed/.test(o.textContent)), 'not painted stale');
-  assert.match(window.document.getElementById('memDefragModelNote').textContent, /^Every Memory defragment run uses Opus 5\.5 · high/);
-});
 
-// Each row boots its own app: each drives its own failing /api/settings switch.
-test('a failed settings re-read makes Save refuse instead of posting the old paint; a working re-read lifts the error', async () => {
-  await checkRows([
-    { name: 'Settings › Memory: a failed re-read of the setting (a settings-changed frame) makes Save refuse instead of posting the old paint', run: async () => {
-      const posts = [];
-      const base = dmHandler(posts);
-      let failSettings = false;
-      const { window } = await boot({ fetchHandler: (u, o) => (failSettings && u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
-        ? Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) : base(u, o)) });
-      await go(window, 'settings/memory');
-      await settle();
-      assert.equal(window.document.getElementById('memDefragModel').value, 'claude-opus-5-5', 'the first paint');
-      failSettings = true;
-      WSStub.last._message({ type: 'settings-changed' });
-      await settle();
-      edit(window, window.document.getElementById('memDefragModel'), 'claude-haiku-4-5');
-      window.document.getElementById('memDefragModelSave').click();
-      await settle();
-      assert.equal(posts.length, 0, 'the stale paint is never posted over what another tab saved');
-      assert.match(cardAlertOf(window.document.getElementById('mem-defrag-model-card')).detail, /The model list did not load/);
-    } },
-    { name: 'Settings › Memory: a re-read that works lifts the error a failed one left behind; the save\'s own frame leaves no error', run: async () => {
-      const posts = [];
-      const base = dmHandler(posts);
-      let failSettings = false;
-      const { window } = await boot({ fetchHandler: (u, o) => (failSettings && u === '/api/settings' && (o.method || 'GET').toUpperCase() === 'GET'
-        ? Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) : base(u, o)) });
-      await go(window, 'settings/memory');
-      await settle();
-      const msg = window.document.getElementById('memDefragModelMsg');
-      failSettings = true;
-      WSStub.last._message({ type: 'settings-changed' });
-      await settle();
-      assert.equal(msg.textContent, 'boom');
-      failSettings = false;
-      WSStub.last._message({ type: 'settings-changed' });
-      await settle();
-      assert.equal(msg.textContent, '', 'the card works again: no stale error');
-      edit(window, window.document.getElementById('memDefragModel'), 'claude-haiku-4-5');
-      window.document.getElementById('memDefragModelSave').click();
-      await settle();
-      assert.equal(posts.length, 1, 'and Save posts again');
-      assert.equal(lastToast(window.document).detail, 'Applies to the next defragment run.');
-      WSStub.last._message({ type: 'settings-changed' });   // the save's own frame
-      await settle();
-      assert.equal(msg.textContent, '', 'no error line after the save\'s own frame');
-      assert.equal(cardAlertOf(window.document.getElementById('mem-defrag-model-card')), null);
-    } },
-  ]);
-});
 
 // Each row boots its own app: the second needs a clean editor.
 test('conflict-warning ordering: a settings-changed reload overtaking a memory-changed one keeps the warning; a clean editor owes none', async () => {
@@ -732,4 +592,22 @@ test('conflict-warning ordering: a settings-changed reload overtaking a memory-c
       assert.doesNotMatch(window.document.getElementById('memory-msg').textContent, /changed on disk/, 'the refresh found a clean editor: nothing to report');
     } },
   ]);
+});
+
+test('an Ask card handoff carrying an engine picks it on New Pipeline, keeps it visible in Simple, and sends it', async () => {
+  const { window, calls } = await boot();
+  window.__np.openNewPipeline({
+    target: 'project', projectDir: '/Users/me/dev/alpha', workflowId: 'wf_default',
+    guardrailsId: 'normal', prompt: 'Fix the cart total rounding.', title: 'Fix rounding', featureBranch: '', engine: 'codex',
+  });
+  window.dispatchEvent(new window.Event('hashchange'));
+  await tick(); await tick(); await tick(); await tick(); await tick();
+  const doc = window.document;
+  assert.equal(doc.getElementById('engineSelect').value, 'codex');
+  assert.equal(doc.getElementById('engine-row').dataset.levelKeep, '1', 'a non-Claude engine shows even in Simple');
+  doc.getElementById('start-btn').closest('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await tick(); await tick(); await tick();
+  const run = calls.find((c) => c.url.endsWith('/api/run') && c.method === 'POST');
+  assert.ok(run, 'the form posted');
+  assert.equal(run.body.engine, 'codex');
 });

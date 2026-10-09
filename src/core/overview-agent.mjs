@@ -111,6 +111,9 @@ export async function generateOverview(key, id, { model, signal, force = false, 
     systemPrompt: OVERVIEW_SYSTEM_PROMPT,
     prompt,
     allowedTools: [],                 // pure reasoning over the prompt; no tools needed
+    // …so none are granted (as pr-description.mjs): `--tools ""` and no MCP servers. Without them the CLI's
+    // default tool set (Bash, Edit, Task…) under acceptEdits could act on the prompt's text.
+    ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),
     model: runModel,
     ...(slotEffort ? { effort: slotEffort } : {}),
     modelEnv: onClaude ? resolveModelEnv(runModel) : undefined,

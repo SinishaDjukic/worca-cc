@@ -1220,7 +1220,7 @@ test('workflow card: building at START, proposed at RESULT (cost booked); a tool
       assert.deepEqual(Object.keys(building.card).sort(), BUILDING_KEYS);
       assert.equal(building.card.type, 'workflow'); assert.equal(building.card.mode, 'task'); assert.equal(building.card.projectKey, 'demo-00000001', 'the pinned project is the default target');
       assert.equal(building.card.note, 'A note'); assert.equal(building.card.trace.step, 1); assert.equal(building.card.thenRun, true);
-      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/' });
+      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/', engine: 'claude' });
       const final = getMessage(s.asst.id);
       const card = final.blocks.find((b) => b.kind === 'card');
       assert.equal(card.id, building.id, 'same block, flipped in place');

@@ -13,6 +13,7 @@
 import { join, isAbsolute, extname } from 'node:path';
 import { rm, readFile, readdir, access, stat } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
+import { runsOn } from '../shared/connections.mjs';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
@@ -201,7 +202,7 @@ export class GraphOrchestrator extends RunHarness {
     const stored = defragSlotPair(engine, this._settingsScope());
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
-      ? (await listModels(this.projectDir)).filter((m) => (m.engine || 'claude') === engine) : [];
+      ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
     const r = resolveDefragModel({ explicit, stored, models });
     if (!r.model) return { pair: null, warning: r.warning };
     this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Codex')})`);
@@ -297,7 +298,7 @@ export class GraphOrchestrator extends RunHarness {
       // On a Claude run: the run's own sign-in. On a Cursor run: the helper's Claude (the seam probes with no bin).
       try { helperAuth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
     }
-    const catalog = (await listModels(this.projectDir)).filter((m) => (m.engine || 'claude') === engine);
+    const catalog = (await listModels(this.projectDir)).filter((m) => runsOn(m, engine));
     const runnable = autoModelsFor(catalog, { auth: engine === 'claude' ? helperAuth : 'unknown', routed: modelHasBaseUrlRouting });
     const models = runnable.models;
     const requireModel = runnable.requireModel;
@@ -306,7 +307,7 @@ export class GraphOrchestrator extends RunHarness {
     // The classifier's own call runs on the helper engine: on a Cursor run that is Claude, picking from Claude's catalog.
     let callPool = models;
     if (helper !== engine) {
-      const pool = autoModelsFor((await listModels(this.projectDir)).filter((m) => (m.engine || 'claude') === helper), { auth: helperAuth, routed: modelHasBaseUrlRouting });
+      const pool = autoModelsFor((await listModels(this.projectDir)).filter((m) => runsOn(m, helper)), { auth: helperAuth, routed: modelHasBaseUrlRouting });
       if (pool.note) this._log('orchestrator', 'warn', `auto: ${pool.note}`);   // e.g. Claude signed out on a Cursor run
       callPool = pool.models;
     }
@@ -983,6 +984,7 @@ export class GraphOrchestrator extends RunHarness {
       ...(this.claude.effort ? { effort: this.claude.effort } : {}),
       ...(engine ? { engine } : {}),
       ...(engine && this._allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
+      ...(this._modelForAll && this.claude.model ? { modelForAll: true } : {}),
     };
     return Object.keys(c).length ? { claude: c } : {};
   }

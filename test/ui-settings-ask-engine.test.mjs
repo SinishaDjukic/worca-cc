@@ -22,7 +22,9 @@ test('renderAskEngineSection: the engine row and one model row per engine, each 
   const opts = (id) => [...host.querySelectorAll(`[data-setting="${id}"] .inherit-model option`)].map((o) => o.value).filter(Boolean);
   assert.deepEqual(opts('models.claude.ask'), ['claude-opus-5-5']);
   assert.deepEqual(opts('models.codex.ask'), ['gpt-5.5']);
-  assert.match(host.querySelector('[data-setting="models.claude.ask"] .inherit-model option').textContent, /Worca default \(Opus 5\.5 · high\)/);
+  // Value first, and the Model names the model only: the Effort beside it says its own inherited value.
+  assert.equal(host.querySelector('[data-setting="models.claude.ask"] .inherit-model option').textContent, 'Opus 5.5 (default)');
+  assert.equal(host.querySelector('[data-setting="models.claude.ask"] .inherit-effort option').textContent, 'high (default)');
 });
 
 test('renderAskEngineSection: with no Codex model offered, Codex is marked unavailable and gets no empty model row', () => {

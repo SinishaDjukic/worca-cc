@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API, WORCA_MCP_API } from './plugin-api.mjs';
 import { EFFORTS, MODEL_ENGINES, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
+import { engineList } from '../shared/engine-switch.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
 import { validateGraph } from '../shared/graph/validate.mjs';
 import { validateScriptMetaV2, normalizeScriptMeta } from '../shared/graph/script-meta.mjs';
@@ -479,7 +480,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
       const id = str(m.id);
       if (!id) { errors.push(`${at}: "id" is required`); return; }
       if (m.engine !== undefined && !MODEL_ENGINES.includes(m.engine)) {
-        errors.push(`${at} ("${id}"): "engine" must be "claude", "codex" or "cursor"`);
+        errors.push(`${at} ("${id}"): "engine" must be ${engineList(MODEL_ENGINES, (e) => `"${e}"`)}`);
         return;
       }
       const engine = MODEL_ENGINES.includes(m.engine) ? m.engine : 'claude';

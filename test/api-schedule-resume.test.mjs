@@ -54,10 +54,10 @@ after(async () => {
 });
 
 /** A paused, resumable fixture: v2 resume point + a real on-disk worktree dir. */
-async function pausedFixture({ pauseReason = null, pauseDetail = null, title = 'Paused feat' } = {}) {
+async function pausedFixture({ pauseReason = null, pauseDetail = null, title = 'Paused feat', guardrailsId = null } = {}) {
   const wt = await mkdtemp(join(tmpdir(), 'sched-resume-wt-'));
   const branch = { source: 'main', feature: 'feat/x', worktreeDir: wt, reusedExisting: false };
-  const resumePoint = graphResumePoint({ pipelineDir: dir, ...(pauseReason ? { pauseReason } : {}), ...(pauseDetail ? { pauseDetail } : {}) });
+  const resumePoint = graphResumePoint({ pipelineDir: dir, ...(pauseReason ? { pauseReason } : {}), ...(pauseDetail ? { pauseDetail } : {}), ...(guardrailsId ? { guardrailsId } : {}) });
   const { id } = await seedPipeline(dir, { title, status: 'paused', branch, resumePoint });
   return { id, wt };
 }
@@ -137,6 +137,30 @@ test('fire: the tick resumes the paused run, audits via the orchestrator, and li
   const ev = await until(() => getDb().prepare("SELECT text, actor FROM pipeline_events WHERE pipeline_id = ? AND text LIKE 'Pipeline **resumed**%'").get(id));
   assert.ok(ev, 'the orchestrator audit line names the scheduler as actor');
   await cleanupRun(id);
+});
+
+test('engine: a scheduled resume on another engine stores it, fires on it, and a refused switch answers at once', async () => {
+  const { id } = await pausedFixture({ pauseReason: 'usage_limit' });
+  assert.equal((await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'gemini' })).status, 400);
+  const r = await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'codex' });
+  assert.equal(r.status, 202);
+  const { runId: ticketId } = await r.json();
+  const t = getDb().prepare('SELECT title, request FROM scheduled_runs WHERE id = ?').get(ticketId);
+  assert.equal(JSON.parse(t.request).internal.resumeEngine, 'codex');
+  assert.match(t.title, / on Codex$/, 'Schedules names the engine');
+  getDb().prepare('UPDATE scheduled_runs SET run_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), ticketId);
+  assert.ok((await schedulerTick()).fired.includes(ticketId));
+  const entry = [...runs.values()].find((e) => e.pipelineId === id);
+  assert.equal(entry.orch.claude.engine, 'codex', 'the ticket resumes on its engine');
+  await cleanupRun(id);
+
+  const guarded = await pausedFixture({ pauseReason: 'usage_limit', guardrailsId: 'normal' });
+  const refused = await post('/api/schedules/resume', { pipelineId: guarded.id, scheduledFor: inFuture(60_000), engine: 'codex' });
+  assert.equal(refused.status, 409, 'checked when scheduled, not only when it fires');
+  const body = await refused.json();
+  assert.equal(body.code, 'engine-refused');
+  assert.doesNotMatch(body.error, /--allow-unguarded-engine/, 'worded for the UI');
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs WHERE json_extract(request, \'$.internal.resumePipelineId\') = ?').get(guarded.id).n, 0);
 });
 
 test('fire skips when the run was resumed meanwhile (ticket skipped, feed entry, run untouched)', async () => {

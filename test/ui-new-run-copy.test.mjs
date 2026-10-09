@@ -27,7 +27,6 @@ test('every string that names the page reads "New run"', () => {
   const find = (sel) => [doc, ...[...doc.querySelectorAll('template')].map((t) => t.content)].map((r) => r.querySelector(sel)).find(Boolean);
   assert.equal(find('.pd-new').textContent.trim(), 'New run', 'the project page\'s button');
   assert.match(find('#getting-started-card .gs-settings-text').textContent, /^The Getting started checklist walks through the first nine things/);
-  assert.match(find('.mem-model-text').textContent, /from the Defragment button, New run, an Ask Worca card or the CLI\./);
 });
 
 test('no user-visible "New pipeline" is left in the UI, Ask\'s prompt or the policy help (comments aside)', () => {

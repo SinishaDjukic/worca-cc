@@ -48,6 +48,8 @@
 // so a saved root takes effect for new runs/listing without a server restart.
 
 import { mkdir, writeFile, rename } from 'node:fs/promises';
+import { suggestModelHandle } from '../shared/connections.mjs';
+export { suggestModelHandle };
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -1682,9 +1684,18 @@ function assertCodexFields(engine, env, upstream) {
   const why = codexUpstreamProblem(upstream);
   if (why) throw new Error(why);
 }
-function assertIdForEngine(id, engine) {
-  if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id`);
-  if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is a Codex built-in`);
+/** How an entry sends the endpoint a model id other than its catalog id, in words, for a refusal. */
+function handleHint(id, { upstream, env } = {}) {
+  const suggestion = suggestModelHandle(id, upstream?.provider || (env && 'ANTHROPIC_BASE_URL' in env ? 'gw' : 'my'));
+  const how = upstream ? `keep ${id} as its upstream model id` : `set ANTHROPIC_MODEL=${id} in its env`;
+  return `give this entry its own id, such as "${suggestion}", and ${how}`;
+}
+
+function assertIdForEngine(id, engine, conn = {}) {
+  if (engine === 'codex' && CLAUDE_MODEL_ID_RE.test(id)) throw new Error(`"${id}" is a Claude model id${conn.upstream ? ` — ${handleHint(id, conn)}` : ''}`);
+  // A built-in id names a harness's own sign-in (ChatGPT for Codex's): an entry on another connection — a gateway, a
+  // provider — that serves the same model takes an id of its own; the endpoint still gets the model's own id.
+  if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
   // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
   // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
   if (engine === 'cursor' && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id`);
@@ -1761,7 +1772,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   assertTestSettingsAccess();
   const vid = assertModelId(id);
   if (!isClearInput(label) && typeof label !== 'string') throw new Error('label must be a string');
-  const vengine = assertModelEngine(engine); assertIdForEngine(vid, vengine);
+  const vengine = assertModelEngine(engine); assertIdForEngine(vid, vengine, { upstream, env });
   const vefforts = assertEfforts(efforts, vengine);
   const venv = assertEnvPairs(env);
   const vcost = assertModelCost(cost);

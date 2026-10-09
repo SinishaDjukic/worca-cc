@@ -49,32 +49,50 @@ test('a Claude model in a Codex chat is refused on POST and PATCH; the thread is
 
 // Task 0 (a) was NOT CONFIRMED (plans/ask-on-codex-spike.md): this codex cannot be locked down, so the real catalog offers
 // no Codex model and a fresh chat cannot pick one. (With a lockable codex both engines are listed: test/ask-chat-engine.test.mjs.)
-test('GET /api/ask/models: per-engine defaults; no Codex row while codex cannot be locked down, so a fresh chat cannot pick one', async () => {
+test('GET /api/ask/models: per-engine defaults, Codex included; a fresh chat may pick either engine until its first reply', async () => {
   const cat = await (await fetch(`${base}/api/ask/models`)).json();
-  assert.equal(cat.models.some((m) => m.engine === 'codex'), false);
+  assert.equal(cat.models.some((m) => m.engine === 'codex'), true);
   assert.equal(cat.askEngine, 'claude');
-  assert.equal(cat.defaults.codex, null);
+  assert.ok(cat.defaults.codex && cat.defaults.codex.model);
   assert.ok(cat.defaults.claude && cat.defaults.claude.model);
   const t = store.createThread();
   const r = await send('PATCH', `/api/ask/threads/${t.id}`, { model: 'gpt-5.5', effort: 'low' });
-  assert.equal(r.status, 400);
-  assert.equal(r.body.error, 'unknown model "gpt-5.5"');
+  assert.equal(r.status, 200, JSON.stringify(r.body));
   const ok = await send('PATCH', `/api/ask/threads/${t.id}`, { model: 'claude-opus-5-5', effort: 'high' });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
 });
 
-test('an event turn in a Codex chat whose model is no longer offered falls back to the Codex default only — never to Claude', async () => {
+test('an event turn in a Codex chat whose pick is no longer valid falls back to the Codex default only — never to Claude', async () => {
   const t = store.createThread();
-  store.updateThread(t.id, { model: 'gpt-5.5', effort: 'low' });   // a Codex model this codex no longer offers
+  store.updateThread(t.id, { model: 'gpt-5.5', effort: 'max' });   // an effort this Codex model does not offer
   store.appendMessage(t.id, { role: 'user', text: 'hi' });
   store.appendMessage(t.id, { role: 'assistant', text: 'here', status: 'done', model: 'gpt-5.5', effort: 'low',
     blocks: [{ kind: 'card', id: 'card_00000901', state: 'proposed', card: { type: 'schedule', summary: 'Start now' } }] });
   const r = await send('POST', `/api/ask/threads/${t.id}/cards/card_00000901`, { state: 'declined' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.block.state, 'declined');
-  // This codex offers no Codex model (no lockdown), so there is none to fall back to: the turn does not start on Claude.
-  assert.deepEqual(r.body.turn, { error: 'no model available', status: 503 });
-  assert.equal(store.listMessages(t.id).filter((m) => m.role === 'assistant').length, 1, 'no Claude turn started');
+  const cat = await (await fetch(`${base}/api/ask/models`)).json();
+  const started = store.getMessage(r.body.turn.assistantMessageId);
+  assert.equal(started.model, cat.defaults.codex.model, 'the Codex default');
+  assert.notEqual(started.model, cat.defaults.claude.model, 'never Claude');
+  assert.equal(store.getThread(t.id).engine, 'codex', 'the turn stored its engine on the thread');
+});
+
+test('an event turn in a Codex chat whose model left the catalog stays on Codex and says so in the chat', async () => {
+  const t = store.createThread();
+  store.updateThread(t.id, { model: 'gpt-retired-9', effort: 'low', engine: 'codex' });   // no catalog knows this id
+  store.appendMessage(t.id, { role: 'user', text: 'hi' });
+  store.appendMessage(t.id, { role: 'assistant', text: 'here', status: 'done', model: 'gpt-retired-9', effort: 'low',
+    blocks: [{ kind: 'card', id: 'card_00000902', state: 'proposed', card: { type: 'schedule', summary: 'Start now' } }] });
+  const r = await send('POST', `/api/ask/threads/${t.id}/cards/card_00000902`, { state: 'declined' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const cat = await (await fetch(`${base}/api/ask/models`)).json();
+  const started = store.getMessage(r.body.turn.assistantMessageId);
+  assert.equal(started.model, cat.defaults.codex.model, 'the Codex default, not Claude');
+  const notice = store.listMessages(t.id).find((m) => m.role === 'system' && /gpt-retired-9/.test(m.text));
+  assert.ok(notice, 'a notice names the missing model');
+  assert.match(notice.text, /Codex's default/);
+  assert.equal(store.getThread(t.id).engine, 'codex');
 });
 
 test('GET a thread: the payload names the engine the chat is locked to, null before its first reply', async () => {

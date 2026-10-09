@@ -48,8 +48,8 @@ test('copilot names its models its own way: a catalog model of another engine is
   assert.equal(o._engineModel('opus'), undefined);
   assert.equal(o._engineModel('gpt-5.6-sol'), undefined);
   const lines = withNodes(orch({ engine: 'copilot' }), { a: { key: 'planner', model: 'opus' }, b: { key: 'implementer', model: 'gpt-5.6-sol' }, c: { key: 'reviewer', model: 'claude-sonnet-4.6' } })._engineGate();
-  assert.ok(lines.includes('engine copilot: model "opus" is a Claude model — the nodes that name it run on copilot\'s default model, so their cost stays unknown'), lines.join('\n'));
-  assert.ok(lines.includes('engine copilot: model "gpt-5.6-sol" is a Codex model — the nodes that name it run on copilot\'s default model'), lines.join('\n'));
+  assert.ok(lines.includes('engine copilot: model "opus" runs on Claude — the nodes that name it run on copilot\'s default model, so their cost stays unknown'), lines.join('\n'));
+  assert.ok(lines.includes('engine copilot: model "gpt-5.6-sol" runs on Codex — the nodes that name it run on copilot\'s default model'), lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('claude-sonnet-4.6')));
 });
 
@@ -63,7 +63,10 @@ test('copilot has no step or helper slots: steps run the run\'s model, helpers c
 test('copilot attaches remote MCP copies too; a copy with no command or url is refused', () => {
   const o = orch({ engine: 'copilot' });
   assert.equal(o._engineMcpRefusal({ copies: [{ name: 'gh' }], servers: { gh: { type: 'http', url: 'https://mcp.example' } } }), null);
-  assert.match(o._engineMcpRefusal({ copies: [{ name: 'odd' }], servers: { odd: { type: 'stdio' } } }), /this run attaches MCP servers copilot cannot attach \(odd\)/);
+  assert.equal(o._engineMcpRefusal({ copies: [{ name: 'odd' }], servers: { odd: { type: 'stdio' } } }), 'this run attaches MCP servers copilot cannot attach — no command and no url: odd');
+  assert.equal(o._engineMcpRefusal({ copies: [{ name: 'odd' }, { name: 'a.b' }], servers: { odd: {}, 'a.b': { type: 'http', url: 'https://mcp.example' } } }),
+    'this run attaches MCP servers copilot cannot attach — a name copilot cannot use (only letters, digits, _ and -, at most 64 characters): a.b; no command and no url: odd',
+    'a remote server is fine on copilot; its name is not');
 });
 
 test('fan-out on copilot: the task tool and the worca-investigator agent', () => {

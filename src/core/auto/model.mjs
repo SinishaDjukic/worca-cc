@@ -4,6 +4,7 @@
 // ahead of it in the catalog does not take the default) > any Sonnet > the first
 // catalog entry.
 import { autoWorkflowModel } from '../settings.mjs';
+import { runsOn } from '../../shared/connections.mjs';
 
 export const AUTO_MODEL_ENV = 'WORCA_AUTO_MODEL';
 
@@ -16,7 +17,7 @@ export const AUTO_MODEL_ENV = 'WORCA_AUTO_MODEL';
  * @returns {string} a model id, or '' when the catalog is empty
  */
 export function pickCatalogModel(models, setting, { engine = 'claude' } = {}) {
-  const pool = (Array.isArray(models) ? models : []).filter((m) => m && (m.engine || 'claude') === engine);
+  const pool = (Array.isArray(models) ? models : []).filter((m) => m && runsOn(m, engine));
   const ids = pool.map((m) => m.id).filter((id) => typeof id === 'string' && id);
   const find = (id) => ids.find((x) => x.toLowerCase() === String(id || '').trim().toLowerCase());
   if (engine !== 'claude') return find(setting) || pool.find((m) => m.builtin)?.id || ids[0] || '';
@@ -35,7 +36,7 @@ export function pickCatalogModel(models, setting, { engine = 'claude' } = {}) {
 export function resolveAutoModel(models, { env = process.env, setting = autoWorkflowModel(), engine = 'claude' } = {}) {
   if (engine !== 'claude') {
     const id = typeof setting === 'string' ? setting.trim().toLowerCase() : '';
-    const hit = id ? (Array.isArray(models) ? models : []).find((m) => m && (m.engine || 'claude') === engine && String(m.id).toLowerCase() === id) : null;
+    const hit = id ? (Array.isArray(models) ? models : []).find((m) => m && runsOn(m, engine) && String(m.id).toLowerCase() === id) : null;
     return hit ? hit.id : '';
   }
   const fromEnv = typeof env?.[AUTO_MODEL_ENV] === 'string' ? env[AUTO_MODEL_ENV].trim() : '';

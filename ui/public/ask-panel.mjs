@@ -18,7 +18,10 @@ import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
-import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { lockEngineOptions } from './engine-locks.mjs';
+import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
@@ -1920,6 +1923,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
     };
+    // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
+    // only when the section holds more than one connection.
+    const appendByConnection = (models, engine) => {
+      const groups = modelGroups(models, { engine });
+      for (const c of groups) {
+        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        for (const m of c.models) panel.appendChild(modelItem(m));
+      }
+    };
     let shownPane = 'main';
     const renderPane = (pane) => {
       shownPane = pane;
@@ -1943,7 +1955,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) for (const m of splitCatalog(g.models).rest) panel.appendChild(modelItem(m));
+        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) appendByConnection(splitCatalog(g.models).rest, g.engine);
       } else {
         // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
         const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
@@ -1951,7 +1963,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const g of sections) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
           const split = splitCatalog(g.models);
-          for (const m of split.primary) panel.appendChild(modelItem(m));
+          appendByConnection(split.primary, g.engine);
           rest.push(...split.rest);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
@@ -2020,8 +2032,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.mcp.preview = st.mcp.failed ? null : data;
     const p = st.mcp.preview;
     // A failed preview leaves the chip as it was (the open picker says so): the user can reopen it to retry.
-    // §4.6: registry MCP servers and set skills are offered in Claude chats only.
-    if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0) || pickerEngine() === 'codex';
+    // §4.6: registry MCP servers are offered in Claude chats only; a Codex chat's preview carries its set skills alone
+    // (#635), so the picker shows there when a set has skills.
+    if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0);
     el.mcpBtnLabel.textContent = p ? `Sets · ${p.started + ((p.skills && p.skills.started) || 0)}` : 'Sets · ?';
     if (st.mcp.render) st.mcp.render();
   }
@@ -2125,7 +2138,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Switches first, then the disabled rows (Appendix B 10, P4); by the name each shows.
   const memberOrder = (a, b) => (Number(!!a.skip && a.skip.reason !== 'chat-off') - Number(!!b.skip && b.skip.reason !== 'chat-off'))
     || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-  const layerLine = (sk) => `skills from sets not loaded on this machine: ${sk.layer.text || sk.layer.blocked}`;
+  const layerLine = (sk) => `skills from sets not loaded: ${sk.layer.text || sk.layer.blocked}`;
 
   function openMcpPopover(trigger) {
     const panel = openPopover({ panelClass: 'ask-pop-mcp', trigger, build: () => {}, onClose: () => { st.mcp.render = null; } });
@@ -2199,6 +2212,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets — reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
+        // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
+        if (p.codexServers > 0) panel.appendChild(make('div', 'ask-pop-empty', 'MCP servers from sets are available in Claude chats'));
         panel.appendChild(make('div', 'ask-pop-divider'));
         panel.appendChild(mcpManageItem('Manage on the Connectors page', '#connectors'));
       }
@@ -2799,20 +2814,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     try { const r = await fetch(url); return r && r.ok ? await r.json() : null; } catch { return null; }
   }
   /** The lane's three sources (spec D5): workflow template, registry, per-project config. null = unusable. */
-  async function loadLane(workflowId, projectDir) {
+  async function loadLane(workflowId, projectDir, picked = '') {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const [wf, agents, cfg, defaults] = await Promise.all([
       fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
       fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
     // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).
-    const engine = defaults && defaults.engine && ENGINE_NAMES.includes(defaults.engine.value) ? defaults.engine.value : 'claude';
+    const defaultEngine = defaults && defaults.engine && ENGINE_NAMES.includes(defaults.engine.value) ? defaults.engine.value : 'claude';
+    const engine = ENGINE_NAMES.includes(picked) ? picked : defaultEngine;
     const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
     if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
     const allModels = Array.isArray(cfg.models) ? cfg.models : [];
-    const models = allModels.filter((m) => ((m && m.engine) || 'claude') === engine);
+    const models = allModels.filter((m) => m && runsOn(m, engine));
     // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
     // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
     // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
@@ -2820,7 +2836,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const slotDefaults = defaults && defaults.steps && defaults.steps[engine] ? defaults.steps[engine] : null;
     const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
       models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
-    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine,
+    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine, defaultEngine,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -2948,7 +2964,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // model
       const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
       sel.appendChild(opt('', 'inherit (workflow default)'));
-      for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
       sel.value = c.model || '';
       // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
       sel.disabled = !lane.editable || !!row.pinned;
@@ -3907,12 +3924,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const targetHost = make('div', 'ask-card-target');
     targetSec.appendChild(targetHost);
 
-    const wfRow = make('div', 'ask-rp-grid two');
+    const wfRow = make('div', 'ask-rp-grid wf-row');
     const workflowSel = rpSelect('ask-card-workflow', 'Workflow');
     const wfDesc = make('span', 'ask-rp-wfdesc', '');
     wfDesc.setAttribute('data-for', 'workflow');
     const wfField = rpField('Workflow', workflowSel);
     wfField.appendChild(wfDesc);
+    // Engine: "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the
+    // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
+    const engineSel = rpSelect('ask-card-engine', 'Engine');
+    fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
+    // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
+    if (lockEngineOptions(engineSel)) engineSel.value = '';
+    const engineField = rpField('Engine', engineSel);
+    local.engine = () => engineSel.value;
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
     const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
     guardDesc.setAttribute('data-for', 'guardrails');
@@ -3923,9 +3948,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const lvTag = (node, min, keep) => { node.dataset.minLevel = min; if (keep) node.dataset.levelKeep = '1'; return node; };
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
     lvTag(seg, 'advanced', card.target === 'workspace');
-    wfRow.append(wfField, guardField);
+    lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
+    wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
     rootEl.appendChild(targetSec);
+    engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
       reloadLane();
@@ -4202,9 +4229,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return;
       }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
-      loadLane(workflowId, projectDir).then((lane) => {
+      loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        if (lane) {
+          engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+        }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
       });
@@ -4251,6 +4282,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
+    if (engine) body.engine = engine;                       // none: /api/run's default engine
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -4284,7 +4317,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
    *  one, so the config written and the body posted would describe different runs. */
   function freezeTargetInputs(rootEl, on) {
-    for (const sel of ['.ask-card-workflow', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
       for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
     }
   }
@@ -4384,6 +4417,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // The picker has no way to re-derive this: a `project` proposal opened in New Pipeline would
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
+      engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;

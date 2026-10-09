@@ -97,6 +97,7 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
+      ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),   // and no tools at all: cwd is the server's own checkout
       signal: ctrl.signal,
       bin,
       onEvent: () => {},

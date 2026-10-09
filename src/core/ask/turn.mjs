@@ -30,7 +30,7 @@ import { buildAskSpawnOptions, buildMcpConfig, ASK_MCP_SERVER_PATH } from './spa
 import { refreshAskMemoryMount } from './memory-deps.mjs';
 import { materializeSkillMount } from '../skills-registry/mount.mjs';
 import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/host.mjs';
-import { renderSkillsSection } from './prompt.mjs';
+import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
 import { validateAwayChange } from './away-deps.mjs';
@@ -49,7 +49,7 @@ import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { codexPreflight, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
+import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
 import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -137,9 +137,10 @@ class AskTurn extends EventEmitter {
     this._cap = null;                 // Task 10: the watchdog's verdict ('max_turns' | 'max_budget' | 'shell')
     this._toolCalls = 0;
     this._spentUsd = 0;
-    // Skills registry §4.4: resolveAskSkills()'s result for this turn; null, a blocked layer, no plugin or a Codex chat ⇒ no
-    // mount and a byte-identical spawn. Set to null again when the mount fails or the CLI refuses --plugin-dir.
-    this.skills = this.engine === 'claude' && skills && !skills.blocked && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
+    // Skills registry §4.4: resolveAskSkills()'s result for this turn; null, a blocked layer or no plugin ⇒ no mount and a
+    // byte-identical spawn. Set to null again when the mount fails or the CLI refuses --plugin-dir. A Codex chat mounts
+    // the same way but reads the skills through read_file (#635), so Claude Code's --plugin-dir block does not apply.
+    this.skills = skills && (this.engine === 'codex' || !skills.blocked) && Array.isArray(skills.plugins) && skills.plugins.length ? skills : null;
     this.skillMount = null;           // materializeSkillMount()'s answer: { base, pluginDirs, plugins, failed }
     this.skillNames = [];             // the qualified names the mount holds — the prompt section, the note, the allow rules
     this._promptWithoutSkills = null; // the route's system prompt, restored when the safety net drops the layer
@@ -187,6 +188,7 @@ class AskTurn extends EventEmitter {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
       codexPreflight: deps.codexPreflight ?? ((o) => codexPreflight(o)),
+      codexAskSupport: deps.codexAskSupport ?? ((o) => codexAskSupport(o)),
       codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
       codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
       askSlot: deps.askSlot ?? askSlotOf,
@@ -673,7 +675,7 @@ class AskTurn extends EventEmitter {
     try {
       const workspaceId = typeof out.workspaceId === 'string' && out.workspaceId ? out.workspaceId : null;
       // workspaceId rides the revalidate input only when set — a project card's input stays exactly what it was.
-      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, ...(workspaceId ? { workspaceId } : {}), warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '' });
+      const r = await d.revalidateWorkflow({ shape: out.shape, projectKey: out.projectKey, ...(workspaceId ? { workspaceId } : {}), warnings: Array.isArray(out.warnings) ? out.warnings : [], costUsd: Number(out.costUsd) || 0, fingerprint: typeof out.fingerprint === 'string' ? out.fingerprint : '', engine: this.engine });
       // v4: the child's name first (the real child resolves it), else the parent's own lookup (the MOCK child
       // returns null — without this every mock card, and its context-header line, would have no target name).
       const workspaceName = workspaceId ? (cleanText(out.workspaceName, 120) || cleanText(r.workspace && r.workspace.name, 120) || null) : null;
@@ -795,8 +797,11 @@ class AskTurn extends EventEmitter {
       const kept = this.skills.mounted.filter((m) => written.has(m.pluginName) && !failed.has(m.qualifiedName));
       if (!kept.length || !Array.isArray(mount.pluginDirs)) throw new Error('no skill was written');   // P3 writes no empty plugin
       this.skillMount = mount;
-      this.skillNames = kept.map((m) => m.qualifiedName);
-      const lost = this.skills.mounted.filter((m) => !kept.includes(m)).map((m) => m.qualifiedName);
+      // A Codex chat has no plugin namespace (#635): its names come from the whole resolved list, as the picker's do.
+      const codexNames = this.engine === 'codex' ? codexSkillNames(this.skills.mounted) : null;
+      const nameOf = (m) => (codexNames ? codexNames.get(m.qualifiedName) : m.qualifiedName);
+      this.skillNames = kept.map(nameOf);
+      const lost = this.skills.mounted.filter((m) => !kept.includes(m)).map(nameOf);
       if (lost.length) {
         console.warn(`[worca-ask] thread ${this.threadId}: ${lost.join(', ')} not copied (${(mount.failed || []).map((f) => f.error).join('; ')})`);
         this._skillsNotices.push(`skills from sets not loaded: ${lost.join(', ')} (they could not be copied for this turn)`);
@@ -804,7 +809,10 @@ class AskTurn extends EventEmitter {
         this._persistBlocks();
       }
       this._promptWithoutSkills = this.systemPrompt;
-      this.systemPrompt = `${this.systemPrompt}\n\n${renderSkillsSection({ skills: kept.map((m) => ({ qualifiedName: m.qualifiedName, setName: m.setName })) })}`;
+      this.systemPrompt = `${this.systemPrompt}\n\n${codexNames
+        // Codex: each SKILL.md under this message's mount, which the turn's read_file takes as one more root (file-deps.mjs).
+        ? renderCodexSkillsSection({ skills: kept.map((m) => ({ name: nameOf(m), description: m.description, path: join(this._skillBase, m.pluginName, 'skills', m.name, 'SKILL.md') })) })
+        : renderSkillsSection({ skills: kept.map((m) => ({ qualifiedName: m.qualifiedName, setName: m.setName })) })}`;
     } catch (err) {
       this.skills = null;
       this.skillMount = null;
@@ -1011,7 +1019,9 @@ class AskTurn extends EventEmitter {
     if (e.type === 'result' && Number.isFinite(e.costUsd)) {
       this._spentUsd += e.costUsd;
       this._lastUsage = e.usage ?? null;
-      if (limitsNow.maxBudgetUsd != null && this._spentUsd > limitsNow.maxBudgetUsd) this._trip('max_budget');
+      // An error result is the spend of a turn that already ended (stopped, failed — codex.mjs books it from codex's
+      // session file): it is booked, never a reason to stop what has stopped.
+      if (!e.isError && limitsNow.maxBudgetUsd != null && this._spentUsd > limitsNow.maxBudgetUsd) this._trip('max_budget');
     }
   }
 
@@ -1033,7 +1043,8 @@ class AskTurn extends EventEmitter {
     return null;
   }
 
-  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14) and a ready codex (§4.6). Returns
+  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14), a codex that has every lockdown
+   *  flag, and a ready codex (§4.6). Returns
    *  the completed result when it refuses, else null. The mock never asks the real binary. */
   async _codexGate(limitsNow) {
     const d = this.deps;
@@ -1041,16 +1052,23 @@ class AskTurn extends EventEmitter {
     if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
       return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Ask Worca).` });
     }
+    if (this.mock) return null;
+    const refuse = (refusal) => {
+      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
+      return this._complete({ kind: 'error', message: refusal, code: CODEX_NOT_READY_CODE });
+    };
+    // The lockdown's flags must all exist in this codex (codexAskSupport): a property of the binary, so a relayed turn,
+    // which runs the same binary as the person's agent user, is checked too.
+    let support = null;
+    try { support = await d.codexAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
+    if (support && support.refusal) return refuse(support.refusal);
     // A relayed turn runs codex as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a check
     // run here would ask about the server user's codex instead. Its sign-in failure surfaces from the turn itself.
-    if (this.mock || this.relay) return null;
+    if (this.relay) return null;
     let pf = null;
     // A chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
     try { pf = await d.codexPreflight({ signIn: !hasCodexEndpoint(this.model) }); } catch (err) { pf = { warning: err?.message || String(err) }; }
-    if (pf && pf.refusal) {
-      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${pf.refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
-      return this._complete({ kind: 'error', message: pf.refusal, code: CODEX_NOT_READY_CODE });
-    }
+    if (pf && pf.refusal) return refuse(pf.refusal);
     return null;
   }
 
@@ -1096,13 +1114,15 @@ class AskTurn extends EventEmitter {
         ? pathResolve(process.env.WORCA_HOME)
         : dirname(d.worcaHome());
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web }) : null;
+      // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
+      const skillRoot = this.engine === 'codex' && this.skills && this.skillMount ? this._skillBase : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.engine === 'codex' ? { engine: 'codex' } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody

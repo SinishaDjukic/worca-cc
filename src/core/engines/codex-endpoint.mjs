@@ -12,6 +12,7 @@ import { listGlobalModels } from '../settings.mjs';
 import { listPluginModels } from '../plugin-models.mjs';
 import { policyCatalogModels } from '../policy/cache.mjs';
 import { providerReadiness, upstreamSettings } from '../bridge/registry.mjs';
+import { codexReaches } from '../../shared/connections.mjs';
 
 /** The codex env var that carries the endpoint's API key (the provider's `env_key`). */
 export const CODEX_PROVIDER_KEY_ENV = 'WORCA_CODEX_PROVIDER_KEY';
@@ -27,7 +28,8 @@ export function findCodexEndpointEntry(id) {
   const key = typeof id === 'string' ? id.trim().toLowerCase() : '';
   if (!key) return null;
   const hit = (m) => m && typeof m.id === 'string' && m.id.toLowerCase() === key;
-  const shape = (m, source) => (m.engine === 'codex' && m.upstream ? { id: m.id, upstream: m.upstream, ...(m.cost ? { cost: m.cost } : {}), source } : null);
+  // Any entry whose connection Codex reaches (src/shared/connections.mjs codexReaches), whatever engine it was added under.
+  const shape = (m, source) => (codexReaches(m.upstream) ? { id: m.id, upstream: m.upstream, ...(m.cost ? { cost: m.cost } : {}), source } : null);
   try {
     const g = listGlobalModels().find(hit);
     if (g) return shape(g, 'global');

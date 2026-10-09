@@ -31,8 +31,7 @@ function makeTurn(s, limits, runClaudeImpl, over = {}) {
     threadId: s.thread.id, assistantMessageId: s.asst.id, userMessageId: s.user.id, prompt: 'P', systemPrompt: 'S', restoredPrompt: 'R',
     model: 'gpt-5.5', effort: 'low', engine: 'codex', ...over,
     deps: { onFrame: (f) => frames.push(f), generateTitle: async () => '', codexPreflight: async () => ({}), memoryMount: async () => null,
-      // Task 0 (a) NOT CONFIRMED: the shipped CODEX_ASK_LOCKDOWN is null, so the watchdog tests inject one.
-      codexLockdown: () => ['--disable', 'shell_tool'],
+      codexLockdown: () => ['--disable', 'shell_tool'], codexAskSupport: async () => ({}),
       askLimits: () => limits, runClaudeImpl },
   });
   return { turn, frames };
@@ -51,6 +50,39 @@ test('askMaxTurns: the call past the cap aborts; stopped with the existing turn-
   assert.equal(done.status, 'stopped');
   assert.equal(done.reason, 'max_turns');
   assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the 2-turn limit (Settings → Ask Worca)'));
+});
+
+test('a capped Codex turn books what it spent (the adapter\'s late result) and stays stopped on its limit', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, { maxTurns: 1, maxBudgetUsd: null }, async (o) => {
+    o.onEvent({ type: 'session', sessionId: 'codex:t', init: true });
+    call(o, 'a'); call(o, 'b');
+    await waitAbort(o.signal);
+    // The adapter reads the stopped turn's usage from codex's session file and books it before it throws.
+    o.onEvent({ type: 'result', subtype: 'error_during_execution', isError: true, text: '', usage: { input_tokens: 900, output_tokens: 9 }, costUsd: 0.02 });
+    throw abortErr();
+  });
+  await turn.run();
+  const done = frames.find((f) => f.type === 'ask-done');
+  assert.equal(done.status, 'stopped');
+  assert.equal(done.reason, 'max_turns');
+  assert.equal(done.costUsd, 0.02);
+});
+
+test('a Codex turn the person stops books what it spent, and stays the person\'s stop even past the cost cap', async () => {
+  const s = seed();
+  const { turn, frames } = makeTurn(s, { maxTurns: 400, maxBudgetUsd: 0.01 }, async (o) => {
+    o.onEvent({ type: 'session', sessionId: 'codex:t', init: true });
+    setTimeout(() => turn.abort.abort(), 5);
+    await waitAbort(o.signal);
+    o.onEvent({ type: 'result', subtype: 'error_during_execution', isError: true, text: '', usage: { input_tokens: 900, output_tokens: 9 }, costUsd: 0.03 });
+    throw abortErr();
+  });
+  await turn.run();
+  const done = frames.find((f) => f.type === 'ask-done');
+  assert.equal(done.status, 'stopped');
+  assert.equal(done.reason, 'user');
+  assert.equal(done.costUsd, 0.03);
 });
 
 test('askMaxBudgetUsd: a reported cost over the cap stops the turn with the budget notice', async () => {

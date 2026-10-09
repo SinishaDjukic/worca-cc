@@ -61,8 +61,8 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
-import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS } from './engines/index.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
 import { unionGuardrails, guardrailsToPermissionRules, mergePermissionRules } from './guardrails.mjs';
@@ -89,7 +89,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { brokerEnabled, brokerInfo, personSlots } from './broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
@@ -109,7 +109,7 @@ import { readSettings as readRawSettings } from './settings.mjs';
 import { byActor } from './identity.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { agentIdentity } from './agent-user.mjs';
-import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText } from './mcp/registry.mjs';
+import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
@@ -117,7 +117,8 @@ import { expandMcpDenyRules } from './mcp/deny.mjs';
 import { resolveSkillRegistry, requiredSkillsOf, SKILL_CAP } from './skills-registry/resolve.mjs';
 import { materializeSkillMount } from './skills-registry/mount.mjs';
 import { skillHostFacts } from './skills-registry/host.mjs';
-import { SKILL_PROBLEM_REASONS, skillSkipMessage, skillSkipReasonText, skillLayerText } from './skills-registry/texts.mjs';
+import { SKILL_PROBLEM_REASONS, skillSkipMessage, skillSkipReasonText, skillLayerText, skillHooksIgnoredText } from './skills-registry/texts.mjs';
+import { skillMdFields } from './skills-registry/inspect.mjs';
 // Skills registry P5 adds `skillDeviations` (policy/effective.mjs); read through the namespace so this module loads
 // without it (no Team-skill deviations until P5 lands).
 import * as policyEffective from './policy/effective.mjs';
@@ -135,7 +136,8 @@ import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, 
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
 import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey } from './settings.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
-import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
+import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
@@ -759,6 +761,10 @@ export class RunHarness extends EventEmitter {
       // before anything is created.
       engine: selectRunEngine(this.opts.claude?.engine || savedEngine),
     };
+    // Resume with another model: every remaining step runs on this.claude.model (a usage limit spent on the provider
+    // the run's steps were on). Rides the resume point while the model does. Kept off this.claude (spawn options).
+    this._modelForAll = this.opts.claude?.modelForAll === true
+      || (savedClaude?.modelForAll === true && !this.opts.claude?.model && this.claude.engine === savedEngine);
     // Kept off this.claude, which is spread into spawn options.
     this._allowUnguardedEngine = !!this.opts.claude?.allowUnguardedEngine
       || (savedClaude?.allowUnguardedEngine === true && this.claude.engine === savedEngine);
@@ -780,13 +786,15 @@ export class RunHarness extends EventEmitter {
     if (savedClaude && !this.claude.model && typeof savedClaude.model === 'string' && savedClaude.model) {
       const saved = savedClaude.model;
       const engine = this.claude.engine;
-      const owner = engineOfModel(saved);
+      // A switch keeps a model the target harness reaches too (an endpoint model on Claude Code and Codex).
+      const runs = modelRunsOn(saved, engine);
+      const owner = runs === false ? engineOfModel(saved) : runs ? engine : null;
       // Copilot owns no catalog model: it keeps an id of its own naming (_engineModel) while the run stays on it.
       const keep = engine === 'copilot'
         ? (savedEngine === 'copilot' && !!this._engineModel(saved))
-        : owner === engine
+        : runs === true
           ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
-          : (owner === null && engine !== 'claude' && engine === savedEngine);
+          : (runs === null && engine !== 'claude' && engine === savedEngine);
       if (keep) {
         this.claude.model = saved;
         if (!this.claude.effort && typeof savedClaude.effort === 'string' && savedClaude.effort) this.claude.effort = savedClaude.effort;
@@ -1230,11 +1238,15 @@ export class RunHarness extends EventEmitter {
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
     }
     if (this.pauseRequested || this.state.status === 'stopped' || this.abort.signal.aborted) return false;
-    // The engine whose own session/usage limit this is: an agent execution hit it, and it is
-    // not a spent free-model allowance (that is the provider's, not the engine's). Every pause
-    // surface offers to continue on the other engine from it (engine-switch.mjs).
-    const limitEngine = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? (this.claude.engine || 'claude') : null;
-    this._setPauseReason(reason, text, limitEngine);
+    // Whose limit this is follows from the step's connection (src/shared/connections.mjs). On the harness's own
+    // sign-in it is the subscription's — another harness has its own allowance, so every pause surface offers to
+    // continue there (engine-switch.mjs). On a provider or a custom endpoint it is that provider's (a spent
+    // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
+    // none is offered; the pause names the provider, and a resume can pick another model.
+    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
+    const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
+    const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
+    this._setPauseReason(reason, limitText, limitEngine);
     let audit;
     if (reason === REASON.ERROR) {
       audit = ctx
@@ -1243,7 +1255,7 @@ export class RunHarness extends EventEmitter {
     } else if (reason === REASON.USAGE_LIMIT) {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
       const others = usageLimitSwitches({ reason, limitEngine }, readyEnginesCached());
-      audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset${others.length ? `, or continue now on ${engineList(others)}` : ''}.`;
+      audit = `Pipeline **paused**: session/usage limit on ${where} — ${limitText}. Resume after the reset${others.length ? `, or continue now on ${engineList(others)}` : ''}, or resume with another model.`;
     } else if (reason === REASON.RECOVERABLE) {
       this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}${hint ? ` — ${hint}` : ''}`,
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2547,7 +2559,7 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Engine gate (plans/harness-bridge-design.md §10.3). A non-Claude engine runs
+   * Engine gate. A non-Claude engine runs
    * only what it can govern, and says what it cannot. Refused before any spawn
    * (_engineRefusal): guardrail permission rules it cannot enforce (unless this run
    * passed allowUnguardedEngine), a node that needs MCP tools, and a model routed to
@@ -2561,7 +2573,13 @@ export class RunHarness extends EventEmitter {
    */
   _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
     const name = this.claude.engine || 'claude';
-    if (name === 'claude') return [];
+    if (name === 'claude') {
+      // The run's own model (--model / the start body) naming another engine's model: refused, never dropped —
+      // dropping it would run every node on the CLI default model, often the most expensive one.
+      const why = foreignRunModel(this.claude.model, name, this.projectDir);
+      if (why) throw engineRefusal(name, why);
+      return [];
+    }
     const projectRules = this._engineProjectRules ?? null;
     const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
@@ -2596,17 +2614,17 @@ export class RunHarness extends EventEmitter {
       if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
       if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
     }
-    for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'claude')) {
+    // A node model this harness cannot run (its connection reaches other harnesses only) is dropped, and said so.
+    for (const m of this._engineGateModels(nodes)) {
+      const harnesses = enginesOfModel(m, { projectDir: this.projectDir });
+      if (!harnesses || harnesses.includes(name)) continue;
       if (this._engineModel(m)) continue;   // copilot runs a Claude id the catalog does not hold (its own naming) as named
+      const what = `model "${m}" runs on ${harnesses.map(engineLabel).join(' or ')}`;
       lines.push(name === 'codex'
-        ? `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
-        : `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, so their cost stays unknown`);
-    }
-    // Copilot owns no catalog model: a Codex catalog model is dropped there too.
-    if (name === 'copilot') {
-      for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'codex')) {
-        lines.push(`engine ${name}: model "${m}" is a Codex model — the nodes that name it run on ${name}'s default model`);
-      }
+        ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
+        : harnesses.includes('claude')
+          ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
+          : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
@@ -2623,9 +2641,8 @@ export class RunHarness extends EventEmitter {
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
-    if (brokerEnabled()) {
-      return `the credential broker is on, and ${name} signs in with its own credentials, which the broker cannot bill or revoke`;
-    }
+    const brokerRefusal = brokerEngineRefusal(name);
+    if (brokerRefusal) return brokerRefusal;
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
       return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
     }
@@ -2659,7 +2676,7 @@ export class RunHarness extends EventEmitter {
     // only a routed model this engine itself owns is refused — except a Codex model on its own
     // OpenAI-compatible endpoint, which codex connects to itself (engines/codex-endpoint.mjs).
     for (const m of this._engineGateModels(nodes)) {
-      if (name === 'codex' && hasCodexEndpoint(m)) continue;
+      if (modelRunsOn(m, name, { projectDir: this.projectDir }) !== false) continue;   // its connection reaches this harness
       if ((modelHasBaseUrlRouting(m) || bridgedModelInfo(m)) && engineOfModel(m, { projectDir: this.projectDir }) === name) {
         return `model "${m}" is routed to a custom endpoint for Claude Code and cannot run on ${name}`;
       }
@@ -2766,6 +2783,14 @@ export class RunHarness extends EventEmitter {
     return this._engineEarlyRefusal(rp.guardrailsId || this.guardrailsId, () => this._engineGateNodes(rp));
   }
 
+  /** This run target's Team set input from the policy cache (mcp/registry.mjs cachedTeamFor); null when none or unreadable. */
+  async _cachedTeam() {
+    try {
+      const t = await cachedTeamFor(this.isWorkspace ? { workspaceId: this.workspace?.id } : { projectKey: this.members[0]?.projectKey });
+      return t?.required?.length ? { home: t.home, required: t.required } : null;
+    } catch { return null; }
+  }
+
   /** The shared body of engineStartRefusal / engineResumeRefusal. */
   async _engineEarlyRefusal(guardrailsId, gateNodes) {
     const name = this.claude.engine || 'claude';
@@ -2774,7 +2799,10 @@ export class RunHarness extends EventEmitter {
     try {
       const { id, rules, projectRules } = await this._engineSetRules(guardrailsId, { quiet: true });
       args = { rules, guardrailsId: id, projectRules, nodes: await gateNodes() };
-      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+      // The run's team policy is resolved only once it runs: before that, the copies its Team set
+      // attaches come from the policy cache, as the previews read them.
+      const team = this.policyRun ? undefined : await this._cachedTeam();
+      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set(), { team }))?.result);
     } catch (err) {
       // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
       if (err?.engineRefused) return { error: err.message, overridable: false };
@@ -2800,9 +2828,11 @@ export class RunHarness extends EventEmitter {
     if (why) throw engineRefusal(this.claude.engine, why);
   }
 
-  /** What a non-Claude run's agents will not get of the merged MCP servers: the ones Claude Code loads on its own
-   *  (the checkout's .mcp.json, user scope, plugins — codex runs with --ignore-user-config) and, on Codex, the
-   *  project servers that are not stdio (a remote registry copy is refused instead, _engineMcpRefusal). Never throws. */
+  /** What a non-Claude run's agents will not get of the merged MCP servers: a granted server that is not in mcp.json
+   *  (Claude Code would load it on its own), and the servers in mcp.json the engine cannot attach, by the adapter's
+   *  reason (a registry copy among them is refused instead, _engineMcpRefusal). The checkout's committed
+   *  .mcp.json servers Claude Code has approved are in mcp.json on every such engine, so they meet the same checks;
+   *  the others are named by the run context (run-context.mjs attachCommittedMcp). Never throws. */
   _engineMcpWarnings(rc) {
     const name = this.claude.engine || 'claude';
     if (name === 'claude' || !rc) return [];
@@ -2812,15 +2842,13 @@ export class RunHarness extends EventEmitter {
     const native = (rc.mcpServerNames || []).filter((n) => !Object.hasOwn(written, n));
     if (native.length) out.push(`engine ${name}: MCP servers Claude Code loads on its own are not attached on ${name}: ${native.join(', ')}`);
     const unattachable = getEngine(name).unattachableMcp;
-    const remote = typeof unattachable === 'function' ? unattachable(written) : [];
-    if (remote.length) out.push(name === 'codex'
-      ? `engine ${name}: remote MCP servers are not attached on ${name} (stdio only): ${remote.join(', ')}`
-      : `engine ${name}: MCP servers ${name} cannot attach are not attached: ${remote.join(', ')}`);
+    const problems = typeof unattachable === 'function' ? unattachable(written) : [];
+    if (problems.length) out.push(`engine ${name}: MCP servers not attached on ${name} — ${describeUnattachableMcp(name, problems)}`);
     return out;
   }
 
-  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null.
-   *  Codex attaches stdio servers only, so a remote (http/sse) copy is refused there. */
+  /** Why this run's engine refuses these MCP registry copies ({copies, servers}: a registry result), or null:
+   *  the copies the adapter cannot attach, grouped by its reason (Codex attaches stdio servers only, for one). */
   _engineMcpRefusal(layer) {
     const name = this.claude.engine || 'claude';
     const copies = layer?.copies;
@@ -2831,11 +2859,9 @@ export class RunHarness extends EventEmitter {
     const unattachable = getEngine(name).unattachableMcp;
     if (typeof unattachable !== 'function') return null;
     const servers = layer.servers || {};
-    const remote = unattachable(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
-    if (!remote.length) return null;
-    return name === 'codex'
-      ? `this run attaches remote MCP servers (${remote.join(', ')}), and ${name} attaches stdio servers only`
-      : `this run attaches MCP servers ${name} cannot attach (${remote.join(', ')})`;
+    const problems = unattachable(Object.fromEntries(copies.map((c) => [c.name, servers[c.name]])));
+    if (!problems.length) return null;
+    return `this run attaches MCP servers ${name} cannot attach — ${describeUnattachableMcp(name, problems)}`;
   }
 
   /**
@@ -2925,9 +2951,23 @@ export class RunHarness extends EventEmitter {
     return rules || undefined;
   }
 
+  /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
+   *  harness's own sign-in). Never throws. */
+  _limitConnection(nc) {
+    const engine = this.claude.engine || 'claude';
+    let model = null;
+    try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
+    return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
+  }
+
   _nodeModelPair(nc) {
+    if (this._modelForAll) {
+      const all = this._engineModel(this.claude.model);
+      if (all) return { model: all, effort: this.claude.effort ? (effortOn(this.claude.effort, this.claude.engine || 'claude') || undefined) : undefined };
+    }
     const own = this._engineModel(nc?.model);
-    if (own) return { model: own, effort: nc.effort };
+    // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
+    if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
     return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
   }
 
@@ -3017,6 +3057,10 @@ export class RunHarness extends EventEmitter {
     const prior = this.runRoot ? await readRunManifest(this.runRoot) : null;
     const alreadyReported = new Set(prior?.warnings ?? []);
     let reg = null;                                        // the MCP registry layer's { result, catalog }
+    // Skills registry: another engine reads set skills from `.agents/skills`, so they are planned BEFORE the
+    // assembly and mounted by it with every other skill (one owner: renames, records, orphan pruning, teardown).
+    // On Claude they load through --plugin-dir and are planned after it, in _resolveSkills.
+    const skillPlan = (this.claude.engine || 'claude') !== 'claude' ? await this._planSkills() : null;
     const rc = await assembleRunContext({
       runRoot: this.runRoot,
       members: this.members.map((m) => ({
@@ -3037,6 +3081,7 @@ export class RunHarness extends EventEmitter {
       agentIsolated: !!agentIdentity(),
       settingsScope: this._settingsScope(),
       engine: this.claude.engine || 'claude',
+      setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
     });
     this.runContext = rc;
@@ -3123,7 +3168,7 @@ export class RunHarness extends EventEmitter {
     await this._recordCapabilities();
     // Skills registry (§4.3): after the capability probe and after the assembly rewrote
     // run.json.warnings; before the audit line, which closes with the layer's clause.
-    await this._resolveSkills({ reported: alreadyReported });
+    await this._resolveSkills({ reported: alreadyReported, plan: skillPlan, mountedAs: rc.skillMountDir ? rc.setSkillNames : null });
     await appendAudit(this.pipeline.dir, renderContextAudit(rc, this.skillLayer)).catch(() => {});
     return rc;
   }
@@ -3133,16 +3178,18 @@ export class RunHarness extends EventEmitter {
    * Team set from the resolved policy, the opt-out and the tool-name limit of every model the run
    * may dispatch. Workspace scans and memory-defrag runs get none (designer default 3).
    * @param {string[]} taken  names the spawn already loads (run-context.mjs)
+   * @param {{team?: object|null}} [o]  the Team set input when the policy is not resolved yet (the engine gate's
+   *        early look reads it from the policy cache); omitted, it comes from this.policyRun
    * @returns {Promise<{result:object, catalog:object[]}|null>}
    */
-  async _resolveMcp(taken) {
+  async _resolveMcp(taken, { team } = {}) {
     if (this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return null;
     const { target, teamKey } = this._registryTarget();
     const required = requiredOf(this.policyRun);
     const [result, catalog] = await Promise.all([
       resolveRegistry({
         surface: 'pipeline', targets: [target],
-        teams: { [teamKey]: required.length ? { home: this.policyRun.home, required } : null },
+        teams: { [teamKey]: team !== undefined ? team : required.length ? { home: this.policyRun.home, required } : null },
         optOut: this.mcpOptOut, toolNameLimit: toolNameLimitFor([...this._mcpModels()]), copyCap: 24, taken,
         mcpTimeoutMs: MCP_STARTUP_MS.pipeline,
       }),
@@ -3176,46 +3223,25 @@ export class RunHarness extends EventEmitter {
   /** `claude --help` / `--version`, parsed once per run (§8.18 V5; skills §4.1 reads `pluginDir`). */
   _claudeCaps() { return (this._capsProbe ||= probeClaudeCapabilities(this.claude.bin)); }
 
-  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Another
-   *  engine has no --plugin-dir (and this.claude.bin is its binary, never probed as claude): no. */
+  /** Skills registry §4.1: does this run's `claude` advertise --plugin-dir? A mock run spawns none: yes. Asked on
+   *  Claude runs only: another engine mounts set skills in `.agents/skills` (_planSkills). */
   async _pluginDirSupported() {
     if (this.claude.mock) return true;
-    if ((this.claude.engine || 'claude') !== 'claude') return false;
     return (await this._claudeCaps()).pluginDir === true;
   }
 
   /**
-   * Skills registry (design §4.3): the set skills this run's target brings, each set's as one
-   * generated plugin under `<pipeline.dir>/skills` (outside every checkout; survives a pause; goes
-   * with the pipeline dir), spawned with one `--plugin-dir` each (_execCtx → runOpts). Re-run on
-   * every resume: the mount is rebuilt from the live sets minus the stored opt-out, BEFORE the first
-   * spawn (the CLI silently ignores a missing --plugin-dir path). Workspace scans and memory-defrag
-   * runs get none. Never throws: a fault leaves the run without set skills and says so.
-   * @param {{reported?: Set<string>}} [o]  warnings this run root already reported (a resumed run)
-   * @returns {Promise<object|null>} the layer, or null when the target brings no set skill
+   * Skills registry (design §4.3), the first half of _resolveSkills: the set skills this run's target brings,
+   * each set's copied as one generated plugin under `<pipeline.dir>/skills` (outside every checkout; survives a
+   * pause; goes with the pipeline dir). Writes nothing but that folder, so another engine plans BEFORE the
+   * assembly and hands the copies to it (_setSkillSources), and _resolveSkills records the plan after it.
+   * Never throws: a fault is a plan with no layer and the line that says why.
+   * @returns {Promise<{none:true, warning:string|null}|{result:object, mounted:object[], skipped:object[], blocked:string|null, mount:object}>}
    */
-  async _resolveSkills({ reported = new Set() } = {}) {
-    this.skillLayer = null;
-    if (!this.pipeline?.dir || this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return null;
+  async _planSkills() {
+    if (!this.pipeline?.dir || this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return { none: true, warning: null, quiet: true };
     const base = join(this.pipeline.dir, 'skills');
     const firstLine = (err) => String(err?.message || err).split('\n')[0];
-    // No layer this segment: no mount and no record — not even one an earlier segment left in the state or in
-    // run.json (History reads its durable copy). A fault's line is warned once and kept with the run's warnings.
-    const noLayer = async (warning = null) => {
-      await rm(base, { recursive: true, force: true }).catch(() => {});
-      delete this.state.skillMount;
-      if (warning && !reported.has(warning)) this._log('skills', 'warn', warning);
-      if (this.runRoot) {
-        try {
-          const cur = (await readRunManifest(this.runRoot)) || {};
-          const warnings = Array.isArray(cur.warnings) ? cur.warnings : [];
-          const add = warning && !warnings.includes(warning) ? [warning] : [];
-          // A run that never had a layer writes nothing (byte-identical run.json); undefined drops the key.
-          if ('skillMount' in cur || add.length) await updateRunManifest(this.runRoot, { skillMount: undefined, warnings: [...warnings, ...add] });
-        } catch { /* best-effort: the run log has the line */ }
-      }
-      return null;
-    };
     let result;
     try {
       const { target, teamKey } = this._registryTarget();
@@ -3226,7 +3252,7 @@ export class RunHarness extends EventEmitter {
         optOut: this.mcpOptOut, skillCap: SKILL_CAP.pipeline,
       });
     } catch (err) {
-      return noLayer(`skills from sets not loaded: ${firstLine(err)}`);
+      return { none: true, warning: `skills from sets not loaded: ${firstLine(err)}` };
     }
     // §2b-13 off-policy findings for required Team skills — after _resolvePolicy (it resets the list
     // on resume); the whole list is persisted, as the MCP deviations are.
@@ -3245,10 +3271,11 @@ export class RunHarness extends EventEmitter {
     }
     const mounted = Array.isArray(result?.mounted) ? result.mounted : [];
     const skipped = Array.isArray(result?.skipped) ? result.skipped : [];
-    if (!mounted.length && !skipped.length) return noLayer();   // and a mount an earlier segment left is removed
-    // §4.1 host gates, only when something would load: managed `disableSideloadFlags`, or a CLI
-    // without --plugin-dir. Either skips the whole layer with one warning — never a dead spawn.
-    const blocked = !mounted.length ? null
+    if (!mounted.length && !skipped.length) return { none: true, warning: null };   // and a mount an earlier segment left is removed
+    // §4.1 host gates, only when something would load on Claude: managed `disableSideloadFlags`, or a CLI
+    // without --plugin-dir. Either skips the whole layer with one warning — never a dead spawn. Another engine
+    // reads the copies from `.agents/skills`, never through --plugin-dir (this.claude.bin is its binary).
+    const blocked = !mounted.length || (this.claude.engine || 'claude') !== 'claude' ? null
       : this._skillHostFacts().sideloadDisabled ? 'sideload-disabled'
       : (await this._pluginDirSupported()) ? null : 'cli-no-plugin-dir';
     let mount = { base: null, pluginDirs: [], plugins: [], failed: [] };
@@ -3259,43 +3286,123 @@ export class RunHarness extends EventEmitter {
         if (!mount.pluginDirs.length) throw new Error(mount.failed?.[0]?.error || 'no skill could be copied');
       } else await rm(base, { recursive: true, force: true });
     } catch (err) {
-      return noLayer(`skills from sets not loaded: could not prepare ${base}: ${firstLine(err)}`);
+      return { none: true, warning: `skills from sets not loaded: could not prepare ${base}: ${firstLine(err)}` };
     }
+    return { result, mounted, skipped, blocked, mount };
+  }
+
+  /**
+   * Another engine's set skills as assembleSkills candidates (run-context.mjs): each copied skill's folder under
+   * `<pipeline.dir>/skills/<plugin>/skills/<name>`, renamed `<set slug>-<name>` on a clash in `.agents/skills`.
+   * [] on Claude (set skills load through --plugin-dir there) and for a plan with nothing to mount.
+   */
+  _setSkillSources(plan) {
+    if ((this.claude.engine || 'claude') === 'claude' || !plan || plan.none || plan.blocked) return [];
+    return (plan.mount.plugins || []).flatMap((p) => p.skills.map((name) => {
+      const m = plan.mounted.find((x) => x.pluginName === p.pluginName && x.name === name);
+      return { key: `${p.pluginName}:${name}`, name, source: join(p.dir, 'skills', name), prefix: `${m?.setSlug || p.pluginName}-`, origin: `set ${m?.setName ?? p.pluginName}` };
+    }));
+  }
+
+  /**
+   * Skills registry (design §4.3): the set-skill layer of this run, recorded. On Claude each set's copy is spawned
+   * with one `--plugin-dir` (_execCtx → runOpts); on another engine the assembly mounted the copies in
+   * `.agents/skills`, and `mountedAs` maps each `<plugin>:<skill>` to the name it got there (null: the run has no
+   * such mount, a legacy run or a member without a checkout). Re-run on every resume: the mount is rebuilt from the
+   * live sets minus the stored opt-out, BEFORE the first spawn (the CLI silently ignores a missing --plugin-dir
+   * path). Workspace scans and memory-defrag runs get none. Never throws: a fault leaves the run without set
+   * skills and says so.
+   * @param {{reported?: Set<string>, plan?: object|null, mountedAs?: Record<string,string>|null}} [o]
+   *        warnings this run root already reported (a resumed run); the plan made before the assembly
+   * @returns {Promise<object|null>} the layer, or null when the target brings no set skill
+   */
+  async _resolveSkills({ reported = new Set(), plan = null, mountedAs = null } = {}) {
+    this.skillLayer = null;
+    plan ??= await this._planSkills();
+    if (plan.none && plan.quiet) return null;
+    const base = join(this.pipeline.dir, 'skills');
+    // No layer this segment: no mount and no record — not even one an earlier segment left in the state or in
+    // run.json (History reads its durable copy). A fault's line is warned once and kept with the run's warnings.
+    if (plan.none) {
+      const warning = plan.warning;
+      await rm(base, { recursive: true, force: true }).catch(() => {});
+      delete this.state.skillMount;
+      if (warning && !reported.has(warning)) this._log('skills', 'warn', warning);
+      if (this.runRoot) {
+        try {
+          const cur = (await readRunManifest(this.runRoot)) || {};
+          const warnings = Array.isArray(cur.warnings) ? cur.warnings : [];
+          const add = warning && !warnings.includes(warning) ? [warning] : [];
+          // A run that never had a layer writes nothing (byte-identical run.json); undefined drops the key.
+          if ('skillMount' in cur || add.length) await updateRunManifest(this.runRoot, { skillMount: undefined, warnings: [...warnings, ...add] });
+        } catch { /* best-effort: the run log has the line */ }
+      }
+      return null;
+    }
+    const { result, mounted, skipped, mount } = plan;
+    const engine = this.claude.engine || 'claude';
+    const onEngine = engine !== 'claude';
+    // Another engine with no `.agents/skills` mount for this run cannot see the copies at all.
+    const blocked = plan.blocked || (onEngine && mounted.length && !mountedAs ? 'engine-no-skill-mount' : null);
+    const firstLine = (err) => String(err?.message || err).split('\n')[0];
     // A skill P3 could not copy is not delivered: it leaves the layer and the plugin list and becomes a skipped
     // row (`mount-failed`, its error as the reason) — never told to agents, the run card or the audit as loaded.
+    // On another engine so is a copy the assembly did not mount (a name the checkout tracks, a copy error).
     const setNameOf = (id) => (result.plugins || []).find((p) => p.setId === id)?.setName ?? id;
     const notCopied = (Array.isArray(mount.failed) ? mount.failed : []).map((f) => ({
       setId: f.setId, setName: setNameOf(f.setId), pluginName: f.pluginName, name: f.name ?? '?',
       skillId: mounted.find((m) => m.pluginName === f.pluginName && m.name === f.name)?.id ?? null,
       qualifiedName: `${f.pluginName}:${f.name ?? '?'}`, reason: 'mount-failed', why: firstLine(f.error),
     }));
+    if (onEngine && !blocked) {
+      for (const p of mount.plugins || []) {
+        for (const name of p.skills) {
+          if (Object.hasOwn(mountedAs, `${p.pluginName}:${name}`)) continue;
+          const m = mounted.find((x) => x.pluginName === p.pluginName && x.name === name);
+          notCopied.push({ setId: p.setId, setName: setNameOf(p.setId), pluginName: p.pluginName, name, skillId: m?.id ?? null,
+            qualifiedName: `${p.pluginName}:${name}`, reason: 'mount-failed', why: 'not mounted in .agents/skills (see the run warnings)' });
+        }
+      }
+    }
     const lost = new Set(notCopied.map((f) => f.qualifiedName));
     const kept = lost.size ? mounted.filter((m) => !lost.has(`${m.pluginName}:${m.name}`)) : mounted;
-    const copied = new Map((mount.plugins || []).map((p) => [p.pluginName, p.skills]));
-    const plugins = (result.plugins || []).filter((p) => blocked || copied.has(p.pluginName)).map((p) => ({
+    const copied = new Map((mount.plugins || []).map((p) => [p.pluginName, p.skills.filter((s) => !lost.has(`${p.pluginName}:${s}`))]));
+    const plugins = (result.plugins || []).filter((p) => blocked || copied.get(p.pluginName)?.length).map((p) => ({
       setId: p.setId, setName: p.setName, pluginName: p.pluginName, renamedPlugin: !!p.renamedPlugin, skills: [...(copied.get(p.pluginName) || p.skills)],
     }));
     const allSkipped = [...skipped, ...notCopied];
-    this.skillLayer = { base: mount.base, pluginDirs: blocked ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked };
+    // The names agents call on another engine: the folders in `.agents/skills`.
+    const agentNames = onEngine && !blocked ? kept.map((m) => mountedAs[`${m.pluginName}:${m.name}`]) : null;
+    this.skillLayer = {
+      base: mount.base, pluginDirs: blocked || onEngine ? [] : mount.pluginDirs, plugins, mounted: kept, skipped: allSkipped, blocked,
+      ...(agentNames ? { rel: skillsRelFor(engine), names: agentNames } : {}),
+    };
     const record = {
       base: mount.base, plugins,
       skipped: allSkipped.map((s) => ({
         setId: s.setId, setName: s.setName, skillId: s.skillId, name: s.name,
         qualifiedName: s.qualifiedName ?? (s.pluginName ? `${s.pluginName}:${s.name}` : s.name), reason: s.reason, why: s.why ?? skillSkipReasonText(s),
       })),
-      layer: { blocked, text: blocked ? skillLayerText(blocked) : null },
+      layer: { blocked, text: blocked ? skillLayerText(blocked, engine) : null },
+      ...(agentNames ? { rel: this.skillLayer.rel, names: agentNames } : {}),
     };
     this.state.skillMount = record;
     // One run-log warning per renamed plugin and per problem skip (choices — off, opted out, never
     // consented — say nothing); a resumed run does not repeat what this run root already reported.
-    const lines = blocked ? [`skills from sets not loaded on this machine: ${skillLayerText(blocked)}`] : [];
+    const lines = blocked ? [`skills from sets not loaded: ${skillLayerText(blocked, engine)}`] : [];
     for (const p of plugins) {
-      if (blocked || !p.renamedPlugin) continue;
+      if (blocked || onEngine || !p.renamedPlugin) continue;
       const slug = mounted.find((m) => m.setId === p.setId)?.setSlug || 'general';
       lines.push(`set ${p.setName} loads as \`${p.pluginName}:\` here — a Claude Code plugin named ${slug} is installed`);
     }
     for (const s of skipped) if (SKILL_PROBLEM_REASONS.includes(s.reason)) lines.push(skillSkipMessage(s));
     for (const s of notCopied) lines.push(`${s.qualifiedName} in ${s.setName} not loaded: ${s.why}`);
+    // A skill's `hooks:` are Claude Code's: mounted on another engine, the skill loads and its hooks never run.
+    if (agentNames) {
+      const hooked = kept.filter((m) => this._skillDeclaresHooks(join(mount.base, m.pluginName, 'skills', m.name)))
+        .map((m) => mountedAs[`${m.pluginName}:${m.name}`]);
+      if (hooked.length) lines.push(skillHooksIgnoredText(engine, hooked));
+    }
     for (const w of lines) if (!reported.has(w)) this._log('skills', 'warn', w);
     if (this.runRoot) {
       try {
@@ -3305,6 +3412,11 @@ export class RunHarness extends EventEmitter {
       } catch { /* best-effort: the run log has the lines */ }
     }
     return this.skillLayer;
+  }
+
+  /** Whether the SKILL.md in a copied set skill's folder declares `hooks:` (skills registry §2a U1); unreadable: no. */
+  _skillDeclaresHooks(dir) {
+    try { return !!skillMdFields(readFileSync(join(dir, 'SKILL.md'), 'utf8'))?.hooks; } catch { return false; }
   }
 
   /**
@@ -5399,9 +5511,11 @@ export class RunHarness extends EventEmitter {
     const runModel = engine !== runEngine ? null
       : (engine === 'copilot' ? this._engineModel(this.claude.model || undefined)
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel },
-      { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
-    if (!pair.model && engine === 'codex') { pair.model = CODEX_DEFAULT_MODEL; pair.source = 'default'; }
+    // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
+    const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
+    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
+      { models: models.filter((m) => m && runsOn(m, engine)) });
+    if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
       this._nightWarned.add(text);

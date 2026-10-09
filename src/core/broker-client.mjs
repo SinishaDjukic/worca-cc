@@ -20,6 +20,14 @@ export function brokerEnabled(env = process.env) {
   return typeof env.WORCA_BROKER_URL === 'string' && env.WORCA_BROKER_URL.trim() !== '';
 }
 
+/** Why `engine` cannot run while the broker is on, else null. Only Claude Code spends through the broker; another
+ *  engine signs in with its own credentials (a ChatGPT or Cursor sign-in, an API key in its env), which the broker can
+ *  neither bill per person nor keep from the agent. Runs, Ask chats and GET /api/engines all refuse with this. */
+export function brokerEngineRefusal(engine, env = process.env) {
+  if (!brokerEnabled(env) || !engine || engine === 'claude' || engine === 'mock') return null;
+  return `the credential broker is on, and ${engine} signs in with its own credentials, which the broker cannot bill or revoke`;
+}
+
 /** {url, secret, error}: the broker's address without a trailing slash, and the secret. */
 export function brokerConfig(env = process.env, readFile = readFileSync) {
   if (!brokerEnabled(env)) return null;

@@ -184,12 +184,6 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="models"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #models-list'), null);
     } },
-    { name: '#models/title-model (and the old #settings/models/title-model) lands on the Title generation card', run: async () => {
-      const { doc } = await boot({ hash: 'settings/models/title-model' });
-      await settle();
-      assert.equal(doc.defaultView.location.hash, '#models/title-model');
-      assert.equal(doc.activeElement && doc.activeElement.id, 'titleModel');
-    } },
     { name: 'a failed GET /api/settings says so on the Models page (its Engines card and pickers come from it); a later load that works takes it back', run: async () => {
       let fail = true;
       const { window, doc } = await boot({ routes: { '/api/settings': () => (fail
@@ -211,7 +205,10 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
     { name: 'leaving Models hides an open info tip (the bubble lives on <body>)', run: async () => {
       const { window, doc } = await boot();
       await go(window, 'models');
-      doc.querySelector('[data-view="models"] .info-tip').dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+      // The page ships no ⓘ since the helper-model cards became Helper jobs rows; the leave-guard covers any it gains.
+      const tip = Object.assign(doc.createElement('button'), { type: 'button', className: 'info-tip', innerHTML: 'i<span class="tip-content hidden">A tip.</span>' });
+      doc.querySelector('[data-view="models"]').append(tip);
+      tip.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
       assert.equal(doc.getElementById('info-bubble').classList.contains('hidden'), false, 'the tip opened');
       await go(window, 'runs');
       assert.equal(doc.getElementById('info-bubble').classList.contains('hidden'), true);

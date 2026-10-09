@@ -59,7 +59,7 @@ test('POST /api/settings: askEngine and askModels round-trip; null clears; the u
 test('a model of the other engine, a bad effort or an unknown engine is refused; nothing is written', async () => {
   const wrong = await post('/api/settings', { askModels: { codex: { model: 'claude-opus-5-5' } } });
   assert.equal(wrong.status, 400);
-  assert.equal(wrong.body.error, '“Chat model”: "claude-opus-5-5" is a Claude model — this slot picks a Codex model.');
+  assert.equal(wrong.body.error, '“Chat model”: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run.');
   assert.equal(wrong.body.field, 'askModels.codex');
   const effort = await post('/api/settings', { askModels: { claude: { model: 'claude-opus-5-5', effort: 'low' } } });
   assert.equal(effort.status, 400);

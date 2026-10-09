@@ -9,7 +9,11 @@
 
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
-import { engineLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { harnessesOf, runsOn, suggestModelHandle } from '../../src/shared/connections.mjs';
+
+/** The sign-in choices of the model editor: which subscription, in the harness that holds it. */
+const SIGNIN_CHOICES = { claude: 'Claude Code — your Claude login', codex: 'Codex — your ChatGPT sign-in', cursor: 'Cursor — your Cursor sign-in' };
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -101,8 +105,15 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
   const codexLc = new Set(codex.map((m) => m.id.toLowerCase()));
-  // §3.1a: a model of another engine (Codex, Cursor) says so on its card; its efforts are that engine's.
-  const engineBadge = (m) => (m.engine && m.engine !== 'claude' ? h(doc, 'span', 'badge blue mv-engine', engineLabel(m.engine)) : null);
+  // A model names the harnesses that run it (src/shared/connections.mjs) when that is not Claude Code alone; its
+  // efforts are its own engine's.
+  const engineBadge = (m) => {
+    const hs = harnessesOf(m);
+    if (hs.length === 1 && hs[0] === 'claude') return null;
+    const b = h(doc, 'span', 'badge blue mv-engine', hs.map(engineLabel).join(' · '));
+    b.title = `Runs on ${hs.map(engineLabel).join(' and ')}`;
+    return b;
+  };
   const effortsOf = (m) => effortsSummary(m.efforts, ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[m.engine || 'claude'] || efforts);
   const q = String(query || '').trim().toLowerCase();
   const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
@@ -112,7 +123,8 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   const keep = (m, source) => {
     if (filter === 'imported' && !hi.has(String(m.id).toLowerCase())) return false;
     if (filter === 'needs-setup' && !m.needsSignIn) return false;
-    if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
+    // "Codex": every model Codex can run, whichever group it sits in (its built-ins, an endpoint model of yours).
+    if (filter === 'codex') { if (!runsOn(m, 'codex')) return false; } else if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
     if (!q) return true;
     return [m.id, m.label, m.plugin, m.home, m.upstream && m.upstream.model].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
   };
@@ -467,33 +479,37 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   idInput.placeholder = 'claude-opus-4-8, glm-4.7, a fine-tune id…';
   idInput.value = editing ? model.id : '';
   idInput.disabled = editing; // the id IS the reference — delete + re-add to rename
-  grid.appendChild(field('Model id (worca’s handle; sent to claude --model unless ANTHROPIC_MODEL overrides)', idInput,
-    editing ? '' : 'Use a built-in id to override that built-in.'));
+  // Typing an id stops the editor from deriving one from the provider and upstream model (applyConnectionModeIn).
+  if (!editing && typeof idInput.addEventListener === 'function') idInput.addEventListener('input', () => { idInput.dataset.auto = 'off'; });
+  grid.appendChild(field('Model id (worca’s handle)', idInput,
+    editing ? '' : 'What runs and settings name this entry by. A sign-in model uses the model’s own id (a built-in id overrides that built-in); through a provider the id is yours, and the endpoint is sent the upstream model id below.'));
 
   const labelInput = h(doc, 'input', 'input mv-label');
   labelInput.type = 'text';
   labelInput.placeholder = 'Display name (defaults to the id)';
   labelInput.value = editing ? (model.label === model.id ? '' : model.label) : '';
   grid.appendChild(field('Label', labelInput));
-  // §3.1a: which engine runs the model. Codex takes no routing env (codex ignores it), and its connection
-  // can only be an OpenAI-compatible endpoint; the engine is part of the entry, so it is fixed once created.
+  // ── Connection (model-bridge-design.md §8.3): a harness's sign-in / env / provider ──
+  // It decides which harnesses can run the model (src/shared/connections.mjs): a sign-in only its own, routing env
+  // Claude Code, a provider Claude Code through the bridge and Codex an OpenAI Responses endpoint directly.
+  const connEl = renderConnectionSection(model, { doc, providers, copilotModels });
+  if (editing) connEl.dataset.editing = '1';
+  grid.appendChild(field('Connection', connEl));
+  // Whose subscription a sign-in model runs on — the harness it is bound to. Only the sign-in connection asks;
+  // an env or provider entry is stored as Claude Code's (its harnesses follow from the connection).
   const engineSel = h(doc, 'select', 'select mv-engine');
-  for (const [v, t] of MODEL_ENGINE_NAMES.map((e) => [e, engineLabel(e)])) {
+  for (const v of MODEL_ENGINE_NAMES) {
     const o = doc.createElement('option');
-    o.value = v; o.textContent = t;
+    o.value = v; o.textContent = SIGNIN_CHOICES[v] ? `${SIGNIN_CHOICES[v]}${isBetaEngine(v) ? ' (beta)' : ''}` : engineChoiceLabel(v);
     engineSel.appendChild(o);
   }
   engineSel.value = engineNow;
   engineSel.disabled = editing;
-  grid.appendChild(field('Engine', engineSel, editing
+  const signinField = field('Sign-in', engineSel, editing
     ? 'Fixed once created — delete the model and add it again to change it.'
-    : 'Which harness runs this model. A Codex model takes no routing env; it connects to OpenAI or to an OpenAI-compatible endpoint. '
-      + "A Cursor model runs through cursor-agent's own sign-in: no env, no endpoint, no effort. Worca cannot price it."));
-
-  // ── Connection (model-bridge-design.md §8.3): direct / env / provider ──
-  // Rendered first among the routing controls: it decides whether the env
-  // rows below carry the routing or Worca's own bridge does.
-  grid.appendChild(field('Connection', renderConnectionSection(model, { doc, providers, copilotModels })));
+    : 'The harness whose sign-in runs this model. A Cursor model takes no effort, and Worca cannot price it.');
+  signinField.classList.add('mv-signin-field');
+  grid.appendChild(signinField);
 
   const effWrap = h(doc, 'div', 'mv-efforts');
   const effortList = ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[engineNow] || efforts;
@@ -627,6 +643,8 @@ export function setModelEngine(rootEl, engine) {
   if (effField) effField.hidden = cursor;
   const conn = rootEl.querySelector('.mv-conn');
   if (conn) { conn.dataset.engine = next; applyConnectionMode(conn); }
+  const signin = rootEl.querySelector('.mv-signin-field');
+  if (signin && conn) signin.hidden = (conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct') !== 'direct';
 }
 
 /**
@@ -740,7 +758,23 @@ export function collectModelEditor(rootEl) {
  *  delegated `change` handler for the editor needs a single import). */
 export function applyConnectionModeIn(rootEl) {
   const conn = rootEl && rootEl.querySelector && rootEl.querySelector('.mv-conn');
-  if (conn) applyConnectionMode(conn);
+  if (!conn) return;
+  applyConnectionMode(conn);
+  const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
+  const creating = rootEl.dataset.mode !== 'edit';
+  // An env or provider entry is Claude Code's (its other harnesses follow from the connection): a new one leaves the
+  // sign-in choice, and the efforts follow Claude Code's list.
+  if (creating && mode !== 'direct' && rootEl.dataset.engine && rootEl.dataset.engine !== 'claude') setModelEngine(rootEl, 'claude');
+  const signin = rootEl.querySelector('.mv-signin-field');
+  if (signin) signin.hidden = mode !== 'direct';
+  // Through a provider, a new entry's id defaults to <provider>-<upstream id> until the user types one: a built-in
+  // id names a harness's own sign-in, so the gateway's twin of gpt-5.5 is openai-gpt-5.5.
+  const idIn = rootEl.querySelector('.mv-id');
+  const upstreamId = (conn.querySelector('.mv-conn-model')?.value || '').trim();
+  if (creating && idIn && idIn.dataset.auto !== 'off' && mode === 'provider' && upstreamId) {
+    idIn.value = suggestModelHandle(upstreamId, conn.querySelector('.mv-conn-provider')?.value || 'openai');
+    idIn.dataset.auto = 'on';
+  }
 }
 
 // ── Share-as-plugin export wizard (design §9.5) ─────────────────────────────

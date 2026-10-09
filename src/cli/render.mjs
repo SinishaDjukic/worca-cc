@@ -131,6 +131,8 @@ export function formatResumeHints(result, pipelineId, { color = (n, s) => s } = 
   for (const e of usageLimitSwitches(result || {}, readyEnginesCached())) {
     lines.push(`Or continue now on ${engineLabel(e)}: ${color('bold', `worca resume ${pipelineId} --engine ${e}`)}`);
   }
+  // Any usage limit — the harness's sign-in or a provider's: another model on another connection has its own.
+  if (result?.reason === 'usage_limit') lines.push(`Or continue now with another model: ${color('bold', `worca resume ${pipelineId} --model <id>`)}`);
   return lines;
 }
 

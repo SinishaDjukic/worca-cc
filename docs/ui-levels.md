@@ -152,6 +152,7 @@ be skipped by forgetting it.
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch | A |
+| Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as workflow defaults"; memory scope | E |
 
@@ -239,7 +240,7 @@ Everything on the page: the list, the runtime step, the workspace and the bench 
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
-| General: spawn diagnostics; Memory tab: Defragment model | E — the Defragment model card stays visible while a model is set |
+| General: spawn diagnostics; Memory tab: the line linking to Helper jobs | E |
 | Guardrails create / delete | E |
 
 ### Marketplace, Connectors, Models, Providers (the Add-ons pages)
@@ -252,7 +253,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Marketplace page: installed, available, install | A |
 | Marketplace page: Add marketplace, the Marketplaces list, Doctor, leftover data | E |
 | Connectors page: the Sets, Servers and Skills views | A |
-| Models page: the catalog, Engines, Title generation, Auto workflow model, PR description model | E |
+| Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description and Memory defragment) | E |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |

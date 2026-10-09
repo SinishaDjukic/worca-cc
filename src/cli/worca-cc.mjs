@@ -320,7 +320,7 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex | copilot | cursor
+  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
@@ -1298,9 +1298,9 @@ async function cmdConfig(argv) {
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
-  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine'].includes(argv[i - 1])) || '').trim();
+  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
@@ -1312,6 +1312,12 @@ async function cmdResume(argv) {
   const engineAt = argv.indexOf('--engine');
   const engine = engineAt !== -1 ? argv[engineAt + 1] ?? null : null;
   const allowUnguardedEngine = argv.includes('--allow-unguarded-engine');
+  // --model: every remaining step runs on it (a usage limit spent on the provider the steps were on).
+  const modelAt = argv.indexOf('--model');
+  const model = modelAt !== -1 ? (argv[modelAt + 1] ?? '').trim() : '';
+  const effortAt = argv.indexOf('--effort');
+  const effort = effortAt !== -1 ? (argv[effortAt + 1] ?? '').trim() : '';
+  if (modelAt !== -1 && !model) { process.stderr.write('worca resume: --model needs a model id\n'); return 1; }
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -1348,6 +1354,15 @@ async function cmdResume(argv) {
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;
+  }
+  if (model) {
+    const { catalogHasModel, modelRunsOn, enginesOfModel } = await import('../core/config.mjs');
+    const target = engine || saved.resumePoint?.claude?.engine || 'claude';
+    if (!catalogHasModel(model)) { process.stderr.write(`worca resume: unknown model "${model}" — add it to the catalog first\n`); return 1; }
+    if (modelRunsOn(model, target) === false) {
+      process.stderr.write(`worca resume: model "${model}" runs on ${(enginesOfModel(model) || []).join(' or ')}, not on ${target}\n`);
+      return 1;
+    }
   }
   const { budgetStatus, setCostCapOverride, readCostCapOverride } =
     await import('../core/cost-budget.mjs');
@@ -1422,7 +1437,7 @@ async function cmdResume(argv) {
   const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
-    claude: { mock, ...(engine ? { engine } : {}), ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}) },
+    claude: { mock, ...(engine ? { engine } : {}), ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}), ...(model ? { model, ...(effort ? { effort } : {}), modelForAll: true } : {}) },
     auto,
     resume: saved,
   });

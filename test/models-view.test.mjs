@@ -381,45 +381,67 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
   assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
 });
 
-test('editor: a Codex Connection offers codex\'s default or an OpenAI-compatible Responses endpoint, nothing else', () => {
+test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on Codex too', () => {
   const providers = { openai: { configured: false, keySet: false, keyOptional: false } };
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, providers });
-  setModelEngine(el, 'codex');
   const conn = el.querySelector('.mv-conn');
+  const signin = el.querySelector('.mv-signin-field');
+  // A new entry is on no engine until its connection says so: every mode, whatever the sign-in.
+  setModelEngine(el, 'codex');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'env', 'provider']);
+  assert.equal(shown[0].querySelector('.mv-conn-mode-title').textContent, "A harness's own sign-in");
+  assert.equal(signin.hidden, false, 'the sign-in asks which harness');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Codex only/);
+  // Through a provider the entry is Claude Code's: the sign-in leaves, the efforts are Claude Code's list.
+  conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
+  applyConnectionModeIn(el);
+  assert.equal(signin.hidden, true);
+  assert.equal(el.dataset.engine, 'claude');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
+  const prov = conn.querySelector('.mv-conn-provider');
+  assert.equal(prov.disabled, false);
+  prov.value = 'openai';
+  conn.querySelector('.mv-conn-api').value = 'openai-responses';
+  conn.querySelector('.mv-conn-model').value = 'gpt-5.5';
+  applyConnectionModeIn(el);
+  assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  // The id follows the provider and the upstream model until typed: gpt-5.5 itself is Codex's own sign-in.
+  assert.equal(el.querySelector('.mv-id').value, 'openai-gpt-5.5');
+  const { body } = collectModelEditor(el);
+  assert.equal('engine' in body, false, 'stored as Claude Code\'s; its harnesses follow from the connection');
+  assert.equal(body.id, 'openai-gpt-5.5');
+  assert.equal(body.upstream.model, 'gpt-5.5');
+  conn.querySelector('.mv-conn-api').value = 'openai-chat';
+  applyConnectionModeIn(el);
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Claude Code, through worca's bridge\./);
+  // A typed id is kept.
+  el.querySelector('.mv-id').value = 'my-gpt'; el.querySelector('.mv-id').dataset.auto = 'off';
+  applyConnectionModeIn(el);
+  assert.equal(el.querySelector('.mv-id').value, 'my-gpt');
+});
+
+test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its own sign-in or an OpenAI-compatible Responses endpoint', () => {
+  const upstream = { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '${CX_KEY}', headers: { 'X-Team': 'blue' } };
+  const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const conn = edit.querySelector('.mv-conn');
   const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
   assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'provider'], 'no env mode on Codex');
   assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Codex default', 'OpenAI-compatible endpoint']);
-  conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
-  applyConnectionModeIn(el);
+  assert.equal(edit.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
   const prov = conn.querySelector('.mv-conn-provider');
   assert.equal(prov.value, 'openai');
   assert.equal(prov.disabled, true);
-  assert.deepEqual([...prov.options].filter((o) => !o.hidden).map((o) => o.value), ['openai']);
   assert.deepEqual([...conn.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
   assert.equal(conn.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
-  assert.equal(conn.querySelector('.mv-conn-adv').hidden, false, 'Base URL, key and headers overrides stay');
-  assert.equal(conn.querySelector('.mv-conn-provider-hint').textContent, 'No provider key — set one on the Providers page, or override it under Advanced.');
   assert.match(conn.querySelector('.mv-conn-note').textContent, /Codex calls the endpoint’s Responses API itself/);
-  assert.ok([...el.querySelectorAll('.mv-effort-cb')].every((c) => !c.disabled), 'efforts are not collapsed as for a translated model');
-  el.querySelector('.mv-id').value = 'cx-local';
-  conn.querySelector('.mv-conn-model').value = 'qwen3-coder';
-  conn.querySelector('.mv-conn-baseurl').value = 'http://127.0.0.1:8000/v1';
-  conn.querySelector('.mv-conn-key').value = '${CX_KEY}';
-  conn.querySelector('.mv-conn-headers').value = 'X-Team: blue';
-  const { body } = collectModelEditor(el);
-  assert.equal(body.engine, 'codex');
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  const { body } = collectModelEditor(edit);
   assert.deepEqual(body.env, {});
-  assert.deepEqual(body.upstream, { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '${CX_KEY}', headers: { 'X-Team': 'blue' } });
-  // A stored Codex endpoint renders in provider mode; going back to Claude restores every mode and provider.
-  const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream: body.upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
-  assert.equal(edit.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
-  assert.equal(collectModelEditor(edit).body.upstream.model, 'qwen3-coder');
+  assert.deepEqual(body.upstream, upstream);
   edit.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true;
   assert.equal(collectModelEditor(edit).body.upstream, null, 'switching back to codex\'s default clears the endpoint');
-  setModelEngine(el, 'claude');
-  assert.equal([...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden).length, 3);
-  assert.equal(prov.disabled, false);
-  assert.equal(conn.querySelector('.mv-conn-mode-rb[value="direct"]').closest('.mv-conn-mode').querySelector('.mv-conn-mode-title').textContent, 'Anthropic API / CLI default');
 });
 
 test('cards: a Codex endpoint model says endpoint, not bridged, and carries no translation line', () => {
@@ -453,7 +475,10 @@ test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fi
   assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
   const conn = el.querySelector('.mv-conn');
   const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
-  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Cursor default'], 'its own sign-in only');
+  // A new entry still offers every connection; on Cursor's sign-in it runs on Cursor alone.
+  assert.equal(shown.length, 3);
+  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Cursor only/);
   assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
   el.querySelector('.mv-id').value = 'sonnet-4.5';
   const { body } = collectModelEditor(el);

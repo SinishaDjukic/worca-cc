@@ -172,11 +172,13 @@ test('formatRunSummary: the Away mode line, only when it answered', () => {
 
 test('formatResumeHints: the resume command, plus each other engine after a usage limit an engine hit', () => {
   assert.deepEqual(formatResumeHints({ reason: 'error' }, 'ab12cd34'), ['Resume with: worca resume ab12cd34']);
-  assert.deepEqual(formatResumeHints({ reason: 'usage_limit' }, 'ab12cd34'), ['Resume with: worca resume ab12cd34'], 'not an engine limit');
+  // A provider's limit (no limitEngine): no other engine, but another model has its own allowance.
+  assert.deepEqual(formatResumeHints({ reason: 'usage_limit' }, 'ab12cd34'), ['Resume with: worca resume ab12cd34', 'Or continue now with another model: worca resume ab12cd34 --model <id>'], 'not an engine limit');
   assert.deepEqual(formatResumeHints({ reason: 'usage_limit', limitEngine: 'codex' }, 'ab12cd34'), [
     'Resume with: worca resume ab12cd34',
     'Or continue now on Claude: worca resume ab12cd34 --engine claude',
     'Or continue now on Cursor: worca resume ab12cd34 --engine cursor',
+    'Or continue now with another model: worca resume ab12cd34 --model <id>',
   ]);
   const bold = formatResumeHints({ reason: 'usage_limit', limitEngine: 'claude' }, 'x', { color: (n, s) => `<${n}>${s}` });
   assert.equal(bold[1], 'Or continue now on Codex: <bold>worca resume x --engine codex');
