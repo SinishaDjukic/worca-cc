@@ -8186,6 +8186,8 @@ span.act-running-title{cursor:default}
 .engine-slot-foot .engine-slot-rest{margin:0;flex:1 1 220px;}
 .engine-slot-foot .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
 .engine-helpers-fold{margin-top:12px;}
+/* Project settings put Save right after the section: the same 18px gap a .field leaves. */
+.pd-settings-body .engine-card{margin-bottom:18px;}
 .engine-helpers-fold > summary{cursor:pointer;font-weight:600;font-size:13px;}
 .engine-helpers-fold .engine-helpers > h4{display:none;}
 @media (max-width:640px){
