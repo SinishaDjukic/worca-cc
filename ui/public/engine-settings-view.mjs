@@ -84,14 +84,14 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
   return box;
 }
 
-/** The Engine & models card body — Settings › Models › Engines (level "user") and a project's settings ("project"):
+/** The Engine & models card body — the Models page › Engines (level "user") and a project's settings ("project"):
  *  the default engine, then one engine at a time (the switch is Expert's; Advanced sees the default engine's tab),
  *  each tab the same skeleton: a readiness line, Step models, Helper jobs. `options.status`: an element that says how
  *  many changes are unsaved. `options.onTest(modelId, button)`: a row's Test. `options.noEffort`: setting ids whose
  *  slot stores a model only. Returns {} (kept for callers that read engine extras). */
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New run starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
   applyEngineLocks(host);
   const from = options.level === 'project' ? 'your settings' : "Worca's defaults";
   const noEffort = new Set(options.noEffort || []);
@@ -115,7 +115,7 @@ export function renderEngineSection(host, options) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
     const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
-    // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on Settings › Models.
+    // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
     const row = (id, label, defaultLabel, hint = null) => { const value = field(id); return { id, label, hint, set: value.own !== undefined && value.own !== null, el: renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: ENGINE_EFFORTS[engine], own: value.own, inherited: value.inherited, defaultLabel, noEffort: noEffort.has(id) }) }; };

@@ -20,6 +20,11 @@ test('contextEntries: resolved chips (pin marked, page named, untitled run by id
         { kind: 'page', id: 'settings', label: 'Settings' },
       ]);
     } },
+    { name: 'contextEntries: the four Add-ons pages earn a page chip named like their sidebar row', run: () => {
+      for (const [view, label] of [['marketplace', 'Marketplace'], ['connectors', 'Connectors'], ['models', 'Models'], ['providers', 'Providers']]) {
+        assert.deepEqual(contextEntries({ view }, { view }), [{ kind: 'page', id: view, label }]);
+      }
+    } },
     { name: 'contextEntries: unresolved ids, list views and a run with no home produce no chip', run: async () => {
       await checkRows([
         { name: 'contextEntries: unresolved ids and list views produce nothing', run: () => {

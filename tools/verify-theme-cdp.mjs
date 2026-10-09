@@ -335,9 +335,10 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // FORCED through the CSS domain, element by element, in every theme.
 // A selector with no element on the current screen is skipped (nodeId 0). At 5a22ca47 `.icon-btn` and `.field-clear`
 // have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
-// so a future element is sampled; `.sidebar.collapsed .nav button.nav-cta` matches only in the rail-collapsed state.
+// so a future element is sampled. `.topnav-new` is New run in the top bar (an ink pill: its hover is a wash).
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
-  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav button.nav-cta', '.nav button', '.spend-ind', '.hd-tree-file', '.ap'];
+  '.gr-rm', '.field-clear', '.agent-row-head', '.topnav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
+  '.act-srow', '.act-stop'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a
   // querySelector error THROW — a swallowed "Could not find node" would silently drop hover coverage.
@@ -454,14 +455,14 @@ const states = [
   ['settings-runs', async () => { await go('settings/runs'); await until(`document.querySelector('.settings-pane[data-tab="runs"]:not(.hidden) #budget-settings-card')`, 'runs pane'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
-  ['settings-models', async () => { await go('settings/models'); }],
+  ['settings-models', async () => { await go('models'); }],
   // The catalog's two dialogs (§4.10, §8.4). They render their own content, so the audit would
   // never see the editor's fields or the import table from 'settings-models' alone — the same gap
   // that let a chip's contrast regress unnoticed.
-  ['settings-model-editor', async () => { await go('settings/models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
-  ['settings-model-import', async () => { await go('settings/models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
-  ['settings-providers', async () => { await go('settings/providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
-  ['settings-plugins', async () => { await go('settings/plugins'); }],
+  ['settings-model-editor', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
+  ['settings-model-import', async () => { await go('models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
+  ['settings-providers', async () => { await go('providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
+  ['settings-plugins', async () => { await go('marketplace'); }],
   // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
   // row, the editor, its status line and a History row — an empty scope would paint the fresh badge
   // and nothing else. The contrast baseline is NEVER regenerated for this: a new failing pair means

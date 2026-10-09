@@ -82,7 +82,7 @@ export function validateRunSource(raw, { target, listTaskSources, resolveProfile
   const named = str(raw.profile);
   if (src.multiProfile) {
     if (named) {
-      if (!PROFILE_RE.test(named) || !available.includes(named)) errors.push(`${src.displayName} has no profile "${named}" (profiles: ${available.join(', ') || 'none — set one up in Settings › Plugins'})`);
+      if (!PROFILE_RE.test(named) || !available.includes(named)) errors.push(`${src.displayName} has no profile "${named}" (profiles: ${available.join(', ') || 'none — set one up on the Marketplace page'})`);
       else { profile = named; profileVia = 'named'; }
     } else {
       const scope = target.workspaceId ? { scopeType: 'workspace', scopeKey: target.workspaceId, memberKeys: (target.members || []).map((m) => m.projectKey) }
@@ -90,7 +90,7 @@ export function validateRunSource(raw, { target, listTaskSources, resolveProfile
       let r = { profile: null, via: 'none' };
       try { r = resolveProfile({ ...scope, plugin, sourceId, available }) || r; } catch { /* unresolved */ }
       if (r.profile) { profile = r.profile; profileVia = r.via; }
-      else if (!available.length) errors.push(`${src.displayName} has no profile yet — the user sets one up in Settings › Plugins`);
+      else if (!available.length) errors.push(`${src.displayName} has no profile yet — the user sets one up on the Marketplace page`);
       else errors.push(`${src.displayName} has several profiles and this ${target.workspaceId ? 'workspace' : 'project'} is not bound to one — ask the user which: ${(r.candidates && r.candidates.length ? r.candidates : available).join(', ')}`);
     }
   } else if (named) errors.push(`${src.displayName} does not use profiles — omit source.profile`);

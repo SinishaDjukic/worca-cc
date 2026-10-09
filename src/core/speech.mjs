@@ -57,7 +57,7 @@ function endpoint(kind, typed) {
 
 function assertUsable(kind, c) {
   const what = kind === 'stt' ? 'speech-to-text' : 'text-to-speech';
-  if (!c.baseUrl) throw new SpeechError(`${what} is not configured (Settings › Providers › Speech)`, 409);
+  if (!c.baseUrl) throw new SpeechError(`${what} is not configured (Providers › Speech)`, 409);
   if (c.unresolved) throw new SpeechError(`the ${what} key's \${VAR} is not set in worca's environment`, 409);
 }
 

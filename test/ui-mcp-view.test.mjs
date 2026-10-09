@@ -172,7 +172,7 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
       modal.opened.actions.find(([label]) => label === 'Save')[2]();
       await settle();
       assert.deepEqual(writes().at(-1), ['POST', '/api/mcp/sets/team-acme-platform-9333/duplicate', { name: 'acme/platform copy' }]);
-      assert.equal(nav.at(-1), 'settings/mcp/sets/new-set');
+      assert.equal(nav.at(-1), 'connectors/sets/new-set');
     } },
     { name: 'a greyed Team set offers only Forget, which calls the team forget route', run: async () => {
       const { host, ctl, writes, nav } = mount();
@@ -181,7 +181,7 @@ test('Team sets are read-only (no rename/delete/add/remove, disabled never-conse
       click(host.querySelector('[data-act="forget"]'));
       await settle();
       assert.deepEqual(writes(), [['POST', '/api/mcp/teams/old%2Fhome/forget', {}]]);
-      assert.deepEqual(nav, ['settings/mcp']);
+      assert.deepEqual(nav, ['connectors']);
     } },
   ]);
 });
@@ -338,7 +338,7 @@ test('Servers view is read-only with badges/In sets/Add to set; Remove on a manu
       assert.match(rows[1].textContent, /name provisional.*plugin disabled/);
       assert.match(rows[2].textContent, /no longer required by acme\/platform/);
       assert.deepEqual([...rows[1].querySelectorAll('a.chip')].map((a) => a.getAttribute('href')),
-        ['#settings/mcp/sets/billing', '#settings/mcp/sets/team-acme-platform-9333']);
+        ['#connectors/sets/billing', '#connectors/sets/team-acme-platform-9333']);
       assert.equal(host.querySelector('[data-act="add-server"]').textContent, 'Add MCP server');
     } },
     { name: 'Remove on a manual server names the sets it leaves', run: async () => {
@@ -466,27 +466,53 @@ async function boot(url) {
 }
 const go = async (window, hash) => { window.location.hash = hash; window.dispatchEvent(new window.Event('hashchange')); await settle(); };
 
-test('MCP hashes (#settings/mcp General, /sets/<id>, /servers) route and deep links land on the pane', async () => {
+test('the Connectors page: its hashes (#connectors General, /sets/<id>, /servers), deep links, the old #settings/mcp addresses and its leave-guard', async () => {
   await checkRows([
-    { name: 'hashes: #settings/mcp = General, #settings/mcp/sets/<id>, #settings/mcp/servers', run: () => {
+    { name: 'hashes: #connectors = General, #connectors/sets/<id>, #connectors/servers', run: () => {
       assert.deepEqual(parseMcpParam(''), { view: 'sets', setId: 'general' });
       assert.deepEqual(parseMcpParam('sets/billing'), { view: 'sets', setId: 'billing' });
       assert.deepEqual(parseMcpParam('servers'), { view: 'servers', setId: null });
-      assert.equal(mcpRoute('general'), 'settings/mcp');
-      assert.equal(mcpRoute('billing'), 'settings/mcp/sets/billing');
-      assert.equal(mcpRoute(null), 'settings/mcp/servers');
+      assert.equal(mcpRoute('general'), 'connectors');
+      assert.equal(mcpRoute('billing'), 'connectors/sets/billing');
+      assert.equal(mcpRoute(null), 'connectors/servers');
     } },
-    { name: 'deep links land on the MCP pane: a set, then the Servers view', run: async () => {
+    { name: 'deep links land on the Connectors page: a set, then the Servers view; the page is titled Connectors, its views keep their names', run: async () => {
       const { window, calls } = await boot('http://localhost:4319/');
-      await go(window, 'settings/mcp/sets/billing');
-      const pane = window.document.querySelector('.settings-pane[data-tab="mcp"]');
-      assert.equal(pane.classList.contains('hidden'), false);
+      await go(window, 'connectors/sets/billing');
+      const page = window.document.querySelector('.view[data-view="connectors"]');
+      assert.equal(page.classList.contains('hidden'), false);
+      assert.equal(window.document.querySelector('.view[data-view="settings"]').classList.contains('hidden'), true);
       assert.ok(calls.includes('GET /api/mcp/sets/billing'));
-      assert.equal(window.location.hash, '#settings/mcp/sets/billing');
-      assert.ok(pane.querySelector('.mcp-setrow[data-set="billing"].on'));
-      await go(window, 'settings/mcp/servers');
+      assert.equal(window.location.hash, '#connectors/sets/billing');
+      assert.ok(page.querySelector('.mcp-setrow[data-set="billing"].on'));
+      assert.equal(page.querySelector('.topbar h1'), null, 'the top bar names the page');
+      assert.equal(window.document.getElementById('topnav-title').textContent, 'Connectors');
+      assert.deepEqual([...page.querySelectorAll('.topbar .seg button')].map((b) => b.textContent), ['Sets', 'Servers', 'Skills']);
+      assert.equal(window.document.querySelector('#settings-tabs button[data-tab="mcp"]'), null, 'Settings has no Sets tab');
+      await go(window, 'connectors/servers');
       assert.ok(calls.includes('GET /api/mcp/servers'));
-      assert.equal(pane.querySelectorAll('.mcp-server-row').length, 3);
+      assert.equal(page.querySelectorAll('.mcp-server-row').length, 3);
+      assert.equal(page.querySelector('.topbar h1'), null, 'a repaint brings no title back');
+      assert.ok(page.querySelector('.topbar .sub') && page.querySelector('.topbar .seg'), 'and no empty bar: the sub line and the segments stay');
+    } },
+    { name: 'an old #settings/mcp/sets/<id> link opens that set on the Connectors page, replacing the entry', run: async () => {
+      const { window, calls } = await boot('http://localhost:4319/');
+      const entries = window.history.length;
+      await go(window, 'settings/mcp/sets/billing');
+      assert.equal(window.location.hash, '#connectors/sets/billing');
+      assert.equal(window.history.length, entries + 1);
+      assert.ok(calls.includes('GET /api/mcp/sets/billing'));
+      assert.ok(window.document.querySelector('.view[data-view="connectors"] .mcp-setrow[data-set="billing"].on'));
+    } },
+    { name: 'leaving Connectors closes a dialog it opened (#plugin-modal lives outside the page)', run: async () => {
+      const { window } = await boot('http://localhost:4319/');
+      await go(window, 'connectors');
+      window.document.querySelector('.view[data-view="connectors"] [data-act="new-set"]').click();
+      await settle();
+      const modal = window.document.getElementById('plugin-modal');
+      assert.equal(modal.classList.contains('hidden'), false, 'New set opened its dialog');
+      await go(window, 'runs');
+      assert.equal(modal.classList.contains('hidden'), true);
     } },
   ]);
 });

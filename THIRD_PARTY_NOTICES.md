@@ -41,7 +41,7 @@ SOFTWARE.
 
 ## @modelcontextprotocol/sdk
 
-Test (Settings › Sets, `src/core/mcp/test.mjs`) talks to MCP servers
+Test (on the Connectors page, `src/core/mcp/test.mjs`) talks to MCP servers
 through the official SDK, `@modelcontextprotocol/sdk 1.31.0` (MIT, Copyright (c)
 2024 Anthropic, PBC), pinned exactly in `package.json`. It and the packages it
 pulls in are installed from npm, each under its own license (the text ships in

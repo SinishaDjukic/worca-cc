@@ -270,7 +270,7 @@ test('a disabled plugin\'s workflows are hidden from the list and refused by the
   await assert.rejects(assertRunnableWorkflow('wfp_demo_simple'), (e) => {
     assert.equal(e.code, 'PLUGIN_DISABLED');
     assert.match(e.message, /plugin "demo", which is disabled/);
-    assert.match(e.message, /worca plugin enable demo/);
+    assert.match(e.message, /enable the plugin \(the Marketplace page, or: worca plugin enable demo\)/);
     return true;
   });
   assert.ok(await readWorkflow('wfp_demo_simple'), 'the row itself is still there (nothing deleted)');

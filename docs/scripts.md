@@ -21,7 +21,7 @@ agents.
 
 ## The Scripts page
 
-`Scripts` in the rail (interface mode **Expert**). The list shows every registered
+**Nodes › Scripts** in the sidebar (interface mode **Expert**). The list shows every registered
 script with its origin, runtime, ports and saved cases; a filter matches key,
 name, runtime and origin. **Duplicate** copies any script into your own layer;
 **Delete** refuses while a saved workflow still places it.

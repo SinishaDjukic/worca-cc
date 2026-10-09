@@ -1,7 +1,7 @@
 // ui/public/ask-voice.mjs
 // Ask Worca voice mode (docs/speech.md): the browser half. A state machine over
 // an injected VAD (Silero via @ricky0123/vad-web, loaded lazily from /vendor),
-// two speech engines picked by Settings › Providers › Speech — 'browser' (Whisper /
+// two speech engines picked by Providers › Speech — 'browser' (Whisper /
 // Kokoro in a worker, speech-browser.mjs; the default) or 'server' (the user's own
 // OpenAI-compatible servers through /api/speech/*) — and an injected audio player.
 // States: off → loading → listening ⇄ transcribing → thinking ⇄ speaking; error.

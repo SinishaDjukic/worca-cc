@@ -239,7 +239,7 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
   const ctx = await boot();
   pick(ctx, 'codex');
   assert.equal(ctx.doc.getElementById('engine-hint').textContent.trim(),
-    'Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex');
+    'Codex runs this pipeline, including titles and summaries. Its models: Models › Codex');
 });
 
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
@@ -250,7 +250,7 @@ test('engine: Cursor is the third choice; it sends engine cursor and says helper
   assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');
   assert.equal(hint.hidden, false);
-  assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Settings › Models › Cursor.');
+  assert.equal(hint.textContent.trim(), 'Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: Models › Cursor.');
   assert.doesNotMatch(hint.textContent, /including titles and summaries/);
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'cursor');

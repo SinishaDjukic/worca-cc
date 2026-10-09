@@ -32,7 +32,7 @@ async function boot({ fetchHandler } = {}) {
   return { window };
 }
 
-test('Settings is the last nav item, loads root, and saves a new one', async () => {
+test('Settings sits in the account menu (not the page list), loads root, and saves a new one', async () => {
   let posted = null;
   const ctx = await boot({
     fetchHandler: (url, opts) => {
@@ -48,9 +48,12 @@ test('Settings is the last nav item, loads root, and saves a new one', async () 
   });
   const { window } = ctx;
 
-  // (1) below all other menus: Settings is the LAST sidebar nav link.
-  const navLinks = [...window.document.querySelectorAll('.nav button[data-nav]')];
-  assert.equal(navLinks[navLinks.length - 1].dataset.nav, 'settings', 'Settings is the last menu');
+  // (1) Settings left the page list for the account menu: after Interface mode, before the away row.
+  const doc = window.document;
+  assert.equal(doc.querySelector('.nav [data-nav="settings"]'), null, 'not a sidebar page any more');
+  const rows = [...doc.querySelectorAll('#acct-menu > .msect > button')].map((el) => el.id);
+  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away'], 'Interface mode, Settings, then the away row last');
+  assert.equal(doc.getElementById('acct-settings').dataset.nav, 'settings');
 
   // (2) navigating to it loads the current root (default shown as placeholder).
   window.location.hash = 'settings';

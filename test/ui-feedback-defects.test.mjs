@@ -70,7 +70,7 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'GET /api/plugins': { status: 200, body: { plugins: [], orphans: [] } },
         'GET /api/chat/status': { status: 200, body: { channels: [] } },
       } });
-      await go('settings/plugins');
+      await go('marketplace');
       window.document.querySelector('.pl-mkt-remove[data-id="acme"]').click();
       await confirmDialog(window);
       for (let i = 0; i < 10; i++) await tick();
@@ -98,7 +98,7 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'DELETE /api/models/acme-fast': { status: 200, body: { ok: true } },
         'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
       } });
-      await go('settings/models');
+      await go('models');
       window.document.querySelector('.mv-delete[data-id="acme-fast"]')
         .dispatchEvent(new window.Event('click', { bubbles: true }));
       await confirmDialog(window);
@@ -128,7 +128,7 @@ test('#555: a plugin uninstall refused with 409 is an error toast whose Details 
     'POST /api/marketplaces/refresh': { status: 200, body: { marketplaces: [] } },
     'GET /api/chat/status': { status: 200, body: { channels: [] } },
   } });
-  await go('settings/plugins');
+  await go('marketplace');
   window.document.querySelector('.pl-remove[data-name="acme-jira"], [data-name="acme-jira"] .pl-remove').click();
   await confirmDialog(window);
   for (let i = 0; i < 10; i++) await tick();
@@ -145,7 +145,7 @@ test('#555: the model editor Save — a missing id is a field error, a refusal a
     'PATCH /api/models/acme-fast': { get status() { return patch.status; }, get body() { return patch.body; } },
     'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
   } });
-  await go('settings/models');
+  await go('models');
   const doc = window.document;
   // Add model with no id: the id field says so; nothing is sent.
   doc.getElementById('model-create-btn').click();

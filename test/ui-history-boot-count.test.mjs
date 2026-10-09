@@ -78,6 +78,7 @@ test('first connect background-loads history (Runs stays hidden, no Needs-you co
       // so read each: three stopped rows need nobody and are not live.
       assert.equal(doc.querySelector('#nav-needs-count').hidden, true, 'no Needs-you count for finished runs');
       assert.equal(doc.querySelector('#nav-running-count').textContent, '0', 'the live count, not the 3 finished runs');
+      assert.equal(doc.querySelector('#nav-running-count').hidden, true, 'and a zero is hidden');
     } },
     { name: 'the background load also triggers Phase-2 PR enrichment so PR states are ready', run: async () => {
       const post = ctx.calls.find((c) => c.url.endsWith('/api/history/pr') && c.opts.body);

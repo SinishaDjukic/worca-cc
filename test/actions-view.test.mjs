@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { memberViewState, renderActionsCard, renderOverviewStrip, renderRunPill,
-  renderRunningActionsCard, historyActionBadges, formatUptime, isSafeHref, createActionsController } from '../ui/public/actions-view.mjs';
+  renderRunningActionRows, historyActionBadges, formatUptime, isSafeHref, createActionsController } from '../ui/public/actions-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const member = (over = {}) => ({ projectKey: 'app-0cea65fb', projectName: 'app', branch: 'worca-cc/x', worktreeDir: '/h/runs/ab/repos/app-0cea65fb',
@@ -84,14 +84,15 @@ test('disabled (hosted): actions and built-ins hidden, Check out and Copy comman
   assert.deepEqual(labelsOf(el), ['Check out', 'Copy command']);
 });
 
-test('pill, sidebar card, history badges', () => {
+test('pill, sidebar rows, history badges', () => {
   const run = { instanceId: 'i', runId: 'ab12cd34', member: 'app-0cea65fb', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, url: 'http://localhost:4417' };
   assert.equal(renderRunPill([run], { doc }).textContent, 'Run :4417');
   assert.equal(renderRunPill([], { doc }), null);
   assert.equal(renderRunPill([{ ...run, ports: {} }], { doc }).textContent, 'Run');   // no port variable
   assert.deepEqual(historyActionBadges({ id: 'ab12cd34', checkout: null }, [{ ...run, ports: {} }]).map((b) => b.text), ['Running']);
-  const card = renderRunningActionsCard([run], { doc, titleOf: () => 'Fix login' });
-  assert.match(card.textContent, /Running actions/); assert.match(card.textContent, /:4417/);
+  const rows = renderRunningActionRows([run], { doc, titleOf: () => 'Fix login' });
+  assert.equal(rows.querySelector('.act-srow-name').textContent, 'Fix login · Run :4417');
+  assert.doesNotMatch(rows.textContent, /Running actions/, 'no header row');
   assert.deepEqual(historyActionBadges({ id: 'ab12cd34', checkout: { members: [{ policy: 'on-success' }, { policy: 'on-success' }] } }, [run]).map((b) => b.text),
     ['Running :4417', '2 checked out', 'Kept · on success']);
   assert.equal(formatUptime(3_723_000), '1h 2m');
@@ -145,16 +146,40 @@ test('overview strip: Check out, then open link + Stop while a service runs; nul
   assert.equal(renderOverviewStrip(model(member({ branch: null })), { doc, handlers }), null);
 });
 
-test('running actions card: null when empty, Stop and row callbacks', () => {
-  assert.equal(renderRunningActionsCard([], { doc }), null);
-  const run = { instanceId: 'i', runId: 'ab12cd34', member: 'app-0cea65fb', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, startedAt: Date.now() - 5000 };
+test('running action rows: null when nothing runs; one row per running service with a square Stop and the uptime in its title', () => {
+  assert.equal(renderRunningActionRows([], { doc }), null);
+  const now = Date.now();
+  const run = { instanceId: 'i', runId: 'ab12cd34', member: 'app-0cea65fb', label: 'Run', kind: 'service', status: 'ready', ports: { PORT: 4417 }, startedAt: now - 5000 };
+  const gone = { ...run, instanceId: 'j', status: 'exited' };
   const got = [];
-  const card = renderRunningActionsCard([run], { doc, titleOf: (s) => s.runId, onStop: (s) => got.push(['stop', s.instanceId]), onOpen: (s) => got.push(['open', s.runId]) });
-  card.querySelector('button.act-stop').click();
-  card.querySelector('.act-running-title').click();
+  const rows = renderRunningActionRows([run, gone], { doc, now, titleOf: (s) => s.runId, onStop: (s) => got.push(['stop', s.instanceId]), onOpen: (s) => got.push(['open', s.runId]) });
+  assert.equal(rows.querySelectorAll('.act-srow').length, 1, 'only running services get a row');
+  const row = rows.querySelector('.act-srow');
+  assert.equal(row.dataset.instanceId, 'i');
+  assert.deepEqual([...row.children].map((c) => c.className), ['pdot', 'act-srow-name', 'act-stop']);
+  assert.equal(row.title, 'ab12cd34 · Run :4417 · up 5s');
+  const stop = row.querySelector('button.act-stop');
+  assert.equal(stop.getAttribute('aria-label'), 'Stop Run and free its port');
+  assert.equal(stop.title, 'Stop Run and free its port');
+  assert.equal(stop.textContent, '', 'an icon button: the square glyph, no word');
+  stop.click();
+  row.querySelector('button.act-srow-name').click();
   assert.deepEqual(got, [['stop', 'i'], ['open', 'ab12cd34']]);
   assert.equal(formatUptime(5000), '5s');
   assert.equal(formatUptime(65000), '1m 5s');
+});
+
+test('running action rows: a run with no saved row is plain text; menu:true marks the buttons as menu items for the rail flyout', () => {
+  const run = { instanceId: 'i', runId: 'ab12cd34', label: 'Run', kind: 'service', status: 'running', ports: {}, histKey: null };
+  const plain = renderRunningActionRows([run], { doc, onOpen: () => {} });
+  assert.equal(plain.querySelector('.act-srow-name').tagName, 'SPAN', 'nowhere to open');
+  assert.equal(plain.querySelector('.act-srow-name').textContent, 'ab12cd34 · Run', 'no port variable: no ":undefined"');
+  assert.equal(plain.querySelector('.act-srow').title, 'ab12cd34 · Run', 'no startedAt: no uptime');
+  const menu = renderRunningActionRows([{ ...run, histKey: 'k' }], { doc, onOpen: () => {}, menu: true });
+  assert.equal(menu.querySelector('.act-srow').getAttribute('role'), 'none');
+  assert.equal(menu.querySelector('.act-srow-name').getAttribute('role'), 'menuitem');
+  assert.equal(menu.querySelector('.act-stop').getAttribute('role'), 'menuitem');
+  assert.equal(renderRunningActionRows([run], { doc }).querySelector('.act-stop').hasAttribute('role'), false);
 });
 
 function fakeApi(routes) {

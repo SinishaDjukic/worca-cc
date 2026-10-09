@@ -25,6 +25,7 @@ const PROVIDERS = {
 
 test('providers card: not connected / not acknowledged states; sign-in block replaces the button', () => {
   const card = renderProvidersCard({ copilot: { connected: false, termsCurrent: false, accountType: 'individual', maxConcurrent: 4 } }, { doc });
+  assert.match(card.querySelector('.mv-providers-hint').textContent, /then import or add models on the Models page and pick them/);
   const cp = card.querySelector('.mv-pv-row[data-provider="copilot"]');
   // The state pill says what unblocks sign-in in the notice button's words, and IS a notice
   // button: the same .mv-cp-terms class the Providers delegation opens the notice for.

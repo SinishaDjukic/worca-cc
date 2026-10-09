@@ -1,6 +1,6 @@
 // ui/public/stats-view.mjs
-// Pure DOM renderers for the Statistics view, the sidebar budget indicator,
-// the Settings budget readout, and the cost-pause banners. Every function
+// Pure DOM renderers for the Statistics view, the Settings budget readout and
+// the cost-pause banners (the account menu's spend card is account-menu.mjs). Every function
 // takes the target `document` via opts (defaults to the browser global) and
 // returns DETACHED elements — no fetch, no listeners outside the returned
 // tree. app.js owns endpoint calls and mounting; node:test drives these via
@@ -75,7 +75,7 @@ const ICONS = {
   prs: 'M6 8.6v6.8M18 15.4V11a4 4 0 0 0-4-4h-2M6 3.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM6 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM18 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z',
 };
 
-function fmtResetAt(ms) {
+export function fmtResetAt(ms) {
   const d = new Date(ms);
   const p = (x) => String(x).padStart(2, '0');
   return `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -87,7 +87,7 @@ function fmtIn(ms) {
   return days > 0 ? `${days}d ${hours}h` : `${hours}h ${Math.floor((ms % 3600000) / 60000)}m`;
 }
 
-const periodWord = (b) => (b && b.resetPeriod === 'weekly' ? 'week' : 'month');
+export const periodWord = (b) => (b && b.resetPeriod === 'weekly' ? 'week' : 'month');
 
 /** Neutral delta chip "↑ 23%" vs the previous window; null when not meaningful. */
 function deltaChip(doc, cur, prevVal, range) {
@@ -266,183 +266,17 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
 
 /** The payload's "Saved this <period>" figure, or null when it has none: /api/budget
  *  degrades it to null when the savings read fails, and a server that predates the
- *  field sends nothing — either way the indicator shows Spent alone rather than "$0". */
-function windowSaved(b) {
+ *  field sends nothing — either way the spend card shows Spent alone rather than "$0". */
+export function windowSaved(b) {
   return typeof b.windowSavedUsd === 'number' && Number.isFinite(b.windowSavedUsd)
     ? b.windowSavedUsd : null;
 }
 
 /** Signed money in the Statistics Saved tile's own shape: "−$12.50", never "$-12.50". */
-const signedUsd = (fmt, n) => `${n < 0 ? '−' : ''}${fmt.usd(Math.abs(n))}`;
+export const signedUsd = (fmt, n) => `${n < 0 ? '−' : ''}${fmt.usd(Math.abs(n))}`;
 
-/** Where "Saved" comes from, appended to both sidebar titles when the figure shows. */
-const SAVED_NOTE = 'Saved = estimated human hours × your rate − spent';
-
-function indRow(doc, label, amount) {
-  const row = h(doc, 'span', 'spend-ind-row');
-  row.appendChild(h(doc, 'span', 'spend-ind-label', label));
-  row.appendChild(h(doc, 'span', 'spend-ind-amt mono', amount));
-  return row;
-}
-
-/** Whole-dollar money for the one-line indicator: "$163", "$3,591", "$99,999"; from $100k up
- *  (decided on the rounded value) the rail's compact tiers, "$120k", "$1.2M". Signed like
- *  railUsd: "−$40", never "−$0". */
-function lineUsd(n) {
-  const v = Number(n) || 0;
-  const a = Math.round(Math.abs(v));
-  if (a >= 100000) return railUsd(v);
-  return `${v < 0 && a > 0 ? '−' : ''}$${a.toLocaleString('en-US')}`;
-}
-
-/** The one-line indicator's period: "Week" (a week can straddle two months; "This week" is
- *  22 px too wide for the line at $99,999 ×2), else the month's short name. The server's
- *  monthly window is a calendar month in the SERVER's zone (costWindowStart is the 1st at its
- *  local midnight), so the window's midpoint names it — mid-month in any browser zone up to
- *  ±14 h. From a payload with one bound: the start, or the instant before the exclusive end.
- *  "Month" when neither bound is there. */
-function periodLabel(b) {
-  if (periodWord(b) === 'week') return 'Week';
-  const start = Number.isFinite(b.windowStartMs), end = Number.isFinite(b.windowEndMs);
-  const ms = start && end ? (b.windowStartMs + b.windowEndMs) / 2
-    : start ? b.windowStartMs : end ? b.windowEndMs - 1 : null;
-  return ms == null ? 'Month' : MO[new Date(ms).getMonth()];
-}
-
-/** "<amount> <word>": the amount mono (.spend-ind-amt), the word in the UI font. */
-function indFigure(doc, cls, amount, word) {
-  const seg = h(doc, 'span', cls);
-  seg.appendChild(h(doc, 'span', 'spend-ind-amt mono', amount));
-  seg.appendChild(doc.createTextNode(` ${word}`));
-  return seg;
-}
-
-/** Sidebar spend indicator (whole block navigates to #stats). With a total limit: Spent +
- *  meter. Without one there is no meter to show, so the card is one line instead — "Oct
- *  $163 spent  $3,591 saved", whole dollars, spread evenly across the card — and the exact
- *  figures move to the title and the accessible name. */
-export function renderBudgetIndicator(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
-  const b = budget || {};
-  const btn = h(doc, 'button', 'spend-ind');
-  btn.type = 'button';
-  btn.dataset.nav = 'stats';
-  const hasLimit = b.totalLimitUsd != null;
-  const ratio = hasLimit ? b.windowSpendUsd / b.totalLimitUsd : 0;
-  const saved = hasLimit ? null : windowSaved(b);
-  if (b.blocked) btn.classList.add('over');
-  else if (hasLimit && ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
-  btn.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
-    (hasLimit ? ` of ${fmt.usd(b.totalLimitUsd)}` : '') +
-    ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate (total_cost_usd), not authoritative billing` +
-    (saved != null ? `. Saved this ${periodWord(b)}: ${signedUsd(fmt, saved)} (${SAVED_NOTE})` : '');
-  if (hasLimit) {
-    btn.appendChild(indRow(doc, `Spent this ${periodWord(b)}`, fmt.usd(b.windowSpendUsd)));
-    btn.appendChild(meterEl(doc, 'spend-ind-meter', b.blocked ? 100 : ratio * 100));
-    if (b.blocked) btn.appendChild(h(doc, 'small', 'spend-ind-sub', 'limit reached · new runs blocked'));
-    return btn;
-  }
-  btn.setAttribute('aria-label', `Spent this ${periodWord(b)}: ${fmt.usd(b.windowSpendUsd)}` +
-    (saved != null ? ` · Saved this ${periodWord(b)}: ${signedUsd(fmt, saved)}` : ''));
-  // Period, spent and saved are siblings on one flex level, spread space-between: month
-  // flush left, saved flush right, spent centred between equal gaps — no separator.
-  const line = h(doc, 'span', 'spend-ind-line');
-  line.appendChild(h(doc, 'span', 'spend-ind-period', periodLabel(b)));
-  line.appendChild(indFigure(doc, 'spend-ind-spent', lineUsd(b.windowSpendUsd), 'spent'));
-  if (saved != null) {
-    // A gain is green (.pos → --green-ink-strong, which clears verify:theme's 4.5:1 on the
-    // card's hover fill). A loss stays neutral ink — --red-ink is 4.07:1 there — and reads
-    // "−$40 net": its "−" carries it, and "−$40 saved" would contradict itself.
-    const seg = indFigure(doc, 'spend-ind-saved', lineUsd(saved), saved < 0 ? 'net' : 'saved');
-    if (saved >= 0) seg.classList.add('pos');
-    line.appendChild(seg);
-  }
-  btn.appendChild(line);
-  return btn;
-}
-
-/** Compact signed money for the collapsed rail's 40px stack:
- *  $4 · $317 · $1.2k · $9.9k · $11k · $999k · $1.2M · $12M, with "−" before any of them.
- *  At most five glyphs unsigned, six signed ("−$8.8k" ≈ 36px at 10px mono, inside the
- *  stack's 38px). Every tier is decided on the ROUNDED value, so 999.5 is "$1k" (not
- *  "$1000"), 9,950 is "$10k" (not "$10.0k") and 999,500 is "$1M" (not "$1000k").
- *  NAME: `railUsd` — this module already declares `compactUsd(fmt, v)` (the spend-chart
- *  y-axis formatter), and a second top-level declaration of one name in an ES module is
- *  a fatal SyntaxError that takes down stats-view.mjs, app.js and the whole UI. */
-export function railUsd(n) {
-  const v = Number(n) || 0;
-  const a = Math.abs(v);
-  let body;
-  if (Math.round(a) < 1000) body = `$${Math.round(a)}`;
-  else if (Math.round(a / 100) / 10 < 10) body = `$${Math.round(a / 100) / 10}k`;
-  else if (Math.round(a / 1000) < 1000) body = `$${Math.round(a / 1000)}k`;
-  else if (Math.round(a / 1e5) / 10 < 10) body = `$${Math.round(a / 1e5) / 10}M`;
-  else body = `$${Math.round(a / 1e6)}M`;
-  return v < 0 && body !== '$0' ? `−${body}` : body;
-}
-
-function stackPair(doc, label, value) {
-  const pair = h(doc, 'span', 'spend-stack-pair');
-  pair.appendChild(h(doc, 'span', 'spend-stack-lbl', label));
-  pair.appendChild(h(doc, 'span', 'spend-stack-val', value));
-  return pair;
-}
-
-/** Collapsed-rail Spent/Saved stack — what the 76px rail shows while NO total limit is
- *  set. A ring needs a denominator; without one it could only print a bare amount in a
- *  disc, with nothing saying what the amount was. The stack drops the disc and states both
- *  figures, a small caps label over a compact amount, in a 40px column: the width of every
- *  other rail square, so it overhangs the 39px content box exactly as they do and nothing
- *  clips. Exact figures live in the title and the accessible name. Keeps `.spend-ind` and
- *  data-nav="stats" so app.js's closest('.spend-ind') click routing still reaches it. */
-export function renderBudgetStack(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
-  const b = budget || {};
-  const word = periodWord(b);
-  const saved = windowSaved(b);
-  const btn = h(doc, 'button', 'spend-ind spend-stack');
-  btn.type = 'button';
-  btn.dataset.nav = 'stats';
-  const figures = `Spent this ${word}: ${fmt.usd(b.windowSpendUsd)}` +
-    (saved != null ? ` · Saved this ${word}: ${signedUsd(fmt, saved)}` : '');
-  btn.setAttribute('aria-label', figures);
-  btn.title = `${figures} · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side ` +
-    `estimate (total_cost_usd), not authoritative billing` + (saved != null ? `. ${SAVED_NOTE}` : '');
-  btn.appendChild(stackPair(doc, 'Spent', railUsd(b.windowSpendUsd)));
-  if (saved != null) {
-    const pair = stackPair(doc, 'Saved', railUsd(saved));
-    if (saved >= 0) pair.classList.add('pos');
-    btn.appendChild(pair);
-  }
-  return btn;
-}
-
-/** Collapsed-rail budget control — the sidebar indicator's compact twin. Under a total
- *  limit: a 38px ring metering spend against it. Without one there is no denominator, so
- *  it hands over to renderBudgetStack (app.js calls this one function for the rail either
- *  way). Keeps the `spend-ind` class because app.js routes the sidebar spend click through
- *  `closest('.spend-ind')`. The arc percentage travels as the custom property `--ring-pct`
- *  and the gradient is composed in the stylesheet, so there is one definition of it and
- *  the cascade can swap the band colours by class. */
-export function renderBudgetRing(budget, opts = {}) {
-  const b = budget || {};
-  if (b.totalLimitUsd == null) return renderBudgetStack(b, opts);
-  const { doc = globalThis.document, fmt = DEFAULT_FMT } = opts;
-  const btn = h(doc, 'button', 'spend-ind spend-ring');
-  btn.type = 'button';
-  btn.dataset.nav = 'stats';
-  const ratio = b.windowSpendUsd / b.totalLimitUsd;
-  // Clamped both ways: over-cap spend must not sweep past a full circle, and a
-  // refund must not sweep a negative arc.
-  const pct = b.blocked ? 100 : Math.max(0, Math.min(100, Math.round(ratio * 100)));
-  if (b.blocked) btn.classList.add('over');
-  else if (ratio >= BUDGET_WARN_AT) btn.classList.add('warn');
-  btn.style.setProperty('--ring-pct', String(pct));
-  btn.title = `Estimated spend this ${periodWord(b)}: ${fmt.usd4(b.windowSpendUsd)}` +
-    ` of ${fmt.usd(b.totalLimitUsd)}` +
-    ` · resets ${fmtResetAt(b.windowEndMs)} — Claude Code client-side estimate ` +
-    `(total_cost_usd), not authoritative billing`;
-  btn.appendChild(h(doc, 'span', 'spend-ring-val', `${pct}%`));
-  return btn;
-}
+/** Where "Saved" comes from, appended to the spend card's title when the figure shows. */
+export const SAVED_NOTE = 'Saved = estimated human hours × your rate − spent';
 
 /** Settings budget readout: meter + one summary line. */
 export function renderBudgetReadout(budget, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
@@ -785,7 +619,7 @@ export function renderStatsBody(model, opts = {}) {
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
     const emptyText = model.range === 'all'
-      ? 'No pipelines yet — run one from New pipeline.'
+      ? 'No pipelines yet — run one from New run.'
       : 'No runs in this period.';
     for (const title of ['Spend', 'Runs']) {
       const card = chartCard(doc, `${title} per ${unitWord(model.bucket)}`, rangeLabel);

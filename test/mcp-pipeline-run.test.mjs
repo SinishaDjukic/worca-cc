@@ -126,7 +126,7 @@ test('deviations: from the run policy\'s Team set, persisted even after an earli
   const run1 = [];
   const box = {};
   const slug = set.slug;
-  const failed = `sentry_${slug}: failed to connect (token, URL or command) — run Test in Settings › Sets › ${set.name}`;
+  const failed = `sentry_${slug}: failed to connect (token, URL or command) — run Test in Connectors › ${set.name}`;
   const named = `an MCP tool name is too long for this model — Test the servers in ${set.name} (sentry_${slug})`;
   const orch1 = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, mcpOptOut: [`${set.id}|manual:pg`], runners: runners(run1, {
     pauseFirst: box, init: [{ name: `sentry_${slug}`, status: 'failed' }],
@@ -327,8 +327,8 @@ test('§10: init statuses become one warning per copy and status, kept in run.js
   const m = await readRunManifest(orch.runRoot);
   assert.deepEqual(m.mcpStatus, { sentry_billing: 'failed', pg_billing: 'disabled', jira: 'absent' });
   assert.deepEqual(m.warnings, [
-    'sentry_billing: failed to connect (token, URL or command) — run Test in Settings › Sets › Billing',
-    'pg_billing: failed to connect (token, URL or command) — run Test in Settings › Sets › Billing',
+    'sentry_billing: failed to connect (token, URL or command) — run Test in Connectors › Billing',
+    'pg_billing: failed to connect (token, URL or command) — run Test in Connectors › Billing',
     'pg_billing: disabled by your Claude Code settings (set Billing)',
     'jira: blocked by managed MCP policy (set General)',
   ], 'a repeated (or flapping) sentry failure is not warned twice; pending is not a warning');

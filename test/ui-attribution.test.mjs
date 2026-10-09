@@ -1,10 +1,10 @@
 // test/ui-attribution.test.mjs
 // Attribution in the UI (the server's identity.mjs). People are shown ONLY on a shared
-// deployment (whoami.shared: a real per-person sign-in): "Signed in as" in the rail foot,
+// deployment (whoami.shared: a real per-person sign-in): "Signed in as" in the account menu,
 // an initials circle on sidebar rows (the compact Runs list rows carry no "by", D14),
 // the person chip (full name) in both detail headers, "Paused by …" banners, and a
 // "Started by" filter over the Runs list. A local install or a one-person deployment
-// shows none of it.
+// shows none of it (the account corner names a one-person deployment's operator, no more).
 // Nothing shows for a null or 'local' identity, and every name is painted as text.
 //
 // boot() is a local copy of the jsdom harness in test/ui-running-card.test.mjs and
@@ -69,37 +69,52 @@ const ME = 'me@example.com';
 const SHARED = { name: ME, source: 'access', shared: true };
 const SOLO = { name: 'Solo Operator', source: 'operator', shared: false };
 
-// ── "Signed in as" ─────────────────────────────────────────────────────────────
+// ── The account corner and "Signed in as" ───────────────────────────────────────
 
-test('rail foot: \'Signed in as\' on a shared deployment, fetched once; hidden locally, solo, and on a failed call', async () => {
+const corner = (doc) => {
+  const b = doc.getElementById('side-acct');
+  return { ava: b.querySelector('.acct-ava').textContent, name: b.querySelector('.acct-name').textContent, title: b.title, account: b.dataset.account,
+    card: doc.getElementById('acct-id').hidden, label: b.getAttribute('aria-label') };
+};
+
+test('account corner: who is signed in, fetched once; an operator gets a name but no card; local, an older server and a failed call read Profile', async () => {
   await checkRows([
-    { name: 'rail foot: "Signed in as <name>" on a shared deployment, fetched once at boot', run: async () => {
+    { name: 'shared: initials + the name up to "@" in the corner, the full name in the tooltip and in "Signed in as"; one whoami fetch', run: async () => {
       const { doc, calls } = await boot({ whoami: SHARED });
-      const box = doc.getElementById('side-who');
-      assert.equal(box.hidden, false);
-      assert.equal(box.textContent.replace(/\s+/g, ' ').trim(), `Signed in as ${ME}`);
+      assert.deepEqual(corner(doc), { ava: 'M', name: 'me', title: ME, account: 'shared', card: false,
+        label: `${ME}: spend, away mode, interface mode and settings` });
+      const card = doc.getElementById('acct-id');
+      assert.equal(card.textContent.replace(/\s+/g, ' ').trim(), `Signed in as ${ME} via Cloudflare Access`);
       assert.equal(calls.filter((u) => u.endsWith('/api/whoami')).length, 1);
     } },
-    { name: 'rail foot: hidden locally, for a one-person deployment, on "local", and when the call fails', run: async () => {
+    { name: 'operator-named (one person): initials + the name, no identity card, no people anywhere', run: async () => {
+      const { doc } = await boot({ whoami: SOLO });
+      assert.deepEqual(corner(doc), { ava: 'SO', name: 'Solo Operator', title: 'Solo Operator', account: 'operator', card: true,
+        label: 'Solo Operator: spend, away mode, interface mode and settings' });
+    } },
+    { name: 'local, "local", an older server (no `shared`), a failed call, no answer: "P" and "Profile", no card', run: async () => {
       for (const handler of [
         (u) => (u.endsWith('/api/whoami') ? ok({ name: null, source: 'local', shared: false }) : null),
-        (u) => (u.endsWith('/api/whoami') ? ok(SOLO) : null),
+        (u) => (u.endsWith('/api/whoami') ? ok({ name: 'local', source: 'local', shared: false }) : null),
         (u) => (u.endsWith('/api/whoami') ? ok({ name: 'ada@example.com', source: 'access' }) : null),   // an older server: no `shared`
         (u) => (u.endsWith('/api/whoami') ? fail(500, {}) : null),
         null,
       ]) {
         const { doc } = await boot({ fetchHandler: handler || undefined });
-        assert.equal(doc.getElementById('side-who').hidden, true);
+        assert.deepEqual(corner(doc), { ava: 'P', name: 'Profile', title: 'Profile: spend, away mode, interface mode and settings', account: 'local', card: true,
+          label: 'Profile: spend, away mode, interface mode and settings' });
       }
     } },
   ]);
 });
 
-test('rail foot: a name is painted as text, never markup', async () => {
-  const { doc } = await boot({ whoami: { name: '<img src=x onerror=alert(1)>', source: 'header', shared: true } });
-  const name = doc.querySelector('#side-who .side-who-name');
-  assert.equal(name.textContent, '<img src=x onerror=alert(1)>');
-  assert.equal(name.querySelector('img'), null);
+test('account corner: a name is painted as text, never markup', async () => {
+  const evil = '<img src=x onerror=alert(1)>';
+  const { doc } = await boot({ whoami: { name: evil, source: 'header', shared: true } });
+  assert.equal(doc.querySelector('#side-acct .acct-name').textContent, evil);
+  assert.equal(doc.querySelector('#acct-id .id-name').textContent, evil);
+  assert.equal(doc.querySelector('#acct-id .id-via').textContent, 'via your sign-in proxy');
+  assert.equal(doc.querySelector('#side-acct img, #acct-id img'), null);
 });
 
 // ── The "Started by" filter over the Runs list ───────────────────────────────────

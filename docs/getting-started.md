@@ -100,9 +100,12 @@ it → know the workflows → real work → scale.
 - **Interface mode** (docs/ui-levels.md): a step whose controls live above the
   current mode asks once, before the tour moves anywhere (*Switch to Advanced?*);
   confirming switches and starts the tour. Should the mode drop while a tour
-  runs, the hop becomes the mode switch itself, then the right card in the
-  dialog, then **Done** (pointer mode, above the dialog) so the tour is seen to
-  carry on rather than sit dimmed behind it.
+  runs, the hop becomes the account corner, then the menu's **Interface mode**
+  row, then the right mode in its side menu (pointer mode); choosing it carries
+  the tour on. A switch the server refuses (a failed save) puts the mode back
+  and says why in a toast, and the hop stays on the side menu. With the
+  Interface mode dialog open (Settings › General › **Change…**), the hop rings
+  its card instead, then **Done**.
 
 Layering: the spotlight sits above the Ask dock (z 40) and below every
 `.viewer-modal` (z 50), so a dialog the target opens simply covers it. Targets

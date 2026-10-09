@@ -22,7 +22,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
 
 // `level` (docs/ui-levels.md) is the interface mode a step's controls live in; absent = simple.
 // Every tile shows at every mode — the count stays "n of 9" — but a step above the current mode
-// wears its level, and its guide opens by ringing the mode switch.
+// wears its level, and its guide asks to switch the mode before it starts.
 const LEVEL_ORDER = ['simple', 'advanced', 'expert'];
 const LEVEL_LABEL = { advanced: 'Advanced', expert: 'Expert' };
 
@@ -234,7 +234,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
 /* ------------------------------------------------------------------- pill */
 
 /**
- * The sidebar row under New pipeline: "Getting started · 2/9". It follows the
+ * The sidebar's first row: "Getting started · 2/9". It follows the
  * user to every view (the guides leave the shelf behind) and vanishes once the
  * checklist is hidden or complete — nothing left to nag about.
  * @param {Element} host

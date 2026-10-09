@@ -88,7 +88,7 @@ const UNSUPPORTED_API_RE = /not accessible via the \/(chat\/completions|response
 /** The fix that refusal needs, per provider. */
 export function unsupportedApiFix(provider) {
   return provider === 'copilot'
-    ? 'this model needs a different API: re-import it (Settings › Models › Import models…) or change its API in the model editor'
+    ? 'this model needs a different API: re-import it (Models › Import models…) or change its API in the model editor'
     : 'this model needs a different API: change its API in the model editor';
 }
 
@@ -196,7 +196,7 @@ export const bridgeErrors = {
   unauthorized: () => anthropicError(401, 'authentication_error', 'bridge: invalid bearer token'),
   unknownModel: (id) => anthropicError(404, 'not_found_error', `bridge: no bridged model ${JSON.stringify(id)} in the catalog`),
   notSignedIn: (provider, hint) => anthropicError(401, 'authentication_error', `provider ${provider}: not signed in — ${hint}`),
-  termsNotAcknowledged: (provider) => anthropicError(401, 'authentication_error', `provider ${provider}: terms not acknowledged — open Settings › Providers`),
+  termsNotAcknowledged: (provider) => anthropicError(401, 'authentication_error', `provider ${provider}: terms not acknowledged — open the Providers page`),
   tooLarge: () => anthropicError(400, 'invalid_request_error', PROMPT_TOO_LONG),
   badJson: () => anthropicError(400, 'invalid_request_error', 'bridge: request body is not JSON'),
   unsupported: (message) => anthropicError(400, 'invalid_request_error', message),

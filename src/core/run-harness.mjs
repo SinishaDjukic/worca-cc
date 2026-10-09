@@ -687,7 +687,7 @@ const MCP_NAME_WARNING = MCP_TOOL_NAME_TOO_LONG;
 /** §10: the run warning for a registry copy's `system/init` status; null when it is not a problem. */
 function mcpStatusWarning(name, status, setName) {
   const set = setName ? ` (set ${setName})` : '';
-  if (status === 'failed' || status === 'needs-auth') return `${name}: failed to connect (token, URL or command) — run Test in Settings › Sets${setName ? ` › ${setName}` : ''}`;
+  if (status === 'failed' || status === 'needs-auth') return `${name}: failed to connect (token, URL or command) — run Test ${setName ? `in Connectors › ${setName}` : 'on the Connectors page'}`;
   if (status === 'disabled') return `${name}: disabled by your Claude Code settings${set}`;
   if (status === 'absent') return `${name}: blocked by managed MCP policy${set}`;
   return null;

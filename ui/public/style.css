@@ -23,6 +23,10 @@
   --bg:light-dark(#F1F1EF,#161614);
   --canvas-2:light-dark(#FBFBF9,#1B1B19);
   --panel:light-dark(#FFFFFF,#222220);
+  --side-bg:light-dark(#FAFAFA,#222220);
+  --side-ink:light-dark(#767676,#B4B4AE);
+  --side-sel-ink:light-dark(#171717,#ECECE8);
+  --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
   --field:light-dark(#F6F6F4,#2C2C29);
   --field-focus:light-dark(#FFFFFF,#2E2E2B);
@@ -54,6 +58,7 @@
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
+  --amber-ink-strong:light-dark(#8E550B,#F0B45A);
   /* Script-only families (script-wizard plan S10): the same lightness as the six above, both themes. */
   --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);
   --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
@@ -73,6 +78,9 @@
   --peach-wash:light-dark(#FEF6EC,#2A2219); --peach-line:light-dark(#F1DCBD,#504029);
   /* Ask Worca run card head wash (mockup 2026-09-06): Worca-authored, same hue as the Auto tag. */
   --violet-wash:light-dark(#F6F4FC,#211E2E);
+  /* The top bar search's open pill (the chat-first canvas, 2026-10-09): a coral line and a soft halo. */
+  --search-line:light-dark(rgba(221,107,77,.45),rgba(240,154,124,.45));
+  --search-ring:light-dark(rgba(221,107,77,.24),rgba(240,154,124,.26));
 
   /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
      the literal it replaced, so the light theme did not move. */
@@ -130,82 +138,80 @@ body{
 .app{display:flex;height:100vh;}
 
 /* ---------- Sidebar ---------- */
-/* `width` is inert while .app is a flex row — flex-basis determines the used
-   main size, and that is what actually animates (measured: 298 -> 270.8 ->
-   125.1 -> 76 over 200ms). `width` is listed too so the fallback path animates
-   if the flex context ever changes. It must stay a TRANSITION: the blanket at
-   :905 kills every transition under prefers-reduced-motion, but only four
-   selectors' animations.
-   This comment is deliberately OUTSIDE the braces. The style tests' ruleBody()
-   helpers capture up to the first closing brace, so a comment inside a rule
-   body truncates the capture (the pinned-sidebar pins on this rule are no
-   longer tested). */
+/* Three bands in one column: the logo row (.brand) and the foot (.side-foot) stay put,
+   and #side-scroll between them is the only thing that scrolls — .sidebar itself never
+   does. 254px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
+   `width` is inert while .app is a flex row — flex-basis decides the used main size,
+   and that is what animates. `width` is listed too so the fallback path animates if
+   the flex context ever changes. It must stay a TRANSITION: the reduced-motion blanket
+   kills every transition, but only four selectors' animations.
+   This comment is deliberately OUTSIDE the braces. The style tests' ruleBody() helpers
+   capture up to the first closing brace, so a comment inside a rule body truncates the
+   capture. */
 .sidebar{
-  width:298px;flex:0 0 298px;
-  background:var(--panel);
-  padding:26px 18px 10px;
+  width:254px;flex:0 0 254px;min-height:0;
+  background:var(--side-bg);
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
-  overflow-y:auto;
+  overflow:hidden;
   transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
              width .2s cubic-bezier(.65,.02,.28,1);
 }
-.brand{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;margin-bottom:24px;}
-.brand .logo{display:block;height:34px;aspect-ratio:512/190;background:var(--ink);
+/* The fixed top band: the wordmark and the mock pill (the collapse toggle is in the top bar). Its border is
+   transparent at rest and turns --line while the pages scroll under it (.under-top). */
+.brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 0 20px;
+  border-bottom:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-top .brand{border-bottom-color:var(--line);}
+.brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
   -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+/* The scrolling band. A column flex box so .nav can grow to the band's full height. */
+.side-scroll{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;padding:11px 10px 10px;scrollbar-width:thin;}
 
-.nav{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;}
+.nav{display:flex;flex-direction:column;gap:4px;flex:1 0 auto;}
+/* One even rhythm: every row is 32px tall with a 4px gap (a 36px pitch), and nothing
+   adds a gap of its own. The icon sits in a 20px slot (the 16px glyph + 2px a side),
+   so the label starts 39px in whatever leads the row (an icon, the Getting started check).
+   The CSS stroke-width beats each SVG's stroke-width attribute (a
+   presentation hint), so every glyph draws at 1.6. The label span takes the free
+   width and ellipsizes; counts and chevrons follow it. */
 .nav button{
-  display:flex;align-items:center;gap:13px;width:100%;margin:0;
-  padding:8px 13px;border:0;border-radius:13px;
-  background:transparent;color:var(--ink-2);
-  font-family:inherit;font-size:13px;line-height:inherit;font-weight:500;
-  text-align:left;cursor:pointer;
+  position:relative;display:flex;align-items:center;gap:10px;width:100%;height:32px;margin:0;
+  padding:0 8px 0 9px;border:0;border-radius:8px;
+  background:transparent;color:var(--side-ink);
+  font-family:inherit;font-size:13.5px;line-height:1;font-weight:500;
+  text-align:left;white-space:nowrap;cursor:pointer;
   transition:background .15s,color .15s;
 }
-.nav button svg{width:19px;height:19px;flex:0 0 auto;stroke-width:1.9;}
-.nav button:hover{background:var(--hover);color:var(--ink);}
-.nav button.active{background:var(--ink);color:var(--on-ink);}
-.nav button.active svg{stroke:var(--on-ink);}
+.nav button svg{width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1.6;}
+/* line-height:1.4 keeps g, p and y inside the label's own box: its overflow:hidden (the ellipsis)
+   would clip them at the row's line-height:1. */
+.nav button > span:not(.nav-count){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
+/* Hover is the light field grey; the open page --side-sel-bg with --side-sel-ink — a
+   soft fill, never the old black bar (the rail squares too). */
+.nav button:hover{background:var(--field);color:var(--ink);}
+.nav button.active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* Sentence case, not caps: the markup already ships "Activity"/"Build"/"Manage",
-   so the label is whatever the HTML says. The .11em tracking and the 10.5px size
-   existed to keep ALL-CAPS legible; sentence case needs neither, and at 10.5px a
-   lowercase x-height reads a size smaller than caps did, so the size goes up as
-   the tracking comes down.
-   The padding is deliberately lopsided — 24px above, 5px below. A heading
-   belongs to the items UNDER it, so the big gap has to fall between groups, not
-   between a heading and its own first row. */
-.nav-sect{font-size:11.5px;font-weight:600;letter-spacing:.01em;text-transform:none;
-  color:var(--ink-3);padding:24px 13px 5px;user-select:none;}
-/* Settings is the only row that hangs between two edges — the divider above it
-   and the spend card below — so both gaps are set here and in .side-foot's
-   padding-top, and they must stay equal. 8 + the 2px .nav gap = the 10px the
-   foot pads with. */
-.nav-sep{margin-top:auto;margin-bottom:8px;border-top:1px solid var(--line);}
-/* Primary action: outlined at rest so it doesn't fight the dark current-view
-   fill; border thickness is absorbed into padding to keep row height equal. */
-.nav button.nav-cta{border:1.5px solid var(--ink);color:var(--ink);font-weight:600;
-  padding:6.5px 11.5px;}
-.nav button.nav-cta:hover{background:var(--hover);}
-.nav button.nav-cta.active{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.nav-count{margin-left:auto;min-width:22px;height:22px;padding:0 7px;border-radius:999px;
-  display:grid;place-items:center;font-size:11.5px;font-weight:700;}
-.nav-count.n-amber{background:var(--amber);color:var(--on-status);}
-.nav-count.n-grey{background:var(--field);color:var(--ink-3);}
-/* On the hovered item's grey, the badge turns white so it stays a badge. */
-.nav button:hover:not(.active) .nav-count.n-grey{background:var(--panel);}
-.nav button.active .nav-count{background:var(--on-ink-wash);color:var(--on-ink);}
-/* The Runs live count: green = work in flight. Green is applied by app.js ONLY while
-   the count is >0 — at zero the badge falls back to n-grey, the inert-inventory
-   treatment the Schedules count uses, so a permanently green pill cannot dilute the
-   green that should catch the eye. It keeps its colour on the dark active fill (the
-   generic active rule above would wash it into translucent white). */
-.nav-count.n-run{background:var(--green);color:var(--on-status);}
-/* Schedules' unread-problems badge sits beside its grey count */
+/* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
+   padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
+   rows UNDER it, so the big gap falls between groups. The first group (Runs,
+   Schedules, Statistics, Team metrics) has no label at all. */
+.nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
+  color:var(--ink-3);user-select:none;}
+/* Counts: a plain grey mono number, and the amber "needs you" count is the sidebar's one
+   coloured pill. The grey is --ink-2, not the labels' --ink-3: a count carries information
+   (on the rail too). A zero is hidden with the `hidden` attribute (app.js keeps the element
+   and its number), so no row carries a number that says nothing. `.nav-count.n-grey`
+   clears the .n-grey disc utility's fill AND restates the colour: that utility sits later in
+   the file at the same specificity and would paint --ink-3. The gs-pill count styles itself. */
+.nav-count{flex:none;margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:500;line-height:1;
+  color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.nav-count.n-grey{background:none;color:var(--ink-2);}
+.nav-count.n-amber{display:inline-flex;align-items:center;justify-content:center;min-width:20px;
+  height:18px;padding:0 6px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);}
+/* Schedules' unread-problems pill sits beside its grey count */
 #nav-schedules-unread{margin-left:6px;}
-.nav-count[hidden]{display:none;}   /* author display:grid beats the UA [hidden] rule */
-.nav button.active .nav-count.n-run{background:var(--green);color:var(--on-status);}
+.nav-count[hidden]{display:none;}
 
 /* Parent roll-up "needs you" dot on the phone bar's menu button */
 .nav-rollup {
@@ -214,54 +220,22 @@ body{
   animation: pulse 1.3s ease-in-out infinite;
 }
 
-/* Child pipeline rows nested under Running — tree-connector style (mirrors the
-   sub-agents tree: a vertical spine on the left with a branch into each dot). */
-.nav-children { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 0; }
-.nav-children.hidden, .nav-children.collapsed { display: none; }
-/* Scoped `.nav .nav-child` so these rows outrank the generic `.nav button` rule
-   (padding:11px 13px / gap:13px), which otherwise flattens the left inset and
-   parks the dot on top of the elbow connector. */
-.nav .nav-child {
-  position: relative;
-  display: flex; align-items: center; gap: 9px;
-  padding: 6px 10px 6px 28px; border-radius: 9px;
-  color: var(--ink-2);
-  min-width: 0;
-}
-/* Rounded elbow: vertical run from the top of the row down to the dot center,
-   then curving right toward the dot (stops 7px short of it). */
-.nav-child::before {
-  content: ""; position: absolute;
-  left: 9px; top: -2px;
-  width: 12px; height: calc(50% + 2px);
-  border-left: 1.5px solid var(--line-2);
-  border-bottom: 1.5px solid var(--line-2);
-  border-bottom-left-radius: 7px;
-  pointer-events: none;
-}
-/* Continuation: keeps the spine unbroken between rows (not after the last). */
-.nav-child:not(:last-child)::after {
-  content: ""; position: absolute;
-  left: 9px; top: 50%; bottom: -4px;
-  width: 1.5px; background: var(--line-2);
-  pointer-events: none;
-}
-.nav .nav-child:hover { background: var(--field); color: var(--ink); }
-/* Selected: gentle tint + soft ring, not a heavy dark fill.
-   Scoped under .nav to outrank the global `.nav button.active` dark-fill rule. */
-.nav .nav-child.active { background: var(--field); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
-/* Static group (Nodes › Agents, Scripts). The parent is a disclosure: it never
-   takes the dark current-page fill (`.active` belongs to the child page) and
-   reads as --ink via .has-active while a child is open. The children reuse the
-   Running-row elbow above, but carry an icon where a run row carries a dot;
-   `.nav .nav-child > svg` (0,2,1) out-ranks `.nav button svg` (0,1,2). */
-.nav .nav-group.has-active { color: var(--ink); font-weight: 600; }
-.nav .nav-group-chev { width: 14px; height: 14px; margin-left: auto; color: var(--ink-3); transition: transform .2s; }
-.nav-group[aria-expanded="false"] .nav-group-chev { transform: rotate(-90deg); }
-.nav .nav-child > svg { width: 17px; height: 17px; }
-/* `.nav button.active svg` (0,2,2) paints the stroke --on-ink for the dark fill;
-   a child's fill is the soft --field tint, so its icon stays --ink. */
-.nav .nav-child.active svg { stroke: var(--ink); }
+/* Nodes (Agents, Scripts) open in a side flyout that side-flyout.mjs places, fixed,
+   beside the sidebar. The row takes the open-page fill while a child page is shown
+   (.has-active) and the hover grey while its flyout is open; the chevron points at the
+   flyout. */
+.nav .nav-group.has-active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
+.nav .nav-group[aria-expanded="true"]:not(.has-active){background:var(--field);color:var(--ink);}
+.nav .nav-group-chev{flex:none;width:14px;height:14px;margin:0;color:var(--ink-3);stroke-width:1.8;}
+/* The popup card (the mockup's menu): panel, hairline, 12px corners and the menu shadow,
+   172px wide, its rows the sidebar's own 32px ones 1px apart. It lives inside <nav> for keyboard
+   order, so the rail's rules use `.nav > button` and never reach these rows. z 43: over
+   the phone drawer (42) it opens from, under a running tour's scrim (44+). */
+.nav-fly{position:fixed;z-index:43;display:flex;flex-direction:column;gap:1px;width:172px;padding:5px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-menu);}
+.nav-fly[hidden]{display:none;}
+.nav-fly-k{padding:6px 9px 5px;font-size:10.5px;font-weight:500;line-height:1.2;color:var(--ink-3);}
+.nav .nav-fly button{height:30px;}
 
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;
@@ -269,16 +243,11 @@ body{
 .side-project .sp-select{padding:11px 38px 11px 13px;font-size:13.5px;font-weight:600;border-radius:12px;}
 .nav-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--ink-3);padding:8px 12px 6px;}
-/* The three numbers are one number: the toggle hangs between the spend card and
-   the rail's bottom edge exactly as Settings hangs between the divider and that
-   same card, so padding-top (above Settings), gap (above the toggle) and
-   .sidebar's padding-bottom (below it) all read 10px. */
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-top:10px;}
-/* "Signed in as" (attribution, not an account menu): one quiet line above the spend card. */
-.side-who{padding:0 12px;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.side-who[hidden]{display:none;}
-.side-who-name{color:var(--ink-2);font-weight:600;}
-.sidebar.collapsed .side-who{display:none;}
+/* The fixed bottom band: Running actions and the account corner. It never scrolls; its border turns --line while more pages sit below
+   (.under-bottom). */
+.side-foot{flex:none;display:flex;flex-direction:column;gap:4px;padding:8px 10px 10px;
+  border-top:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-bottom .side-foot{border-top-color:var(--line);}
 .user{display:flex;align-items:center;gap:11px;padding:6px 8px;}
 .user .ava{width:36px;height:36px;border-radius:50%;flex:0 0 auto;
   background:linear-gradient(135deg,var(--ava-a),var(--ava-b));}
@@ -289,7 +258,7 @@ body{
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
 
 /* ---------- Main ---------- */
-.main{flex:1;min-width:0;padding:26px 32px 40px;overflow-y:auto;}
+.main{flex:1;min-width:0;min-height:0;padding:26px 32px 40px;overflow-y:auto;}
 /* Projects becomes a two-screen track: .main stops scrolling and becomes the
    bounded column, the view takes the remainder, and each screen owns its own
    scrollport. Dropping the container's TOP padding is what lets sticky headers
@@ -297,9 +266,125 @@ body{
    topbar (below) so the unscrolled layout is unchanged. (Runs has its own rule.) */
 body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}   /* the Workspaces track: the same bounded column */
-.topbar{display:flex;align-items:flex-start;justify-content:space-between;
+
+/* ---------- Top bar (#topnav) ---------- */
+/* .app is the sidebar and .main-col; the column stacks the 48px bar over .main, which stays
+   the one scroll container (flex:1;min-height:0 above), so the run pages' sticky
+   .rd-bar/.hd-bar still pin to its top. The bar is a three-slot grid: the page name on the
+   left, search in the centre (240-440px), the actions on the right. The side tracks keep a floor:
+   the right one its content (Activity + New run), the left one the 32px collapse toggle. With 0
+   floors the centre grew to 440px first and both sides spilled under the search pill, which then
+   took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
+   HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
+.main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);
+  align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
+.topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
+.topnav-c{display:flex;justify-content:center;min-width:0;}
+.topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
+.topnav-title{min-width:0;margin:0;font-size:14px;font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;
+  border-radius:8px;background:transparent;color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
+.side-toggle svg{width:16px;height:16px;flex:none;}
+.side-toggle:hover{background:var(--field);color:var(--ink);}
+.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.topnav-new{display:inline-flex;align-items:center;gap:7px;flex:none;height:32px;padding:0 14px 0 12px;border:0;
+  border-radius:999px;background:var(--ink);color:var(--on-ink);font:500 13px/1 var(--sans);white-space:nowrap;
+  cursor:pointer;transition:box-shadow .15s;}
+.topnav-new svg{width:14px;height:14px;flex:none;}
+.topnav-new:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.topnav-new:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Activity (#topnav-activity, activity-menu.mjs): an outlined pill with one badge, the amber
+   Needs-you count in the Runs badge's colours, else the running count in blue. Its popover
+   hangs fixed under it (side-flyout.mjs 'down') at the sidebar popups' layer, 43: three tabs,
+   rows that are links (a status dot, the title, the time on the right, a muted line under it),
+   and a footer. */
+.topnav-act{display:inline-flex;align-items:center;gap:7px;flex:none;height:32px;padding:0 12px;border:0;
+  border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink);
+  font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;transition:box-shadow .15s;}
+.topnav-act:has(> .topnav-badge:not([hidden])){padding-right:6px;}
+.topnav-act svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-act:hover{box-shadow:inset 0 0 0 1px var(--hover-outline);}
+.topnav-act[aria-expanded="true"]{box-shadow:inset 0 0 0 1.5px var(--ink);}
+.topnav-act:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.topnav-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;
+  border-radius:999px;background:var(--field);color:var(--ink-2);font:600 11.5px/1 var(--sans);font-variant-numeric:tabular-nums;}
+.topnav-badge[data-tone="need"]{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.topnav-badge[data-tone="run"]{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.topnav-badge[hidden]{display:none;}
+.activity-pop{position:fixed;z-index:43;display:flex;flex-direction:column;width:440px;max-height:min(560px,calc(100vh - 72px));
+  overflow:hidden;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
+.activity-pop[hidden]{display:none;}
+.activity-tabs{flex:none;display:flex;align-items:stretch;gap:18px;height:44px;padding:0 16px;border-bottom:1px solid var(--line);}
+.activity-tab{position:relative;display:inline-flex;align-items:center;gap:6px;padding:0;border:0;background:none;
+  color:var(--ink-3);font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.activity-tab:hover,.activity-tab[aria-selected="true"]{color:var(--ink);}
+.activity-tab[aria-selected="true"]::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:2px;background:var(--ink);}
+.activity-tab:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:6px;}
+.activity-tab-n{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.activity-panel{flex:1 1 auto;min-height:0;overflow-y:auto;padding:6px;}
+.activity-glabel{padding:10px 10px 4px;font-size:11.5px;font-weight:500;line-height:14px;color:var(--ink-3);}
+.activity-row{display:grid;grid-template-columns:8px minmax(0,1fr);align-items:start;column-gap:12px;padding:9px 10px;
+  border-radius:10px;color:var(--ink);text-decoration:none;}
+.activity-row:hover{background:var(--hover);}
+.activity-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.activity-dot{width:8px;height:8px;margin-top:6px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--seq);}
+.activity-dot[data-tone="need"]{background:var(--amber);box-shadow:none;}
+.activity-dot[data-tone="run"]{background:var(--blue);box-shadow:none;}
+.activity-row-main{display:flex;flex-direction:column;min-width:0;}
+.activity-row-top{display:flex;align-items:baseline;gap:8px;min-width:0;}
+.activity-row-title{min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.activity-row-time{flex:none;margin-left:auto;font-size:12px;color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.activity-row-sub{font-size:12px;line-height:17px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.activity-empty{margin:0;padding:18px 10px;font-size:13px;color:var(--ink-2);text-align:center;}
+.activity-foot{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px 8px 16px;
+  border-top:1px solid var(--line);}
+.activity-foot-link{font-size:13px;font-weight:500;color:var(--ink-2);text-decoration:none;}
+.activity-foot-link:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+/* Search or ask (.tsearch, topnav-search.mjs): a 34px pill in the centre slot with its listbox under it,
+   as wide as the pill and 360px at least. Open, the pill wears the coral line and halo (--search-line,
+   --search-ring). Open, the whole search stacks at z 41 (nothing above it makes a stacking context): over
+   the run pages' sticky bars, the terminal pane (39) and the Ask dock (40), whose open sheet would cover
+   the listbox, and under the phone drawer (42), the flyouts (43), a tour (44) and the modals (50 and up).
+   Phones fold the pill into #tsearch-open (the "Responsive nav tiers" block); #tsearch-close lives only there. */
+.tsearch{position:relative;width:100%;min-width:0;}
+.tsearch.is-open{z-index:41;}
+.tsearch-open,.tsearch-close{display:none;}
+.tsearch-field{display:flex;align-items:center;gap:9px;height:34px;padding:0 6px 0 13px;border-radius:999px;
+  background:var(--field);box-shadow:0 0 0 1px var(--line);color:var(--ink-3);cursor:text;transition:box-shadow .15s;}
+.tsearch-field:hover{box-shadow:0 0 0 1px var(--hover-outline);}
+.tsearch.is-open .tsearch-field{background:var(--panel);box-shadow:0 0 0 1px var(--search-line),0 0 0 4px var(--search-ring);color:var(--ink-2);}
+.tsearch-ic{width:16px;height:16px;flex:none;}
+.tsearch-input{flex:1;min-width:0;height:100%;padding:0;border:0;outline:none;background:transparent;color:var(--ink);
+  font:400 13.5px var(--sans);-webkit-appearance:none;appearance:none;}
+.tsearch-input::placeholder{color:var(--ink-2);}
+.tsearch-input::-webkit-search-cancel-button,.tsearch-input::-webkit-search-decoration{-webkit-appearance:none;}
+.tsearch-kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
+  border-radius:6px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink-3);
+  font:500 11px/1 var(--sans);white-space:nowrap;}
+.tsearch-kbd:empty{display:none;}
+.tsearch-pop{position:absolute;z-index:30;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:100%;min-width:360px;
+  max-height:min(480px,calc(100vh - 72px));overflow-y:auto;display:flex;flex-direction:column;padding:6px;
+  border-radius:var(--r-card);background:var(--panel);box-shadow:0 0 0 1px var(--line-2),var(--shadow-pop);}
+.tsearch-pop[hidden]{display:none;}
+.tsearch-group{display:flex;flex-direction:column;}
+.tsearch-label{padding:8px 10px 4px;font-size:11.5px;line-height:14px;font-weight:500;color:var(--ink-3);}
+.tsearch-opt{display:flex;align-items:center;gap:10px;flex:none;min-height:34px;padding:0 10px;border-radius:var(--r-ctrl);
+  color:var(--ink);font-size:13.5px;white-space:nowrap;cursor:pointer;}
+.tsearch-opt.is-active{background:var(--hover);}
+.tsearch-opt .tsearch-ic{color:var(--ink-3);}
+.tsearch-title{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.tsearch-meta{flex:0 1 auto;min-width:0;max-width:55%;margin-left:auto;padding-left:12px;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;color:var(--ink-3);}
+.tsearch-dot{flex:none;width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--seq);}
+.tsearch-dot.tone-need{background:var(--amber);}
+.tsearch-dot.tone-run{background:var(--blue);}
+.tsearch-dot.tone-fail{background:var(--red);}
+.tsearch-none{padding:8px 10px;font-size:13px;color:var(--ink-3);}
+.tsearch-sep{flex:none;height:1px;margin:4px 8px;background:var(--line);}
+.topbar{display:flex;align-items:center;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
-.topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
 .topbar .sub{color:var(--ink-2);font-size:13.5px;}
 .run-state{display:flex;align-items:center;gap:10px;}
 .pill-status{display:inline-flex;align-items:center;gap:8px;background:var(--panel);
@@ -1392,10 +1477,10 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge[hidden]{display:none;}
-/* The server's mock mode, beside the wordmark: .brand spreads its row, so it parks left. */
-.brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;
-  /* Solid chip: --amber-ink on --amber-bg is 3.9:1 in light, below the 4.5:1 text floor. */
-  background:var(--amber-ink);color:var(--on-status);}
+/* The server's mock mode, in the logo row after the wordmark: its margin-right:auto keeps it
+   beside the wordmark (on the rail the row stacks and the pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
+   below the 4.5:1 text floor. */
+.brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);}
 .brand .side-mock-pill[hidden]{display:none;}
 
 /* ---------- Retained-work banner (the saved run's page) ---------- */
@@ -2079,7 +2164,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 
 /* ===== Scripts view (scripts-workbench §5.1) ===== */
 .scripts-host{display:block;}
-.scripts-tools{display:flex;align-items:center;gap:10px;}
+.scripts-tools{display:flex;align-items:center;gap:10px;margin-left:auto;}
 .scripts-tools .script-filter{width:220px;padding:9px 13px;font-size:13px;}
 .script-card{display:flex;align-items:center;gap:14px;}
 .script-card .script-card-main{flex:1;min-width:0;}
@@ -3046,72 +3131,115 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .tm-route-list{list-style:none;padding:0;margin:8px 0 0;} .tm-route-list li.failed{color:var(--red-ink);}
 .tm-route-list .tm-stderr{white-space:pre-wrap;margin:4px 0 0;}
 
-/* ---------- Sidebar "I'm here | I'm away" (app.js#paintSideAway) ---------- */
-/* The same .seg as every other two-way choice, smaller. */
-.seg.side-away{display:flex;width:100%;padding:3px;gap:3px;border-radius:10px;}
-.seg.side-away button{flex:1 1 0;display:flex;align-items:center;justify-content:center;gap:6px;
-  padding:6px 8px;font-size:12px;border-radius:7px;white-space:nowrap;}
-.seg.side-away button svg{width:14px;height:14px;flex:0 0 auto;}
-.seg.side-away button:not(.on) svg{opacity:.7;}
-.seg.side-away button[aria-disabled="true"]{cursor:default;opacity:.6;}
-/* The lit side takes the flat status pair our chips use: green for here, violet for away. */
-.seg.side-away button[data-side="here"].on{background:var(--green-bg);color:var(--green-ink);box-shadow:none;}
-.seg.side-away button[data-side="away"].on{background:var(--violet-bg);color:var(--violet-ink);box-shadow:none;}
-.seg.side-away button.on svg{opacity:1;}
-/* The rail: the two icons stacked, the lit one raised. */
-.sidebar.collapsed .seg.side-away{flex-direction:column;width:auto;}
-.sidebar.collapsed .seg.side-away button{padding:6px;}
-.sidebar.collapsed .side-away-label{display:none;}
-.side-away-note{display:block;padding:6px 4px 0;font-size:11.5px;line-height:1.35;color:var(--ink-3);}
-.sidebar.collapsed .side-away-note{display:none;}
+/* ---------- The account corner and its menu (account-menu.mjs) ---------- */
+/* The corner closes the foot band: the avatar in its spend ring, the name, an up-down glyph.
+   The ring shows only under a total limit (data-spend ok | warn | over) and is never hidden
+   while blocked; the violet dot says "away" (data-presence). On the rail only the avatar,
+   its ring and its dot show. */
+.acct{display:flex;align-items:center;gap:9px;width:100%;height:46px;padding:0 8px 0 4px;border:0;border-radius:10px;
+  background:transparent;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
+.acct:hover,.acct[aria-expanded="true"]{background:var(--field);}
+.acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.acct-ring-wrap{position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;}
+.acct-ring{position:absolute;inset:0;width:38px;height:38px;transform:rotate(-90deg);display:none;}
+.acct[data-spend="ok"] .acct-ring,.acct[data-spend="warn"] .acct-ring,.acct[data-spend="over"] .acct-ring{display:block;}
+.acct-ring circle{fill:none;stroke-width:2.5;}
+.acct-ring .trk{stroke:var(--line-2);}
+.acct-ring .arc{stroke:var(--ink-2);stroke-linecap:round;transition:stroke-dasharray .4s ease;}
+.acct[data-spend="warn"] .acct-ring .arc{stroke:var(--amber);}
+.acct[data-spend="over"] .acct-ring .arc{stroke:var(--red);stroke-linecap:butt;}
+.acct-ava{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;
+  background:var(--line-2);color:var(--ink);font:600 11px/1 var(--sans);letter-spacing:.02em;}
+.acct-dot{position:absolute;right:1px;bottom:1px;width:11px;height:11px;border-radius:50%;
+  background:var(--violet);box-shadow:0 0 0 2px var(--panel);display:none;}
+.acct[data-presence="away"] .acct-dot{display:block;}
+.acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 12px/1.2 var(--sans);color:var(--ink-2);}
+.acct:hover .acct-name,.acct[aria-expanded="true"] .acct-name{color:var(--ink);}
+.acct-updown{width:14px;height:14px;flex:none;fill:none;stroke:var(--ink-3);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.sidebar.collapsed .acct{width:auto;padding:0 2px;}
+.sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown{display:none;}
 
-/* ---------- Sidebar spend indicator ---------- */
-.spend-ind{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:var(--r-ctrl);
-  background:var(--field);padding:10px 12px;cursor:pointer;font-family:inherit;}
-.spend-ind:hover{background:var(--hover-on-field);}
-.spend-ind:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.spend-ind-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
-.spend-ind-label{font-size:12px;font-weight:600;color:var(--ink-2);}
-.spend-ind-amt{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--ink);}
+/* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
+   popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
+   popups' --panel, so it stands off the grey sidebar) whose sections — the spend card, the
+   identity card and each .msect run of rows — sit flat on it, a 1px --line hairline between
+   each shown section and the next; it scrolls on a short window. Small grey text is --ink-2;
+   a row's hover is --hover. */
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:0;}
+.acct-menu > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line);}
+.nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
+.mcard{display:flex;flex-direction:column;padding:12px 15px 13px;}
+.mc-head{display:flex;align-items:center;gap:8px;min-height:26px;margin-bottom:8px;}
+.mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
+.mini-ring circle{fill:none;stroke-width:2.6;}
+.mini-ring .trk{stroke:var(--line-2);}
+.mini-ring .arc{stroke:var(--ink);stroke-linecap:round;}
+.spend-card[data-spend="warn"] .mini-ring .arc{stroke:var(--amber);}
+.spend-card[data-spend="over"] .mini-ring .arc{stroke:var(--red);stroke-linecap:butt;}
+.mc-title{flex:1;min-width:0;font:500 13px/1.2 var(--sans);color:var(--ink);}
+.mc-btn{flex:none;height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);
+  color:var(--ink);font:500 11.5px/1 var(--sans);cursor:pointer;}
+.mc-btn:hover{border-color:var(--ink-3);}
+.mc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mc-btn.solid{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
+.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:5px 12px;}
+.mc-rows dt{font:400 12px/1.3 var(--sans);color:var(--ink-2);}
+.mc-rows dd{margin:0;text-align:right;font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.mc-rows dd.pos{color:var(--green-ink-strong);}
+.mc-rows dd.warn{color:var(--amber-ink);}
+.mc-rows dd.over{color:var(--red-ink);}
+.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink);}
+.mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
+.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px/1.3 var(--sans);color:var(--ink);}
+.id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
+.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:5px;}
+.mi{display:flex;flex:none;align-items:center;gap:9px;width:100%;height:31px;padding:0 10px;border:0;border-radius:8px;background:transparent;
+  color:var(--ink);font:400 12.5px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
+.mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
+.mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mi[aria-current="page"]{font-weight:500;}
+.mi[aria-disabled="true"]{cursor:default;color:var(--ink-2);}
+/* line-height:1.4 keeps g, p and y inside the label: its overflow:hidden (the ellipsis) would
+   clip them at the row's line-height:1 (the .nav label rule does the same). */
+.mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
+.mi-val{flex:none;font:400 12px/1 var(--sans);color:var(--ink-2);}
+.mi-chev{width:14px;height:14px;flex:none;margin-right:-2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi-hint{flex:none;font:400 11px/1 var(--sans);color:var(--ink-2);}
+.away-item[data-state="away"]{background:var(--violet-bg);color:var(--violet-ink);font-weight:500;}
+.away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
+.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line);border-radius:0;}
+.mc-free:hover{background:transparent;}
+.mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}
+.mc-free:hover .mi-lbl{color:var(--ink);}
+.mc-free .mi-val{font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;}
+.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink);}
+.mc-free[data-tone="over"] .mi-val{color:var(--red-ink);}
+.lv-opt{display:grid;grid-template-columns:18px 1fr 16px;gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-2);font-family:inherit;text-align:left;cursor:pointer;}
+.lv-opt:hover{background:var(--field);}
+.lv-opt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.lv-bars{width:12px;height:12px;margin-top:2px;justify-self:center;}
+.lv-bars rect{fill:var(--line-2);}
+.lv-bars rect.on{fill:currentColor;}
+.lv-opt-name{font:500 12.5px/1.3 var(--sans);color:var(--ink);}
+.lv-opt-desc{grid-column:2;font:400 11px/1.35 var(--sans);color:var(--ink-2);}
+.lv-check{grid-row:1;grid-column:3;width:16px;height:16px;margin-top:1px;fill:none;stroke:var(--ink);stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;visibility:hidden;}
+.lv-opt[aria-checked="true"]{color:var(--ink);}
+.lv-opt[aria-checked="true"] .lv-check{visibility:visible;}
+@media (prefers-reduced-motion: reduce){.acct-ring .arc{transition:none;}}
+
+/* The Settings budget readout's meter (renderBudgetReadout: meterEl names the fill "<class>-fill"). */
 .spend-ind-meter{display:block;height:6px;border-radius:999px;background:var(--blue-bg);margin-top:8px;overflow:hidden;}
-/* meterEl() names the fill "<meter-class>-fill", so: spend-ind-meter-fill */
 .spend-ind-meter-fill{display:block;height:100%;border-radius:999px;background:var(--blue-ink);}
-.spend-ind-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:6px;}
-.spend-ind.warn .spend-ind-meter{background:var(--amber-bg);}
-.spend-ind.warn .spend-ind-meter-fill{background:var(--amber-ink);}
-.spend-ind.over .spend-ind-meter{background:var(--red-bg);}
-.spend-ind.over .spend-ind-meter-fill{background:var(--red-ink);}
-.spend-ind.over .spend-ind-sub{color:var(--red-ink);}
-/* No total limit: one line, "Oct   $163 spent   $3,591 saved", on one shared baseline. The
-   month, spent and saved are siblings on ONE flex level spread space-between: the month flush
-   left, saved (or "net") flush right, spent between them with equal gaps — no " · ", the
-   spacing does its job. With no saved figure, spent goes flush right. The month leads in
-   ink. Spent is small, regular and --ink-2 (--ink-3 is 2.58:1 on --field).
-   Saved is a size up and semibold; a gain is green — --green-ink-strong, since --green-ink
-   measures 4.44:1 on this card's hover fill, under verify:theme's 4.5:1. A loss ("−$40 net")
-   keeps neutral ink (--red-ink fails there too); its "−" carries it. The line never wraps:
-   each figure ellipsizes as a safety net (min-width:0 lets it shrink; the month never does).
-   Width budget: the card's content box is 235 px; with the old " · " between the figures,
-   "$99,999 spent · $99,999 saved" fit after "Oct" (11 px spare at May) and "Week" (3 px) —
-   the 10 px minimum gap now stands where the dot was, so the budget is about the same, and
-   "This week" ran 22 px over: a size or gap bump here needs a re-measure. New class names only — the OpenRouter block below
-   reuses .spend-ind-row, -label and -amt, so the amount overrides are scoped to a segment. */
-.spend-ind-line{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0;white-space:nowrap;}
-.spend-ind-period{flex:none;font-size:12px;font-weight:600;color:var(--ink);}
-.spend-ind-spent{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--ink-2);}
-.spend-ind-spent .spend-ind-amt{font-size:11px;font-weight:400;color:var(--ink-2);}
-.spend-ind-saved{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600;color:var(--ink);}
-.spend-ind-saved .spend-ind-amt{font-size:12px;}
-.spend-ind-saved.pos,.spend-ind-saved.pos .spend-ind-amt{color:var(--green-ink-strong);}
-/* OpenRouter free-model requests (openrouter-free-view.mjs): a second block under the spend block. */
-.free-ind{margin-top:8px;}
 
 /* ---------- Settings cards ---------- */
 /* One width/centering/gap rule for every Settings card. */
 .settings-card{max-width:760px;padding:22px;margin-left:auto;margin-right:auto;}
 .settings-card + .settings-card{margin-top:18px;}
 .settings-card[hidden]{display:none;}
-/* Settings › Models: Title generation, Auto workflow model and PR description model side by side
+/* The Models page: Title generation, Auto workflow model and PR description model side by side
    above the catalog, so short cards do not push it a screen down; one column once they would squeeze. */
 
 /* Settings › General › Alerts (alerts.mjs): two switches and the test button, stacked. */
@@ -3953,7 +4081,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-ov-tag{padding:6px 12px;border:1px solid var(--line);border-radius:999px;font-size:11.5px;color:var(--ink-2);}
 
 /* Settings → Memory and the project page's Memory tab (agent-memory-design.md §10).
-   The namespace is `mem-*`: `mv-*` is Settings → Models. */
+   The namespace is `mem-*`: `mv-*` is the Models page. */
 .mem-host{display:grid;grid-template-columns:minmax(260px,1fr) minmax(0,2fr);gap:18px;align-items:start;}
 .mem-host > .mem-health{grid-column:1 / -1;}
 .mem-health-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
@@ -3962,7 +4090,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
 .mem-health-head .mem-defrag{margin-left:auto;}
-/* Settings → Memory: the line pointing at the Defragment model's helper job (Settings › Models › Engines). */
+/* Settings → Memory: the line pointing at the Defragment model's helper job (the Models page › Engines). */
 .mem-model-link{margin:0 0 16px;}
 .mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}
@@ -4280,8 +4408,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .runs-shell{position:relative;height:100%;display:grid;grid-template-columns:clamp(260px,24%,320px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
 .runs-list-pane{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
-.runs-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:22px 14px 10px 20px;}
-.runs-head h1{margin:0;font:700 20px/1.2 var(--sans);letter-spacing:-.01em;}
+.runs-head{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px 6px 20px;}
 .runs-search-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
 .runs-search-btn:hover,.runs-search-btn.on{background:var(--hover);color:var(--ink);}
 .runs-search-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -4373,10 +4500,6 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    one shell shows, and a z-index there would trap the tour's .guide-lift (z 45) under its scrim. */
 .runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell).detail-open{z-index:1;}
 .runs-shell.no-anim > *{transition:none !important;}
-/* One badge on Runs (D11): the amber Needs-you count (.n-amber) replaces the live count while
-   shown, and stays amber on the active (dark) item — the generic active rule would wash it out. */
-#nav-needs-count:not([hidden]) + #nav-running-count{display:none;}
-.nav button.active #nav-needs-count{background:var(--amber);color:var(--on-status);}
 /* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
 .hd-after,.rd-after{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
@@ -5007,69 +5130,42 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .stop-confirm:disabled{opacity:.6;cursor:default;}
 .stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
-/* ---------- Collapsible sidebar: the 76px icon rail ---------- */
-/* No rule here restyles anything the expanded 298px column already had: 21 of
-   them are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
-   `.side-toggle*`, `.spend-ring*`, `.spend-stack*`) style
-   nodes that exist only because of this feature. Below 1080px the rail is
-   forced (tablets) and at 760px the full column becomes the phone drawer;
-   app.js#railCollapsed decides, and the stored preference only applies above
-   1080px.
+/* ---------- Collapsible sidebar: the 60px icon rail ---------- */
+/* No rule here restyles anything the expanded 254px column already had: the rail
+   rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`) styles
+   a node that exists only because of this feature. Below 1080px the rail is forced (tablets) and at 760px
+   the full column becomes the phone drawer; app.js#railCollapsed decides, and the
+   stored preference only applies above 1080px.
    HOUSE RULE for this whole block: no comment inside a rule body, and no
    closing brace in any comment — ruleBody() stops its capture at the first one
    and both would break the tests. */
-.brand .logo-mark{display:none;width:32px;height:32px;border-radius:50%;background:var(--ink);
+.brand .logo-mark{display:none;width:26px;height:26px;border-radius:50%;background:var(--ink);
   -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
   mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-/* The toggle ends the wordmark row: the mock pill's margin-right:auto (or the
-   row's space-between) parks it at the right edge. The round mark inside it
-   shows only on the rail, where mark + chevron are one target. */
-.side-toggle{display:flex;align-items:center;justify-content:center;
-  width:30px;height:30px;flex:0 0 auto;padding:0;border:0;border-radius:9px;
-  background:transparent;color:var(--ink-2);cursor:pointer;
-  transition:background .15s,color .15s;}
-.side-toggle svg{width:20px;height:20px;flex:0 0 auto;}
-.side-toggle:hover{background:var(--hover);color:var(--ink);}
-.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.brand .side-toggle-mark{display:none;}
 
-/* 76 - 1px border-right - 36px padding = a 39px content box. But
-   ::-webkit-scrollbar (:898) makes the vertical gutter SPACE-CONSUMING, and the
-   rail's own scroll height is ~967px with four runs — on a 900px window that
-   gutter takes another 10px and shoves the icon column 5px off centre. Suppress
-   it here only; the rail still scrolls by wheel and keyboard, and the base
-   overflow-y is deliberately NOT restated (a test asserts it isn't). */
-.sidebar.collapsed{width:76px;flex:0 0 76px;padding:26px 18px 10px;
-  scrollbar-width:none;}
-.sidebar.collapsed::-webkit-scrollbar{width:0;height:0;}
-/* The nav must not jump when the rail collapses: the first tile sits at
-   26 + 34 + 24 = 84px expanded (sidebar padding-top + wordmark + .brand
-   margin-bottom), so the rail keeps the same 26px top padding above and makes
-   up the difference below. 26, not 24, because the round mark is 32px tall
-   against the wordmark's 34 — the gap absorbs the 2px so the sum still lands
-   on 84. */
-.sidebar.collapsed .brand{flex-direction:column;gap:6px;margin-bottom:26px;padding:0;}
+/* 60 - 1px border-right = 59px, and #side-scroll pads 10px a side: a 39px content box
+   for the 40px squares. ::-webkit-scrollbar makes the vertical gutter SPACE-CONSUMING
+   and would shove the squares off centre, so the rail's scroll band hides it; the band
+   still scrolls by wheel and keyboard. */
+.sidebar.collapsed{width:60px;flex:0 0 60px;}
+.sidebar.collapsed .side-scroll{scrollbar-width:none;}
+.sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
+/* The logo row stacks: the round mark on top, the mock pill under it. */
+.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:6px;padding:16px 0 10px;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
-.sidebar.collapsed .brand > .logo-mark{display:none;}
 .sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;letter-spacing:.02em;}
-/* On the rail the toggle IS the mark: the 32px mark plus a 14px ">" in the
-   empty padding to its right, one button. The negative margins take the 3px
-   hover pad and the chevron out of layout, so the mark sits exactly where the
-   bare mark did (centred, 26 + 32 + 26 = 84 to the first tile) and the rail
-   stays 76px wide: the chevron lands in the right padding, before the border. */
-.sidebar.collapsed .side-toggle{width:auto;height:auto;gap:1px;padding:3px;
-  margin:-3px -18px -3px -3px;border-radius:12px;order:-1;}
-.sidebar.collapsed .side-toggle .side-toggle-mark{display:block;}
-.sidebar.collapsed .side-toggle svg{width:14px;height:14px;stroke-width:2.6;}
 
-/* (0,3,1): out-ranks `.nav button` (0,1,1), `.nav button:hover` (0,2,1) and
-   `.nav button.nav-cta` (0,2,1). `flex:0 0 auto` is NOT decoration: .nav is a
-   column flex container whose items default to shrinkable, and these boxes are
-   fixed-size by design. */
-.sidebar.collapsed .nav{align-items:center;gap:6px;}
-.sidebar.collapsed .nav button{position:relative;flex:0 0 auto;
-  width:40px;height:40px;padding:0;gap:0;justify-content:center;border-radius:12px;}
+/* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
+   the open page keep the column's greys. Child combinators only (`.nav > button`, and
+   the Getting started pill one level down in its host), so the rows of a flyout inside
+   <nav> keep their full-row look. (0,3,1) out-ranks `.nav button` (0,1,1) and
+   `.nav button:hover` (0,2,1). `flex:0 0 auto` is NOT
+   decoration: .nav is a column flex container whose items default to shrinkable, and
+   these boxes are fixed-size by design. */
+.sidebar.collapsed .nav{align-items:center;gap:3px;}
+.sidebar.collapsed .nav > button,.sidebar.collapsed .gs-pill-host > button{flex:0 0 auto;width:40px;height:34px;padding:0;gap:0;justify-content:center;}
+.sidebar.collapsed .nav .gs-pill .gs-pill-count{display:none;}
 /* NOT display:none. This span is the ONLY source of an accessible name for
    every nav button — index.html carries no aria-label on any of the 12 and the
    SVGs carry no title element — and display:none removes it from the
@@ -5080,146 +5176,61 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    deprecated and its successor is what modern engines honour. position:absolute
    takes it out of flow, so the 40px square still centres its glyph, and the
    button above is position:relative. The Runs badges carry .nav-count, so the
-   :not() guards keep this off them; the child combinator keeps it to the label. */
-.sidebar.collapsed .nav button > span:not(.nav-count):not(.nav-rollup){
+   :not() guards keep this off them; the child combinators keep it to the label of a
+   row of the rail (never a row of a flyout inside <nav>). */
+.sidebar.collapsed .nav > button > span:not(.nav-count):not(.nav-rollup),
+.sidebar.collapsed .gs-pill-host > button > span:not(.nav-count){
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
-/* New pipeline is the one filled control on the rail; outlined-at-rest only
-   makes sense next to labels. These are (0,4,1) and (0,5,1), so they outrank
-   `.nav button:hover` (:100, 0,2,1), `.nav button.nav-cta` (:109, 0,2,1),
-   `.nav button.nav-cta:hover` (:111, 0,3,1) and `.nav button.nav-cta.active`
-   (:112, 0,3,1). Without its own hover the rail's only filled control is
-   hover-dead: the (0,4,1) fill would beat the (0,3,1) hover and nothing would
-   change. brightness() keeps the mock's darker-on-hover intent inside the
-   palette, and matches ten existing hover rules in this file. */
-.sidebar.collapsed .nav button.nav-cta{background:var(--ink);color:var(--on-ink);}
-.sidebar.collapsed .nav button.nav-cta svg{stroke:var(--on-ink);}
-.sidebar.collapsed .nav button.nav-cta:hover{filter:brightness(.55);}
 
-/* Section headers keep their text node; font-size:0 hides it (the ui-nav-sections
-   test that read the rail's source order through it is gone). (They are not
-   exposed as named a11y nodes in either state, so that is NOT the reason.) 26px
-   hairline, per the mock. */
-.sidebar.collapsed .nav-sect{width:26px;height:1px;margin:10px auto;padding:0;
-  font-size:0;letter-spacing:0;background:var(--line);overflow:hidden;}
+/* Section labels keep their text node; font-size:0 hides it. (They are not exposed as
+   named a11y nodes in either state, so that is NOT the reason.) What is left is a 1px
+   hairline across the 39px box, 6px in from each side, per the mockup. */
+.sidebar.collapsed .nav-sect{align-self:stretch;height:1px;margin:10px 6px;padding:0;font-size:0;
+  letter-spacing:0;background:var(--line);overflow:hidden;}
 
-.sidebar.collapsed .nav-count{position:absolute;top:-2px;right:-2px;margin:0;
-  min-width:17px;height:17px;padding:0 4px;font-size:10px;
-  border:2px solid var(--panel);}
-/* A grey zero pinned to a 40px square is noise. The Runs item shows one badge in the
-   corner either way (the Needs-you count hides the live one, #nav-needs-count's rule),
-   and updateNavCounts puts both numbers in the button's title AND aria-label. */
-.sidebar.collapsed .nav-count.n-grey{display:none;}
+/* On the rail a count rides the square's top-right corner, small. A zero is already
+   hidden; Runs shows one badge either way (updateNavCounts hides the live count behind
+   the Needs-you pill and writes both numbers into the button's title and aria-label),
+   and the Schedules grey number steps aside while its unread pill shows. */
+.sidebar.collapsed .nav-count{position:absolute;top:3px;right:2px;margin:0;font-size:9.5px;}
+.sidebar.collapsed .nav-count.n-amber{min-width:15px;height:15px;padding:0 4px;}
+.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden])){display:none;}
 
-/* The rail reproduces the expanded 10px on all four edges around Settings and
-   the toggle. padding-top is 9, not 10, because the foot's own 1px border-top
-   is what the tile is measured from — the two together are the 10. The nav-sep
-   override does the same arithmetic against the 6px collapsed .nav gap. */
-.sidebar.collapsed .nav-sep{width:26px;margin-top:auto;margin-bottom:4px;}
-.sidebar.collapsed .side-foot{align-items:center;gap:10px;
-  padding-top:9px;border-top:1px solid var(--line);}
+/* The rail's foot centres its tiles (Running actions, the account avatar) inside a 4px
+   side padding (51px wide). */
+.sidebar.collapsed .side-foot{align-items:center;padding:8px 4px 10px;}
 
-.sidebar.collapsed .nav-children{align-items:center;gap:5px;margin-top:5px;}
-/* Nodes on the rail: no room for a parent row, so it goes and its two children
-   stand as ordinary 40px squares — the rail reads exactly as it did before the
-   group existed. The children must show even while the group is folded, so the
-   (0,3,0) rule out-ranks `.nav-children.collapsed` (0,2,0). The elbow has
-   nothing to hang from here, and an open child takes the same dark fill as
-   every other current-page square (beats `.nav .nav-child.active` on class
-   count). */
-.sidebar.collapsed .nav-group{display:none;}
-.sidebar.collapsed .nav-group-children.collapsed{display:flex;}
-.sidebar.collapsed .nav-child::before,.sidebar.collapsed .nav-child::after{content:none;}
-.sidebar.collapsed .nav .nav-child > svg{width:19px;height:19px;}
-.sidebar.collapsed .nav .nav-child.active{background:var(--ink);color:var(--on-ink);box-shadow:none;}
-.sidebar.collapsed .nav .nav-child.active svg{stroke:var(--on-ink);}
-/* ---- rail budget ring ---- */
-/* `.spend-ring` (0,1,0) ties `.spend-ind` (:1607-1608, 0,1,0) and wins the tie
-   on source order, which is what lets it override display / width / text-align /
-   border / border-radius / background / padding. The band rules at :1618-1622
-   are `.spend-ind.warn .spend-ind-meter` and friends — they style DESCENDANTS
-   the ring does not have, so they cannot reach it. `.spend-ind:focus-visible`
-   (:1610) is already identical to what a `.spend-ring:focus-visible` would say,
-   so no such rule is written. `:hover` is the one case order cannot fix. */
-.spend-ring{--ring-pct:0;--ring-fill:var(--blue-ink);--ring-track:var(--blue-bg);
-  display:flex;align-items:center;justify-content:center;text-align:center;
-  width:38px;height:38px;padding:0;border:0;border-radius:50%;cursor:pointer;
-  background:conic-gradient(var(--ring-fill) 0% calc(var(--ring-pct) * 1%),
-                            var(--ring-track) 0%);}
-/* `.spend-ind:hover` (:1609, background:var(--line)) is (0,2,0) and
-   OUT-SPECIFIES a bare `.spend-ring` (0,1,0) — measured in Chrome: hovering set
-   background-image to `none` and the disc to a flat neutral fill, destroying the
-   arc. Specificity is decided before source order, so the gradient has to be
-   restated at (0,2,0). brightness() supplies the hover feedback the flat fill
-   used to. */
-.spend-ring:hover{background:conic-gradient(var(--ring-fill) 0% calc(var(--ring-pct) * 1%),
-                                            var(--ring-track) 0%);
-  filter:brightness(.96);}
-.spend-ring.warn{--ring-fill:var(--amber-ink);--ring-track:var(--amber-bg);}
-.spend-ring.over{--ring-fill:var(--red-ink);--ring-track:var(--red-bg);}
-.spend-ring-val{display:flex;align-items:center;justify-content:center;
-  width:29px;height:29px;border-radius:50%;background:var(--panel);
-  font-family:var(--mono);font-size:9.5px;color:var(--ink-2);}
-
-/* ---- rail spend stack (no total limit) ---- */
-/* No total limit means no denominator, so the rail drops the ring for two stacked
-   figures: a caps label over a compact mono amount, Spent then Saved.
-   `.spend-stack` ties `.spend-ind` at (0,1,0) and wins the tie on source order, which
-   is what lets it override display / width / padding / border-radius and keep the
-   card's border, --field fill and pointer. 40px is the width of every rail square
-   (nav buttons, the toggle), so it overhangs the 39px content box by the same half
-   pixel they do and nothing clips; border-box leaves 38px inside, and the widest
-   amount railUsd() emits ("−$8.8k", six glyphs at 10px mono) is 36px.
-   `.spend-ind:hover` recolours the background only, which is the hover this wants.
-   A non-negative Saved pair is --green-ink-strong, as in the expanded card; Spent and a
-   loss stay --ink (--red-ink is 4.07:1 on that hover fill, under verify:theme's 4.5:1). */
-.spend-stack{display:flex;flex-direction:column;align-items:center;
-  width:40px;padding:7px 0;border-radius:12px;text-align:center;}
-.spend-stack-pair{display:flex;flex-direction:column;align-items:center;gap:1px;}
-.spend-stack-pair + .spend-stack-pair::before{content:"";width:22px;height:1px;
-  margin:5px 0;background:var(--line-2);}
-.spend-stack-lbl{font-family:var(--sans);font-size:9px;font-weight:600;line-height:1.1;
-  letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);}
-.spend-stack-val{font-family:var(--mono);font-size:10px;font-weight:600;line-height:1.2;
-  white-space:nowrap;color:var(--ink);}
-.spend-stack-pair.pos .spend-stack-lbl,.spend-stack-pair.pos .spend-stack-val{color:var(--green-ink-strong);}
+/* Nodes on the rail: one square (no chevron) that opens the same flyout to the right. */
+.sidebar.collapsed .nav-group-chev{display:none;}
 
 /* ---------- Responsive nav tiers ---------- */
 /* Three tiers, one sidebar. Above 1080px nothing here applies. 761-1080px
-   (tablets) app.js#railCollapsed forces the 76px rail above, so the only rule
+   (tablets) app.js#railCollapsed forces the 60px rail above, so the only rule
    left is hiding the toggle that could not change anything. At 760px and below
-   the phone bar (#mbar) appears and the aside turns into an off-canvas drawer:
+   the top bar's hamburger (#mbar-menu) takes the toggle's place, New run keeps
+   only its icon, and the aside turns into an off-canvas drawer:
    fixed, translated out, visibility:hidden so nothing in it is focusable until
    body.nav-open slides it in. visibility waits for the slide out (0s delay .22s)
    and flips at once on the way in. Layers: the Ask dock at z 40, .nav-scrim 41, the
    drawer 42, the guide scrim 44-47 (a tour lifts .sidebar to 45), .viewer-modal
    50 so the interface-mode dialog opens over the drawer. These overrides of
-   .app, .main and .sidebar must stay BELOW their base rules: ruleBody() in the
+   .sidebar and the top bar must stay BELOW their base rules: ruleBody() in the
    CSS tests reads the first occurrence of a selector, media blocks included.
    HOUSE RULE, as in the rail block: no comment inside a rule body and no closing
    brace in a comment. */
-.mbar,.nav-scrim,.side-close{display:none;}
+.mbar-menu,.nav-scrim,.side-close{display:none;}
 @media (max-width:1080px){
-  .sidebar .side-toggle{display:none;}
-  .sidebar.collapsed .brand > .logo-mark{display:block;}
+  .side-toggle{display:none;}
 }
 @media (max-width:760px){
-  .app{flex-direction:column;}
-  .main{flex:1 1 auto;min-height:0;}
-  .mbar{display:flex;align-items:center;gap:10px;flex:0 0 auto;height:52px;padding:0 10px;
-    background:var(--panel);border-bottom:1px solid var(--line);}
   .mbar-menu{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
     width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--ink);cursor:pointer;}
   .mbar-menu svg{width:22px;height:22px;}
   .mbar-menu:hover{background:var(--hover);}
   .mbar-menu:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
   .mbar-menu .nav-rollup{position:absolute;top:6px;right:6px;margin:0;border:2px solid var(--panel);}
-  .mbar-mark{width:26px;height:26px;flex:0 0 auto;background:var(--ink);
-    -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-    mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-  .mbar-title{min-width:0;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--ink);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(298px,86vw);
+  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(254px,86vw);
     box-shadow:var(--shadow-sheet);transform:translateX(-100%);visibility:hidden;
     transition:transform .22s cubic-bezier(.65,.02,.28,1),visibility 0s linear .22s;}
   body.nav-open .sidebar{transform:none;visibility:visible;
@@ -5231,20 +5242,42 @@ button.rd-srow:hover{background:var(--hover-on-field);}
   .side-close svg{width:20px;height:20px;}
   .side-close:hover{background:var(--hover);}
   .side-close:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .topnav{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;}
+  .topnav-new{width:32px;padding:0;justify-content:center;}
+  .topnav-new-label{display:none;}
+  .topnav-act{min-width:32px;padding:0 8px;gap:5px;justify-content:center;}
+  .topnav-act-label{display:none;}
+  .activity-pop{width:calc(100vw - 16px);}
+  .tsearch{width:auto;}
+  .tsearch-field{display:none;}
+  .tsearch-open{display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;
+    border-radius:999px;background:transparent;color:var(--ink-2);cursor:pointer;}
+  .tsearch-open svg{width:18px;height:18px;}
+  .tsearch-open:hover{background:var(--hover);color:var(--ink);}
+  .tsearch-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .tsearch.is-open::before{content:"";position:fixed;top:0;left:0;right:0;z-index:30;height:48px;background:var(--panel);}
+  .tsearch.is-open .tsearch-field{display:flex;position:fixed;top:7px;left:8px;right:8px;z-index:31;}
+  .tsearch.is-open .tsearch-open{visibility:hidden;}
+  .tsearch.is-open .tsearch-kbd{display:none;}
+  .tsearch.is-open .tsearch-close{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;
+    border:0;border-radius:999px;background:transparent;color:var(--ink-2);cursor:pointer;}
+  .tsearch-close svg{width:16px;height:16px;}
+  .tsearch-close:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .tsearch-pop{position:fixed;top:56px;left:8px;right:8px;width:auto;min-width:0;transform:none;max-height:calc(100vh - 72px);}
 }
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
 /* Fixed full-height dock over the content column; children restore pointer
    events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
    and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
-   reusable. Left offsets track the rail: 298px expanded, 76px collapsed
+   reusable. Left offsets track the rail: 254px expanded, 60px collapsed
    (.sidebar / .sidebar.collapsed own those widths). */
-.ask-dock{position:fixed;top:0;bottom:0;right:0;left:298px;z-index:40;pointer-events:none;
+.ask-dock{position:fixed;top:0;bottom:0;right:0;left:254px;z-index:40;pointer-events:none;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
   padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
-body.rail-collapsed .ask-dock{left:76px;}
+body.rail-collapsed .ask-dock{left:60px;}
 /* On phones the sidebar is an off-canvas drawer (Responsive nav tiers) while
-   .collapsed may still be present — restate the higher-specificity selector or left:76px wins. */
+   .collapsed may still be present — restate the higher-specificity selector or left:60px wins. */
 @media (max-width:760px){
   .ask-dock,body.rail-collapsed .ask-dock{left:0;}
 }
@@ -5354,7 +5387,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   opacity:0;pointer-events:none;transform:translate(4px,50%);
   transition:opacity .12s ease-out,transform .12s ease-out;}
 .ask-tip.is-shown{opacity:1;transform:translate(0,50%);}
-.ask-tip .ask-kbd{background:var(--panel);color:var(--ink);}
 @media (hover:none){.ask-tip{display:none;}}
 @media (max-width:760px){
   .ask-pill{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));}
@@ -5383,8 +5415,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-pill.is-live .ask-pill-mark>.ask-pill-logo{opacity:0;transform:scale(.35);
   transition-duration:.52s;transition-timing-function:cubic-bezier(.4,0,.7,.2);}
 .ask-pill.is-live .ask-pill-mark>.ask-orb{opacity:1;transition-duration:.52s;transition-timing-function:cubic-bezier(.2,.7,.3,1);}
-.ask-kbd{padding:3px 7px;border-radius:7px;background:var(--field);color:var(--ink-3);
-  font-family:var(--mono);font-weight:400;font-size:10.5px;}
 
 /* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
    transcript column and the composer box share --ask-col-max and centre under it,
@@ -6416,20 +6446,25 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
   animation:gs-draw var(--t,.6s) cubic-bezier(.45,0,.3,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
 @keyframes gs-draw{to{stroke-dashoffset:0;}}
 
-/* Sidebar pill under New pipeline: mounted by app.js (not in the shell — the 10-button
-   nav census stays), styled by .nav button; the count wears the accent. */
+/* Sidebar pill under New pipeline: mounted by app.js right after that row (not in the
+   shell — the nav census stays), styled by .nav button at the same 32px rhythm; the
+   count wears the accent. */
 .gs-pill-host[hidden]{display:none;}
-/* The pill wears the guide's own violet and its halo, so it reads as "the tour is
-   here" from any view — the one animated thing in the rail. */
-.nav button.gs-pill{font-weight:600;color:var(--violet-ink);border:1.5px solid var(--violet);padding:6.5px 11.5px;
+/* The pill wears the guide's own violet as a full outline, and its halo, so it reads as
+   "the tour is here" from any view — the one animated thing in the sidebar. The 1.5px
+   border comes out of the padding, so its icon and label sit where every row's do. */
+.nav button.gs-pill{font-weight:500;color:var(--violet-ink);border:1.5px solid var(--violet);padding:0 6.5px 0 7.5px;
   animation:gs-pill-glow 2.4s ease-out infinite;}
 .nav button.gs-pill:hover{background:var(--violet-bg);color:var(--violet-ink);}
 .nav button.gs-pill.active{background:var(--violet-bg);border-color:var(--violet);color:var(--violet-ink);animation:none;}
 .nav button.gs-pill.active svg{stroke:var(--violet-ink);}
 .nav button.gs-pill.active .gs-pill-count{background:var(--panel);color:var(--violet-ink);}
 .nav button.gs-pill svg{stroke:var(--violet-ink);}
-/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate). */
-.nav button.gs-pill .gs-pill-count{background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
+/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate).
+   A pill of its own: the sidebar's other counts are bare numbers. */
+.nav button.gs-pill .gs-pill-count{display:inline-flex;align-items:center;justify-content:center;flex:none;
+  height:18px;padding:0 6px;border-radius:999px;
+  background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
 @keyframes gs-pill-glow{
   0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 50%,transparent);}
   70%{box-shadow:0 0 0 9px color-mix(in srgb,var(--violet) 0%,transparent);}
@@ -6744,17 +6779,9 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 :root[data-level="expert"] [data-max-level="simple"],
 :root[data-level="expert"] [data-max-level="advanced"]{display:none !important;}
 
-/* The icon: a stack of layers, unlit ones ghosted. currentColor, so hover, the
-   dark active fill and both themes come for free. */
-/* An <i>, not a <span>: the collapsed rail visually hides every direct span child of a nav button
-   (the labels), and this icon is the one thing that must survive there. */
-.lv-icon-slot{display:inline-grid;place-items:center;flex:0 0 auto;font-style:normal;}
-.nav button.nav-mode .lv-icon{width:19px;height:19px;}
+/* The icon (the Settings card, the dialog's cards): a stack of layers, unlit ones ghosted. */
 .lv-icon .lv-off{opacity:.26;}
 .lv-icon path{transition:opacity .2s;}
-
-/* Sidebar item: a plain `.nav button`. It is an action, never the current view. */
-.nav button.nav-mode .lv-icon-slot{width:19px;height:19px;}
 
 /* Level pill (banner, hidden-settings note). Colour is semantic to the level. */
 .lv-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;
@@ -7932,7 +7959,7 @@ input.gv-name:focus-visible{outline:none;}
 /* History meta segment (board 10) */
 .hd-policy.st-info{color:var(--blue-ink);}
 /* Plugins page strip + checklist (boards 10, 11) */
-/* Settings › Plugins: what the team policy asks for, as one panel of compact rows (it scales to
+/* Marketplace: what the team policy asks for, as one panel of compact rows (it scales to
    however many plugins a policy names) with the mass action in the head. */
 .pl-required-card{margin:18px 0 14px;}
 .pl-required-card .card-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;margin-bottom:6px;}
@@ -7984,9 +8011,9 @@ input.gv-name:focus-visible{outline:none;}
 /* Team metrics: an actor may be a full email (attribution) — clip it to the column, full name in the tooltip. */
 .tm-person{display:inline-block;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;}
 
-/* Settings › MCP servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
+/* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
    switches and buttons are the shared ones. */
-.settings-pane[data-tab="mcp"] .topbar{flex-wrap:wrap;}
+[data-view="connectors"] .topbar{flex-wrap:wrap;}
 .mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
 .mcp-setlist{padding:8px;display:flex;flex-direction:column;gap:2px;}
 .mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:12px;background:none;font:inherit;color:inherit;cursor:pointer;}
@@ -8001,7 +8028,7 @@ input.gv-name:focus-visible{outline:none;}
 .mcp-x{border:0;background:none;cursor:pointer;color:var(--ink-3);font:inherit;padding:0 2px;}
 .mcp-member{padding:14px 16px;margin-top:10px;}
 .mcp-member .pl-enable{margin-left:0;}
-.settings-pane[data-tab="mcp"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
+[data-view="connectors"] .mono,.mcp-def .mono,.mcp-fields .mono{font-family:var(--mono);}
 .mcp-fld{display:grid;grid-template-columns:150px minmax(0,1fr);align-items:center;gap:12px;margin-top:8px;}
 .mcp-secret{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .mcp-state{margin-top:10px;}
@@ -8015,7 +8042,7 @@ input.gv-name:focus-visible{outline:none;}
 .mcp-resolution,.mcp-proj-sets{margin-bottom:14px;}
 @media (max-width:760px){.mcp-sets{grid-template-columns:1fr;}}
 
-/* Settings › Sets: skills (mcp-view.mjs, skill-import.mjs; docs/skills.md). Layout only: cards, chips, badges,
+/* Connectors › Skills (mcp-view.mjs, skill-import.mjs; docs/skills.md). Layout only: cards, chips, badges,
    switches and buttons are the shared ones, and every colour is a theme token, so light and dark both hold. */
 .sk-row{padding:14px 18px;}
 .sk-member{padding:14px 16px;margin-top:10px;}
@@ -8145,19 +8172,33 @@ input.gv-name:focus-visible{outline:none;}
 .act-notice.err{background:var(--red-bg);color:var(--ink);border-radius:var(--r-ctrl);padding:10px 14px}
 .act-notice.ok{color:var(--green-ink)}
 .act-page-link{color:var(--blue-ink-strong);text-decoration:underline;text-underline-offset:2px;white-space:nowrap;}   /* a page an Actions message names (appendWithPageLinks) */
-/* spacing comes from .side-foot's gap:10px; no margin */
-#side-actions{border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);padding:10px 12px}
+/* Running actions in the sidebar foot (issue #529), compact: one 26px row per running service —
+   a green dot, "<run title> · <label :port>" cut with an ellipsis, a square Stop. No card and no
+   header; the uptime is the row's title. Spacing comes from .side-foot's gap; no margin. */
 #side-actions[hidden]{display:none}
-.act-running{display:grid;gap:6px}
-.act-running .pdot{width:7px;height:7px;border-radius:50%;background:var(--green)}
-.act-running-heading{font-weight:600;color:var(--ink)}
-.act-running-count{color:var(--ink-2)}
-.act-running-title{background:none;border:none;padding:0;font:inherit;color:var(--ink);cursor:pointer;text-align:left}
-span.act-running-title{cursor:default}
-.act-running-row .act-label,.act-running-row .act-uptime{color:var(--ink-2)}
-/* A collapsed rail keeps only the dot and the count. */
-.sidebar.collapsed #side-actions{padding:8px 6px}
-.sidebar.collapsed #side-actions .act-running-heading,.sidebar.collapsed #side-actions .act-running-row{display:none}
+.act-rows{display:flex;flex-direction:column;gap:1px}
+.side-actions-rows .act-rows{max-height:107px;overflow-y:auto;scrollbar-width:thin}
+.act-srow{display:flex;flex:none;align-items:center;gap:8px;height:26px;padding:0 2px 0 9px;border-radius:8px;font-size:12px;color:var(--ink-2)}
+.act-srow:hover{background:var(--field);color:var(--ink)}
+.act-srow .pdot,.act-tile .pdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--green)}
+.act-srow-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+button.act-srow-name{cursor:pointer}
+.act-stop{display:grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--ink-2);cursor:pointer}
+.act-stop:hover{background:var(--red-bg);color:var(--red-ink)}
+.act-stop:focus-visible,.act-srow-name:focus-visible,.act-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Inside a row the ring is drawn inside the control: the rows' scroll box (and the flyout card's)
+   would clip a ring drawn outside it. */
+.act-srow .act-stop:focus-visible,.act-srow .act-srow-name:focus-visible{outline-offset:-2px}
+/* The rail keeps one 40x34 tile — a green dot and the count — that opens the same rows, Stop
+   included, in a side flyout (side-flyout.mjs; the card is .nav-fly), so a running service stays
+   stoppable on the rail too. */
+.act-tile{display:none}
+.sidebar.collapsed .side-actions-rows{display:none}
+.sidebar.collapsed .act-tile{display:flex;align-items:center;justify-content:center;gap:5px;width:40px;height:34px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;cursor:pointer}
+.sidebar.collapsed .act-tile:hover,.sidebar.collapsed .act-tile[aria-expanded="true"]{background:var(--field);color:var(--ink)}
+/* The card never runs past the window (placeFlyout keeps it 8px inside every edge); its rows scroll. */
+.act-fly{width:236px;max-height:calc(100vh - 16px);overflow-y:auto}
 .act-pill{border:none;font:inherit;cursor:pointer}
 .act-pill-slot:empty{display:none}
 .hist-actions-badges{display:inline-flex;gap:6px}

@@ -26,7 +26,7 @@ Worca never uses the browser's own Web Speech API (Chrome sends that audio to Go
   runs."), that line is read instead. Quick answers are just read. The
   acknowledgement itself cannot be interrupted.
 - An utterance ends after **1.2 s of silence**. Speak slowly or pause to think?
-  Raise **Pause before sending** (Settings › Providers › Speech, 0.3–5 s) so you are
+  Raise **Pause before sending** (Providers › Speech, 0.3–5 s) so you are
   not cut off mid-sentence; lower it for snappier turns.
 - While worca is thinking or running tools, speech is ignored.
 - Only prose is read: code blocks, tables, links and cards are skipped.
@@ -51,7 +51,7 @@ copy: the browser keeps none, and later sessions load from worca in a few second
   the chip says *Starting voice…* (only a real first download says *Downloading*).
   Once you have used voice, opening the Ask panel preloads them in the background,
   so the mic is usually ready when you click it.
-- **Disk.** Settings › Providers › Speech shows how much is downloaded and has
+- **Disk.** Providers › Speech shows how much is downloaded and has
   *Remove speech models*. Voice keeps working — the next mic use downloads again.
 
 | | Speech-to-text | Text-to-speech |
@@ -61,7 +61,7 @@ copy: the browser keeps none, and later sessions load from worca in a few second
 | Without WebGPU (WASM) | ~80 MB, a few seconds per sentence | ~90 MB, about real time — expect pauses between sentences |
 
 - The engines run in a Web Worker, so the page stays responsive.
-- **Language** (Settings) steers Whisper; `auto` detects it.
+- **Language** (Providers › Speech) steers Whisper; `auto` detects it.
 - **Voice** picks a Kokoro voice: `af_heart` (default), `af_bella`, `bf_emma`,
   `am_michael`, … — American (`a…`) and British (`b…`) English only. Anything else
   (e.g. OpenAI's `alloy`) falls back to `af_heart`. **Speed** applies too.
@@ -115,7 +115,7 @@ Worca asks for `response_format: "wav"`.
 
 ### Pointing worca at them
 
-Settings › Providers › **Speech (Ask Worca voice)** — set **Engine** to *Your server*
+Providers › **Speech (Ask Worca voice)** — set **Engine** to *Your server*
 (the server fields show then; they stay saved when you switch back):
 
 | Field | Speech-to-text | Text-to-speech |

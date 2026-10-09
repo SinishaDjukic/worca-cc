@@ -100,7 +100,7 @@ test('one Runs nav item; a bare #running or #history lands on #runs with the emp
   go(window, 'running'); await settle(window);
   assert.equal(window.location.hash, '#runs');
   assert.ok(btn.classList.contains('active'));
-  assert.equal(doc.getElementById('mbar-title').textContent, 'Runs');
+  assert.equal(doc.getElementById('topnav-title').textContent, 'Runs');
 });
 
 test('a live run groups with its registered project even before History loads', async () => {

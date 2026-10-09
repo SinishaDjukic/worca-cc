@@ -452,7 +452,7 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
     if (pluginDisabled(live.origin, readPluginsLock())) {
       const plugin = live.origin.slice('plugin:'.length);
       throw Object.assign(new Error(`workflow "${wanted}" belongs to plugin "${plugin}", which is disabled — `
-        + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
+        + `enable the plugin (the Marketplace page, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
     }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
     if (checkGraph && live.version === 2) assertValidGraph(live, registry, scripts);

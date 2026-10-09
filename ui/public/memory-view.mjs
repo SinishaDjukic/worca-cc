@@ -5,7 +5,7 @@
 // endpoint calls and the mounting; node:test drives these via jsdom. Interactive elements carry a
 // routing class (mem-new, mem-save, mem-cancel, mem-delete, mem-restore, mem-defrag) plus
 // data-name / data-id, so the controller wires ONE delegated listener per host. The namespace is
-// `mem-*`: `mv-*` belongs to Settings → Models (models-view.mjs). Every string that came from disk
+// `mem-*`: `mv-*` belongs to the Models page (models-view.mjs). Every string that came from disk
 // (names, hooks, bodies, reasons) is a textContent / value — never innerHTML.
 
 function h(doc, tag, cls, text) {
@@ -113,7 +113,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   }
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
-      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New pipeline page.` : NO_HOST_HINT));
+      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New run page.` : NO_HOST_HINT));
   }
   card.appendChild(h(doc, 'small', 'hint', 'A defragment run merges duplicate topics, splits overgrown files, drops stale rules and tightens hooks. It is an ordinary pipeline run; the previous files stay in History.'));
   return card;

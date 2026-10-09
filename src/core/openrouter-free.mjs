@@ -8,7 +8,7 @@
 // `:free` call the bridge forwards lowers the count, and a 429 for the daily limit sets it to
 // 0; the next reading corrects any drift. A reading is kept for READ_TTL_MS.
 //
-// Whose allowance: without the credential broker, the key on Settings › Providers (one per
+// Whose allowance: without the credential broker, the key on the Providers page (one per
 // install). With the broker, each person's own key, read through the broker with a
 // short-lived token billed to them; the bridge can't tell whose key a call used there, so
 // the count refreshes more often instead of being lowered per call.

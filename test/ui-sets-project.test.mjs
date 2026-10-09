@@ -89,7 +89,7 @@ test('Skills in runs on X: qualified names, set links, statuses and skip reasons
         ['team-platfor:deploy-checklist', 'Team · acme/platform', 'off — turn it on in the team checklist'],
       ]);
       assert.deepEqual([...card.querySelectorAll('.mcp-res-row a')].map((a) => a.getAttribute('href')).slice(3),
-        ['#settings/mcp/sets/billing', '#settings/mcp', '#settings/mcp/sets/team-acme-platform-9333']);
+        ['#connectors/sets/billing', '#connectors', '#connectors/sets/team-acme-platform-9333']);
       assert.equal(card.querySelectorAll('.mcp-res-skip').length, 3, 'skipped rows read as skips');
       assert.match(card.lastChild.textContent, /agents call \/<set>:<skill>/);
     } },
@@ -224,7 +224,7 @@ test('Settings › Ask Worca: General\'s servers and skills as chips, the edit l
     'an off or missing skill reaches no chat: no chip');
   assert.equal(host.querySelector('.sk-chip').title, 'Drive worca');
   assert.equal(host.querySelector('.sk-chip .sk-kind').textContent, 'Skill');
-  assert.equal(host.querySelector('a').getAttribute('href'), '#settings/mcp/sets/general');
+  assert.equal(host.querySelector('a').getAttribute('href'), '#connectors/sets/general');
   assert.equal(host.lastChild.textContent, 'The Skill tool is on only for turns that mount at least one skill; shell blocks never run in Ask.');
   const bare = doc.createElement('div');
   await paintAskMcpBlock(bare, { api: fakeApi().api, doc });

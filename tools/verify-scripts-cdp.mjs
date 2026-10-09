@@ -194,7 +194,7 @@ try {
   const list = await ev(`(()=>{const rail=[...document.querySelectorAll('.nav button[data-nav]')].map(b=>b.dataset.nav);
     return {after:rail[rail.indexOf('agents')+1],active:document.querySelector('.nav button[data-nav="scripts"]').classList.contains('active'),
       keys:[...document.querySelectorAll('${VIEW} .script-card')].map(c=>c.dataset.scriptKey),
-      title:document.querySelector('${VIEW} h1').textContent};})()`);
+      title:document.getElementById('topnav-title').textContent};})()`);
   check('1', 'Scripts sits directly under Agents in the rail and the page lists the three built-ins',
     list.after === 'scripts' && list.active === true && list.title === 'Scripts'
     && ['shell', 'js', 'gitDiff'].every((k) => list.keys.includes(k)), list);

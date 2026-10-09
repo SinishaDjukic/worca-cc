@@ -1845,6 +1845,37 @@ test('a running service shows in the sidebar, the header pill and the tab dot; S
   assert.equal(stop.opts.method, 'POST');
 });
 
+test('Running actions on the rail: one tile with the count opens the same rows in a side flyout; Stop works there; the last stop puts it all away', async () => {
+  const running = [...ACT_RUNNING];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#side-actions-rows .act-srow-name').textContent, 'Log UX · Run :4417', 'the compact row in the column');
+  assert.equal(doc.getElementById('side-actions').getAttribute('role'), 'group', 'a named group: with no heading, "Running actions" is the rows\' name');
+  click(ctx.window, doc.getElementById('side-toggle'));
+  assert.ok(doc.querySelector('.sidebar').classList.contains('collapsed'), 'the rail');
+  const tile = doc.getElementById('side-actions-tile');
+  assert.equal(tile.querySelector('.act-tile-n').textContent, '1');
+  assert.equal(tile.getAttribute('aria-label'), '1 running action');
+  click(ctx.window, tile);
+  const fly = doc.getElementById('side-actions-fly');
+  assert.equal(fly.hidden, false);
+  assert.equal(tile.getAttribute('aria-expanded'), 'true');
+  assert.equal(fly.querySelector('.act-srow-name').textContent, 'Log UX · Run :4417');
+  click(ctx.window, fly.querySelector('.act-stop'));
+  await settle(ctx.window);
+  const stop = ctx.calls.find((c) => c.url.includes('/api/actions/instances/'));
+  assert.equal(stop.url, `/api/actions/instances/${encodeURIComponent(ACT_RUNNING[0].instanceId)}/stop`);
+  running.length = 0;                                                    // the server has nothing running any more
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'stop' }) });
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('side-actions').hidden, true);
+  assert.equal(fly.hidden, true, 'the flyout closes with the last service');
+  assert.equal(tile.getAttribute('aria-expanded'), 'false');
+});
+
 test('Terminal before Check out opens the confirm dialog with the branch and the setup command in bold', async () => {
   const model = { ...ACT_MODEL, members: [{ ...ACT_MODEL.members[0], setup: 'npm ci', builtins: [{ key: 'terminal', label: 'Terminal' }] }] };
   const ctx = await bootDetail({ arms: (url) => (url.includes(`/api/runs/${ROW.id}/actions?`) ? ok(model) : actionArms()(url)) });
@@ -1960,4 +1991,158 @@ test("worca's own AI calls: named in the Agents tab (stopped review tokens shown
       assert.deepEqual([...sec.querySelectorAll('.hd-ov-tag')].map((c) => c.textContent).filter((t) => /sub-agent/.test(t)), ['1 sub-agent']);
     } },
   ]);
+});
+
+test('Running actions on the rail: Stop by keyboard keeps focus in the flyout on the next row; a route puts the flyout away', async () => {
+  const second = { ...ACT_RUNNING[0], instanceId: `${ACT_RUNNING[0].instanceId}-2`, label: 'Docs', ports: { PORT: 4418 } };
+  const running = [ACT_RUNNING[0], second];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.getElementById('side-toggle'));
+  const tile = doc.getElementById('side-actions-tile');
+  const fly = doc.getElementById('side-actions-fly');
+  tile.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));   // Enter on the tile
+  assert.equal(fly.hidden, false);
+  assert.equal(fly.querySelectorAll('.act-srow').length, 2);
+  const stop = fly.querySelector('.act-stop');
+  stop.focus();
+  running.shift();                                                       // the server stops the first one
+  stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle(ctx.window, 4);
+  assert.equal(fly.hidden, false);
+  assert.equal(fly.querySelectorAll('.act-srow').length, 1);
+  assert.ok(fly.contains(doc.activeElement), 'focus stays in the flyout, not on <body>');
+  assert.equal(doc.activeElement.closest('.act-srow').dataset.instanceId, second.instanceId);
+  ctx.window.location.hash = 'runs';
+  ctx.window.dispatchEvent(new ctx.window.HashChangeEvent('hashchange'));
+  await settle(ctx.window, 2);
+  assert.equal(fly.hidden, true, 'any route puts it away');
+  assert.equal(tile.getAttribute('aria-expanded'), 'false');
+});
+
+test('Escape in a sidebar popup on a run\'s Details closes only the popup: the page does not step back to the glance', async () => {
+  const ctx = await bootDetail({ arms: actionArms() });
+  await openDetail(ctx, 'details/overview');
+  const doc = ctx.window.document;
+  const before = ctx.window.location.hash;
+  assert.match(before, /details\/overview$/);
+  const nodes = doc.querySelector('.nav .nav-group[data-nav-group="nodes"]');
+  nodes.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  assert.equal(doc.getElementById('nav-nodes-fly').hidden, false);
+  doc.activeElement.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await settle(ctx.window, 2);
+  assert.equal(doc.getElementById('nav-nodes-fly').hidden, true);
+  assert.equal(ctx.window.location.hash, before, 'still on Details');
+});
+
+test('Running actions: a keyboard Stop in the column keeps focus on the next row\'s Stop; the last Stop hands focus to the open page\'s row', async () => {
+  const second = { ...ACT_RUNNING[0], instanceId: `${ACT_RUNNING[0].instanceId}-2`, label: 'Docs', ports: { PORT: 4418 } };
+  const running = [ACT_RUNNING[0], second];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  const rows = doc.getElementById('side-actions-rows');
+  const keyStop = async (stop) => {
+    stop.focus();
+    stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+    await settle(ctx.window, 4);
+  };
+  assert.equal(rows.querySelectorAll('.act-srow').length, 2);
+  running.shift();                                                       // the server stops the first one
+  await keyStop(rows.querySelector('.act-stop'));
+  assert.equal(rows.querySelectorAll('.act-srow').length, 1);
+  assert.ok(rows.contains(doc.activeElement), 'focus stays in the rows, not on <body>');
+  assert.equal(doc.activeElement.closest('.act-srow').dataset.instanceId, second.instanceId);
+  assert.ok(doc.activeElement.classList.contains('act-stop'), 'on the same control');
+  running.shift();                                                       // and the last one
+  await keyStop(rows.querySelector('.act-stop'));
+  assert.equal(doc.getElementById('side-actions').hidden, true);
+  assert.notEqual(doc.activeElement, doc.body, 'focus did not fall to the page');
+  assert.equal(doc.activeElement, doc.querySelector('.nav > button.active'), 'the open page\'s row');
+});
+
+test('Running actions on the rail: a keyboard Stop of the last service in the flyout hands focus to the open page\'s square', async () => {
+  const running = [...ACT_RUNNING];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.getElementById('side-toggle'));
+  const tile = doc.getElementById('side-actions-tile');
+  tile.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));   // Enter on the tile
+  const fly = doc.getElementById('side-actions-fly');
+  assert.equal(fly.hidden, false);
+  const stop = fly.querySelector('.act-stop');
+  stop.focus();
+  running.length = 0;
+  stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle(ctx.window, 4);
+  assert.equal(fly.hidden, true);
+  assert.equal(doc.getElementById('side-actions').hidden, true);
+  assert.notEqual(doc.activeElement, doc.body, 'focus did not fall to the page');
+  assert.equal(doc.activeElement, doc.querySelector('.nav > button.active'), 'the open page\'s square');
+});
+
+
+test('Running actions on the rail: with focus on the tile, the last service ending hands focus to the open page\'s square', async () => {
+  const running = [...ACT_RUNNING];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.getElementById('side-toggle'));
+  const tile = doc.getElementById('side-actions-tile');
+  tile.focus();
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  assert.equal(doc.activeElement, tile, 'a repaint while a service still runs leaves focus on the tile');
+  running.length = 0;
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'stop' }) });
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('side-actions').hidden, true, 'the tile went with the last service');
+  assert.equal(doc.activeElement, doc.querySelector('.nav > button.active'), 'focus did not stay on a hidden tile');
+});
+
+test('Running actions: when the open page\'s row cannot take focus (not shown), the last Stop hands focus to the next sidebar control that can', async () => {
+  const running = [...ACT_RUNNING];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  // jsdom has no layout: a control that is not shown (the rail toggle on a tablet, a row Simple hides)
+  // is one whose focus() does nothing.
+  for (const el of [doc.querySelector('.nav > button.active'), doc.getElementById('side-toggle')]) el.focus = () => {};
+  const stop = doc.querySelector('#side-actions-rows .act-stop');
+  stop.focus();
+  running.length = 0;
+  stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  await settle(ctx.window, 4);
+  assert.equal(doc.getElementById('side-actions').hidden, true);
+  assert.equal(doc.activeElement, doc.getElementById('topnav-new'), 'New run shows at every level and every width');
+});
+
+test('Running actions: a row whose run loses its saved row keeps keyboard focus in that row (its Stop), never on another row\'s name', async () => {
+  const second = { ...ACT_RUNNING[0], instanceId: `${ACT_RUNNING[0].instanceId}-2`, label: 'Docs', ports: { PORT: 4418 } };
+  const running = [ACT_RUNNING[0], second];
+  const ctx = await bootDetail({ arms: actionArms(running) });
+  await openDetail(ctx, 'details/overview');
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  const doc = ctx.window.document;
+  const rows = doc.getElementById('side-actions-rows');
+  rows.querySelectorAll('.act-srow')[1].querySelector('button.act-srow-name').focus();
+  running[1] = { ...second, histKey: null };                             // its run lost its saved row
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'actions-changed', action: 'start' }) });
+  await settle(ctx.window, 4);
+  assert.equal(rows.querySelectorAll('.act-srow')[1].querySelector('.act-srow-name').tagName, 'SPAN', 'the name is plain text now');
+  assert.equal(doc.activeElement.closest('.act-srow')?.dataset.instanceId, second.instanceId, 'focus stayed in the same row');
+  assert.ok(doc.activeElement.classList.contains('act-stop'), 'on its Stop, so Enter cannot open another run');
 });
