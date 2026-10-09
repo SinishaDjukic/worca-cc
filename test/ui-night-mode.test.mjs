@@ -584,7 +584,7 @@ test('answers card: a run seen only through hello after it ended reads its revie
   assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 1 answer · $0.05', 'repainted when the saved steps landed');
 });
 
-test('"Decided by"/"Effort" offer the catalog grouped like the title-model picker and read back; at project level empty is "Same as my settings (…)" and sent as __unset', async () => {
+test('"Decided by"/"Effort" offer the catalog grouped like the title-model picker and read back; at project level empty is "… (your setting)" and sent as __unset', async () => {
   await checkRows([
     { name: 'form: "Decided by" offers what the title-model picker offers; "Effort" the effort levels; both read back', run: async () => {
       const root = formRoot();
@@ -607,20 +607,20 @@ test('"Decided by"/"Effort" offer the catalog grouped like the title-model picke
       assert.ok(!p.__unset.includes('deciderModel') && !p.__unset.includes('deciderEffort'));
       assert.match(root.querySelector('.away-summary').textContent, /worca weighs the options with Opus 5\.5 at high effort\./, 'the live summary follows the pickers');
     } },
-    { name: 'form, project level: empty reads "Same as my settings (…)" with where it comes from, and is sent as __unset', run: async () => {
+    { name: 'form, project level: empty reads "… (your setting)" with where it comes from, and is sent as __unset', run: async () => {
       const root = formRoot();
       renderNightForm(root, { level: 'project', values: {}, inherited: resolveNightConfig({ user: { deciderModel: 'claude-opus-5-5' }, team: { deciderEffort: 'high' } }), now: 0, models: DM_MODELS });
       const model = root.querySelector('.night-decider-model'); const effort = root.querySelector('.night-decider-effort');
-      assert.equal(model.options[0].textContent, 'Same as my settings (Opus 5.5)');
-      assert.equal(effort.options[0].textContent, 'Same as my settings (high)');
+      assert.equal(model.options[0].textContent, 'Opus 5.5 (your setting)');
+      assert.equal(effort.options[0].textContent, 'high (your setting)');
       assert.equal(model.closest('.night-field').querySelector('.away-inherited').textContent, '(your setting)');
       assert.equal(effort.closest('.night-field').querySelector('.away-inherited').textContent, '(team default)');
       const p = readNightForm(root, { level: 'project' });
       assert.ok(p.__unset.includes('deciderModel') && p.__unset.includes('deciderEffort'));
       assert.equal('deciderModel' in p || 'deciderEffort' in p, false, 'never null: an empty choice removes the key');
       renderNightForm(root, { level: 'project', values: {}, inherited: resolveNightConfig({}), now: 0, models: DM_MODELS });
-      assert.equal(root.querySelector('.night-decider-model').options[0].textContent, "Same as my settings (the run's model)");
-      assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'Same as my settings (medium)');
+      assert.equal(root.querySelector('.night-decider-model').options[0].textContent, "the run's model (your setting)");
+      assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'medium (your setting)');
       renderNightForm(root, { level: 'project', values: {}, inherited: { config: null, sources: {} }, now: 0 });
       assert.equal(root.querySelector('.night-decider-model').options[0].textContent, 'Same as my settings', 'nothing inherited yet: no guess');
       assert.equal(root.querySelector('.night-decider-effort').options[0].textContent, 'Same as my settings');

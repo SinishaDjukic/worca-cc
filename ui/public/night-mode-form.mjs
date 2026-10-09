@@ -6,7 +6,7 @@
 import { FIELD_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, KIND_LABELS, WHICH_RUNS_OPTIONS, GRACE_NO_HOURS, DECIDER_EFFORTS, DECIDER_WORDS, DECIDER_GROUPS } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { describeAwayMode } from '../../src/shared/away-mode/describe.mjs';
-import { inheritText } from './inherit-field.mjs';
+import { inheritText, dropInheritedTwin } from './inherit-field.mjs';
 
 export const NIGHT_KINDS = ['clarify', 'questions', 'form', 'gate', 'workflow', 'recovery'];
 export const CRITERIA = ['matchesMemory', 'reversible', 'smallestScope', 'codebaseConventions', 'cost'];
@@ -80,6 +80,7 @@ function triSelect(doc, cls, f, level, values, inhValue, inhSource) {
   none.value = ''; sel.append(none);
   for (const [v, t] of [['on', 'On'], ['off', 'Off']]) { const o = el(doc, 'option', null, t); o.value = v; sel.append(o); }
   sel.value = values[f] !== undefined ? (values[f] ? 'on' : 'off') : '';
+  if (level === 'project' && typeof inhValue === 'boolean') dropInheritedTwin(sel, inhValue ? 'on' : 'off');
   return sel;
 }
 
@@ -174,6 +175,7 @@ function deciderEffortField(doc, level, values, inh, inhSrc) {
   none.value = ''; sel.append(none);
   for (const e of DECIDER_EFFORTS) { const o = el(doc, 'option', null, e); o.value = e; sel.append(o); }
   sel.value = DECIDER_EFFORTS.includes(values.deciderEffort) ? values.deciderEffort : '';
+  if (level === 'project') dropInheritedTwin(sel, inherited);
   w.append(sel);
   sourceHint(doc, w, values, inhSrc, 'deciderEffort');
   return w;
@@ -264,6 +266,7 @@ export function renderNightForm(root, { level, values = {}, effective = {}, sour
     stSel.append(opt);
   }
   stSel.value = values.strategy !== undefined ? values.strategy : '';
+  if (level === 'project' && m) dropInheritedTwin(stSel, m.value);
   method.append(stSel);
   sourceHint(doc, method, values, inhSrc, 'strategy');
   pick.append(method);

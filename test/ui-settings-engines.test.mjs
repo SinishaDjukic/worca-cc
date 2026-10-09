@@ -76,7 +76,7 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex']);
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex'], 'Claude is the default option, listed once');
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {

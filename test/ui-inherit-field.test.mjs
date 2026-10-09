@@ -15,9 +15,9 @@ const CATALOG = [
 ];
 
 test('inheritText and inheritedOf name the layer an empty field falls back to', () => {
-  assert.equal(inheritText('user', 'Opus'), 'Same as my settings (Opus)');
-  assert.equal(inheritText('team', '12'), 'Team default (12)');
-  assert.equal(inheritText('default', '400'), 'Worca default (400)');
+  assert.equal(inheritText('user', 'Opus'), 'Opus (your setting)');
+  assert.equal(inheritText('team', '12'), '12 (team default)');
+  assert.equal(inheritText('default', '400'), '400 (default)');
   assert.equal(inheritText(undefined, null), 'Same as my settings');
   assert.deepEqual(inheritedOf({ project: 9, user: 30, team: 12, default: 400 }), { value: 30, source: 'user' });
   assert.deepEqual(inheritedOf({ team: 12, default: 400 }), { value: 12, source: 'team' });
@@ -31,12 +31,12 @@ test('number field: inherit placeholder; an override shows the badge; Clear retu
   const f = renderInheritField(d, { id: 'askMaxTurns', label: 'Turn limit', kind: 'number', level: 'project', own: undefined, inherited: { value: 30, source: 'user' } });
   const input = f.querySelector('.inherit-input');
   assert.equal(input.value, '');
-  assert.equal(input.placeholder, 'Same as my settings (30)');
+  assert.equal(input.placeholder, '30 (your setting)');
   assert.equal(f.querySelector('.inherit-badge').hidden, true);
   assert.equal(readInheritField(f), null);
   const o = renderInheritField(d, { id: 'askMaxTurns', label: 'Turn limit', kind: 'number', level: 'project', own: 9, inherited: { value: 12, source: 'team' } });
   assert.equal(o.querySelector('.inherit-input').value, '9');
-  assert.equal(o.querySelector('.inherit-input').placeholder, 'Team default (12)');
+  assert.equal(o.querySelector('.inherit-input').placeholder, '12 (team default)');
   assert.equal(o.querySelector('.inherit-badge').hidden, false);
   assert.equal(o.querySelector('.inherit-badge').textContent, 'Project');
   assert.equal(readInheritField(o), 9);
@@ -62,12 +62,12 @@ test('select field and model field: options, inheritance text, effort follows th
   const d = doc();
   const eng = renderInheritField(d, { id: 'run.engine', label: 'Default engine', kind: 'select', level: 'project', own: undefined,
     inherited: { value: 'codex', source: 'user' }, options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }], format: (v) => ({ claude: 'Claude', codex: 'Codex' })[v] });
-  assert.equal(eng.querySelector('.inherit-input option').textContent, 'Same as my settings (Codex)');
+  assert.equal(eng.querySelector('.inherit-input option').textContent, 'Codex (your setting)');
   const m = renderInheritField(d, { id: 'models.codex.steps.planner', label: 'Plan', kind: 'model', level: 'project', engine: 'codex', catalog: CATALOG,
     efforts: ['minimal', 'low', 'medium', 'high'], own: undefined, inherited: { value: { model: 'gpt-5.5', effort: 'low' }, source: 'user' } });
   const sel = m.querySelector('.inherit-model');
   assert.deepEqual([...sel.options].map((o) => o.value), ['', 'gpt-5.5', 'gpt-5.6-sol'], 'only the engine\'s models');
-  assert.equal(sel.options[0].textContent, 'Same as my settings (GPT-5.5 · low)');
+  assert.equal(sel.options[0].textContent, 'GPT-5.5 · low (your setting)');
   sel.value = 'gpt-5.6-sol';
   sel.dispatchEvent(new d.defaultView.Event('change', { bubbles: true }));
   const eff = m.querySelector('.inherit-effort');
@@ -84,7 +84,18 @@ test('the Away mode form takes its inherit text from the shared field', () => {
   const root = d.getElementById('root');
   renderNightForm(root, { level: 'project', values: {}, effective: NIGHT_DEFAULTS, sources: {},
     inherited: { config: { ...NIGHT_DEFAULTS, maxDecisions: 7 }, sources: { maxDecisions: 'team', graceMinutes: 'default', strategy: 'user' } }, toggle: 'auto', now: 0 });
-  assert.equal(root.querySelector('.night-num[data-field="maxDecisions"]').placeholder, 'Team default (7)');
-  assert.equal(root.querySelector('.night-num[data-field="graceMinutes"]').placeholder, 'Worca default (30)');
-  assert.match(root.querySelector('.night-strategy option').textContent, /^Same as my settings \(/);
+  assert.equal(root.querySelector('.night-num[data-field="maxDecisions"]').placeholder, '7 (team default)');
+  assert.equal(root.querySelector('.night-num[data-field="graceMinutes"]').placeholder, '30 (default)');
+  assert.match(root.querySelector('.night-strategy option').textContent, / \(your setting\)$/);
+});
+
+test('a select lists the inherited value once: "Codex (your setting)" stands for Codex, unless Codex is pinned here', () => {
+  const d = doc();
+  const spec = (own) => ({ id: 'run.engine', label: 'Default engine', kind: 'select', level: 'project', own,
+    inherited: { value: 'codex', source: 'user' }, options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }], format: (v) => ({ claude: 'Claude', codex: 'Codex' })[v] });
+  const values = (f) => [...f.querySelectorAll('.inherit-input option')].map((o) => o.value);
+  assert.deepEqual(values(renderInheritField(d, spec(undefined))), ['', 'claude']);
+  const pinned = renderInheritField(d, spec('codex'));
+  assert.deepEqual(values(pinned), ['', 'claude', 'codex'], 'a pinned value still shows');
+  assert.equal(pinned.querySelector('.inherit-input').value, 'codex');
 });

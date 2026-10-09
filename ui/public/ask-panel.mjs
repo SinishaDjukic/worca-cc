@@ -4238,7 +4238,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
-        if (lane) engineSel.options[0].textContent = `Default (${engineLabel(lane.defaultEngine)})`;
+        if (lane) {
+          engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+        }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
       });

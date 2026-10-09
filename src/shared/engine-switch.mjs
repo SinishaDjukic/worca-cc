@@ -90,7 +90,7 @@ export function engineSwitchNote(engine) {
 export function engineRefusalFor(text, surface) {
   const s = String(text ?? '');
   if (surface === 'ui') return s.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
-  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it from the worca-cc UI with Allow unguarded');
+  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it in the Worca UI with Allow unguarded');
   return s;
 }
 

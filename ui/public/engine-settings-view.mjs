@@ -42,7 +42,7 @@ export function enginePatchToSettingsBody(patch) {
 }
 
 /** Settings › Ask Worca (cascading-settings-design.md D17): the engine new chats start on, and the model each engine's
- *  chats start with. User-only; `defaults` are the catalog's built-in picks, shown as "Worca default (…)". */
+ *  chats start with. User-only; `defaults` are the catalog's built-in picks, shown as "<value> (default)". */
 export function renderAskEngineSection(host, { catalog = [], askEngine, askModels = {}, defaults = {} } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
   // The catalog lists no Codex model while this codex cannot be locked down for a chat (docs/models.md#codex): a saved

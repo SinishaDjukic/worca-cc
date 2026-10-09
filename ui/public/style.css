@@ -8164,6 +8164,12 @@ span.act-running-title{cursor:default}
 .inherit-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink)}
 .inherit-badge[hidden],.inherit-clear[hidden]{display:none}
 .inherit-row{display:flex;gap:8px;flex-wrap:wrap}
+/* A model field: Model (2/3) and Effort (1/3) on one row, each under a caption. */
+.inherit-row.inherit-pair{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px 10px;}
+.inherit-sub{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.inherit-sub-cap{font-size:11.5px;font-weight:600;color:var(--ink-2);}
+.inherit-sub .select{width:100%;min-width:0;}
+@media (max-width:560px){ .inherit-row.inherit-pair{grid-template-columns:1fr;} }
 .engine-card{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
 .engine-card h3{margin:0 0 6px}.engine-card h4{margin:12px 0 4px;font-size:13px}.pd-settings-card{margin-top:14px}
 /* A non-Claude engine card's readiness line (GET /api/engines): text only. */

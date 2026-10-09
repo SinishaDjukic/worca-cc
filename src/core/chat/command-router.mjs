@@ -44,7 +44,7 @@ export function parseDuration(str) {
 }
 
 const HELP_TEXT = [
-  '**worca-cc chat commands**',
+  '**Worca chat commands**',
   '`/runs` — live runs · `/last` — latest finished pipeline',
   '`/status [*ref]` — run detail · `/cost [*ref]` — run cost',
   `\`/pause [*ref]\` · \`/stop [*ref]\` · \`/resume [*ref] [${SWITCH_ENGINES.join('|')}]\` (an engine continues the run on it)`,
