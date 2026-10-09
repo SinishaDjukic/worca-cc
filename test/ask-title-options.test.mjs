@@ -33,7 +33,7 @@ async function fakeBin(dir, outFile) {
 function splitArgv(dump) { const parts = dump.split('\0'); parts.pop(); return parts; }
 
 // One generateTitle spawn per call shape: the hardened ask call carries every option at
-// once, the legacy call none of them.
+// once; the pipeline call only the no-tools pair (--tools "" + --strict-mcp-config).
 test('ask title call: --tools "" + strict-mcp/setting-sources/slash flags, --mcp-config and permissionMode dontAsk reach the spawned argv; the title still comes back', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-title-'));
   const out = join(dir, 'argv.txt');
@@ -65,16 +65,22 @@ test('ask title call: --tools "" + strict-mcp/setting-sources/slash flags, --mcp
   await rm(dir, { recursive: true, force: true });
 });
 
-test('legacy title call: none of the new flags and the acceptEdits permission mode', POSIX_SHIM, async () => {
+test('pipeline title call: no tools at all (--tools "" + --strict-mcp-config), none of the Ask flags, acceptEdits', POSIX_SHIM, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'worca-ask-title-'));
   const out = join(dir, 'argv.txt');
   const bin = await fakeBin(dir, out);
   await generateTitle('fix login bug', { cwd: dir, bin });
   const argv = splitArgv(await readFile(out, 'utf8'));
   await checkRows([
-    { name: 'legacy call: none of the new flags appear', run: () => {
-      for (const flag of ['--tools', '--strict-mcp-config', '--setting-sources', '--disable-slash-commands', '--mcp-config']) {
-        assert.ok(!argv.includes(flag), `${flag} must not appear for a legacy caller`);
+    { name: 'no built-in tools and no MCP servers: the title model cannot act on the task text', run: () => {
+      const i = argv.indexOf('--tools');
+      assert.ok(i >= 0, '--tools must appear');
+      assert.equal(argv[i + 1], '', '--tools "" disables every built-in tool');
+      assert.ok(argv.includes('--strict-mcp-config'), '--strict-mcp-config must appear');
+    } },
+    { name: 'none of the Ask-only flags appear', run: () => {
+      for (const flag of ['--setting-sources', '--disable-slash-commands', '--mcp-config']) {
+        assert.ok(!argv.includes(flag), `${flag} must not appear for a pipeline title`);
       }
     } },
     { name: 'generateTitle without permissionMode keeps the legacy acceptEdits argv', run: () => {

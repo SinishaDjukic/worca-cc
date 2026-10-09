@@ -61,7 +61,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
@@ -2562,7 +2562,13 @@ export class RunHarness extends EventEmitter {
    */
   _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
     const name = this.claude.engine || 'claude';
-    if (name === 'claude') return [];
+    if (name === 'claude') {
+      // The run's own model (--model / the start body) naming another engine's model: refused, never dropped —
+      // dropping it would run every node on the CLI default model, often the most expensive one.
+      const why = foreignRunModel(this.claude.model, name, this.projectDir);
+      if (why) throw engineRefusal(name, why);
+      return [];
+    }
     const projectRules = this._engineProjectRules ?? null;
     const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
     if (why) throw engineRefusal(name, why);

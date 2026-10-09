@@ -193,7 +193,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, assertSlotModels, stepSlotDefaults,
+  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
@@ -229,7 +229,7 @@ import {
 } from '../src/core/workflows.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../src/core/auto/proposal.mjs';
 import {
-  revalidateWorkflowProposal, applyTunables, workflowEventPrompt, workflowNoticeText,
+  revalidateWorkflowProposal, modelsOfEngine, applyTunables, workflowEventPrompt, workflowNoticeText,
 } from '../src/core/ask/workflow-deps.mjs';
 import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
@@ -2334,6 +2334,10 @@ const startRunHandler = async (req, res) => {
       // The pair against THIS project's catalog (a schedule is checked here too, before it is
       // stored). A ticket firing takes its already-checked pair verbatim, like a CLI --model.
       if (startPair && !internal) {
+        // A Claude run refuses another engine's model (the harness gate does too); another engine drops a Claude
+        // model by design and runs its own default (its gate says so at run start).
+        const foreign = runEngine.engine && runEngine.engine !== 'claude' ? null : foreignRunModel(body.model, 'claude', projectDir);
+        if (foreign) return badRequest(res, foreign);
         const checked = checkStartPair(body, await listModels(projectDir));
         if (checked.error) return badRequest(res, checked.error);
         startPair = checked.pair;
@@ -10839,7 +10843,8 @@ const askCardBusy = new Set();
 async function saveWorkflowCard(threadId, block, body = {}) {
   const card = block.card || {};
   const registry = loadAgentRegistry(AGENTS_DIR);
-  const models = await listModels('');
+  // Only the chat's engine's models: a node pick of another engine's model would be dropped at run start.
+  const models = modelsOfEngine(await listModels(''), askChatEngineOf(askGetThread(threadId)) || 'claude');
   // A non-string `name` would be stringified by cleanText ("[object Object]" as the
   // workflow name) — only a string counts; anything else falls back to the card's own.
   const ans = sanitizeProposalAnswer(

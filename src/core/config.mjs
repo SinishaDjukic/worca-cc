@@ -718,6 +718,15 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => engineOfModel(id, { projectDir }));
 
+/** Why a run-level model cannot run on `engine` (it is another engine's catalog model), else null. */
+export function foreignRunModel(model, engine, projectDir = null) {
+  const id = typeof model === 'string' ? model.trim() : '';
+  const owner = id ? engineOfModel(id, { projectDir }) : null;
+  return owner && owner !== engine
+    ? `model "${id}" runs on ${owner}, not on ${engine} — pick a ${engine} model, or start the run with --engine ${owner}`
+    : null;
+}
+
 /**
  * Whether `modelId` names a catalog member — built-in, global, plugin or policy — regardless of
  * the hide-built-ins flag (hidden entries still resolve), optionally of one engine.
