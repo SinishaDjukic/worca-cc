@@ -25,7 +25,7 @@ test('three bands: the logo row and the foot stay put, the pages scroll between 
   assert.equal(doc.querySelector('nav.nav').parentElement.id, 'side-scroll', 'the nav is the scroll band');
   assert.ok(doc.querySelector('#side-scroll').classList.contains('side-scroll'));
   assert.ok(doc.querySelector('#side-foot').classList.contains('side-foot'));
-  for (const id of ['side-who', 'side-away', 'side-actions', 'side-spend']) {
+  for (const id of ['side-actions', 'side-acct']) {
     assert.equal(doc.getElementById(id).parentElement.id, 'side-foot', `#${id} sits in the fixed foot`);
   }
 });

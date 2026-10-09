@@ -2989,8 +2989,8 @@ onNotification((n) => {
   try { chatNotifier.notifySchedule(n); } catch { /* never break the writer */ }
 });
 
-// Away hours starting or ending by themselves (night/hours-watch.mjs): every open tab shows one line
-// under the menu's "I'm here | I'm away"; chat hears it only when a run is answered by worca.
+// Away hours starting or ending by themselves (night/hours-watch.mjs): every open tab shows a toast
+// ("Away mode") and its account menu's away row follows; chat hears it only when a run is answered by worca.
 const AWAY_WATCH_TICK_MS = 30_000;
 let _awayWatchTimer = null;
 function startAwayHoursWatch() {
@@ -8117,8 +8117,8 @@ app.get('/api/whoami', (req, res) => {
 // (docs/credential-broker.md). Status only: which slots have a key, never a key.
 // { enabled:false } with the broker off.
 // OpenRouter's daily allowance of `:free` requests (src/core/openrouter-free.mjs), for the
-// signed-in person with the credential broker, else for the install's key. The sidebar line,
-// the new-run warning and the Providers card read it; ?refresh=1 asks OpenRouter now.
+// signed-in person with the credential broker, else for the install's key. The account menu's
+// free-request row, the new-run warning and the Providers page read it; ?refresh=1 asks OpenRouter now.
 app.get('/api/openrouter/free-daily', async (req, res) => {
   try {
     res.json(await freeDailyStatus({ person: currentBillTo(), force: req.query.refresh === '1' }));
@@ -8388,7 +8388,7 @@ app.get('/api/settings', async (req, res) => {
 
 app.get('/api/budget', (_req, res) => {
   const budget = budgetStatus();
-  // The sidebar's "Saved this month" figure rides on this snapshot (money-saved design §10).
+  // The account menu's spend card ("Saved") rides on this snapshot (money-saved design §10).
   // Additive and best-effort: a failed savings read must never cost the gate figures the
   // New-view Start button and every cost banner key on, so it degrades to nulls instead.
   let savings = { windowHumanHours: null, windowSavedUsd: null };

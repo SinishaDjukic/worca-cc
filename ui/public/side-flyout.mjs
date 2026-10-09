@@ -1,6 +1,6 @@
 // ui/public/side-flyout.mjs — one controller for every popup that hangs off the sidebar: the
-// Nodes flyout and the rail's Running actions (and, later, the account menu with its Interface
-// mode submenu). Pure DOM: no app state and no look of its own — style.css owns how a popup
+// Nodes flyout, the rail's Running actions, and the account menu with its Interface mode side
+// menu. Pure DOM: no app state and no look of its own — style.css owns how a popup
 // looks, this module owns where it goes, when it opens and closes, and the keyboard.
 //
 // Every open popup of a document sits on one stack. Escape closes the newest one (a submenu

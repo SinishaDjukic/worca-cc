@@ -37,7 +37,7 @@ const status = (done = [], flags = {}) => ({
   done: done.length, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: false, ...flags,
 });
 
-async function boot({ onboarding = status(['claude']), projects = [], level = null } = {}) {
+async function boot({ onboarding = status(['claude']), projects = [], level = null, settingsError = null } = {}) {
   // `level`: the server-rendered interface mode (docs/ui-levels.md); null = no attribute (gates nothing).
   const shellHtml = level ? html.replace('<html lang="en" data-theme="system">', `<html lang="en" data-theme="system" data-level="${level}">`) : html;
   const dom = trackDom(new JSDOM(shellHtml, { url: 'http://localhost:4317/', pretendToBeVisual: true }));
@@ -53,6 +53,8 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
       if (init.method === 'POST') { const b = JSON.parse(init.body); posts.push(b); current = { ...current, ...b }; }
       return json(current);
     }
+    // settingsError: the error POST /api/settings answers with (a mode switch the server refuses).
+    if (settingsError && url.includes('/api/settings') && init.method === 'POST') return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: settingsError }) });
     if (url.includes('/api/projects')) return json({ projects });
     return json({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 });
   };
@@ -76,7 +78,7 @@ test('boot: the pill mounts under New pipeline and routes to the page (where the
   const pillHost = newRow.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 16, 'the nav census is untouched (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 15, 'the nav census is untouched (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -332,4 +334,46 @@ test('a step above the interface mode asks to switch first (Not now leaves all a
       doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
     } },
   ]);
+});
+
+test('a mode lowered mid-tour: the hop rings the account corner, then Interface mode, then the mode; choosing it carries the tour on', async () => {
+  const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  const target = () => doc.querySelector('.guide-layer')?.dataset.target || '';
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  await settle();
+  assert.ok(target().startsWith('.nav button[data-nav="composer"]'), target());
+  // Lowered from the account menu itself: its side menu is still open, so the hop rings the mode there.
+  click(window, doc.getElementById('side-acct'));
+  click(window, doc.getElementById('acct-lvl'));
+  click(window, doc.querySelector('#lvl-menu [data-level-choice="simple"]'));
+  assert.equal(doc.documentElement.dataset.level, 'simple');
+  assert.equal(await until(() => target() === '#lvl-menu [data-level-choice="advanced"]'), true, target());
+  click(window, doc.querySelector('.main'));             // a click outside puts the menu away
+  assert.equal(doc.getElementById('acct-menu').hidden, true);
+  assert.equal(await until(() => target() === '#side-acct'), true, `the corner first: ${target()}`);
+  click(window, doc.getElementById('side-acct'));
+  assert.equal(await until(() => target() === '#acct-lvl'), true, `then Interface mode: ${target()}`);
+  click(window, doc.getElementById('acct-lvl'));
+  assert.equal(await until(() => target() === '#lvl-menu [data-level-choice="advanced"]'), true, `then the mode: ${target()}`);
+  click(window, doc.querySelector('#lvl-menu [data-level-choice="advanced"]'));
+  assert.equal(doc.documentElement.dataset.level, 'advanced');
+  assert.equal(await until(() => target().startsWith('.nav button[data-nav="composer"]')), true, `the tour carries on: ${target()}`);
+});
+
+test('a switch the server refuses when a tour starts: the dialog says why, once (no toast as well), and no tour starts', async () => {
+  const { doc, window } = await boot({ level: 'simple', settingsError: 'disk full', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  click(window, doc.querySelector('.gs-pill'));
+  await settle();
+  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  await settle();
+  assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Advanced?');
+  click(window, doc.getElementById('confirm-ok'));
+  await settle();
+  assert.equal(doc.documentElement.dataset.level, 'simple', 'the refused switch goes back');
+  assert.equal(doc.getElementById('mode-modal').classList.contains('hidden'), false, 'the dialog opens to say why');
+  assert.equal(doc.getElementById('mode-msg').textContent, 'Could not save the mode: disk full');
+  assert.equal(doc.querySelector('.toast[data-key="ui-level-save"]'), null, 'and no toast says it a second time');
+  assert.equal(doc.querySelector('.guide-layer'), null, 'no tour starts');
 });

@@ -45,7 +45,8 @@ anything.
    `level:` above the current mode asks "Switch to Expert?" before the tour
    moves anywhere; "Not now" leaves the mode and the page untouched
    (`startGuide` in `app.js`). If the mode is lowered while a tour runs, its
-   next hop rings the mode switch instead of failing (`gsRaiseLevelHop`).
+   next hop rings the account corner, then **Interface mode**, then the mode,
+   instead of failing (`gsRaiseLevelHop`).
 6. **Upgrades lose nothing.** An install that already has projects or runs
    starts at Expert, which is the UI it always had. Only a fresh install starts
    at Simple (`effectiveUiLevel` in `ui/server.mjs`). The first project and the
@@ -105,17 +106,21 @@ be skipped by forgetting it.
 
 ### The switch
 
-- Sidebar: `#nav-mode`, a plain `.nav button` directly above Settings. No
-  `data-nav` (it is an action, not a page). Its icon is the state readout: a
-  stack of layers, the second lit from Advanced, the third from Expert. On the
-  collapsed rail the icon is all that shows.
-- Below 1080 px the sidebar is the icon rail (tablets) and the rail's `#nav-mode` icon is the control; at
-  760 px and below it becomes a drawer behind the phone bar's ☰ button, where `#nav-mode` shows in full.
-- Click opens `#mode-modal`: three radio cards. Choosing one applies at once
-  (the app re-lays out behind the dialog), `POST /api/settings {uiLevel}`
-  persists it, and a failed save reverts.
-- Settings › General › Interface mode shows the current mode and opens the same
-  dialog.
+- The account menu: the corner at the foot of the sidebar (`#side-acct`) opens
+  it, and its **Interface mode** row (`#acct-lvl`) names the current mode and
+  opens a side menu (`#lvl-menu`) with Simple, Advanced and Expert. Each has
+  bars showing how much of Worca is on screen and one line on what it adds.
+  Choosing one applies at once, `POST /api/settings {uiLevel}` persists it, a
+  failed save reverts, and both menus stay open so the page behind changes in
+  place. Esc closes the side menu, then the menu.
+- On the rail (tablets, and a folded sidebar) the corner is the avatar alone and
+  opens the same menu; on a phone it sits at the foot of the drawer, and the
+  drawer stays open while the menu is used.
+- Settings › General › Interface mode shows the current mode, and its
+  **Change…** opens `#mode-modal`: three radio cards that apply the same way.
+  The guides open that dialog too when a save failed.
+- `ui-level.mjs` paints all three (the menu row and side menu, the Settings card,
+  the dialog) from one controller.
 - Stored as `uiLevel` in `settings.json`. Absent means "never chosen".
 
 ## Catalogue
@@ -126,9 +131,11 @@ be skipped by forgetting it.
 
 | Element | Level |
 |---|---|
-| New pipeline, Getting started, Runs, Projects, Settings | S |
+| New pipeline, Getting started, Runs, Projects | S |
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
-| Ask Worca button, sidebar spend indicator, the mode item | S |
+| Ask Worca button | S |
+| The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
+| The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workflow Composer, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
 | Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |

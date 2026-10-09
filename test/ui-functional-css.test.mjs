@@ -100,6 +100,8 @@ const ROWS = [
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],
   ['.rd-questions', 'ui-running-detail: the question panel rises in'],
   ['.wm-add-msg', 'workspace-map-css: hidden lines stay hidden'],
+  // The account corner's popups and cards (side-flyout.mjs and app.js toggle `hidden`).
+  ...['.acct-menu', '.lvl-menu', '.acct-spend', '.id-card'].map((sel) => [sel, 'ui-account-corner: a closed menu, an empty card']),
   // (.log-filters .log-f-exec and the checkbox/radio inputs are type/descendant selectors: the
   //  Step 3 row "every element index.html ships with `hidden` stays hidden" covers them.)
 ];

@@ -14,7 +14,7 @@
       <!-- ===================== Phone bar (<=760px) ===================== -->
       <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
            <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
-           the spend card and "Signed in as" come along. app.js#setMobileNavOpen owns
+           Running actions and the account corner come along. app.js#setMobileNavOpen owns
            aria-expanded, the scrim and the inert page; paintMobileBar writes the title. -->
       <header class="mbar" id="mbar">
         <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
@@ -139,30 +139,11 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
               <span>Team policy</span>
             </button>
-
-            <div class="nav-sep" aria-hidden="true"></div>
-            <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
-                 and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
-                 repaints it, and on the collapsed rail it is all that shows. -->
-            <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
-              <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
-              <span class="lv-name">Expert</span>
-            </button>
-            <button type="button" data-nav="settings" data-min-level="simple">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
-              <span>Settings</span>
-            </button>
           </nav>
         </div>
 
         <div class="side-foot" id="side-foot">
-          <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
-               identity proxy or an operator-set name; a local install never shows it. -->
-          <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
-          <!-- "I'm here | I'm away" (app.js#paintSideAway): the lit side is what applies right now, the
-               away hours included (wording §3.8). Pause stays in Settings › Away mode. -->
-          <div id="side-away"></div>
-          <!-- Running actions (issue #529): its own mount, since paintBudget replaces #side-spend's children.
+          <!-- Running actions (issue #529): its own mount, just above the account corner.
                Not level-gated: it shows only while a service runs, and it must stay stoppable. The column
                shows the rows (app.js#paintRunningActions); the rail shows one tile (a green dot and the
                count) that opens the same rows, Stop included, in a side flyout. -->
@@ -174,8 +155,44 @@
               <div class="act-fly-rows" id="side-actions-fly-rows"></div>
             </div>
           </div>
-          <div id="side-spend"></div>
+          <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
+               (paintBudget) and the away dot. It opens #acct-menu: spend, away mode, interface mode
+               and Settings. -->
+          <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
+                  aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
+            <span class="acct-ring-wrap">
+              <svg class="acct-ring" viewBox="0 0 38 38" aria-hidden="true"><circle class="trk" cx="19" cy="19" r="17.5"></circle><circle class="arc" cx="19" cy="19" r="17.5" stroke-dasharray="0.00 109.96"></circle></svg>
+              <span class="acct-ava" aria-hidden="true">P</span>
+              <i class="acct-dot" aria-hidden="true"></i>
+            </span>
+            <span class="acct-name">Profile</span>
+            <svg class="acct-updown" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"></path></svg>
+          </button>
         </div>
+        <!-- The account menu (opens upward from the corner) and its Interface mode side menu:
+             position:fixed popups that side-flyout.mjs places and closes. The spend card and the
+             identity card are painted by app.js; the side menu by ui-level.mjs. -->
+        <div class="nav-fly acct-menu" id="acct-menu" role="menu" aria-label="Account" data-min-level="simple" hidden>
+          <div class="acct-spend" id="acct-spend" hidden></div>
+          <div class="mcard id-card" id="acct-id" role="group" aria-labelledby="acct-id-k" hidden>
+            <span class="mc-k" id="acct-id-k">Signed in as</span>
+            <b class="id-name"></b>
+            <small class="id-via"></small>
+          </div>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" class="mi" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
+            <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
+            <svg class="mi-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          </button>
+          <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple"><span class="mi-lbl">Settings</span></button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" class="mi away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
+            <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
+            <span class="mi-lbl">Step away</span>
+            <span class="mi-hint"></span>
+          </button>
+        </div>
+        <div class="nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>
       </aside>
 
       <!-- ===================== Main ===================== -->
@@ -1558,7 +1575,7 @@
               <div id="credentialsHost"></div>
             </section>
 
-            <!-- Interface mode (docs/ui-levels.md): the same setting as the sidebar item, same dialog. -->
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
             <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
@@ -2359,7 +2376,7 @@
     </div>
 
     <!-- ===== Interface mode (docs/ui-levels.md) ===== -->
-    <!-- Opened by every [data-mode-open]: the sidebar item (also in the phone drawer), Settings › General.
+    <!-- Opened by [data-mode-open] (Settings › General's "Change…") and by a guide whose switch failed.
          Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
          ui-level.mjs owns the cards, focus and keys. -->
     <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">

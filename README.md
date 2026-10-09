@@ -411,8 +411,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **I'm away**
-  on the sidebar's *I'm here | I'm away* switch, Worca answers what a run would wait on: clarifying
+- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+  in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
   read-only review (it can only read files), on the run's engine, scores each option against your
@@ -432,8 +432,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   own cost caps always hold; Worca passes the team's soft cap only if you allow it.
 - **Every answer on record** — the run page lists *Answered for you* (question, answer, reason
   and the deciding model), one group per ask, with the answers to check marked and listed first.
-  A note above it reads like "5 answers while you were away — 2 to check". The
-  sidebar announces when away hours start and end.
+  A note above it reads like "5 answers while you were away — 2 to check". A
+  short notice says when away hours start and end, and a violet dot sits on your avatar while you
+  are away; **I'm back** in the account menu ends it.
 
 ### Scheduled runs
 
@@ -474,8 +475,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Statistics** (Advanced) — pick Today, This week, This month or All time for Spent, Saved
   (estimated human hours × your developer rate, minus spend), Pipeline spend, Ask Worca, Time
   worked, Pipelines finished and PRs merged, plus *Spend per* and *Runs per* charts by hour, day
-  or month (runs split into finished, stopped and failed). A spend indicator in the sidebar shows
-  spend against the budget.
+  or month (runs split into finished, stopped and failed). With a total limit, a ring around your
+  avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
+  menu's spend card has the figures.
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
   pipeline)* or `worca resume <id> --ignore-cost-cap` lifts it for that run. A total cost limit
@@ -606,10 +608,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   log. **Expert** shows everything: Agents and Scripts, Team metrics, Team policy, Models,
   diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
   anything.
-- **A view preference, not a permission** — the sidebar button just above **Settings**, which names
-  the current mode, opens the **Interface mode** dialog. A choice applies at
+- **A view preference, not a permission** — **Interface mode** in the account menu (the corner at
+  the foot of the sidebar) names the current mode and lists the three. A choice applies at
   once, for every browser that opens this Worca; **Settings › General › Interface mode › Change…**
-  opens the same dialog. A fresh install starts at Simple, one that already has projects or runs at
+  opens the same choice as a dialog. A fresh install starts at Simple, one that already has projects or runs at
   Expert. A link to a page above your mode still opens it, under a banner offering *Switch to …*;
   values set in a higher mode keep applying, and a question a run waits on shows in every mode. A
   guide step that needs a higher mode asks first (*Switch to Advanced?*). See

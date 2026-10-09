@@ -27,14 +27,21 @@ export const LEVEL_INFO = Object.freeze({
     label: 'Advanced',
     who: 'Regular use',
     desc: 'Control how a run executes and review what it changed: branches, guardrails, per-agent models, the diff, pull requests and your own workflows.',
-    adds: 'Adds: Statistics, Workflow Composer, Workspaces, plugins, memory and the live log.',
+    adds: 'Adds: Schedules, Statistics, Workflow Composer, Workspaces, the Marketplace and Connectors pages, memory and the live log.',
   }),
   expert: Object.freeze({
     label: 'Expert',
     who: 'Authoring and team setup',
     desc: 'Everything. Author agents, models and guardrail sets, tune fan-out and loop limits, filter logs by execution and run team metrics.',
-    adds: 'Adds: Agents, Team metrics, Models, diagnostics and every per-node tunable.',
+    adds: 'Adds: Agents, Scripts, Team metrics, Team policy, the Models and Providers pages, diagnostics and every per-node tunable.',
   }),
+});
+
+/** One line per mode for the account menu's Interface mode side menu. */
+export const LEVEL_SHORT = Object.freeze({
+  simple: 'The core loop: start a run, answer it, read the result.',
+  advanced: 'Adds schedules, statistics, workflows, the marketplace and connectors.',
+  expert: 'Everything, including nodes, models, providers and team policy.',
 });
 
 export function isUiLevel(v) { return UI_LEVELS.includes(v); }
@@ -79,9 +86,8 @@ export function minLevelFor(el) {
   return best;
 }
 
-// The icon IS the state readout (the collapsed rail shows nothing else): a stack
-// of layers, the top sheet always solid, the second lit from advanced, the third
-// from expert. Same 24px grid and stroke as every other nav icon.
+// The dialog's and the Settings card's icon: a stack of layers, the top sheet always
+// solid, the second lit from advanced, the third from expert.
 export function levelIconSvg(level) {
   const r = levelRank(level);
   const off = (n) => (r < n ? ' class="lv-off"' : '');
@@ -90,6 +96,14 @@ export function levelIconSvg(level) {
     + '<path d="M12 3 3 8l9 5 9-5-9-5z"></path>'
     + `<path${off(1)} d="M3 12.5l9 5 9-5"></path>`
     + `<path${off(2)} d="M3 17l9 5 9-5"></path></svg>`;
+}
+
+/** Three bars, one lit per mode: how much of Worca is on screen (the side menu's icon). */
+export function levelBarsSvg(level) {
+  const n = levelRank(level) + 1;
+  return '<svg class="lv-bars" viewBox="0 0 14 14" aria-hidden="true">'
+    + [0, 1, 2].map((i) => `<rect x="${0.5 + i * 4.75}" y="${10 - i * 3.5}" width="3.25" height="${3.5 + i * 3.5}" rx="1"${i < n ? ' class="on"' : ''}></rect>`).join('')
+    + '</svg>';
 }
 
 /** Write the mode onto <html> and tell the app (renderers that branch on it repaint). */
@@ -121,15 +135,26 @@ export function levelCardsHtml(level) {
   }).join('');
 }
 
+/** The account menu's Interface mode side menu: one radio item per mode (data-level-choice, so a
+ *  click is a choose like a dialog card), the bars, the name, a check and one short line. */
+export function levelMenuHtml(level) {
+  const cur = normalizeLevel(level);
+  return UI_LEVELS.map((id) => `<button type="button" class="lv-opt" role="menuitemradio" data-level-choice="${id}" aria-checked="${id === cur}">`
+    + levelBarsSvg(id)
+    + `<span class="lv-opt-name">${esc(LEVEL_INFO[id].label)}</span>`
+    + '<svg class="lv-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>'
+    + `<span class="lv-opt-desc">${esc(LEVEL_SHORT[id])}</span></button>`).join('');
+}
+
 /**
- * Wire the mode item(s), the dialog and the Settings card.
+ * Wire the account menu's Interface mode row and side menu, the dialog and the Settings card.
  *
  * @param {object} o
  * @param {Document} [o.doc]
  * @param {(level:string)=>Promise<{ok:boolean,level?:string,error?:string}>} o.save  persists; answers the CONFIRMED mode
- * @returns {{paint:(level?:string)=>void, open:(from?:Element)=>void, close:()=>void, choose:(level:string)=>Promise<void>}}
+ * @returns {{paint:(level?:string)=>void, open:(from?:Element)=>void, close:()=>void, choose:(level:string, o?:{report?:boolean})=>Promise<void>}}
  */
-export function createLevelController({ doc, save } = {}) {
+export function createLevelController({ doc, save, onError = null } = {}) {
   const d = docOf(doc);
   const $ = (s) => d.querySelector(s);
   const modal = $('#mode-modal');
@@ -143,16 +168,19 @@ export function createLevelController({ doc, save } = {}) {
     const lvl = applyLevel(level === undefined ? currentLevel(d) : level, d);
     const info = LEVEL_INFO[lvl];
     for (const b of d.querySelectorAll('[data-mode-open]')) {
-      const icon = b.querySelector('.lv-icon-slot');
-      if (icon) icon.innerHTML = levelIconSvg(lvl);
-      const name = b.querySelector('.lv-name');
-      if (name) name.textContent = info.label;              // just the level: the icon says what it is
       b.setAttribute('aria-label', `Interface mode: ${info.label}. Change how much of Worca is shown`);
-      b.title = `${info.label} — change how much of Worca is shown`;   // the collapsed rail's only label
+      b.title = `${info.label} — change how much of Worca is shown`;
     }
     const sIcon = $('#modeSettingsIcon'); if (sIcon) sIcon.innerHTML = levelIconSvg(lvl);
     const sName = $('#modeSettingsName'); if (sName) sName.textContent = info.label;
     const sDesc = $('#modeSettingsDesc'); if (sDesc) sDesc.textContent = info.desc;
+    // The account menu: the row's value, and the side menu's check (items updated in place, so focus stays).
+    const row = $('#acct-lvl .mi-val'); if (row) row.textContent = info.label;
+    const side = $('#lvl-menu');
+    if (side) {
+      if (!side.querySelector('[data-level-choice]')) side.innerHTML = levelMenuHtml(lvl);
+      for (const o of side.querySelectorAll('[data-level-choice]')) o.setAttribute('aria-checked', String(o.dataset.levelChoice === lvl));
+    }
     if (cards && modal && !modal.classList.contains('hidden')) {
       const had = d.activeElement && d.activeElement.closest && d.activeElement.closest('#mode-cards');
       cards.innerHTML = levelCardsHtml(lvl);
@@ -171,13 +199,14 @@ export function createLevelController({ doc, save } = {}) {
   function close() {
     if (!modal || modal.classList.contains('hidden')) return;
     modal.classList.add('hidden');
-    // The opener may have been repainted or hidden by the change; fall back to the sidebar item.
-    const back = (opener && opener.isConnected && opener.offsetParent !== null) ? opener : $('.nav [data-mode-open]');
+    // The opener may have been repainted or hidden by the change; fall back to the account corner.
+    const back = (opener && opener.isConnected && opener.offsetParent !== null) ? opener : $('#side-acct');
     if (back && typeof back.focus === 'function') back.focus();
     opener = null;
   }
 
-  async function choose(level) {
+  /** `report: false`: the caller shows why a save failed itself (a tour's start opens the dialog), so no onError. */
+  async function choose(level, { report = true } = {}) {
     if (!isUiLevel(level)) return;
     const mine = ++seq;
     const previous = confirmed;
@@ -188,7 +217,11 @@ export function createLevelController({ doc, save } = {}) {
     if (mine !== seq) return;                      // a later click owns the paint now
     if (!out || !out.ok) {
       paint(previous);
-      if (msg) { msg.textContent = `Could not save the mode: ${(out && out.error) || 'unknown error'}`; msg.className = 'hint err'; }
+      const error = (out && out.error) || 'unknown error';
+      if (msg) { msg.textContent = `Could not save the mode: ${error}`; msg.className = 'hint err'; }
+      // The dialog shows that line. A pick from the account menu's side menu has no line of its
+      // own, so the app is told (it toasts); never both.
+      if (report && onError && (!modal || modal.classList.contains('hidden'))) onError(error);
       return;
     }
     confirmed = normalizeLevel(out.level || level);

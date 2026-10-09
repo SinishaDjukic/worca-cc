@@ -141,7 +141,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
 
 // One phone boot, the steps in order: each row starts where the previous one left the page
 // (drawer closed, on New pipeline → Statistics → Runs), and a failing row names its step.
-test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; the Nodes flyout and the mode switch do not close it', async () => {
+test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; the Nodes flyout and the account menu do not close it', async () => {
   const { $, click, key, resize, window } = await boot({ width: 390 });
   await checkRows([
     { name: 'phone: open, close by scrim / close button / Escape; focus and inert are managed', run: async () => {
@@ -165,7 +165,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       click('#mbar-menu'); key('Escape');
       assert.equal(body.classList.contains('nav-open'), false);
     } },
-    { name: 'phone: a route closes the drawer and names the page in the bar; the Nodes flyout and the mode switch do not', run: async () => {
+    { name: 'phone: a route closes the drawer and names the page in the bar; the Nodes flyout and the account menu do not', run: async () => {
       const body = window.document.body;
       assert.equal($('#mbar-title').textContent, 'New pipeline');
       click('#mbar-menu');
@@ -175,17 +175,42 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       key('Escape');
       assert.equal($('#nav-nodes-fly').hidden, true, 'Escape closes the flyout…');
       assert.ok(body.classList.contains('nav-open'), '…and only the flyout');
-      click('#nav-mode');
-      assert.ok(body.classList.contains('nav-open'), 'the mode dialog opens over the drawer');
-      assert.equal($('#mode-modal').classList.contains('hidden'), false);
-      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      assert.equal($('#mode-modal').classList.contains('hidden'), true, 'Esc closes the dialog…');
-      assert.ok(body.classList.contains('nav-open'), '…and only the dialog');
+      click('#side-acct');
+      assert.equal($('#acct-menu').hidden, false, 'the account menu opens inside the drawer');
+      click('#acct-lvl');
+      assert.equal($('#lvl-menu').hidden, false, 'Interface mode opens its side menu');
+      click('#lvl-menu [data-level-choice="advanced"]');
+      await tick();
+      assert.equal(window.document.documentElement.dataset.level, 'advanced');
+      click('#lvl-menu [data-level-choice="expert"]');
+      await tick();
+      assert.ok(body.classList.contains('nav-open'), 'choosing a mode keeps the drawer…');
+      assert.equal($('#acct-menu').hidden, false, '…and the menu');
+      key('Escape');
+      assert.equal($('#lvl-menu').hidden, true, 'Esc closes the side menu first…');
+      assert.equal($('#acct-menu').hidden, false);
+      key('Escape');
+      assert.equal($('#acct-menu').hidden, true, '…then the menu…');
+      assert.ok(body.classList.contains('nav-open'), '…and never the drawer');
       click('.nav button[data-nav="stats"]');
       await tick();
       assert.equal(window.location.hash, '#stats');
       assert.equal(body.classList.contains('nav-open'), false);
       assert.equal($('#mbar-title').textContent, 'Statistics');
+      click('#mbar-menu');
+      click('#side-acct');
+      click($('#acct-spend .mc-btn'));
+      await tick();
+      assert.equal(window.location.hash, '#stats', 'Details, from the spend card');
+      assert.equal(body.classList.contains('nav-open'), false, 'a page inside the menu closes the drawer');
+      click('#mbar-menu');
+      click('#side-acct');
+      click('#acct-settings');
+      await tick();
+      assert.equal(window.location.hash, '#settings', 'Settings, from the account menu');
+      assert.equal(body.classList.contains('nav-open'), false, 'a route from the menu closes the drawer');
+      assert.equal($('#acct-menu').hidden, true, 'and the menu');
+      assert.equal($('#mbar-title').textContent, 'Settings');
     } },
     { name: 'phone: a hash change (back button) closes an open drawer', run: async () => {
       click('#mbar-menu');
@@ -218,4 +243,28 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       assert.equal(window.document.body.classList.contains('nav-open'), false, 'no drawer off-phone');
     } },
   ]);
+});
+
+test('phone drawer: only a route closes it; a popup trigger and an option inside a popup keep it open, a page inside a popup closes it', async () => {
+  const { $, click, window } = await boot({ width: 390 });
+  const doc = window.document;
+  click('#mbar-menu');
+  click('#side-acct');
+  assert.ok(doc.body.classList.contains('nav-open'), 'the account corner opens its menu inside the drawer');
+  assert.equal($('#acct-menu').hidden, false);
+  // Any popup the sidebar grows follows the same rule: no route, no close.
+  const trigger = doc.createElement('button');
+  trigger.type = 'button';
+  trigger.setAttribute('aria-haspopup', 'menu');
+  const menu = doc.createElement('div');
+  menu.setAttribute('role', 'menu');
+  menu.innerHTML = '<button type="button" role="menuitemradio" id="opt">Option</button>'
+    + '<button type="button" role="menuitem" data-nav="stats" id="go">Statistics</button>';
+  $('#side-foot').append(trigger, menu);
+  click(trigger);
+  assert.ok(doc.body.classList.contains('nav-open'), 'a popup trigger is not a route');
+  click('#opt');
+  assert.ok(doc.body.classList.contains('nav-open'), 'an option inside a popup is not a route');
+  click('#go');
+  assert.equal(doc.body.classList.contains('nav-open'), false, 'a page inside a popup is');
 });

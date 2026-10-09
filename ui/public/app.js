@@ -79,7 +79,6 @@ import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
-import { AWAY_GLYPH } from './away-glyph.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -127,7 +126,7 @@ import {
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
-import { renderFreeDaily, freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
+import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
@@ -150,7 +149,8 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -200,7 +200,7 @@ import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswe
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
-import { describeRun, describeNewRun, describeAwaySwitch } from '../../src/shared/away-mode/describe.mjs';
+import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
@@ -775,8 +775,6 @@ function repaintNavMode() {
   applySidebarCollapsed();
   updateNavCounts();             // Runs' title/aria-label (both states)
   renderPipelineTabs();          // child rows <-> initials tiles
-  paintBudget();                 // spend block <-> budget ring
-  paintFreeDaily();              // the free-request line shows only in the full column
   paintSideEdges();              // the band heights moved
 }
 
@@ -834,7 +832,8 @@ if (railAtBoot) {
 // is open the page behind is inert (inert, not aria-hidden: only inert removes
 // focusability — see the track screens), focus starts on #side-close and comes back
 // to the hamburger. Any route closes it: a drawer button here, and showView for
-// back/forward and deep links. The Nodes row (it opens its flyout) and the mode switch keep it open.
+// back/forward and deep links. Only a route closes it: a popup trigger (the Nodes row, the account
+// corner) and a button inside a popup that is not a page keep it open.
 let mobileNavOpen = false;
 const mbarMenu = $('#mbar-menu');
 const navScrim = $('#nav-scrim');
@@ -859,7 +858,9 @@ $('#side-close')?.addEventListener('click', () => setMobileNavOpen(false));
 $('.sidebar')?.addEventListener('click', (e) => {
   if (!mobileNavOpen) return;
   const b = e.target.closest && e.target.closest('button');
-  if (!b || b.matches('.nav-group, [data-mode-open]')) return;
+  // A popup trigger, or a button inside a popup that is not a page (a mode, the away row), is no
+  // route; a page inside a popup ([data-nav]: Settings, Details, Raise limit, Free requests) is.
+  if (!b || b.matches('[aria-haspopup]') || (b.closest('[role="menu"]') && !b.matches('[data-nav]'))) return;
   setMobileNavOpen(false);
 });
 document.addEventListener('keydown', (e) => {
@@ -879,7 +880,7 @@ for (const m of [phoneNavMq, railTierMq]) {
   else if (typeof m.addListener === 'function') m.addListener(onNavTierChange);   // Safari < 14
 }
 // Pages with no sidebar entry of their own still need a name in the phone bar.
-const MBAR_TITLES = { 'getting-started': 'Getting started', 'workspace-create': 'New workspace', 'agent-create': 'New agent' };
+const MBAR_TITLES = { 'getting-started': 'Getting started', 'workspace-create': 'New workspace', 'agent-create': 'New agent', settings: 'Settings' };
 function paintMobileBar(name) {
   const t = $('#mbar-title');
   if (!t) return;
@@ -889,8 +890,8 @@ function paintMobileBar(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Spend indicator. One /api/budget snapshot drives the sidebar block (the
-// drawer on phones) and the New-view creation gate. Refreshed at boot, on
+// Spend. One /api/budget snapshot drives the ring around the account avatar, the
+// account menu's spend card and the New-view creation gate. Refreshed at boot, on
 // every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
 // ---------------------------------------------------------------------------
 const budgetState = { budget: null, timer: null, fetching: false, pending: false, lastFetchMs: 0 };
@@ -931,13 +932,9 @@ async function refreshFreeDaily({ force = false } = {}) {
   paintFreeDaily();
 }
 
-/** The free-request line rides the spend mount, under the spend block (full rail only). */
+/** The free-request row closes the account menu's spend card (paintSpendCard). */
 function paintFreeDaily() {
-  const mount = document.getElementById('side-spend');
-  if (!mount) return;
-  mount.querySelector('.free-ind')?.remove();
-  const node = railCollapsed() ? null : renderFreeDaily(freeDailyState.status);
-  if (node) mount.appendChild(node);
+  paintSpendCard();
   applyFreeDailyToNewView();
   if (currentView() === 'providers') paintProviderFreeDaily();
 }
@@ -990,16 +987,10 @@ async function refreshBudget() {
 
 function paintBudget() {
   const b = budgetState.budget;
-  const mount = document.getElementById('side-spend');
   if (!b) return;
-  if (mount) {
-    // The rail has room for a compact twin, not a labelled block: a 38px ring under a
-    // total limit, the 40px Spent/Saved stack without one (renderBudgetRing picks).
-    const render = railCollapsed() ? renderBudgetRing : renderBudgetIndicator;
-    mount.replaceChildren(render(b,
-      { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
-    paintFreeDaily();   // the free-request line sits under the block this just replaced
-  }
+  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  paintAccount();
+  paintSpendCard();
   applyBudgetToNewView();
   if (currentView() === 'settings' && currentSettingsTab === 'runs') paintBudgetReadout();
   repaintCostBanners();
@@ -1085,13 +1076,6 @@ function personLabel(v) {
   const n = personShown(v);
   return !n ? '' : isViewer(n) ? 'you' : n;
 }
-/** Up to two initials: an email's local part (or a display name) split on . _ - and spaces. */
-function personInitials(name) {
-  const base = String(name || '').trim().split('@')[0];
-  const parts = base.split(/[\s._-]+/).filter(Boolean);
-  const ini = parts.slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-  return /^[A-Z0-9]{1,2}$/.test(ini) ? ini : (ini ? ini.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?' : '?');
-}
 /** A neutral initials circle; `title` is the full sentence. Text only, never markup. */
 function personIni(name, title) {
   const el = document.createElement('span');
@@ -1114,9 +1098,9 @@ function personChip(name, verb = 'Started by') {
   return chip;
 }
 
-// "Signed in as" in the rail foot, and the viewer every people-label compares against.
+// The account corner and its identity card, and the viewer every people-label compares against.
+// Fetched once at boot; a failed call leaves "Profile" (nobody in particular).
 async function loadWhoami() {
-  const box = document.getElementById('side-who');
   try {
     const res = await fetch('/api/whoami');
     if (!res.ok) return;
@@ -1124,11 +1108,9 @@ async function loadWhoami() {
     const name = attributedName(who && who.name);
     viewer.shared = !!(who && who.shared === true && name);
     viewer.name = viewer.shared ? name : null;
-    if (box) {
-      box.querySelector('.side-who-name').textContent = viewer.shared ? name : '';
-      box.title = viewer.shared ? `Signed in as ${name}` : '';
-      box.hidden = !viewer.shared;
-    }
+    acctState.account = describeAccount(who);
+    paintAccount();
+    paintIdentityCard(document.getElementById('acct-id'), acctState.account);
     if (viewer.shared) repaintPeople();
   } catch { /* nobody is shown */ }
 }
@@ -1142,14 +1124,50 @@ function repaintPeople() {
   try { schedulesView.repaint(); } catch { /* not booted */ }
 }
 
-// The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
-// <nav> that navLinks snapshots at boot — so route it from a container listener
-// rather than the [data-nav] delegation.
-document.getElementById('side-spend').addEventListener('click', (e) => {
-  // The OpenRouter free-request line (same mount) opens the Providers page, where its key lives.
-  if (e.target.closest('.free-ind')) location.hash = 'providers';
-  else if (e.target.closest('.spend-ind')) location.hash = 'stats';
+// ── The account corner and its menu (account-menu.mjs) ─────────────────────────
+// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
+// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
+// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, and the away
+// row last. A level or an away change leaves it open; a route closes it.
+const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
+const acctBtn = document.getElementById('side-acct');
+const acctMenu = document.getElementById('acct-menu');
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', hover: false });
+// Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
+// closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
+createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+function paintAccount() {
+  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+}
+paintAccount();                // the first paint: "Profile" until /api/whoami answers
+
+/** The spend card: the budget snapshot and the free-request row; shown at every interface mode. */
+function paintSpendCard() {
+  const mount = document.getElementById('acct-spend');
+  if (!mount) return;
+  const card = renderSpendCard(budgetState.budget, { fmt: { usd: fmtUsd, usd4: fmtUsd4 }, free: freeDailyState.status });
+  // Re-rendered under the keyboard (a budget tick, pipelines-changed, a free-request refresh): focus
+  // stays on the same button of the new card, or goes back to the corner when that button is gone.
+  const focused = mount.contains(document.activeElement) ? (document.activeElement.closest('.mc-free') ? '.mc-free' : '.mc-btn') : null;
+  mount.replaceChildren(...(card ? [card] : []));
+  mount.hidden = !card;
+  if (focused) (mount.querySelector(focused) || acctBtn).focus();
+  if (acctFly.isOpen()) acctFly.reposition();
+}
+// The card's buttons are re-rendered on every paint, so route the menu from the container. Settings
+// is a navLinks row (it lights while Settings is open); the rest name their view in data-nav (which
+// also closes the menu) and, when they open one card of it, the full hash in data-hash.
+acctMenu.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-nav]');
+  if (!b || b.id === 'acct-settings') return;
+  const target = b.dataset.hash || b.dataset.nav;
+  if (location.hash.slice(1) === target) showView(...splitRoute(target));
+  else location.hash = target;
 });
+function splitRoute(target) {
+  const i = target.indexOf('/');
+  return i === -1 ? [target, ''] : [target.slice(0, i), target.slice(i + 1)];
+}
 
 // ---------------------------------------------------------------------------
 // Server message router. Multi-run: every run's events arrive here (the server
@@ -13661,7 +13679,7 @@ async function paintNightSettings(data) {
     if (!d) { if (host.dataset.dirty !== '1' && data) paintNightFallback(host, data); return; }
     state.awayMode = d;
     paintAwayStatus(d.toggle, !!parseWindow(d.config.window));
-    paintSideAway();
+    paintAwayMenuRow();
     if (host.dataset.dirty === '1') { updateAwaySummary(host, { toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now(), inherited: d.inherited }); return; }   // keep unsaved edits
     renderNightForm(host, { level: 'user', values: d.user, effective: d.config, sources: d.sources, inherited: d.inherited, toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now(), statusEl: awayStatusEl, models });
     // Never on the keep-dirty branch above: settings-changed from another card's save lands
@@ -29942,6 +29960,8 @@ function gsWalk(hops, g) {
 }
 /** The dialog is up (a .viewer-modal without `hidden`). */
 const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m && !m.classList.contains('hidden')); };
+/** An account popup is open (#acct-menu, #lvl-menu: the `hidden` attribute). */
+const gsMenuUp = (id) => { const m = document.getElementById(id); return !!(m && !m.hidden); };
 /** The run just started, on its own page (beginRun opens it): the closing stops of every tour
  *  that starts one — what it is doing, its numbers, a waiting question (only while one waits),
  *  then the rows that open each part of it. `first` is the tour's own line for the first stop.
@@ -30031,9 +30051,9 @@ function gsAddProjectHops(g, navText, addText) {
 }
 /** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
  *  candidate target exists but sits above the mode, the hop becomes "raise the mode" — the
- *  sidebar item first, then the right card once the dialog is up, then Done so the tour is
- *  seen to carry on from behind the dialog. Choosing re-derives the original hop through the
- *  page watcher, like any other click. */
+ *  account corner first, then the menu's Interface mode row, then the mode in its side menu.
+ *  Choosing re-derives the original hop through the page watcher, like any other click. With
+ *  the dialog open (Settings › General › Change…), the hop rings its card, then Done. */
 function gsRaiseLevelHop(hop) {
   const sels = Array.isArray(hop.target) ? hop.target : [hop.target];
   const dialogUp = gsDialogUp('mode-modal');
@@ -30052,8 +30072,15 @@ function gsRaiseLevelHop(hop) {
   if (dialogUp) {
     return { target: `#mode-cards [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}, then Done.` };
   }
-  return { target: ['#nav-mode'],
-    text: `This step is part of ${label} mode. Open the mode switch to show it.` };
+  // An open account menu: point into it. Pointer hops draw no scrim, and the ring sits above the popups.
+  if (gsMenuUp('lvl-menu')) {
+    return { target: `#lvl-menu [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}.` };
+  }
+  if (gsMenuUp('acct-menu')) {
+    return { target: '#acct-lvl', mode: 'pointer', text: `Open Interface mode and choose ${label}.` };
+  }
+  return { target: ['#side-acct'],
+    text: `This step is part of ${label} mode. Open your account menu to show it.` };
 }
 /** On a phone the sidebar is a shut drawer whose buttons still have a box, so guide-spot
  *  would ring them off-screen. A hop whose control lives in #side-rail first rings the
@@ -30318,7 +30345,7 @@ function gsScrollTop() {
 }
 
 // A step whose controls sit above the interface mode (docs/ui-levels.md) asks ONCE, before the tour
-// moves the user anywhere: a mid-tour detour to the mode switch reads as the guide losing its place.
+// moves the user anywhere: a mid-tour detour to the account menu reads as the guide losing its place.
 // Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
 // mode lowered while a tour runs.)
 async function startGuide(step) {
@@ -30329,12 +30356,12 @@ async function startGuide(step) {
     const ok = await confirmModal({
       title: `Switch to ${info.label}?`,
       message: `“${def.label}” uses controls that ${LEVEL_INFO[currentLevel()].label} hides. `
-        + `Switch to ${info.label} to follow the tour — you can change it back any time from the sidebar.`,
+        + `Switch to ${info.label} to follow the tour — you can change it back any time from your account menu.`,
       confirmLabel: `Switch to ${info.label} and start`,
       cancelLabel: 'Not now',
     });
     if (!ok) return;
-    await levelCtl.choose(need);
+    await levelCtl.choose(need, { report: false });   // a refusal reads once: in the dialog below, no toast
     if (!levelAtLeast(need)) { levelCtl.open(null, { keepMsg: true }); return; }   // save failed and reverted: show why
   }
   runGuideFor(step);
@@ -30394,7 +30421,8 @@ function onboardingViewChanged(name) {
 loadOnboarding();
 
 const views = $$('.view');
-const navLinks = $$('.nav button[data-nav]');
+// Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.
+const navLinks = $$('.nav button[data-nav], #acct-settings');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
@@ -30423,6 +30451,8 @@ const levelCtl = createLevelController({
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     return { ok: true, level: data.uiLevel };
   },
+  // A pick from the account menu's side menu that the server refused: the check went back, say why.
+  onError: (error) => notify({ tone: 'err', title: 'Could not save the mode', detail: error, key: 'ui-level-save' }),
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
@@ -30696,6 +30726,7 @@ function showView(name, param = '') {
   if (nodesGroup) nodesGroup.classList.toggle('has-active', NODES_GROUP_VIEWS.includes(name));
   nodesFlyout?.close();
   sideActionsFlyout?.close();
+  acctFly.close();           // ...and the account menu (Settings, Details, Raise limit, Free requests)
   // Body flags let CSS drop .main's padding for the full-height pages (the Runs panes).
   document.body.classList.toggle('view-runs', RUNS_VIEWS.has(name));
   document.body.classList.toggle('view-projects', name === 'projects');
@@ -30876,7 +30907,7 @@ function mcpTab() {
 let currentShownView = null;
 // True only while showView() is writing location.hash itself, to prevent re-entry.
 let syncingHash = false;
-// Boot paint of the mode item / Settings card. Here, not beside levelCtl: a first paint can
+// Boot paint of the account menu's mode row / Settings card. Here, not beside levelCtl: a first paint can
 // dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
 levelCtl.paint();
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
@@ -30943,7 +30974,7 @@ function rdTickHosts(r) {
 }
 
 function timerTick() {
-  try { paintSideAway(); } catch { /* the word moves with the clock (away hours start and end) */ }
+  try { paintAwayMenuRow(); } catch { /* the row moves with the clock (away hours start and end) */ }
   // The Away mode pill counts down while the run WAITS on a question, which the loop below skips.
   try { const open = rdOpenRun(); if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open); } catch { /* a closed test window must not throw from a timer */ }
   for (const r of runs.values()) {
@@ -31261,79 +31292,52 @@ async function refreshAwayBodies() {
     // An open project tab: the status is global, so its summary follows (unsaved edits survive).
     for (const host of document.querySelectorAll('.pd-night-form')) { if (host.querySelector('.away-summary')) updateAwaySummary(host, { toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now() }); }
   }
-  _sideAwayRead = true;
-  paintNewRunAwayHint(); paintSideAway();
+  _awayRowRead = true;
+  paintNewRunAwayHint(); paintAwayMenuRow();
   await Promise.all(Object.keys(state.awayModeByDir).map(async (dir) => { const x = await fetchAwayMode(dir); if (x) state.awayModeByDir[dir] = x; }));
   const open = rdOpenRun();
   if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open);
 }
-// ---- The sidebar's "I'm here | I'm away" control ----
-// The lit side is what applies right now, the away hours included. Clicking the other side says it:
-// "I'm away" = "I'm away now"; "I'm here" = here, even inside the away hours (the next ones apply by
-// themselves). Pause stays in Settings. Unread settings leave it disabled; a click opens Settings › Runs.
-let _sideAwaySig = '';
-let _sideAwayBusy = false;
-let _sideAwayErr = '';            // the last failed click, kept in the tooltip until the next one
-let _sideAwayRead = false;        // the first GET has answered (until then the slot stays empty, never "could not be read")
-let _sideAwayNote = '';           // "Away hours started / ended" from the server, shown for a minute under the control
-let _sideAwayNoteTimer = null;
-const SIDE_AWAY_NOTE_MS = 60_000;
-const sideAwayMount = document.getElementById('side-away');   // held, like awayStatusEl: the 1 s tick paints this page's own mount
-const SIDE_AWAY_ICONS = {         // shown alone on the collapsed menu
-  here: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"></path></svg>',
-  away: AWAY_GLYPH,                // shared with the workflow graph's Away mode band (away-glyph.mjs)
-};
-function paintSideAway() {
-  const mount = sideAwayMount;
-  if (!mount || !_sideAwayRead) return;
+// ---- The account menu's away row (last in the menu) ----
+// "Step away" while you count as here (posts "I'm away now"); "I'm back" while you count as away,
+// the away hours included (posts "I'm here", which skips the rest of them). With per-person Away
+// mode the server answers and stores the signed-in person's own switch, so this reads it the same
+// way. Pause stays in Settings. Unread settings leave the row disabled; a click opens Settings › Runs.
+let _awayRowSig = '';
+let _awayRowBusy = false;
+let _awayRowErr = '';             // the last failed click, kept in the tip until the next one
+let _awayRowRead = false;         // the first GET has answered (until then the row keeps its first paint)
+const awayRow = document.getElementById('acct-away');
+function paintAwayMenuRow() {
+  if (!awayRow || !_awayRowRead) return;
   const d0 = state.awayMode;
-  const s = describeAwaySwitch({ config: d0 ? d0.config : null, toggle: d0 ? d0.toggle : 'auto', hereSince: d0 ? d0.hereSince : null, now: Date.now() });
-  const sig = JSON.stringify([s, _sideAwayBusy, _sideAwayErr, _sideAwayNote]);
-  if (sig === _sideAwaySig && mount.firstChild) return;      // the 1 s tick repaints only on a change
-  _sideAwaySig = sig;
-  const seg = document.createElement('div');
-  seg.className = 'seg side-away'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Away mode');
-  seg.dataset.status = s.status;
-  seg.title = _sideAwayErr ? `${s.tip} (Could not change it: ${_sideAwayErr})` : s.tip;
-  for (const [side, label] of [['here', "I'm here"], ['away', "I'm away"]]) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.dataset.side = side;
-    const on = s.side === side;
-    b.className = on ? 'on' : '';
-    b.setAttribute('aria-pressed', String(on));
-    if (s.disabled || _sideAwayBusy) b.setAttribute('aria-disabled', 'true');
-    b.innerHTML = SIDE_AWAY_ICONS[side];
-    b.append(Object.assign(document.createElement('span'), { className: 'side-away-label', textContent: label }));
-    b.setAttribute('aria-label', label);
-    seg.append(b);
-  }
-  const note = _sideAwayNote ? Object.assign(document.createElement('small'), { className: 'hint side-away-note', textContent: _sideAwayNote }) : null;
-  if (note) note.setAttribute('role', 'status');
-  mount.replaceChildren(seg, ...(note ? [note] : []));
+  const row = describeAwayRow({ config: d0 ? d0.config : null, toggle: d0 ? d0.toggle : 'auto', hereSince: d0 ? d0.hereSince : null, now: Date.now() });
+  const sig = JSON.stringify([row, _awayRowBusy, _awayRowErr]);
+  if (sig === _awayRowSig) return;                          // the 1 s tick repaints only on a change
+  _awayRowSig = sig;
+  const wasAway = acctState.away?.state === 'away';
+  acctState.away = row;
+  paintAwayRow(awayRow, row, { busy: _awayRowBusy, err: _awayRowErr });
+  if (wasAway !== (row.state === 'away')) paintAccount();  // the violet dot and the label
 }
-/** The server's away-hours edge (night/hours-watch.mjs): one line for a minute, and a fresh status. */
+/** The server's away-hours edge (night/hours-watch.mjs): a toast ("Away mode", the server's sentence), and a fresh status. */
 function onAwayHoursEdge(msg) {
-  _sideAwayNote = typeof msg.text === 'string' ? msg.text : '';
-  if (_sideAwayNoteTimer) clearTimeout(_sideAwayNoteTimer);
-  _sideAwayNoteTimer = setTimeout(() => { _sideAwayNote = ''; _sideAwayNoteTimer = null; paintSideAway(); }, SIDE_AWAY_NOTE_MS);
+  if (typeof msg.text === 'string' && msg.text) notify({ tone: 'info', title: 'Away mode', detail: msg.text, key: 'away-edge' });
   void refreshAwayBodies().catch(() => {});
-  paintSideAway();
 }
-sideAwayMount?.addEventListener('click', async (e) => {
-  const b = e.target.closest('.side-away button[data-side]');
-  if (!b || _sideAwayBusy) return;
+awayRow?.addEventListener('click', async () => {
+  if (_awayRowBusy) return;
   const d0 = state.awayMode;
-  if (!d0 || b.getAttribute('aria-disabled') === 'true') { location.hash = 'settings/runs'; return; }
-  if (b.getAttribute('aria-pressed') === 'true') return;     // already what applies
-  _sideAwayBusy = true; _sideAwayErr = ''; paintSideAway();
+  if (!d0 || !acctState.away || acctState.away.disabled) { location.hash = 'settings/runs'; return; }
+  _awayRowBusy = true; _awayRowErr = ''; paintAwayMenuRow();
   try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nightModeToggle: b.dataset.side === 'away' ? 'on' : 'here' }) });
-    if (!res.ok) _sideAwayErr = (await safeJson(res)).error || `HTTP ${res.status}`;
-  } catch (err) { _sideAwayErr = err.message || 'network error'; }
-  _sideAwayBusy = false;
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nightModeToggle: acctState.away.state === 'away' ? 'here' : 'on' }) });
+    if (!res.ok) _awayRowErr = (await safeJson(res)).error || `HTTP ${res.status}`;
+  } catch (err) { _awayRowErr = err.message || 'network error'; }
+  _awayRowBusy = false;
   // settings-changed does the same; the newest refresh wins
   await refreshAwayBodies().catch((e) => notify({ tone: 'err', title: 'Could not refresh Away mode', detail: e.message, key: 'away-refresh' }));
-  paintSideAway();
+  paintAwayMenuRow();
 });
 
 /** The New-run "Mark this run" hint, from the user-level settings (the project is not fixed until submit). */
@@ -31347,7 +31351,7 @@ function paintNewRunAwayHint() {
 // ---------------------------------------------------------------------------
 syncSourceToggle();
 loadProjects();
-void refreshAwayBodies().catch(() => {});   // the sidebar switch (and the New-run hint) need the user-level body
+void refreshAwayBodies().catch(() => {});   // the account menu's away row (and the New-run hint) need the user-level body
 connectWS();
 // Restore the New-Pipeline target (project | workspace). 'workspace' lazy-loads
 // the workspace options + re-points the config panel; 'project' is the default.

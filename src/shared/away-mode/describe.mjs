@@ -41,7 +41,7 @@ function statusLine(config, toggle, now, tz, localZone, surface, hereSince) {
   }
   const cfg = { ...config, timeZone: tz };
   const start = windowStartMs(cfg.window, tz, now);
-  if (start != null && Number.isFinite(hereSince) && hereSince >= start) return { status: 'here-now', text: `Right now it is ${fmtHHMM(now, tz)}${zoneTag}. You count as here because you said "I'm here". Your away hours apply again from ${hours[0]}.` };
+  if (start != null && Number.isFinite(hereSince) && hereSince >= start) return { status: 'here-now', text: `Right now it is ${fmtHHMM(now, tz)}${zoneTag}. You count as here because you said "I'm back". Your away hours apply again from ${hours[0]}.` };
   if (start != null) return { status: 'away-hours', text: `Right now it is ${fmtHHMM(now, tz)}${zoneTag}. You count as away (your away hours). They end at ${hours[1]}.` };
   return { status: 'here', text: `Right now it is ${fmtHHMM(now, tz)}${zoneTag}. You count as here. Next away hours start at ${hours[0]}.` };
 }
@@ -141,19 +141,24 @@ export function describeChange(before, after, { toggle = 'auto', now, localZone 
   return { before: pick(before), after: pick(after) };
 }
 
-// The sidebar switch (wording §3.8): "I'm here | I'm away". The lit side is what applies right now,
-// the away hours included; clicking the other side says it ("I'm here" skips the current stretch).
-const AWAY_SIDE = new Set(['away-now', 'away-hours']);
-const CLICK_AWAY = 'Click "I\'m away" to have worca answer on every run now.';
+// The account menu's away row: one row, last in the menu. "Step away" while you count as here
+// (posts "I'm away now"), "I'm back" while you count as away (posts "I'm here", which also skips the
+// rest of the current away hours). The hint is the next edge: when the away hours start, when they end.
+const STEP_AWAY = 'Step away to have worca answer on every run now.';
 
-/** @returns {{side:'here'|'away'|null, status:string, disabled:boolean, tip:string}} */
-export function describeAwaySwitch({ config, toggle = 'auto', now, localZone = null, hereSince = null } = {}) {
+/** @returns {{state:'here'|'away', status:string, label:string, hint:string, tip:string, disabled:boolean}} */
+export function describeAwayRow({ config, toggle = 'auto', now, localZone = null, hereSince = null } = {}) {
   const d = describeAwayMode({ config, toggle, now, localZone, hereSince });
-  if (d.status === 'unknown') return { side: null, status: d.status, disabled: true, tip: d.lines[0] };
-  const out = { side: AWAY_SIDE.has(d.status) ? 'away' : 'here', status: d.status, disabled: false };
-  if (d.status === 'away-now') return { ...out, tip: 'You said you are away. worca answers on every run until you click "I\'m here".' };
-  if (d.status === 'away-hours') return { ...out, tip: `${d.lines[0]} Click "I'm here" to count as here until they end.` };
-  if (d.status === 'paused') return { ...out, tip: 'Away mode is paused. worca answers nothing. Click "I\'m away" to have worca answer on every run, or turn it back on in Settings › Away mode.' };
-  if (d.status === 'no-hours') return { ...out, tip: `No away hours are set. ${CLICK_AWAY}` };
-  return { ...out, tip: `${d.lines[0]} ${CLICK_AWAY}` };
+  const hours = d.status === 'unknown' ? null : hoursOf(config);
+  const here = { state: 'here', status: d.status, label: 'Step away', disabled: false };
+  const away = { state: 'away', status: d.status, label: "I'm back", disabled: false };
+  switch (d.status) {
+    case 'here':
+    case 'here-now': return { ...here, hint: `away at ${hours[0]}`, tip: `${d.lines[0]} ${STEP_AWAY}` };
+    case 'no-hours': return { ...here, hint: '', tip: `No away hours are set. ${STEP_AWAY}` };
+    case 'paused': return { ...here, hint: 'Away mode paused', tip: 'Away mode is paused. worca answers nothing. Step away to have worca answer on every run, or turn it back on in Settings › Away mode.' };
+    case 'away-now': return { ...away, hint: '', tip: 'You said you are away. worca answers on every run until you click "I\'m back".' };
+    case 'away-hours': return { ...away, hint: `until ${hours[1]}`, tip: `${d.lines[0]} Click "I'm back" to count as here until they end.` };
+    default: return { ...here, status: 'unknown', hint: '', tip: d.lines[0], disabled: true };
+  }
 }

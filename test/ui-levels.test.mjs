@@ -36,9 +36,9 @@ const LEVEL_RE = /^(simple|advanced|expert)$/;
 
 test('every nav item, Settings tab and card, and detail tab declares an explicit, valid level', async () => {
   await checkRows([
-    { name: 'every sidebar item carries an explicit level', run: () => {
+    { name: 'every sidebar item (the account corner and its menu rows included) carries an explicit level', run: () => {
       const doc = shell();
-      const items = [...doc.querySelectorAll('.nav button')];
+      const items = [...doc.querySelectorAll('.nav button, #side-acct, #acct-menu button')];
       assert.ok(items.length >= 14, 'the sidebar is present');
       for (const b of items) {
         assert.match(b.dataset.minLevel || '', LEVEL_RE, `nav item "${b.textContent.trim()}" has no data-min-level`);
@@ -141,15 +141,16 @@ test('the stylesheet gates exactly the three cumulative cases, and honours data-
 
 test('mode dialog: three radio cards, a click applies and saves, a failed save reverts; a [data-mode-set] control sets the mode without the dialog', async () => {
   await checkRows([
-    { name: 'the dialog: three radio cards, click applies at once and saves, a failed save reverts', run: async () => {
+    { name: 'the dialog (Settings › General "Change…"): three radio cards, click applies at once and saves, a failed save reverts', run: async () => {
       const dom = new JSDOM(html.replace('<html lang="en" data-theme="system">', '<html lang="en" data-theme="system" data-level="simple">'));
       const doc = dom.window.document;
       const saved = [];
       let fail = false;
       const ctl = createLevelController({ doc, save: async (l) => { saved.push(l); return fail ? { ok: false, error: 'disk full' } : { ok: true, level: l }; } });
       ctl.paint();
-      assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Simple');
-      doc.getElementById('nav-mode').click();
+      assert.equal(doc.querySelector('#acct-lvl .mi-val').textContent, 'Simple', 'the account menu row');
+      assert.equal(doc.querySelector('#modeSettingsName').textContent, 'Simple');
+      doc.getElementById('modeSettingsChange').click();
       const modal = doc.getElementById('mode-modal');
       assert.ok(!modal.classList.contains('hidden'), 'click opens the dialog');
       const cards = [...doc.querySelectorAll('#mode-cards [data-level-choice]')];
@@ -157,21 +158,24 @@ test('mode dialog: three radio cards, a click applies and saves, a failed save r
       assert.equal(doc.querySelector('#mode-cards [aria-checked="true"]').dataset.levelChoice, 'simple');
       assert.equal(doc.activeElement.dataset.levelChoice, 'simple', 'focus lands on the checked card');
 
-      doc.querySelector('[data-level-choice="expert"]').click();
+      doc.querySelector('#mode-cards [data-level-choice="expert"]').click();
       assert.equal(doc.documentElement.dataset.level, 'expert', 'applies before the save resolves (live preview)');
       await new Promise((r) => setTimeout(r, 0));
       assert.deepEqual(saved, ['expert']);
-      assert.equal(doc.querySelector('#nav-mode .lv-name').textContent, 'Expert');
+      assert.equal(doc.querySelector('#acct-lvl .mi-val').textContent, 'Expert', 'the account menu row follows');
+      assert.equal(doc.querySelector('#lvl-menu [aria-checked="true"]').dataset.levelChoice, 'expert', 'and its side menu');
       assert.equal(doc.querySelector('#modeSettingsName').textContent, 'Expert', 'the Settings card follows');
 
       fail = true;
-      doc.querySelector('[data-level-choice="advanced"]').click();
+      doc.querySelector('#mode-cards [data-level-choice="advanced"]').click();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(doc.documentElement.dataset.level, 'expert', 'a failed save reverts to the confirmed mode');
       assert.match(doc.getElementById('mode-msg').textContent, /disk full/);
 
       doc.getElementById('mode-done').click();
       assert.ok(modal.classList.contains('hidden'), 'Done closes');
+      // jsdom lays nothing out (offsetParent is null), so the opener reads as gone: the fallback is the account corner.
+      assert.equal(doc.activeElement, doc.getElementById('side-acct'), 'focus falls back to the account corner');
     } },
     { name: 'a [data-mode-set] control (banner, hidden-settings note) sets the mode without opening the dialog', run: async () => {
       const doc = new JSDOM(html).window.document;

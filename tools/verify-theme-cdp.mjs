@@ -337,7 +337,7 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
 // so a future element is sampled; `.sidebar.collapsed .nav > button.nav-new` matches only in the rail-collapsed state.
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
-  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav > button.nav-new', '.nav button', '.spend-ind', '.hd-tree-file', '.ap',
+  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav > button.nav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
   '.act-srow', '.act-stop'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a

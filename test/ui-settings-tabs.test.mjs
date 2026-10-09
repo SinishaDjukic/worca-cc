@@ -87,7 +87,7 @@ test('Settings route normalisation: bare #settings shows General only; #settings
       const { window } = await boot();
       await go(window, 'settings/guardrails');
       assert.equal(shown(window, 'guardrails'), true);
-      assert.ok(window.document.querySelector('.nav button[data-nav="settings"]').classList.contains('active'));
+      assert.ok(window.document.getElementById('acct-settings').classList.contains('active'), 'the account menu\'s Settings row');
     } },
     { name: '#settings/general and an unknown tab both normalise back to bare #settings', run: async () => {
       const { window } = await boot();

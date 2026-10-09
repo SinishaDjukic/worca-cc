@@ -58,12 +58,12 @@ async function boot({ seed = null, breakStorage = false,
     const u = String(url);
     if (u.includes('/api/budget')) {
       // noBudget: a promise that never settles, so paintBudget runs with
-      // budgetState.budget === null (app.js:448 early-returns before #side-spend).
+      // budgetState.budget === null (paintBudget early-returns before the account corner).
       if (noBudget) return new Promise(() => {});
       // budgetOver: patch the fixture (e.g. clear the total limit) for one boot.
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ ...budgetFixture(), ...budgetOver }) });
     }
-    // The ring's click routes to #stats, which paints the stats view. Without a
+    // A route to #stats (the spend card's Details) paints the stats view. Without a
     // body the paint throws AFTER the test ends ("Cannot read properties of
     // undefined (reading 'spentUsd')") and node:test fails the whole FILE on the
     // stray async activity, while the test itself reports as passing.
@@ -112,8 +112,8 @@ async function boot({ seed = null, breakStorage = false,
   // evaluation, from the boot line at :14036, and this file boots the app 19
   // times. node --test runs FILES in parallel, so one file can outlive 60s under
   // load, and a leaked tick from an EXPANDED boot would call paintBudget()
-  // against whatever globalThis.document is current and re-mount the labelled
-  // indicator into a later COLLAPSED test's #side-spend. Park it a day out, and
+  // against whatever globalThis.document is current and repaint the account
+  // corner of a later COLLAPSED test. Park it a day out, and
   // do it BEFORE the import. Seam: test/ui-budget-indicator.test.mjs:89-91.
   window.__budgetTickMs = DAY;
   if (resizeObserver) window.ResizeObserver = resizeObserver;   // jsdom has none
@@ -190,6 +190,8 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
     'expanded rows must not grow redundant tooltips — the label is right there');
   click('#side-toggle');
   for (const [nav, title] of rows()) assert.ok(title, `collapsed ${nav} must carry a tooltip`);
+  assert.match(doc.getElementById('side-acct').title, /^Profile: spend, away mode, interface mode and settings · \$20\.00 of \$50\.00 spent /,
+    'the rail shows the avatar alone: its tooltip says who, what it opens and the spend against the limit');
   assert.equal(doc.querySelector('.nav button[data-nav="composer"]').title, 'Workflow Composer',
     'the tooltip is the label span verbatim — index.html:55');
   assert.equal(doc.querySelector('.nav button[data-nav="new"]').title, 'New pipeline');

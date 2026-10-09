@@ -40,6 +40,7 @@ const RUNTIME = new Map([
   ['#plugin-modal .tp-enable-submit', ['app.js', "'btn btn-primary btn-mini tp-enable-submit'"]],
   ['#tp-body .tp-edit', ['team-policy-view.mjs', "'btn btn-ghost btn-mini tp-edit'"]],
   ['#mode-cards [data-level-choice]', ['ui-level.mjs', 'data-level-choice="${id}"']],            // the mode dialog's cards
+  ['#lvl-menu [data-level-choice]', ['ui-level.mjs', "if (!side.querySelector('[data-level-choice]')) side.innerHTML = levelMenuHtml(lvl);"]],   // the account menu's Interface mode side menu
 ]);
 // `target:` keys in the section that are not hop definitions.
 const NOT_HOPS = new Set(['null', 'hop.target']);              // runGuideFor's state object; runGuide's createGuideSpot call

@@ -262,7 +262,7 @@ tool round trip, each helper call and each retry — so a small pipeline run tak
 
 | Where | Shows |
 | --- | --- |
-| Sidebar, under the spend block | *OpenRouter free today 941 / 1000*; amber below 10%, red at 0, the reset on hover. Only with a `:free` model in the catalog |
+| The account menu, last row of the spend card | *Free requests today 941 / 1000*; amber below 10%, red at 0, the reset on hover; it opens the Providers page. Only with a `:free` model in the catalog |
 | A run's cost pill | *$0 · 87 free requests* for a run that used `:free` models |
 | New pipeline form | a warning when a node's model is `:free` and fewer requests are left than this install's typical run (the median of its recent runs; 90 before it has any) |
 | The Providers page | the allowance under the OpenAI-compatible card, read when the page opens |

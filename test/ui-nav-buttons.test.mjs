@@ -81,16 +81,22 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
       await tick();
       assert.equal(hidden(doc, 'runs'), false, 'Back restored the Runs view');
     } },
-    // Settings is pinned at the bottom behind a divider: it must stay a `.nav` child,
-    // or app.js's `.nav button[data-nav]` wiring silently stops routing it.
-    { name: 'clicking pinned Settings still routes via the hash', run: async () => {
-      const btn = doc.querySelector('.nav button[data-nav="settings"]');
-      assert.ok(btn, 'settings button reachable through the .nav selector');
+    // Settings lives in the account menu: app.js's navLinks takes #acct-settings beside the
+    // `.nav button[data-nav]` rows, so it routes and lights like them.
+    { name: 'Settings in the account menu routes via the hash, lights while open, and closes the menu', run: async () => {
+      click(window, doc.getElementById('side-acct'));
+      assert.equal(doc.getElementById('acct-menu').hidden, false);
+      const btn = doc.getElementById('acct-settings');
       click(window, btn);
       await tick();
       assert.equal(window.location.hash, '#settings');
       assert.equal(doc.querySelector('[data-view="settings"]').classList.contains('hidden'), false);
       assert.ok(btn.classList.contains('active'));
+      assert.equal(btn.getAttribute('aria-current'), 'page');
+      assert.equal(doc.getElementById('acct-menu').hidden, true, 'a route closes the menu');
+      click(window, doc.querySelector('.nav button[data-nav="runs"]'));
+      await tick();
+      assert.equal(btn.getAttribute('aria-current'), null, 'leaving Settings clears it');
     } },
     { name: 'clicking the CTA routes back to the New view', run: async () => {
       click(window, doc.querySelector('.nav button[data-nav="projects"]'));
