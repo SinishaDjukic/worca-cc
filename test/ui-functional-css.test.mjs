@@ -102,6 +102,8 @@ const ROWS = [
   ['.wm-add-msg', 'workspace-map-css: hidden lines stay hidden'],
   // The account corner's popups and cards (side-flyout.mjs and app.js toggle `hidden`).
   ...['.acct-menu', '.lvl-menu', '.acct-spend', '.id-card'].map((sel) => [sel, 'ui-account-corner: a closed menu, an empty card']),
+  // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
+  ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
   // (.log-filters .log-f-exec and the checkbox/radio inputs are type/descendant selectors: the
   //  Step 3 row "every element index.html ships with `hidden` stays hidden" covers them.)

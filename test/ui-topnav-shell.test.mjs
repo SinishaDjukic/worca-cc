@@ -132,10 +132,16 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
   assert.match(main, /min-height:0;/, 'or the column grows past the window and nothing scrolls');
   assert.match(main, /overflow-y:auto;/, '.main is still the one scroll container (the sticky run headers pin to it)');
   const bar = ruleBody('.topnav');
-  for (const d of ['flex:none;', 'height:48px;', 'display:grid;', 'grid-template-columns:minmax(0,1fr) minmax(240px,440px) minmax(0,1fr);',
+  for (const d of ['flex:none;', 'height:48px;', 'display:grid;', 'grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);',
     'align-items:center;', 'gap:12px;', 'padding:0 16px 0 12px;', 'background:var(--panel);', 'border-bottom:1px solid var(--line);']) {
     assert.ok(bar.includes(d), `.topnav has ${d}`);
   }
+  // The side slots keep a floor: with 0 minimums the 440px search grew first and Activity + New run spilled left under
+  // the search pill (Chrome hit-tested the search at 820 rail, 1100, 1280 + terminal), and with the right floor alone the
+  // left track fell to 0 and the search covered the collapse toggle (1280 + terminal).
+  assert.match(bar, /grid-template-columns:[^;]* minmax\(max-content,1fr\);/, 'the right track never goes below its content');
+  assert.match(bar, /grid-template-columns:minmax\(32px,1fr\) /, 'the left track keeps the 32px collapse toggle');
+  assert.match(ruleBody('.side-toggle'), /flex:none;width:32px;/, 'the floor is the toggle\'s width');
   const all = [...css.matchAll(/(?:^|[\s,}])\.topnav\s*\{([^}]*)\}/g)].map((m) => m[1]);
   assert.ok(all.length >= 1);
   for (const body of all.slice(1)) assert.doesNotMatch(body, /height/, 'no tier changes the bar\'s height');

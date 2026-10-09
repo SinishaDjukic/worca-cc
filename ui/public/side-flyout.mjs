@@ -1,7 +1,8 @@
 // ui/public/side-flyout.mjs — one controller for every popup that hangs off the sidebar: the
 // Nodes flyout, the rail's Running actions, and the account menu with its Interface mode side
-// menu. Pure DOM: no app state and no look of its own — style.css owns how a popup
-// looks, this module owns where it goes, when it opens and closes, and the keyboard.
+// menu; and for the top bar's Activity popover, which opens down. Pure DOM: no app state and no
+// look of its own — style.css owns how a popup looks, this module owns where it goes, when it
+// opens and closes, and the keyboard.
 //
 // A popup opens on a click, never on hover, and a second click on its trigger closes it. A close the
 // pointer makes (that second click, a click outside, a click on a route inside) lets go of focus, so
@@ -43,6 +44,7 @@ function stackOf(doc) {
  *  mode 'side'  : left = right edge of the closest `.sidebar` (or the trigger) + gap; top = trigger.top - 30
  *  mode 'up'    : left = trigger.left; top = trigger.top - menu height - gap (opens upward)
  *  mode 'beside': left = parent.right + 4, or parent.left - width - 4 when there is no room; top = trigger.top - 5
+ *  mode 'down'  : left = trigger.right - menu width (right edges aligned); top = trigger.bottom + gap (opens downward)
  *  Writes menu.style.left/top in px; un-hides the menu first so it can be measured. */
 export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win = globalThis.window, gap = 6, margin = 8 } = {}) {
   menu.hidden = false;
@@ -56,6 +58,9 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   if (mode === 'up') {
     left = t.left;
     top = t.top - h - gap;
+  } else if (mode === 'down') {
+    left = t.right - w;
+    top = t.bottom + gap;
   } else if (mode === 'beside') {
     const p = (parent || trigger).getBoundingClientRect();
     left = p.right + 4;

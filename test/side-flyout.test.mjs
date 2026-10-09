@@ -49,7 +49,7 @@ function viewport(window, w, h) {
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: h });
 }
 
-test('placeFlyout: side / up / beside, each clamped to the viewport; un-hides the menu to measure it', async () => {
+test('placeFlyout: side / up / beside / down, each clamped to the viewport; un-hides the menu to measure it', async () => {
   await checkRows([
     { name: 'side: beside the sidebar\'s right edge + 6, 30px above the trigger row', run: () => {
       const { window, $ } = setup();
@@ -104,6 +104,19 @@ test('placeFlyout: side / up / beside, each clamped to the viewport; un-hides th
       box($('menu2'), { left: 200, top: 300, width: 258, height: 200 });
       placeFlyout($('sub'), $('trig2'), { mode: 'beside', parent: $('menu2'), win: window });
       assert.equal($('sub').style.left, '8px', '200 - 236 - 4 < 8: clamped');
+    } },
+    { name: 'down: under the trigger by the gap, its right edge on the trigger\'s; clamped at the left on a phone', run: () => {
+      const { window, $ } = setup();
+      viewport(window, 1280, 800);
+      box($('out'), { left: 1000, top: 8, width: 100, height: 32 });
+      box($('menu'), { width: 440, height: 300 });
+      placeFlyout($('menu'), $('out'), { mode: 'down', win: window });
+      assert.deepEqual([$('menu').style.left, $('menu').style.top], ['660px', '46px']);
+      viewport(window, 375, 700);
+      box($('out'), { left: 300, top: 8, width: 32, height: 32 });
+      box($('menu'), { width: 359, height: 300 });
+      placeFlyout($('menu'), $('out'), { mode: 'down', win: window });
+      assert.deepEqual([$('menu').style.left, $('menu').style.top], ['8px', '46px'], 'the viewport width minus 16px, 8px in');
     } },
   ]);
 });

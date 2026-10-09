@@ -206,6 +206,8 @@ import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisibl
 import { createFlyout } from './side-flyout.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
+import { activityCounts } from './activity-model.mjs';
+import { createActivityMenu } from './activity-menu.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
@@ -253,6 +255,7 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -1279,6 +1282,7 @@ function handleServerMessage(msg) {
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
     refreshAllCounts();
+    activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     if (currentView() === 'schedules' || inRunsView()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); });
     return;
   }
@@ -29680,12 +29684,18 @@ function renderPipelineTabs() {
 }
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
-// as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou).
-function runsNeedsCount() {
-  return countNeedsYou({
-    live: overviewRuns().map((r) => ({ pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
+// as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
+// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
+// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+function runsNeedsInput() {
+  return {
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
-  });
+    active: liveRuns().map((r) => ({ runId: r.runId })),
+  };
+}
+function runsNeedsCount() {
+  return countNeedsYou(runsNeedsInput());
 }
 function updateNavCounts() {
   const live = liveRuns().length;
@@ -29718,6 +29728,7 @@ function updateNavCounts() {
     if (t !== 'Runs' || railed) rb.title = t; else rb.removeAttribute('title');
     rb.setAttribute('aria-label', t);
   }
+  activityMenu?.refresh();       // the top bar's Activity badge (and its open list), from the same runs
 }
 
 // Single authoritative refresh for the sidebar counts. Only Runs and Schedules carry a
@@ -30973,6 +30984,29 @@ $('#topnav-new')?.addEventListener('click', () => {
   if (location.hash.slice(1) === 'new') showView('new');
   else location.hash = 'new';
 });
+
+// Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
+// scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
+// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
+// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
+// opens. A row routes like New run from Ask: close the Ask sheet, then route, or the page opens under it.
+activityMenu = $('#topnav-activity') ? createActivityMenu({
+  button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
+  getCounts: () => activityCounts(runsNeedsInput()),
+  getRuns: () => ({
+    live: overviewRuns().map(runsLiveItem),
+    history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
+    active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+  }),
+  loadSchedules: async () => {
+    await withWorkspaces();                              // a workspace's ticket names its workspace
+    const res = await fetch('/api/schedules');
+    return res.ok ? safeJson(res) : null;
+  },
+  placeOf: (x) => runsGroupFor({ projectDir: x.projectDir || '', workspaceId: x.workspaceId || '', projectKey: x.projectKey || '' }).name,
+  tz: browserTimeZone(),
+  navigate: (hash) => { askPanel?.close(); location.hash = hash; },
+}) : null;
 
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.

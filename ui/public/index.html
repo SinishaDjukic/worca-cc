@@ -221,6 +221,15 @@
             </div>
           </div>
           <div class="topnav-r">
+            <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
+                 a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
+                 number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
+            <button type="button" class="topnav-act" id="topnav-activity" data-min-level="simple" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-pop" aria-label="Activity">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+              <span class="topnav-act-label">Activity</span>
+              <span class="topnav-badge" id="topnav-activity-n" hidden></span>
+            </button>
+            <div class="activity-pop" id="activity-pop" role="dialog" aria-label="Activity" hidden></div>
             <!-- New run: the way to the #new page, at every interface mode and every width (the
                  sidebar has no row for it). app.js routes it like a nav row; it is never lit as
                  the open page (no data-nav). -->
