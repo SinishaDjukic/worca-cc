@@ -23,6 +23,10 @@
   --bg:light-dark(#F1F1EF,#161614);
   --canvas-2:light-dark(#FBFBF9,#1B1B19);
   --panel:light-dark(#FFFFFF,#222220);
+  --side-bg:light-dark(#FAFAFA,#222220);
+  --side-ink:light-dark(#767676,#B4B4AE);
+  --side-sel-ink:light-dark(#171717,#ECECE8);
+  --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
   --field:light-dark(#F6F6F4,#2C2C29);
   --field-focus:light-dark(#FFFFFF,#2E2E2B);
@@ -133,7 +137,7 @@ body{
 /* ---------- Sidebar ---------- */
 /* Three bands in one column: the logo row (.brand) and the foot (.side-foot) stay put,
    and #side-scroll between them is the only thing that scrolls — .sidebar itself never
-   does. 220px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
+   does. 254px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
    `width` is inert while .app is a flex row — flex-basis decides the used main size,
    and that is what animates. `width` is listed too so the fallback path animates if
    the flex context ever changes. It must stay a TRANSITION: the reduced-motion blanket
@@ -142,8 +146,8 @@ body{
    capture up to the first closing brace, so a comment inside a rule body truncates the
    capture. */
 .sidebar{
-  width:220px;flex:0 0 220px;min-height:0;
-  background:var(--panel);
+  width:254px;flex:0 0 254px;min-height:0;
+  background:var(--side-bg);
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
   overflow:hidden;
@@ -171,8 +175,8 @@ body{
 .nav button{
   position:relative;display:flex;align-items:center;gap:10px;width:100%;height:29px;margin:0;
   padding:0 8px 0 9px;border:0;border-radius:8px;
-  background:transparent;color:var(--ink-2);
-  font-family:inherit;font-size:12.5px;line-height:1;font-weight:400;
+  background:transparent;color:var(--side-ink);
+  font-family:inherit;font-size:13.5px;line-height:1;font-weight:500;
   text-align:left;white-space:nowrap;cursor:pointer;
   transition:background .15s,color .15s;
 }
@@ -180,10 +184,10 @@ body{
 /* line-height:1.4 keeps g, p and y inside the label's own box: its overflow:hidden (the ellipsis)
    would clip them at the row's line-height:1. */
 .nav button > span:not(.nav-count){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
-/* Hover is the light field grey; the open page the deeper --hover grey with ink and
-   500 — a soft fill, never the old black bar (the rail squares too). */
+/* Hover is the light field grey; the open page --side-sel-bg with --side-sel-ink — a
+   soft fill, never the old black bar (the rail squares too). */
 .nav button:hover{background:var(--field);color:var(--ink);}
-.nav button.active{background:var(--hover);color:var(--ink);font-weight:500;}
+.nav button.active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
    padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
@@ -191,11 +195,10 @@ body{
    Runs, Schedules, Statistics, Team metrics) has no label at all. */
 .nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
   color:var(--ink-3);user-select:none;}
-/* New pipeline: a normal row led by an 18px ink tile with a "+", ink label at 500, so it
-   reads first without an outline or a fill of its own. The tile is an <i>, not a span:
+/* New pipeline: a normal row led by an 18px ink tile with a "+"; its label is grey like
+   every row that is not the open page. The tile is an <i>, not a span:
    the rail visually hides a row's direct span children (the labels). 18px + 1px a side
    fills the same 20px slot every icon sits in. */
-.nav button.nav-new{color:var(--ink);font-weight:500;}
 .nav-tile{display:grid;place-items:center;flex:0 0 auto;width:18px;height:18px;margin:0 1px;
   border-radius:5px;background:var(--ink);color:var(--on-ink);font-style:normal;}
 .nav .nav-tile svg{width:12px;height:12px;margin:0;stroke-width:2.2;}
@@ -225,7 +228,7 @@ body{
    beside the sidebar. The row takes the open-page fill while a child page is shown
    (.has-active) and the hover grey while its flyout is open; the chevron points at the
    flyout. */
-.nav .nav-group.has-active{background:var(--hover);color:var(--ink);font-weight:500;}
+.nav .nav-group.has-active{background:var(--side-sel-bg);color:var(--side-sel-ink);}
 .nav .nav-group[aria-expanded="true"]:not(.has-active){background:var(--field);color:var(--ink);}
 .nav .nav-group-chev{flex:none;width:14px;height:14px;margin:0;color:var(--ink-3);stroke-width:1.8;}
 /* The popup card (the mockup's menu): panel, hairline, 12px corners and the menu shadow,
@@ -3035,14 +3038,14 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is the mockup's
-   off-white sheet with white cards; it scrolls on a short window. Small grey text is
+   off-white sheet with white cards, one per section (the spend card, the identity card,
+   and each .msect run of rows), 6px apart; it scrolls on a short window. Small grey text is
    --ink-2 (--ink-3 is 2.58:1 on --field); a row's hover is --hover, a step darker than
    the sheet. */
-.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:6px;background:var(--field);}
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:6px;padding:6px;background:var(--field);}
 .nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
 .mcard{display:flex;flex-direction:column;padding:10px 12px 11px;border:1px solid var(--line);border-radius:10px;
   background:var(--panel);box-shadow:var(--shadow-soft);}
-.acct-spend:not([hidden]) + .mcard{margin-top:6px;}
 .mc-head{display:flex;align-items:center;gap:8px;min-height:26px;margin-bottom:8px;}
 .mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
 .mini-ring circle{fill:none;stroke-width:2.6;}
@@ -3066,14 +3069,17 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
 .id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px/1.3 var(--sans);color:var(--ink);}
 .id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
-.menu-sep{flex:none;height:1px;margin:6px -6px;background:var(--line);}
+.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:4px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);box-shadow:var(--shadow-soft);}
 .mi{display:flex;flex:none;align-items:center;gap:9px;width:100%;height:31px;padding:0 10px;border:0;border-radius:8px;background:transparent;
   color:var(--ink);font:400 12.5px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
 .mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
 .mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .mi[aria-current="page"]{font-weight:500;}
 .mi[aria-disabled="true"]{cursor:default;color:var(--ink-2);}
-.mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+/* line-height:1.4 keeps g, p and y inside the label: its overflow:hidden (the ellipsis) would
+   clip them at the row's line-height:1 (the .nav label rule does the same). */
+.mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
 .mi-val{flex:none;font:400 12px/1 var(--sans);color:var(--ink-2);}
 .mi-chev{width:14px;height:14px;flex:none;margin-right:-2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .mi-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
@@ -5000,7 +5006,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* ---------- Collapsible sidebar: the 60px icon rail ---------- */
-/* No rule here restyles anything the expanded 220px column already had: the rail
+/* No rule here restyles anything the expanded 254px column already had: the rail
    rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
    `.side-toggle*`) style nodes that exist only
    because of this feature. Below 1080px the rail is forced (tablets) and at 760px
@@ -5128,7 +5134,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
     mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
   .mbar-title{min-width:0;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--ink);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(220px,86vw);
+  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(254px,86vw);
     box-shadow:var(--shadow-sheet);transform:translateX(-100%);visibility:hidden;
     transition:transform .22s cubic-bezier(.65,.02,.28,1),visibility 0s linear .22s;}
   body.nav-open .sidebar{transform:none;visibility:visible;
@@ -5146,9 +5152,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 /* Fixed full-height dock over the content column; children restore pointer
    events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
    and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
-   reusable. Left offsets track the rail: 220px expanded, 60px collapsed
+   reusable. Left offsets track the rail: 254px expanded, 60px collapsed
    (.sidebar / .sidebar.collapsed own those widths). */
-.ask-dock{position:fixed;top:0;bottom:0;right:0;left:220px;z-index:40;pointer-events:none;
+.ask-dock{position:fixed;top:0;bottom:0;right:0;left:254px;z-index:40;pointer-events:none;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
   padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
 body.rail-collapsed .ask-dock{left:60px;}

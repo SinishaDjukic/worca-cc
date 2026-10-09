@@ -1,5 +1,5 @@
 // test/ui-sidebar-compact.test.mjs — the compact sidebar (plan P1, docs/superpowers/plans/2026-10-08-compact-sidebar.md):
-// three bands, the 220px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
+// three bands, the 254px column and the 60px rail, the row rhythm, the counts and the Nodes flyout, read
 // straight from index.html and style.css. jsdom has no layout, so sizes are pinned in the stylesheet; the
 // behaviour lives in ui-sidebar-collapse, ui-nodes-flyout, ui-mobile-nav and side-flyout tests.
 import { test } from 'node:test';
@@ -30,9 +30,9 @@ test('three bands: the logo row and the foot stay put, the pages scroll between 
   }
 });
 
-test('the column is 220px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
+test('the column is 254px and never scrolls itself; #side-scroll is the one scroller; the rail is 60px', () => {
   const side = ruleBody('.sidebar');
-  assert.match(side, /width:220px;flex:0 0 220px;/);
+  assert.match(side, /width:254px;flex:0 0 254px;/);
   assert.match(side, /display:flex;flex-direction:column;/);
   assert.match(side, /overflow:hidden;/);
   assert.doesNotMatch(side, /overflow-y|padding/, 'the bands own the padding and the scrolling');
@@ -50,9 +50,9 @@ test('the column is 220px and never scrolls itself; #side-scroll is the one scro
 });
 
 test('the Ask dock and the phone drawer follow the new widths; no 298 / 76px literal is left', () => {
-  assert.match(ruleBody('.ask-dock'), /left:220px;/);
+  assert.match(ruleBody('.ask-dock'), /left:254px;/);
   assert.equal(ruleBody('body.rail-collapsed .ask-dock'), 'left:60px;');
-  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(220px,86vw\);/);
+  assert.match(css, /\.sidebar\{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min\(254px,86vw\);/);
   // The Ask threads popover's right:76px sits on the right edge: it is not the rail.
   const rest = css.replace('.ask-pop-threads{top:46px;right:76px;', '');
   assert.doesNotMatch(rest, /\b298\b|\b76px\b/);
@@ -65,10 +65,10 @@ test('hairlines: transparent at rest, --line while the pages run under an edge',
   assert.equal(ruleBody('.sidebar.under-bottom .side-foot'), 'border-top-color:var(--line);');
 });
 
-test('row rhythm: 29px rows a 1px gap apart, 12.5px labels, 16px icons at stroke 1.6, 11px section labels', () => {
+test('row rhythm: 29px rows a 1px gap apart, 13.5px medium labels, 16px icons at stroke 1.6, 11px section labels', () => {
   assert.match(ruleBody('.nav'), /gap:1px;/);
   const row = ruleBody('.nav button');
-  for (const d of ['height:29px;', 'padding:0 8px 0 9px;', 'border-radius:8px;', 'gap:10px;', 'font-size:12.5px;', 'font-weight:400;']) {
+  for (const d of ['height:29px;', 'padding:0 8px 0 9px;', 'border-radius:8px;', 'gap:10px;', 'font-size:13.5px;', 'font-weight:500;', 'color:var(--side-ink);']) {
     assert.ok(row.includes(d), `.nav button has ${d}`);
   }
   assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1\.6;/);
@@ -77,7 +77,7 @@ test('row rhythm: 29px rows a 1px gap apart, 12.5px labels, 16px icons at stroke
 });
 
 test('the open page is a soft grey fill and hover the lighter field grey; nothing paints a row black', () => {
-  assert.equal(ruleBody('.nav button.active'), 'background:var(--hover);color:var(--ink);font-weight:500;');
+  assert.equal(ruleBody('.nav button.active'), 'background:var(--side-sel-bg);color:var(--side-sel-ink);');
   assert.equal(ruleBody('.nav button:hover'), 'background:var(--field);color:var(--ink);');
   assert.equal(ruleBody('.nav button.active svg'), null, 'no --on-ink stroke: there is no dark fill to sit on');
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
@@ -99,7 +99,7 @@ test('New pipeline is a normal row led by an 18px ink "+" tile; nav-cta is gone 
   assert.equal(row.querySelector(':scope > span').textContent, 'New pipeline');
   assert.match(ruleBody('.nav-tile'), /width:18px;height:18px;margin:0 1px;/);
   assert.match(ruleBody('.nav-tile'), /background:var\(--ink\);color:var\(--on-ink\);/);
-  assert.equal(ruleBody('.nav button.nav-new'), 'color:var(--ink);font-weight:500;');
+  assert.equal(ruleBody('.nav button.nav-new'), null, 'its label is grey like every row that is not the open page');
   const themeTool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
   for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')], ['tools/verify-theme-cdp.mjs', themeTool]]) {
     assert.doesNotMatch(src, /nav-cta/, `${name} still names nav-cta`);

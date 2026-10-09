@@ -114,6 +114,7 @@ test('stylesheet: the rail keeps the avatar, ring and dot; the popups are fixed;
   assert.match(rule('.nav-fly.acct-menu') || '', /width:258px;/);
   assert.match(rule('.nav-fly.lvl-menu') || '', /width:236px;/);
   assert.match(rule('.mi') || '', /flex:none;/, 'a short window scrolls the menu; its rows never squeeze below 31px');
+  assert.match(rule('.mi-lbl') || '', /overflow:hidden;[^}]*line-height:1\.4;/, 'the ellipsis box keeps g, p and y: the row\'s line-height:1 would clip them');
   assert.doesNotMatch(css, /\[data-level[^\]]*\][^{]*\.acct/, 'no interface-mode rule reaches the corner');
 });
 
@@ -152,10 +153,11 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
     { name: 'order and roles', run: () => {
       const menu = $('acct-menu');
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
-        ['acct-spend', 'acct-id', 'menu-sep', 'acct-lvl', 'acct-settings', 'menu-sep', 'acct-away']);
+        ['acct-spend', 'acct-id', 'msect', 'msect']);
+      assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
+        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']]], 'each run of rows is its own white card');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.className),
         ['mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away'], 'Details, the free row, then the three rows');
-      assert.deepEqual([...menu.querySelectorAll('.menu-sep')].map((s) => s.getAttribute('role')), ['separator', 'separator']);
       assert.deepEqual([$('acct-lvl').getAttribute('aria-haspopup'), $('acct-lvl').getAttribute('aria-controls'), $('acct-lvl').getAttribute('aria-expanded')],
         ['menu', 'lvl-menu', 'false']);
     } },

@@ -179,18 +179,20 @@
             <b class="id-name"></b>
             <small class="id-via"></small>
           </div>
-          <div class="menu-sep" role="separator"></div>
-          <button type="button" class="mi" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
-            <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
-            <svg class="mi-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
-          </button>
-          <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple"><span class="mi-lbl">Settings</span></button>
-          <div class="menu-sep" role="separator"></div>
-          <button type="button" class="mi away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
-            <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
-            <span class="mi-lbl">Step away</span>
-            <span class="mi-hint"></span>
-          </button>
+          <div class="msect" role="group">
+            <button type="button" class="mi" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
+              <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
+              <svg class="mi-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </button>
+            <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple"><span class="mi-lbl">Settings</span></button>
+          </div>
+          <div class="msect" role="group">
+            <button type="button" class="mi away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
+              <span class="mi-lbl">Step away</span>
+              <span class="mi-hint"></span>
+            </button>
+          </div>
         </div>
         <div class="nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>
       </aside>

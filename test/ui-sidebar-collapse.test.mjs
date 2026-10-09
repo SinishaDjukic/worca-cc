@@ -1,4 +1,4 @@
-// test/ui-sidebar-collapse.test.mjs — the sidebar's two states: the 220px
+// test/ui-sidebar-collapse.test.mjs — the sidebar's two states: the 254px
 // labelled column and the 60px icon rail: jsdom behaviour driven through the
 // REAL app.js against the REAL index.html (harness lifted from
 // test/ui-pipeline-tabs.test.mjs:15-36).

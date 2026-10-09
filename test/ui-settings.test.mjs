@@ -51,8 +51,8 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
   // (1) Settings left the page list for the account menu: after Interface mode, before the away row.
   const doc = window.document;
   assert.equal(doc.querySelector('.nav [data-nav="settings"]'), null, 'not a sidebar page any more');
-  const rows = [...doc.querySelectorAll('#acct-menu > button, #acct-menu > .menu-sep')].map((el) => el.id || el.className);
-  assert.deepEqual(rows, ['menu-sep', 'acct-lvl', 'acct-settings', 'menu-sep', 'acct-away'], 'Interface mode, Settings, then the away row last');
+  const rows = [...doc.querySelectorAll('#acct-menu > .msect > button')].map((el) => el.id);
+  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away'], 'Interface mode, Settings, then the away row last');
   assert.equal(doc.getElementById('acct-settings').dataset.nav, 'settings');
 
   // (2) navigating to it loads the current root (default shown as placeholder).
