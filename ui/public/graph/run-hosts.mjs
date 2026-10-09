@@ -270,7 +270,7 @@ export function mountRunGraph(hostEl, opts = {}) {
         const tt = el.querySelector('.nhead .tt');
         el.setAttribute('role', 'link');
         el.tabIndex = 0;
-        el.setAttribute('aria-label', `Show the live log of ${tt ? tt.textContent : el.dataset.nodeId}`);
+        el.setAttribute('aria-label', `Show the log of ${tt ? tt.textContent : el.dataset.nodeId} below the workflow`);
       } else {
         el.removeAttribute('role');
         el.removeAttribute('tabindex');
