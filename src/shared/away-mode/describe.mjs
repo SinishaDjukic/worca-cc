@@ -141,7 +141,7 @@ export function describeChange(before, after, { toggle = 'auto', now, localZone 
   return { before: pick(before), after: pick(after) };
 }
 
-// The account menu's away row: one row, last in the menu. "Step away" while you count as here
+// The account menu's away row: one row, just above the appearance icons. "Step away" while you count as here
 // (posts "I'm away now"), "I'm back" while you count as away (posts "I'm here", which also skips the
 // rest of the current away hours). The hint is the next edge: when the away hours start, when they end.
 const STEP_AWAY = 'Step away to have worca answer on every run now.';

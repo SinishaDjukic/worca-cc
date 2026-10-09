@@ -204,9 +204,11 @@ export function paintIdentityCard(card, acct) {
 
 // ── The away row ─────────────────────────────────────────────────────────────
 
-/** Here: a moon, the away hours (a step-out arrow read as Sign out). Away: a home, to come back to. */
+/** Here: a person walking out (a step-out arrow read as Sign out; a moon read as
+ *  dark mode, the appearance switcher's own icon). Away: a home, to come back to. */
 const AWAY_ICON_PATHS = Object.freeze({
-  here: ['M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z'],
+  here: ['M14 2.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z', 'M13 8l-1.5 5.5', 'M8.5 12l2-3.2 2.5-.8 2.5 2.5 2.5 1',
+    'M11.5 13.5l2.5 3 1 4.5', 'M11.5 13.5l-1.5 3.5-3 3.5'],
   away: ['M3.5 10.5L12 3.5l8.5 7', 'M5.5 9v11h13V9', 'M10 20v-5.5h4V20'],
 });
 

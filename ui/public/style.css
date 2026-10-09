@@ -3210,6 +3210,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mi-hint{flex:none;font:400 11px/1 var(--sans);color:var(--ink-2);}
 .away-item[data-state="away"]{background:var(--violet-bg);color:var(--violet-ink);font-weight:500;}
 .away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
+/* Appearance at the foot of the menu: three icon segments (System · Light · Dark) on one --field
+   track, the picked one raised like .seg button.on. */
+.msect.theme-sect{padding:8px 10px 10px;}
+.theme-seg{display:flex;gap:2px;padding:3px;border-radius:9px;background:var(--field);}
+.theme-ic{display:flex;flex:1;align-items:center;justify-content:center;height:26px;padding:0;border:0;border-radius:7px;
+  background:transparent;color:var(--ink-2);cursor:pointer;}
+.theme-ic:hover{color:var(--ink);}
+.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-soft);}
+.theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line);border-radius:0;}
 .mc-free:hover{background:transparent;}
 .mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}

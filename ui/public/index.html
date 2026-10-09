@@ -131,8 +131,8 @@
             </div>
           </div>
           <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
-               (paintBudget) and the away dot. It opens #acct-menu: spend, away mode, interface mode
-               and Settings. -->
+               (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
+               away mode and appearance. -->
           <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
                   aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
             <span class="acct-ring-wrap">
@@ -167,6 +167,21 @@
               <span class="mi-lbl">Step away</span>
               <span class="mi-hint"></span>
             </button>
+          </div>
+          <!-- Appearance, icons only: the same three modes as Settings › General (app.js#paintTheme
+               paints both). A pick applies and saves; the menu stays open. -->
+          <div class="msect theme-sect" role="group" aria-label="Appearance">
+            <div class="theme-seg" id="acct-theme">
+              <button type="button" class="theme-ic on" role="menuitemradio" aria-checked="true" data-theme-mode="system" data-min-level="simple" aria-label="System" title="System">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"></path><path d="M8.5 19.5h7M12 15.5v4"></path></svg>
+              </button>
+              <button type="button" class="theme-ic" role="menuitemradio" aria-checked="false" data-theme-mode="light" data-min-level="simple" aria-label="Light" title="Light">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"></path></svg>
+              </button>
+              <button type="button" class="theme-ic" role="menuitemradio" aria-checked="false" data-theme-mode="dark" data-min-level="simple" aria-label="Dark" title="Dark">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"></path></svg>
+              </button>
+            </div>
           </div>
         </div>
         <div class="nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>

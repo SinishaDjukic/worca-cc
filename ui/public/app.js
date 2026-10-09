@@ -1165,12 +1165,13 @@ function repaintPeople() {
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
 // The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
 // toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, and the away
-// row last. A level or an away change leaves it open; a route closes it.
+// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the away row,
+// and the appearance icons last. A level, an away or a theme change leaves it open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up' });
+// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false });
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
@@ -13595,8 +13596,8 @@ function settingsCardPainted(saveId) { settingsCardDirty(saveId)?.markClean(); }
 
 // ── Appearance (dark-mode design §5.3) ──────────────────────────────────────
 // The mode lives in settings.json and is server-rendered into <html data-theme>
-// for the first paint; this block keeps it live: the segmented control, the
-// theme-color meta, the `worca:theme` event the thinking orb listens to, and
+// for the first paint; this block keeps it live: the two switchers (Settings ›
+// General's segmented control, the account menu's icons), the theme-color meta, the `worca:theme` event the thinking orb listens to, and
 // the OS-change listener for system mode. Nothing is stored in this browser.
 const THEME_MODES = ['system', 'light', 'dark'];
 function syncThemeColorMeta() {
@@ -13621,22 +13622,25 @@ function applyTheme(mode) {
 const themeNotSaved = (detail) => notify({ tone: 'err', title: 'Theme not saved', detail, key: 'theme' });
 let confirmedTheme = 'system';       // the last SERVER-confirmed mode (GET, POST 200, settings-changed)
 let themeSeq = 0;                    // out-of-order POST resolutions never repaint a stale answer
+const THEME_SWITCHERS = '#theme-seg button[data-theme-mode], #acct-theme button[data-theme-mode]';
+/** Light `mode` in both switchers: aria-pressed on the Settings buttons, aria-checked on the menu's radios. */
+function paintThemeButtons(mode) {
+  for (const b of document.querySelectorAll(THEME_SWITCHERS)) {
+    const on = b.dataset.themeMode === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute(b.getAttribute('role') === 'menuitemradio' ? 'aria-checked' : 'aria-pressed', on ? 'true' : 'false');
+  }
+}
 function paintTheme(mode) {
   const m = applyTheme(mode);
   confirmedTheme = m;
-  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
-    const on = b.dataset.themeMode === m;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
+  paintThemeButtons(m);
 }
 async function chooseTheme(mode) {
   const mine = ++themeSeq;
   const previous = confirmedTheme;
   applyTheme(mode);                                                        // optimistic (not a confirmation)
-  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
-    b.classList.toggle('on', b.dataset.themeMode === mode); b.setAttribute('aria-pressed', b.dataset.themeMode === mode ? 'true' : 'false');
-  }
+  paintThemeButtons(mode);
   let res; let data;
   try {
     res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: mode }) });
@@ -13654,9 +13658,20 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
-document.getElementById('theme-seg')?.addEventListener('click', (e) => {
-  const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
-  if (btn) chooseTheme(btn.dataset.themeMode);
+for (const id of ['theme-seg', 'acct-theme']) {
+  document.getElementById(id)?.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
+    if (btn) chooseTheme(btn.dataset.themeMode);
+  });
+}
+// The menu's icons are one row: Left and Right move between them (the menu's Up and Down walk every item).
+document.getElementById('acct-theme')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const list = [...e.currentTarget.querySelectorAll('button[data-theme-mode]')];
+  const i = list.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  list[(i + (e.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length].focus();
 });
 // Boot: the shell arrived with the stored mode on <html>; normalise it, sync the
 // meta, tell the orb, and seed `confirmedTheme` + the seg buttons from it (paintTheme,

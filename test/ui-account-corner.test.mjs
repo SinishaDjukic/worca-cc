@@ -147,21 +147,23 @@ test('the free-request row paints on its own answer: /api/budget fails, the card
   assert.equal(doc.querySelector('#acct-spend .mc-free .mi-val').textContent, '4 / 50');
 });
 
-test('the account menu: its order and roles (spend card · Signed in as · Interface mode · Settings · away row last), and the keyboard', async () => {
+test('the account menu: its order and roles (spend card · Signed in as · Interface mode · Settings · away row · appearance icons last), and the keyboard', async () => {
   const { doc, $, click, key } = await boot();
   await checkRows([
     { name: 'order and roles', run: () => {
       const menu = $('acct-menu');
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
-        ['acct-spend', 'acct-id', 'msect', 'msect']);
+        ['acct-spend', 'acct-id', 'msect', 'msect', 'msect theme-sect']);
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']]], 'each run of rows is its own white card');
-      assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.className),
-        ['mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away'], 'Details, the free row, then the three rows');
+        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away']], ['group', ['acct-theme']]], 'each run of rows is its own white card');
+      assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
+        ['mc-btn', 'mi mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'system', 'light', 'dark'], 'Details, the free row, the three rows, then the three icons');
+      assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
+        [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
       assert.deepEqual([$('acct-lvl').getAttribute('aria-haspopup'), $('acct-lvl').getAttribute('aria-controls'), $('acct-lvl').getAttribute('aria-expanded')],
         ['menu', 'lvl-menu', 'false']);
     } },
-    { name: 'a keyboard open lands on the first item; the arrows walk the items; Escape from a row refocuses the corner', run: () => {
+    { name: 'a keyboard open lands on the first item (not the checked theme icon); the arrows walk the items; Escape from a row refocuses the corner', run: () => {
       click($('side-acct'), 0);
       assert.equal(doc.activeElement.textContent, 'Details', 'the spend card leads');
       key('ArrowDown');
@@ -169,12 +171,39 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       key('ArrowDown');
       assert.equal(doc.activeElement, $('acct-lvl'));
       key('End');
+      assert.equal(doc.activeElement.dataset.themeMode, 'dark', 'the last icon ends the menu');
+      key('ArrowUp');
+      key('ArrowUp');
+      key('ArrowUp');
       assert.equal(doc.activeElement, $('acct-away'));
       key('Escape');
       assert.equal($('acct-menu').hidden, true);
       assert.equal(doc.activeElement, $('side-acct'));
     } },
   ]);
+});
+
+test('Appearance icons: a pick applies and saves, lights both switchers and keeps the menu open; Left and Right move between them', async () => {
+  const { doc, $, click, key, posts } = await boot();
+  const lit = (sel, attr) => [...doc.querySelectorAll(`${sel} button[data-theme-mode]`)].map((b) => [b.dataset.themeMode, b.classList.contains('on'), b.getAttribute(attr)]);
+  assert.deepEqual(lit('#acct-theme', 'aria-checked'), [['system', true, 'true'], ['light', false, 'false'], ['dark', false, 'false']]);
+  click($('side-acct'));
+  click($('acct-theme').querySelector('[data-theme-mode="dark"]'));
+  await settle();
+  assert.equal(doc.documentElement.dataset.theme, 'dark');
+  assert.deepEqual(posts.filter((p) => p.url.endsWith('/api/settings')).map((p) => p.body), [{ theme: 'dark' }]);
+  assert.deepEqual(lit('#acct-theme', 'aria-checked'), [['system', false, 'false'], ['light', false, 'false'], ['dark', true, 'true']]);
+  assert.deepEqual(lit('#theme-seg', 'aria-pressed'), [['system', false, 'false'], ['light', false, 'false'], ['dark', true, 'true']], 'Settings › General follows');
+  assert.equal($('acct-menu').hidden, false, 'the menu stays open: the page behind changes in place');
+  for (const b of $('acct-theme').querySelectorAll('button')) assert.equal(minLevelFor(b), 'simple', 'shows at every mode');
+  $('acct-theme').querySelector('[data-theme-mode="dark"]').focus();
+  key('ArrowRight');
+  assert.equal(doc.activeElement.dataset.themeMode, 'system', 'Right wraps to the first');
+  key('ArrowLeft');
+  assert.equal(doc.activeElement.dataset.themeMode, 'dark', 'Left wraps to the last');
+  click($('theme-seg').querySelector('[data-theme-mode="light"]'));
+  await settle();
+  assert.deepEqual(lit('#acct-theme', 'aria-checked'), [['system', false, 'false'], ['light', true, 'true'], ['dark', false, 'false']], 'a Settings pick lights the menu too');
 });
 
 test('Interface mode: the row opens its side menu; a choice applies and saves, both stay open; Escape closes the side menu first', async () => {

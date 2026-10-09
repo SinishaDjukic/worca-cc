@@ -87,12 +87,13 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
  *  menu reaches the page (Escape, Tab and shortcuts with Ctrl, Meta or Alt do, but never with an arrow,
  *  Home, End, Page Up/Down, Delete, Backspace, Space or Enter).
  *  Keeps `aria-expanded` on the trigger in sync. Keyboard open (click with e.detail === 0, Enter/Space) focuses
- *  the first item (or `[aria-checked="true"]` when present). */
+ *  the first item (or `[aria-checked="true"]` when present, unless `focusChecked` is false). */
 export function createFlyout({
   doc = globalThis.document, win = globalThis.window,
   trigger, menu,
   mode = 'side', parent = null,
   closeOn = null,
+  focusChecked = true,
   inside = () => false,
   onOpen = () => {}, onClose = () => {},
 } = {}) {
@@ -122,7 +123,7 @@ export function createFlyout({
     }
     if (focus) {
       const list = items();
-      (list.find((el) => el.getAttribute('aria-checked') === 'true') || list[0])?.focus();
+      ((focusChecked && list.find((el) => el.getAttribute('aria-checked') === 'true')) || list[0])?.focus();
     }
   }
 
