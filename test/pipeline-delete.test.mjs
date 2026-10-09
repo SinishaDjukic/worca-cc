@@ -404,6 +404,41 @@ test('deleting a PAUSED detached run removes <worcaHome>/runs/<id>; a later swee
   }
 });
 
+test('archive and retained-work discard refuse a run folder the running server is started from', async () => {
+  const repo = await freshRepo();
+  const prev = process.env.WORCA_HOME;
+  const { home } = await freshStore(repo, {
+    id: 'host0001', base: 'server-host', datePrefix: '04-06-26', status: 'paused', branch: null,
+  });
+  try {
+    const runRoot = join(home, '.worca-cc', 'runs', 'host0001');
+    const wt = await createWorktree({
+      projectDir: repo, pipelineId: 'host0001', sourceBranch: 'main',
+      featureBranch: 'worca-cc/server-host-host0001',
+      baseDir: join(runRoot, 'repos'), checkoutName: 'proj-00000001',
+    });
+    getDb().prepare('UPDATE pipelines SET branch = ? WHERE id = ?').run(
+      JSON.stringify({ source: 'main', feature: wt.branch, worktreeDir: wt.worktreeDir, runRootMode: 'detached' }),
+      'host0001',
+    );
+    const hostDirs = [join(wt.worktreeDir, 'ui')];
+    await assert.rejects(deletePipeline({ key: 'proj-00000001', id: 'host0001', hostDirs }),
+      (e) => e.code === 'HOSTS_SERVER');
+    assert.ok(existsSync(wt.worktreeDir), 'the checkout stays');
+    assert.ok((await listLocalBranches(repo)).includes(wt.branch), 'the branch stays');
+    assert.equal(getDb().prepare('SELECT archived_at FROM pipelines WHERE id = ?').get('host0001').archived_at, null);
+
+    // The same folder as retained work (a failed commit): discard refuses before any snapshot.
+    getDb().prepare(`UPDATE pipelines SET status = 'done', branch = json_set(branch, '$.commitFailed', json(?)) WHERE id = ?`)
+      .run(JSON.stringify({ code: 'commit_failed', step: 'commit', message: 'x', at: new Date().toISOString() }), 'host0001');
+    await assert.rejects(discardRetainedWorktrees({ key: 'proj-00000001', id: 'host0001', hostDirs }),
+      (e) => e.code === 'HOSTS_SERVER');
+    assert.ok(existsSync(wt.worktreeDir), 'the retained checkout stays');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+  }
+});
+
 test('deleting a LEGACY run touches no run root (there is none) and still succeeds', async () => {
   const repo = await freshRepo();
   const prev = process.env.WORCA_HOME;

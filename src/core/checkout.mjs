@@ -3,13 +3,13 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { dirname, basename, join, resolve, sep } from 'node:path';
 import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktreePatch } from './worktree.mjs';
 import { staleIndexLockNote } from './git-lock.mjs';
+import { dirHostingServer, hostDirsOfThisProcess, hostsServerMessage } from './host-dirs.mjs';
 import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
@@ -34,8 +34,6 @@ const parse = (t) => { if (t && typeof t === 'object') return t; try { return JS
 /** D27: git prints realpaths; the Worca home or a temp dir may sit behind a symlink (/var → /private/var). */
 export const canon = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
 const isUnder = (child, parent) => { const c = canon(child); const p = canon(parent); return c === p || c.startsWith(p + sep); };
-/** This process's code root and cwd: a checkout holding either is never removed, or the server deletes itself. */
-const hostDirsOfThisProcess = () => [fileURLToPath(new URL('../../', import.meta.url)), process.cwd()];
 
 /** Runs with a live action process or an open terminal (#573): the cap and until-pr never touch their checkout. */
 export const busyRunIds = (extra = []) => new Set([
@@ -236,10 +234,8 @@ export function discardCheckout({ id, members = null, force = false, stopService
     if (!row) throw cerr('pipeline not found', 'NOT_FOUND');
     const recs = (checkoutRecordsFor(row)?.members || []).filter((m) => !members || members.includes(m.projectKey));
     // Checked before any service stops: a refusal leaves everything as it was.
-    for (const rec of recs) {
-      const host = !rec.external && hostDirs.find((d) => isUnder(d, rec.worktreeDir));
-      if (host) throw cerr(`Can't remove the checkout at ${rec.worktreeDir}: the running Worca server is started from it. Restart Worca from another folder, then try again.`, 'HOSTS_SERVER', { worktreeDir: rec.worktreeDir });
-    }
+    const hosting = dirHostingServer(recs.filter((r) => !r.external).map((r) => r.worktreeDir), hostDirs);
+    if (hosting) throw cerr(hostsServerMessage(hosting), 'HOSTS_SERVER', { worktreeDir: hosting });
     const patches = []; const removed = []; let failure = null;
     const patchDir = recs.length ? await patchDirFor(row.id) : null;
     const unlinked = [];
