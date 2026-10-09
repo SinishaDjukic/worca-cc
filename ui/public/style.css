@@ -3250,6 +3250,19 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-providers-split .mv-providers-hint{margin:0 2px 0;}
 .mv-pv-card{padding:18px 22px;display:grid;gap:12px;}
 .mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
+/* A provider card reads top to bottom: name + state, what it is, then its fields side by side in one row, then the
+   verdict and buttons. Description beside a column of fields left the left half empty and the card tall. */
+.mv-pv-card .mv-pv-row{grid-template-columns:minmax(0,1fr);gap:14px;}
+.mv-pv-card .mv-sp-row .mv-pv-main .hint{max-width:72ch;}
+/* Speech: Speech-to-text and Text-to-speech side by side, each its own column of fields. */
+.mv-pv-card .mv-sp-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 24px;align-items:start;}
+.mv-sp-kind{display:grid;gap:10px;align-content:start;min-width:0;}
+.mv-pv-card .mv-pv-main > :empty{display:none;}   /* an unfilled status line would add a gap */
+.mv-pv-card .mv-sp-row > .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-main .hint{max-width:72ch;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px 14px;align-items:start;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl .mv-field:has(.mv-pv-conc):last-child:nth-child(3){max-width:190px;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
@@ -3373,7 +3386,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mvi-tbl .mvi-id{display:block;margin:2px 0 0;font-family:var(--mono);}
 .mvi-tbl tr.mvi-disabled{opacity:.55;}
 .mvi-status{color:var(--ink-3);font-size:12px;}
-@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}}
+@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}.mv-pv-card .mv-pv-row .mv-pv-ctl{grid-template-columns:1fr;}}
 
 /* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
 .mv-secret{display:block;margin:4px 0 0;}

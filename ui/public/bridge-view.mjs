@@ -229,8 +229,11 @@ function renderSpeechRow(doc, sp) {
   const row = h(doc, 'div', 'mv-pv-row mv-sp-row');
   row.dataset.provider = 'speech';
   const main = h(doc, 'div', 'mv-pv-main');
+  const spHead = h(doc, 'div', 'mv-head');
+  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Ask Worca voice)'));
+  main.appendChild(spHead);
   main.appendChild(h(doc, 'small', 'hint',
-    'Voice mode for Ask Worca. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
+    'Voice mode for Ask Worca. Built in: Whisper and Kokoro run inside your browser — the first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
   if (sp.cacheBytes) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');
@@ -245,10 +248,12 @@ function renderSpeechRow(doc, sp) {
   const ctl = h(doc, 'div', 'mv-pv-ctl');
   for (const kind of ['stt', 'tts']) {
     const s = sp[kind] || {};
+    const box = h(doc, 'div', 'mv-sp-kind');
+    box.dataset.kind = kind;
     const head = h(doc, 'div', 'mv-head');
     head.appendChild(h(doc, 'b', 'mv-name', kind === 'stt' ? 'Speech-to-text' : 'Text-to-speech'));
     head.appendChild(speechBadge(doc, s, kind));
-    ctl.appendChild(head);
+    box.appendChild(head);
     const eng = h(doc, 'label', 'mv-field');
     eng.appendChild(h(doc, 'span', 'mv-field-label', 'Engine'));
     const sel = h(doc, 'select', 'input mv-sp-field mv-sp-engine');
@@ -261,7 +266,7 @@ function renderSpeechRow(doc, sp) {
     }
     sel.value = s.engine || 'browser';
     eng.appendChild(sel);
-    ctl.appendChild(eng);
+    box.appendChild(eng);
     // The server fields matter only for engine 'server' (they stay stored either way).
     const server = h(doc, 'div', 'mv-sp-server');
     server.dataset.kind = kind;
@@ -269,13 +274,13 @@ function renderSpeechRow(doc, sp) {
     sel.addEventListener('change', () => { server.hidden = sel.value !== 'server'; });
     if (kind === 'tts') {
       // Kokoro's voices (af_heart, bf_emma, …) serve both the built-in engine and Kokoro-FastAPI.
-      ctl.appendChild(speechInput(doc, kind, 'voice', 'Voice', 'af_heart, bf_emma, … (OpenAI: alloy, …)', s));
-      ctl.appendChild(speechInput(doc, kind, 'speed', 'Speed', '1', s));
+      box.appendChild(speechInput(doc, kind, 'voice', 'Voice', 'af_heart, bf_emma, … (OpenAI: alloy, …)', s));
+      box.appendChild(speechInput(doc, kind, 'speed', 'Speed', '1', s));
     }
     if (kind === 'stt') {
-      ctl.appendChild(speechInput(doc, kind, 'language', 'Language', 'auto, or an ISO code such as bg', s));
+      box.appendChild(speechInput(doc, kind, 'language', 'Language', 'auto, or an ISO code such as bg', s));
       // How long a silence ends what you are saying — raise it if you get cut off mid-sentence.
-      ctl.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 — raise it if you get cut off', s));
+      box.appendChild(speechInput(doc, kind, 'pause', 'Pause before sending (seconds)', '1.2 — raise it if you get cut off', s));
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');
@@ -287,7 +292,8 @@ function renderSpeechRow(doc, sp) {
     test.dataset.kind = kind;
     btns.appendChild(test);
     server.appendChild(btns);
-    ctl.appendChild(server);
+    box.appendChild(server);
+    ctl.appendChild(box);
   }
   row.appendChild(ctl);
   const save = h(doc, 'div', 'mv-pv-btns');
@@ -331,13 +337,10 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     }
     root.appendChild(note);
   }
-  /** One provider's row, in its own card when the tab hosts it. */
-  const place = (row, title) => {
+  /** One provider's row, in its own card when the tab hosts it. The row's name and state badge title the card. */
+  const place = (row) => {
     if (!split) { root.appendChild(row); return; }
     const card = h(doc, 'section', 'card mv-pv-card');
-    const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'h3', 'mv-section-title', title));
-    card.appendChild(head);
     card.appendChild(row);
     root.appendChild(card);
   };
@@ -403,7 +406,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   terms.type = 'button';
   cpBtns.appendChild(terms);
   cp.appendChild(cpBtns);
-  place(cp, 'GitHub Copilot');
+  place(cp);
 
   // ── key-based providers ──
   for (const name of ['openai', 'anthropic']) {
@@ -473,9 +476,9 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     save.type = 'button'; save.dataset.provider = name;
     btns.appendChild(save);
     row.appendChild(btns);
-    place(row, PROVIDER_LABELS[name]);
+    place(row);
   }
-  place(renderSpeechRow(doc, p.speech || {}), 'Speech (Ask Worca voice)');
+  place(renderSpeechRow(doc, p.speech || {}));
   return root;
 }
 
