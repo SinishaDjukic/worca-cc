@@ -8164,6 +8164,8 @@ span.act-running-title{cursor:default}
 .inherit-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink)}
 .inherit-badge[hidden],.inherit-clear[hidden]{display:none}
 .inherit-row{display:flex;gap:8px;flex-wrap:wrap}
+/* A hint between the label and the control: the same air below it as above it. */
+.inherit-field > .hint + .inherit-row{margin-top:8px;}
 /* A model field: Model (2/3) and Effort (1/3) on one row, each under a caption. */
 .inherit-row.inherit-pair{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px 10px;}
 .inherit-sub{display:flex;flex-direction:column;gap:4px;min-width:0;}
