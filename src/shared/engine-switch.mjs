@@ -81,7 +81,7 @@ export function usageLimitSwitches({ reason = null, limitEngine = null } = {}, r
 
 /** What switching a paused run to `engine` does, in one line. */
 export function engineSwitchNote(engine) {
-  return `Starts the paused step fresh; the model falls back to ${engineLabel(engine)}'s default.`;
+  return `Starts the paused step fresh; a model ${engineLabel(engine)} cannot run falls back to its default.`;
 }
 
 /** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("pass

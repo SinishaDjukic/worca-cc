@@ -17,6 +17,7 @@ import process from 'node:process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
+import { runsOn } from '../src/shared/connections.mjs';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
@@ -193,7 +194,7 @@ import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, checkInside, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import {
   readConfig, setStep, addCustomModel, removeCustomModel, listModels,
-  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, foreignRunModel, assertSlotModels, stepSlotDefaults,
+  PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
   readPrRemotePrefs, setPrRemotePrefs, modelHasBaseUrlRouting, writeSyncPrefs, readSyncPrefs,
@@ -3999,6 +4000,19 @@ async function resumeBaseCheck(row, { workspace, projectDir }) {
  * on Codex. Nothing named keeps the saved engine and its saved consent.
  * @returns {{ engine?: string, allowUnguardedEngine?: true }}
  */
+/** A resume's model override, validated: {} without one; else {model, effort?, modelForAll:true}. @throws {ResumeError} */
+function resumeModelOpts(model, effort, engine) {
+  if (model == null || model === '') return {};
+  if (typeof model !== 'string' || model.length > 200) throw new ResumeError(400, { error: 'model must be a model id' });
+  if (effort != null && effort !== '' && typeof effort !== 'string') throw new ResumeError(400, { error: 'effort must be a string' });
+  const id = model.trim();
+  if (!catalogHasModel(id)) throw new ResumeError(400, { error: `unknown model "${id}" — add it to the catalog first` });
+  if (modelRunsOn(id, engine) === false) {
+    throw new ResumeError(400, { error: `model "${id}" runs on ${(enginesOfModel(id) || []).map(engineLabel).join(' or ')}, not on ${engineLabel(engine)}` });
+  }
+  return { model: id, ...(typeof effort === 'string' && effort ? { effort } : {}), modelForAll: true };
+}
+
 function resumeEngineOpts(engine, allowUnguardedEngine) {
   if (allowUnguardedEngine !== undefined && typeof allowUnguardedEngine !== 'boolean') {
     throw new ResumeError(400, { error: 'allowUnguardedEngine must be true or false' });
@@ -4026,12 +4040,15 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
+  // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
+  const modelOpts = resumeModelOpts(model, effort, engineOpts.engine || saved.resumePoint?.claude?.engine || 'claude');
   if (saved.row.status !== 'paused' && saved.row.status !== 'interrupted') {
     // A paused entry this server still holds for a run settled elsewhere (`worca stop` from a
     // terminal) offers a Resume the row refuses: settle it for its tabs (settleStaleParked). Not
@@ -4144,7 +4161,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     projectDir,
     ...(workspace ? { workspace } : {}),
     agentsDir: AGENTS_DIR,
-    claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts },
+    claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts, ...modelOpts },
     resume: saved,
     resumedBy: by || 'local',
   });
@@ -4158,6 +4175,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
 
   // A scheduled resume for this run is moot the moment any resume is committed.
   cancelScheduledResumes(pipelineId, { by, reason: `the run was resumed${byActor(by || 'local')}` });
+  if (modelOpts.model) appendAuditById(pipelineId, `Resumed with model ${modelOpts.model} for every remaining step${byActor(by || 'local')}.`, { actor: by });
   // A stop may have claimed the row while the gates above awaited (claimPausedForStop flips
   // it to stopped atomically). Re-read it with NOTHING awaited between here and runs.set, so
   // either the stop sees this entry (stopPausedPipeline's beforeStop, and refuses) or this
@@ -4251,6 +4269,8 @@ app.post('/api/resume', async (req, res) => {
       baseAck: req.body?.baseAck === true,
       engine: req.body?.engine,
       allowUnguardedEngine: req.body?.allowUnguardedEngine,
+      model: req.body?.model,
+      effort: req.body?.effort,
     });
     res.json(out);
   } catch (err) {
@@ -8467,8 +8487,8 @@ app.get('/api/budget', (_req, res) => {
 function refuseNonClaudeUtilityModel(key, value) {
   const id = typeof value === 'string' ? value.trim()
     : (value && typeof value === 'object' ? String(value.model ?? value.scanModel ?? '').trim() : '');
-  const e = id ? engineOfModel(id) : null;   // null: no catalog knows the id — allowed, as today
-  if (e && e !== 'claude') throw new Error(`${key}: "${id}" is a ${engineLabel(e)} model — this setting picks a Claude model`);
+  const harnesses = id ? enginesOfModel(id) : null;   // null: no catalog knows the id — allowed, as today
+  if (harnesses && !harnesses.includes('claude')) throw new Error(`${key}: "${id}" runs on ${harnesses.map(engineLabel).join(' or ')} — this setting picks a model Claude Code can run`);
 }
 
 app.post('/api/settings', async (req, res) => {
@@ -9406,7 +9426,7 @@ app.get('/api/workflows/:id', async (req, res) => {
       if (!HELPER_ENGINES.includes(engine)) return res.json(defragWorkflowView(wf, null));
       const dir = typeof req.query.projectDir === 'string' && req.query.projectDir ? resolveProjectDir(req.query.projectDir) : null;
       const stored = defragSlotPair(engine, dir);
-      const models = stored.model ? (await listModels(dir || '')).filter((m) => (m.engine || 'claude') === engine) : [];
+      const models = stored.model ? (await listModels(dir || '')).filter((m) => runsOn(m, engine)) : [];
       const pair = stored.model ? resolveDefragModel({ stored, models }) : null;
       return res.json(defragWorkflowView(wf, pair));
     }
@@ -10436,6 +10456,20 @@ function askChatEngine(threadId, thread) {
   return askListMessages(threadId).some((m) => m && m.role === 'assistant') ? askChatEngineOf(thread) : null;
 }
 
+/** The harness a chat turn on `model` runs on: the one the chat is locked to; else, of the harnesses the model's
+ *  connection reaches that Ask runs on, the user's "Engine for new chats" when it is one, else the first. null when
+ *  the model reaches no Ask harness (or names no model). */
+function askTurnEngine(threadId, thread, model) {
+  const locked = threadId ? askChatEngine(threadId, thread) : null;
+  if (locked) return locked;
+  if (typeof model !== 'string' || !model) return null;
+  const harnesses = (enginesOfModel(model) || [engineOfModel(model) || 'claude']).filter((e) => ASK_ENGINES.includes(e));
+  if (!harnesses.length) return null;
+  let preferred = 'claude';
+  try { preferred = resolveSetting('askEngine').value || 'claude'; } catch { /* today's default */ }
+  return harnesses.includes(preferred) ? preferred : harnesses[0];
+}
+
 /** An event turn's model: the thread's own pick, else the default of the engine the chat is locked to (never the
  *  other engine's), else the user's Ask default. null when none is available. A fallback is said in the chat. */
 async function askEventPick(threadId, thread) {
@@ -10474,8 +10508,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
-  const modelEngine = model ? engineOfModel(model) : null;
-  if (modelEngine && !ASK_ENGINES.includes(modelEngine)) return { ok: false, status: 400, error: `Ask on ${engineLabel(modelEngine)} is unavailable` };
+  const modelEngine = model ? askTurnEngine(id, thread, model) : null;
+  if (model && !modelEngine && engineOfModel(model)) return { ok: false, status: 400, error: `Ask on ${engineLabel(engineOfModel(model))} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
@@ -10554,7 +10588,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const mcp = await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
     // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
     // and is told so once per chat.
-    const engine = engineOfModel(model) === 'codex' ? 'codex' : 'claude';
+    const engine = modelEngine === 'codex' ? 'codex' : 'claude';
     const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
@@ -10690,7 +10724,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const mv = await validateModelEffort(body.model, body.effort, { engine: askChatEngine(id, thread) });
     if (!mv.ok) return badRequest(res, mv.error);
     // The credential broker keeps Claude keys: a Codex chat spends codex's own sign-in (spec §9 "broker slots: Claude only").
-    if (!mockEnabled({}) && engineOfModel(mv.model) !== 'codex') {
+    if (!mockEnabled({}) && askTurnEngine(id, thread, mv.model) !== 'codex') {
       const refusal = await brokerStartRefusal(req, [String(body.model)]);
       if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
     }
@@ -10730,7 +10764,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
         // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
         // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        if (cls.mime === 'application/pdf' && engineOfModel(mv.model) === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
+        if (cls.mime === 'application/pdf' && askTurnEngine(id, thread, mv.model) === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
@@ -10794,7 +10828,7 @@ app.post('/api/ask/mcp-preview', async (req, res) => {
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.model !== undefined && (typeof body.model !== 'string' || !body.model || body.model.length > 200)) return badRequest(res, 'model must be a model id');
     // The chat's engine (D12): the one it is locked to, else the picked model's — a Codex chat gets skills only (#635).
-    const previewEngine = (thread && askChatEngine(thread.id, thread)) || (body.model && engineOfModel(body.model) === 'codex' ? 'codex' : 'claude');
+    const previewEngine = (thread ? askTurnEngine(thread.id, thread, body.model ?? null) : askTurnEngine(null, null, body.model ?? null)) || 'claude';
     res.json(await askMcpPreview({ ctx: cv.context, threadId: thread ? thread.id : null, off: mo.value, model: body.model ?? null, engine: previewEngine }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });

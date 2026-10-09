@@ -23,6 +23,7 @@ import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
+import { runsOn } from '../../shared/connections.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -99,7 +100,7 @@ function dropUnknownModels(shape, models) {
 /** The catalog rows one engine runs (a row without `engine` is Claude's, as in the orchestrator's Auto filter). */
 export function modelsOfEngine(all, engine) {
   const want = engine || 'claude';
-  return (Array.isArray(all) ? all : []).filter((m) => m && (m.engine || 'claude') === want);
+  return (Array.isArray(all) ? all : []).filter((m) => m && runsOn(m, want));
 }
 
 /**

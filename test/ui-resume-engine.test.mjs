@@ -16,7 +16,7 @@ const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.ur
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECT = '/tmp/proj-resume-engine';
 const KEY = 'proj-resume-engine-abcd1234';
-const NOTE = "Starts the paused step fresh; the model falls back to Claude's default.";
+const NOTE = "Starts the paused step fresh; a model Claude cannot run falls back to its default.";
 
 const live = [];
 afterEach(() => { while (live.length) { try { live.pop().close(); } catch {} } });
@@ -230,6 +230,8 @@ test('run page banner: other pauses, and a limit that was not the engine\'s, off
     const ctx = await boot();
     const page = await pausedRun(ctx, { done });
     assert.equal(page.querySelector('.rd-ov-switch'), null, JSON.stringify(done));
+    // Any usage limit (a provider's included) offers another model; other pauses do not.
+    assert.equal(!!page.querySelector('.rd-ov-model'), done.reason === 'usage_limit', JSON.stringify(done));
   }
 });
 
@@ -391,7 +393,7 @@ test('History detail menu: one item per other engine, ready or not; the second o
   await ctx.settle(8);
   const items = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
   assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
-    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; the model falls back to Cursor's default."]]);
+    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."]]);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
   items[1].click();

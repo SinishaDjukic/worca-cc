@@ -19,6 +19,7 @@ import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
+import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
@@ -246,6 +247,7 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     if (!readiness.has(key)) readiness.set(key, providerReadiness(m.upstream));
     const r = readiness.get(key);
     return {
+      connection: connectionOf(m),
       bridged: p, upstreamApi: m.upstream.api, upstreamModel: m.upstream.model,
       needsSignIn: !r.ok, ...(r.ok ? {} : { signInReason: r.reason }),
       ...(m.upstream.capabilities ? { capabilities: { ...m.upstream.capabilities } } : {}),
@@ -306,6 +308,11 @@ function composeCatalog(projectCustom = [], { projectDir = null } = {}) {
     if (seen.has(m.id.toLowerCase())) continue; // predefined/global/plugin wins
     seen.add(m.id.toLowerCase());
     out.push({ id: m.id, label: m.label, efforts: [...EFFORTS], engine: 'claude', custom: 'project', hasEnv: false, routed: false });
+  }
+  // The harnesses each row runs on follow from its connection (src/shared/connections.mjs), never from a tag.
+  for (const r of out) {
+    if (!r.connection) r.connection = connectionOf({ engine: r.engine, routed: r.routed });
+    r.harnesses = [...harnessesOf({ connection: r.connection })];
   }
   return out;
 }
@@ -698,33 +705,65 @@ export function resolveModelEnv(modelId, { tag } = {}) {
  *  plugin, Claude built-ins, team policy, then Codex built-ins — a user layer of any kind owns an
  *  id a Codex built-in also has. Synchronous; never throws. */
 function catalogEngineRows(projectDir = null) {
+  // `harnesses`: every harness the entry's connection reaches (src/shared/connections.mjs); `engine` the first.
+  const row = (m, engine = engineTag(m)) => { const connection = connectionOf({ ...m, engine }); return { id: m.id, engine, connection, harnesses: harnessesOf({ connection }) }; };
   return [
-    ...listGlobalModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
-    ...listPluginModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
-    ...PREDEFINED_MODELS.map((m) => ({ id: m.id, engine: 'claude' })),
-    ...policyCatalogModels().map((m) => ({ id: m.id, engine: engineTag(m) })),
-    ...CODEX_BUILTIN_MODELS.map((m) => ({ id: m.id, engine: 'codex' })),
-    ...(projectDir ? readRaw(projectDir).customModels.map((m) => ({ id: m.id, engine: 'claude' })) : []),
+    ...listGlobalModels().map((m) => row(m)),
+    ...listPluginModels().map((m) => row(m)),
+    ...PREDEFINED_MODELS.map((m) => row(m, 'claude')),
+    ...policyCatalogModels().map((m) => row(m)),
+    ...CODEX_BUILTIN_MODELS.map((m) => row(m, 'codex')),
+    ...(projectDir ? readRaw(projectDir).customModels.map((m) => row(m, 'claude')) : []),
   ];
 }
 
-export function engineOfModel(modelId, { projectDir = null } = {}) {
+function catalogRowOf(modelId, projectDir = null) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return null;
   const lc = id.toLowerCase();
-  const hit = catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc);
-  return hit ? hit.engine : (CLAUDE_ID_RE.test(id) ? 'claude' : null);
+  return catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc) || null;
 }
 
-setCascadeModelOwnerReader((id, { projectDir = null } = {}) => engineOfModel(id, { projectDir }));
+/** Every harness that can run `modelId`, or null for an id no catalog layer knows (a bare Claude Code id or
+ *  alias outside the catalog runs on Claude). Synchronous; never throws. */
+export function enginesOfModel(modelId, { projectDir = null } = {}) {
+  const hit = catalogRowOf(modelId, projectDir);
+  if (hit) return hit.harnesses;
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  return id && CLAUDE_ID_RE.test(id) ? ['claude'] : null;
+}
 
-/** Why a run-level model cannot run on `engine` (it is another engine's catalog model), else null. */
+/** The connection `modelId` reaches its endpoint over (src/shared/connections.mjs), or null for an unknown id. */
+export function modelConnection(modelId, { projectDir = null } = {}) {
+  const hit = catalogRowOf(modelId, projectDir);
+  if (hit) return hit.connection;
+  const id = typeof modelId === 'string' ? modelId.trim() : '';
+  return id && CLAUDE_ID_RE.test(id) ? { kind: 'signin', engine: 'claude' } : null;
+}
+
+/** Whether a run on `engine` can run `modelId`: true / false, or null for an id no catalog layer knows. */
+export function modelRunsOn(modelId, engine, { projectDir = null } = {}) {
+  const harnesses = enginesOfModel(modelId, { projectDir });
+  return harnesses ? harnesses.includes(engine || 'claude') : null;
+}
+
+/** The FIRST harness that runs `modelId` (its sign-in's harness, or Claude Code for an endpoint model), or null for
+ *  an unknown id. Where a decision is "can it run on X", ask modelRunsOn / enginesOfModel instead: an endpoint
+ *  model can run on more than one harness. */
+export function engineOfModel(modelId, { projectDir = null } = {}) {
+  const harnesses = enginesOfModel(modelId, { projectDir });
+  return harnesses ? harnesses[0] : null;
+}
+
+// The cascade drops a slot pick its engine cannot run (settings-cascade.mjs pairCheck): it reads the harness list.
+setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
+
+/** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
   const id = typeof model === 'string' ? model.trim() : '';
-  const owner = id ? engineOfModel(id, { projectDir }) : null;
-  return owner && owner !== engine
-    ? `model "${id}" runs on ${owner}, not on ${engine} — pick a ${engine} model, or start the run with --engine ${owner}`
-    : null;
+  const harnesses = id ? enginesOfModel(id, { projectDir }) : null;
+  if (!harnesses || harnesses.includes(engine)) return null;
+  return `model "${id}" runs on ${harnesses.join(' or ')}, not on ${engine} — pick a model ${engine} can run, or start the run with --engine ${harnesses[0]}`;
 }
 
 /**
@@ -735,15 +774,14 @@ export function foreignRunModel(model, engine, projectDir = null) {
 export function catalogHasModel(modelId, { engine, projectDir = null } = {}) {
   const id = typeof modelId === 'string' ? modelId.trim() : '';
   if (!id) return false;
-  const lc = id.toLowerCase();
-  const effective = catalogEngineRows(projectDir).find((r) => r.id.toLowerCase() === lc);
-  return !!effective && (!engine || effective.engine === engine);
+  const effective = catalogRowOf(id, projectDir);
+  return !!effective && (!engine || effective.harnesses.includes(engine));
 }
 
+/** `modelId` when a run on `engine` can run it (or no catalog layer knows it), else undefined. */
 export function modelForEngine(modelId, engine = 'claude', { projectDir = null } = {}) {
   if (typeof modelId !== 'string' || !modelId.trim()) return undefined;
-  const owner = engineOfModel(modelId, { projectDir });
-  return owner && owner !== engine ? undefined : modelId;
+  return modelRunsOn(modelId, engine, { projectDir }) === false ? undefined : modelId;
 }
 
 export async function assertSlotModels(items, { projectDir = '' } = {}) {
@@ -754,9 +792,8 @@ export async function assertSlotModels(items, { projectDir = '' } = {}) {
     const bad = (message) => Object.assign(new Error(`${id}: ${message}`), { status: 400 });
     const hit = models.find((model) => model?.id?.toLowerCase() === value.model.toLowerCase());
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
-    const owner = hit.engine || 'claude';
-    if (owner !== engine) throw bad(`"${hit.id}" is a ${engineLabel(owner)} model — this slot picks a ${engineLabel(engine)} model`);
-    if (value.effort && !hit.efforts?.includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}"`);
+    if (!runsOn(hit, engine)) throw bad(`"${hit.id}" runs on ${harnessesLabel(hit)} — this slot picks a model ${engineLabel(engine)} can run`);
+    if (value.effort && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
 }
 

@@ -7,6 +7,8 @@
 // and the delegated listeners. Interactive elements carry a routing class
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
+import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
+
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -793,13 +795,14 @@ function collectOpenRouter(conn) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env); a Cursor
- *  model has only its own sign-in (no env, no endpoint). A mode with no text is hidden. */
+/** Each connection mode's title and hint. A new entry offers all three (the sign-in picks its harness below); an entry
+ *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and a Cursor one only its own
+ *  sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ['Anthropic API / CLI default', "Today's behaviour: the claude CLI reaches the endpoint its own login or env names."],
-    env: ['Custom endpoint via env', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
-    provider: ['Through a provider', "Worca's own bridge: GitHub Copilot, or an OpenAI-compatible endpoint. No LiteLLM needed."],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with — Claude Code's login, Codex's ChatGPT sign-in or Cursor's. It runs only in that harness."],
+    env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API — LiteLLM, Bedrock, Vertex, a gateway. Set the routing env below.'],
+    provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
   codex: {
     direct: ['Codex default', "codex's own sign-in (`codex login`) reaches OpenAI."],
@@ -838,6 +841,8 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
     modes.appendChild(lab);
   }
   wrap.appendChild(modes);
+  // Which harnesses this connection reaches, kept current by applyConnectionMode.
+  wrap.appendChild(h(doc, 'small', 'hint mv-conn-runs'));
 
   const body = h(doc, 'div', 'mv-conn-body');
   const grid = h(doc, 'div', 'mv-conn-grid');
@@ -989,18 +994,30 @@ export function applyConnectionMode(connEl) {
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
   // A Cursor model: its own sign-in only (MODE_TEXT.cursor), so the provider body never shows.
+  // A new entry is on no engine until its connection says so (src/shared/connections.mjs): the sign-in mode asks which
+  // harness, env and provider make it Claude Code's. Only an entry being edited is held to the engine it was added under.
   const eng = conn.dataset.engine || 'claude';
-  const codex = eng === 'codex';
-  const cursor = eng === 'cursor';
+  const held = conn.dataset.editing === '1' ? eng : 'claude';
+  const codex = held === 'codex';
+  const cursor = held === 'cursor';
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
-    const text = (MODE_TEXT[eng] || MODE_TEXT.claude)[rb.value];
+    const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];
     lab.hidden = !text;
     if (!text) { if (rb.checked) { rb.checked = false; conn.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true; } continue; }
     lab.querySelector('.mv-conn-mode-title').textContent = text[0];
     lab.querySelector('.mv-conn-mode-hint').textContent = text[1];
   }
   const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
+  const runs = conn.querySelector('.mv-conn-runs');
+  if (runs) {
+    const pv = conn.querySelector('.mv-conn-provider')?.value || 'copilot';
+    const av = conn.querySelector('.mv-conn-api')?.value || conn.querySelector('.mv-conn-api')?.dataset.keep || '';
+    const connection = mode === 'direct' ? { kind: 'signin', engine: eng }
+      : mode === 'env' ? { kind: 'env' }
+        : { kind: 'provider', provider: pv, api: av, codex: codexReaches({ provider: pv, api: av, openrouter: openRouterApplies(conn) }), prefer: eng };
+    runs.textContent = runsOnText(connection);
+  }
   const body = conn.querySelector('.mv-conn-body');
   if (body) body.hidden = cursor || mode !== 'provider';
   const provSel = conn.querySelector('.mv-conn-provider');

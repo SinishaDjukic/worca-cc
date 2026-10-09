@@ -82,6 +82,8 @@ export function renderDone(meta, payload = {}) {
     for (const e of usageLimitSwitches(payload, readyEnginesCached())) {
       parts.push(`   Or continue now on ${engineLabel(e)}: /resume ${runRef(meta.runId)} ${e} (may need Allow unguarded in the worca-cc UI)`);
     }
+    // Any usage limit (the sign-in's or a provider's): a model on another connection has its own allowance.
+    if (payload.reason === 'usage_limit') parts.push('   Or resume with another model from the worca-cc UI (Resume › Resume with another model…)');
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {

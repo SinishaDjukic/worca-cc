@@ -87,25 +87,8 @@ export default [
     },
   },
 
-  {
-    id: 'settings.gateway-model-id',
-    title: 'a gateway custom model may be named gpt-5.5 (an id its endpoint serves) (R6)',
-    tier: 'core', models: 'cheap', diff: true,
-    async run(t) {
-      const srv = await t.sb.server();
-      try {
-        const env = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', ANTHROPIC_AUTH_TOKEN: 'live-dummy' };
-        const plain = await srv.api('POST', '/api/models', { id: 'gpt-5.5', label: 'GPT via my gateway', env });
-        t.note(`POST /api/models {id:"gpt-5.5", env:{ANTHROPIC_BASE_URL}} → ${plain.status} ${plain.text.slice(0, 200)}`);
-        // DECISION NEEDED (R6): the multi-harness build reserves the Codex built-in ids, so a gateway model of that name
-        // is refused; the previous build accepted it. Reported, not failed, until that is decided.
-        t.check('a Claude-engine gateway model named gpt-5.5 is accepted (R6, decision needed)', plain.status === 200, plain.text.slice(0, 300), { severity: 'warn' });
-        const other = await srv.api('POST', '/api/models', { id: 'gpt-4.1-gw', label: 'Other gateway id', env });
-        t.check('control: a non-colliding gateway id is accepted', other.status === 200, other.text.slice(0, 300));
-      } finally { await srv.stop(); }
-    },
-  },
-
+  // R6 (a gateway twin of a Codex built-in id) moved to 85-connections.mjs connections.catalog: the id is refused with one
+  // to use instead, which is accepted.
   {
     id: 'telemetry.subagent-rows',
     title: 'a node that fans out sub-agents gets one closed sub_agents row per sub-agent (no hook telemetry)',

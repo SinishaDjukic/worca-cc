@@ -1,3 +1,4 @@
+import { runsOn, effortsOn } from '../../src/shared/connections.mjs';
 export const INHERIT_HEAD = Object.freeze({ user: 'Same as my settings', team: 'Team default', default: 'Worca default' });
 export function inheritText(source, shown) { const head = INHERIT_HEAD[source] || INHERIT_HEAD.user; return shown == null || shown === '' ? head : `${head} (${shown})`; }
 export function inheritedOf(layers, { level = 'project' } = {}) {
@@ -14,7 +15,7 @@ const node = (doc, tag, cls, text) => { const el = doc.createElement(tag); if (c
 const option = (doc, value, label) => { const el = node(doc, 'option', null, label); el.value = value; return el; };
 function efforts(doc, select, spec, modelId, keep) {
   const hit = modelId ? (spec.catalog || []).find((model) => model?.id === modelId) : null;
-  const list = hit?.efforts?.length ? hit.efforts : (spec.efforts || []); select.replaceChildren(option(doc, '', modelId ? 'Model default' : 'Inherited'));
+  const own = hit ? effortsOn(hit, spec.engine || 'claude') : []; const list = own.length ? own : (spec.efforts || []); select.replaceChildren(option(doc, '', modelId ? 'Model default' : 'Inherited'));
   for (const effort of list) select.append(option(doc, effort, effort)); select.value = keep && list.includes(keep) ? keep : '';
 }
 export function renderInheritField(doc, spec) {
@@ -26,7 +27,7 @@ export function renderInheritField(doc, spec) {
   const shown = spec.kind === 'model' ? formatPair(inherited.value, spec.catalog, spec.defaultLabel || null) : format(inherited.value); let controls;
   if (spec.kind === 'number') { const input = node(doc, 'input', 'input input-mini inherit-input'); input.type = 'number'; if (spec.min != null) input.min = String(spec.min); if (spec.step != null) input.step = String(spec.step); input.value = spec.own == null ? '' : String(spec.own); input.placeholder = inheritText(inherited.source, shown); controls = [input]; }
   else if (spec.kind === 'select') { const select = node(doc, 'select', 'select inherit-input'); select.append(option(doc, '', inheritText(inherited.source, shown))); for (const item of spec.options || []) select.append(option(doc, item.value, item.label)); select.value = spec.own == null ? '' : (spec.fromValue || String)(spec.own); controls = [select]; }
-  else { const model = node(doc, 'select', 'select inherit-model'); model.setAttribute('aria-label', `${spec.label} model`); model.append(option(doc, '', inheritText(inherited.source, shown))); const catalog = (spec.catalog || []).filter((item) => (item.engine || 'claude') === (spec.engine || 'claude')); for (const item of catalog) model.append(option(doc, item.id, item.label || item.id)); const ownModel = spec.own?.model || ''; if (ownModel && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} — not in the catalog`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
+  else { const model = node(doc, 'select', 'select inherit-model'); model.setAttribute('aria-label', `${spec.label} model`); model.append(option(doc, '', inheritText(inherited.source, shown))); const catalog = (spec.catalog || []).filter((item) => runsOn(item, spec.engine || 'claude')); for (const item of catalog) model.append(option(doc, item.id, item.label || item.id)); const ownModel = spec.own?.model || ''; if (ownModel && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} — not in the catalog`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
   const line = node(doc, 'div', 'away-input-row inherit-row'); line.append(...controls); wrap.append(line); STATE.set(wrap, { spec });
   const paint = () => { const set = readInheritField(wrap) !== null; badge.hidden = !(set && spec.level === 'project'); clear.hidden = !set; };
   const touched = () => { wrap.dataset.dirty = '1'; paint(); }; for (const control of controls) { control.addEventListener('input', touched); control.addEventListener('change', touched); }

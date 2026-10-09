@@ -133,6 +133,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionLabel, connectionKey } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -3111,10 +3112,10 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   // "cost not verified" flag still marks an option.
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
-  // D10: New pipeline offers the run engine's models only — another engine's model would be
-  // skipped at run time. `sel.engine` names another engine for a caller that has one.
+  // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
+  // other would be skipped at run time. `sel.engine` names another engine for a caller that has one.
   const engine = sel.engine || state.engine || 'claude';
-  const ofEngine = (m) => (m.engine || 'claude') === engine;
+  const ofEngine = (m) => runsOn(m, engine);
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   const labelCounts = new Map();
   for (const m of state.models) {
@@ -3152,8 +3153,10 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   const model = modelById(modelSel.value);
   effortSel.innerHTML = '';
   effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
-  (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
-  effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
+  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn).
+  const offeredEfforts = model ? effortsOn(model, engine) : [];
+  offeredEfforts.forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = sel.effort && offeredEfforts.includes(sel.effort) ? sel.effort : '';
 
   modelSel.disabled = false;
   effortSel.disabled = !model;
@@ -3703,7 +3706,7 @@ function renderAgentRows(rows) {
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
       // The model's own engine; a pick the catalog no longer holds belongs to an engine this run is not on.
-      const owner = entry ? engineLabel(entry.engine || 'claude') : null;
+      const owner = entry ? harnessesLabel(entry) : null;
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
       kept.textContent = owner
@@ -11764,14 +11767,25 @@ function modalShell({
       const lab = document.createElement('label');
       lab.textContent = f.label;
       lab.htmlFor = `confirm-f-${f.id}`;
-      const inp = document.createElement('input');
-      inp.type = 'text';
-      inp.className = 'input';
+      // `options` [{value, text, group?}] makes the field a select (grouped when any option names a group).
+      const inp = document.createElement(Array.isArray(f.options) ? 'select' : 'input');
+      if (Array.isArray(f.options)) {
+        inp.className = 'select';
+        let og = null;
+        for (const o of f.options) {
+          const opt = document.createElement('option');
+          opt.value = o.value; opt.textContent = o.text ?? o.value;
+          if (o.group) { if (!og || og.label !== o.group) { og = document.createElement('optgroup'); og.label = o.group; inp.appendChild(og); } og.appendChild(opt); } else inp.appendChild(opt);
+        }
+      } else {
+        inp.type = 'text';
+        inp.className = 'input';
+        inp.placeholder = f.placeholder || '';
+        inp.autocomplete = 'off';
+      }
       inp.id = `confirm-f-${f.id}`;
       inp.dataset.fieldId = f.id;
       inp.value = f.value || '';
-      inp.placeholder = f.placeholder || '';
-      inp.autocomplete = 'off';
       if (f.mono) inp.style.fontFamily = 'var(--mono)';
       wrap.append(lab, inp);
       if (f.hint) {
@@ -13976,7 +13990,7 @@ function buildTitleModelOptions(sel, stored) {
   // Legacy per-project entries are not global — titles are; hidden built-ins
   // stay out unless one IS the stored pick (it still resolves).
   // Claude's title slot (D10): Codex models belong to the Codex engine card (Plan 2).
-  const models = titleModelCatalog.filter((m) => m && (m.engine || 'claude') === 'claude' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
+  const models = titleModelCatalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
   const group = (label, xs) => {
     if (!xs.length) return;
     const og = document.createElement('optgroup');
@@ -14076,7 +14090,7 @@ function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel
   sel.appendChild(option('', defaultLabel));
   const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   // Claude's utility slots (Auto, PR description, defragment, workspace scan): Claude models only (D10).
-  const models = catalog.filter((m) => m && (m.engine || 'claude') === 'claude' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
+  const models = catalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
   for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
   // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
   // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
@@ -17431,7 +17445,7 @@ async function confirmCostOverride(runId, btn) {
 }
 
 /** POST /api/resume's body: every option a resume carries, resent as-is after each question. */
-function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false } = {}) {
+function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null } = {}) {
   return {
     pipelineId, baseCheck: true,
     ...(baseAck ? { baseAck: true } : {}),
@@ -17439,6 +17453,7 @@ function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, po
     ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}),
     ...(engine ? { engine } : {}),
     ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
@@ -18313,9 +18328,13 @@ function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
   const offers = usageLimitSwitches(pause || {});
-  const sig = `${saved}|${offers.join(',')}`;
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}`;
   if (menu.dataset.engineSig === sig) return;
   menu.dataset.engineSig = sig;
+  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance.
+  const withModel = menu.querySelector('.resume-with-model');
+  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit';
+  menu.dataset.limitEngine = pause?.limitEngine || '';   // read by the item's click (pickResumeModel)
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
@@ -18329,6 +18348,28 @@ function paintResumeEngineItems(menu, runEngine, pause) {
     item.querySelector('small').textContent = engineSwitchNote(e);
     tpl.before(item);
   }
+}
+
+/** "Resume with another model…" (a usage limit): the model every remaining step runs on, picked from the ones the
+ *  run's harness can run on another connection (src/shared/connections.mjs), grouped by provider. null = cancelled. */
+async function pickResumeModel(engine, pause) {
+  let rows = [];
+  try { rows = (await safeJson(await fetch('/api/config'))).models || []; } catch { rows = []; }
+  // A sign-in's limit is spent for every model on that sign-in; a provider's names itself in the pause detail.
+  const spent = pause && pause.limitEngine ? `signin:${pause.limitEngine}` : null;
+  const offered = rows.filter((m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project' && connectionKey(m) !== spent);
+  if (!offered.length) {
+    await confirmModal({ title: 'No other model to resume with', message: `No model ${engineLabel(engine)} can run is set up on another connection. Add one in Settings › Models.`, confirmLabel: 'OK', cancelLabel: 'Close' });
+    return null;
+  }
+  const options = offered.map((m) => ({ value: m.id, text: m.label || m.id, group: connectionLabel(m) }));
+  const v = await promptModal({
+    title: 'Resume with another model',
+    message: 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
+    confirmLabel: 'Resume',
+    fields: [{ id: 'model', label: 'Model', options, value: options[0].value, required: true }],
+  });
+  return v && v.model ? v.model : null;
 }
 
 /** Before a paused run moves to another engine: what that does. true = go. */
@@ -22071,13 +22112,18 @@ function setupHdActions(screen, record, data) {
     // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself. Their clones are
     // painted after setup, so one delegated listener on the menu.
     resumeMenu.addEventListener('click', (e) => {
-      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
       if (!item || !resumeMenu.contains(item)) return;
       e.stopPropagation();
       closeResumeMenu();
       if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
       const r = hdCurrentRecord(record);
       const saved = hdRunEngine(r, data);
+      if (item.classList.contains('resume-with-model')) {
+        pickResumeModel(saved, { reason: 'usage_limit', limitEngine: resumeMenu.dataset.limitEngine || null })
+          .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
+        return;
+      }
       resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
     });
     resumeAtItem.addEventListener('click', (e) => {
@@ -25210,6 +25256,21 @@ function rdOvStateBanner(host, r) {
     });
     host.append(btn);
   }
+  // Any usage limit, the sign-in's or a provider's: another model on another connection has its own allowance.
+  if (isPaused(r) && r.pipelineId && r.pauseReason === 'usage_limit') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-mini rd-ov-model';
+    btn.textContent = 'Resume with another model…';
+    btn.title = 'Every remaining step runs on the model you pick';
+    btn.addEventListener('click', async () => {
+      const pauseBtn = document.querySelector('#run-detail .rd-pause');
+      if (pauseBtn && pauseBtn.disabled) return;
+      const model = await pickResumeModel(r.runEngine || 'claude', pause);
+      if (model) resumeRunFromCard(r.runId, pauseBtn || btn, { model });
+    });
+    host.append(btn);
+  }
 }
 
 function rdOvStats(host, r) {
@@ -26522,7 +26583,7 @@ function stepModelByNode(stepper, runEngine = 'claude') {
   for (const n of stepper.graph.nodes) {
     if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
     const entry = modelById(n.model);
-    if (entry && (entry.engine || 'claude') !== runEngine) continue;
+    if (entry && !runsOn(entry, runEngine)) continue;
     out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
   }
   return out;
@@ -28198,13 +28259,18 @@ function openRunDetail(runId, { instant = false } = {}) {
   // CLICK time; the toggle carries the busy state, as for a plain Resume. Clones are painted after
   // setup, so one delegated listener on the menu.
   rdResumeMenu.addEventListener('click', (e) => {
-    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
     if (!item || !rdResumeMenu.contains(item)) return;
     e.stopPropagation();
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
     const pauseBtn = screen.querySelector('.rd-pause');
     if (!r || !pauseBtn || pauseBtn.disabled) return;
+    if (item.classList.contains('resume-with-model')) {
+      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine })
+        .then((model) => { if (model) resumeRunFromCard(r.runId, pauseBtn, { model }); });
+      return;
+    }
     const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
     resumeRunOnEngine(r.runId, pauseBtn, engine);
   });
