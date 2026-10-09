@@ -5,6 +5,9 @@
 // the id via resolveModelEnv, no tools, low effort, hard timeout. Never
 // throws — the outcome is a result object either way.
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
 import { resolveModelEnv, engineOfModel } from './config.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
@@ -12,6 +15,7 @@ import { classifyError, isFreeDailyLimit, freeDailyHint } from './recoverable-er
 import { failedBecauseSignedOut } from './claude-auth.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
+import { CURSOR_SIGNED_OUT_HINT } from './engines/cursor.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
 const REPLY_CAP = 100;
@@ -77,14 +81,19 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
   let bridgeFailure = null;
   const onBridgeFailure = (e) => { if (e && !e.tag && String(e.catalogId || '').toLowerCase() === want) bridgeFailure = e; };
   bridgeEvents.on('failure', onBridgeFailure);
+  // A Cursor test never runs in the server's cwd: cursor-agent has its shell and file tools on (no read-only
+  // mode), and the cwd may be $HOME, whose .cursor/ holds the user's own config.
+  let scratch = null;
   try {
+    if (engine === 'cursor') scratch = mkdtempSync(join(tmpdir(), 'worca-model-test-'));   // inside: a throw here still runs the finally
     const { text } = await run({
-      cwd: process.cwd(),
+      cwd: scratch || process.cwd(),
       systemPrompt: SYSTEM,
       prompt: 'Reply with exactly OK.',
       model: id,
       modelEnv: onClaude ? resolveModelEnv(id) : undefined,
-      ...(onClaude ? {} : { engine, sandbox: 'read-only' }),
+      // Codex runs it read-only. Cursor has no read-only mode (engines/cursor.mjs); the prompt is worca's own text.
+      ...(onClaude ? {} : { engine, ...(engine === 'codex' ? { sandbox: 'read-only' } : {}) }),
       effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
@@ -127,7 +136,7 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
       : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? ''
       : cliSignedOut ? CLAUDE_SIGNED_OUT_HINT
       : !onClaude && hasCodexEndpoint(id) ? (errorClass === 'network' ? CODEX_ENDPOINT_NETWORK_HINT : hintFor(errorClass))
-      : !onClaude && errorClass === 'auth' ? CODEX_SIGNED_OUT_HINT
+      : !onClaude && errorClass === 'auth' ? (engine === 'cursor' ? CURSOR_SIGNED_OUT_HINT : CODEX_SIGNED_OUT_HINT)
       : isFreeDailyLimit(message) ? freeDailyHint(message)
       : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };
@@ -135,5 +144,6 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
     bridgeEvents.off('failure', onBridgeFailure);
     clearTimeout(timer);
     if (signal) signal.removeEventListener?.('abort', onOuterAbort);
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 }

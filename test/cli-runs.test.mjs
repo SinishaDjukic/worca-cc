@@ -77,7 +77,7 @@ test('list across projects newest first (plain, non-TTY) and as --json wire entr
       insertPipeline({ id: 'bbb20001', projectKey: 'proj-b', title: 'running run', status: 'running', minutesAgo: 5, startedBy: 'alice' });
       const r = await run(['runs']);
       assert.equal(r.code, 0, r.stderr);
-      assert.match(r.stdout, /ID\s+STATUS\s+STARTED\s+PROJECT\s+TITLE/, 'a header row leads the table');
+      assert.match(r.stdout, /ID\s+STATUS\s+ENGINE\s+STARTED\s+PROJECT\s+TITLE/, 'a header row leads the table');
       const ids = r.stdout.split('\n').filter((l) => /^\s{2}[0-9a-f]{8} {2}/.test(l)).map((l) => l.trim().slice(0, 8));
       assert.deepEqual(ids, ['bbb20001', 'aaa10002', 'aaa10001'], 'newest first');
       assert.match(r.stdout, /bbb20001\s+running/);
@@ -180,4 +180,35 @@ test('refusals: ambiguous prefix (match count), unknown verb/id (one combined er
       assert.match(r.stderr, /unknown option/);
     } },
   ]);
+});
+
+test('a Cursor run: the detail reads "cost unknown", never $0.00, and the list entry names its engine', async () => {
+  insertPipeline({ id: 'ccc30001', projectKey: 'proj-c', title: 'cursor run', status: 'done', minutesAgo: 1, costUsd: 0.3,
+    resumePoint: JSON.stringify({ claude: { engine: 'cursor' } }) });
+  const r = await run(['runs', 'ccc30001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /cost\s+cost unknown \(worca's own calls: \$0\.30\)/);
+  const list = JSON.parse((await run(['runs', '--json'])).stdout);
+  assert.equal(list.find((x) => x.id === 'ccc30001').runEngine, 'cursor');
+  assert.equal(list.find((x) => x.id !== 'ccc30001').runEngine, 'claude', 'a run with no engine recorded is Claude');
+  assert.match(r.stdout, /engine\s+Cursor/);
+  assert.match((await run(['runs'])).stdout, /ccc30001\s+done\s+Cursor\s/, 'the list names the engine');
+});
+
+test('a paused run: the detail says how to resume; after a usage limit its engine hit, on each other engine too', async () => {
+  insertPipeline({ id: 'ddd40001', projectKey: 'proj-d', title: 'limited run', status: 'paused', minutesAgo: 1,
+    resumePoint: JSON.stringify({ claude: { engine: 'codex' }, pauseReason: 'usage_limit', pauseDetail: 'try again at 3pm', limitEngine: 'codex' }) });
+  insertPipeline({ id: 'ddd40002', projectKey: 'proj-d', title: 'error run', status: 'paused', minutesAgo: 1,
+    resumePoint: JSON.stringify({ pauseReason: 'error', pauseDetail: 'disk full' }) });
+  const r = await run(['runs', 'ddd40001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /Resume with: worca resume ddd40001\n/);
+  assert.match(r.stdout, /Or continue now on Claude: worca resume ddd40001 --engine claude/);
+  assert.match(r.stdout, /Or continue now on Cursor: worca resume ddd40001 --engine cursor/);
+  const d = JSON.parse((await run(['runs', 'ddd40001', '--json'])).stdout);
+  assert.deepEqual([d.engine, d.limitEngine], ['codex', 'codex']);
+  const e = await run(['runs', 'ddd40002']);
+  assert.match(e.stdout, /Resume with: worca resume ddd40002/);
+  assert.doesNotMatch(e.stdout, /continue now/, 'another pause offers no switch');
+  assert.doesNotMatch((await run(['runs', 'aaa10001'])).stdout, /Resume with/, 'a finished run has nothing to resume');
 });

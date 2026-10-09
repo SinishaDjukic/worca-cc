@@ -17,8 +17,9 @@ export function keyOptional(provider, baseUrl) {
   return provider === 'openai' && isLocalBaseUrl(baseUrl);
 }
 
-/** A Codex entry's upstream is an endpoint codex connects to itself (engines/codex-endpoint.mjs): never bridged. */
-const bridgedUpstream = (m) => (m.upstream && m.engine !== 'codex' ? m.upstream : null);
+/** Only a Claude entry's upstream is bridged: a Codex entry's is an endpoint codex connects to itself
+ *  (engines/codex-endpoint.mjs), and a Cursor entry has none. */
+const bridgedUpstream = (m) => (m.upstream && (m.engine || 'claude') === 'claude' ? m.upstream : null);
 
 /**
  * The bridged catalog entry for `id` (user global → plugin → team policy), or

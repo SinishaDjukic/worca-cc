@@ -100,7 +100,7 @@ import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
-import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf } from '../src/core/ask/models.mjs';
+import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
@@ -201,7 +201,9 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
+import { engineReadiness } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -2228,7 +2230,19 @@ const startRunHandler = async (req, res) => {
         if (!r.ok) return badRequest(res, r.error);
         sched.afterRef = r.after;
       }
-      if (sched) return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            workspace: { id: ws.id, key: ws.id, name: ws.name, description: ws.description, projects: buildWorkspaceMembers(projects, branch, sourceByKey) },
+            prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws)), claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body, sched, title, askLink, budget, workspaceId: ws.id, projectDir: projects[0].projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, mcpWorkspaceTarget(ws));
 
       const wsBuilt = buildWorkspaceMembers(projects, branch, sourceByKey);
@@ -2348,7 +2362,19 @@ const startRunHandler = async (req, res) => {
       }
       // A schedule stores the pair as checked (the catalog's casing, trimmed): its ticket takes it verbatim.
       const storedBody = startPair ? { ...body, model: startPair.model, effort: startPair.effort || undefined } : body;
-      if (sched) return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      if (sched) {
+        // The engine gate's early refusals answer when the run is scheduled, not hours later when it fires.
+        if (runEngine.engine) {
+          const probe = await createOrchestratorFor({
+            projectDir, prompt: effectivePrompt, title, agentsDir: AGENTS_DIR, workflowId, template: workflowRow, guardrailsId,
+            mcpOptOut: await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 }),
+            claude: { mock, ...runEngine },
+          });
+          const refusal = await probe.engineStartRefusal();
+          if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
+        }
+        return res.status(202).json(await scheduleRequest({ body: storedBody, sched, title, askLink, budget, projectDir, startedBy }));
+      }
       const mcpOptOut = await knownMcpOptOut(optOut.list, { kind: 'project', key: projectKey(projectDir), name: path.basename(projectDir), rank: 0 });
 
       // Scans and defrag never sync: skip the default-branch lookup and settings reads entirely, so
@@ -2409,7 +2435,7 @@ const startRunHandler = async (req, res) => {
     // arrive as the run's error event.
     if (runEngine.engine) {
       const refusal = await orch.engineStartRefusal();
-      if (refusal) return res.status(409).json({ error: refusal.error, code: 'engine-refused', overridable: refusal.overridable });
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable });
     }
 
     if (internal) {
@@ -2496,6 +2522,7 @@ app.post('/api/run', startRunHandler);
 // a target's set skills. Namespaced imports (ES imports are hoisted), kept beside their only users so no
 // other region's imports can collide with these names.
 import * as runSkillResolve from '../src/core/skills-registry/resolve.mjs';
+import { previewSetSkillNames } from '../src/core/run-context.mjs';
 import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
@@ -2517,15 +2544,25 @@ async function skillTeamFor(target) {
   return t?.requiredSkills?.length ? { home: t.home, required: t.requiredSkills } : null;
 }
 
-/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. The layer
- *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag
- *  support is probed at run start). */
-async function skillRunPreview(target, { optOut = [] } = {}) {
+/** The set skills a run on the target would mount (§4.5): the resolver over the run's input. On Claude the layer
+ *  is `sideload-disabled` when this host's managed settings forbid --plugin-dir (the CLI's own flag support is
+ *  probed at run start). Another engine mounts them in `.agents/skills`: `agentNames` maps each one's
+ *  qualifiedName to the name it would get there. */
+async function skillRunPreview(target, { optOut = [], engine = 'claude' } = {}) {
   const team = await skillTeamFor(target);
   const result = await runSkillResolve.resolveSkillRegistry({
     surface: 'pipeline', targets: [target], teams: { [target.kind === 'project' ? target.key : `ws:${target.id}`]: team },
     optOut, skillCap: runSkillResolve.SKILL_CAP.pipeline,
   });
+  if (engine !== 'claude') {
+    const keys = new Set(target.kind === 'project' ? [target.key] : target.members.map((m) => m.key));
+    const dirs = (await listProjects()).filter((p) => keys.has(p.key)).map((p) => p.path);
+    const root = getProjectsRoot();
+    if (root && path.resolve(root) !== path.resolve(os.homedir())) dirs.push(root);
+    const agentNames = await previewSetSkillNames({ dirs, homeDir: os.homedir(),
+      setSkills: result.mounted.map((m) => ({ key: m.qualifiedName, name: m.name, prefix: `${m.setSlug || m.pluginName}-` })) });
+    return { result, team, blocked: null, agentNames };
+  }
   const blocked = result.mounted.length && runSkillHost.skillHostFacts().sideloadDisabled ? 'sideload-disabled' : null;
   return { result, team, blocked };
 }
@@ -2583,6 +2620,7 @@ app.post('/api/mcp/preview', async (req, res) => {
   if (b.models != null && (!Array.isArray(b.models) || b.models.length > 100 || !b.models.every((m) => typeof m === 'string'))) {
     return badRequest(res, 'models must be an array of model ids');
   }
+  if (b.engine != null && !ENGINE_NAMES.includes(b.engine)) return badRequest(res, `engine must be one of ${ENGINE_NAMES.join(', ')}`);
   try {
     const target = await mcpTargetOf(b.target);
     if (target === undefined) return badRequest(res, 'target must be { projectKey } or { workspaceId }');
@@ -2591,7 +2629,7 @@ app.post('/api/mcp/preview', async (req, res) => {
     const why = (sk) => skipReasonText(sk, catalog);
     // Skills registry §4.5: the set skills beside the servers. A skills fault leaves `skills` null and the
     // servers' answer intact (the run resolves again at start).
-    const sr = await skillRunPreview(target, { optOut: opt.list }).catch(() => null);
+    const sr = await skillRunPreview(target, { optOut: opt.list, engine: b.engine || 'claude' }).catch(() => null);
     const count = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
     const skillSets = new Map((sr?.result.sets || []).map((s) => [s.id, s]));
     // Both halves collect the target's sets with one rule (P2 collectSets; the Team input carries the required skills
@@ -2612,7 +2650,8 @@ app.post('/api/mcp/preview', async (req, res) => {
           ? runSkillPolicy.skillDeviations(sr.team ? { 'skills.required': { value: sr.team.required } } : {}, sr.result, skillWhy) : []),
       ],
       skills: sr && {
-        mounted: sr.result.mounted.map(({ dir, ...m }) => m),   // never a host path to the browser
+        // never a host path to the browser; on another engine, the name `.agents/skills` would give it
+        mounted: sr.result.mounted.map(({ dir, ...m }) => (sr.agentNames ? { ...m, agentName: sr.agentNames[m.qualifiedName] } : m)),
         plugins: sr.result.plugins,
         skipped: sr.result.skipped.map((s) => ({ ...s, message: runSkillTexts.skillSkipMessage(s), why: skillWhy(s) })),
         started: sr.blocked ? 0 : sr.result.mounted.length,
@@ -2850,9 +2889,11 @@ async function fireResumeTicket(ticket, pipelineId) {
   }
   const scheduledBy = ticket.createdBy || null;
   try {
+    const engine = ticket.request && ticket.request.internal && ticket.request.internal.resumeEngine;
     const out = await resumeRun(pipelineId, {
       by: scheduledBy || 'local',
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
+      ...(engine ? { engine } : {}),
     });
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
@@ -3054,9 +3095,10 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin? } — a one-off
+// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine? } — a one-off
 // "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
+// `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
 app.post('/api/schedules/resume', async (req, res) => {
   try {
     const body = req.body || {};
@@ -3076,8 +3118,23 @@ app.post('/api/schedules/resume', async (req, res) => {
       if (!Number.isSafeInteger(body.graceMin) || body.graceMin < 0 || body.graceMin > 10080) return badRequest(res, 'graceMin must be a whole number of minutes from 0 to 10080');
       graceMin = body.graceMin;
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’`;
-    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by } };
+    let engine = null;
+    if (body.engine != null) {
+      try { engine = resumeEngineOpts(body.engine).engine || null; } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+    }
+    if (engine) {
+      const saved = readPipelineForResume(v.row.id);
+      let dirs;
+      try { dirs = await resumeTargetDirs(saved); } catch (err) { return res.status(err.status || 400).json(err.body || { error: err.message }); }
+      const probe = await createOrchestratorFor({
+        projectDir: dirs.projectDir, ...(dirs.workspace ? { workspace: dirs.workspace } : {}), agentsDir: AGENTS_DIR,
+        claude: { permissionMode: 'acceptEdits', mock: serverMockMode(), engine }, resume: saved,
+      });
+      const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
+      if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
+    }
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}`;
+    const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
       runAtMs: at.ms, request, ifMissed, graceMin,
@@ -3820,6 +3877,13 @@ app.get('/api/night-decisions', (req, res) => {
 // layer when a project is given), where each field comes from, what an empty field falls back to,
 // the live status (toggle, and hereSince: when "I'm here" was last said) and the raw layers the forms edit. Every surface renders its text from this
 // through src/shared/away-mode/describe.mjs.
+// The run engines and whether each is ready now (engines/readiness.mjs: the adapter's own preflight, cached 60 s).
+// ?recheck=1 forces a fresh check. Feeds the usage-limit "continue on…" offers and the engine cards.
+app.get('/api/engines', async (req, res) => {
+  try { res.json({ engines: await engineReadiness({ force: req.query.recheck === '1' }) }); }
+  catch (err) { res.status(500).json({ error: String(err?.message || err) }); }
+});
+
 app.get('/api/run-defaults', (req, res) => {
   const raw = typeof req.query.projectDir === 'string' && req.query.projectDir ? req.query.projectDir : null;
   const projectDir = raw ? resolveProjectDir(raw) : null;
@@ -3827,7 +3891,7 @@ app.get('/api/run-defaults', (req, res) => {
   try {
     const result = resolveSetting('run.engine', projectDir ? { projectDir } : null);
     res.json({ engine: { value: result.value, source: result.source },
-      steps: { claude: stepSlotDefaults('claude', { projectDir }), codex: stepSlotDefaults('codex', { projectDir }) } });
+      steps: Object.fromEntries(MODEL_ENGINES.map((e) => [e, stepSlotDefaults(e, { projectDir })])) });
   } catch (error) { res.status(500).json({ error: error?.message || String(error) }); }
 });
 
@@ -3945,6 +4009,23 @@ function resumeEngineOpts(engine, allowUnguardedEngine) {
   try { return { engine: selectRunEngine(engine), ...opts }; } catch (err) { throw new ResumeError(400, { error: err.message }); }
 }
 
+/** A saved run's resume target: workspace runs carry their dirs in workspace_meta; single-project runs map
+ *  project_key back through the registry. Throws a ResumeError when neither resolves. */
+async function resumeTargetDirs(saved) {
+  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
+    const meta = JSON.parse(saved.row.workspace_meta);
+    const projects = (meta.projects || []).map((p) => ({ ...p }));
+    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
+    return {
+      projectDir: projects[0].projectDir,
+      workspace: { id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName, description: meta.workspaceDescription || '', projects },
+    };
+  }
+  const projectDir = await projectDirForKey(saved.row.project_key);
+  if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
+  return { projectDir, workspace: undefined };
+}
+
 async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
@@ -4008,23 +4089,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     throw new ResumeError(400, { error: `worktree missing: ${branch.worktreeDir}` });
   }
 
-  // Resolve projectDir: workspace runs carry dirs in workspace_meta; single-project
-  // runs map project_key back through the registry.
-  let projectDir = null;
-  let workspace;
-  if (saved.row.target === 'workspace' && saved.row.workspace_meta) {
-    const meta = JSON.parse(saved.row.workspace_meta);
-    const projects = (meta.projects || []).map((p) => ({ ...p }));
-    if (!projects.length) throw new ResumeError(400, { error: 'workspace metadata incomplete' });
-    projectDir = projects[0].projectDir;
-    workspace = {
-      id: meta.workspaceId, key: saved.row.workspace_key, name: meta.workspaceName,
-      description: meta.workspaceDescription || '', projects,
-    };
-  } else {
-    projectDir = await projectDirForKey(saved.row.project_key);
-    if (!projectDir) throw new ResumeError(400, { error: 'project for this pipeline is not onboarded on this machine' });
-  }
+  const { projectDir, workspace } = await resumeTargetDirs(saved);
 
   // Base check (opt-in, plan D7) BEFORE the team gates, which save acknowledgements and audit
   // lines a cancelled "base moved" confirmation must not leave behind. A memory-defrag run keeps
@@ -4189,7 +4254,8 @@ app.post('/api/resume', async (req, res) => {
     });
     res.json(out);
   } catch (err) {
-    if (err instanceof ResumeError) return res.status(err.status).json(err.body);
+    // The engine gate's refusal is the run's CLI wording; this answer is the UI's.
+    if (err instanceof ResumeError) return res.status(err.status).json(err.body.code === 'engine-refused' ? { ...err.body, error: engineRefusalFor(err.body.error, 'ui') } : err.body);
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -4595,14 +4661,14 @@ app.post('/api/runs/:id/overview', async (req, res) => {
     key = projectKey(projectDir);
   }
   const force = req.query.force === '1' || req.query.force === 'true';
-  // The run's own engine (§4.3): only a Claude run's failure can be the Claude sign-in.
+  // The run's own engine (§4.3): only a failure on Claude can be the Claude sign-in (a Cursor run's overview runs on Claude).
   const runEngine = runEngineOfRow(lookupPipelineRow(key, id));
   try {
     const overview = await generateOverview(key, id, { force });
     res.json({ overview });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    if (msg !== 'pipeline not found' && runEngine === 'claude' && await failedBecauseSignedOut({ message: msg })) {
+    if (msg !== 'pipeline not found' && helperEngineFor(runEngine) === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     const code = msg === 'pipeline not found' ? 404 : 500;
@@ -6903,7 +6969,7 @@ app.post('/api/pr/describe', async (req, res) => {
     if (life.signal.aborted) return;                 // the client is gone; nobody to answer
     const msg = err && err.message ? err.message : String(err);
     // Only a Claude run's failure can be the Claude sign-in (§4.3).
-    if (msg !== 'pipeline not found' && (state.runEngine || 'claude') === 'claude' && await failedBecauseSignedOut({ message: msg })) {
+    if (msg !== 'pipeline not found' && helperEngineFor(state.runEngine || 'claude') === 'claude' && await failedBecauseSignedOut({ message: msg })) {
       return res.status(409).json({ code: CLAUDE_SIGNED_OUT_CODE, error: CLAUDE_SIGNED_OUT_MESSAGE });
     }
     res.status(msg === 'pipeline not found' ? 404 : 500).json({ error: msg });
@@ -8164,13 +8230,14 @@ const askAwaySwitchFor = (person) => (awayPerPerson() && person && person !== 'l
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude' }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}) };
+  // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex', ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -8393,14 +8460,15 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * Settings › Models' utility pickers (title, Auto classifier, PR description, memory defragment,
- * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex id there is
+ * workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
-function refuseCodexUtilityModel(key, value) {
+function refuseNonClaudeUtilityModel(key, value) {
   const id = typeof value === 'string' ? value.trim()
     : (value && typeof value === 'object' ? String(value.model ?? value.scanModel ?? '').trim() : '');
-  if (id && engineOfModel(id) === 'codex') throw new Error(`${key}: "${id}" is a Codex model — this setting picks a Claude model`);
+  const e = id ? engineOfModel(id) : null;   // null: no catalog knows the id — allowed, as today
+  if (e && e !== 'claude') throw new Error(`${key}: "${id}" is a ${engineLabel(e)} model — this setting picks a Claude model`);
 }
 
 app.post('/api/settings', async (req, res) => {
@@ -8461,7 +8529,7 @@ app.post('/api/settings', async (req, res) => {
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   try {
     for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
-      if (has(key)) asSettingsField(key, () => refuseCodexUtilityModel(key, body[key]));
+      if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
     // so the 400 can name the field (#555). Every argument is exactly as before. With no budget
@@ -8838,6 +8906,7 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
+    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -9332,7 +9401,9 @@ app.get('/api/workflows/:id', async (req, res) => {
     // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
     // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
     if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {
-      const engine = req.query.engine === 'codex' ? 'codex' : 'claude';
+      const engine = ENGINE_NAMES.includes(req.query.engine) ? req.query.engine : 'claude';
+      // An engine with no helper slots (Cursor): no stored pair, the defrag runs on that engine's default.
+      if (!HELPER_ENGINES.includes(engine)) return res.json(defragWorkflowView(wf, null));
       const dir = typeof req.query.projectDir === 'string' && req.query.projectDir ? resolveProjectDir(req.query.projectDir) : null;
       const stored = defragSlotPair(engine, dir);
       const models = stored.model ? (await listModels(dir || '')).filter((m) => (m.engine || 'claude') === engine) : [];
@@ -10366,14 +10437,12 @@ function askChatEngine(threadId, thread) {
 }
 
 /** An event turn's model: the thread's own pick, else the default of the engine the chat is locked to (never the
- *  other engine's), else the user's Ask default. null when none is available. */
+ *  other engine's), else the user's Ask default. null when none is available. A fallback is said in the chat. */
 async function askEventPick(threadId, thread) {
-  const lockedEngine = askChatEngine(threadId, thread);
-  const mv = await validateModelEffort(thread.model, thread.effort, { engine: lockedEngine });
-  if (mv.ok) return mv;
-  const cat = await askCatalog({ withSecrets: false });
-  const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
-  return d ? { ok: true, ...d } : null;
+  const mv = await askEventPickOf(thread, askChatEngine(threadId, thread));
+  const notice = mv && eventFallbackNotice(mv);
+  if (notice) postAskSystemNotice(threadId, notice);
+  return mv;
 }
 
 /**
@@ -10403,6 +10472,10 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
+  // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
+  const modelEngine = model ? engineOfModel(model) : null;
+  if (modelEngine && !ASK_ENGINES.includes(modelEngine)) return { ok: false, status: 400, error: `Ask on ${engineLabel(modelEngine)} is unavailable` };
   const budget = budgetStatus();                                                    // P3: the event path needs the same gate the route head applies
   if (budget.blocked) return { ok: false, status: 403, error: 'total cost limit reached', budget };
   if (askRunningCount() >= ASK_LIMITS.turnsGlobal) {
@@ -10424,7 +10497,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Writes. Store the LAST context + model/effort on the thread (§6.5 tail, D8).
     // `ctx` (pin-merged) rather than cv.context: the stored row is what restores
     // the selector on reopen and what the MCP child reads for tool defaulting.
-    askUpdateThread(id, { context: ctx, model, effort, ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
+    // The engine is stored with the model (#635): a chat stays on it even if its model later leaves the catalog.
+    askUpdateThread(id, { context: ctx, model, effort, engine: modelEngine || 'claude', ...(mcpOff !== undefined ? { mcpOff } : {}), ...(agentMode !== undefined ? { agentMode } : {}) });
     // §7.4 — NOTHING is stamped on the row before the 202: the thread stays
     // untitled (the header reads "Ask Worca") until the D13 background title
     // announces itself. titleWasAuto gates that call: a title given at THREAD
@@ -10484,7 +10558,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
-    // mounts them and appends the prompt section naming exactly what it wrote (a Claude chat only: turn.mjs).
+    // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
     const agentOn = askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
@@ -10536,7 +10610,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
-        mcpJoinNotice: engine === 'codex' ? null : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model }),
+        // A Codex chat's notice names only the skills that join (#635): it starts no copy.
+        mcpJoinNotice: () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -10718,7 +10793,9 @@ app.post('/api/ask/mcp-preview', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: thread ? thread.mcpOff : null } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.model !== undefined && (typeof body.model !== 'string' || !body.model || body.model.length > 200)) return badRequest(res, 'model must be a model id');
-    res.json(await askMcpPreview({ ctx: cv.context, threadId: thread ? thread.id : null, off: mo.value, model: body.model ?? null }));
+    // The chat's engine (D12): the one it is locked to, else the picked model's — a Codex chat gets skills only (#635).
+    const previewEngine = (thread && askChatEngine(thread.id, thread)) || (body.model && engineOfModel(body.model) === 'codex' ? 'codex' : 'claude');
+    res.json(await askMcpPreview({ ctx: cv.context, threadId: thread ? thread.id : null, off: mo.value, model: body.model ?? null, engine: previewEngine }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10853,12 +10930,8 @@ async function startTerminalEventTurn(threadId, block) {
   const id = `${block.sessionId}:${block.seq}`;
   const text = terminalEventPrompt(block);
   const notice = terminalNoticeText(block);
-  let mv = await validateModelEffort(thread.model, thread.effort);
-  if (!mv.ok) {
-    const d = (await askCatalog({ withSecrets: false })).default;
-    if (!d) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
-    mv = { ok: true, ...d };
-  }
+  const mv = await askEventPick(threadId, thread);
+  if (!mv) return failedEventTurn(threadId, { error: 'no model available', status: 503 });
   const start = async () => {
     if (askCommands.seen(id)) return { ok: false, skipped: true };
     return startAskTurn({ threadId, thread: askGetThread(threadId) || thread, ctx: thread.context || {},

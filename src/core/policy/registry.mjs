@@ -97,7 +97,7 @@ const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, CODEX_EFFORTS } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -368,11 +368,18 @@ function normalizeModels(raw, warnings) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) { warnings.push(`catalogs.models: duplicate id ${m.id} dropped`); continue; }
     const entry = { id: m.id, label: clip(typeof m.label === 'string' && m.label.trim() ? m.label : m.id, 80) };
-    if (m.engine !== undefined && m.engine !== 'claude' && m.engine !== 'codex') { warnings.push(`catalogs.models: ${m.id}: engine must be claude or codex — entry dropped`); continue; }
-    const codex = m.engine === 'codex';
-    const allowed = codex ? CODEX_EFFORTS : EFFORTS;
+    if (m.engine !== undefined && !MODEL_ENGINES.includes(m.engine)) { warnings.push(`catalogs.models: ${m.id}: engine must be ${MODEL_ENGINES.join(', ')} — entry dropped`); continue; }
+    const engine = m.engine || 'claude';
+    const codex = engine === 'codex';                 // KEEP: the upstream check below reads `codex`
+    const allowed = engine === 'claude' ? EFFORTS : effortsForEngine(engine);
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
-    entry.efforts = efforts.length ? efforts : (codex ? [...CODEX_EFFORTS] : ['medium', 'high']);
+    entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
+    if (engine === 'cursor') {
+      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
+      entry.engine = 'cursor';
+    }
     if (codex) {
       // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.
       if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a codex model takes no env — entry dropped`); continue; }

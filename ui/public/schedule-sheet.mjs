@@ -86,6 +86,8 @@ export function closeScheduleSheet() {
  * @param {string} [o.heading]                    overrides the mode's heading (e.g. a new resume is not a "Change time")
  * @param {string} [o.confirmLabel]               overrides the mode's confirm label
  * @param {string} [o.warning]                    an amber note (e.g. the workflow can ask questions)
+ * @param {{choices:Array<[string,string]>, value:string}|null} [o.engine]  a scheduled resume's engine choice ([value, label]
+ *   pairs, the saved engine first); the result's `engine` is the pick when it is not the first
  * @param {{show:boolean, beforeRun:boolean|null, shownBeforeRun:boolean, onDiverged:'origin'|'fail'|null}} [o.sync]
  *   opt-in Sync block (#527): only the New-pipeline Schedule path passes it. beforeRun null = the form
  *   switch is untouched; onDiverged null = each member's own setting. The result's `sync` carries only
@@ -94,7 +96,7 @@ export function closeScheduleSheet() {
 export function openScheduleSheet({
   mode = 'create', allowRepeat = true, allowAfter = true, candidates = null,
   initial = {}, defaults = { graceMin: 360, ifMissed: 'run', maxFailures: 3 },
-  runTitle = '', warning = '', sync = null, heading: headingOverride = '', confirmLabel: confirmOverride = '',
+  runTitle = '', warning = '', sync = null, heading: headingOverride = '', confirmLabel: confirmOverride = '', engine = null,
 } = {}) {
   closeScheduleSheet();
   return new Promise((resolve) => {
@@ -215,6 +217,9 @@ export function openScheduleSheet({
       return Object.keys(out).length ? out : undefined;
     };
 
+    const engineSel = engine ? selectEl('sched-engine', engine.choices, engine.value, 'Resume on') : null;
+    const engineRow = engineSel ? h('div', { class: 'field field-compact' }, h('label', { for: 'sched-engine', text: 'Resume on' }), engineSel) : null;
+
     const err = h('div', { class: 'hint err sched-err', hidden: true });
     const cancelBtn = h('button', { type: 'button', class: 'btn btn-mini sched-cancel', text: 'Cancel' });
     const okBtn = h('button', { type: 'button', class: 'btn btn-primary btn-mini sched-ok', text: confirmLabel });
@@ -227,7 +232,7 @@ export function openScheduleSheet({
       showPresets ? seg : null,
       quick, onceRow, daysField, customField, monthField, showKind ? afterRow : null, repeatRow,
       sentence, tzLine, tzIn, tzList,
-      policyRow, missedRow, syncRow,
+      policyRow, missedRow, syncRow, engineRow,
       h('small', { class: 'hint sched-note', text: 'A scheduled run starts only while Worca is running and this computer is awake.' }),
       warning ? h('div', { class: 'hint warn sched-warn', text: warning }) : null,
       err,
@@ -425,6 +430,7 @@ export function openScheduleSheet({
       clearInterval(tick);
       const chosen = result ? syncResult() : undefined;
       if (chosen) result = { ...result, sync: chosen };
+      if (result && engineSel && engineSel.firstChild.value !== engine.choices[0][0]) result = { ...result, engine: engineSel.firstChild.value };
       document.removeEventListener('keydown', onKey, true);
       modal.remove();
       openSheet = null;

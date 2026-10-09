@@ -107,6 +107,20 @@ test('/cost and /last read the real camelCase history-entry fields', async () =>
   assert.match(last.body[0].value, /1m01s/);
 });
 
+test('a Cursor run reads "cost unknown" on /cost, /last and /status, never $0.00', async () => {
+  const f = makeRouter({ history: async () => [{ id: 'p-5678', title: 'C', status: 'done', runEngine: 'cursor', totalCostUsd: 0, totalActiveMs: 1000 }] });
+  assert.match((await handle(f, '/cost *5678')).body[0].value, /cost: cost unknown$/);
+  assert.match((await handle(f, '/last')).body[0].value, /\*\*Cost:\*\* cost unknown/);
+  assert.match((await handle(f, '/status *5678')).body[0].value, /\*\*Cost:\*\* cost unknown/);
+  const helper = makeRouter({ history: async () => [{ id: 'p-5678', title: 'C', status: 'done', runEngine: 'cursor', totalCostUsd: 0.2 }] });
+  assert.match((await handle(helper, '/cost *5678')).body[0].value, /cost unknown \(worca's own calls: \$0\.20\)/);
+  const { send, state } = fixture();
+  state.states['run-aaaa1111'].runEngine = 'cursor';
+  state.states['run-aaaa1111'].totalCostUsd = 0;
+  assert.match(text(await send('/status')), /\*\*Cost:\*\* cost unknown/);
+  assert.match(text(await send('/cost')), /cost so far: cost unknown/);
+});
+
 test('/status: no-arg single-active default, wildcard suffix, history fallback, pending hint', async () => {
   const { send, state } = fixture();
   const noArg = text(await send('/status'));
@@ -539,11 +553,12 @@ test('/resume [*ref] [engine]: an engine continues the run on it; the refusal sa
   await send('/resume *3333');
   assert.deepEqual(got.at(-1), ['pipe-cccc3333', undefined], 'no engine named: the saved one');
   const n = got.length;
-  assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude or codex/);
+  assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude, codex or cursor/);
   assert.equal(got.length, n, 'nothing resumed');
 
-  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce' };
+  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them' };
   const refused = text(await send('/resume *3333 codex'));
   assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
-  assert.match(refused, /resume it from the worca-cc UI and tick Allow unguarded/);
+  assert.match(refused, /or resume it from the worca-cc UI with Allow unguarded to run it without them/, 'the consent is the UI\'s, never a chat word');
+  assert.doesNotMatch(refused, /--allow-unguarded-engine/, 'no CLI flag in chat');
 });

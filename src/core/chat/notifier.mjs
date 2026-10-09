@@ -70,6 +70,7 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         runId,
         title: entry?.title || orch?.state?.title || '',
         totalCostUsd: orch?.state?.totalCostUsd,
+        runEngine: orch?.state?.runEngine,
         totalActiveMs: orch?.state?.totalActiveMs,
         // renderDone reports directions the run never applied. Omitting this made
         // that warning unreachable from chat — which is the one surface where

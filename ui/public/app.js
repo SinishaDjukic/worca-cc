@@ -132,7 +132,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngine, usageLimitSwitch, engineSwitchNote } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -252,6 +252,27 @@ const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) :
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
+// Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
+// 60 s. null until an answer with an `engines` array arrives — then usageLimitSwitches offers every other engine.
+// Every caller's onLoad runs when the answer lands (banner, history bar). A failed or engines-less answer is cached
+// for the same 60 s, so a repaint loop never turns into a request loop. Up here, above every painter: painters can
+// run before a later `let` line is reached (TDZ).
+let engineReady = null; let engineReadyAt = 0; let engineReadyLoading = null; const engineReadyWaiters = new Set();
+function readyEngines(onLoad) {
+  if (Date.now() - engineReadyAt < 60_000) return engineReady;
+  if (typeof onLoad === 'function') engineReadyWaiters.add(onLoad);
+  if (!engineReadyLoading) {
+    engineReadyLoading = fetch('/api/engines').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
+      engineReady = Array.isArray(d?.engines) ? d.engines.filter((e) => e.ready).map((e) => e.name) : null;   // null: offer all
+      engineReadyAt = Date.now();
+      const waiters = [...engineReadyWaiters]; engineReadyWaiters.clear();
+      for (const w of waiters) { try { w(); } catch { /* one painter must not stop the others */ } }
+    }).finally(() => { engineReadyLoading = null; });
+  }
+  return engineReady;
+}
+/** Readiness only matters to a usage-limit pause an engine hit: any other run never asks. */
+const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.limitEngine ? readyEngines(onLoad) : null);
 
 // ---------------------------------------------------------------------------
 // Elements
@@ -3643,9 +3664,9 @@ function renderAgentRows(rows) {
     const rowDef = row.def || {};
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
-    // A Codex run has no sub-agents (codexCapabilities.subagents === false): nothing to pick for them.
-    // Neither does a Copilot run: its sub-agents run on the node's own model.
-    if (state.engine === 'codex' || state.engine === 'copilot') sWrap.hidden = true;
+    // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
+    // node's own model, and Cursor has none.
+    if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const qWrap = document.createElement('label');
       qWrap.className = 'fanout-toggle questions-toggle';
@@ -3681,10 +3702,13 @@ function renderAgentRows(rows) {
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
-      const owner = (entry && entry.engine === 'codex') || (!entry && state.engine === 'claude') ? 'Codex' : 'Claude';
+      // The model's own engine; a pick the catalog no longer holds belongs to an engine this run is not on.
+      const owner = entry ? engineLabel(entry.engine || 'claude') : null;
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
-      kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
+      kept.textContent = owner
+        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`
+        : `Your pick ${row.enginePair.model} is kept for runs on its own engine — choose a model here to replace it.`;
       body.appendChild(kept);
     }
 
@@ -3845,7 +3869,7 @@ if (el.memoryScopeSeg) {
 // Engine (harness bridge §10.4): per run, never remembered — every New pipeline starts on Claude.
 function setRunEngine(engine) {
   const prev = state.engine;
-  state.engine = engine === 'codex' || engine === 'copilot' ? engine : 'claude';
+  state.engine = ENGINE_NAMES.includes(engine) ? engine : 'claude';
   for (const b of el.engineSeg ? el.engineSeg.querySelectorAll('button[data-engine]') : []) {
     const on = b.dataset.engine === state.engine;
     b.classList.toggle('on', on);
@@ -3853,17 +3877,23 @@ function setRunEngine(engine) {
   }
   paintEngineHints();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine.
-  if (prev !== state.engine) void renderWorkflowConfig(state.workflowId);
+  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
+  // picker too: another engine names set skills as its .agents/skills mount would.
+  if (prev !== state.engine) {
+    void renderWorkflowConfig(state.workflowId);
+    if (currentView() === 'new') schedulePolicyLine();
+  }
 }
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
 function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
-    const project = Object.values(state.runDefaults?.steps?.codex || {}).some((s) => s?.source === 'project');
+    const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
     el.engineHint.textContent = state.engine === 'copilot'
       ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
+      : state.engine === 'cursor'
+      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Settings › Models › Cursor'}.`
       : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -3879,7 +3909,7 @@ async function loadRunDefaults(projectDir) {
   try { const res = await fetch(projectDir ? `/api/run-defaults?projectDir=${encodeURIComponent(projectDir)}` : '/api/run-defaults'); data = res.ok ? await safeJson(res) : null; } catch {}
   if (gen !== runDefaultsGen) return;
   const prevSteps = JSON.stringify(state.runDefaults?.steps ?? null);
-  state.runDefaults = data?.engine && ['claude', 'codex', 'copilot'].includes(data.engine.value) ? data : null;
+  state.runDefaults = data?.engine && ENGINE_NAMES.includes(data.engine.value) ? data : null;
   if (state.runDefaults && !state.engineTouched) setRunEngine(data.engine.value); else paintEngineHints();
   // The rows show the slot defaults: repaint them only when those changed (setRunEngine repaints
   // on an engine change itself). An idle repaint re-arms the policy/MCP preview debounce.
@@ -3897,6 +3927,13 @@ function showEngineRefusal(data) {
 }
 
 if (el.engineSeg) {
+  for (const b of el.engineSeg.querySelectorAll('button[data-engine]')) {
+    if (!isBetaEngine(b.dataset.engine)) continue;
+    const beta = document.createElement('span');
+    beta.className = 'badge violet beta-badge';
+    beta.textContent = 'Beta';
+    b.append(beta);
+  }
   el.engineSeg.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-engine]');
     if (!btn) return;
@@ -4094,8 +4131,8 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex run starts a Codex model (D10); the editor applies `engine`.
-  mvState.prefill = state.engine === 'codex' ? { id: '', engine: 'codex' } : null;
+  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('settings', 'models');
 }
@@ -15896,6 +15933,7 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
+    cursorEfforts: d.cursorEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
@@ -15928,7 +15966,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}) });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [] });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
@@ -16112,6 +16150,8 @@ async function exportPluginFlow() {
 }
 
 const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
+// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
+const HELPER_ENGINES = ['claude', 'codex'];
 let modelsHelpersEl = null;
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
@@ -16122,10 +16162,25 @@ async function paintEngineSettings(data) {
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
   const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
   const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
-  for (const engine of ['claude', 'codex']) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
-  for (const job of CODEX_HELPER_JOBS) fields[utilityId('codex', job)] = { own: data.utilityModels?.codex?.[job], inherited: { value: undefined, source: 'default' } };
-  const extras = renderEngineSection(root, { level: 'user', roles, catalog, fields, jobs: { claude: [], codex: CODEX_HELPER_JOBS } });
+  for (const engine of ENGINE_NAMES) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
+  for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
+    for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
+  }
+  const extras = renderEngineSection(root, { level: 'user', roles, catalog, fields, jobs: { claude: [], codex: CODEX_HELPER_JOBS, cursor: [] } });
   if (modelsHelpersEl) extras.claude.append(modelsHelpersEl);
+  // Each non-Claude card's readiness line (GET /api/engines). Only on the Settings view: a settings-changed
+  // broadcast repaints this from any view, and that must not spawn a preflight.
+  if (currentView() === 'settings') void paintEngineCardStatus(root);
+}
+/** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
+ *  with no `engines` array leaves the lines empty. */
+async function paintEngineCardStatus(root) {
+  let list = null;
+  try { const res = await fetch('/api/engines'); const d = res.ok ? await safeJson(res) : null; list = Array.isArray(d?.engines) ? d.engines : null; } catch { list = null; }
+  for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
+    const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
+    line.textContent = !e ? '' : !e.ready ? `Not ready — ${e.reason || 'unknown'}` : e.reason ? `Ready — ${e.reason}` : 'Ready';
+  }
 }
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
@@ -18125,7 +18180,7 @@ async function paintMcpRuns() {
     try {
       const r = await fetch('/api/mcp/preview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels() }),
+        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels(), engine: state.engine }),
       });
       data = r.ok ? await safeJson(r) : null;
     } catch { data = null; }
@@ -18248,20 +18303,31 @@ async function confirmPastTeamCap(runId, btn) {
 // the saved run, and the run page's usage-limit banner. The consent is New pipeline's own.
 const ENGINE_UNGUARDED_LABEL = 'Allow unguarded: run without the rules this engine cannot enforce';
 
-/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and
- *  "Resume on <other engine>", whose line says what switching does. */
-function paintResumeEngineItems(menu, runEngine) {
+/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and, when the pause
+ *  offers the switch (a usage limit the engine hit, as the banner and the History bar), one "Resume on
+ *  <engine>" per other engine, whose line says what switching does. Every other engine is listed, ready
+ *  or not (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
+ *  hidden template; clones go before it, and the menu's one delegated listener handles them. Every frame
+ *  repaints, so an unchanged menu is left alone: re-cloning under an open menu would lose a click. */
+function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
-  const other = otherEngine(saved);
+  const offers = usageLimitSwitches(pause || {});
+  const sig = `${saved}|${offers.join(',')}`;
+  if (menu.dataset.engineSig === sig) return;
+  menu.dataset.engineSig = sig;
   const savedItem = menu.querySelector('.resume-on-saved');
-  const otherItem = menu.querySelector('.resume-on-other');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
-  if (otherItem) {
-    otherItem.hidden = !other;
-    otherItem.dataset.engine = other || '';
-    otherItem.querySelector('b').textContent = other ? `Resume on ${engineLabel(other)}` : '';
-    otherItem.querySelector('small').textContent = other ? engineSwitchNote(other) : '';
+  const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
+  if (!tpl) return;
+  tpl.dataset.template = '1'; tpl.hidden = true;
+  menu.querySelectorAll('.resume-on-other:not([data-template])').forEach((b) => b.remove());
+  for (const e of offers) {
+    const item = tpl.cloneNode(true);
+    delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
+    item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
+    item.querySelector('small').textContent = engineSwitchNote(e);
+    tpl.before(item);
   }
 }
 
@@ -21022,7 +21088,7 @@ function paintHdGlance(screen, record, data) {
 
   // Time · Cost · Changes, as on the Running page in every state.
   const activeMs = typeof st.totalActiveMs === 'number' ? st.totalActiveMs : liveTotalMs(st.steps, 0);
-  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: st.totalCostUsd || 0,
+  paintGlanceFacts(glance, { summary: s || null, activeMs, cost: engineReportsCost(st.runEngine) ? (st.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(st.steps, st.totalCostUsd), fmtUsd) });
 
   // The result: every tab, the actions. The things to check live in Overview only.
@@ -21123,21 +21189,33 @@ function gateHdResume(btn, { reason, detail }) {
 // a resume point exists — v1 points were retired by the v2 upgrade; a LIVE snapshot has no
 // `resumable` field, so `!== false` keeps the live path untouched).
 // Idempotent: runs on load, when the row lands and on every run frame (renderRunningView).
-/** The bar's "Resume on <other engine>" (.hd-resume-switch): a paused run whose engine hit
- *  its own usage limit, read off the live run when this tab has one, else the saved state. */
-function paintHdResumeSwitch(screen, record, data, live, resumable) {
-  const btn = screen.querySelector('.hd-resume-switch');
-  if (!btn) return;
+/** The bar's "Resume on <engine>" buttons (.hd-resume-switch): a paused run whose engine hit its own
+ *  usage limit, read off the live run when this tab has one, else the saved state. One button per offered
+ *  engine (`ready`: the ready engines, null = all), cloned before the hidden index.html template; the bar's
+ *  one delegated listener handles them. An unchanged offer is left alone. */
+/** The pause the history bar reads: the live run's when this tab has one, else the saved state's. */
+function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
-  const pause = live
+  return live
     ? { reason: live.pauseReason, limitEngine: live.limitEngine }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine };
-  const other = resumable ? usageLimitSwitch(pause) : null;
-  btn.hidden = !other;
-  btn.dataset.engine = other || '';
-  if (other) {
-    btn.querySelector('.hd-btn-label').textContent = `Resume on ${engineLabel(other)}`;
-    btn.title = engineSwitchNote(other);
+}
+function paintHdResumeSwitch(screen, record, data, live, resumable, ready = null) {
+  const tpl = screen.querySelector('.hd-resume-switch[data-template]') || screen.querySelector('.hd-resume-switch');
+  if (!tpl) return;
+  tpl.dataset.template = '1'; tpl.hidden = true;
+  const offers = resumable ? usageLimitSwitches(hdPauseOf(live, screen, data, record), ready) : [];
+  const sig = offers.join(',');
+  if (tpl.dataset.engineSig === sig) return;
+  tpl.dataset.engineSig = sig;
+  screen.querySelectorAll('.hd-resume-switch:not([data-template])').forEach((b) => b.remove());
+  for (const e of offers) {
+    const btn = tpl.cloneNode(true);
+    delete btn.dataset.template; delete btn.dataset.engineSig;
+    btn.hidden = false; btn.dataset.engine = e;
+    btn.querySelector('.hd-btn-label').textContent = `Resume on ${engineLabel(e)}`;
+    btn.title = engineSwitchNote(e);
+    tpl.before(btn);
   }
 }
 
@@ -21184,7 +21262,12 @@ function paintHdLive(screen, record, data) {
     : !over && HD_RESUMABLE.has(savedStatus) && st.resumable !== false);
   split.hidden = !resumable;
   resumeBtn.hidden = !resumable;
-  paintHdResumeSwitch(screen, record, data, live, resumable);
+  // The callback re-reads the CURRENT record and data (refreshHdFromRow replaces histDetailState.record), and a run
+  // that is not resumable never asks.
+  const ready = resumable ? readyFor(hdPauseOf(live, screen, data, record), () => {
+    if (histDetailState?.screen === screen) paintHdLive(screen, histDetailState.record, histDetailState.data);
+  }) : null;
+  paintHdResumeSwitch(screen, record, data, live, resumable, ready);
   const resumeMore = screen.querySelector('.hd-resume-more');
   const resumeMenu = screen.querySelector('.hd-resume-menu');
   if (!resumable) {
@@ -21196,7 +21279,7 @@ function paintHdLive(screen, record, data) {
   gateHdResume(resumeBtn, gate);
   // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
   // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
-  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data));
+  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
   const resumeAtItem = screen.querySelector('.hd-resume-at-item');
   if (resumeAtItem) {
     const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
@@ -21473,21 +21556,23 @@ function paintHdHeaderMeta(screen, record, data) {
   w.textContent = word;
   meta.appendChild(w);
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
+  const hdCost = runCostText(st, st.totalCostUsd, '');
   for (const [cls, text, strong] of [
     ['hd-day', day, false],
     ['hd-clock', clock, false],
     ['hd-dur', typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '', true],
-    ['hd-cost', typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '', true],
+    ['hd-cost', hdCost.text, true],
   ]) {
     if (!text) continue;
     meta.appendChild(hdDot());
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
-    if (cls === 'hd-cost') seg.title = estTitle(st.totalCostUsd);
+    if (cls === 'hd-cost') seg.title = hdCost.title || estTitle(st.totalCostUsd);
     meta.appendChild(seg);
   }
-  paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus);
+  paintCostBreakdown(screen.querySelector('.hd-header'), meta.querySelector('.hd-cost'), runCostBreakdown(st.steps, st.totalCostUsd), costFocus,
+    { agentsUnknown: !engineReportsCost(st.runEngine) });
   // Scheduled runs: say HOW this run started — "by schedule" links to the Schedules view.
   if (st.scheduledFor) {
     meta.appendChild(hdDot());
@@ -21710,8 +21795,12 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
  * user may still pick "Start it late"), then POSTs the ticket.
  */
-async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null }, btn) {
+async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
+  // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
+  const saved = runEngine || 'claude';
+  const others = usageLimitSwitches(pause || {});
   const res = await openScheduleSheet({
+    engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
     allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
@@ -21728,6 +21817,7 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       body: JSON.stringify({
         pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
         ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        ...(res.engine ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -21952,13 +22042,15 @@ function setupHdActions(screen, record, data) {
     resumePipeline(r, r.projectDir || null, resumeBtn);
   });
 
-  // "Resume on <other engine>" after a usage limit (paintHdResumeSwitch). Resume's own button
-  // carries the busy state, so a click while it is in flight does nothing.
-  const switchBtn = screen.querySelector('.hd-resume-switch');
-  switchBtn?.addEventListener('click', () => {
-    if (!switchBtn.dataset.engine || resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
+  // "Resume on <engine>" after a usage limit (paintHdResumeSwitch clones them later, so one delegated
+  // listener on the bar). Resume's own button carries the busy state, so a click while it is in flight does nothing.
+  const hdBar = screen.querySelector('.hd-resume-switch')?.parentElement;
+  hdBar?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.hd-resume-switch:not([data-template])');
+    if (!btn || !hdBar.contains(btn)) return;
+    if (!btn.dataset.engine || resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
     const r = hdCurrentRecord(record);
-    resumePipelineOnEngine(r, hdRunEngine(r, data), resumeBtn, switchBtn.dataset.engine);
+    resumePipelineOnEngine(r, hdRunEngine(r, data), resumeBtn, btn.dataset.engine);
   });
 
   // Scheduled resume ("Resume at…" in the split's menu); paintHdLive gates the item.
@@ -21976,23 +22068,25 @@ function setupHdActions(screen, record, data) {
       resumeMore.setAttribute('aria-expanded', open ? 'true' : 'false');
       (open ? resumeMenu.querySelector('[role="menuitem"]:not([hidden])') || resumeAtItem : resumeMore).focus();
     });
-    // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself.
-    for (const item of resumeMenu.querySelectorAll('.resume-on-saved, .resume-on-other')) {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        closeResumeMenu();
-        if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
-        const r = hdCurrentRecord(record);
-        const saved = hdRunEngine(r, data);
-        resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
-      });
-    }
+    // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself. Their clones are
+    // painted after setup, so one delegated listener on the menu.
+    resumeMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+      if (!item || !resumeMenu.contains(item)) return;
+      e.stopPropagation();
+      closeResumeMenu();
+      if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
+      const r = hdCurrentRecord(record);
+      const saved = hdRunEngine(r, data);
+      resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
+    });
     resumeAtItem.addEventListener('click', (e) => {
       e.stopPropagation();
       if (resumeAtItem.disabled) return;
       closeResumeMenu();
       const r = hdCurrentRecord(record);   // never the load-time object (record-identity rule)
-      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null }, resumeAtItem);
+      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null,
+        runEngine: hdRunEngine(r, data), pause: hdPauseOf(hdLiveRun(r), screen, data, r) }, resumeAtItem);
     });
     resumeMenu.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); closeResumeMenu(); resumeMore.focus(); }
@@ -22261,9 +22355,17 @@ function placeCostPop(header, btn, pop) {
   pop.style.left = `${Math.round(Math.max(8, Math.min(bb.left - hb.left, hb.width - w - 8)))}px`;
 }
 
+/** A run on an engine that reports no cost (Cursor): its cost is unknown, never a $0.00 (fmtUsd(null) prints $0.00).
+ *  `fallback`: what the site shows today when the total is not a number ('' or '—'); a reporting engine is unchanged. */
+function runCostText(r, total, fallback = null) {
+  if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` — worca's own calls so far: ${fmtUsd(total)}` : ''}` };
+  if (fallback !== null && typeof total !== 'number') return { text: fallback, title: '' };
+  return { text: fmtUsd(Number(total) || 0), title: '' };
+}
+
 /** Turn the meta line's cost segment into the panel's trigger when the run has a share or a cut-off
- *  lower bound to show. */
-function paintCostBreakdown(header, seg, b, refocus = false) {
+ *  lower bound to show. `agentsUnknown`: the run's engine reports no cost (the Agents row reads "cost unknown"). */
+function paintCostBreakdown(header, seg, b, refocus = false, { agentsUnknown = false } = {}) {
   if (!header) return;
   const pop = costPopFor(header);
   if (!seg || (!b.lines.length && !b.cut.turns)) {
@@ -22295,10 +22397,10 @@ function paintCostBreakdown(header, seg, b, refocus = false) {
   btn.setAttribute('aria-controls', pop.id);
   btn.setAttribute('aria-expanded', String(!pop.hidden));
   // Rebuilt only when the numbers change, so an open panel does not flicker on every frame.
-  const sig = JSON.stringify(b);
+  const sig = JSON.stringify([b, agentsUnknown]);
   if (pop.dataset.sig !== sig) {
     pop.dataset.sig = sig;
-    pop.replaceChildren(costBreakdownEl(document, b, { fmtUsd }));
+    pop.replaceChildren(costBreakdownEl(document, b, { fmtUsd, agentsUnknown }));
   }
   if (!pop.hidden) placeCostPop(header, btn, pop);
   // preventScroll: a browser focuses a clicked button, so a plain focus() after a rebuild scrolled
@@ -24105,11 +24207,13 @@ function buildHdOverview(sec, record, data) {
     isGraphManifest(st.stepper)
       ? histCountsLine(st)
       : `${steps.length} step${steps.length === 1 ? '' : 's'} · ${maxCycle} cycle${maxCycle === 1 ? '' : 's'}`));
+  const histCost = runCostText(st, st.totalCostUsd, '—');
   const costCard = hdStatCard('cost', 'COST',
-    typeof st.totalCostUsd === 'number' ? fmtUsd(st.totalCostUsd) : '—',
+    histCost.text,
     [`across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
       costSummaryText(runCostBreakdown(steps, st.totalCostUsd), fmtUsd)].filter(Boolean).join(' · '));
-  if (typeof st.totalCostUsd === 'number') costCard.querySelector('.hd-ov-value').title = estTitle(st.totalCostUsd);
+  if (histCost.title) costCard.querySelector('.hd-ov-value').title = histCost.title;
+  else if (typeof st.totalCostUsd === 'number') costCard.querySelector('.hd-ov-value').title = estTitle(st.totalCostUsd);
   grid.appendChild(costCard);
   const wt = st.branch && typeof st.branch === 'object' ? st.branch : {};
   // `worktreeRemoved` is ABSENT on a paused run, `true` after teardown
@@ -25048,7 +25152,8 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
     if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
-    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+    const whose = r.limitEngine ? `${engineLabel(r.limitEngine)}'s ` : '';
+    return `Paused — ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
     // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
@@ -25083,10 +25188,14 @@ function rdOvStateBanner(host, r) {
   copy.className = 'rd-ov-copy';
   copy.textContent = rdStateCopy(r, name);
   host.append(chip, copy);
-  // A usage limit the engine hit: the other engine has its own allowance, so offer it here, at
+  // A usage limit the engine hit: each other engine has its own allowance, so offer them here, at
   // every interface level (the Resume menu's caret is Advanced only).
-  const other = isPaused(r) && r.pipelineId ? usageLimitSwitch({ reason: r.pauseReason, limitEngine: r.limitEngine }) : null;
-  if (other) {
+  const pause = { reason: r.pauseReason, limitEngine: r.limitEngine };
+  const offers = isPaused(r) && r.pipelineId ? usageLimitSwitches(pause, readyFor(pause, () => {
+    const cur = runs.get(r.runId);
+    if (cur && host.isConnected) rdOvStateBanner(host, cur);
+  })) : [];
+  for (const other of offers) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn btn-mini rd-ov-switch';
@@ -25128,8 +25237,9 @@ function rdOvStats(host, r) {
     ? `cap ${fmtUsd(cap)} per pipeline`
     : `across ${steps.length} step${steps.length === 1 ? '' : 's'}`,
   costSummaryText(runCostBreakdown(steps, r.totalCostUsd), fmtUsd)].filter(Boolean).join(' · ');
-  const cost = hdStatCard('cost', 'COST SO FAR', fmtUsd(r.totalCostUsd || 0), costSub);
-  cost.querySelector('.hd-ov-value').title = estTitle(r.totalCostUsd || 0);
+  const soFar = runCostText(r, r.totalCostUsd);
+  const cost = hdStatCard('cost', 'COST SO FAR', soFar.text, costSub);
+  cost.querySelector('.hd-ov-value').title = soFar.title || estTitle(r.totalCostUsd || 0);
   host.appendChild(cost);
 
   // Tri-state, exactly like History's card: absent while the run holds the
@@ -26123,7 +26233,8 @@ function askRunSnapshot(r) {
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
-    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()), costUsd: r.totalCostUsd || 0,
+    startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
+    costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
     progress: decor ? decor.progress : null, active: graph ? activeNodes(r) : [],
     stepper: graph ? r.stepper : null, decor,
   };
@@ -26243,7 +26354,7 @@ function statusPill(r) {
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
-    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: r.limitEngine ? `Paused · ${engineLabel(r.limitEngine)} usage limit` : 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
@@ -28084,24 +28195,26 @@ function openRunDetail(runId, { instant = false } = {}) {
     (open ? rdResumeMenu.querySelector('[role="menuitem"]:not([hidden])') || rdResumeAt : rdResumeMore).focus();
   });
   // The engine items (paintResumeEngineItems): the run, its engine and the toggle are read at
-  // CLICK time; the toggle carries the busy state, as for a plain Resume.
-  for (const item of rdResumeMenu.querySelectorAll('.resume-on-saved, .resume-on-other')) {
-    item.addEventListener('click', (e) => {
-      e.stopPropagation();
-      closeRdResumeMenu();
-      const r = runs.get(runDetailState.runId);
-      const pauseBtn = screen.querySelector('.rd-pause');
-      if (!r || !pauseBtn || pauseBtn.disabled) return;
-      const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
-      resumeRunOnEngine(r.runId, pauseBtn, engine);
-    });
-  }
+  // CLICK time; the toggle carries the busy state, as for a plain Resume. Clones are painted after
+  // setup, so one delegated listener on the menu.
+  rdResumeMenu.addEventListener('click', (e) => {
+    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+    if (!item || !rdResumeMenu.contains(item)) return;
+    e.stopPropagation();
+    closeRdResumeMenu();
+    const r = runs.get(runDetailState.runId);
+    const pauseBtn = screen.querySelector('.rd-pause');
+    if (!r || !pauseBtn || pauseBtn.disabled) return;
+    const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
+    resumeRunOnEngine(r.runId, pauseBtn, engine);
+  });
   rdResumeAt.addEventListener('click', (e) => {
     e.stopPropagation();
     if (rdResumeAt.disabled) return;
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
-    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null }, rdResumeAt);
+    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null,
+      runEngine: r.runEngine, pause: { reason: r.pauseReason, limitEngine: r.limitEngine } }, rdResumeAt);
   });
   rdResumeMenu.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeRdResumeMenu(); rdResumeMore.focus(); }
@@ -28464,7 +28577,7 @@ function paintRdGlance(screen, r) {
   const liveDiff = terminal ? null : rdDiffBadge(live);
   paintGlanceFacts(glance, {
     summary, liveFiles: liveDiff != null && liveDiff !== '' ? Number(liveDiff) : null,
-    activeMs: rdActiveMs(r), cost: r.totalCostUsd || 0,
+    activeMs: rdActiveMs(r), cost: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,
     costNote: costSummaryText(runCostBreakdown(r.steps, r.totalCostUsd), fmtUsd),
     ticking: (r.status === 'running' || r.status === 'starting') && r.pendingQuestion == null,
   });
@@ -29306,7 +29419,7 @@ function paintRdHeader(screen, r) {
     // Model bridge (model-bridge-design.md §8.6): a run that went through the
     // bridge shows its request count beside the dollars, so a "$0" reads as a
     // unit mismatch (Copilot bills requests), not as free.
-    ['rd-cost', fmtUsd(r.totalCostUsd || 0) + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
+    ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
@@ -29332,9 +29445,11 @@ function paintRdHeader(screen, r) {
     seg.textContent = txt;
     if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
     else if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
+    if (cls === 'rd-cost' && !engineReportsCost(r.runEngine)) seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
     meta.appendChild(seg);
   });
-  paintCostBreakdown(screen.querySelector('.rd-header'), meta.querySelector('.rd-cost'), runCostBreakdown(r.steps, r.totalCostUsd), costFocus);
+  paintCostBreakdown(screen.querySelector('.rd-header'), meta.querySelector('.rd-cost'), runCostBreakdown(r.steps, r.totalCostUsd), costFocus,
+    { agentsUnknown: !engineReportsCost(r.runEngine) });
 
   // Branch row.
   const br = r.branch && typeof r.branch === 'object' ? r.branch : {};
@@ -29439,7 +29554,7 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine);
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
   const ns = screen.querySelector('.rd-night');

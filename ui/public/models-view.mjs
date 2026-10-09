@@ -9,6 +9,7 @@
 
 import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { credentialBadge } from './credential-badges.mjs';
+import { engineLabel, engineChoiceLabel, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -95,14 +96,14 @@ export function suggestDuplicateId(id, takenIds = []) {
  * entry you came for was never the one on top.
  * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], cursorEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
   const codexLc = new Set(codex.map((m) => m.id.toLowerCase()));
-  // §3.1a: a model of the Codex engine says so on its card; its efforts are Codex's.
-  const engineBadge = (m) => (m.engine === 'codex' ? h(doc, 'span', 'badge blue mv-engine', 'Codex') : null);
-  const effortsOf = (m) => effortsSummary(m.efforts, m.engine === 'codex' ? codexEfforts : efforts);
+  // §3.1a: a model of another engine (Codex, Cursor) says so on its card; its efforts are that engine's.
+  const engineBadge = (m) => (m.engine && m.engine !== 'claude' ? h(doc, 'span', 'badge blue mv-engine', engineLabel(m.engine)) : null);
+  const effortsOf = (m) => effortsSummary(m.efforts, ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[m.engine || 'claude'] || efforts);
   const q = String(query || '').trim().toLowerCase();
   const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
   const searching = !!q || filter !== 'all';
@@ -437,12 +438,12 @@ function envRow(doc, key = '', value = '') {
  * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
  * mv-env-rm and calls collectModelEditor on save.
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'] } = {}) {
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], cursorEfforts = [] } = {}) {
   const editing = !!model;
   const root = h(doc, 'section', 'card mv-editor');
   // Both engines' effort lists ride the root so setModelEngine can swap them (§3.1a).
-  root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts });
-  const engineNow = editing && model.engine === 'codex' ? 'codex' : 'claude';
+  root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts });
+  const engineNow = editing && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
   root.dataset.mode = editing ? 'edit' : 'create';
   if (editing) {
     root.dataset.id = model.id;
@@ -477,16 +478,17 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   // §3.1a: which engine runs the model. Codex takes no routing env (codex ignores it), and its connection
   // can only be an OpenAI-compatible endpoint; the engine is part of the entry, so it is fixed once created.
   const engineSel = h(doc, 'select', 'select mv-engine');
-  for (const [v, t] of [['claude', 'Claude'], ['codex', 'Codex']]) {
+  for (const v of MODEL_ENGINE_NAMES) {
     const o = doc.createElement('option');
-    o.value = v; o.textContent = t;
+    o.value = v; o.textContent = engineChoiceLabel(v);
     engineSel.appendChild(o);
   }
   engineSel.value = engineNow;
   engineSel.disabled = editing;
   grid.appendChild(field('Engine', engineSel, editing
     ? 'Fixed once created — delete the model and add it again to change it.'
-    : 'Which harness runs this model. A Codex model takes no routing env; it connects to OpenAI or to an OpenAI-compatible endpoint.'));
+    : 'Which harness runs this model. A Codex model takes no routing env; it connects to OpenAI or to an OpenAI-compatible endpoint. '
+      + "A Cursor model runs through cursor-agent's own sign-in: no env, no endpoint, no effort. Worca cannot price it."));
 
   // ── Connection (model-bridge-design.md §8.3): direct / env / provider ──
   // Rendered first among the routing controls: it decides whether the env
@@ -494,7 +496,7 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   grid.appendChild(field('Connection', renderConnectionSection(model, { doc, providers, copilotModels })));
 
   const effWrap = h(doc, 'div', 'mv-efforts');
-  const effortList = engineNow === 'codex' ? codexEfforts : efforts;
+  const effortList = ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts })[engineNow] || efforts;
   const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : effortList);
   for (const lab of effortBoxes(doc, effortList, selected)) effWrap.appendChild(lab);
   const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
@@ -598,12 +600,12 @@ function effortBoxes(doc, list, selected) {
  * The ONE place that knows the rule — the initial render, the select's change handler (app.js)
  * and "+ Add model…" from a Codex New pipeline all go through it. Safe on any editor.
  * @param {Element} rootEl the .mv-editor root
- * @param {'claude'|'codex'} engine
+ * @param {'claude'|'codex'|'cursor'} engine
  */
 export function setModelEngine(rootEl, engine) {
   const sel = rootEl && rootEl.querySelector('.mv-engine');
   if (!sel) return;
-  const next = engine === 'codex' ? 'codex' : 'claude';
+  const next = MODEL_ENGINE_NAMES.includes(engine) ? engine : 'claude';
   sel.value = next;
   if (rootEl.dataset.engine !== next) {
     let lists = {};
@@ -612,11 +614,17 @@ export function setModelEngine(rootEl, engine) {
     if (wrap) wrap.replaceChildren(...effortBoxes(rootEl.ownerDocument, lists[next] || [], null));
     rootEl.dataset.engine = next;
   }
-  const codex = next === 'codex';
+  const noEnv = next !== 'claude';
   const envField = rootEl.querySelector('.mv-env')?.closest('.mv-field');
-  if (envField) envField.hidden = codex;
+  if (envField) envField.hidden = noEnv;
   const btns = rootEl.querySelector('.mv-env-btns');
-  if (btns) btns.hidden = codex;
+  if (btns) btns.hidden = noEnv;
+  // A Cursor model takes no effort and worca cannot price it: the whole fields hide (and come back off Cursor).
+  const cursor = next === 'cursor';
+  const pricing = rootEl.querySelector('.mv-cost-edit')?.closest('.mv-field');
+  if (pricing) pricing.hidden = cursor;
+  const effField = rootEl.querySelector('.mv-efforts')?.closest('.mv-field');
+  if (effField) effField.hidden = cursor;
   const conn = rootEl.querySelector('.mv-conn');
   if (conn) { conn.dataset.engine = next; applyConnectionMode(conn); }
 }
@@ -673,7 +681,8 @@ export function collectModelEditor(rootEl) {
   const label = (rootEl.querySelector('.mv-label')?.value || '').trim();
   const efforts = [...rootEl.querySelectorAll('.mv-effort-cb')].filter((c) => c.checked).map((c) => c.value);
   const allCount = rootEl.querySelectorAll('.mv-effort-cb').length;
-  const engine = rootEl.querySelector('.mv-engine')?.value === 'codex' ? 'codex' : 'claude';
+  const engineValue = rootEl.querySelector('.mv-engine')?.value;
+  const engine = MODEL_ENGINE_NAMES.includes(engineValue) ? engineValue : 'claude';
 
   const env = {};
   const seen = new Set();
@@ -714,11 +723,11 @@ export function collectModelEditor(rootEl) {
 
   const body = {
     ...(editing ? {} : { id }),
-    ...(!editing && engine === 'codex' ? { engine } : {}),
+    ...(!editing && engine !== 'claude' ? { engine } : {}),
     label,
     // All boxes checked = the full set = store the default (empty).
     efforts: efforts.length === allCount ? [] : efforts,
-    env: engine === 'codex' ? {} : env,
+    env: engine !== 'claude' ? {} : env,
     cost,
     // Create mode has nothing to clear, so a null upstream is simply omitted
     // and the POST body stays byte-identical for a non-bridged entry.

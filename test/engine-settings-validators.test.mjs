@@ -50,3 +50,24 @@ test('a Codex id in a Claude utility setting is a 400 naming it; nothing is writ
   const ok = await post({ titleModel: 'claude-haiku-4-5' });
   assert.equal(ok.status, 200, 'a Claude id is still accepted');
 });
+
+test('Ask never runs on Cursor; a run may', async () => {
+  const { assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
+  assert.throws(() => assertAskEngineInput('cursor'), /askEngine must be one of claude \| codex/);
+  assert.equal(assertRunEngineInput('cursor'), 'cursor');
+});
+
+test('Cursor: step models without effort; no helper slots', async () => {
+  const { assertUtilityModelsInput, assertStepModelsInput } = await import('../src/core/settings.mjs');
+  assert.throws(() => assertUtilityModelsInput({ cursor: { title: { model: 'x' } } }), /Cursor runs no helper jobs/);
+  assert.deepEqual(assertStepModelsInput({ cursor: { plan: { model: 'x' } } }), { cursor: { plan: { model: 'x' } } });
+  assert.throws(() => assertStepModelsInput({ cursor: { plan: { model: 'x', effort: 'high' } } }), /^Error: stepModels\.cursor\.plan: Cursor takes no effort$/);
+});
+
+test('a Cursor id in a Claude utility setting is a 400 naming it', async () => {
+  const { addGlobalModel } = await import('../src/core/settings.mjs');
+  await addGlobalModel({ id: 'cursor-m', engine: 'cursor' });
+  const r = await post({ titleModel: 'cursor-m' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /^“[^”]+”: "cursor-m" is a Cursor model — this setting picks a Claude model\.$/);
+});

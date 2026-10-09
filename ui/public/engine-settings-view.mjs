@@ -1,6 +1,9 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-export const ENGINE_LABELS = Object.freeze({ claude: 'Claude', codex: 'Codex', copilot: 'Copilot' });
-export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']) });
+import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
+// An inherited value's label; an unset one stays null, so the field shows its bare heading.
+const engineName = (v) => (v == null ? null : engineLabel(v));
+const CURSOR_HELPERS_NOTE = "Helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) run on Claude on a Cursor run.";
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
@@ -9,15 +12,19 @@ export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${eng
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: 'Codex' }, { value: 'copilot', label: 'Copilot' }], own: run.own, inherited: run.inherited, format: (value) => ENGINE_LABELS[value] || value }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
   const extras = {};
-  for (const engine of ['claude', 'codex']) {
+  // One card per engine that owns catalog models: Copilot owns none, so it has no step or helper slots to set.
+  for (const engine of MODEL_ENGINE_NAMES) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine;
-    const heading = doc.createElement('h3'); heading.textContent = ENGINE_LABELS[engine]; card.append(heading);
-    if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint'; note.textContent = options.notes[engine]; card.append(note); }
+    const heading = doc.createElement('h3'); heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'badge violet beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    // A non-Claude card's readiness line (GET /api/engines), filled by app.js on Settings › Models.
+    if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
+    const noteText = [options.notes?.[engine], engine === 'cursor' ? CURSOR_HELPERS_NOTE : null].filter(Boolean).join(' ');
+    if (noteText) { const note = doc.createElement('small'); note.className = 'hint'; note.textContent = noteText; card.append(note); }
     const row = (id, label, defaultLabel) => { const value = field(id); return renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: ENGINE_EFFORTS[engine], own: value.own, inherited: value.inherited, defaultLabel }); };
     const steps = doc.createElement('div'); steps.className = 'engine-steps'; const sh = doc.createElement('h4'); sh.textContent = 'Step models'; steps.append(sh);
-    for (const role of options.roles || []) steps.append(row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || "the workflow's model")); card.append(steps);
+    for (const role of options.roles || []) steps.append(row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (engine === 'cursor' ? "Cursor's default model" : "the workflow's model"))); card.append(steps);
     const jobs = options.jobs?.[engine] || []; if (jobs.length) { const helpers = doc.createElement('div'); helpers.className = 'engine-helpers'; const hh = doc.createElement('h4'); hh.textContent = 'Helper models'; helpers.append(hh); for (const job of jobs) helpers.append(row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : null))); card.append(helpers); }
     const extra = doc.createElement('div'); extra.className = 'engine-card-extra'; card.append(extra); extras[engine] = extra; host.append(card);
   }
@@ -28,7 +35,7 @@ export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
-    let match = /^models\.(claude|codex)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    let match = /^models\.(claude|codex|cursor)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
   }
   return body;
@@ -44,11 +51,11 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const unavailable = 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${codexOffered ? '' : ` ${unavailable}`}`,
-    options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? 'Codex' : 'Codex (unavailable)' }],
-    own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: (value) => ENGINE_LABELS[value] || value }));
+    options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? engineChoiceLabel('codex') : 'Codex (unavailable)' }],
+    own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   for (const engine of ['claude', 'codex']) {
     if (engine === 'codex' && !codexOffered) continue;
-    host.append(renderInheritField(doc, { id: `models.${engine}.ask`, label: `${ENGINE_LABELS[engine]} chat model`, kind: 'model', level: 'user', engine,
+    host.append(renderInheritField(doc, { id: `models.${engine}.ask`, label: `${engineLabel(engine)} chat model`, kind: 'model', level: 'user', engine,
       catalog, efforts: ENGINE_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' },
       ...(engine === 'codex' ? { hint: 'On Codex the per-turn cost cap is checked when a reply ends, and needs a model worca can price.' } : {}) }));
   }

@@ -13,7 +13,8 @@ import { pauseConsequences, describePauseReason, giveUpOption } from '../failure
 import { projectForm } from '../../shared/forms/project.mjs';
 import { CHAT_PROJECTION_MAX } from '../ask-projection.mjs';
 import { awayAnswersSummary } from '../../shared/away-mode/labels.mjs';
-import { usageLimitSwitch, engineLabel } from '../../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, engineReportsCost, runCostLabel } from '../../shared/engine-switch.mjs';
+import { readyEnginesCached } from '../engines/ready-cache.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 
@@ -28,6 +29,11 @@ export function fmtMs(ms) {
 export function fmtUsd(usd) {
   if (usd == null || !Number.isFinite(Number(usd))) return null;
   return `$${Number(usd).toFixed(2)}`;
+}
+
+/** A run's cost: fmtUsd (null when unset), or "cost unknown" on an engine that reports no cost — never $0.00. */
+export function fmtRunCost(engine, usd) {
+  return engineReportsCost(engine) ? fmtUsd(usd) : runCostLabel(engine, usd, fmtUsd);
 }
 
 function mdMsg(text, severity) {
@@ -51,7 +57,7 @@ function head(icon, meta) {
 /**
  * done event: status done|stopped|paused (+reason for limit pauses, +limitEngine for a
  * usage limit an engine hit).
- * meta may carry {title, totalCostUsd, totalActiveMs} for the summary line.
+ * meta may carry {title, totalCostUsd, totalActiveMs, runEngine} for the summary line.
  */
 export function renderDone(meta, payload = {}) {
   const status = payload.status || 'done';
@@ -70,9 +76,12 @@ export function renderDone(meta, payload = {}) {
     }
     pushAway(parts, meta);
     parts.push(`   Resume from the worca-cc UI, or reply: /resume ${runRef(meta.runId)}`);
-    // A usage limit the engine hit: the other engine has its own allowance.
-    const other = usageLimitSwitch(payload);
-    if (other) parts.push(`   Or continue now on ${engineLabel(other)}: /resume ${runRef(meta.runId)} ${other}`);
+    // A usage limit the engine hit: each other engine has its own allowance. Chat never sends the engine gate's
+    // consent, and whether the gate refuses is known only at resume (the target engine's preflight, the guardrail set
+    // and project rules it reads then), so the hint says the switch may need the UI.
+    for (const e of usageLimitSwitches(payload, readyEnginesCached())) {
+      parts.push(`   Or continue now on ${engineLabel(e)}: /resume ${runRef(meta.runId)} ${e} (may need Allow unguarded in the worca-cc UI)`);
+    }
     return mdMsg(parts.join('\n'), isError ? 'error' : 'warning');
   }
   if (status === 'stopped') {
@@ -86,7 +95,7 @@ export function renderDone(meta, payload = {}) {
   parts.push('   **Status:** completed');
   const dur = fmtMs(meta.totalActiveMs);
   if (dur) parts.push(`   **Duration:** ${dur}`);
-  const cost = fmtUsd(meta.totalCostUsd);
+  const cost = fmtRunCost(meta.runEngine, meta.totalCostUsd);
   if (cost) parts.push(`   **Cost:** ${cost}`);
   pushPending(parts, meta);
   pushAway(parts, meta);

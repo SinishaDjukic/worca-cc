@@ -823,7 +823,7 @@ async function runViaBroker(opts) {
   }
 }
 
-/** Claude Code declares every capability worca uses (plans/harness-bridge-design.md §6). */
+/** Claude Code declares every capability worca uses. */
 export const claudeCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, true])));
 
 /** The adapter's run(): every spawn goes through the credential broker when it is

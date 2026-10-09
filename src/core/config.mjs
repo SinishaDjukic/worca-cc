@@ -16,8 +16,9 @@ import { getDb, prepare, tx } from './db.mjs';
 import { projectKey } from './store.mjs';
 import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
-import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
+import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
+import { engineLabel } from '../shared/engine-switch.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
 import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
@@ -113,7 +114,7 @@ export function codexModelLabel(id) {
 export const CODEX_BUILTIN_MODELS = Object.freeze(Object.keys(CODEX_PRICES).map((id) => Object.freeze({
   id, label: codexModelLabel(id), efforts: Object.freeze([...CODEX_EFFORTS]),
 })));
-const engineTag = (m) => (m && m.engine === 'codex' ? 'codex' : 'claude');
+const engineTag = (m) => (m && MODEL_ENGINES.includes(m.engine) ? m.engine : 'claude');
 const CLAUDE_ID_RE = /^(claude-|opus|sonnet|haiku|fable)/i;
 
 /** @deprecated config moved to the DB (project_config). Kept for import-compat only. */
@@ -745,7 +746,6 @@ export function modelForEngine(modelId, engine = 'claude', { projectDir = null }
   return owner && owner !== engine ? undefined : modelId;
 }
 
-const ENGINE_NAME = Object.freeze({ claude: 'Claude', codex: 'Codex' });
 export async function assertSlotModels(items, { projectDir = '' } = {}) {
   const list = (Array.isArray(items) ? items : []).filter((item) => item?.value?.model);
   if (!list.length) return;
@@ -755,7 +755,7 @@ export async function assertSlotModels(items, { projectDir = '' } = {}) {
     const hit = models.find((model) => model?.id?.toLowerCase() === value.model.toLowerCase());
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
     const owner = hit.engine || 'claude';
-    if (owner !== engine) throw bad(`"${hit.id}" is a ${ENGINE_NAME[owner] || owner} model — this slot picks a ${ENGINE_NAME[engine] || engine} model`);
+    if (owner !== engine) throw bad(`"${hit.id}" is a ${engineLabel(owner)} model — this slot picks a ${engineLabel(engine)} model`);
     if (value.effort && !hit.efforts?.includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}"`);
   }
 }
@@ -767,7 +767,7 @@ export async function assertSlotModels(items, { projectDir = '' } = {}) {
  * @returns {Promise<Record<string,{model:(string|undefined),effort:(string|undefined)}>>}
  */
 export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspace = false } = {}) {
-  const eng = engine === 'codex' ? 'codex' : 'claude'; const out = {};
+  const eng = MODEL_ENGINES.includes(engine) ? engine : 'claude'; const out = {};
   for (const { key } of agentSteps()) {
     let layers; try { layers = resolveSetting(`models.${eng}.steps.${key}`, projectDir ? { projectDir, workspace } : { workspace }).layers; } catch { continue; }
     const pick = eng === 'claude' ? (layers.user !== undefined ? ['user', layers.user] : layers.team !== undefined ? ['team', layers.team] : null)
@@ -779,7 +779,7 @@ export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspa
 export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
   // Copilot has no step slots (it owns no catalog model): every step runs the run's own model, else copilot's default.
   if (engine === 'copilot') return Object.fromEntries(agentSteps().map(({ key }) => [key, { model: fallbackModel || undefined, effort: undefined }]));
-  const eng = engine === 'codex' ? 'codex' : 'claude'; const cfg = readRaw(projectDir);
+  const eng = MODEL_ENGINES.includes(engine) ? engine : 'claude'; const cfg = readRaw(projectDir);
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
   const out = {};

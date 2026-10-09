@@ -14,11 +14,11 @@ import { parseCommand, MENTION_TOKEN } from './parser.mjs';
 import { DIRECTIONS_CLOSED, DIRECTION_MAX_CHARS } from '../directions.mjs';
 import { BOOKEND_EXECUTION_IDS } from '../../shared/graph/constants.mjs';
 import { createAllowlistGuard, parseIdList } from './allowlist.mjs';
-import { runRef, fmtUsd, fmtMs } from './renderers.mjs';
+import { runRef, fmtRunCost, fmtMs } from './renderers.mjs';
 import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 import { chatActor } from '../identity.mjs';
-import { SWITCH_ENGINES, engineLabel } from '../../shared/engine-switch.mjs';
+import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor } from '../../shared/engine-switch.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -47,7 +47,7 @@ const HELP_TEXT = [
   '**worca-cc chat commands**',
   '`/runs` — live runs · `/last` — latest finished pipeline',
   '`/status [*ref]` — run detail · `/cost [*ref]` — run cost',
-  '`/pause [*ref]` · `/stop [*ref]` · `/resume [*ref] [claude|codex]` (an engine continues the run on it)',
+  `\`/pause [*ref]\` · \`/stop [*ref]\` · \`/resume [*ref] [${SWITCH_ENGINES.join('|')}]\` (an engine continues the run on it)`,
   '`/approve [*ref]` — at a gate: no more cycles, continue · on a recovery prompt: retry · on an Auto proposal: accept',
   '`/retry [*ref]` — at a gate: run another cycle',
   '`/abort [*ref]` — give up on a recovery prompt (pauses the run; nothing is discarded)',
@@ -236,7 +236,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       if (!rows.length) return reply('No pipelines yet.');
       const r = rows[0];
       const bits = [runLine({ ...r, runId: r.id })];
-      const cost = fmtUsd(r.totalCostUsd);
+      const cost = fmtRunCost(r.runEngine, r.totalCostUsd);
       if (cost) bits.push(`   **Cost:** ${cost}`);
       const dur = fmtMs(r.totalActiveMs);
       if (dur) bits.push(`   **Active:** ${dur}`);
@@ -249,7 +249,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       if (t.row) {
         const r = t.row;
         return reply([runLine({ ...r, runId: r.id }),
-          ...(fmtUsd(r.totalCostUsd) ? [`   **Cost:** ${fmtUsd(r.totalCostUsd)}`] : []),
+          ...(fmtRunCost(r.runEngine, r.totalCostUsd) ? [`   **Cost:** ${fmtRunCost(r.runEngine, r.totalCostUsd)}`] : []),
           ...(r.pauseReason ? [`   **Pause reason:** ${describePauseReason(r.pauseReason) || r.pauseReason}`] : []),
           ...(r.pauseDetail ? [`   **${pauseConsequences(r.pauseReason).severity === 'error' ? 'Error' : 'Cause'}:** ${r.pauseDetail}`] : []),
         ].join('\n'));
@@ -268,7 +268,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
         const activeLabel = active.length === 0 ? '—'
           : (active.length === 1 ? active[0] : `${active.length} agents running`);
         lines.push(`   **Executions:** ${doneSteps}/${ledger.length} done · **Active:** ${activeLabel}`);
-        const cost = fmtUsd(state.totalCostUsd);
+        const cost = fmtRunCost(state.runEngine, state.totalCostUsd);
         if (cost) lines.push(`   **Cost:** ${cost}`);
       }
       const pq = actions.pendingQuestion(r.runId);
@@ -286,9 +286,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     cost: async ({ chatKey, args }) => {
       const t = resolveTarget(args[0], scopedRuns(chatKey), await actions.history({ limit: 50 }));
       if (t.error) return t.error;
-      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtUsd(t.row.totalCostUsd) || '$0.00'}`);
+      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtRunCost(t.row.runEngine, t.row.totalCostUsd) || '$0.00'}`);
       const state = actions.runState(t.run.runId);
-      return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtUsd(state?.totalCostUsd) || '$0.00'}`);
+      return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtRunCost(state?.runEngine, state?.totalCostUsd) || '$0.00'}`);
     },
 
     pause: async ({ chatKey, args, actor }) => {
@@ -348,7 +348,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const engineArg = args.find((a) => SWITCH_ENGINES.includes(String(a).toLowerCase()));
       const engine = engineArg ? String(engineArg).toLowerCase() : null;
       const refs = args.filter((a) => a !== engineArg);
-      if (refs.length > 1) return reply(`Unknown engine \`${refs[1]}\` — use ${SWITCH_ENGINES.join(' or ')}.`, 'warning');
+      if (refs.length > 1) return reply(`Unknown engine \`${refs[1]}\` — use ${engineList(SWITCH_ENGINES, (e) => e)}.`, 'warning');
       const ref = refs[0];
       // Resolve against PAUSED/INTERRUPTED history rows (resume works across
       // restarts); a live match means it's already running.
@@ -365,9 +365,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       const out = engine ? await actions.resume(t.row.id, actor, { engine }) : await actions.resume(t.row.id, actor);
       const on = engine ? ` on ${engineLabel(engine)}` : '';
       if (out?.ok) return reply(`▶️ Resuming \`${runRef(t.row.id)}\`${on} — ${String(t.row.title || '').slice(0, 50)}`);
-      // The engine gate's consent is a UI checkbox, never a chat word.
-      const consent = out?.code === 'engine-refused' && out.overridable ? ' To run it without those rules, resume it from the worca-cc UI and tick Allow unguarded.' : '';
-      return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${out?.error || 'unknown error'}${consent}`, 'error');
+      // The engine gate's consent is a UI checkbox, never a chat word: the refusal sends the person there.
+      const why = out?.code === 'engine-refused' ? engineRefusalFor(out.error, 'chat') : out?.error;
+      return reply(`Could not resume \`${runRef(t.row.id)}\`${on}: ${why || 'unknown error'}`, 'error');
     },
 
     approve: async (env) => answerDecision(env, 'approve'),

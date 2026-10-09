@@ -6,7 +6,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { rm } from 'node:fs/promises';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { skillSetFixture, addSkills, scratchDir, scratchGitDir as gitDir } from './helpers/skill-sets.mjs';
@@ -113,6 +113,24 @@ test('POST /api/mcp/preview: managed settings that disable sideloading block the
     assert.deepEqual(body.sets.map((s) => [s.skills, s.startedSkills]), [[2, 0]]);
   } finally {
     if (prev === undefined) delete process.env.WORCA_CLAUDE_MANAGED_SETTINGS; else process.env.WORCA_CLAUDE_MANAGED_SETTINGS = prev;
+  }
+});
+
+test('POST /api/mcp/preview on another engine: each set skill shows the name .agents/skills would give it; Claude keeps <plugin>:<skill>', async () => {
+  const own = join(dir, '.claude', 'skills', 'deploy-checklist');
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, 'SKILL.md'), '---\nname: deploy-checklist\ndescription: the project\'s own\n---\n');
+  try {
+    const codex = await (await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'codex' })).json();
+    const names = Object.fromEntries(codex.skills.mounted.map((m) => [m.name, m.agentName]));
+    assert.deepEqual(names, { 'deploy-checklist': `${set.slug}-deploy-checklist`, 'release-notes': 'release-notes' }, 'renamed only on a clash');
+    assert.deepEqual(codex.skills.layer, { blocked: null, text: null });
+    const claude = await (await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'claude' })).json();
+    assert.ok(claude.skills.mounted.every((m) => !('agentName' in m)), 'Claude agents call <plugin>:<skill>');
+    const bad = await post('/api/mcp/preview', { target: { projectKey: key }, engine: 'gemini' });
+    assert.equal(bad.status, 400);
+  } finally {
+    await rm(join(dir, '.claude'), { recursive: true, force: true });
   }
 });
 

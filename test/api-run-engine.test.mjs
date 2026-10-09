@@ -94,7 +94,19 @@ test('engine: codex on a set with permission rules is refused at once, with the 
   assert.equal(data.code, 'engine-refused');
   assert.equal(data.overridable, true);
   assert.match(data.error, /^engine codex: guardrail set "normal" has permission rules this engine cannot enforce/);
+  assert.match(data.error, /tick Allow unguarded/, 'the UI\'s consent, not the CLI flag');
+  assert.doesNotMatch(data.error, /--allow-unguarded-engine/);
   assert.equal(runs.size, before, 'no run entry is left behind');
+});
+
+test('engine: a scheduled run on codex is checked when it is scheduled, not only when it fires', async () => {
+  const r = await post('/api/run', { ...body(), engine: 'codex', guardrailsId: 'normal', scheduledFor: new Date(Date.now() + 3600_000).toISOString() });
+  assert.equal(r.status, 409);
+  const data = await r.json();
+  assert.equal(data.code, 'engine-refused');
+  assert.equal(data.overridable, true);
+  const ok = await post('/api/run', { ...body(), engine: 'codex', scheduledFor: new Date(Date.now() + 3600_000).toISOString() });
+  assert.equal(ok.status, 202, 'a set the engine can hold schedules as before');
 });
 test('engine: with the consent the same run starts on codex', async () => {
   const r = await post('/api/run', { ...body(), engine: 'codex', guardrailsId: 'normal', allowUnguardedEngine: true });

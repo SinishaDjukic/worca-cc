@@ -441,3 +441,37 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
   assert.equal(badge('gpt-5.5'), true, 'a Claude global of the same id owns it');
   assert.equal(badge('gpt-5.6-sol'), true, 'a team-policy model of the same id owns it');
 });
+
+test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'cursor']);
+  setModelEngine(el, 'cursor');
+  assert.equal(el.querySelector('.mv-engine').value, 'cursor');
+  assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true, 'the whole Pricing field');
+  assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
+  const conn = el.querySelector('.mv-conn');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Cursor default'], 'its own sign-in only');
+  assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+  el.querySelector('.mv-id').value = 'sonnet-4.5';
+  const { body } = collectModelEditor(el);
+  assert.equal(body.engine, 'cursor');
+  assert.deepEqual(body.env, {});
+  assert.deepEqual(body.efforts, []);
+  assert.equal('upstream' in body, false);
+  setModelEngine(el, 'codex');
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'Pricing is back');
+  assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false, 'efforts are back');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
+});
+
+test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'sonnet-4.5', label: 'Sonnet via Cursor', efforts: [], engine: 'cursor' }],
+    predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS, cursorEfforts: [],
+  }, { doc });
+  assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
+  assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);
+});

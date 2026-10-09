@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createAskModels, chatEngine } from '../src/core/ask/models.mjs';
+import { createAskModels, chatEngine, eventFallbackNotice } from '../src/core/ask/models.mjs';
+import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { CODEX_EFFORTS } from '../src/core/model-env.mjs';
 
 useTempHome(after);
@@ -45,6 +46,21 @@ test('chatEngine: the engine of the thread model; unknown or empty is claude', (
   assert.equal(chatEngine({ model: 'nope-xyz' }), 'claude');
 });
 
+test('chatEngine: the stored engine wins over the model, so a model that left the catalog keeps its chat\'s engine', () => {
+  assert.equal(chatEngine({ model: 'gpt-retired-9', engine: 'codex' }), 'codex');
+  assert.equal(chatEngine({ model: 'gpt-5.5', engine: 'claude' }), 'claude');
+  assert.equal(chatEngine({ model: 'gpt-5.5', engine: 'cursor' }), 'codex', 'an engine Ask does not run on is ignored');
+});
+
+test('eventPick: a Codex chat whose model left the catalog gets the Codex default and a notice naming both', async () => {
+  const pick = await mk().eventPick({ model: 'gpt-retired-9', effort: 'low', engine: 'codex' }, 'codex');
+  assert.deepEqual(pick, { ok: true, model: 'gpt-6-astra', effort: 'medium', fallback: { from: 'gpt-retired-9', engine: 'codex' } });
+  assert.equal(eventFallbackNotice(pick), "This chat's model gpt-retired-9 is not available any more, so this reply uses Codex's default, gpt-6-astra (medium).");
+  const ok = await mk().eventPick({ model: 'gpt-5.5', effort: 'low' }, 'codex');
+  assert.deepEqual(ok, { ok: true, model: 'gpt-5.5', effort: 'low' });
+  assert.equal(eventFallbackNotice(ok), null);
+});
+
 test('askCatalog: both engines; a Codex row says so, a Claude row carries no engine key; defaults per engine', async () => {
   const cat = await mk().askCatalog();
   assert.deepEqual(cat.models.map((m) => m.id), ['claude-opus-5-5', 'claude-haiku-4-5', 'gpt-6-astra', 'gpt-5.5']);
@@ -76,4 +92,19 @@ test('validateModelEffort: any engine before the first turn; inside a chat only 
 test('the event-turn fallback stays on the chat\'s engine', async () => {
   const cat = await mk().askCatalog({ withSecrets: false });
   assert.equal(cat.defaults[chatEngine({ model: 'gpt-5.5' })].model, 'gpt-6-astra');
+});
+
+test('Cursor models never reach the Ask catalog, and a hand-made pick of one is an unknown model', async () => {
+  const { askCatalog, validateModelEffort } = createAskModels({
+    listModels: async () => [{ id: 'cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
+    pluginModels: () => [], secretStatus: () => [], askPrefs: () => ({ engine: 'claude', slots: {} }),
+    effortless: () => new Set(),                   // as mk() passes: never read the real bridge state
+  });
+  const cat = await askCatalog({});
+  assert.ok(!cat.models.some((m) => m.id === 'cursor-m'));
+  assert.deepEqual(await validateModelEffort('cursor-m', 'high'), { ok: false, error: 'unknown model "cursor-m"' });
+});
+
+test('the Ask turn refuses an engine Ask does not run on', () => {
+  assert.throws(() => createAskTurn({ engine: 'cursor' }), /Ask on Cursor is unavailable/);
 });

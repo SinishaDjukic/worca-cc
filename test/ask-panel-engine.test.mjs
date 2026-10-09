@@ -30,7 +30,7 @@ test('a new chat lists both engines under their names', async () => {
   const ctx = makePanel({ fetchHandler: handler() });
   ctx.panel.open(); await ctx.tick(); await ctx.tick();
   ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), ['Claude', 'Codex']);
+  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta)']);
   assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5']);
 });
 

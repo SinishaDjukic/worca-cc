@@ -261,6 +261,7 @@
                     <button type="button" data-engine="claude" class="on" aria-pressed="true">Claude</button>
                     <button type="button" data-engine="codex" aria-pressed="false">Codex</button>
                     <button type="button" data-engine="copilot" aria-pressed="false">Copilot</button>
+                    <button type="button" data-engine="cursor" aria-pressed="false">Cursor</button>
                   </div>
                   <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
                   <small class="hint" id="engine-default-hint" hidden></small>
@@ -617,8 +618,8 @@
                   <!-- One control for Pause/Resume. The label lives in its own span so a busy
                        state swaps only the word and the inline SVG survives. -->
                   <!-- Split Resume: the caret (Advanced, paused only) opens the engine choice ("Resume on
-                       <saved engine>" / "Resume on <other engine>", app.js#paintResumeEngineItems) and
-                       "Resume at…", like #start-split. -->
+                       <saved engine>", and "Resume on <other engine>" after a usage limit the engine hit,
+                       app.js#paintResumeEngineItems) and "Resume at…", like #start-split. -->
                   <div class="btn-split mini rd-resume-split">
                     <button type="button" class="rd-pause" data-action="pause" hidden>
                       <svg class="ico-pause" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>

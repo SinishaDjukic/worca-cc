@@ -1,5 +1,5 @@
 // src/core/engines/codex.mjs
-// The codex CLI adapter (plans/harness-bridge-design.md §10): `codex exec --json`
+// The codex CLI adapter: `codex exec --json`
 // argv, the JSONL stream normalized into worca's event vocabulary, cost estimated
 // from codex's cumulative per-thread usage, error classification, and the spawn
 // path on the shared supervisor (engines/spawn.mjs).
@@ -16,14 +16,14 @@
 // - A failed turn ends with `error` + `turn.failed`, and codex may still exit 0. A
 //   top-level `error` alone is not a failure: codex also reports its stream retries
 //   that way ("Reconnecting... 1/5 (…)") and may go on to complete the turn.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, symlinkSync, rmSync, renameSync, readdirSync, linkSync, copyFileSync, lstatSync, readlinkSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { join } from 'node:path';
+import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
@@ -62,13 +62,25 @@ const CODEX_FALSE = new Set(['allowedTools', 'hookTelemetry', 'turnBudget']);
 export const CODEX_DEFAULT_MODEL = 'gpt-5.6-sol';
 export const codexCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CODEX_FALSE.has(k)])));
 
-/** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no native web search,
- *  no browser / apps / plugins / sub-agents. null = this codex cannot be locked down, and an Ask turn on Codex refuses
- *  (turn.mjs). Task 0 (plans/ask-on-codex-spike.md (a)) found codex-cli 0.146.0-alpha.9.2 cannot be: under
- *  `--disable shell_tool --disable unified_exec …` the shell is gone, but `view_image` still reads any image file on
- *  disk and sub-agents still spawn, and no flag or config key switches them off. When a codex version can, set this
- *  to the verified list (valid on `exec` and `exec resume` alike) and re-run the spike. */
-export const CODEX_ASK_LOCKDOWN = null;
+/** Ask Worca on Codex (cascading-settings-design.md D13): the flags that leave codex no shell, no image viewer, no native
+ *  web search, no browser / apps / plugins / goals / hooks, and no rules of its own, valid on `exec` and `exec resume`
+ *  alike. Verified on codex-cli 0.162.0-alpha.2 (plans/ask-on-codex-spike.md (h)) from the request codex sends: under
+ *  these flags `exec`'s nested tools are worca's MCP tools, the MCP resource tools and `apply_patch` (the read-only
+ *  sandbox rejects its writes). Code mode stays on: on 0.162 MCP tools are called through it, and its JavaScript has no
+ *  file system or network. codex keeps its sub-agent tools under every flag and key tried; a sub-agent inherits these
+ *  flags (no shell, no image viewer), and the turn's watchdog stops the chat when one appears (turn.mjs _watch).
+ *  A codex that does not know every feature named here refuses the flag at start-up; codexAskSupport says so first. */
+export const CODEX_ASK_LOCKDOWN = Object.freeze([
+  '--disable', 'shell_tool', '--disable', 'unified_exec', '--disable', 'view_image',
+  '--disable', 'apps', '--disable', 'plugins', '--disable', 'browser_use', '--disable', 'computer_use', '--disable', 'in_app_browser',
+  '--disable', 'image_generation', '--disable', 'multi_agent', '--disable', 'multi_agent_v2', '--disable', 'tool_suggest',
+  '--disable', 'goals', '--disable', 'hooks', '-c', 'web_search="disabled"', '--ignore-rules',
+]);
+/** The codex features CODEX_ASK_LOCKDOWN switches off: every one must exist in the installed codex. */
+export const CODEX_ASK_FEATURES = Object.freeze(CODEX_ASK_LOCKDOWN.filter((a, i, all) => all[i - 1] === '--disable'));
+/** The oldest codex the Ask lockdown was verified on. */
+export const CODEX_ASK_MIN_VERSION = '0.162';
+
 /** Every read-only spawn — a utility job over untrusted input (a diff, a task text — D11) — runs with codex's shell off.
  *  The read-only sandbox still lets the shell read the whole disk, so a prompt-injected task could otherwise read a key
  *  file into its answer. Verified to remove the shell on codex-cli 0.146 (plans/ask-on-codex-spike.md (a)). An Ask
@@ -88,7 +100,7 @@ function bashPrefix(rule) {
   return body.split(/\s+/);
 }
 
-/** How far a codex command rule reaches (plans/harness-bridge-design.md §10.3; verified on codex-cli 0.146). codex
+/** How far a codex command rule reaches (verified on codex-cli 0.146). codex
  *  splits a shell script into commands only when it is plain words: a redirect, a `$(…)`, a `$VAR` or a `VAR=x cmd`
  *  makes it match the whole `bash -lc …` argv instead, so the rule never sees the command. The gate and the run log
  *  say so in these words. */
@@ -139,12 +151,16 @@ export function codexRulesFile(prefixes) {
 /** The user's own codex home: where codex keeps its sign-in. */
 export const userCodexHome = (env = process.env) => (env.CODEX_HOME && env.CODEX_HOME.trim()) || join(homedir(), '.codex');
 
+/** Where worca keeps its managed codex homes (guardedCodexHome). */
+const codexHomesBase = () => join(worcaHome(), 'engines', 'codex', 'homes');
+
 /**
  * A worca-managed CODEX_HOME holding `rules`. codex reads command rules only from its home's `rules/` folder,
- * so a guarded spawn runs under one home per rule set (the same rules always get the same home, so a resumed
- * thread is found where it was written); its sign-in is the user's own auth.json, linked in. Never throws.
+ * so a guarded spawn runs under one home per rule set; its sign-in is the user's own auth.json, linked in and
+ * re-pointed on every call (keepAuthLinked). A thread written under another home is brought in on resume
+ * (bringCodexThreadHome). Never throws.
  */
-export function guardedCodexHome(rulesText, { base = join(worcaHome(), 'engines', 'codex', 'homes'), userHome = userCodexHome() } = {}) {
+export function guardedCodexHome(rulesText, { base = codexHomesBase(), userHome = userCodexHome() } = {}) {
   const dir = join(base, createHash('sha256').update(rulesText).digest('hex').slice(0, 12));
   try {
     mkdirSync(join(dir, 'rules'), { recursive: true });
@@ -157,10 +173,94 @@ export function guardedCodexHome(rulesText, { base = join(worcaHome(), 'engines'
       const tmp = join(dir, 'rules', `.worca.rules.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
       try { writeFileSync(tmp, rulesText); renameSync(tmp, file); } finally { rmSync(tmp, { force: true }); }
     }
-    const auth = join(dir, 'auth.json');
-    if (!existsSync(auth) && existsSync(join(userHome, 'auth.json'))) symlinkSync(join(userHome, 'auth.json'), auth);
+    keepAuthLinked(dir, userHome);
   } catch { /* the spawn then fails on its sign-in and says so */ }
   return dir;
+}
+
+/**
+ * The managed home's auth.json as a link to the user's current one. The user's codex home can move (CODEX_HOME) or
+ * sign out, so the link is checked on every spawn: a link to another file, or one left dangling, is re-pointed
+ * (a temp link renamed into place, as the rules file is), and removed when the user has no auth.json. A regular
+ * file is left alone: it is a sign-in codex itself wrote in this home.
+ */
+function keepAuthLinked(dir, userHome) {
+  const auth = join(dir, 'auth.json');
+  const want = join(userHome, 'auth.json');
+  let link;   // undefined: nothing there; null: a regular file; else the link's target
+  try { link = lstatSync(auth).isSymbolicLink() ? readlinkSync(auth) : null; } catch { link = undefined; }
+  if (link === null) return;
+  if (!existsSync(want)) { if (link !== undefined) rmSync(auth, { force: true }); return; }
+  if (link === want) return;
+  const tmp = join(dir, `.auth.json.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try { symlinkSync(want, tmp); renameSync(tmp, auth); } finally { rmSync(tmp, { force: true }); }
+}
+
+/** codex's session file for `thread` under `home` (`sessions/<y>/<m>/<d>/rollout-<time>-<thread>.jsonl`), or null. */
+export function findCodexRollout(home, thread) {
+  if (!home || !thread) return null;
+  const suffix = `-${thread}.jsonl`;
+  const walk = (dir, depth) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+    for (const e of entries) {
+      if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith(suffix)) return join(dir, e.name);
+      if (e.isDirectory() && depth < 3) { const f = walk(join(dir, e.name), depth + 1); if (f) return f; }
+    }
+    return null;
+  };
+  return walk(join(home, 'sessions'), 0);
+}
+
+/** The codex homes a thread may have been written under: the user's own and every worca-managed one. */
+function knownCodexHomes() {
+  const base = codexHomesBase();
+  let managed = [];
+  try { managed = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => join(base, e.name)); } catch { /* none yet */ }
+  return [userCodexHome(), ...managed];
+}
+
+/**
+ * Makes `thread` resumable under `home`. A thread lives in the home of the spawn that started it, and a guarded spawn's
+ * home follows its rule set, so a rule change between pause and resume (or a move between guarded and unguarded) moves
+ * the home. codex finds a thread by its session file anywhere under the home's sessions/ (checked on codex-cli 0.162),
+ * so the file is hard-linked in from the home that has it: one file, so either home resumes the latest turn. A copy
+ * stands in when the homes are on different volumes. Never throws; false when no home has the thread.
+ */
+export function bringCodexThreadHome(home, thread, { homes = knownCodexHomes() } = {}) {
+  if (findCodexRollout(home, thread)) return true;
+  for (const h of homes) {
+    if (!h || resolve(h) === resolve(home)) continue;
+    const src = findCodexRollout(h, thread);
+    if (!src) continue;
+    const dest = join(home, relative(h, src));
+    try {
+      mkdirSync(dirname(dest), { recursive: true });
+      try { linkSync(src, dest); } catch { copyFileSync(src, dest); }
+      return true;
+    } catch { return false; }
+  }
+  return false;
+}
+
+/**
+ * The thread's cumulative usage as codex last recorded it in its session file (the last `token_count` event), or null.
+ * `exec --json` reports usage only on `turn.completed`, so this is the only record of a turn stopped before it.
+ */
+export function codexRolloutUsage(home, thread) {
+  const file = findCodexRollout(home, thread);
+  if (!file) return null;
+  let lines;
+  try { lines = readFileSync(file, 'utf8').split('\n'); } catch { return null; }
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!lines[i].includes('"token_count"')) continue;
+    try {
+      const evt = JSON.parse(lines[i]);
+      const total = evt?.payload?.type === 'token_count' ? evt.payload.info?.total_token_usage : null;
+      if (total && typeof total === 'object') return readUsage(total);
+    } catch { /* a torn last line: try the one before */ }
+  }
+  return null;
 }
 
 // ── sub-agents ───────────────────────────────────────────────────────────────
@@ -191,24 +291,47 @@ export function codexInvestigatorRole({ agents, subagentSystemPrompt, inheritMod
     toml: `${lines.join('\n')}\n`, model };
 }   // the Ask turn's own 30-minute clock bounds it (propose_workflow classifies, test_script runs)
 const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
-const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+const ENV_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
-/** The servers of an --mcp-config document that codex cannot attach: it takes stdio servers only. */
-export function codexUnattachableMcp(servers) {
-  return Object.entries(servers && typeof servers === 'object' ? servers : {})
-    .filter(([name, srv]) => !MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string').map(([name]) => name);
+/** The servers of an --mcp-config document that codex cannot attach, each with its reason (capabilities.mjs
+ *  describeUnattachableMcp): `remote` (codex takes stdio servers only), `name` (outside MCP_NAME_RE, which codex's
+ *  `-c mcp_servers.<name>` key needs) or `incomplete` (no command and no url). */
+export function codexMcpProblems(servers) {
+  const out = [];
+  for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
+    const stdio = !!srv && typeof srv.command === 'string';
+    const reason = stdio ? (MCP_NAME_RE.test(name) ? null : 'name') : srv && typeof srv.url === 'string' ? 'remote' : 'incomplete';
+    if (reason) out.push({ name, reason });
+  }
+  return out;
 }
 
-/** `${VAR}` references in a server's env values, filled from `from` the way Claude Code expands an --mcp-config
- *  (the MCP registry writes `${MCPSECRET_…}` references; the values ride the spawn env). An unknown name
- *  becomes empty, as in a shell. */
-export function expandMcpEnvRefs(servers, from = {}) {
+/** The names of the servers codexMcpProblems finds. */
+export function codexUnattachableMcp(servers) {
+  return codexMcpProblems(servers).map((p) => p.name);
+}
+
+/** The MCP registry's secret references: their values ride the spawn env only, never argv. */
+const MCP_SECRET_REF = /^MCPSECRET_/;
+
+/**
+ * `${VAR}` and `${VAR:-default}` references in a server's command, args and env values, filled from `from` the way
+ * Claude Code expands an --mcp-config (codex expands none). An unset name becomes its default, else empty; a name set
+ * to empty stays empty (unlike a shell's `:-`). command and args reach codex on its argv, which any local user can read, so the registry's `${MCPSECRET_…}`
+ * references are expanded in env values only (the registry writes them nowhere else) and stay as written in argv.
+ */
+export function expandMcpRefs(servers, from = {}) {
+  const fill = (v, { argv = false } = {}) => (typeof v === 'string'
+    ? v.replace(ENV_REF_RE, (ref, n, dflt) => (argv && MCP_SECRET_REF.test(n) ? ref : typeof from[n] === 'string' ? from[n] : (dflt ?? '')))
+    : v);
   const out = {};
   for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
-    if (!srv || typeof srv !== 'object' || !srv.env || typeof srv.env !== 'object') { out[name] = srv; continue; }
-    const env = {};
-    for (const [k, v] of Object.entries(srv.env)) env[k] = typeof v === 'string' ? v.replace(ENV_REF_RE, (_, n) => (typeof from[n] === 'string' ? from[n] : '')) : v;
-    out[name] = { ...srv, env };
+    if (!srv || typeof srv !== 'object') { out[name] = srv; continue; }
+    const next = { ...srv };
+    if (typeof srv.command === 'string') next.command = fill(srv.command, { argv: true });
+    if (Array.isArray(srv.args)) next.args = srv.args.map((a) => fill(a, { argv: true }));
+    if (srv.env && typeof srv.env === 'object') next.env = Object.fromEntries(Object.entries(srv.env).map(([k, v]) => [k, fill(v)]));
+    out[name] = next;
   }
   return out;
 }
@@ -504,7 +627,7 @@ export function createCodexNormalizer({ model, priorUsage = null, unpriced = fal
   }
 
   const error = () => failed || (turnCompleted ? null : lastError);
-  return { push, finish: () => ({ text: texts.join('\n'), error: error(), cumulativeUsage: lastUsage }) };
+  return { push, finish: () => ({ text: texts.join('\n'), error: error(), cumulativeUsage: lastUsage, completed: turnCompleted }) };
 }
 
 // ── errors and auth ──────────────────────────────────────────────────────────
@@ -555,6 +678,33 @@ export function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000, sig
   });
 }
 
+/** The feature names `codex features list` prints (its first column). */
+export function parseCodexFeatures(stdout = '') {
+  return new Set(String(stdout).split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((n) => /^[a-z][a-z0-9_]*$/.test(n)));
+}
+
+/**
+ * Can this codex be locked down for an Ask chat? Every feature CODEX_ASK_LOCKDOWN switches off must exist: a codex
+ * without one refuses the flag at start-up with a bare "Unknown feature flag", and one older than the lockdown's
+ * verification may have tools no flag here removes (codex-cli 0.146 has no `view_image` switch). Never rejects:
+ * resolves `{refusal}` (no binary, an older codex) or `{}`.
+ */
+export function codexAskSupport({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000 } = {}) {
+  return new Promise((resolve) => {
+    execFile(bin, ['features', 'list'], { timeout: timeoutMs }, (err, stdout) => {
+      if (err && typeof err.code !== 'number') {
+        resolve({ refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(err.code)) ? `cannot run ${bin} (${err.code}) — install codex, or point WORCA_CODEX_BIN at it` : `could not ask ${bin} which features it has (${err.message})` });
+        return;
+      }
+      const have = err ? new Set() : parseCodexFeatures(stdout);
+      const missing = CODEX_ASK_FEATURES.filter((f) => !have.has(f));
+      resolve(missing.length
+        ? { refusal: `this codex cannot switch off ${missing.join(', ')} for a chat — update codex to ${CODEX_ASK_MIN_VERSION} or newer` }
+        : {});
+    });
+  });
+}
+
 // ── spawn ────────────────────────────────────────────────────────────────────
 
 const defaultUsageDir = () => join(worcaHome(), 'engines', 'codex', 'usage');
@@ -573,8 +723,8 @@ function storeUsage(dir, thread, usage) {
  * Options a codex spawn has no lever for (allowedTools, permissionRules,
  * appendSubagentSystemPrompt, maxBudgetUsd, …) are ignored; the run start logs
  * each of them as a degradation (the capability map). `maxTurns` caps the main
- * agent's tool calls (the Ask watchdog's count, turn.mjs): the call past it stops
- * the turn with an error.
+ * agent's tool calls of a helper job (never an Ask chat's: its watchdog owns that
+ * cap, turn.mjs): the call past it stops the turn with a `turnCap` error.
  */
 export async function runCodexProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model: namedModel, effort, onEvent = () => {}, signal,
@@ -634,13 +784,14 @@ export async function runCodexProcess({
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
-    const unattachable = new Set(codexUnattachableMcp(all));
-    if (unattachable.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] codex attaches stdio MCP servers only — not attached: ${[...unattachable].join(', ')}` });
+    const problems = codexMcpProblems(all);
+    const unattachable = new Set(problems.map((p) => p.name));
+    if (unattachable.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on codex — ${describeUnattachableMcp('codex', problems)}` });
     // `${VAR}` references expand from what Claude Code would expand them from: this spawn's env plus the run's spawn env
     // (the registry copies' MCPSECRET_* values), which reaches the servers only through those references.
     const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     // Two registry copies of one server would share a launcher env name in codex's one env: each copy reads its own.
-    mcpServers = expandMcpEnvRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
+    mcpServers = expandMcpRefs(Object.fromEntries(Object.entries(all).filter(([n]) => !unattachable.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)])), from);
   }
   const serverEnv = codexMcpOverrides(mcpServers).env;
   // An Ask chat (askLockdown: no shell, so nothing but codex reads its env) hands its spawn env to its MCP servers the
@@ -658,6 +809,8 @@ export async function runCodexProcess({
   // Guardrails: the deny rules codex can hold (codexRulePlan). Command rules live in a worca-managed CODEX_HOME.
   const plan = codexRulePlan(permissionRules);
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));
+  const home = (env.CODEX_HOME && String(env.CODEX_HOME).trim()) || join(homedir(), '.codex');
+  if (thread) bringCodexThreadHome(home, thread);
   const extra = [];
   if (plan.shellOff && sandbox !== 'read-only' && !askLockdown) extra.push(...CODEX_SHELL_OFF);
   if (plan.webSearchOff) extra.push('-c', 'web_search="disabled"');
@@ -680,8 +833,30 @@ export async function runCodexProcess({
   const args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
     ...(askLockdown ? { lockdown, images } : {}) });
   let sawThread = thread;
-  // maxTurns: the main agent's tool calls, counted as the Ask watchdog counts them (sub-agent calls do not count).
-  const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
+  // The thread's usage once the spawn ends, stored for the next resume. `exec --json` reports usage only on
+  // `turn.completed`: a turn that ended without it (the turn cap, an abort, a failed turn) still ran, and codex recorded
+  // its usage in the thread's session file. That spend is booked as this spawn's result (its stop or failure is still
+  // what the spawn throws), and stored, so the next resume is charged only its own turn.
+  const settleUsage = () => {
+    const f = normalizer.finish();
+    if (!sawThread) return f;
+    const now = f.completed ? null : codexRolloutUsage(home, sawThread);
+    if (now) {
+      const delta = diffUsage(now, f.cumulativeUsage);
+      if (Object.values(delta).some((v) => v > 0)) {
+        const cost = endpoint ? null : estimateCodexCostUsd(model, delta);
+        safeEmit(onEvent, { type: 'result', subtype: 'error_during_execution', isError: true, text: '', usage: claudeStyleUsage(delta),
+          ...(cost != null ? { costUsd: cost } : {}) });
+      }
+    }
+    const usage = now || f.cumulativeUsage;
+    if (usage) storeUsage(usageDir, sawThread, usage);
+    return f;
+  };
+  // maxTurns: the main agent's tool calls (sub-agent calls do not count). An Ask chat's cap is its watchdog's alone
+  // (turn.mjs _watch): it reads the live limit and ends the turn as a stop with the limit notice, so a spawn-time
+  // count here could only trip first, with a different number, as an error.
+  const cap = !askLockdown && Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const capCtrl = new AbortController();
   let toolCalls = 0; let capped = false;
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
@@ -707,8 +882,7 @@ export async function runCodexProcess({
       }
     },
   }).catch((err) => {
-    const f = normalizer.finish();
-    if (sawThread && f.cumulativeUsage) storeUsage(usageDir, sawThread, f.cumulativeUsage);
+    const f = settleUsage();
     if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
     // codex writes tracing lines to stderr for recoverable tool errors (a rejected
     // patch), so a non-zero exit's stderr detail and class can miss the failure the
@@ -720,8 +894,7 @@ export async function runCodexProcess({
     }
     throw redacted(err);
   });
-  const final = normalizer.finish();
-  if (sawThread && final.cumulativeUsage) storeUsage(usageDir, sawThread, final.cumulativeUsage);
+  const final = settleUsage();
   // The cap tripped while codex was already finishing: the turn still went past it.
   if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
   if (final.error) {

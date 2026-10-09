@@ -13,7 +13,7 @@
 // detach() removes the named listeners and latches; the follower self-detaches
 // on error/done. Core module: no Express, no orchestrator import — driven by a
 // bare EventEmitter in tests.
-import { fmtMs, fmtUsd } from '../chat/renderers.mjs';
+import { fmtMs, fmtRunCost } from '../chat/renderers.mjs';
 
 const MAX_QUESTION_NOTICES = 3;
 
@@ -46,7 +46,7 @@ export function attachRunFollower(orch, {
     const parts = [`Run finished — "${name}" · ${status}`];
     const dur = fmtMs(state.totalActiveMs);
     if (dur) parts.push(dur);
-    const cost = fmtUsd(state.totalCostUsd);
+    const cost = fmtRunCost(state.runEngine, state.totalCostUsd);
     if (cost) parts.push(cost);
     return parts.join(' · ');
   };

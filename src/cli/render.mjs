@@ -17,7 +17,8 @@
 // executions render nothing; `token` events are never rendered.
 import { BOOKEND_EXECUTION_IDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { awayAnswersSummary } from '../shared/away-mode/labels.mjs';
-import { usageLimitSwitch, engineLabel } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineLabel, runCostLabel } from '../shared/engine-switch.mjs';
+import { readyEnginesCached } from '../core/engines/ready-cache.mjs';
 import { shortHelp } from '../shared/forms/project.mjs';
 
 const nodesOf = (m) => ((m && m.graph && m.graph.nodes) || []).filter(Boolean);
@@ -122,19 +123,20 @@ export function formatResultLine(result) {
 
 /**
  * How to pick a paused run up again: the resume command, and for a session/usage limit an
- * engine hit, the command that continues it now on the other engine.
+ * engine hit, the command that continues it now on each other engine.
  * @param {{reason?: string|null, limitEngine?: string|null}} result the paused run's done payload
  */
 export function formatResumeHints(result, pipelineId, { color = (n, s) => s } = {}) {
   const lines = [`Resume with: ${color('bold', `worca resume ${pipelineId}`)}`];
-  const other = usageLimitSwitch(result || {});
-  if (other) lines.push(`Or continue now on ${engineLabel(other)}: ${color('bold', `worca resume ${pipelineId} --engine ${other}`)}`);
+  for (const e of usageLimitSwitches(result || {}, readyEnginesCached())) {
+    lines.push(`Or continue now on ${engineLabel(e)}: ${color('bold', `worca resume ${pipelineId} --engine ${e}`)}`);
+  }
   return lines;
 }
 
-/** `9 executions · 12m00s active · $1.23`. */
-export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0 } = {}) {
-  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${usd(costUsd)}`;
+/** `9 executions · 12m00s active · $1.23` (`cost unknown` on an engine that reports no cost, never $0.00). */
+export function formatTotals({ executions = 0, activeMs = 0, costUsd = 0, engine = 'claude' } = {}) {
+  return `${executions} execution${executions === 1 ? '' : 's'} · ${fmtDur(activeMs)} active · ${runCostLabel(engine, costUsd, usd)}`;
 }
 
 /** The count-only twin of formatRunSummary's execution rows: v2 stepper rows that
@@ -181,6 +183,7 @@ export function formatRunSummary(state) {
     executions: rows.length,
     activeMs: rows.reduce((a, s) => a + (Number(s.activeMs) || 0), 0),
     costUsd: st.totalCostUsd,
+    engine: st.runEngine,
   }));
   if (Array.isArray(st.directions?.pending) && st.directions.pending.length) {
     lines.push(`${st.directions.pending.length} direction(s) never applied: ${st.directions.pending.map((d) => `${d.id} "${d.text}"`).join('; ')}`);

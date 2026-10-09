@@ -8,13 +8,15 @@ import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSe
 import { ASK_LIMITS } from './limits.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
-import { effortsForEngine } from '../model-env.mjs';
+import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
 
 export const ENGINE_LABEL = Object.freeze({ claude: 'Claude', codex: 'Codex' });
-/** A chat's engine (cascading-settings-design.md D12): its model's engine; unknown or empty is Claude. No column stores it. */
+/** A chat's engine (cascading-settings-design.md D12): the engine stored on the thread (v53), so a model that left the
+ *  catalog never moves the chat to another engine; a chat from before v53 reads its model's engine (unknown is Claude). */
 export function chatEngine(thread, { engineOf = realEngineOf } = {}) {
+  if (thread && ASK_ENGINES.includes(thread.engine)) return thread.engine;
   return (thread && typeof thread.model === 'string' && engineOf(thread.model)) === 'codex' ? 'codex' : 'claude';
 }
 /** The user's Ask engine and per-engine slots (D17); a settings failure reads as today's defaults. */
@@ -102,9 +104,12 @@ export function createAskModels({
       // project-selection design first. Everything else — built-in, global,
       // plugin — is offered.
       if (m.custom === 'project') continue;
-      // D12: both engines are offered; the panel groups them and locks a chat to its own. Codex rows only when this
+      // D12: both Ask engines are offered; the panel groups them and locks a chat to its own. Codex rows only when this
       // codex can be locked down (plans/ask-on-codex-spike.md (a)) — otherwise a Codex chat could never start.
-      const engine = m.engine === 'codex' ? 'codex' : 'claude';
+      // D5: only engines an Ask chat can be locked down on (model-env.mjs ASK_ENGINES). A Cursor row stays out, so a
+      // hand-made pick of one is an unknown model.
+      const engine = m.engine || 'claude';
+      if (!ASK_ENGINES.includes(engine)) continue;
       if (engine === 'codex' && !codexAvailable()) continue;
       const custom = m.custom === 'global' || m.custom === 'plugin' ? m.custom : false;
       const entry = {
@@ -175,10 +180,36 @@ export function createAskModels({
     return { ok: true, model: entry.id, effort: e };
   }
 
-  return { askCatalog, validateModelEffort };
+  /**
+   * The model an automatic turn (a card event, a finished command) runs on: the chat's own pick, else the default of
+   * the engine the chat is locked to — never the other engine's — else, before the first reply, the user's Ask default.
+   * `fallback` is set when the chat's own model could not be used, so the caller can say so in the chat.
+   * @returns {Promise<{ok:true, model:string, effort:string, fallback?:{from:string, engine:string|null}}|null>}
+   */
+  async function eventPick(thread, lockedEngine = null) {
+    const mv = await validateModelEffort(thread && thread.model, thread && thread.effort, { engine: lockedEngine });
+    if (mv.ok) return mv;
+    const cat = await askCatalog({ withSecrets: false });
+    const d = lockedEngine ? cat.defaults[lockedEngine] : cat.default;
+    if (!d) return null;
+    const from = thread && typeof thread.model === 'string' ? thread.model : '';
+    return { ok: true, ...d, ...(from ? { fallback: { from, engine: lockedEngine } } : {}) };
+  }
+
+  return { askCatalog, validateModelEffort, eventPick };
+}
+
+/** The chat notice for an eventPick fallback: which model was unavailable and what the reply runs on instead. */
+export function eventFallbackNotice({ fallback, model, effort }) {
+  if (!fallback) return null;
+  const on = fallback.engine ? `${ENGINE_LABEL[fallback.engine]}'s default, ${model} (${effort})` : `${model} (${effort})`;
+  return fallback.from.toLowerCase() === String(model).toLowerCase()
+    ? `This chat's effort is not available for ${fallback.from} any more, so this reply uses ${on}.`
+    : `This chat's model ${fallback.from} is not available any more, so this reply uses ${on}.`;
 }
 
 const bound = createAskModels();
 /** Bound to the real catalog — what ui/server.mjs uses for GET /api/ask/models and the message POST. */
 export const askCatalog = bound.askCatalog;
 export const validateModelEffort = bound.validateModelEffort;
+export const askEventPick = bound.eventPick;

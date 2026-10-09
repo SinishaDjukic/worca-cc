@@ -793,7 +793,8 @@ function collectOpenRouter(conn) {
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env). */
+/** Each connection mode's title and hint, per engine. A Codex model has no env mode (codex ignores routing env); a Cursor
+ *  model has only its own sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
     direct: ['Anthropic API / CLI default', "Today's behaviour: the claude CLI reaches the endpoint its own login or env names."],
@@ -803,6 +804,9 @@ const MODE_TEXT = {
   codex: {
     direct: ['Codex default', "codex's own sign-in (`codex login`) reaches OpenAI."],
     provider: ['OpenAI-compatible endpoint', 'An endpoint that serves the Responses API — vLLM, LM Studio, Ollama, a gateway. Codex connects to it itself; no codex sign-in needed.'],
+  },
+  cursor: {
+    direct: ['Cursor default', "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor."],
   },
 };
 
@@ -984,10 +988,13 @@ export function applyConnectionMode(connEl) {
   if (!conn) return;
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
-  const codex = conn.dataset.engine === 'codex';
+  // A Cursor model: its own sign-in only (MODE_TEXT.cursor), so the provider body never shows.
+  const eng = conn.dataset.engine || 'claude';
+  const codex = eng === 'codex';
+  const cursor = eng === 'cursor';
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
-    const text = MODE_TEXT[codex ? 'codex' : 'claude'][rb.value];
+    const text = (MODE_TEXT[eng] || MODE_TEXT.claude)[rb.value];
     lab.hidden = !text;
     if (!text) { if (rb.checked) { rb.checked = false; conn.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true; } continue; }
     lab.querySelector('.mv-conn-mode-title').textContent = text[0];
@@ -995,7 +1002,7 @@ export function applyConnectionMode(connEl) {
   }
   const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
   const body = conn.querySelector('.mv-conn-body');
-  if (body) body.hidden = mode !== 'provider';
+  if (body) body.hidden = cursor || mode !== 'provider';
   const provSel = conn.querySelector('.mv-conn-provider');
   if (provSel) {
     for (const o of provSel.options) o.hidden = o.disabled = codex && o.value !== 'openai';
@@ -1011,9 +1018,9 @@ export function applyConnectionMode(connEl) {
   const adv = conn.querySelector('.mv-conn-adv');
   if (adv) adv.hidden = provider === 'copilot';
   const orBox = conn.querySelector('.mv-conn-or');
-  if (orBox) orBox.hidden = codex || !openRouterApplies(conn);
+  if (orBox) orBox.hidden = codex || cursor || !openRouterApplies(conn);
   const capsBox = conn.querySelector('.mv-conn-caps');
-  if (capsBox) capsBox.hidden = codex;
+  if (capsBox) capsBox.hidden = codex || cursor;
   const hint = conn.querySelector('.mv-conn-provider-hint');
   const p = conn._providers;
   if (hint) {

@@ -63,6 +63,9 @@ async function boot({ level = 'advanced', resumeAnswers = [], fetchHandler } = {
   return { window, doc: window.document, recv, settle, go, resumes };
 }
 
+/** A usage limit `engine` hit: the pause that offers the other engines (engine-switch.mjs usageLimitSwitches). */
+const limitOf = (engine) => ({ reason: 'usage_limit', detail: "You've hit your usage limit · try again at 3:47 PM", limitEngine: engine });
+
 /** A paused run on `engine`, open on its run page. */
 async function pausedRun(ctx, { engine = 'codex', done = {} } = {}) {
   const { doc, recv, settle, go } = ctx;
@@ -87,7 +90,7 @@ const modal = (doc) => ({
 
 test('run page: the Resume menu names both engines; the other one says what switching does', async () => {
   const ctx = await boot();
-  const page = await pausedRun(ctx);
+  const page = await pausedRun(ctx, { done: limitOf('codex') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   const saved = page.querySelector('.rd-resume-menu .resume-on-saved');
@@ -97,6 +100,18 @@ test('run page: the Resume menu names both engines; the other one says what swit
   assert.equal(other.querySelector('b').textContent, 'Resume on Claude');
   assert.equal(other.querySelector('small').textContent, NOTE);
   assert.equal(ctx.doc.activeElement, saved, 'the menu opens on its first item');
+});
+
+test('run page: a pause that is not a usage limit the engine hit lists no other engine in the Resume menu', async () => {
+  for (const done of [{}, { reason: 'error', detail: 'disk full', limitEngine: 'codex' }, { reason: 'usage_limit', detail: "OpenRouter's free-model requests for today are used up" }]) {
+    const ctx = await boot();
+    const page = await pausedRun(ctx, { done });
+    page.querySelector('.rd-resume-more').click();
+    await ctx.settle();
+    assert.deepEqual([...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden), [], JSON.stringify(done));
+    assert.equal(page.querySelector('.rd-resume-menu .resume-on-saved').hidden, false, 'Resume itself stays');
+    assert.equal(page.querySelector('.rd-resume-menu .rd-resume-at').hidden, false, 'and Resume at…');
+  }
 });
 
 test('run page: "Resume on Codex" is today\'s resume — no question, no engine sent', async () => {
@@ -113,7 +128,7 @@ test('run page: "Resume on Codex" is today\'s resume — no question, no engine 
 
 test('run page: "Resume on Claude" confirms with the note, then sends engine claude', async () => {
   const ctx = await boot();
-  const page = await pausedRun(ctx);
+  const page = await pausedRun(ctx, { done: limitOf('codex') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
@@ -134,7 +149,7 @@ test('run page: "Resume on Claude" confirms with the note, then sends engine cla
 test('a 409 engine-refused shows the reason and New pipeline\'s consent; ticking it re-sends with it', async () => {
   const refusal = { status: 409, body: { code: 'engine-refused', overridable: true, engine: 'codex', error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce' } };
   const ctx = await boot({ resumeAnswers: [refusal, { status: 200, body: { ok: true, runId: 'r-new', pipelineId: 'pl_1' } }] });
-  const page = await pausedRun(ctx, { engine: 'claude' });
+  const page = await pausedRun(ctx, { engine: 'claude', done: limitOf('claude') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
@@ -158,7 +173,7 @@ test('a 409 engine-refused shows the reason and New pipeline\'s consent; ticking
 test('a refusal the consent cannot lift shows the reason only; nothing is re-sent', async () => {
   const refusal = { status: 409, body: { code: 'engine-refused', overridable: false, error: 'engine codex: the credential broker is on' } };
   const ctx = await boot({ resumeAnswers: [refusal] });
-  const page = await pausedRun(ctx, { engine: 'claude' });
+  const page = await pausedRun(ctx, { engine: 'claude', done: limitOf('claude') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
@@ -177,7 +192,7 @@ test('a refusal the consent cannot lift shows the reason only; nothing is re-sen
 test('a team-cap question on the way keeps the engine on the re-send', async () => {
   const cap = { status: 403, body: { error: 'team cap', code: 'team_pipeline', needsPolicyOverride: true, policy: {} } };
   const ctx = await boot({ resumeAnswers: [cap, { status: 200, body: { ok: true, runId: 'r-new', pipelineId: 'pl_1' } }] });
-  const page = await pausedRun(ctx);
+  const page = await pausedRun(ctx, { done: limitOf('codex') });
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   page.querySelector('.resume-on-other').click();
@@ -298,4 +313,114 @@ test('History detail: other pauses, and a limit that was not the engine\'s, put 
     await ctx.settle(8);
     assert.equal(ctx.doc.querySelector('#hist-detail .hd-resume-switch').hidden, true, JSON.stringify(opts));
   }
+});
+
+test('History detail menu: a pause that offers no switch lists no other engine', async () => {
+  for (const opts of [{ limitEngine: null }, { pauseReason: 'error' }]) {
+    const ctx = await boot({ fetchHandler: histFetch('codex', opts) });
+    ctx.go(`history/${KEY}/fcec04e8`);
+    await ctx.settle(8);
+    assert.deepEqual([...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden), [], JSON.stringify(opts));
+  }
+});
+
+test('run page: a paused Codex run lists every other engine; the second clone resumes on Cursor', async () => {
+  const ctx = await boot();
+  const page = await pausedRun(ctx, { done: limitOf('codex') });
+  page.querySelector('.rd-resume-more').click();
+  await ctx.settle();
+  const items = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['cursor', 'Resume on Cursor']]);
+  items[1].querySelector('b').click();
+  await ctx.settle();
+  assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.equal(ctx.resumes.length, 1);
+  assert.equal(ctx.resumes[0].engine, 'cursor');
+});
+
+// ── Readiness (GET /api/engines): the banner and the bar offer only ready engines; the menus list them all ──
+
+const enginesAnswer = (ready) => ({ engines: ['claude', 'codex', 'cursor'].map((name) => ({ name, label: name, ready: ready.includes(name), reason: ready.includes(name) ? null : 'not signed in' })) });
+const countingEngines = (ready, inner = null) => {
+  const seen = { engines: 0 };
+  const handler = (url, opts) => {
+    if (url.endsWith('/api/engines')) { seen.engines += 1; return ok(enginesAnswer(ready)); }
+    return inner ? inner(url, opts) : null;
+  };
+  return { seen, handler };
+};
+const LIMIT = { reason: 'usage_limit', detail: "You've hit your usage limit · try again at 3:47 PM", limitEngine: 'claude' };
+
+test('run page banner: only the ready engines are offered after a usage limit', async () => {
+  for (const [ready, want] of [[['claude', 'codex'], ['Resume on Codex']], [['claude', 'codex', 'cursor'], ['Resume on Codex', 'Resume on Cursor']]]) {
+    const { handler } = countingEngines(ready);
+    const ctx = await boot({ fetchHandler: handler });
+    const page = await pausedRun(ctx, { engine: 'claude', done: LIMIT });
+    await ctx.settle(8);
+    assert.deepEqual([...page.querySelectorAll('.rd-ov-switch')].map((b) => b.textContent), want, ready.join(','));
+  }
+});
+
+test('History detail bar: only the ready engines; the second clone resumes on its own engine', async () => {
+  const { handler } = countingEngines(['claude', 'codex', 'cursor'], histFetch('claude'));
+  const ctx = await boot({ level: 'simple', fetchHandler: handler });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(12);
+  const btns = [...ctx.doc.querySelectorAll('#hist-detail .hd-bar .hd-resume-switch')].filter((b) => !b.hidden);
+  assert.deepEqual(btns.map((b) => b.dataset.engine), ['codex', 'cursor']);
+  btns[1].querySelector('.hd-btn-label').click();
+  await ctx.settle();
+  assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.deepEqual([ctx.resumes.at(-1).pipelineId, ctx.resumes.at(-1).engine], ['fcec04e8', 'cursor']);
+
+  const notReady = countingEngines(['claude', 'codex'], histFetch('claude'));
+  const ctx2 = await boot({ level: 'simple', fetchHandler: notReady.handler });
+  ctx2.go(`history/${KEY}/fcec04e8`);
+  await ctx2.settle(12);
+  assert.deepEqual([...ctx2.doc.querySelectorAll('#hist-detail .hd-bar .hd-resume-switch')].filter((b) => !b.hidden).map((b) => b.dataset.engine), ['codex']);
+});
+
+test('History detail menu: one item per other engine, ready or not; the second one sends its engine', async () => {
+  const { handler } = countingEngines(['claude'], histFetch('codex'));
+  const ctx = await boot({ fetchHandler: handler });
+  ctx.go(`history/${KEY}/fcec04e8`);
+  await ctx.settle(8);
+  const items = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
+    [['claude', 'Resume on Claude', NOTE], ['cursor', 'Resume on Cursor', "Starts the paused step fresh; the model falls back to Cursor's default."]]);
+  ctx.doc.querySelector('.hd-resume-more').click();
+  await ctx.settle();
+  items[1].click();
+  await ctx.settle();
+  ctx.doc.getElementById('confirm-ok').click();
+  await ctx.settle(8);
+  assert.equal(ctx.resumes.at(-1).engine, 'cursor');
+});
+
+test('a pause that is not a usage limit never asks for readiness', async () => {
+  const { seen, handler } = countingEngines(['claude', 'codex', 'cursor']);
+  const ctx = await boot({ fetchHandler: handler });
+  await pausedRun(ctx, { engine: 'claude', done: { reason: 'error', detail: 'disk full' } });
+  await ctx.settle(8);
+  assert.equal(seen.engines, 0);
+  const h = countingEngines(['claude'], histFetch('codex', { pauseReason: 'error', limitEngine: null }));
+  const ctx2 = await boot({ fetchHandler: h.handler });
+  ctx2.go(`history/${KEY}/fcec04e8`);
+  await ctx2.settle(8);
+  assert.equal(h.seen.engines, 0);
+});
+
+test('run page: a second frame of the same paused run leaves the open menu\'s items in place', async () => {
+  const ctx = await boot();
+  const page = await pausedRun(ctx, { done: limitOf('codex') });
+  page.querySelector('.rd-resume-more').click();
+  await ctx.settle();
+  const item = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].find((i) => !i.hidden);
+  ctx.recv({ type: 'state', runId: 'r1', status: 'paused', runEngine: 'codex' });
+  await ctx.settle(4);
+  assert.equal(item.isConnected, true, 'not re-cloned under the open menu');
 });
