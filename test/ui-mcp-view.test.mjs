@@ -485,12 +485,15 @@ test('the Connectors page: its hashes (#connectors General, /sets/<id>, /servers
       assert.ok(calls.includes('GET /api/mcp/sets/billing'));
       assert.equal(window.location.hash, '#connectors/sets/billing');
       assert.ok(page.querySelector('.mcp-setrow[data-set="billing"].on'));
-      assert.equal(page.querySelector('.topbar h1').textContent, 'Connectors');
+      assert.equal(page.querySelector('.topbar h1'), null, 'the top bar names the page');
+      assert.equal(window.document.getElementById('topnav-title').textContent, 'Connectors');
       assert.deepEqual([...page.querySelectorAll('.topbar .seg button')].map((b) => b.textContent), ['Sets', 'Servers', 'Skills']);
       assert.equal(window.document.querySelector('#settings-tabs button[data-tab="mcp"]'), null, 'Settings has no Sets tab');
       await go(window, 'connectors/servers');
       assert.ok(calls.includes('GET /api/mcp/servers'));
       assert.equal(page.querySelectorAll('.mcp-server-row').length, 3);
+      assert.equal(page.querySelector('.topbar h1'), null, 'a repaint brings no title back');
+      assert.ok(page.querySelector('.topbar .sub') && page.querySelector('.topbar .seg'), 'and no empty bar: the sub line and the segments stay');
     } },
     { name: 'an old #settings/mcp/sets/<id> link opens that set on the Connectors page, replacing the entry', run: async () => {
       const { window, calls } = await boot('http://localhost:4319/');

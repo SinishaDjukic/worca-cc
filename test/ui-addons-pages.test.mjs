@@ -133,7 +133,7 @@ test('Providers is a page of its own: its loader, its title, its level banner, a
       await go(window, 'providers');
       assert.deepEqual(shownView(doc), ['providers']);
       assert.ok(calls.includes('GET /api/providers'));
-      assert.equal(doc.querySelector('[data-view="providers"] h1').textContent, 'Providers');
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Providers');
       assert.ok(doc.querySelector('[data-view="providers"] #providers-list .mv-providers'), 'the card painted');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="providers"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #providers-list'), null);
@@ -179,7 +179,7 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.deepEqual(shownView(doc), ['models']);
       assert.ok(calls.includes('GET /api/models'));
       assert.ok(calls.includes('GET /api/settings'));
-      assert.equal(doc.querySelector('[data-view="models"] h1').textContent, 'Models');
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Models');
       assert.equal(doc.querySelector('#engine-settings-root [data-setting="run.engine"] .inherit-input').value, 'codex', 'the Engines card painted');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="models"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #models-list'), null);
@@ -277,7 +277,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
       assert.ok(calls.includes('GET /api/plugins'));
       assert.ok(calls.includes('GET /api/marketplaces'));
       assert.ok(calls.includes('POST /api/marketplaces/refresh'), 'opening the page refreshes the marketplaces in the background');
-      assert.equal(doc.querySelector('[data-view="marketplace"] h1').textContent, 'Marketplace');
+      assert.equal(doc.getElementById('topnav-title').textContent, 'Marketplace');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="plugins"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #plugins-list'), null);
       assert.deepEqual([...doc.querySelectorAll('#settings-tabs button[data-tab]')].map((b) => b.dataset.tab), ['general', 'runs', 'ask', 'guardrails', 'memory']);
@@ -355,7 +355,7 @@ test('the sidebar\'s Add-ons group sits between Nodes and Manage: a label and fo
   assert.equal(rows.at(-1).nextElementSibling.textContent.trim(), 'Manage');
 });
 
-test('an Add-ons row opens its page, lights itself and names the page in the phone bar; at Simple the open page keeps its row', async () => {
+test('an Add-ons row opens its page, lights itself and names the page in the top bar; at Simple the open page keeps its row', async () => {
   const rows = [['marketplace', 'Marketplace'], ['connectors', 'Connectors'], ['models', 'Models'], ['providers', 'Providers']];
   await checkRows([
     ...rows.map(([view, label]) => ({ name: `the ${label} row`, run: async () => {
@@ -369,7 +369,7 @@ test('an Add-ons row opens its page, lights itself and names the page in the pho
       assert.ok(row.classList.contains('active'));
       assert.equal(row.getAttribute('aria-current'), 'page');
       assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]')], [row], 'only the open page is lit: Settings is not');
-      assert.equal(doc.getElementById('mbar-title').textContent, label);
+      assert.equal(doc.getElementById('topnav-title').textContent, label);
     } })),
     { name: 'at Simple the Models row stays on screen while Models is open, and goes when you leave', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });

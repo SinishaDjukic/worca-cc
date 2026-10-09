@@ -1,6 +1,6 @@
 // test/ui-mobile-nav.test.mjs — the three navigation tiers. Desktop (>1080px): the
 // sidebar, or the 60px rail by preference. Tablet (761-1080px): the rail, always,
-// preference untouched. Phone (<=760px): the #mbar top bar whose hamburger opens the
+// preference untouched. Phone (<=760px): the top bar's hamburger (#mbar-menu) opens the
 // FULL sidebar as a slide-in drawer (counts, live runs, spend, signed-in: parity).
 // jsdom has no matchMedia, so boot() installs a width-driven stub BEFORE app.js loads.
 import { test, afterEach } from 'node:test';
@@ -151,7 +151,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       assert.equal($('#mbar-menu').getAttribute('aria-expanded'), 'true');
       assert.equal($('#nav-scrim').hidden, false);
       assert.ok($('.main').hasAttribute('inert'), 'the page behind is inert');
-      assert.ok($('#mbar').hasAttribute('inert'));
+      assert.ok($('#topnav').hasAttribute('inert'), 'the top bar too');
       assert.equal(window.document.activeElement, $('#side-close'), 'focus moves into the drawer');
 
       click('#nav-scrim');
@@ -167,7 +167,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
     } },
     { name: 'phone: a route closes the drawer and names the page in the bar; the Nodes flyout and the account menu do not', run: async () => {
       const body = window.document.body;
-      assert.equal($('#mbar-title').textContent, 'New pipeline');
+      assert.equal($('#topnav-title').textContent, 'New run');
       click('#mbar-menu');
       click('.nav .nav-group[data-nav-group="nodes"]');
       assert.ok(body.classList.contains('nav-open'), 'opening Nodes keeps the drawer open');
@@ -196,7 +196,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       await tick();
       assert.equal(window.location.hash, '#stats');
       assert.equal(body.classList.contains('nav-open'), false);
-      assert.equal($('#mbar-title').textContent, 'Statistics');
+      assert.equal($('#topnav-title').textContent, 'Statistics');
       click('#mbar-menu');
       click('#side-acct');
       click($('#acct-spend .mc-btn'));
@@ -210,7 +210,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       assert.equal(window.location.hash, '#settings', 'Settings, from the account menu');
       assert.equal(body.classList.contains('nav-open'), false, 'a route from the menu closes the drawer');
       assert.equal($('#acct-menu').hidden, true, 'and the menu');
-      assert.equal($('#mbar-title').textContent, 'Settings');
+      assert.equal($('#topnav-title').textContent, 'Settings');
     } },
     { name: 'phone: a hash change (back button) closes an open drawer', run: async () => {
       click('#mbar-menu');
@@ -218,7 +218,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       window.dispatchEvent(new window.HashChangeEvent('hashchange'));
       await tick();
       assert.equal(window.document.body.classList.contains('nav-open'), false);
-      assert.equal($('#mbar-title').textContent, 'Runs');
+      assert.equal($('#topnav-title').textContent, 'Runs');
     } },
     { name: 'phone: Agents in the Nodes flyout routes, and puts the flyout and the drawer away', run: async () => {
       click('#mbar-menu');
@@ -229,7 +229,7 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       assert.equal(window.location.hash, '#agents');
       assert.equal($('#nav-nodes-fly').hidden, true);
       assert.equal(window.document.body.classList.contains('nav-open'), false);
-      assert.equal($('#mbar-title').textContent, 'Agents');
+      assert.equal($('#topnav-title').textContent, 'Agents');
     } },
     { name: 'resizing across tiers closes the drawer and re-derives the rail', run: async () => {
       click('#mbar-menu');

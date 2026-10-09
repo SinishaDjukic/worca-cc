@@ -4041,7 +4041,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // footer
     const foot = make('footer', 'ask-rp-foot');
-    const openNp = make('button', 'ask-card-open-np', '↗ Open in New Pipeline');
+    const openNp = make('button', 'ask-card-open-np', '↗ Open in New run');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';

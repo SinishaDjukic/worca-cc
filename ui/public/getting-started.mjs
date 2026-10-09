@@ -234,7 +234,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
 /* ------------------------------------------------------------------- pill */
 
 /**
- * The sidebar row under New pipeline: "Getting started · 2/9". It follows the
+ * The sidebar's first row: "Getting started · 2/9". It follows the
  * user to every view (the guides leave the shelf behind) and vanishes once the
  * checklist is hidden or complete — nothing left to nag about.
  * @param {Element} host

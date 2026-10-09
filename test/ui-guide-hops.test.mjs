@@ -1,6 +1,7 @@
 // test/ui-guide-hops.test.mjs — every onboarding-guide hop rings a control that exists.
 // The guides are hop objects in app.js's "// ── Guides ──" section: NAV(view, …) rings
-// `.nav button[data-nav="<view>"]`; every other hop carries `target:` — a string, an array
+// `.nav button[data-nav="<view>"]` (NAV('new', …) rings the top bar's #topnav-new: New run has
+// no sidebar row); every other hop carries `target:` — a string, an array
 // of fallbacks, a helper call (`on('.rd-facts')`) or a named list (`card`). A hop whose
 // target never shows "gives up" (guide-spot), so a renamed selector kills a tour silently.
 import { test } from 'node:test';
@@ -76,7 +77,7 @@ const named = (name) => { const m = section.match(new RegExp(`const ${name} = `)
 
 test('every guide hop has at least one target that exists in the page', async () => {
   const hops = [];
-  for (const m of section.matchAll(/\bNAV\(\s*'([\w-]+)'/g)) hops.push({ line: lineOf(m.index), expr: m[0], targets: [`.nav button[data-nav="${m[1]}"]`] });
+  for (const m of section.matchAll(/\bNAV\(\s*'([\w-]+)'/g)) hops.push({ line: lineOf(m.index), expr: m[0], targets: [m[1] === 'new' ? '#topnav-new' : `.nav button[data-nav="${m[1]}"]`] });
   for (const m of section.matchAll(/\btarget:\s*/g)) {
     const expr = readExpr(section, m.index + m[0].length).trim();
     if (NOT_HOPS.has(expr)) continue;

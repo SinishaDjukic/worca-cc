@@ -69,7 +69,7 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
       assert.equal(hidden(doc, 'runs'), false, 'Runs view shown');
       assert.ok(btn.classList.contains('active'), 'button highlighted');
       assert.equal(btn.getAttribute('aria-current'), 'page', 'active state exposed to AT');
-      assert.equal(doc.querySelector('.nav button[data-nav="new"]').getAttribute('aria-current'), null);
+      assert.equal(doc.getElementById('topnav-new').getAttribute('aria-current'), null, 'New run is never lit as the open page');
     } },
     { name: 'back/forward (a plain hashchange) still routes', run: async () => {
       click(window, doc.querySelector('.nav button[data-nav="runs"]'));
@@ -98,14 +98,14 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
       await tick();
       assert.equal(btn.getAttribute('aria-current'), null, 'leaving Settings clears it');
     } },
-    { name: 'clicking the CTA routes back to the New view', run: async () => {
+    { name: 'New run in the top bar routes back to the New view; no sidebar row is lit there', run: async () => {
       click(window, doc.querySelector('.nav button[data-nav="projects"]'));
       await tick();
-      click(window, doc.querySelector('.nav button[data-nav="new"]'));
+      click(window, doc.getElementById('topnav-new'));
       await tick();
+      assert.equal(window.location.hash, '#new');
       assert.equal(doc.querySelector('[data-view="new"]').classList.contains('hidden'), false);
-      assert.ok(doc.querySelector('.nav button[data-nav="new"]').classList.contains('active'),
-        'CTA still receives the .active state from the router');
+      assert.deepEqual([...doc.querySelectorAll('.nav button.active')], [], 'the sidebar has no New run row to light');
     } },
   ]);
 });

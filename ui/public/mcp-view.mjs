@@ -181,7 +181,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'h1', '', 'Connectors'), h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
+    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');

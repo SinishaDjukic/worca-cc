@@ -11,19 +11,6 @@
   </head>
   <body>
     <div class="app">
-      <!-- ===================== Phone bar (<=760px) ===================== -->
-      <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
-           <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
-           Running actions and the account corner come along. app.js#setMobileNavOpen owns
-           aria-expanded, the scrim and the inert page; paintMobileBar writes the title. -->
-      <header class="mbar" id="mbar">
-        <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
-          <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
-        </button>
-        <span class="mbar-mark" role="img" aria-label="Worca"></span>
-        <span class="mbar-title" id="mbar-title">New pipeline</span>
-      </header>
       <div class="nav-scrim" id="nav-scrim" hidden></div>
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar" id="side-rail">
@@ -32,14 +19,6 @@
           <span class="logo-mark" role="img" aria-label="Worca"></span>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
-          <!-- Collapse/expand (desktop only). Expanded: a bare "<" at the row's end. On the
-               rail the button carries the round mark too, so mark + ">" is one target. -->
-          <button type="button" class="side-toggle" id="side-toggle"
-                  aria-expanded="true" aria-controls="side-rail"
-                  title="Collapse menu" aria-label="Collapse menu">
-            <span class="logo-mark side-toggle-mark" aria-hidden="true"></span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="chev" d="M15 6l-6 6 6 6"></path></svg>
-          </button>
           <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
           </button>
@@ -48,10 +27,6 @@
         <!-- The one scrolling band: the logo row above and .side-foot below stay put. -->
         <div class="side-scroll" id="side-scroll">
           <nav class="nav" aria-label="Primary">
-            <button type="button" class="active nav-new" data-nav="new" data-min-level="simple">
-              <i class="nav-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></i>
-              <span>New pipeline</span>
-            </button>
             <button type="button" data-nav="runs" data-min-level="simple">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
               <span>Runs</span>
@@ -197,7 +172,43 @@
         <div class="nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>
       </aside>
 
-      <!-- ===================== Main ===================== -->
+      <!-- ===================== Main column: the top bar over the pages ===================== -->
+      <!-- .main-col stacks the top bar (#topnav) over <main>. The bar never scrolls: .main stays
+           the one scroll container, so the run pages' sticky .rd-bar/.hd-bar still pin to its
+           top. Left: the page name (app.js#paintTopnavTitle, topnav.mjs#pageTitle). Centre:
+           search. Right: actions. -->
+      <div class="main-col">
+        <header class="topnav" id="topnav">
+          <div class="topnav-l">
+            <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
+                 <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
+                 Running actions and the account corner come along. app.js#setMobileNavOpen owns
+                 aria-expanded, the scrim and the inert page behind (this bar included). -->
+            <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+              <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
+            </button>
+            <!-- Collapse/expand the sidebar (desktop only: style.css hides it from 1080px down,
+                 where the tablet rail is forced and phones use the hamburger). A static
+                 panel-left icon; app.js#applySidebarCollapsed keeps aria-expanded and the label. -->
+            <button type="button" class="side-toggle" id="side-toggle"
+                    aria-expanded="true" aria-controls="side-rail"
+                    title="Collapse menu" aria-label="Collapse menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path></svg>
+            </button>
+            <h1 class="topnav-title" id="topnav-title"></h1>
+          </div>
+          <div class="topnav-c"></div>
+          <div class="topnav-r">
+            <!-- New run: the way to the #new page, at every interface mode and every width (the
+                 sidebar has no row for it). app.js routes it like a nav row; it is never lit as
+                 the open page (no data-nav). -->
+            <button type="button" class="topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z"></path></svg>
+              <span class="topnav-new-label">New run</span>
+            </button>
+          </div>
+        </header>
       <main class="main">
 
         <!-- Shown when the open page sits above the interface mode (a deep link, a guide, or a
@@ -212,7 +223,6 @@
         <section class="view" data-view="new">
           <div class="topbar">
             <div>
-              <h1>New pipeline</h1>
               <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
             </div>
           </div>
@@ -560,13 +570,12 @@
         <!-- /view new -->
 
         <!-- ===== VIEW: GETTING STARTED (docs/getting-started.md) ===== -->
-        <!-- Its own page: the sidebar pill (mounted by app.js under New pipeline) and
+        <!-- Its own page: the sidebar pill (mounted by app.js at the top of the nav) and
              Settings › General › Getting started route here. The tile shelf is painted
              into the host by getting-started.mjs on every entry. -->
         <section class="view hidden" data-view="getting-started">
           <div class="topbar">
             <div>
-              <h1>Getting started</h1>
               <div class="sub">Nine things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
             </div>
           </div>
@@ -578,7 +587,6 @@
           <div class="runs-shell" id="runs-shell" data-layout="split">
             <div class="runs-list-pane" id="runs-list-pane">
               <div class="runs-head">
-                <h1>Runs</h1>
                 <span class="runs-head-tools">
                   <!-- "Group by" (runs-list.mjs RUNS_GROUPINGS): app.js keeps aria-checked and the menu. -->
                   <span class="runs-group-wrap">
@@ -983,7 +991,6 @@
         <section class="view hidden" data-view="schedules">
           <div class="topbar">
             <div>
-              <h1>Schedules</h1>
               <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
             </div>
             <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
@@ -1009,7 +1016,6 @@
         <section class="view hidden" data-view="stats">
           <div class="topbar">
             <div>
-              <h1>Statistics</h1>
               <div class="sub">Spend, time worked, and outcomes across all pipelines · costs are Claude Code estimates, not billing</div>
             </div>
           </div>
@@ -1031,7 +1037,6 @@
         <section class="view hidden" data-view="team-metrics">
           <div class="topbar">
             <div>
-              <h1>Team metrics</h1>
               <div class="sub">Shared across the team from the <code>worca-metrics</code> branch · costs are Claude Code estimates, not billing</div>
             </div>
             <div class="sync-chip" id="tm-sync" hidden></div>
@@ -1065,7 +1070,6 @@
         <section class="view hidden" data-view="team-policy">
           <div class="topbar">
             <div>
-              <h1>Team policy</h1>
               <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
             </div>
             <div class="sync-chip" id="tp-sync" hidden></div>
@@ -1085,7 +1089,6 @@
             <div class="ws-screen ws-screen-list">
               <div class="topbar">
                 <div>
-                  <h1>Workspaces</h1>
                   <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
                 </div>
                 <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
@@ -1114,7 +1117,7 @@
                   <span class="ws-stale badge red" hidden>missing projects</span>
                 </div>
                 <!-- One row under the title: the summary on the left, the actions on the right. This
-                     page configures and tracks a workspace; runs start from New pipeline. -->
+                     page configures and tracks a workspace; runs start from New run. -->
                 <div class="wd-row2">
                 <div class="pd-meta"><small class="ws-projects"></small></div>
                 <div class="pd-actions">
@@ -1145,7 +1148,6 @@
         <section class="view hidden" data-view="workspace-create">
           <div class="topbar">
             <div>
-              <h1 id="wiz-title">Create workspace</h1>
               <div class="sub">Pick 2+ projects and scan how they connect</div>
             </div>
             <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
@@ -1208,7 +1210,6 @@
         <section class="view hidden" data-view="agents">
           <div class="topbar">
             <div>
-              <h1>Agents</h1>
               <div class="sub">Built-in and custom agents — the typed ports each one reads and writes drive the Composer</div>
             </div>
             <button type="button" id="agent-create-btn" class="btn btn-primary btn-mini">
@@ -1277,7 +1278,6 @@
             <div class="proj-screen proj-screen-list">
               <div class="topbar">
                 <div>
-                  <h1>Projects</h1>
                   <div class="sub">Registered projects. Open one for its details and memory; add a folder or remove one from the list — files on disk and run history are never touched.</div>
                 </div>
                 <div class="topbar-actions"><button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
@@ -1312,7 +1312,7 @@
                 <div class="pd-actions">
                   <button type="button" class="pd-new btn-ghost">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                    New pipeline
+                    New run
                   </button>
                   <button type="button" class="pd-history btn-ghost">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1341,7 +1341,6 @@
         <section class="view hidden" data-view="agent-create">
           <div class="topbar">
             <div>
-              <h1>Create agent</h1>
               <div class="sub">Describe the agent, let the builder draft it, then review and save</div>
             </div>
             <button type="button" id="agw-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
@@ -1407,12 +1406,6 @@
 
         <!-- ===== VIEW: WORKFLOW COMPOSER (v2 node graph) ===== -->
         <section class="view hidden" data-view="composer">
-          <div class="topbar">
-            <div>
-              <h1>Workflow Composer</h1>
-            </div>
-          </div>
-
           <section class="card gv-editor">
             <div class="gv-head" id="gv-head">
               <input id="gv-name" class="gv-name" type="text" spellcheck="false" placeholder="Untitled pipeline" aria-label="Pipeline name">
@@ -1518,7 +1511,6 @@
           <section class="settings-pane" data-tab="general">
             <div class="topbar">
               <div>
-                <h1>Settings</h1>
                 <div class="sub">Machine-wide Worca CC preferences</div>
               </div>
             </div>
@@ -1668,7 +1660,7 @@
                 <h2>Getting started</h2>
               </div>
               <div class="gs-settings-row">
-                <p class="gs-settings-text">The checklist on New pipeline walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
                 <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
               </div>
               <small class="hint" id="gsSettingsMsg"></small>
@@ -1717,7 +1709,6 @@
           <section class="settings-pane hidden" data-tab="runs">
             <div class="topbar">
               <div>
-                <h1>Runs</h1>
                 <div class="sub">Cost limits and defaults for your pipeline runs</div>
               </div>
             </div>
@@ -2000,7 +1991,6 @@
           <section class="settings-pane hidden" data-tab="ask">
             <div class="topbar">
               <div>
-                <h1>Ask Worca</h1>
                 <div class="sub">The assistant chat: how far one turn may go, which tools and websites it may use, and its saved history</div>
               </div>
             </div>
@@ -2080,7 +2070,6 @@
           <section class="settings-pane hidden" data-tab="guardrails">
             <div class="topbar">
               <div>
-                <h1>Guardrails</h1>
                 <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
               </div>
               <button type="button" id="guardrail-create-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
@@ -2097,7 +2086,6 @@
           <section class="settings-pane hidden" data-tab="memory">
             <div class="topbar">
               <div>
-                <h1>Memory</h1>
                 <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
@@ -2107,7 +2095,7 @@
                  .settings-card: the Settings card set (About last) stays the General cards only. -->
             <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
               <div class="label-row"><h2>Defragment model</h2></div>
-              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
+              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New run, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
               <div class="mem-model-row">
                 <div class="field">
                   <div class="label-row"><label for="memDefragModel">Model</label></div>
@@ -2136,7 +2124,6 @@
         <section class="view hidden" data-view="marketplace">
             <div class="topbar">
               <div>
-                <h1>Marketplace</h1>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
               <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
@@ -2171,7 +2158,6 @@
         <section class="view hidden" data-view="models">
             <div class="topbar">
               <div>
-                <h1>Models</h1>
                 <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers page.</div>
               </div>
               <div style="display:flex;gap:8px;flex:0 0 auto">
@@ -2289,7 +2275,6 @@
         <section class="view hidden" data-view="providers">
             <div class="topbar">
               <div>
-                <h1>Providers</h1>
                 <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models page.</div>
               </div>
             </div>
@@ -2298,6 +2283,7 @@
         </section>
         <!-- /view providers -->
       </main>
+      </div><!-- /.main-col -->
     </div>
 
     <!-- ===== Model editor (configurable-models-design.md §4.10) =====

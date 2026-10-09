@@ -194,7 +194,6 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
     'the rail shows the avatar alone: its tooltip says who, what it opens and the spend against the limit');
   assert.equal(doc.querySelector('.nav button[data-nav="composer"]').title, 'Workflow Composer',
     'the tooltip is the label span verbatim — index.html:55');
-  assert.equal(doc.querySelector('.nav button[data-nav="new"]').title, 'New pipeline');
   assert.equal(doc.querySelector('.nav button[data-nav="stats"]').title, 'Statistics',
     'the tooltip is the SIDEBAR label, Statistics (index.html)');
   assert.match(doc.querySelector('.nav button[data-nav="runs"]').title, /^Runs/,

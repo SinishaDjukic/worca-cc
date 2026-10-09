@@ -70,16 +70,16 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
 
 // ---- app.js wiring ----
 
-test('boot: the pill mounts under New pipeline and routes to the page (where the shelf paints), the welcome shows once', async () => {
+test('boot: the pill mounts at the top of the sidebar and routes to the page (where the shelf paints), the welcome shows once', async () => {
   const { doc, window, posts } = await boot();
   const host = doc.getElementById('getting-started-host');
   assert.equal(host.hidden, true, 'not painted while the page is not open');
-  const newRow = doc.querySelector('.nav button.nav-new[data-nav="new"]');
-  const pillHost = newRow.nextElementSibling;
-  assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
+  const pillHost = doc.querySelector('.nav').firstElementChild;
+  assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
+  assert.equal(pillHost.nextElementSibling.dataset.nav, 'runs', 'right above Runs');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 15, 'the nav census is untouched (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu)');
-  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New pipeline: welcome up');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New run: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
   click(window, doc.querySelector('.gs-pill'));
@@ -233,8 +233,8 @@ test('a replay walks every stop again: a control whose state is already right is
   const target = () => doc.querySelector('.guide-layer')?.dataset.target;
   const text = () => doc.querySelector('.guide-layer .guide-text')?.textContent || '';
   const next = () => doc.querySelector('.guide-layer .guide-next');
-  assert.ok(target().startsWith('.nav button[data-nav="new"]'), 'always from the first hop');
-  click(window, doc.querySelector('.nav button[data-nav="new"]'));
+  assert.equal(target(), '#topnav-new', 'always from the first hop: New run, in the top bar');
+  click(window, doc.getElementById('topnav-new'));
   await settle();
   // The project picker is a stop either way: unpicked it asks for a pick, picked it offers Next.
   assert.equal(target(), '#projectSelect');
@@ -274,7 +274,7 @@ test('a replay walks every stop again: a control whose state is already right is
   await settle();
   click(window, doc.querySelector('.gs-tile[data-step="run"]'));
   await settle();
-  click(window, doc.querySelector('.nav button[data-nav="new"]'));
+  click(window, doc.getElementById('topnav-new'));
   await until(() => target() === '#projectSelect');
   assert.equal(target(), '#projectSelect', 'a fresh walk: nothing passed earlier carries over');
   if (next()) click(window, next());

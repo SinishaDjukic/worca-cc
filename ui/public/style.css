@@ -154,7 +154,7 @@ body{
   transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
              width .2s cubic-bezier(.65,.02,.28,1);
 }
-/* The fixed top band: the wordmark, the mock pill and the collapse toggle. Its border is
+/* The fixed top band: the wordmark and the mock pill (the collapse toggle is in the top bar). Its border is
    transparent at rest and turns --line while the pages scroll under it (.under-top). */
 .brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 0 20px;
   border-bottom:1px solid transparent;transition:border-color .15s;}
@@ -168,7 +168,7 @@ body{
 .nav{display:flex;flex-direction:column;gap:4px;flex:1 0 auto;}
 /* One even rhythm: every row is 32px tall with a 4px gap (a 36px pitch), and nothing
    adds a gap of its own. The icon sits in a 20px slot (the 16px glyph + 2px a side),
-   so the label starts 39px in whatever leads the row (an icon, the New pipeline tile).
+   so the label starts 39px in whatever leads the row (an icon, the Getting started check).
    The CSS stroke-width beats each SVG's stroke-width attribute (a
    presentation hint), so every glyph draws at 1.6. The label span takes the free
    width and ellipsizes; counts and chevrons follow it. */
@@ -191,17 +191,10 @@ body{
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
    padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
-   rows UNDER it, so the big gap falls between groups. The first group (New pipeline,
-   Runs, Schedules, Statistics, Team metrics) has no label at all. */
+   rows UNDER it, so the big gap falls between groups. The first group (Runs,
+   Schedules, Statistics, Team metrics) has no label at all. */
 .nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
   color:var(--ink-3);user-select:none;}
-/* New pipeline: a normal row led by an 18px ink tile with a "+"; its label is grey like
-   every row that is not the open page. The tile is an <i>, not a span:
-   the rail visually hides a row's direct span children (the labels). 18px + 1px a side
-   fills the same 20px slot every icon sits in. */
-.nav-tile{display:grid;place-items:center;flex:0 0 auto;width:18px;height:18px;margin:0 1px;
-  border-radius:5px;background:var(--ink);color:var(--on-ink);font-style:normal;}
-.nav .nav-tile svg{width:12px;height:12px;margin:0;stroke-width:2.2;}
 /* Counts: a plain grey mono number, and the amber "needs you" count is the sidebar's one
    coloured pill. The grey is --ink-2, not the labels' --ink-3: a count carries information
    (on the rail too). A zero is hidden with the `hidden` attribute (app.js keeps the element
@@ -262,7 +255,7 @@ body{
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block;}
 
 /* ---------- Main ---------- */
-.main{flex:1;min-width:0;padding:26px 32px 40px;overflow-y:auto;}
+.main{flex:1;min-width:0;min-height:0;padding:26px 32px 40px;overflow-y:auto;}
 /* Projects becomes a two-screen track: .main stops scrolling and becomes the
    bounded column, the view takes the remainder, and each screen owns its own
    scrollport. Dropping the container's TOP padding is what lets sticky headers
@@ -270,9 +263,34 @@ body{
    topbar (below) so the unscrolled layout is unchanged. (Runs has its own rule.) */
 body.view-projects .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}   /* the Workspaces track: the same bounded column */
-.topbar{display:flex;align-items:flex-start;justify-content:space-between;
+
+/* ---------- Top bar (#topnav) ---------- */
+/* .app is the sidebar and .main-col; the column stacks the 48px bar over .main, which stays
+   the one scroll container (flex:1;min-height:0 above), so the run pages' sticky
+   .rd-bar/.hd-bar still pin to its top. The bar is a three-slot grid: the page name on the
+   left, search in the centre (240-440px), the actions on the right. Every tier keeps it 48px
+   tall. HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
+.main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(0,1fr) minmax(240px,440px) minmax(0,1fr);
+  align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
+.topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
+.topnav-c{display:flex;justify-content:center;min-width:0;}
+.topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
+.topnav-title{min-width:0;margin:0;font-size:14px;font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.side-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;
+  border-radius:8px;background:transparent;color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
+.side-toggle svg{width:16px;height:16px;flex:none;}
+.side-toggle:hover{background:var(--field);color:var(--ink);}
+.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.topnav-new{display:inline-flex;align-items:center;gap:7px;flex:none;height:32px;padding:0 14px 0 12px;border:0;
+  border-radius:999px;background:var(--ink);color:var(--on-ink);font:500 13px/1 var(--sans);white-space:nowrap;
+  cursor:pointer;transition:box-shadow .15s;}
+.topnav-new svg{width:14px;height:14px;flex:none;}
+.topnav-new:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.topnav-new:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
-.topbar h1{font-size:26px;font-weight:700;letter-spacing:-.025em;margin:0 0 4px;}
 .topbar .sub{color:var(--ink-2);font-size:13.5px;}
 .run-state{display:flex;align-items:center;gap:10px;}
 .pill-status{display:inline-flex;align-items:center;gap:8px;background:var(--panel);
@@ -1353,9 +1371,8 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge[hidden]{display:none;}
-/* The server's mock mode, in the logo row between the wordmark and the toggle: its
-   margin-right:auto parks the toggle at the row's end (on the rail the row stacks and the
-   pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
+/* The server's mock mode, in the logo row after the wordmark: its margin-right:auto keeps it
+   beside the wordmark (on the rail the row stacks and the pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
    below the 4.5:1 text floor. */
 .brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);}
 .brand .side-mock-pill[hidden]{display:none;}
@@ -2041,7 +2058,7 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 
 /* ===== Scripts view (scripts-workbench §5.1) ===== */
 .scripts-host{display:block;}
-.scripts-tools{display:flex;align-items:center;gap:10px;}
+.scripts-tools{display:flex;align-items:center;gap:10px;margin-left:auto;}
 .scripts-tools .script-filter{width:220px;padding:9px 13px;font-size:13px;}
 .script-card{display:flex;align-items:center;gap:14px;}
 .script-card .script-card-main{flex:1;min-width:0;}
@@ -4281,8 +4298,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .runs-shell{position:relative;height:100%;display:grid;grid-template-columns:clamp(260px,24%,320px) minmax(0,1fr);grid-template-rows:minmax(0,1fr);overflow:hidden;}
 .runs-list-pane{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line);}
-.runs-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:22px 14px 10px 20px;}
-.runs-head h1{margin:0;font:700 20px/1.2 var(--sans);letter-spacing:-.01em;}
+.runs-head{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 14px 6px 20px;}
 .runs-search-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
 .runs-search-btn:hover,.runs-search-btn.on{background:var(--hover);color:var(--ink);}
 .runs-search-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
@@ -5006,9 +5022,8 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 
 /* ---------- Collapsible sidebar: the 60px icon rail ---------- */
 /* No rule here restyles anything the expanded 254px column already had: the rail
-   rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
-   `.side-toggle*`) style nodes that exist only
-   because of this feature. Below 1080px the rail is forced (tablets) and at 760px
+   rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`) styles
+   a node that exists only because of this feature. Below 1080px the rail is forced (tablets) and at 760px
    the full column becomes the phone drawer; app.js#railCollapsed decides, and the
    stored preference only applies above 1080px.
    HOUSE RULE for this whole block: no comment inside a rule body, and no
@@ -5017,17 +5032,6 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .brand .logo-mark{display:none;width:26px;height:26px;border-radius:50%;background:var(--ink);
   -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
   mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-/* The toggle ends the logo row: the mock pill's margin-right:auto (or the
-   row's space-between) parks it at the right edge. The round mark inside it
-   shows only on the rail, where mark + chevron are one target. */
-.side-toggle{display:flex;align-items:center;justify-content:center;
-  width:28px;height:28px;flex:0 0 auto;padding:0;border:0;border-radius:8px;
-  background:transparent;color:var(--ink-2);cursor:pointer;
-  transition:background .15s,color .15s;}
-.side-toggle svg{width:18px;height:18px;flex:0 0 auto;}
-.side-toggle:hover{background:var(--field);color:var(--ink);}
-.side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.brand .side-toggle-mark{display:none;}
 
 /* 60 - 1px border-right = 59px, and #side-scroll pads 10px a side: a 39px content box
    for the 40px squares. ::-webkit-scrollbar makes the vertical gutter SPACE-CONSUMING
@@ -5036,25 +5040,17 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .sidebar.collapsed{width:60px;flex:0 0 60px;}
 .sidebar.collapsed .side-scroll{scrollbar-width:none;}
 .sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
-/* The logo row stacks: the toggle (mark + ">") on top, the mock pill under it. */
+/* The logo row stacks: the round mark on top, the mock pill under it. */
 .sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:6px;padding:16px 0 10px;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
-.sidebar.collapsed .brand > .logo-mark{display:none;}
 .sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;letter-spacing:.02em;}
-/* On the rail the toggle IS the mark: the 26px mark plus a small ">" hung outside the
-   button box on its right (position:absolute, left:100%), one button. The mark stays
-   centred in the 60px column and the chevron lands in the gap beside it. */
-.sidebar.collapsed .side-toggle{position:relative;width:auto;height:auto;padding:3px;border-radius:10px;order:-1;}
-.sidebar.collapsed .side-toggle .side-toggle-mark{display:block;}
-.sidebar.collapsed .side-toggle svg{position:absolute;left:100%;top:50%;width:11px;height:11px;
-  margin:-5.5px 0 0 1px;stroke-width:2.6;}
 
 /* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
    the open page keep the column's greys. Child combinators only (`.nav > button`, and
    the Getting started pill one level down in its host), so the rows of a flyout inside
-   <nav> keep their full-row look. (0,3,1) out-ranks `.nav button` (0,1,1),
-   `.nav button:hover` (0,2,1) and `.nav button.nav-new` (0,2,1). `flex:0 0 auto` is NOT
+   <nav> keep their full-row look. (0,3,1) out-ranks `.nav button` (0,1,1) and
+   `.nav button:hover` (0,2,1). `flex:0 0 auto` is NOT
    decoration: .nav is a column flex container whose items default to shrinkable, and
    these boxes are fixed-size by design. */
 .sidebar.collapsed .nav{align-items:center;gap:3px;}
@@ -5102,37 +5098,28 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 /* Three tiers, one sidebar. Above 1080px nothing here applies. 761-1080px
    (tablets) app.js#railCollapsed forces the 60px rail above, so the only rule
    left is hiding the toggle that could not change anything. At 760px and below
-   the phone bar (#mbar) appears and the aside turns into an off-canvas drawer:
+   the top bar's hamburger (#mbar-menu) takes the toggle's place, New run keeps
+   only its icon, and the aside turns into an off-canvas drawer:
    fixed, translated out, visibility:hidden so nothing in it is focusable until
    body.nav-open slides it in. visibility waits for the slide out (0s delay .22s)
    and flips at once on the way in. Layers: the Ask dock at z 40, .nav-scrim 41, the
    drawer 42, the guide scrim 44-47 (a tour lifts .sidebar to 45), .viewer-modal
    50 so the interface-mode dialog opens over the drawer. These overrides of
-   .app, .main and .sidebar must stay BELOW their base rules: ruleBody() in the
+   .sidebar and the top bar must stay BELOW their base rules: ruleBody() in the
    CSS tests reads the first occurrence of a selector, media blocks included.
    HOUSE RULE, as in the rail block: no comment inside a rule body and no closing
    brace in a comment. */
-.mbar,.nav-scrim,.side-close{display:none;}
+.mbar-menu,.nav-scrim,.side-close{display:none;}
 @media (max-width:1080px){
-  .sidebar .side-toggle{display:none;}
-  .sidebar.collapsed .brand > .logo-mark{display:block;}
+  .side-toggle{display:none;}
 }
 @media (max-width:760px){
-  .app{flex-direction:column;}
-  .main{flex:1 1 auto;min-height:0;}
-  .mbar{display:flex;align-items:center;gap:10px;flex:0 0 auto;height:52px;padding:0 10px;
-    background:var(--panel);border-bottom:1px solid var(--line);}
   .mbar-menu{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
     width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--ink);cursor:pointer;}
   .mbar-menu svg{width:22px;height:22px;}
   .mbar-menu:hover{background:var(--hover);}
   .mbar-menu:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
   .mbar-menu .nav-rollup{position:absolute;top:6px;right:6px;margin:0;border:2px solid var(--panel);}
-  .mbar-mark{width:26px;height:26px;flex:0 0 auto;background:var(--ink);
-    -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-    mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-  .mbar-title{min-width:0;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--ink);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(254px,86vw);
     box-shadow:var(--shadow-sheet);transform:translateX(-100%);visibility:hidden;
     transition:transform .22s cubic-bezier(.65,.02,.28,1),visibility 0s linear .22s;}
@@ -5145,6 +5132,9 @@ button.rd-srow:hover{background:var(--hover-on-field);}
   .side-close svg{width:20px;height:20px;}
   .side-close:hover{background:var(--hover);}
   .side-close:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .topnav{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;}
+  .topnav-new{width:32px;padding:0;justify-content:center;}
+  .topnav-new-label{display:none;}
 }
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */

@@ -83,28 +83,18 @@ test('the open page is a soft grey fill and hover the lighter field grey; nothin
   assert.equal(ruleBody('.nav button.active .nav-count'), null, 'no white-on-wash count: the fill is light now');
 });
 
-test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain', () => {
+test('the first group has no label: "Activity" is gone, Build, Add-ons and Manage remain; Runs leads the nav', () => {
   assert.deepEqual([...doc.querySelectorAll('.nav .nav-sect')].map((s) => s.textContent.trim()), ['Build', 'Add-ons', 'Manage']);
-  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'new');
-  assert.equal(doc.querySelector('.nav button[data-nav="new"]').nextElementSibling.dataset.nav, 'runs');
+  assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'runs');
 });
 
-test('New pipeline is a normal row led by an 18px ink "+" tile; nav-cta is gone everywhere', () => {
-  const row = doc.querySelector('.nav button[data-nav="new"]');
-  assert.ok(row.classList.contains('nav-new'));
-  const tile = row.firstElementChild;
-  assert.equal(tile.tagName, 'I', 'an <i>: the rail visually hides a row\'s direct <span> children');
-  assert.ok(tile.classList.contains('nav-tile'));
-  assert.equal(tile.getAttribute('aria-hidden'), 'true');
-  assert.equal(row.querySelector(':scope > span').textContent, 'New pipeline');
-  assert.match(ruleBody('.nav-tile'), /width:18px;height:18px;margin:0 1px;/);
-  assert.match(ruleBody('.nav-tile'), /background:var\(--ink\);color:var\(--on-ink\);/);
-  assert.equal(ruleBody('.nav button.nav-new'), null, 'its label is grey like every row that is not the open page');
+test('New run has no sidebar row (the top bar\'s button opens it): no "+" tile, no nav-new, no nav-cta anywhere', () => {
+  assert.equal(doc.querySelector('.nav [data-nav="new"], .nav-new, .nav-tile'), null);
   const themeTool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
   for (const [name, src] of [['index.html', html], ['style.css', css], ['app.js', read('app.js')], ['tools/verify-theme-cdp.mjs', themeTool]]) {
-    assert.doesNotMatch(src, /nav-cta/, `${name} still names nav-cta`);
+    assert.doesNotMatch(src, /\bnav-(?:cta|new|tile)\b/, `${name} still names the old row`);
   }
-  assert.ok(themeTool.includes("'.sidebar.collapsed .nav > button.nav-new'"), 'verify:theme still hovers the rail\'s New pipeline square');
+  assert.ok(themeTool.includes("'.topnav-new'"), 'verify:theme hovers New run in the top bar');
 });
 
 test('the Getting started pill keeps the 32px rhythm: a full violet outline and a count pill of its own', () => {
@@ -145,20 +135,22 @@ test('the 60px rail: 40x34 squares 3px apart, section labels as 1px hairlines, c
   assert.doesNotMatch(css, /\.sidebar\.collapsed \.nav button/);
 });
 
-test('the MOCK pill sits in the logo row between the wordmark and the toggle; on the rail it stacks under the mark', () => {
+test('the MOCK pill sits in the logo row after the wordmark; on the rail it stacks under the mark (the collapse toggle lives in the top bar)', () => {
   const order = [...doc.querySelector('.brand').children].map((el) => el.id || el.className);
   assert.ok(order.indexOf('logo') < order.indexOf('side-mock-pill'), 'after the wordmark');
-  assert.ok(order.indexOf('side-mock-pill') < order.indexOf('side-toggle'), 'before the toggle');
+  assert.ok(order.indexOf('logo-mark') < order.indexOf('side-mock-pill'), 'the rail\'s mark first, the pill under it');
+  assert.equal(order.indexOf('side-toggle'), -1, 'no toggle in the logo row');
   assert.equal(ruleBody('.brand .side-mock-pill'), 'margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);',
     'no comment inside the rule body (house rule)');
   assert.match(ruleBody('.sidebar.collapsed .brand'), /flex-direction:column;/);
-  assert.match(ruleBody('.sidebar.collapsed .side-toggle'), /order:-1;/, 'the mark first, the pill under it');
+  assert.equal(ruleBody('.sidebar.collapsed .logo-mark'), 'display:block;', 'the rail shows the mark at every width');
+  assert.equal(ruleBody('.sidebar.collapsed .brand > .logo-mark'), null, 'nothing hides it on the desktop rail any more');
 });
 
 test('npm run verify:theme forces :hover on the new hover-only rules (the Running actions rows and their Stop)', () => {
   const tool = readFileSync(new URL('../tools/verify-theme-cdp.mjs', import.meta.url), 'utf8');
   const list = tool.slice(tool.indexOf('const HOVER_SELECTORS = ['), tool.indexOf('];', tool.indexOf('const HOVER_SELECTORS = [')));
-  for (const sel of ['.act-srow', '.act-stop', '.sidebar.collapsed .nav > button.nav-new']) assert.ok(list.includes(`'${sel}'`), sel);
+  for (const sel of ['.act-srow', '.act-stop', '.topnav-new']) assert.ok(list.includes(`'${sel}'`), sel);
 });
 
 test('the needs-you pill reads at 4.5:1 or better in both themes (--amber-ink-strong on --amber-bg)', () => {

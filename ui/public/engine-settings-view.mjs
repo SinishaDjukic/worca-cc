@@ -12,7 +12,7 @@ export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${eng
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New run starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
   const extras = {};
   // One card per engine that owns catalog models: Copilot owns none, so it has no step or helper slots to set.
   for (const engine of MODEL_ENGINE_NAMES) {

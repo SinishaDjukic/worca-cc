@@ -90,7 +90,7 @@ test('routes and labels: #connectors/skills, the title "Connectors", three segme
     { name: 'the Skills view: title, sub, segments, Import skill, GET /api/skills', run: async () => {
       const { host, ctl, calls } = mount();
       await ctl.show('skills');
-      assert.equal(host.querySelector('.topbar h1').textContent, 'Connectors');
+      assert.equal(host.querySelector('.topbar h1'), null, 'the top bar names the page');
       assert.equal(host.querySelector('.topbar .sub').textContent, 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects');
       const seg = [...host.querySelectorAll('.topbar .seg button')];
       assert.deepEqual(seg.map((b) => [b.textContent, b.getAttribute('aria-pressed')]), [['Sets', 'false'], ['Servers', 'false'], ['Skills', 'true']]);

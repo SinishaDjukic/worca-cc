@@ -204,6 +204,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { pageTitle } from './topnav.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
@@ -406,7 +407,6 @@ const el = {
   wizSizeNote: $('#wiz-size-note'),
   wizStartScan: $('#wiz-start-scan'),
   wizClose: $('#wiz-close'),
-  wizTitle: $('#wiz-title'),
   wizScanModel: $('#wiz-scan-model'),
   wizScanEffort: $('#wiz-scan-effort'),
 
@@ -735,12 +735,6 @@ function applySidebarCollapsed() {
     const label = collapsed ? 'Expand menu' : 'Collapse menu';
     btn.title = label;
     btn.setAttribute('aria-label', label);
-    // The glyph is one bare chevron pointing the way the rail will move: "<"
-    // while expanded (click to pull it in), ">" while collapsed (click to push
-    // it back out). Rewriting `d` rather than mirroring in CSS keeps the arrow
-    // optically centred — scaleX(-1) on a chevron shifts its visual mass.
-    const chev = btn.querySelector('svg .chev');
-    if (chev) chev.setAttribute('d', collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6');
   }
   // The rail has no visible labels, so mirror each button's label into a native
   // tooltip while collapsed (the mock does this on all twelve). Written by JS,
@@ -846,7 +840,7 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#mbar'), $('body > .ask-dock'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .ask-dock'), $('body > .term-pane')]) {
     if (n) n.toggleAttribute('inert', next);
   }
   if (next) $('#side-close')?.focus();
@@ -879,14 +873,11 @@ for (const m of [phoneNavMq, railTierMq]) {
   if (typeof m.addEventListener === 'function') m.addEventListener('change', onNavTierChange);
   else if (typeof m.addListener === 'function') m.addListener(onNavTierChange);   // Safari < 14
 }
-// Pages with no sidebar entry of their own still need a name in the phone bar.
-const MBAR_TITLES = { 'getting-started': 'Getting started', 'workspace-create': 'New workspace', 'agent-create': 'New agent', settings: 'Settings' };
-function paintMobileBar(name) {
-  const t = $('#mbar-title');
-  if (!t) return;
-  const b = $(`.nav button[data-nav="${name}"]`);
-  const label = b && b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
-  t.textContent = (label && label.textContent.trim()) || MBAR_TITLES[name] || 'Worca';
+/** The top bar names the open page (topnav.mjs#pageTitle). `name` is the route itself, so
+ *  #running/<id> and #history/<key>/<id> read "Runs" like the list. Painted on every showView. */
+function paintTopnavTitle(name) {
+  const t = document.getElementById('topnav-title');
+  if (t) t.textContent = pageTitle(name);
 }
 
 // ---------------------------------------------------------------------------
@@ -9330,7 +9321,7 @@ function resetWizStep1Hint() {
   hint.classList.remove('err');
   claudeSignedOutHints.delete(hint);
   hint.textContent = usable.length < 2
-    ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
+    ? 'Onboard at least two projects (in New run) to create a workspace.'
     : 'Select two or more projects to scan their interconnections.';
 }
 
@@ -15542,10 +15533,10 @@ function paintRunningActions() {
       // run loses its saved row), else the same control of the first row.
       const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button')
         || host.querySelector(`button${focusedPart}`) || host.querySelector('button'));
-      // Else the open page's row, or the first sidebar control that takes focus here: a control that is
-      // not shown ignores focus() (the Nodes row Simple hides, the rail toggle on a tablet or a phone),
-      // and New pipeline shows at every level, in the column and on the rail.
-      for (const el of [next, $('.nav > button.active'), $('.nav > .nav-group.has-active'), $('#side-toggle'), $('.nav > button[data-nav="new"]')]) {
+      // Else the open page's row, or the first control that takes focus here: a control that is
+      // not shown ignores focus() (the Nodes row Simple hides, the collapse toggle on a tablet or a
+      // phone), and New run in the top bar shows at every level and every width.
+      for (const el of [next, $('.nav > button.active'), $('.nav > .nav-group.has-active'), $('#side-toggle'), $('#topnav-new')]) {
         el?.focus();
         if (el && document.activeElement === el) break;
       }
@@ -27715,7 +27706,7 @@ function paintRunsList() {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
         pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || '') };
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New pipeline.', note }));
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note }));
   }
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
@@ -29744,16 +29735,17 @@ let gsPillHost = null;
 let gsWelcomeUnbind = null;
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
-/** The pill lives right under the New pipeline row. Mounted here, not in the shell, so
- *  the sidebar's static button census (ui-onboarding-shell, ui-levels) is untouched. */
+/** The pill is the nav's first row (New run has no sidebar row: it is the top bar's button).
+ *  Mounted here, not in the shell, so the sidebar's static button census (ui-onboarding-shell,
+ *  ui-levels) is untouched. */
 function gsEnsurePillHost() {
   if (gsPillHost && gsPillHost.isConnected) return gsPillHost;
-  const newRow = document.querySelector('.nav button[data-nav="new"]');
-  if (!newRow) return null;
+  const nav = document.querySelector('.nav');
+  if (!nav) return null;
   gsPillHost = document.createElement('div');
   gsPillHost.className = 'gs-pill-host';
   gsPillHost.hidden = true;
-  newRow.insertAdjacentElement('afterend', gsPillHost);
+  nav.prepend(gsPillHost);
   return gsPillHost;
 }
 
@@ -29905,11 +29897,12 @@ document.addEventListener('keydown', (e) => {
 // is itself a hop: the sidebar entry is ringed and the user's own click routes,
 // so they learn where things live. `final` hops end the guide on the click.
 const onView = (v) => currentShownView === v;
-/** Ring the sidebar entry for `view` (on a phone gsPhoneNavHop rings the menu button first).
+/** Ring the sidebar entry for `view` (on a phone gsPhoneNavHop rings the menu button first);
+ *  New run has no sidebar entry, so its hop rings the top bar's #topnav-new (on every width).
  *  A view the user is already on is never a stop: the hop passes on arrival, without a ring. */
 const NAV = (view, text, also = []) => ({
   id: `nav:${view}`, nav: view, views: [view, ...also], text,   // `also`: views reached from it that count as "there" (a wizard)
-  target: [`.nav button[data-nav="${view}"]`],
+  target: [view === 'new' ? '#topnav-new' : `.nav button[data-nav="${view}"]`],
 });
 const noProjectPicked = () => {
   const sel = document.getElementById('projectSelect');
@@ -30093,7 +30086,7 @@ function gsPhoneNavHop(hop) {
   if (!inDrawer) return hop;
   if (!mobileNavOpen) {
     const t = Array.isArray(hop.text) ? hop.text[0] : hop.text;
-    return { target: '#mbar-menu', lift: ['.mbar'], text: `Open the menu. ${t || ''}`.trim() };
+    return { target: '#mbar-menu', lift: ['.topnav'], text: `Open the menu. ${t || ''}`.trim() };
   }
   return { ...hop, lift: [...(hop.lift || []), '.sidebar'] };
 }
@@ -30719,7 +30712,7 @@ function showView(name, param = '') {
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  paintMobileBar(viewSection(name));
+  paintTopnavTitle(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Nodes (Agents, Scripts): the row takes the open-page fill while a child page is shown,
   // and any route puts its flyout away (a click inside it already did).
@@ -30933,6 +30926,13 @@ navLinks.forEach((b) =>
     else location.hash = name;
   })
 );
+// New run (#topnav-new): the top bar's way to the #new page (the sidebar has no row for it). It
+// routes exactly like a nav row — hash-first, and a direct showView when the hash already says
+// #new — but carries no data-nav, so the router never lights it as the open page.
+$('#topnav-new')?.addEventListener('click', () => {
+  if (location.hash.slice(1) === 'new') showView('new');
+  else location.hash = 'new';
+});
 
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.

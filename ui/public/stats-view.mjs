@@ -619,7 +619,7 @@ export function renderStatsBody(model, opts = {}) {
     ? model.series[model.series.length - 1].bucketStartMs : 0;
   if (!model.totals.runs && !model.series.some((p) => p.spentUsd > 0)) {
     const emptyText = model.range === 'all'
-      ? 'No pipelines yet — run one from New pipeline.'
+      ? 'No pipelines yet — run one from New run.'
       : 'No runs in this period.';
     for (const title of ['Spend', 'Runs']) {
       const card = chartCard(doc, `${title} per ${unitWord(model.bucket)}`, rangeLabel);

@@ -115,7 +115,7 @@ test('#settings/memory paints health card, file list and history; with no projec
       assert.deepEqual([...pane.querySelectorAll('.mem-snap')].map((r) => r.dataset.id), ['20260909-100000-user']);
       assert.equal(pane.querySelector('.mem-editor'), null, 'nothing selected yet');
       assert.equal(pane.querySelector('.mem-defrag').disabled, false, 'a registered project hosts the global run');
-      assert.equal(pane.querySelector('.mem-host-hint').textContent, 'Runs on alpha — pick another project on the New pipeline page.');
+      assert.equal(pane.querySelector('.mem-host-hint').textContent, 'Runs on alpha — pick another project on the New run page.');
       // GET with no body sends no content-type (request shapes stay byte-identical to the other fetches).
       const get = calls.find((c) => c.url.endsWith('/api/memory/global') && c.method === 'GET');
       assert.equal(get.headers, null, 'no content-type on a body-less request');

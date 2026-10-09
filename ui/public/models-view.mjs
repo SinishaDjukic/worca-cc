@@ -189,7 +189,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
   hideLabel.appendChild(doc.createTextNode(" Hide built-in models (you don't use a first-party Anthropic account)"));
   hideRow.appendChild(hideLabel);
   hideRow.appendChild(h(doc, 'small', 'hint',
-    'Drops the built-ins from every model picker — new pipelines, the composer, Ask Worca, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
+    'Drops the built-ins from every model picker — New run, the composer, Ask Worca, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
   root.appendChild(hideRow);
 
   // ── Your models (global) ──

@@ -21,7 +21,7 @@ export const LEVEL_INFO = Object.freeze({
     label: 'Simple',
     who: 'New to Worca',
     desc: 'Pick a project, describe the task, watch the run, answer its questions and read the result. Nothing here can break a run.',
-    adds: 'Shows: New pipeline, Runs, Projects, budget limits and Ask Worca.',
+    adds: 'Shows: New run, Runs, Projects, budget limits and Ask Worca.',
   }),
   advanced: Object.freeze({
     label: 'Advanced',

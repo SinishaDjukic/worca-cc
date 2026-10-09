@@ -113,7 +113,7 @@ export function renderHealthCard(report, { doc = globalThis.document, host = nul
   }
   if (isGlobal && !runId) {
     card.appendChild(h(doc, 'small', 'hint mem-host-hint',
-      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New pipeline page.` : NO_HOST_HINT));
+      host ? `Runs on ${host.name || host.key}${defragModelPhrase(report?.defragModel)} — pick another project on the New run page.` : NO_HOST_HINT));
   }
   card.appendChild(h(doc, 'small', 'hint', 'A defragment run merges duplicate topics, splits overgrown files, drops stale rules and tightens hooks. It is an ordinary pipeline run; the previous files stay in History.'));
   return card;

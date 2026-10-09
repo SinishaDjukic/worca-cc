@@ -2126,7 +2126,7 @@ test('Running actions: when the open page\'s row cannot take focus (not shown), 
   stop.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
   await settle(ctx.window, 4);
   assert.equal(doc.getElementById('side-actions').hidden, true);
-  assert.equal(doc.activeElement, doc.querySelector('.nav > button[data-nav="new"]'), 'New pipeline shows at every level, in the column and on the rail');
+  assert.equal(doc.activeElement, doc.getElementById('topnav-new'), 'New run shows at every level and every width');
 });
 
 test('Running actions: a row whose run loses its saved row keeps keyboard focus in that row (its Stop), never on another row\'s name', async () => {

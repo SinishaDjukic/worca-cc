@@ -299,7 +299,7 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
     for (const c of host.querySelectorAll('.sched-item')) if (openIds.has(c.dataset.id)) c.querySelector('.sched-more').click();
   }
   const emptyOnce = () => h('div', { class: 'run-empty' }, 'No one-off run is waiting. Pick a time with ',
-    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New pipeline.');
+    h('a', { href: '#new/schedule', text: 'Schedule a run' }), ', then describe the task — or use Schedule… next to Start run on New run.');
   const emptyRepeating = () => h('div', { class: 'run-empty' }, 'No repeating schedule. Pick a time with ',
     h('a', { href: '#new/schedule', text: 'Schedule a run' }), ' and choose Every day, Weekdays, Weekly or Monthly.');
 
