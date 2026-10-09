@@ -55,7 +55,8 @@ test('every field says what it inherits and from where; an override shows Projec
   assert.equal(engine.value, 'codex');
   assert.equal(engine.options[0].textContent, 'Claude (your setting)');
   const plan = field(host, 'models.codex.steps.planner').querySelector('.inherit-model');
-  assert.equal(plan.options[0].textContent, 'GPT-5.5 · low (your setting)');
+  assert.equal(plan.options[0].textContent, 'GPT-5.5 (your setting)');
+  assert.equal(field(host, 'models.codex.steps.planner').querySelector('.inherit-effort').options[0].textContent, 'low (your setting)');
   assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5'], 'the Codex card offers Codex models only');
   assert.equal(field(host, 'models.codex.workspaceScan'), null, 'workspace scans are set per user');
 });

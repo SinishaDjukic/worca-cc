@@ -99,6 +99,7 @@ import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, s
 import { createAskPanel } from './ask-panel.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -267,6 +268,7 @@ function readyEngines(onLoad) {
     engineReadyLoading = fetch('/api/engines').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
       engineReady = Array.isArray(d?.engines) ? d.engines.filter((e) => e.ready).map((e) => e.name) : null;   // null: offer all
       engineReadyAt = Date.now();
+      setEngineLocks(d?.engines); applyEngineLocks();
       const waiters = [...engineReadyWaiters]; engineReadyWaiters.clear();
       for (const w of waiters) { try { w(); } catch { /* one painter must not stop the others */ } }
     }).finally(() => { engineReadyLoading = null; });
@@ -3849,7 +3851,8 @@ if (el.memoryScopeSeg) {
 // Engine (harness bridge §10.4): per run, never remembered — every New pipeline starts on Claude.
 function setRunEngine(engine) {
   const prev = state.engine;
-  state.engine = ENGINE_NAMES.includes(engine) ? engine : 'claude';
+  // An engine the instance never starts (the credential broker is on) is not preselected: New pipeline falls back to Claude.
+  state.engine = ENGINE_NAMES.includes(engine) && engineLock(engine) === null ? engine : 'claude';
   if (el.engineSelect) el.engineSelect.value = state.engine;
   keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
@@ -3861,6 +3864,14 @@ function setRunEngine(engine) {
     if (currentView() === 'new') schedulePolicyLine();
   }
 }
+
+// Boot: learn which engines this instance never starts (GET /api/engine-locks runs no preflight), so every picker
+// greys them out before anyone presses Start, and New pipeline moves off one.
+fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
+  if (!Array.isArray(d?.engines)) return;
+  setEngineLocks(d.engines); applyEngineLocks();
+  if (engineLock(state.engine) !== null) setRunEngine('claude');
+});
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
 function paintEngineHints() {

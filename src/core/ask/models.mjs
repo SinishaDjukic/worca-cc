@@ -6,7 +6,7 @@
 import { listModels as realListModels, EFFORTS, engineOfModel as realEngineOf } from '../config.mjs';
 import { listPluginModels as realPluginModels, pluginModelSecretStatus as realSecretStatus } from '../plugin-models.mjs';
 import { ASK_LIMITS } from './limits.mjs';
-import { brokerEnabled } from '../broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal } from '../broker-client.mjs';
 import { effortlessModels as realEffortless } from '../bridge/upstream.mjs';
 import { effortsForEngine, ASK_ENGINES } from '../model-env.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -111,7 +111,7 @@ export function createAskModels({
       // hand-made pick of one is an unknown model.
       // A row runs on every harness its connection reaches (src/shared/connections.mjs); a chat takes the ones Ask
       // runs on. An endpoint model Codex reaches too is offered in both groups.
-      const harnesses = harnessesOf(m).filter((e) => ASK_ENGINES.includes(e) && (e !== 'codex' || codexAvailable()));
+      const harnesses = harnessesOf(m).filter((e) => ASK_ENGINES.includes(e) && (e !== 'codex' || (codexAvailable() && !brokerEngineRefusal('codex'))));
       if (!harnesses.length) continue;
       const engine = harnesses.includes(m.engine || 'claude') ? (m.engine || 'claude') : harnesses[0];
       const custom = m.custom === 'global' || m.custom === 'plugin' ? m.custom : false;

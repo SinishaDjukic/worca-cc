@@ -7,6 +7,7 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { envFlag } from '../model-env.mjs';
 import { cachedReadiness, storeReadiness } from './ready-cache.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
+import { brokerEngineRefusal } from '../broker-client.mjs';
 
 /** Claude's readiness: its sign-in (claude auth status, cached; env keys and the broker count as signed in). Only a
  *  definite signed-out refuses — an unknown answer (an older CLI) reads as ready, as the run-start check treats it. */
@@ -24,12 +25,24 @@ async function claudeSignIn() {
  * WORCA_MOCK=0 a mock and miss ORCH_MOCK=1.
  * @param {{force?:boolean, now?:number, mock?:boolean, preflights?:Record<string,()=>Promise<object>>}} [o]
  *   preflights: a test seam replacing adapters' preflight by name. mock: every engine ready, nothing spawned.
- * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null}>>}
+ * @returns {Promise<Array<{name:string, label:string, ready:boolean, reason:string|null, broker?:true}>>}
  */
+/** The engines this instance never starts, whatever their sign-in (the credential broker is on): no preflight, nothing
+ *  spawned, so a page can ask on every load (GET /api/engine-locks). */
+export function engineLocks(env = process.env) {
+  return listEngines().filter((e) => e.name !== 'mock')
+    .map((e) => ({ name: e.name, reason: brokerEngineRefusal(e.name, env) }))
+    .filter((e) => e.reason).map((e) => ({ ...e, broker: true }));
+}
+
 export async function engineReadiness({ force = false, now = Date.now(), mock = envFlag('WORCA_MOCK', 'ORCH_MOCK'), preflights = {} } = {}) {
   const hit = force ? null : cachedReadiness(now);
   if (hit) return hit;
   const list = await Promise.all(listEngines().filter((e) => e.name !== 'mock').map(async (e) => {
+    // Before mock, as the run-start gate does: with the broker on, another engine never starts. `broker` lets a picker
+    // tell this (an instance setting) from a sign-in the user can fix.
+    const refusal = brokerEngineRefusal(e.name);
+    if (refusal) return { name: e.name, label: engineLabel(e.name), ready: false, reason: refusal, broker: true };
     const check = preflights[e.name] || (e.name === 'claude' ? claudeSignIn : e.preflight);
     if (mock || typeof check !== 'function') return { name: e.name, label: engineLabel(e.name), ready: true, reason: null };
     let r;

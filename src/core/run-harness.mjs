@@ -89,7 +89,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { brokerEnabled, brokerInfo, personSlots } from './broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
@@ -2641,9 +2641,8 @@ export class RunHarness extends EventEmitter {
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
-    if (brokerEnabled()) {
-      return `the credential broker is on, and ${name} signs in with its own credentials, which the broker cannot bill or revoke`;
-    }
+    const brokerRefusal = brokerEngineRefusal(name);
+    if (brokerRefusal) return brokerRefusal;
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
       return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
     }

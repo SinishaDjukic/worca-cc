@@ -1,5 +1,6 @@
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
 import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { applyEngineLocks, engineLock } from './engine-locks.mjs';
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
@@ -91,6 +92,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
   const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New pipeline starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
+  applyEngineLocks(host);
   const from = options.level === 'project' ? 'your settings' : "Worca's defaults";
   const noEffort = new Set(options.noEffort || []);
   // The tab shown first: the default engine's (Copilot owns no models, so Claude's).
@@ -163,11 +165,13 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   // The catalog lists no Codex model while this codex cannot be locked down for a chat (docs/models.md#codex): a saved
   // Codex choice then starts new chats on Claude, and the card says so instead of offering an empty model row.
   const codexOffered = catalog.some((m) => m && m.engine === 'codex');
-  const unavailable = 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
+  const unavailable = engineLock('codex') !== null ? 'Ask on Codex is off while the credential broker is on, so new chats start on Claude.'
+    : 'Ask on Codex is unavailable on this codex version, so new chats start on Claude.';
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${codexOffered ? '' : ` ${unavailable}`}`,
     options: [{ value: 'claude', label: 'Claude' }, { value: 'codex', label: codexOffered ? engineChoiceLabel('codex') : 'Codex (unavailable)' }],
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
+  applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).
   const rows = [];
   for (const engine of ['claude', 'codex']) {

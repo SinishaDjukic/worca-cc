@@ -180,7 +180,7 @@ import { checkoutRun, discardCheckout, membersOfRow, checkoutPathFor, setSetupSt
   enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords } from '../src/core/checkout.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
-import { brokerEnabled, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
 import {
   startPlatformHeartbeat, buildHeartbeatBody, dbPipelineCounts, todayCounts, nextScheduledAt, dbWritable, diskNearlyFull,
   HEARTBEAT_INTERVAL_MS,
@@ -204,7 +204,7 @@ import {
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
-import { engineReadiness } from '../src/core/engines/readiness.mjs';
+import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -3880,6 +3880,9 @@ app.get('/api/night-decisions', (req, res) => {
 // through src/shared/away-mode/describe.mjs.
 // The run engines and whether each is ready now (engines/readiness.mjs: the adapter's own preflight, cached 60 s).
 // ?recheck=1 forces a fresh check. Feeds the usage-limit "continue on…" offers and the engine cards.
+// Which engines this instance never starts (the credential broker is on): cheap, no preflight — every page asks once.
+app.get('/api/engine-locks', (req, res) => res.json({ engines: engineLocks() }));
+
 app.get('/api/engines', async (req, res) => {
   try { res.json({ engines: await engineReadiness({ force: req.query.recheck === '1' }) }); }
   catch (err) { res.status(500).json({ error: String(err?.message || err) }); }
@@ -10721,10 +10724,14 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const body = req.body || {};
     const text = typeof body.text === 'string' ? body.text : '';
     if (!text.trim()) return badRequest(res, 'text is required');
-    const mv = await validateModelEffort(body.model, body.effort, { engine: askChatEngine(id, thread) });
+    // The credential broker keeps Claude keys only: a Codex chat would spend codex's own sign-in, shared by everyone and
+    // readable by the agent. Refused before the model check, which no longer lists Codex rows.
+    const chatEngine = askChatEngine(id, thread);
+    const engineRefusal = brokerEngineRefusal(chatEngine);
+    if (engineRefusal) return res.status(409).json({ error: `This chat runs on Codex: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
+    const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
     if (!mv.ok) return badRequest(res, mv.error);
-    // The credential broker keeps Claude keys: a Codex chat spends codex's own sign-in (spec §9 "broker slots: Claude only").
-    if (!mockEnabled({}) && askTurnEngine(id, thread, mv.model) !== 'codex') {
+    if (!mockEnabled({})) {
       const refusal = await brokerStartRefusal(req, [String(body.model)]);
       if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
     }

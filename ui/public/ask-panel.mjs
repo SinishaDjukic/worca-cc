@@ -19,6 +19,7 @@ import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { lockEngineOptions } from './engine-locks.mjs';
 import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
@@ -3953,6 +3954,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
     const engineSel = rpSelect('ask-card-engine', 'Engine');
     fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
+    // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
+    if (lockEngineOptions(engineSel)) engineSel.value = '';
     const engineField = rpField('Engine', engineSel);
     local.engine = () => engineSel.value;
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');

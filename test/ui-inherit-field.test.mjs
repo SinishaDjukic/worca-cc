@@ -67,7 +67,8 @@ test('select field and model field: options, inheritance text, effort follows th
     efforts: ['minimal', 'low', 'medium', 'high'], own: undefined, inherited: { value: { model: 'gpt-5.5', effort: 'low' }, source: 'user' } });
   const sel = m.querySelector('.inherit-model');
   assert.deepEqual([...sel.options].map((o) => o.value), ['', 'gpt-5.5', 'gpt-5.6-sol'], 'only the engine\'s models');
-  assert.equal(sel.options[0].textContent, 'GPT-5.5 · low (your setting)');
+  assert.equal(sel.options[0].textContent, 'GPT-5.5 (your setting)', 'the Model names the model only');
+  assert.equal(m.querySelector('.inherit-effort').options[0].textContent, 'low (your setting)', 'the Effort says its own');
   sel.value = 'gpt-5.6-sol';
   sel.dispatchEvent(new d.defaultView.Event('change', { bubbles: true }));
   const eff = m.querySelector('.inherit-effort');
