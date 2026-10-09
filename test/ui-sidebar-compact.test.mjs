@@ -65,10 +65,10 @@ test('hairlines: transparent at rest, --line while the pages run under an edge',
   assert.equal(ruleBody('.sidebar.under-bottom .side-foot'), 'border-top-color:var(--line);');
 });
 
-test('row rhythm: 29px rows a 1px gap apart, 13.5px medium labels, 16px icons at stroke 1.6, 11px section labels', () => {
-  assert.match(ruleBody('.nav'), /gap:1px;/);
+test('row rhythm: 32px rows a 4px gap apart, 13.5px medium labels, 16px icons at stroke 1.6, 11px section labels', () => {
+  assert.match(ruleBody('.nav'), /gap:4px;/);
   const row = ruleBody('.nav button');
-  for (const d of ['height:29px;', 'padding:0 8px 0 9px;', 'border-radius:8px;', 'gap:10px;', 'font-size:13.5px;', 'font-weight:500;', 'color:var(--side-ink);']) {
+  for (const d of ['height:32px;', 'padding:0 8px 0 9px;', 'border-radius:8px;', 'gap:10px;', 'font-size:13.5px;', 'font-weight:500;', 'color:var(--side-ink);']) {
     assert.ok(row.includes(d), `.nav button has ${d}`);
   }
   assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1\.6;/);
@@ -107,7 +107,7 @@ test('New pipeline is a normal row led by an 18px ink "+" tile; nav-cta is gone 
   assert.ok(themeTool.includes("'.sidebar.collapsed .nav > button.nav-new'"), 'verify:theme still hovers the rail\'s New pipeline square');
 });
 
-test('the Getting started pill keeps the 29px rhythm: a full violet outline and a count pill of its own', () => {
+test('the Getting started pill keeps the 32px rhythm: a full violet outline and a count pill of its own', () => {
   const pill = ruleBody('.nav button.gs-pill');
   assert.match(pill, /border:1\.5px solid var\(--violet\);padding:0 6\.5px 0 7\.5px;/);
   assert.doesNotMatch(pill, /height|border-left/);
