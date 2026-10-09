@@ -31,7 +31,7 @@
 //                                               -> test/ui-graph-interactions.test.mjs
 //     (6) the wheel policy, the drag threshold + pan delta and the cluster's
 //         clamps, (8)(8b) the End chip and the quiescence copy,
-//     (9b) the .xrow log narrowing, and the (1*)(2)(3)(4a) CSS text and
+//     (9b) the .xrow drawer + log narrowing, and the (1*)(2)(3)(4a) CSS text and
 //          band-count math                      -> test/ui-run-hosts.test.mjs
 //     (9a) the node axis on the Logs tab bar    -> test/ui-log-filter-node-axis.test.mjs
 import { spawn, execFileSync } from 'node:child_process';
@@ -500,7 +500,9 @@ try {
     { stage: [s0, sZoom, sIdle, sAfterClick, sBefore, sUnder, sDrag], world: [w0, w1], cursor,
       prevented: [preventedZ, prevented0, prevented1], nav: [nav0, nav1, nav2], fitted });
 
-  // (9b) a footer-row click narrows the log to ONE execution on the Logs tab bar.
+  // (9b) a footer-row click opens that ONE execution's log in the drawer under the graph (#647): the
+  // page stays on Workflow and the Logs tab's filter is untouched. The drawer's Open in Logs then
+  // narrows the Logs tab bar to it.
   // Reload first: check (6) left the view panned and zoomed, and the Escape leg
   // re-lays the shell out — a fresh screen puts every card back under its fit.
   await go(`running/${runId}/details/workflow`);   // the graph lives in Details › Workflow
@@ -510,13 +512,25 @@ try {
   await until(`document.querySelector('${RD} .gv-world .node[data-node-id="n_clarify"] .xrow')`, 'the clarify exec row');
   await clickCentre(`${RD} .gv-world .node[data-node-id="n_clarify"] .xrow`, 'clarify exec row');
   await settle('row-click');
+  const drawer = await ev(`(()=>{const d=document.querySelector('#run-detail .rd-sec[data-sec="workflow"] .wf-log-drawer');
+    const r=window.__np.getRun(${JSON.stringify(runId)});const g=document.querySelector('#run-detail .rd-graph').getBoundingClientRect();
+    return {open:!!d&&!d.hidden,title:d&&d.querySelector('.wf-log-title').textContent,hash:location.hash,
+      target:r.logDrawer,filter:{node:r.logFilter.node,execution:r.logFilter.execution},
+      below:!!d&&d.getBoundingClientRect().top>=g.top,
+      marked:[...document.querySelectorAll('${RD} .gv-world .node[aria-current="true"]')].map((n)=>n.dataset.nodeId)};})()`);
+  check('9b', 'an .xrow click opens that execution in the drawer under the graph; the page stays on Workflow and the Logs filter is untouched',
+    drawer.open && drawer.title === 'Clarify' && drawer.hash === `#running/${runId}/details/workflow`
+    && drawer.target && drawer.target.execution === 'x:n_clarify:1' && drawer.target.node === 'n_clarify'
+    && drawer.filter.execution === '' && drawer.below && drawer.marked.join() === 'n_clarify', drawer);
+  await clickCentre('#run-detail .wf-log-drawer .wf-log-full', 'Open in Logs');
+  await settle('open-in-logs');
   const chips = await ev(`(()=>{const d=document.querySelector('#run-detail .rd-sec-logs .log-f-exec');
     const r=window.__np.getRun(${JSON.stringify(runId)});
     return {detail:{hidden:d.hidden,text:d.querySelector('.lfe-text').textContent,id:d.dataset.executionId},
       filter:{node:r.logFilter.node,execution:r.logFilter.execution},
       nodeSelect:document.querySelector('#run-detail .rd-sec-logs .log-f-step').value,
       visible:[...document.querySelectorAll('#run-detail .rd-sec-logs .log .log-line')].length};})()`);
-  check('9b', 'an .xrow click narrows the log to `Label #ordinal` on the Logs tab bar',
+  check('9b', "the drawer's Open in Logs narrows the log to `Label #ordinal` on the Logs tab bar",
     chips.detail.hidden === false && chips.detail.text === 'Clarify #1' && chips.detail.id === 'x:n_clarify:1'
     && chips.nodeSelect === 'n_clarify'
     && chips.filter.execution === 'x:n_clarify:1' && chips.filter.node === 'n_clarify', chips);
