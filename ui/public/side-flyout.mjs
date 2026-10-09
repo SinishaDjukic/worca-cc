@@ -3,6 +3,10 @@
 // menu. Pure DOM: no app state and no look of its own — style.css owns how a popup
 // looks, this module owns where it goes, when it opens and closes, and the keyboard.
 //
+// A popup opens on a click, never on hover, and a second click on its trigger closes it. A close the
+// pointer makes (that second click, a click outside, a click on a route inside) lets go of focus, so
+// the trigger is not left focused; a close the keyboard makes hands focus back to the trigger.
+//
 // Every open popup of a document sits on one stack. Escape closes the newest one (a submenu
 // before the menu it hangs from) and stops there; opening a popup closes every open popup that
 // is not its parent; closing a menu closes its submenus first. A key typed in a popup stays in
@@ -68,30 +72,26 @@ export function placeFlyout(menu, trigger, { mode = 'side', parent = null, win =
   menu.style.top = `${top}px`;
 }
 
-/** One popup bound to one trigger. Opens on click (and on hover where `(hover: hover)` matches and hover:true),
- *  closes on: a second click (touch only), Escape (refocus trigger), a click outside (trigger, menu and
- *  inside(target) count as inside), focus leaving it (from the same three, or an open submenu, to anywhere
- *  else; not during a press on the popup), window resize, `closeOn` element scroll, and a click on any
- *  `[data-nav]` inside the menu.
+/** One popup bound to one trigger. Opens on a click (never on hover), closes on: a second click on the
+ *  trigger, Escape (refocus trigger), a click outside (trigger, menu and inside(target) count as inside),
+ *  focus leaving it (from the same three, or an open submenu, to anywhere else; not during a press on the
+ *  popup), window resize, `closeOn` element scroll, and a click on any `[data-nav]` inside the menu.
+ *  A pointer close (e.detail > 0) blurs the trigger or the item that held focus instead of refocusing the
+ *  trigger; a keyboard close (e.detail === 0, Escape) refocuses the trigger when focus was in the popup.
  *  ArrowDown/ArrowUp/Home/End move focus among visible `[role^="menuitem"]` items; no other key typed in the
  *  menu reaches the page (Escape, Tab and shortcuts with Ctrl, Meta or Alt do, but never with an arrow,
  *  Home, End, Page Up/Down, Delete, Backspace, Space or Enter).
  *  Keeps `aria-expanded` on the trigger in sync. Keyboard open (click with e.detail === 0, Enter/Space) focuses
- *  the first item (or `[aria-checked="true"]` when present). A keyboard click on an open popup closes it, and
- *  so does any click on the trigger of a popup the keyboard opened. */
+ *  the first item (or `[aria-checked="true"]` when present). */
 export function createFlyout({
   doc = globalThis.document, win = globalThis.window,
   trigger, menu,
   mode = 'side', parent = null,
-  hover = true, closeDelayMs = 180,
   closeOn = null,
   inside = () => false,
   onOpen = () => {}, onClose = () => {},
 } = {}) {
   const st = stackOf(doc);
-  const canHover = !!(hover && typeof win.matchMedia === 'function' && win.matchMedia('(hover: hover)').matches);
-  let timer = null;
-  let held = false;   // opened from the keyboard: the pointer crossing the trigger must not close it
   const entry = { menu, parent, trigger, close: (o) => close(o) };
 
   const isOpen = () => !menu.hidden;
@@ -101,8 +101,6 @@ export function createFlyout({
   const inSubmenu = (m, t) => st.list.some((x) => x.parent === m && (x.menu.contains(t) || inSubmenu(x.menu, t)));
 
   function open({ focus = false } = {}) {
-    clearTimeout(timer);
-    if (focus) held = true;
     if (!isOpen()) {
       const keep = new Set([entry]);
       for (let p = parent; p;) {
@@ -123,14 +121,15 @@ export function createFlyout({
     }
   }
 
-  function close({ refocus = false } = {}) {
-    clearTimeout(timer);
-    held = false;
-    for (const sub of st.list.filter((x) => x.parent === menu)) sub.close();
+  function close({ refocus = false, blur = false } = {}) {
+    for (const sub of st.list.filter((x) => x.parent === menu)) sub.close({ blur });
     const i = st.list.indexOf(entry);
     if (i >= 0) st.list.splice(i, 1);
     trigger.setAttribute('aria-expanded', 'false');
     if (!isOpen()) return;
+    // A pointer close lets go of focus: neither the trigger nor a hidden item keeps it.
+    const a = doc.activeElement;
+    if (blur && a && (trigger.contains(a) || menu.contains(a))) a.blur();
     // Focus inside a popup that hides would fall to <body>: hand it back to the trigger.
     const hadFocus = menu.contains(doc.activeElement);
     menu.hidden = true;
@@ -140,19 +139,12 @@ export function createFlyout({
 
   const toggle = () => (isOpen() ? close() : open());
   const reposition = () => { if (isOpen()) placeFlyout(menu, trigger, { mode, parent, win }); };
-  const closeLater = () => { clearTimeout(timer); if (!held) timer = setTimeout(() => close(), closeDelayMs); };
 
   trigger.addEventListener('click', (e) => {
     const byKey = e.detail === 0;                         // Enter / Space on a button
     if (!isOpen()) open({ focus: byKey });
-    else if (!canHover || byKey || held) close({ refocus: byKey });   // hover owns only a popup hover opened
+    else close(byKey ? { refocus: true } : { blur: true });
   });
-  if (canHover) {
-    trigger.addEventListener('mouseenter', () => open());
-    trigger.addEventListener('mouseleave', closeLater);
-    menu.addEventListener('mouseenter', () => clearTimeout(timer));
-    menu.addEventListener('mouseleave', closeLater);
-  }
   menu.addEventListener('keydown', (e) => {
     // A key typed in the popup is the popup's: no page-level handler may act on it too (the Workflow
     // Composer moves its selected node on the arrows, with or without a modifier, deletes it on Delete
@@ -176,9 +168,10 @@ export function createFlyout({
     if (!isOpen()) return;
     const t = e.target;
     if (!t || !t.isConnected) return;                     // re-rendered under the click: cannot tell
-    if (menu.contains(t)) { if (t.closest('[data-nav]')) close(); return; }
+    const how = e.detail === 0 ? {} : { blur: true };    // a pointer click lets go of focus
+    if (menu.contains(t)) { if (t.closest('[data-nav]')) close(how); return; }
     if (trigger.contains(t) || inside(t) || inSubmenu(menu, t)) return;
-    close();
+    close(how);
   });
   // Focus leaving the popup (Tab away, a shortcut opening a pane) closes it, so a popup never lingers
   // over the page and takes the Escape meant for where focus went. Only focus that LEAVES counts: it
@@ -188,18 +181,13 @@ export function createFlyout({
   // leaves it open. `focusin`, not `focusout`: a row re-rendered under focus inside must not close it.
   // The press is read on the window in the capture phase, before any document listener acts on it; a
   // right-click's context menu takes the mouseup on macOS and Linux, so `contextmenu` ends the press too.
-  // Focus the keyboard moves into the open popup (Tab) makes it the keyboard's, as a keyboard open does:
-  // the pointer drifting off its trigger no longer closes it under focus.
   let press = null;   // the target of the pointer press in progress
-  let keyed = false;  // the last input was a key, not a pointer press
-  win.addEventListener('pointerdown', (e) => { press = e.target; keyed = false; }, true);
+  win.addEventListener('pointerdown', (e) => { press = e.target; }, true);
   win.addEventListener('pointerup', () => { press = null; }, true);
   win.addEventListener('pointercancel', () => { press = null; }, true);
   win.addEventListener('contextmenu', () => { press = null; }, true);
-  win.addEventListener('keydown', () => { keyed = true; }, true);
   const ours = (n) => !!n && (menu.contains(n) || trigger.contains(n) || inside(n) || inSubmenu(menu, n));
   doc.addEventListener('focusin', (e) => {
-    if (isOpen() && keyed && menu.contains(e.target)) { held = true; clearTimeout(timer); }
     if (!isOpen() || ours(e.target) || !ours(e.relatedTarget) || ours(press)) return;
     close();
   });

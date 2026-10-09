@@ -1,6 +1,6 @@
 // test/side-flyout.test.mjs — the sidebar popup controller (ui/public/side-flyout.mjs): placement and
-// clamping (rects stubbed: jsdom has no layout), the open/close rules, hover with its close delay (fake
-// timers), Escape with refocus, outside clicks, scroll and resize, [data-nav] clicks, the arrow keys,
+// clamping (rects stubbed: jsdom has no layout), the open/close rules (a click opens, never hover; a
+// pointer close lets go of focus), Escape with refocus, outside clicks, scroll and resize, [data-nav] clicks, the arrow keys,
 // aria-expanded, and the one stack that orders nested and competing popups.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,11 +24,11 @@ const PAGE = `<!doctype html><body>
   <button type="button" id="out">Elsewhere</button>
   <div id="extra">Counts as inside</div></body>`;
 
-/** `hoverDevice`: what `(hover: hover)` answers (a mouse) — jsdom has no matchMedia of its own. */
-function setup({ hoverDevice = false, ...opts } = {}) {
+/** `mouse`: `(hover: hover)` matches, as on a desktop — jsdom has no matchMedia of its own. */
+function setup({ mouse = false, ...opts } = {}) {
   const { window } = new JSDOM(PAGE);
   const doc = window.document;
-  window.matchMedia = (q) => ({ media: q, matches: hoverDevice && q === '(hover: hover)', addEventListener() {}, removeEventListener() {} });
+  if (mouse) window.matchMedia = (q) => ({ media: q, matches: true, addEventListener() {}, removeEventListener() {} });
   const $ = (id) => doc.getElementById(id);
   const calls = [];
   const fly = createFlyout({ doc, win: window, trigger: $('trig'), menu: $('menu'), closeOn: $('scroll'),
@@ -108,7 +108,7 @@ test('placeFlyout: side / up / beside, each clamped to the viewport; un-hides th
   ]);
 });
 
-test('createFlyout: a touch click opens, a second closes; aria-expanded and the hooks follow', () => {
+test('createFlyout: a click opens, a second closes; aria-expanded and the hooks follow', () => {
   const { $, fly, calls, click } = setup();
   assert.equal(fly.isOpen(), false);
   click($('trig'));
@@ -132,38 +132,88 @@ test('createFlyout: a keyboard open focuses the first visible item, or the check
   click($('trig'), 0);
   assert.equal($('menu').hidden, true);
   assert.equal(doc.activeElement, $('trig'), 'focus goes back to the trigger');
-  const sub = setup({ hoverDevice: true });
+  const sub = setup();
   const fly2 = createFlyout({ doc: sub.doc, win: sub.window, trigger: sub.$('trig2'), menu: sub.$('sub') });
   fly2.open({ focus: true });
   assert.equal(sub.doc.activeElement, sub.$('s2'), 'the [aria-checked="true"] item');
 });
 
-test('createFlyout: hover opens at once and closes 180ms after the pointer leaves, unless it reaches the menu; a mouse click on the open trigger keeps it open', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { window, $, fly, click } = setup({ hoverDevice: true });
-  const enter = (el) => el.dispatchEvent(new window.MouseEvent('mouseenter'));
-  const leave = (el) => el.dispatchEvent(new window.MouseEvent('mouseleave'));
-  enter($('trig'));
-  assert.equal(fly.isOpen(), true);
+test('createFlyout: a mouse passing over the trigger or the menu never opens or closes it; only a click does', () => {
+  const { window, $, fly, click } = setup({ mouse: true });
+  const over = (el, type) => el.dispatchEvent(new window.MouseEvent(type, { bubbles: type === 'mouseover' || type === 'mouseout' }));
+  over($('trig'), 'mouseenter');
+  over($('trig'), 'mouseover');
+  assert.equal(fly.isOpen(), false, 'hover does not open it');
   click($('trig'));
-  assert.equal(fly.isOpen(), true, 'with a mouse, hover owns it: the click does not close');
-  leave($('trig'));
-  t.mock.timers.tick(179);
-  assert.equal(fly.isOpen(), true, 'still open just before the delay');
-  enter($('menu'));
-  t.mock.timers.tick(500);
-  assert.equal(fly.isOpen(), true, 'reaching the menu cancels the close');
-  leave($('menu'));
-  t.mock.timers.tick(180);
-  assert.equal(fly.isOpen(), false);
+  assert.equal(fly.isOpen(), true, 'a click does');
+  over($('trig'), 'mouseleave');
+  over($('menu'), 'mouseenter');
+  over($('menu'), 'mouseleave');
+  assert.equal(fly.isOpen(), true, 'the pointer leaving does not close it');
 });
 
-test('createFlyout: hover:false, or a touch screen, never opens on hover', () => {
-  for (const [hoverDevice, hover] of [[true, false], [false, true]]) {
-    const { window, $, fly } = setup({ hoverDevice, hover });
-    $('trig').dispatchEvent(new window.MouseEvent('mouseenter'));
-    assert.equal(fly.isOpen(), false, `hoverDevice ${hoverDevice}, hover ${hover}`);
-  }
+test('createFlyout: a pointer close lets go of focus; the keyboard\'s hands it back to the trigger', async () => {
+  await checkRows([
+    { name: 'a second click on the trigger closes it and leaves the trigger unfocused', run: () => {
+      const { doc, $, fly, click } = setup();
+      $('trig').focus();                                     // the mouse press focuses the button (Chrome)
+      click($('trig'));
+      assert.equal(fly.isOpen(), true);
+      click($('trig'));
+      assert.equal(fly.isOpen(), false);
+      assert.equal($('trig').getAttribute('aria-expanded'), 'false');
+      assert.equal(doc.activeElement, doc.body, 'not left on the trigger');
+    } },
+    { name: 'a click outside closes it; focus stays on neither the trigger nor a hidden item', run: () => {
+      const { doc, $, fly, click } = setup();
+      click($('trig'), 0);
+      assert.equal(doc.activeElement, $('a'));
+      click($('extra'));
+      assert.equal(fly.isOpen(), false);
+      assert.equal(doc.activeElement, doc.body);
+    } },
+    { name: 'a route picked with the pointer closes it without pulling focus to the trigger', run: () => {
+      const { doc, $, fly, click } = setup();
+      click($('trig'));
+      $('b').focus();                                        // the press focuses the item
+      click($('b'));
+      assert.equal(fly.isOpen(), false);
+      assert.equal(doc.activeElement, doc.body);
+    } },
+    { name: 'focus that is somewhere else is left alone', run: () => {
+      const { doc, $, fly, click } = setup();
+      click($('trig'));
+      $('out').focus();
+      click($('extra'));
+      assert.equal(fly.isOpen(), false);
+      assert.equal(doc.activeElement, $('out'));
+    } },
+    { name: 'a keyboard click on the open trigger closes it and refocuses the trigger', run: () => {
+      const { doc, $, fly, click } = setup();
+      click($('trig'), 0);
+      click($('trig'), 0);
+      assert.equal(fly.isOpen(), false);
+      assert.equal(doc.activeElement, $('trig'));
+    } },
+    { name: 'a submenu: a second click on its row closes it and blurs the row, the menu stays; a click outside closes both', run: () => {
+      const { window, doc, $, click } = setup();
+      const menu = createFlyout({ doc, win: window, trigger: $('trig2'), menu: $('menu2') });
+      const sub = createFlyout({ doc, win: window, trigger: $('m2a'), menu: $('sub'), mode: 'beside', parent: $('menu2') });
+      click($('trig2'));
+      $('m2a').focus();
+      click($('m2a'));
+      assert.equal(sub.isOpen(), true);
+      click($('m2a'));
+      assert.equal(sub.isOpen(), false);
+      assert.equal(menu.isOpen(), true, 'the menu it hangs from stays');
+      assert.equal(doc.activeElement, doc.body, 'the row is not left focused');
+      click($('m2a'));
+      $('s1').focus();
+      click($('out'));
+      assert.deepEqual([menu.isOpen(), sub.isOpen()], [false, false]);
+      assert.equal(doc.activeElement, doc.body);
+    } },
+  ]);
 });
 
 test('createFlyout: Escape closes the open popup and refocuses its trigger; with nothing open it is not consumed', () => {
@@ -180,7 +230,7 @@ test('createFlyout: Escape closes the open popup and refocuses its trigger; with
 test('createFlyout: what closes it and what does not', async () => {
   await checkRows([
     { name: 'a click outside closes; the trigger, the menu body and inside() do not', run: () => {
-      const { $, fly, click } = setup({ hoverDevice: true, inside: (t) => t.id === 'extra' });
+      const { $, fly, click } = setup({ inside: (t) => t.id === 'extra' });
       fly.open();
       click($('extra'));
       assert.equal(fly.isOpen(), true, 'inside() counts as inside');
@@ -299,30 +349,6 @@ test('createFlyout: Escape with focus outside the popup closes it and leaves foc
   assert.equal(doc.activeElement, $('trig'));
 });
 
-test('createFlyout: on a mouse device a keyboard-opened popup stays while the pointer crosses its trigger; a hover open never moves focus and closes 180ms after the pointer leaves the trigger', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { window, doc, $, fly, click } = setup({ hoverDevice: true });
-  const enter = (el) => el.dispatchEvent(new window.MouseEvent('mouseenter'));
-  const leave = (el) => el.dispatchEvent(new window.MouseEvent('mouseleave'));
-  click($('trig'), 0);
-  assert.equal(doc.activeElement, $('a'));
-  enter($('trig'));
-  leave($('trig'));
-  t.mock.timers.tick(500);
-  assert.equal(fly.isOpen(), true, 'held: the keyboard opened it');
-  assert.equal(doc.activeElement, $('a'));
-  fly.close();
-  $('out').focus();
-  enter($('trig'));
-  assert.equal(fly.isOpen(), true);
-  assert.equal(doc.activeElement, $('out'), 'a hover open leaves focus alone');
-  leave($('trig'));
-  t.mock.timers.tick(179);
-  assert.equal(fly.isOpen(), true);
-  t.mock.timers.tick(1);
-  assert.equal(fly.isOpen(), false, 'not held any more: a hover open closes on hover-out');
-});
-
 test('createFlyout: a pointer click opens without moving focus; reposition() re-places an open popup and leaves a closed one hidden', () => {
   const { window, doc, $, fly, click } = setup();
   viewport(window, 1280, 800);
@@ -435,13 +461,13 @@ test('createFlyout: a press on the popup keeps it open while another component m
   assert.equal(fly.isOpen(), false, 'a cancelled press is over too');
 });
 
-test('createFlyout: on a mouse device a mouse click on its own trigger closes a keyboard-opened popup', () => {
-  const { doc, $, fly, click } = setup({ hoverDevice: true });
+test('createFlyout: a mouse click on its own trigger closes a keyboard-opened popup and lets go of focus', () => {
+  const { doc, $, fly, click } = setup();
   click($('trig'), 0);
   assert.equal(fly.isOpen(), true);
   click($('trig'));
-  assert.equal(fly.isOpen(), false, 'held against the pointer leaving, not against a click');
-  assert.equal(doc.activeElement, $('trig'), 'focus was in the popup: back to the trigger');
+  assert.equal(fly.isOpen(), false);
+  assert.equal(doc.activeElement, doc.body, 'a pointer close: focus is not handed to the trigger');
 });
 
 test('createFlyout: a right-click on the popup (its context menu takes the mouseup) does not leave a press in progress', () => {
@@ -452,41 +478,4 @@ test('createFlyout: a right-click on the popup (its context menu takes the mouse
   $('a').focus();
   $('out').focus();
   assert.equal(fly.isOpen(), false, 'focus leaving after a right-click still closes it');
-});
-
-test('createFlyout: Tab into a hover-opened popup holds it: the pointer drifting off does not close it under focus; keys used elsewhere or a press that focuses an item leave hover in charge', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { window, doc, $, fly, key } = setup({ hoverDevice: true });
-  const enter = (el) => el.dispatchEvent(new window.MouseEvent('mouseenter'));
-  const leave = (el) => el.dispatchEvent(new window.MouseEvent('mouseleave'));
-  $('trig').focus();
-  enter($('trig'));
-  leave($('trig'));                                          // the pointer drifts off…
-  t.mock.timers.tick(100);
-  key($('trig'), 'Tab');                                     // …while Tab moves focus into the popup
-  $('a').focus();                                            // (jsdom does not move focus on Tab)
-  t.mock.timers.tick(500);
-  assert.equal(fly.isOpen(), true, 'the keyboard owns it now: the hover close is off');
-  assert.equal(doc.activeElement, $('a'), 'focus was not pulled back to the trigger');
-  enter($('menu'));
-  leave($('menu'));                                          // the pointer crosses the card and leaves again
-  t.mock.timers.tick(500);
-  assert.equal(fly.isOpen(), true, 'still the keyboard\'s');
-  fly.close();
-  $('out').focus();                                          // the keyboard works elsewhere…
-  enter($('trig'));                                          // …while the mouse opens the popup
-  key($('out'), 'Tab');
-  $('extra').tabIndex = 0;
-  $('extra').focus();                                        // focus moves on, outside the popup
-  assert.equal(fly.isOpen(), true, 'focus never was in the popup');
-  leave($('trig'));
-  t.mock.timers.tick(180);
-  assert.equal(fly.isOpen(), false, 'keys used elsewhere do not hold it');
-  enter($('trig'));
-  $('b').dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true }));
-  $('b').focus();                                            // a mouse press focuses the item (Chrome)
-  $('b').dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
-  leave($('menu'));
-  t.mock.timers.tick(180);
-  assert.equal(fly.isOpen(), false, 'a pointer user: hover still closes it');
 });

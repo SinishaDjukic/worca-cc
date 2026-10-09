@@ -1132,7 +1132,7 @@ function repaintPeople() {
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', hover: false });
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up' });
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });

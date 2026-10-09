@@ -121,7 +121,7 @@ test('stylesheet: the rail keeps the avatar, ring and dot; the popups are fixed;
 test('a mouse passing over the corner does not open the menu: it opens on a click', async () => {
   const { window, $, click } = await boot({ hover: true });
   $('side-acct').dispatchEvent(new window.MouseEvent('mouseenter'));
-  assert.equal($('acct-menu').hidden, true, 'hover: false — the menu is never a hover popup');
+  assert.equal($('acct-menu').hidden, true, 'no popup opens on hover');
   click($('side-acct'));
   assert.equal($('acct-menu').hidden, false, 'a click opens it');
 });
