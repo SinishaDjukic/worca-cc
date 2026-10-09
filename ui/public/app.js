@@ -133,7 +133,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -15993,12 +15993,21 @@ function repaintProviders() {
 /** The providers card's home: its own tab's list. */
 function providerRoot() { return el.providersList; }
 
-function setProviderMsg(name, text, err) {
+/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it. */
+function providerAlert(name, title, detail) {
+  const row = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"]`);
+  if (row) cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+}
+
+/** The card's grey guidance line; an error goes to providerAlert under `title` instead. '' clears both. */
+function setProviderMsg(name, text, err, title = 'Something went wrong') {
   const root = providerRoot();
   const row = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-msg`);
+  if (err) { providerAlert(name, title, text); if (row) row.textContent = ''; return; }
+  if (!text) providerAlert(name, null);
   if (!row) return;
   row.textContent = text || '';
-  row.className = `hint mv-pv-msg${err ? ' err' : ''}`;
+  row.className = 'hint mv-pv-msg';
 }
 
 async function reloadProviders() {
@@ -16020,7 +16029,7 @@ async function ensureCopilotTerms({ force = false } = {}) {
   if (!ok) return false;
   const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
   const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true); return false; }
+  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
   mvState.providers = data;
   return true;
 }
@@ -16033,7 +16042,7 @@ async function copilotSignInFlow() {
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
-    if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true);
+    if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
     mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
     repaintProviders();
     const poll = async () => {
@@ -16064,7 +16073,7 @@ async function copilotSignInFlow() {
     };
     copilotPollTimer = setTimeout(poll, Math.max(3, Number(flow.interval) || 5) * 1000);
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Sign-in did not start');
   }
 }
 
@@ -16074,13 +16083,13 @@ async function copilotSignOutFlow() {
   try {
     const res = await fetch('/api/providers/copilot/logout', { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
+    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Not signed out');
     mvState.providers = data;
     mvState.copilotModels = [];
     setTabMsg('Signed out of GitHub Copilot.', 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Not signed out');
   }
 }
 
@@ -16099,22 +16108,13 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true); return; }
+  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
     const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
-}
-
-/** The Test-connection verdict, in the pill beside the button (and the row's hint line with it). */
-function setProviderResult(name, state, text) {
-  const root = providerRoot();
-  const pill = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
-  if (!pill) return;
-  pill.className = `mv-pv-result${state ? ` is-on is-${state}` : ''}`;
-  pill.textContent = text || '';
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -16130,38 +16130,34 @@ async function clearSpeechCacheFlow(btn) {
   try {
     const res = await fetch('/api/speech/cache', { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) { setProviderMsg('speech', data.error || `HTTP ${res.status}`, true); btn.disabled = false; return; }
+    if (!res.ok) { setProviderMsg('speech', data.error || `HTTP ${res.status}`, true, 'Speech models not removed'); btn.disabled = false; return; }
     mvState.providers = data.providers;
     repaintProviders();
-    setProviderMsg('speech', `Removed ${formatSpeechBytes(data.removed)} of speech models.`);
+    notify({ tone: 'ok', title: 'Speech models removed', detail: `Freed ${formatSpeechBytes(data.removed)}.` });
   } catch (e) {
-    setProviderMsg('speech', e.message, true);
+    setProviderMsg('speech', `Worca did not answer (${e.message}).`, true, 'Speech models not removed');
     btn.disabled = false;
   }
 }
 
-/** The Speech row's per-service Test (docs/speech.md): tests what is on screen, like testProviderFlow. */
+/** The Speech row's per-service Test (docs/speech.md): tests what is on screen, like testProviderFlow.
+ *  Testing… → Works on the button, with what answered in a toast; a failure is the card's alert (#555). */
 async function testSpeechFlow(btn) {
   const kind = btn.dataset.kind;
   const typed = (collectSpeechRow(providerRoot()) || {})[kind] || {};
-  const root = providerRoot();
-  const pill = root && root.querySelector(`.mv-sp-result[data-kind="${kind}"]`);
-  const show = (state, text) => { if (pill) { pill.className = `mv-pv-result mv-sp-result${state ? ` is-on is-${state}` : ''}`; pill.textContent = text || ''; } };
   const what = kind === 'stt' ? 'Speech-to-text' : 'Text-to-speech';
-  btn.disabled = true;
-  show('busy', 'Testing…');
   setProviderMsg('speech', '');
-  try {
-    const res = await fetch('/api/providers/speech/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, ...typed }) });
-    const data = await safeJson(res);
-    if (data.ok) { show('ok', 'Reachable'); setProviderMsg('speech', `${what}: ${data.detail || 'answered'}.`); }
-    else { show('err', 'Failed'); setProviderMsg('speech', `${what}: ${data.message || data.error || `HTTP ${res.status}`}`, true); }
-  } catch (e) {
-    show('err', 'Failed');
-    setProviderMsg('speech', e.message, true);
-  } finally {
-    btn.disabled = false;
-  }
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/speech/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, ...typed }) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return { ok: true, detail: data.detail };
+      return { ok: false, error: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
+  else setProviderMsg('speech', r.error, true, `${what} test failed`);
 }
 
 async function testProviderFlow(btn) {
@@ -16169,38 +16165,31 @@ async function testProviderFlow(btn) {
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
   const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
-  const pill = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
-  if (pill) pill.title = '';
-  setProviderResult(name, 'busy', 'Testing…');
+  const label = PROVIDER_LABELS[name] || name;
   setProviderMsg(name, '');
-  // #555: the button shows Testing… → "Connected"; the pill keeps the verdict; the line only errors.
-  await withButton(btn, async () => {
+  // #555: the button shows Testing… → Connected, the toast says what answered; a failure is the card's alert.
+  const r = await withButton(btn, async () => {
     try {
       const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...(typed.baseUrl ? { baseUrl: typed.baseUrl } : {}), ...(typed.apiKey !== undefined ? { apiKey: typed.apiKey } : {}) }),
       });
-      const data = await safeJson(res);
+      const data = (await safeJson(res)) || {};
       const where = typed.baseUrl || (mvState.providers && mvState.providers[name] && mvState.providers[name].baseUrl) || '';
-      const unsaved = hasUnsavedProviderEdits(name, typed);
       if (data.ok) {
-        setProviderResult(name, 'ok', `Reachable${data.models != null ? ` — ${data.models} model${data.models === 1 ? '' : 's'}` : ''}`);
+        const models = data.models != null ? ` with ${data.models} model${data.models === 1 ? '' : 's'}` : '';
         // `detail` is what the endpoint says about the key itself — OpenRouter's credit, free-model
-        // allowance and rate limit (provider-ops formatOpenRouterKeyInfo); never the key. It rides on
-        // the pill's tooltip now that the row's line carries only errors.
-        if (pill) pill.title = `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${data.detail ? ` Key: ${data.detail}.` : ''}${unsaved ? ' Press Save to keep these settings.' : ''}`;
-        return { ok: true };
+        // allowance and rate limit (provider-ops formatOpenRouterKeyInfo); never the key.
+        const detail = `${where || label} answered${models}.${data.detail ? ` Key: ${data.detail}.` : ''}${hasUnsavedProviderEdits(name, typed) ? ' Press Save to keep these settings.' : ''}`;
+        return { ok: true, detail };
       }
-      const why = data.message || data.error || `HTTP ${res.status}`;
-      setProviderResult(name, 'err', 'Failed');
-      setProviderMsg(name, `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}`, true);
-      return { ok: false };
-    } catch (e) {
-      setProviderResult(name, 'err', 'Failed');
-      setProviderMsg(name, e.message, true);
-      return { ok: false };
-    }
+      const why = data.message || data.error || `The server answered ${res.status}.`;
+      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}` };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
   }, { busy: 'Testing…', done: 'Connected' });
+  if (r.skipped) return;
+  if (r.ok) notify({ tone: 'ok', key: `provider-test-${name}`, title: `${label} connected`, detail: r.detail });
+  else setProviderMsg(name, r.error, true, `${label}: connection failed`);
 }
 
 /** Whether the row carries edits the user has not saved — the test used them, the runs will not. */
@@ -16228,8 +16217,9 @@ async function refreshCopilotQuotaFlow(btn) {
     const data = await safeJson(res);
     if (res.ok) { mvState.providers = data; repaintProviders(); }
     if (res.ok && !data.copilot?.quota) setProviderMsg('copilot', 'GitHub reported no premium-request quota for this account.');
+    else if (!res.ok) setProviderMsg('copilot', data?.error || `The server answered ${res.status}.`, true, 'Usage not refreshed');
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Usage not refreshed');
   } finally {
     btn.disabled = false;
   }

@@ -3281,14 +3281,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-pv-main .hint{margin:0;}
 .mv-pv-ctl{display:grid;gap:10px;align-content:start;}
 .mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
-/* Test connection's verdict, beside the button (bridge-view.mjs renderProvidersCard). Empty until
-   a test runs, so the row keeps its rhythm. */
-.mv-pv-result{margin-right:auto;display:none;align-items:center;gap:6px;min-width:0;padding:5px 10px;border-radius:999px;
-  font:600 12px var(--sans);background:var(--field);color:var(--ink-2);overflow-wrap:anywhere;}
-.mv-pv-result.is-on{display:inline-flex;}
-.mv-pv-result.is-ok{background:var(--green-bg);color:var(--green-ink);}
-.mv-pv-result.is-err{background:var(--red-bg);color:var(--red-ink);}
-.mv-pv-result.is-busy{color:var(--ink-3);}
 
 /* Import dialog (app.js openImportDialog; model-bridge-design.md §8.4). The sheet it hosts is the
    same node the page used to show, so its card chrome is dropped here rather than in two renderers. */

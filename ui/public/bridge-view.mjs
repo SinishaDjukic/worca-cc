@@ -284,9 +284,6 @@ function renderSpeechRow(doc, sp) {
     }
     for (const [field, label, placeholder] of SPEECH_FIELDS[kind]) server.appendChild(speechInput(doc, kind, field, label, placeholder, s));
     const btns = h(doc, 'div', 'mv-pv-btns');
-    const pill = h(doc, 'span', 'mv-pv-result mv-sp-result', '');
-    pill.dataset.kind = kind;
-    btns.appendChild(pill);
     const test = h(doc, 'button', 'btn-ghost mv-sp-test', kind === 'stt' ? 'Test speech-to-text' : 'Test text-to-speech');
     test.type = 'button';
     test.dataset.kind = kind;
@@ -297,6 +294,7 @@ function renderSpeechRow(doc, sp) {
   }
   row.appendChild(ctl);
   const save = h(doc, 'div', 'mv-pv-btns');
+  save.dataset.cardActions = '';
   const b = h(doc, 'button', 'btn-go mv-sp-save', 'Save');
   b.type = 'button';
   save.appendChild(b);
@@ -385,6 +383,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   cp.appendChild(cpCtl);
 
   const cpBtns = h(doc, 'div', 'mv-pv-btns');
+  cpBtns.dataset.cardActions = '';
   const imp = h(doc, 'button', 'btn-ghost mv-cp-fetch-models', 'Import models…');
   // With the broker, the import runs with the viewer's own Copilot sign-in (on the key page).
   imp.type = 'button'; imp.disabled = !c.connected && !brokered;
@@ -458,10 +457,9 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', k.maxConcurrent, { provider: name }));
     row.appendChild(ctl);
 
+    // A failure shows as a card alert just above this row; a success on the button itself (#555).
     const btns = h(doc, 'div', 'mv-pv-btns');
-    // The verdict belongs NEXT TO the button that asks for it: the hint line under the description
-    // is in the other column, and a one-line grey answer there reads as "nothing happened".
-    btns.appendChild(h(doc, 'span', 'mv-pv-result', ''));
+    btns.dataset.cardActions = '';
     if (name === 'openai') {
       // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
       const browse = h(doc, 'button', 'btn-ghost mv-pv-browse', 'Import models…');
