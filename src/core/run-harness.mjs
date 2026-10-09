@@ -61,7 +61,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
-import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
+import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { readGuardrailSet } from './guardrail-store.mjs';
@@ -89,7 +89,7 @@ import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
 import { cachedFreeDailyCounts } from './openrouter-free.mjs';
 import { withBillTo, currentBillTo } from './billing.mjs';
-import { brokerEnabled, brokerInfo, personSlots } from './broker-client.mjs';
+import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots } from './broker-client.mjs';
 import { mockEnabled } from './claude-runner.mjs';
 import { modelSlot, manifestModels, manifestNeedsModel, missingCredentials, describeMissing } from './broker-routing.mjs';
 import { syncPluginSlots } from './plugin-broker-slots.mjs';
@@ -136,7 +136,8 @@ import { writeNightDecision, countNightDecisions, nightCounts, nightGateCycles, 
 import { NIGHT_ACTOR, NIGHT_TOGGLES, nightNeverDecides } from './night/config.mjs';
 import { nightModeToggleFor, nightModeHereSinceFor, personAwayStatus, awayPerPerson, awayPersonKey } from './settings.mjs';
 import { MCP_TOOL_NAME_400_RE, MCP_TOOL_NAME_TOO_LONG } from '../shared/mcp-tool-name.mjs';
-import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
+import { usageLimitSwitches, engineList, engineLabel } from '../shared/engine-switch.mjs';
+import { effortOn, runsOn, connectionLabel } from '../shared/connections.mjs';
 import { readyEnginesCached } from './engines/ready-cache.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
@@ -760,6 +761,10 @@ export class RunHarness extends EventEmitter {
       // before anything is created.
       engine: selectRunEngine(this.opts.claude?.engine || savedEngine),
     };
+    // Resume with another model: every remaining step runs on this.claude.model (a usage limit spent on the provider
+    // the run's steps were on). Rides the resume point while the model does. Kept off this.claude (spawn options).
+    this._modelForAll = this.opts.claude?.modelForAll === true
+      || (savedClaude?.modelForAll === true && !this.opts.claude?.model && this.claude.engine === savedEngine);
     // Kept off this.claude, which is spread into spawn options.
     this._allowUnguardedEngine = !!this.opts.claude?.allowUnguardedEngine
       || (savedClaude?.allowUnguardedEngine === true && this.claude.engine === savedEngine);
@@ -781,13 +786,15 @@ export class RunHarness extends EventEmitter {
     if (savedClaude && !this.claude.model && typeof savedClaude.model === 'string' && savedClaude.model) {
       const saved = savedClaude.model;
       const engine = this.claude.engine;
-      const owner = engineOfModel(saved);
+      // A switch keeps a model the target harness reaches too (an endpoint model on Claude Code and Codex).
+      const runs = modelRunsOn(saved, engine);
+      const owner = runs === false ? engineOfModel(saved) : runs ? engine : null;
       // Copilot owns no catalog model: it keeps an id of its own naming (_engineModel) while the run stays on it.
       const keep = engine === 'copilot'
         ? (savedEngine === 'copilot' && !!this._engineModel(saved))
-        : owner === engine
+        : runs === true
           ? (engine !== 'claude' || catalogHasModel(saved, { engine: 'claude' }))
-          : (owner === null && engine !== 'claude' && engine === savedEngine);
+          : (runs === null && engine !== 'claude' && engine === savedEngine);
       if (keep) {
         this.claude.model = saved;
         if (!this.claude.effort && typeof savedClaude.effort === 'string' && savedClaude.effort) this.claude.effort = savedClaude.effort;
@@ -1231,11 +1238,15 @@ export class RunHarness extends EventEmitter {
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
     }
     if (this.pauseRequested || this.state.status === 'stopped' || this.abort.signal.aborted) return false;
-    // The engine whose own session/usage limit this is: an agent execution hit it, and it is
-    // not a spent free-model allowance (that is the provider's, not the engine's). Every pause
-    // surface offers to continue on the other engine from it (engine-switch.mjs).
-    const limitEngine = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? (this.claude.engine || 'claude') : null;
-    this._setPauseReason(reason, text, limitEngine);
+    // Whose limit this is follows from the step's connection (src/shared/connections.mjs). On the harness's own
+    // sign-in it is the subscription's — another harness has its own allowance, so every pause surface offers to
+    // continue there (engine-switch.mjs). On a provider or a custom endpoint it is that provider's (a spent
+    // OpenRouter free allowance, a gateway's quota): another harness on the same provider would hit it too, so
+    // none is offered; the pause names the provider, and a resume can pick another model.
+    const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
+    const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
+    const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
+    this._setPauseReason(reason, limitText, limitEngine);
     let audit;
     if (reason === REASON.ERROR) {
       audit = ctx
@@ -1244,7 +1255,7 @@ export class RunHarness extends EventEmitter {
     } else if (reason === REASON.USAGE_LIMIT) {
       this._log(where, 'warn', `${describePauseReason(reason)} — pausing for manual resume: ${text}`, meta);
       const others = usageLimitSwitches({ reason, limitEngine }, readyEnginesCached());
-      audit = `Pipeline **paused**: session/usage limit on ${where} — ${text}. Resume after the reset${others.length ? `, or continue now on ${engineList(others)}` : ''}.`;
+      audit = `Pipeline **paused**: session/usage limit on ${where} — ${limitText}. Resume after the reset${others.length ? `, or continue now on ${engineList(others)}` : ''}, or resume with another model.`;
     } else if (reason === REASON.RECOVERABLE) {
       this._log(where, 'warn', `recoverable ${cls || 'error'} error — pausing for manual resume: ${line}${hint ? ` — ${hint}` : ''}`,
         { ...meta, ...(err?.stream ? { stream: err.stream } : {}) });
@@ -2562,7 +2573,13 @@ export class RunHarness extends EventEmitter {
    */
   _engineGate(nodes = Object.values(this.resolved?.nodeCtx || {})) {
     const name = this.claude.engine || 'claude';
-    if (name === 'claude') return [];
+    if (name === 'claude') {
+      // The run's own model (--model / the start body) naming another engine's model: refused, never dropped —
+      // dropping it would run every node on the CLI default model, often the most expensive one.
+      const why = foreignRunModel(this.claude.model, name, this.projectDir);
+      if (why) throw engineRefusal(name, why);
+      return [];
+    }
     const projectRules = this._engineProjectRules ?? null;
     const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId, projectRules, nodes });
     if (why) throw engineRefusal(name, why);
@@ -2597,17 +2614,17 @@ export class RunHarness extends EventEmitter {
       if (pSkip.length) lines.push(`engine ${name}: the project's .claude/settings.json deny rules NOT enforced on ${name} (--allow-unguarded-engine): ${ruleNames(pSkip)}`);
       if (hostGuardEnabled()) lines.push(`engine ${name}: the host-guard hook does not run on ${name} (its preamble still does)`);
     }
-    for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'claude')) {
+    // A node model this harness cannot run (its connection reaches other harnesses only) is dropped, and said so.
+    for (const m of this._engineGateModels(nodes)) {
+      const harnesses = enginesOfModel(m, { projectDir: this.projectDir });
+      if (!harnesses || harnesses.includes(name)) continue;
       if (this._engineModel(m)) continue;   // copilot runs a Claude id the catalog does not hold (its own naming) as named
+      const what = `model "${m}" runs on ${harnesses.map(engineLabel).join(' or ')}`;
       lines.push(name === 'codex'
-        ? `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
-        : `engine ${name}: model "${m}" is a Claude model — the nodes that name it run on ${name}'s default model, so their cost stays unknown`);
-    }
-    // Copilot owns no catalog model: a Codex catalog model is dropped there too.
-    if (name === 'copilot') {
-      for (const m of this._engineGateModels(nodes).filter((id) => engineOfModel(id, { projectDir: this.projectDir }) === 'codex')) {
-        lines.push(`engine ${name}: model "${m}" is a Codex model — the nodes that name it run on ${name}'s default model`);
-      }
+        ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, ${CODEX_DEFAULT_MODEL}`
+        : harnesses.includes('claude')
+          ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
+          : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
@@ -2624,9 +2641,8 @@ export class RunHarness extends EventEmitter {
     const caps = getEngine(name).capabilities;
     // The credential broker's promise is that worca holds no model credential; this engine
     // signs in with its own, which the broker can neither bill nor revoke.
-    if (brokerEnabled()) {
-      return `the credential broker is on, and ${name} signs in with its own credentials, which the broker cannot bill or revoke`;
-    }
+    const brokerRefusal = brokerEngineRefusal(name);
+    if (brokerRefusal) return brokerRefusal;
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
       return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them`;
     }
@@ -2660,7 +2676,7 @@ export class RunHarness extends EventEmitter {
     // only a routed model this engine itself owns is refused — except a Codex model on its own
     // OpenAI-compatible endpoint, which codex connects to itself (engines/codex-endpoint.mjs).
     for (const m of this._engineGateModels(nodes)) {
-      if (name === 'codex' && hasCodexEndpoint(m)) continue;
+      if (modelRunsOn(m, name, { projectDir: this.projectDir }) !== false) continue;   // its connection reaches this harness
       if ((modelHasBaseUrlRouting(m) || bridgedModelInfo(m)) && engineOfModel(m, { projectDir: this.projectDir }) === name) {
         return `model "${m}" is routed to a custom endpoint for Claude Code and cannot run on ${name}`;
       }
@@ -2935,9 +2951,23 @@ export class RunHarness extends EventEmitter {
     return rules || undefined;
   }
 
+  /** The connection of the model a node's step ran on (its own, else the run's; a step with neither is on the
+   *  harness's own sign-in). Never throws. */
+  _limitConnection(nc) {
+    const engine = this.claude.engine || 'claude';
+    let model = null;
+    try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
+    return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
+  }
+
   _nodeModelPair(nc) {
+    if (this._modelForAll) {
+      const all = this._engineModel(this.claude.model);
+      if (all) return { model: all, effort: this.claude.effort ? (effortOn(this.claude.effort, this.claude.engine || 'claude') || undefined) : undefined };
+    }
     const own = this._engineModel(nc?.model);
-    if (own) return { model: own, effort: nc.effort };
+    // A model on two harnesses keeps its own engine's efforts; this harness takes the nearest one (effortOn).
+    if (own) return { model: own, effort: nc.effort ? (effortOn(nc.effort, this.claude.engine || 'claude') || undefined) : nc.effort };
     return { model: this._engineModel(this.claude.model), effort: nc?.model ? undefined : nc?.effort };
   }
 
@@ -5484,7 +5514,7 @@ export class RunHarness extends EventEmitter {
     // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
     const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
     const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
-      { models: models.filter((m) => m && (m.engine || 'claude') === engine) });
+      { models: models.filter((m) => m && runsOn(m, engine)) });
     if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;

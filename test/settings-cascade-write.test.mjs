@@ -66,7 +66,7 @@ test('assertSlotModels: a slot takes only its engine\'s catalog models and their
   await assertSlotModels([{ id: 'models.codex.steps.planner', engine: 'codex', value: { model: 'gpt-5.5', effort: 'low' } }]);
   await assertSlotModels([{ id: 'models.claude.steps.planner', engine: 'claude', value: { effort: 'max' } }]);
   await assert.rejects(() => assertSlotModels([{ id: 'models.codex.steps.planner', engine: 'codex', value: { model: 'claude-opus-5-5' } }]),
-    /^Error: models\.codex\.steps\.planner: "claude-opus-5-5" is a Claude model — this slot picks a Codex model$/);
+    /^Error: models\.codex\.steps\.planner: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run$/);
   await assert.rejects(() => assertSlotModels([{ id: 'x', engine: 'claude', value: { model: 'no-such-model' } }]), /x: unknown model "no-such-model"/);
   await assert.rejects(() => assertSlotModels([{ id: 'y', engine: 'claude', value: { model: 'claude-haiku-4-5', effort: 'max' } }]), /y: claude-haiku-4-5 does not offer effort "max"/);
 });

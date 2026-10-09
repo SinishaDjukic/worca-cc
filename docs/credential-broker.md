@@ -373,8 +373,9 @@ Remove `CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY` from worca.
 With `WORCA_BROKER_URL` set, worca exits (code 78) with a list of what it found when any model
 credential is still within agents' reach:
 
-- a provider key in its environment;
+- a provider key in its environment, including `CODEX_API_KEY` and `CURSOR_API_KEY`;
 - a stored Claude Code sign-in or an `apiKeyHelper` in its own or the agents' HOME;
+- a stored Codex sign-in (`~/.codex/auth.json`, or `$CODEX_HOME/auth.json`) in the same places;
 - a model in the catalog whose env holds a key or routes around the broker with
   `ANTHROPIC_BASE_URL` (a plugin model on its own [plugin slot](#plugin-slots) doesn't);
 - a bridged model with its own `apiKey` or a remote `baseUrl` no slot pins;
@@ -382,6 +383,16 @@ credential is still within agents' reach:
 - a plugin's Model secret that holds a value.
 
 It also exits when the broker can't be reached within 60 seconds, or the secrets differ.
+
+### Only Claude runs
+
+Only Claude Code spends through the broker. Codex, Cursor and Copilot sign in with their own
+credentials (a ChatGPT, Cursor or GitHub sign-in, or a key in their environment), which the broker
+can neither charge to a person nor keep from the agent. So with the broker on:
+
+- a pipeline run on any other engine is refused before it starts;
+- Ask Worca offers no Codex chats, and a Codex chat started before the broker was turned on is refused;
+- every engine picker shows the other engines greyed out, and Settings › Models says why.
 
 ### People
 

@@ -406,6 +406,9 @@ input[type="file"]{font-size:12.5px;color:var(--ink-3);background:transparent;bo
 .add-project{margin-top:10px;display:flex;flex-direction:column;gap:9px;padding:14px;
   border:1.5px solid var(--line-2);border-radius:var(--r-ctrl);background:var(--field);}
 .add-project-actions{display:flex;gap:9px;justify-content:flex-end;}
+/* A card's one Save, with the line that counts unsaved changes (or says Saved.) just left of it. */
+.engine-save-row{align-items:center;}
+.engine-save-row > .hint{margin:0;}
 /* Settings → Chat history: a text-style destructive action so its label sits on
    the same left edge as the "Chat history" heading and the counts line under it
    (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
@@ -702,6 +705,13 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .split-row .seg{flex-wrap:wrap;}
 .target-panes{min-width:0;}
 @media (max-width:760px){ .split-row{grid-template-columns:1fr;} }
+/* Workflow (60%) and the engine that runs it (40%) share a row; the engine hints span it below. */
+.wf-engine-row{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);column-gap:18px;align-items:start;}
+.wf-engine-row > *{min-width:0;}
+.wf-engine-hints{grid-column:1 / -1;margin:-7px 0 12px;}
+.wf-engine-hints:not(:has(.hint:not([hidden]))){display:none;}
+.wf-engine-hints .hint{margin-top:0;font-size:11.5px;}
+@media (max-width:760px){ .wf-engine-row{grid-template-columns:1fr;} }
 
 /* Two fields sharing one row (New pipeline: source + feature branch). Equal
    columns with min-width:0 so a long branch name ellipsizes inside its own
@@ -3103,8 +3113,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .settings-card[hidden]{display:none;}
 /* Settings › Models: Title generation, Auto workflow model and PR description model side by side
    above the catalog, so short cards do not push it a screen down; one column once they would squeeze. */
-.models-helpers{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-bottom:18px;}
-.models-helpers > .settings-card{max-width:none;margin:0;}
 
 /* Settings › General › Alerts (alerts.mjs): two switches and the test button, stacked. */
 #alerts-card .alerts-badge-row{margin-top:14px;}
@@ -3242,6 +3250,19 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-providers-split .mv-providers-hint{margin:0 2px 0;}
 .mv-pv-card{padding:18px 22px;display:grid;gap:12px;}
 .mv-pv-card .mv-pv-row{border:0;padding:0;margin:0;}
+/* A provider card reads top to bottom: name + state, what it is, then its fields side by side in one row, then the
+   verdict and buttons. Description beside a column of fields left the left half empty and the card tall. */
+.mv-pv-card .mv-pv-row{grid-template-columns:minmax(0,1fr);gap:14px;}
+.mv-pv-card .mv-sp-row .mv-pv-main .hint{max-width:72ch;}
+/* Speech: Speech-to-text and Text-to-speech side by side, each its own column of fields. */
+.mv-pv-card .mv-sp-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px 24px;align-items:start;}
+.mv-sp-kind{display:grid;gap:10px;align-content:start;min-width:0;}
+.mv-pv-card .mv-pv-main > :empty{display:none;}   /* an unfilled status line would add a gap */
+.mv-pv-card .mv-sp-row > .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-main .hint{max-width:72ch;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px 14px;align-items:start;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl .mv-field:has(.mv-pv-conc):last-child:nth-child(3){max-width:190px;}
+.mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-btns{padding-top:12px;border-top:1px solid var(--line-2);}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
@@ -3260,14 +3281,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-pv-main .hint{margin:0;}
 .mv-pv-ctl{display:grid;gap:10px;align-content:start;}
 .mv-pv-btns{grid-column:1 / -1;display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;align-items:center;}
-/* Test connection's verdict, beside the button (bridge-view.mjs renderProvidersCard). Empty until
-   a test runs, so the row keeps its rhythm. */
-.mv-pv-result{margin-right:auto;display:none;align-items:center;gap:6px;min-width:0;padding:5px 10px;border-radius:999px;
-  font:600 12px var(--sans);background:var(--field);color:var(--ink-2);overflow-wrap:anywhere;}
-.mv-pv-result.is-on{display:inline-flex;}
-.mv-pv-result.is-ok{background:var(--green-bg);color:var(--green-ink);}
-.mv-pv-result.is-err{background:var(--red-bg);color:var(--red-ink);}
-.mv-pv-result.is-busy{color:var(--ink-3);}
 
 /* Import dialog (app.js openImportDialog; model-bridge-design.md §8.4). The sheet it hosts is the
    same node the page used to show, so its card chrome is dropped here rather than in two renderers. */
@@ -3365,7 +3378,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mvi-tbl .mvi-id{display:block;margin:2px 0 0;font-family:var(--mono);}
 .mvi-tbl tr.mvi-disabled{opacity:.55;}
 .mvi-status{color:var(--ink-3);font-size:12px;}
-@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}}
+@media (max-width:720px){.mv-pv-row{grid-template-columns:1fr;}.mv-pv-card .mv-pv-row .mv-pv-ctl{grid-template-columns:1fr;}}
 
 /* ---- Model plugins (design §9.6): plugin cards + export wizard ---- */
 .mv-secret{display:block;margin:4px 0 0;}
@@ -3435,6 +3448,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* 30px is the row-1 size; on a 12.5px meta line the pip shrinks to match the text. */
 .hd-row2 .hd-sic{width:24px;height:24px;}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
+/* New text on this line meets 4.5:1 (--ink-2); the older --ink-3 parts sit in the light contrast baseline, which only shrinks. */
+.hd-meta .hd-engine{color:var(--ink-2);}
 .hd-diffcounts{display:inline-flex;align-items:center;gap:6px;}
 .hd-dot{font-weight:700;color:var(--ink);}
 .hd-status-word{font:600 12.5px var(--sans);}
@@ -3493,6 +3508,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* The menu drops over the sticky .hd-tabs (same z-index, later in the DOM): lift the
    header above them only while it is open, so scrolled tabs still cover the header. */
 .hd-header:has(.hd-menu:not([hidden])){position:relative;z-index:6;}
+/* Likewise the bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
+.rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
 /* All items shed their pill dressing in here and become full-width rows. Higher
    specificity than the standalone rules above, which still hold nowhere else.
    display:flex here (not only in the standalone rules): .hd-restore has no
@@ -3945,11 +3962,8 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-reasons li{margin:4px 0;}
 .mem-actions{margin-top:12px;align-items:center;gap:10px;}
 .mem-health-head .mem-defrag{margin-left:auto;}
-/* Settings → Memory: the Defragment model card above the scope (app.js paintMemDefragModelSettings). */
-.mem-model-card{margin-bottom:16px;}
-.mem-model-text{margin:0 0 12px;color:var(--ink-2);font-size:13px;line-height:1.5;}
-.mem-model-row{display:flex;flex-wrap:wrap;gap:12px;}
-.mem-model-row .field{flex:1 1 220px;margin-bottom:0;}
+/* Settings → Memory: the line pointing at the Defragment model's helper job (Settings › Models › Engines). */
+.mem-model-link{margin:0 0 16px;}
 .mem-defrag svg{display:block;flex:none;}
 .mem-host-hint{display:block;margin-top:8px;}
 .mem-list,.mem-history{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);padding:14px 16px;}
@@ -5588,6 +5602,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-rp .ask-card-seg-btn.on{background:var(--ink);color:var(--on-ink);}
 .ask-rp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;}
 .ask-rp-grid.two{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;}
+/* Workflow, Engine, Guardrails: the workflow takes half the row. */
+.ask-rp-grid.wf-row{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);margin-top:10px;}
 .ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .ask-rp-label{font-weight:600;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);}
 .ask-rp-hint{font-weight:400;text-transform:none;letter-spacing:0;}
@@ -5647,7 +5663,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-rp .ask-card-scope-warn{margin:12px 18px 0;}
 .ask-pop-at{width:288px;padding:6px;border-radius:var(--r-card);max-height:min(320px,60%);overflow-y:auto;}
-@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two{grid-template-columns:1fr;}}
+@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
 
 /* ---------- workflow card chrome (ui/public/ask-panel.mjs buildWorkflowCard; mockup 2026-09-05 §A-§C) ---------- */
@@ -5900,7 +5916,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
    just above it (--ask-box-top). */
 .ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
-.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:var(--r-card);}
+.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:var(--r-card);
+  max-height:min(420px,70%);overflow-y:auto;overscroll-behavior:contain;}   /* ~10 rows, then it scrolls, like the scope and MCP pickers */
 /* The per-chat MCP picker (MCP registry §9.4) opens over the scope pill it sits beside. Level 1 rows hold a
    small switch and a drill button; level 2 rows a copy name and its switch. */
 .ask-pop-mcp{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
@@ -5963,6 +5980,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
 .ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
 .ask-pop-group { padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
+/* A connection inside an engine's section (Claude sign-in, OpenAI-compatible, …): quieter than the section. */
+.ask-pop-subgroup { padding: 6px 12px 2px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
 .ask-pop-item{display:flex;align-items:center;gap:10px;width:100%;padding:9px 11px;border:0;border-radius:12px;
   background:transparent;text-align:left;font-family:inherit;cursor:pointer;transition:.15s;}
 .ask-pop-item:hover,.ask-pop-item:focus-visible{background:var(--hover);outline:none;}
@@ -6263,7 +6282,7 @@ input[type="radio"]:focus-visible{outline:2px solid var(--ink);outline-offset:2p
   font-weight:500;font-size:12.5px;color:var(--ink-2);}
 /* The engine field's hint and the gate refusal's consent row: hidden must win over
    .hint's display:block and .check-row's inline-flex. */
-#engine-hint[hidden], #engineAllowRow[hidden]{display:none;}
+#engine-hint[hidden], #engine-default-hint[hidden], #engineAllowRow[hidden]{display:none;}
 #engineAllowRow{margin-top:6px;}
 .field > label.check-row,
 .field > label.fanout-toggle{display:inline-flex;margin-bottom:0;font-weight:500;}
@@ -6534,14 +6553,15 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .btn-split > .btn-split-more:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .btn-split > .btn-split-more:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn-split > .btn-go:disabled,.btn-split > .btn-split-more:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none;}
-.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;padding:6px;
+/* Never wider than 340px (or the viewport): a long engine note wraps instead of pushing the menu off screen. */
+.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;max-width:min(340px,calc(100vw - 32px));padding:6px;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
 .btn-split-menu[hidden]{display:none;}
 .btn-split-menu button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
   background:transparent;border:none;border-radius:11px;padding:10px 12px;font-family:inherit;cursor:pointer;color:var(--ink);}
 .btn-split-menu button:hover,.btn-split-menu button:focus-visible{background:var(--hover);outline:none;}
 .btn-split-menu b{font-weight:600;font-size:13.5px;}
-.btn-split-menu small{font-size:12px;color:var(--ink-3);}
+.btn-split-menu small{font-size:12px;color:var(--ink-3);white-space:normal;line-height:1.4;}
 .btn-split.mini > .btn-go:first-child{padding:9px 14px 9px 16px;font-size:12.5px;}
 .btn-split.mini > .btn-split-more{padding:0 12px 0 9px;}
 .btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}
@@ -6756,6 +6776,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* Simple hides the Target switch, which leaves .split-row's picker alone in the row: auto-placement
    would drop it into the narrow first track, so the row becomes one full-width column. */
 :root[data-level="simple"] .split-row:not(:has(#target-field[data-level-keep])){grid-template-columns:minmax(0,1fr);}
+/* …and the Engine picker (Advanced and up), leaving the workflow the whole row. */
+:root[data-level="simple"] .wf-engine-row:not(:has(#engine-row[data-level-keep])){grid-template-columns:minmax(0,1fr);}
 
 /* New pipeline: mock mode outside Advanced, and the hidden-but-active note. */
 .mock-row{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);}
@@ -8149,8 +8171,55 @@ span.act-running-title{cursor:default}
 .inherit-badge{font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink)}
 .inherit-badge[hidden],.inherit-clear[hidden]{display:none}
 .inherit-row{display:flex;gap:8px;flex-wrap:wrap}
-.engine-card{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
-.engine-card h3{margin:0 0 6px}.engine-card h4{margin:12px 0 4px;font-size:13px}.pd-settings-card{margin-top:14px}
+/* A hint between the label and the control: the same air below it as above it. */
+.inherit-field > .hint + .inherit-row{margin-top:8px;}
+/* A model field: Model (2/3) and Effort (1/3) on one row, each under a caption. */
+.inherit-row.inherit-pair{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px 10px;}
+.inherit-sub{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.inherit-sub-cap{font-size:11.5px;font-weight:600;color:var(--ink-2);}
+.inherit-sub .select{width:100%;min-width:0;}
+@media (max-width:560px){ .inherit-row.inherit-pair{grid-template-columns:1fr;} }
+/* Engine & models (engine-settings-view.mjs): the card (level 1) → the engine switch (2) → sections divided by a
+   rule, each a heading with its controls on the right (3) → one Model / Effort table (4) → grey notes (5). No card
+   nests inside it. */
+.engine-switch{margin:0;flex-wrap:wrap;}
+.engine-models-head{border-top:1px solid var(--line);margin:18px 0 0;padding-top:16px;}
+.engine-models-head > .hint{display:block;margin:0 0 10px;}
+.engine-card{margin-top:14px;}
+.engine-card-name{margin:0 0 4px;font-size:15px;}
+/* Expert shows the switch, which already names the tab. */
+:root[data-level="expert"] .engine-card-name{display:none;}
+.engine-card-note{display:block;margin:0 0 4px;}
+.engine-card[hidden],.engine-slot[hidden],.engine-slot-head[hidden],.engine-slot-rest[hidden],.engine-slot-add[hidden],.engine-slot-all[hidden],.engine-slot-test[hidden]{display:none;}
+.engine-slots{border-top:1px solid var(--line);margin-top:14px;padding-top:4px;}
+.engine-slot-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 8px;}
+.engine-slots .engine-slot-bar > h4{margin:0 auto 0 0;font-size:13.5px;}
+.engine-slot-bar .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
+.engine-slot-head,.engine-slots .inherit-field.engine-slot{display:grid;grid-template-columns:minmax(100px,.8fr) minmax(0,1.8fr) minmax(190px,1fr) 144px;column-gap:10px;align-items:center;}
+.engine-slot-head{font-size:11.5px;font-weight:600;color:var(--ink-2);padding:0 0 4px;}
+.engine-slots .inherit-field.engine-slot{margin:0;padding:6px 0;border-top:1px solid var(--line);}
+.engine-slots .engine-slot .label-row{min-width:0;flex-wrap:wrap;}
+.engine-slots .engine-slot .label-row label{cursor:default;}
+.engine-slots .engine-slot .inherit-badge{display:none;}   /* a listed row IS a change: the badge would say it twice */
+.engine-slots .engine-slot .inherit-row{grid-column:2 / 4;}
+/* Model and Effort take the table's own columns, so they line up under the header. */
+.engine-slots .engine-slot .inherit-row.inherit-pair{grid-template-columns:subgrid;column-gap:10px;}
+.engine-slots .engine-slot .inherit-sub-cap{display:none;}
+.engine-slot-actions{display:flex;justify-content:flex-end;gap:6px;}
+.engine-slot-actions .engine-slot-clear{min-width:30px;padding-left:0;padding-right:0;}
+/* Test keeps one width through Testing… and Works, so it never spills into the Effort column. */
+.engine-slot-actions .engine-slot-test{min-width:108px;justify-content:center;}
+.engine-slots .engine-slot-rest{display:block;margin:8px 0 0;}
+/* Project settings put Save right after the section: the same 18px gap a .field leaves. */
+.pd-settings-body .engine-card{margin-bottom:18px;}
+@media (max-width:640px){
+  .engine-slot-head{display:none;}
+  .engine-slots .inherit-field.engine-slot{grid-template-columns:1fr;row-gap:6px;}
+  .engine-slots .engine-slot .inherit-row{grid-column:1;}
+  .engine-slots .engine-slot .inherit-sub-cap{display:block;}
+  .engine-slot-actions{justify-content:flex-start;}
+}
+.pd-settings-card{margin-top:14px}
 /* A non-Claude engine card's readiness line (GET /api/engines): text only. */
 .engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
 .engine-card-status:empty{display:none}

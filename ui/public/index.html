@@ -239,32 +239,42 @@
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Workflow picker (Default + saved). app.js populates from GET
-                     /api/workflows. Choosing a workflow is a run decision, so it
-                     stays here; tuning its agents is not, and lives in Advanced.
-                     Own full-width line ABOVE the task source: the workflow frames
-                     what the run does, the source only says how the task arrives. -->
-                <div class="field field-compact">
-                  <label for="workflowSelect">Workflow</label>
-                  <div class="select-wrap">
-                    <select id="workflowSelect" class="select" aria-label="Workflow">
-                      <option value="wf_default">Default</option>
-                    </select>
+                <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
+                     workflow takes 60%, the engine 40%. app.js populates the workflows from GET
+                     /api/workflows. Choosing a workflow is a run decision, so it stays here; tuning its
+                     agents is not, and lives in Advanced. Own line ABOVE the task source: the workflow
+                     frames what the run does, the source only says how the task arrives. -->
+                <div class="wf-engine-row">
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
-                     the default and adds nothing to the run body; on Codex the run's titles, classifier, overview and PR description run on Codex too. Per run, never remembered. -->
-                <div class="field field-compact" id="engine-row">
-                  <label>Engine</label>
-                  <div class="seg" id="engine-seg" role="group" aria-label="Engine">
-                    <button type="button" data-engine="claude" class="on" aria-pressed="true">Claude</button>
-                    <button type="button" data-engine="codex" aria-pressed="false">Codex</button>
-                    <button type="button" data-engine="copilot" aria-pressed="false">Copilot</button>
-                    <button type="button" data-engine="cursor" aria-pressed="false">Cursor</button>
+                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
+                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
+                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
+                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <div class="field field-compact" id="engine-row" data-min-level="advanced">
+                    <label for="engineSelect">Engine</label>
+                    <div class="select-wrap">
+                      <select id="engineSelect" class="select" aria-label="Engine">
+                        <option value="claude" selected>Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="copilot">Copilot</option>
+                        <option value="cursor">Cursor</option>
+                      </select>
+                    </div>
                   </div>
-                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
-                  <small class="hint" id="engine-default-hint" hidden></small>
+
+                  <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
+                  <div class="wf-engine-hints">
+                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
+                    <small class="hint" id="engine-default-hint" hidden></small>
+                  </div>
                 </div>
 
                 <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
@@ -632,6 +642,7 @@
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -783,15 +794,10 @@
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
-                  <!-- A usage limit the engine hit: continue now on the other engine. Every interface level
-                       (the split's caret is Advanced only); paintHdLive shows it and names the engine. -->
-                  <button type="button" class="hd-resume-switch" hidden>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
-                    <span class="hd-btn-label">Resume on another engine</span>
-                  </button>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
                   <button type="button" class="hd-pause" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
@@ -1962,8 +1968,8 @@
             <section class="card settings-card" id="ask-engine-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Engine &amp; models</h2></div></div>
               <div id="ask-engine-root"></div>
-              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
-              <small class="hint" id="askEngineMsg"></small>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
             </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
@@ -2053,30 +2059,8 @@
                 <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
-            <!-- Settings › Memory: the model + effort EVERY Memory defragment run uses (memory-defrag-model.mjs).
-                 Expert, like the health card's Defragment. No ⓘ and empty hints, as in the Settings view
-                 (no longer tested; keep both out by hand). A plain .card like the health card, NOT a
-                 .settings-card: the Settings card set (About last) stays the General cards only. -->
-            <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
-              <div class="label-row"><h2>Defragment model</h2></div>
-              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
-              <div class="mem-model-row">
-                <div class="field">
-                  <div class="label-row"><label for="memDefragModel">Model</label></div>
-                  <select id="memDefragModel" class="select" data-setting="memoryDefrag.model" aria-label="Defragment model"></select>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="memDefragEffort">Effort</label></div>
-                  <select id="memDefragEffort" class="select" data-setting="memoryDefrag.effort" aria-label="Defragment effort"></select>
-                </div>
-              </div>
-              <small class="hint" id="memDefragModelNote"></small>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="memDefragModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                <button type="button" id="memDefragModelSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-              <small class="hint" id="memDefragModelMsg"></small>
-            </section>
+            <!-- The Memory defragment model is Claude's "Memory defragment" helper job (Settings › Models › Engines). -->
+            <p class="hint mem-model-link" data-min-level="expert">The model every Memory defragment run uses is a helper job: <a href="#settings/models">Settings › Models › Engines › Helper jobs</a>.</p>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>
             <div id="memory-host" class="mem-host"></div>
           </section>
@@ -2135,98 +2119,9 @@
             <section class="card settings-card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root"></div>
-              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
-              <small class="hint" id="engineSettingsMsg"></small>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
             </section>
-            <!-- The models Worca's own helper calls use (titles, the Auto classifier, PR descriptions). Two
-                 columns on a wide screen so the catalog below is not pushed a screen down. -->
-            <div class="models-helpers" data-min-level="expert">
-              <!-- Title generation (#422): which model writes run/chat titles.
-                   Empty = the model of the run or chat itself (title.mjs
-                   resolveTitleModel), so a first-party-free install needs no setup.
-                   The select is built from the project-less catalog; a stored id
-                   that left the catalog paints disabled + "not installed". -->
-              <section class="card settings-card" id="title-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>Title generation</h2>
-                    <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
-                      Every run and chat gets a short LLM-written title. By default it is written by the
-                      model the run or chat itself uses, so an install without a first-party Anthropic
-                      account needs no setup here. Pick a model to write every title with it instead;
-                      the change applies to the next title, no restart. A non-empty
-                      <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row">
-                    <label for="titleModel">Model</label>
-                  </div>
-                  <select id="titleModel" class="select" data-setting="titleModel" aria-label="Title model"></select>
-                </div>
-                <small class="hint" id="titleModelEnvNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="titleModelMsg"></small>
-              </section>
-
-              <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
-                   Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
-              <section class="card settings-card" id="auto-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>Auto workflow model</h2>
-                    <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
-                      When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
-                      Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
-                      <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
-                      run as a sub-agent row named "Auto workflow (round n)".
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="autoModel">Model</label></div>
-                  <select id="autoModel" class="select" data-setting="autoWorkflowModel" aria-label="Auto workflow model"></select>
-                </div>
-                <small class="hint" id="autoModelEnvNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="autoModelMsg"></small>
-              </section>
-              <!-- PR description model: which model drafts the "Ship it?" modal's Generate with AI
-                   description (POST /api/pr/describe). Empty = the Sonnet-class default. -->
-              <section class="card settings-card" id="pr-description-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>PR description model</h2>
-                    <button type="button" class="info-tip" aria-label="About the PR description model">i<span class="tip-content hidden">
-                      <b>Generate with AI</b> in the Create PR dialog makes one model call that reads the run's diff,
-                      results and review, and drafts a description you edit before opening the PR. Pick the model
-                      that makes that call; empty means the Sonnet-class default. Each call is billed to the run as a
-                      sub-agent row named "pr description".
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="prDescModel">Model</label></div>
-                  <select id="prDescModel" class="select" data-setting="prDescriptionModel" aria-label="PR description model"></select>
-                </div>
-                <small class="hint" id="prDescModelNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="prDescModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="prDescModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="prDescModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="prDescModelMsg"></small>
-              </section>
-            </div>
             <p id="models-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="models-list"></div>
           </section>

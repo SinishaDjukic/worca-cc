@@ -25,6 +25,35 @@ The choice is the **Connection** section at the top of the model editor, which
 opens as a dialog (*Add model*, *Edit*, *Duplicate*, *Edit a copy*) and asks
 before it closes on unsaved changes.
 
+### Harnesses, providers and models
+
+A **harness** runs the agents: Claude Code, Codex, Copilot or Cursor, picked per
+run. A **provider** is where a model's tokens are billed: a harness's own
+sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
+run a model follows from its connection, never from a setting:
+
+| Connection | Runs on |
+|---|---|
+| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's) | that harness only — a subscription works only in its own CLI |
+| Custom endpoint via env (`ANTHROPIC_BASE_URL` …) | Claude Code |
+| Through a provider: an OpenAI-compatible endpoint on the Responses API | Claude Code (through the bridge) **and** Codex (directly) |
+| Through a provider: chat completions, OpenRouter routing, GitHub Copilot, Anthropic-compatible | Claude Code (through the bridge) |
+
+Copilot and Cursor take no endpoint: they run their own sign-in's models.
+
+- A model that runs on two harnesses is added once. Its card names both
+  (*Claude · Codex*), every picker on a run of either harness offers it, and a
+  run switched from one to the other keeps it.
+- It keeps one effort list, its own engine's. The other harness gets the nearest
+  effort it has: `xhigh` and `max` run as `high` on Codex, `minimal` and
+  `low` as `medium` on Claude Code.
+- **The model id is worca's handle.** A sign-in model uses the model's own id.
+  The ids of the built-in models belong to their sign-in, so a gateway that
+  serves the same model takes an id of its own: the editor suggests
+  `<provider>-<model>` (`openai-gpt-5.5`), and the endpoint is still sent the
+  upstream model id. Through env, `ANTHROPIC_MODEL` sets the id the endpoint
+  gets.
+
 **Timeouts off first party.** The CLI drops a response that has sent nothing
 for about 5 minutes, reports `Request timed out.` and retries the call from
 scratch. A gateway that buffers the stream sends nothing until the whole reply
@@ -404,9 +433,9 @@ On a Codex run the helper jobs (titles, the run overview, the PR description, th
 - A set skill that declares `hooks:` still loads, but its hooks do not run: hooks are Claude Code's. The run warns once.
 - Codex does not load worca's memory rules on its own, so its agents are told to read them from the memory folders.
 
-**Claude models with custom endpoints.** A Claude model routed to a custom endpoint or through the model bridge no longer refuses a Codex run. Like any Claude model, it is dropped on Codex, and its nodes run on Codex's model. To run Codex itself against your own endpoint, give a Codex model a connection, below.
+**Models with custom endpoints.** A model whose connection Codex cannot reach (routing env, chat completions, Copilot, an Anthropic-compatible endpoint) is dropped on Codex, and its nodes run on Codex's model. A model on an OpenAI-compatible Responses endpoint runs on Codex as it is (see [Harnesses, providers and models](#harnesses-providers-and-models)).
 
-**Custom endpoints for Codex models.** A Codex model can run on any OpenAI-compatible endpoint that serves the Responses API, such as vLLM, LM Studio, Ollama or a gateway. In Settings › Models, add a model with Engine **Codex**, pick **OpenAI-compatible endpoint** under Connection, and enter the model id the endpoint expects. The base URL and API key come from the OpenAI-compatible row on the Providers card unless you override them under Advanced, where extra headers go too. A key is a `${VAR}` reference or a stored secret, as for Claude models.
+**Custom endpoints for Codex.** Codex can run a model on any OpenAI-compatible endpoint that serves the Responses API, such as vLLM, LM Studio, Ollama or a gateway. In Settings › Models, add a model, pick **Through a provider** › **OpenAI-compatible** › **Responses API** under Connection, and enter the model id the endpoint expects. The editor says *Runs on Claude Code (through worca's bridge) and Codex (directly)*. The base URL and API key come from the OpenAI-compatible row on the Providers card unless you override them under Advanced, where extra headers go too. A key is a `${VAR}` reference or a stored secret, as for Claude models.
 
 - Codex connects to the endpoint itself; worca's bridge is not involved. Each call names the endpoint as a Codex model provider with `-c model_providers.…` settings. The key and header values reach codex through its environment, never its command line. Like codex's own `OPENAI_API_KEY`, they are visible to commands the agent runs, because `codex-cli 0.146` does not apply a shell environment policy in `codex exec`.
 - Only the Responses API is offered: `codex-cli 0.146` refuses chat completions (`wire_api = "chat"`). The model's own effort setting is sent as-is.
@@ -512,7 +541,11 @@ worca can run pipelines on Cursor's headless CLI agent. Ask Worca does not run o
 - Both files are added to the repository's `.git/info/exclude`. That file is shared with your main checkout, so these two lines also hide a root-level `.cursor/cli.json` or `.cursor/mcp.json` there from `git status`; delete the two lines under `# worca: Cursor engine config` if you mind. The files are removed when the run ends and never reach the run's diff or commit. worca never writes to `~/.cursor`. If the run's checkout already holds a `.cursor/cli.json` or `.cursor/mcp.json` that worca did not write (tracked or not) and the run needs to write it, the run stops with an error instead of changing your file. worca never removes such a file. An agent's own `.cursor/cli.json` or `.cursor/mcp.json` stays in the run's result: worca stages it even though its own exclude line would hide it, unless your own ignore rules exclude that path.
 - The host guard's kill-check hook does not run on Cursor; its instructions to the agent still apply.
 
-**Usage limits.** When an engine hits its usage limit, the paused run offers to continue on each other engine that is ready (installed and signed in). Pick one. From the command line, every other engine is listed; the resume refuses one that is not ready.
+**Usage limits.** A usage limit is the allowance of whoever the step ran on:
+
+- **A harness's own sign-in** (your Claude Code, ChatGPT or Cursor subscription): the paused run offers to continue on each other harness that is ready (installed and signed in). From the command line every other harness is listed; the resume refuses one that is not ready.
+- **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
+- **Either way**, *Resume with another model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
 **Ask Worca on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Ask Worca.
 

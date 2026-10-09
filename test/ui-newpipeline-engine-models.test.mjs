@@ -95,8 +95,8 @@ async function openWf(window) {
   await waitFor(() => doc.querySelector('.step-model[data-node-id="n1"]'));
 }
 const ids = (doc, node) => [...doc.querySelectorAll(`.step-model[data-node-id="${node}"] option`)].map((o) => o.value);
-const pick = (doc, engine) => doc.querySelector(`#engine-seg button[data-engine="${engine}"]`).click();
-const CLAUDE_IDS = ['', 'claude-haiku-4-5', 'claude-opus-4-8', '__add__'];
+const pick = (doc, engine) => { const s = doc.getElementById('engineSelect'); s.value = engine; s.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true })); };
+const CLAUDE_IDS = ['', 'claude-opus-4-8', 'claude-haiku-4-5', '__add__'];   // catalog order inside the Claude sign-in group
 
 test('the agent rows offer the run engine\'s models and re-filter on an engine switch', async () => {
   const { window } = await boot(apiFetch());

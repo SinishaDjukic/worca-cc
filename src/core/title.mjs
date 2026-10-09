@@ -209,8 +209,11 @@ async function titleAttempt(text, model, opts, engine = null) {
       // Ask Worca (ask-worca-design.md §6.8): sandbox hardening pass-through for the
       // chat's background title call. All undefined for every existing caller, and
       // runClaude emits nothing for undefined — pipeline title argv is unchanged.
-      tools: opts.tools,
-      strictMcpConfig: opts.strictMcpConfig,
+      // A pipeline title passes neither: no built-in tools and no MCP servers on Claude, so a task prompt full of
+      // instructions cannot get the title model to carry them out (it ran in the run's worktree under acceptEdits:
+      // edits, sub-agents and cost while the implementer worked). Ask passes its own sandbox lists.
+      tools: opts.tools ?? (engine ? undefined : []),
+      strictMcpConfig: opts.strictMcpConfig ?? (engine ? undefined : true),
       settingSources: opts.settingSources,
       disableSlashCommands: opts.disableSlashCommands,
       mcpConfigPath: opts.mcpConfigPath,

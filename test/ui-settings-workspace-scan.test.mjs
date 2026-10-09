@@ -1,4 +1,4 @@
-// test/ui-settings-workspace-scan.test.mjs — Settings › Runs › Workspaces (the scan models card). Boot preamble copied from test/ui-settings-auto-model.test.mjs:4-61 (house convention).
+// test/ui-settings-workspace-scan.test.mjs — Settings › Runs › Workspaces (the scan models card).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

@@ -60,7 +60,7 @@ async function submit(ctx) {
   ctx.doc.querySelector('#run-form').dispatchEvent(new ctx.window.Event('submit', { bubbles: true, cancelable: true }));
   for (let i = 0; i < 40 && ctx.posted.length === n; i++) await tick();
 }
-const on = (doc) => doc.querySelector('#engine-seg button.on').dataset.engine;
+const on = (doc) => doc.getElementById('engineSelect').value;
 
 test('a project default of Codex prefills Codex and says it comes from the project', async () => {
   const ctx = await boot({ defaults: (dir) => ({ engine: dir === '/a/web' ? { value: 'codex', source: 'project' } : { value: 'claude', source: 'default' }, steps: { claude: {}, codex: {} } }) });
@@ -84,7 +84,7 @@ test('switching back to Claude over a Codex default sends engine: claude (Review
   const ctx = await boot({ defaults: () => ({ engine: { value: 'codex', source: 'user' }, steps: { claude: {}, codex: { planner: { model: 'gpt-5.5', source: 'project' } } } }) });
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from your settings');
   assert.match(ctx.doc.getElementById('engine-hint').textContent, /Models: project Settings$/);
-  ctx.doc.querySelector('#engine-seg button[data-engine="claude"]').click();
+  { const s = ctx.doc.getElementById('engineSelect'); s.value = 'claude'; s.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); }
   for (let i = 0; i < 4; i++) await tick();
   assert.equal(ctx.doc.getElementById('engine-default-hint').hidden, true, 'not the default any more');
   await submit(ctx);

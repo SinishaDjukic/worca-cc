@@ -34,7 +34,7 @@ const pairCheck = (engine) => (value, _layer, ctx) => {
   try {
     if (normalizeModelPair(engine, value) === null) return false;
     const owner = value?.model && modelOwnerReader ? modelOwnerReader(value.model, { projectDir: ctx?.projectDir || null }) : null;
-    return !owner || owner === engine;
+    return !owner || (Array.isArray(owner) ? owner.includes(engine) : owner === engine);   // owner: the harnesses that run it
   } catch { return false; }
 };
 const webIn = (raw) => isObj(raw) ? { enabled: raw.enabled, anyHost: raw.anyHost ?? false, allowedDomains: raw.allowedDomains ?? [], search: raw.search ?? null } : raw;
