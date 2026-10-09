@@ -3037,15 +3037,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown{display:none;}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
-   popups (side-flyout.mjs keeps them inside the viewport). The menu is the mockup's
-   off-white sheet with white cards, one per section (the spend card, the identity card,
-   and each .msect run of rows), 6px apart; it scrolls on a short window. Small grey text is
-   --ink-2 (--ink-3 is 2.58:1 on --field); a row's hover is --hover, a step darker than
-   the sheet. */
-.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:6px;padding:6px;background:var(--field);}
+   popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
+   popups' --panel, so it stands off the grey sidebar) whose sections — the spend card, the
+   identity card and each .msect run of rows — sit flat on it, a 1px --line hairline between
+   each shown section and the next; it scrolls on a short window. Small grey text is --ink-2;
+   a row's hover is --hover. */
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:0;}
+.acct-menu > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line);}
 .nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
-.mcard{display:flex;flex-direction:column;padding:10px 12px 11px;border:1px solid var(--line);border-radius:10px;
-  background:var(--panel);box-shadow:var(--shadow-soft);}
+.mcard{display:flex;flex-direction:column;padding:12px 15px 13px;}
 .mc-head{display:flex;align-items:center;gap:8px;min-height:26px;margin-bottom:8px;}
 .mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
 .mini-ring circle{fill:none;stroke-width:2.6;}
@@ -3069,8 +3069,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
 .id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px/1.3 var(--sans);color:var(--ink);}
 .id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
-.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:4px;border:1px solid var(--line);border-radius:10px;
-  background:var(--panel);box-shadow:var(--shadow-soft);}
+.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:5px;}
 .mi{display:flex;flex:none;align-items:center;gap:9px;width:100%;height:31px;padding:0 10px;border:0;border-radius:8px;background:transparent;
   color:var(--ink);font:400 12.5px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
 .mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
