@@ -3,10 +3,11 @@
 // Pure DOM: renderNightForm builds the live summary and the inputs, readNightForm reads them back
 // into a patch. A field left empty is "not set here": it is sent as `__unset` so the next layer applies.
 // Every word comes from src/shared/away-mode (labels.mjs, describe.mjs); copy: plans/away-mode-wording.md §3.
-import { FIELD_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, KIND_LABELS, WHICH_RUNS_OPTIONS, GRACE_NO_HOURS, DECIDER_EFFORTS, DECIDER_WORDS, DECIDER_GROUPS } from '../../src/shared/away-mode/labels.mjs';
+import { FIELD_LABELS, METHOD_OPTIONS, CRITERIA_LABELS, KIND_LABELS, WHICH_RUNS_OPTIONS, GRACE_NO_HOURS, DECIDER_EFFORTS, DECIDER_WORDS } from '../../src/shared/away-mode/labels.mjs';
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { describeAwayMode } from '../../src/shared/away-mode/describe.mjs';
 import { inheritText, dropInheritedTwin } from './inherit-field.mjs';
+import { modelGroups, modelSourceSuffix } from '../../src/shared/connections.mjs';
 
 export const NIGHT_KINDS = ['clarify', 'questions', 'form', 'gate', 'workflow', 'recovery'];
 export const CRITERIA = ['matchesMemory', 'reversible', 'smallestScope', 'codebaseConventions', 'cost'];
@@ -109,21 +110,14 @@ function whichRuns(doc, level, own, inh, inhSrc) {
   return wrap;
 }
 
-const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-/** The models "Decided by" offers, grouped like the Settings title-model picker (app.js
- *  buildTitleModelOptions): no legacy per-project entries; hidden built-ins and models that need a
+/** The models "Decided by" offers, grouped by connection like every model picker (modelGroups): no legacy per-project entries; hidden built-ins and models that need a
  *  sign-in only when one IS the stored pick. Both engines' models are offered: the review runs on the
  *  run's engine and uses the pick only on a run of that engine (run-harness.mjs _nightDeciderPair).
  *  @returns {Array<[string, object[]]>} non-empty groups */
 function pickerGroups(models, stored) {
   const ms = (Array.isArray(models) ? models : [])
     .filter((m) => m && typeof m.id === 'string' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
-  return [
-    [DECIDER_GROUPS.mine, ms.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy')],
-    [DECIDER_GROUPS.policy, ms.filter((m) => m.custom === 'policy')],
-    [DECIDER_GROUPS.plugins, ms.filter((m) => m.custom === 'plugin')],
-    [DECIDER_GROUPS.builtIn, ms.filter((m) => !m.custom)],
-  ].filter(([, xs]) => xs.length).map(([label, xs]) => [label, xs.sort(byLabel)]);
+  return modelGroups(ms).map((g) => [g.label, g.models]);
 }
 /** A model's catalog label, else its id. */
 const modelName = (models, id) => {
@@ -146,7 +140,7 @@ function deciderModelField(doc, level, values, inh, inhSrc, models) {
   for (const [label, xs] of groups) {
     const og = el(doc, 'optgroup'); og.label = label;
     for (const m of xs) {
-      const o = el(doc, 'option', null, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : ''));
+      const o = el(doc, 'option', null, (m.label || m.id) + modelSourceSuffix(m));
       o.value = m.id; og.append(o);
     }
     sel.append(og);

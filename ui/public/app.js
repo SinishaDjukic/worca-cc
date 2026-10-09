@@ -133,7 +133,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionLabel, connectionKey } from '../../src/shared/connections.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -173,6 +173,7 @@ import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewer
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
+import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
@@ -1220,7 +1221,7 @@ function handleServerMessage(msg) {
     // and reloads the scope (the health hint names the model), and the Memory defragment workflow's
     // memo is dropped so its agent rows re-read the pinned pair — at once when New pipeline is
     // showing it (an entry to New pipeline drops the whole memo anyway).
-    if (memoryTabCtl) { void loadMemDefragModelCard(); void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true }); }
+    if (memoryTabCtl) void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true });
     delete state.workflowCache[MEMORY_DEFRAG_WORKFLOW_ID];
     if (currentView() === 'new' && state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) void renderWorkflowConfig(state.workflowId);
     void refreshAwayBodies().catch(() => {});
@@ -3103,46 +3104,22 @@ if (typeof window !== 'undefined') {
 // {model,effort}. Shared by the legacy default-stage rows and the dynamic
 // per-node rows so the dropdown contents + effort filtering live in one place.
 function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
-  // Model dropdown: "(default model)", then the models grouped — user-defined
-  // (global + legacy project) first, plugin-provided second, built-ins third,
-  // each group sorted alphabetically by label — then "+ Add model…".
-  // Provenance is carried by the optgroup label, not a per-option suffix; only
-  // when the same LABEL appears more than once does a plugin option get its
-  // plugin name appended (design §9.6, collision-only), and the observed §4.6
-  // "cost not verified" flag still marks an option.
+  // Model dropdown: "(default model)", then the models grouped by connection (model-options.mjs, the grouping every
+  // picker shares) — then "+ Add model…". An option names who added it (team policy, a plugin), and the observed §4.6
+  // "cost not verified" flag still marks it.
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
   // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
   // other would be skipped at run time. `sel.engine` names another engine for a caller that has one.
   const engine = sel.engine || state.engine || 'claude';
   const ofEngine = (m) => runsOn(m, engine);
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-  const labelCounts = new Map();
-  for (const m of state.models) {
-    const lc = (m.label || m.id).toLowerCase();
-    labelCounts.set(lc, (labelCounts.get(lc) || 0) + 1);
-  }
   // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
   // leaves the list — unless it is THIS selection, which is then labelled so.
   const usable = (m) => ofEngine(m) && (!m.needsSignIn || m.id === sel.model);
-  const optgroup = (label, models) => {
-    if (!models.length) return;
-    const og = document.createElement('optgroup');
-    og.label = label;
-    for (const m of models) {
-      const ambiguous = m.custom === 'plugin' && labelCounts.get((m.label || m.id).toLowerCase()) > 1;
-      const viaSuffix = m.bridged && !(m.label || m.id).toLowerCase().includes(m.bridged) ? ` · ${m.bridged}` : '';
-      og.appendChild(option(m.id,
-        m.label + (ambiguous ? ` (${m.plugin})` : '') + viaSuffix + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id)));
-    }
-    modelSel.appendChild(og);
-  };
-  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy' && usable(m)).sort(byLabel));
-  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy' && usable(m)).sort(byLabel));
-  optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin' && usable(m)).sort(byLabel));
   // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
   // it is THIS selection, which still resolves and must stay visible.
-  optgroup('Built-in', state.models.filter((m) => !m.custom && ofEngine(m) && (!m.hidden || m.id === sel.model)).sort(byLabel));
+  appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
+    engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
@@ -11594,7 +11571,7 @@ function buildPdSettings(sec, key) {
   const p = projectByKey(key);
   if (!p) return;
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
-  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path });
+  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
   sec.appendChild(buildPdNightCard(p));
 }
 
@@ -13148,9 +13125,6 @@ async function loadSettings() {
     paintSyncSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
-    await paintTitleModelSettings(data);
-    await paintAutoModelSettings(data);
-    await paintPrDescModelSettings(data);
     await paintEngineSettings(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
@@ -13803,7 +13777,7 @@ async function paintAskEngine(data, { force = false } = {}) {
   if (seq !== askEnginePaintSeq) return;
   if (!force && Object.keys(readAskEngineSection(root)).length) return;   // the user started editing while it loaded
   const catalog = Array.isArray(cat?.models) ? cat.models.map((m) => ({ ...m, engine: m.engine || 'claude' })) : [];
-  renderAskEngineSection(root, { catalog, askEngine: data.askEngine ?? undefined, askModels: data.askModels || {}, defaults: cat?.defaults || {} });
+  renderAskEngineSection(root, { catalog, askEngine: data.askEngine ?? undefined, askModels: data.askModels || {}, defaults: cat?.defaults || {}, onTest: testModelRow, status: document.getElementById('askEngineMsg') });
 }
 function askLimitsCard() { return document.getElementById('ask-settings-card'); }
 function postAskLimits(body, opts = {}) {
@@ -13957,15 +13931,9 @@ document.getElementById('debugSpawnReset')?.addEventListener('click', (e) => pos
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('debugSpawnSave');
 
-// ---- Title generation card (#422) ----
-// A SELECT over the project-less catalog, never a text field: free text could
-// store an id resolveModelEnv cannot route, and the failure would only show up
-// as a missing title minutes into a run. Same optgroups + order as the New
-// Pipeline picker. `titleModelCatalog` is fetched on every Settings paint so the
-// options track catalog edits without a reload.
-const TITLE_MODEL_DEFAULT_LABEL = "Same as the run's model";
-let titleModelCatalog = [];
-function setTitleModelMsg(text, kind) { setHintMsg('titleModelMsg', text, kind); }
+// ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
+// (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
+// list builder the workspace scan picker uses, and a row's Test.
 async function fetchTitleModelCatalog() {
   try {
     const res = await fetch('/api/config');
@@ -13973,115 +13941,17 @@ async function fetchTitleModelCatalog() {
     return res.ok && Array.isArray(data.models) ? data.models : [];
   } catch { return []; }
 }
-function buildTitleModelOptions(sel, stored) {
-  sel.innerHTML = '';
-  sel.appendChild(option('', TITLE_MODEL_DEFAULT_LABEL));
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-  // Legacy per-project entries are not global — titles are; hidden built-ins
-  // stay out unless one IS the stored pick (it still resolves).
-  // Claude's title slot (D10): Codex models belong to the Codex engine card (Plan 2).
-  const models = titleModelCatalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
-  const group = (label, xs) => {
-    if (!xs.length) return;
-    const og = document.createElement('optgroup');
-    og.label = label;
-    for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
-    sel.appendChild(og);
-  };
-  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
-  group('Team policy', models.filter((m) => m.custom === 'policy').sort(byLabel));
-  group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
-  group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
-  if (stored && !models.some((m) => m.id === stored)) {
-    // Loud degrade: the stored id left the catalog (plugin removed, entry deleted).
-    const o = option(stored, `${stored} — not installed`);
-    o.disabled = true;
-    sel.appendChild(o);
-  }
-  sel.value = stored;
-}
-async function paintTitleModelSettings(data) {
-  const sel = document.getElementById('titleModel');
-  if (!sel) return;
-  titleModelCatalog = await fetchTitleModelCatalog();
-  const stored = typeof data.titleModel === 'string' ? data.titleModel : '';
-  buildTitleModelOptions(sel, stored);
-  const eff = data.titleModelEffective || {};
-  let note = '', kind = '';
-  if (eff.source === 'env') {
-    note = `WORCA_TITLE_MODEL is set in the environment: titles use ${eff.model} regardless of this setting.`; kind = 'warn';
-  } else if (eff.stale) {
-    note = `Model "${eff.stale}" is no longer in the catalog — titles fall back to the run's model.`; kind = 'warn';
-  }
-  setHintMsg('titleModelEnvNote', note, kind);
-  const testBtn = document.getElementById('titleModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('titleModelSave');
-}
 // A not-installed pick on a model card is a field problem: the select says what to do.
 const MODEL_GONE_TEXT = 'That model is no longer installed. Pick another, or use the default.';
-function postTitleModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('title-model-settings-card'), paint: paintTitleModelSettings,
-    dirty: settingsCardDirty('titleModelSave'), appliesWhen: 'Applies to the next title.', ...opts,
-  });
-}
-document.getElementById('titleModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('titleModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postTitleModel({ titleModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('titleModelReset')?.addEventListener('click', (e) => postTitleModel({ titleModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('titleModel')?.addEventListener('change', () => {
-  const sel = document.getElementById('titleModel');
-  const testBtn = document.getElementById('titleModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-});
-// Test = the Models-view Test button verbatim (POST /api/models/:id/test): one
-// tiny spawn through the id's catalog routing. Without it the first evidence of
-// a bad pick is a missing title three minutes into a run. Shared by BOTH model
-// cards (title generation and the Auto workflow model) — one implementation.
-// #555: Test shows busy → done on the button. The model's reply stays in the card's line
-// (green); a failure is a card alert above the buttons. The paint-time and change-time
-// disabled toggles keep the no-model rule; idleDisabled holds it after a Test.
-async function testModelFromSettings(selectId, buttonId, setMsg) {
-  const sel = document.getElementById(selectId);
-  const btn = document.getElementById(buttonId);
-  const id = sel.value;
-  if (!id) return;
-  const card = btn.closest('section.card');
-  cardAlert(card, null);
-  setMsg('');
-  const noModel = () => !sel.value || !!sel.options[sel.selectedIndex]?.disabled;
-  const r = await withButton(btn, async () => {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
-      const data = (await safeJson(res)) || {};
-      if (!res.ok) return { ok: false, error: data.error || `The server answered ${res.status}.` };
-      return data.ok ? { ok: true, text: data.text } : { ok: false, error: data.hint || data.message || 'The model did not reply.' };
-    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
-  }, { busy: 'Testing…', done: 'Works', idleDisabled: noModel });
-  if (r.skipped) return;
-  if (r.ok) setMsg(`${id} replied: ${r.text}`, 'ok');
-  else cardAlert(card, { title: `${id} did not answer`, detail: r.error });
-}
-document.getElementById('titleModelTest')?.addEventListener('click', () => testModelFromSettings('titleModel', 'titleModelTest', setTitleModelMsg));
-settingsCardDirty('titleModelSave');
-
-// ---- Auto workflow model (spec D14 / §7.7): the model that classifies a task into a workflow.
-// Reuses fetchTitleModelCatalog (the project-less /api/config catalog), setHintMsg and
-// postSettingsCard. The option list is FLAT on purpose (no optgroups): one plain list.
+// Nothing painted (the settings or the model list failed to load): not a field problem.
+const MODEL_LIST_GONE = { title: 'Not saved', detail: 'The model list did not load. Reload the page to change this.' };
 const AUTO_MODEL_DEFAULT_LABEL = 'Default (Sonnet-class)';
-function setAutoModelMsg(text, kind) { setHintMsg('autoModelMsg', text, kind); }
 function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel = AUTO_MODEL_DEFAULT_LABEL) {
   sel.innerHTML = '';
   sel.appendChild(option('', defaultLabel));
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   // Claude's utility slots (Auto, PR description, defragment, workspace scan): Claude models only (D10).
-  const models = catalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
-  for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+  const models = catalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
+  appendModelGroups(sel, models);
   // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
   // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
   // a perfectly good setting — `stale` is the caller's verdict, not this list's.
@@ -14092,187 +13962,22 @@ function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel
   }
   sel.value = stored;
 }
-async function paintAutoModelSettings(data) {
-  const sel = document.getElementById('autoModel');
-  if (!sel) return;
-  const catalog = await fetchTitleModelCatalog();                     // the same project-less /api/config catalog
-  const stored = typeof data.autoWorkflowModel === 'string' ? data.autoWorkflowModel : '';
-  // autoWorkflowModelEffective is {model, source} only (no `stale`, unlike titleModelEffective).
-  const eff = data.autoWorkflowModelEffective || {};
-  // The SERVER decides staleness: autoModelState() reports source 'settings' only when the
-  // stored id resolved against the real catalog, so anything else with an id stored means it
-  // did not. An older server sends no `source` at all — there the client catalog is the only
-  // evidence, and an EMPTY one is a failed GET, not an empty catalog, so it condemns nothing.
-  const stale = !!stored && (eff.source
-    ? (eff.source !== 'settings' && eff.source !== 'env')
-    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
-  buildAutoModelOptions(sel, stored, catalog, stale);
-  const effModel = eff.model || 'the default model';
-  let note = '', kind = '';
-  if (eff.source === 'env') { note = `WORCA_AUTO_MODEL is set in the environment: Auto uses ${effModel} regardless of this setting.`; kind = 'warn'; }
-  else if (stale) { note = `Model "${stored}" is no longer in the catalog — Auto uses ${effModel} (the default).`; kind = 'warn'; }
-  else if (eff.source === 'settings') note = `Auto classifies with ${effModel}.`;
-  else note = `Auto classifies with ${effModel} (the default).`;
-  setHintMsg('autoModelEnvNote', note, kind);
-  const testBtn = document.getElementById('autoModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('autoModelSave');
-}
-function postAutoModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('auto-model-settings-card'), paint: paintAutoModelSettings,
-    dirty: settingsCardDirty('autoModelSave'), appliesWhen: 'Applies to the next Auto run.', ...opts,
-  });
-}
-document.getElementById('autoModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('autoModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postAutoModel({ autoWorkflowModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('autoModelReset')?.addEventListener('click', (e) => postAutoModel({ autoWorkflowModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('autoModel')?.addEventListener('change', () => { const sel = document.getElementById('autoModel'); const b = document.getElementById('autoModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
-document.getElementById('autoModelTest')?.addEventListener('click', () => testModelFromSettings('autoModel', 'autoModelTest', setAutoModelMsg));
-settingsCardDirty('autoModelSave');
 
-// ---- PR description model: the model behind the "Ship it?" modal's Generate with AI.
-// The Auto workflow card's recipe verbatim (buildAutoModelOptions, the server-decided
-// staleness, postSettingsCard), minus the env override that card has.
-function setPrDescModelMsg(text, kind) { setHintMsg('prDescModelMsg', text, kind); }
-async function paintPrDescModelSettings(data) {
-  const sel = document.getElementById('prDescModel');
-  if (!sel) return;
-  const catalog = await fetchTitleModelCatalog();
-  const stored = typeof data.prDescriptionModel === 'string' ? data.prDescriptionModel : '';
-  const eff = data.prDescriptionModelEffective || {};
-  const stale = !!stored && (eff.source
-    ? eff.source !== 'settings'
-    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
-  buildAutoModelOptions(sel, stored, catalog, stale);
-  const effModel = eff.model || 'the default model';
-  let note = '', kind = '';
-  if (stale) { note = `Model "${stored}" is no longer in the catalog — PR descriptions use ${effModel} (the default).`; kind = 'warn'; }
-  else if (eff.source === 'settings') note = `PR descriptions are written with ${effModel}.`;
-  else note = `PR descriptions are written with ${effModel} (the default).`;
-  setHintMsg('prDescModelNote', note, kind);
-  const testBtn = document.getElementById('prDescModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('prDescModelSave');
+/** A slot row's Test: the Models view's Test (POST /api/models/:id/test), one tiny prompt through the id's catalog
+ *  routing. The reply or the failure is a toast; the button shows busy → done. */
+async function testModelRow(id, btn) {
+  if (!id) return;
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
+      const data = (await safeJson(res)) || {};
+      if (!res.ok) return { ok: false, error: data.error || `The server answered ${res.status}.` };
+      return data.ok ? { ok: true, text: data.text } : { ok: false, error: data.hint || data.message || 'The model did not reply.' };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  notify(r.ok ? { tone: 'ok', title: `${id} replied`, detail: r.text } : { tone: 'err', title: `${id} did not answer`, detail: r.error });
 }
-function postPrDescModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('pr-description-model-settings-card'), paint: paintPrDescModelSettings,
-    dirty: settingsCardDirty('prDescModelSave'), appliesWhen: 'Applies to the next Generate with AI.', ...opts,
-  });
-}
-document.getElementById('prDescModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('prDescModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postPrDescModel({ prDescriptionModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('prDescModelReset')?.addEventListener('click', (e) => postPrDescModel({ prDescriptionModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('prDescModel')?.addEventListener('change', () => { const sel = document.getElementById('prDescModel'); const b = document.getElementById('prDescModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
-document.getElementById('prDescModelTest')?.addEventListener('click', () => testModelFromSettings('prDescModel', 'prDescModelTest', setPrDescModelMsg));
-settingsCardDirty('prDescModelSave');
-
-// ---- Settings › Memory: the Defragment model (memory-defrag-model.mjs) — the model + effort EVERY
-// Memory defragment run uses. The flat list of the Auto card (buildAutoModelOptions) over the same
-// project-less catalog (fetchTitleModelCatalog), "(default)" first; the effort list is the chosen
-// model's own, and clearing the model clears the effort (the pair rule).
-const MEM_DEFRAG_DEFAULT_LABEL = '(default)';
-let memDefragCatalog = [];
-function setMemDefragMsg(text, kind) { setHintMsg('memDefragModelMsg', text, kind); }
-const memDefragLabel = (id) => { const m = memDefragCatalog.find((x) => x && x.id === id); return m ? (m.label || m.id) : id; };
-function paintMemDefragEffort(keep) {
-  const msel = document.getElementById('memDefragModel');
-  const esel = document.getElementById('memDefragEffort');
-  if (!msel || !esel) return;
-  const m = msel.value ? memDefragCatalog.find((x) => x && x.id === msel.value) : null;
-  const efforts = m && Array.isArray(m.efforts) ? m.efforts : [];
-  esel.innerHTML = '';
-  esel.appendChild(option('', m ? '(model default)' : '(pick a model first)'));
-  for (const e of efforts) esel.appendChild(option(e, e));
-  esel.value = keep && efforts.includes(keep) ? keep : '';
-  esel.disabled = !m;
-}
-async function paintMemDefragModelSettings(data) {
-  const msel = document.getElementById('memDefragModel');
-  if (!msel) return;
-  memDefragCatalog = await fetchTitleModelCatalog();
-  const pair = data && data.memoryDefrag && typeof data.memoryDefrag === 'object' ? data.memoryDefrag : {};
-  const raw = typeof pair.model === 'string' ? pair.model : '';
-  // A run matches the stored id case-insensitively (memory-defrag-model.mjs), and so does the card.
-  const hit = raw ? memDefragCatalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === raw.toLowerCase()) : null;
-  const stored = hit ? hit.id : raw;
-  // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
-  const stale = !!stored && memDefragCatalog.length > 0 && !hit;
-  buildAutoModelOptions(msel, stored, memDefragCatalog, stale, MEM_DEFRAG_DEFAULT_LABEL);
-  paintMemDefragEffort(typeof pair.effort === 'string' ? pair.effort : '');
-  // docs/ui-levels.md rule 2: a stored pick stays visible below Expert — New pipeline's locked row
-  // and the health card name it at every level.
-  keepVisible(document.getElementById('mem-defrag-model-card'), !!stored);
-  const def = typeof data.memoryDefragDefault === 'string' && data.memoryDefragDefault ? memDefragLabel(data.memoryDefragDefault) : 'the workflow default';
-  const fallback = `${def}, or the model a project picked for the Memory defragmenter`;
-  // A stored effort the model no longer offers is dropped at run time: the note must not promise it.
-  const effortGone = !!(hit && pair.effort && !(Array.isArray(hit.efforts) && hit.efforts.includes(pair.effort)));
-  let note = '', kind = '';
-  if (stale) { note = `Model "${stored}" is no longer in the catalog — defragment runs fall back to ${fallback}.`; kind = 'warn'; }
-  else if (effortGone) { note = `Every Memory defragment run uses ${memDefragLabel(stored)} at its default effort — it no longer offers "${pair.effort}".`; kind = 'warn'; }
-  else if (stored) note = `Every Memory defragment run uses ${memDefragLabel(stored)}${pair.effort ? ` · ${pair.effort}` : ''}, whatever the project picked.`;
-  else note = `Unset: defragment runs use ${fallback}.`;
-  setHintMsg('memDefragModelNote', note, kind);
-  settingsCardPainted('memDefragModelSave');
-}
-/** Once per visit to the tab (loadMemoryTab) and on a settings-changed frame — never per file route,
- *  so an unsaved pick survives opening a file. */
-async function loadMemDefragModelCard() {
-  if (!document.getElementById('memDefragModel')) return;
-  try {
-    const res = await fetch('/api/settings');
-    const data = await safeJson(res);
-    // A failed re-read leaves the previous paint on screen: forget its catalog so Save refuses
-    // rather than posting that (possibly outdated) pair over another tab's change.
-    if (!res.ok) { memDefragCatalog = []; setMemDefragMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    await paintMemDefragModelSettings(data);
-    // A re-read that worked lifts the error a failed one (or a refused Save) left behind — never a
-    // "Saved." line (that is not an error, and this runs on the save's own frame too).
-    const msg = document.getElementById('memDefragModelMsg');
-    if (msg && msg.classList.contains('err') && memDefragCatalog.length) setMemDefragMsg('');
-  } catch (e) { memDefragCatalog = []; setMemDefragMsg(e.message, 'err'); }
-}
-function postMemDefragModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('mem-defrag-model-card'), dirty: settingsCardDirty('memDefragModelSave'),
-    appliesWhen: 'Applies to the next defragment run.', ...opts,
-    paint: (data) => {
-      // The health card's hint names the pair: reload the scope (keepDraft — an open draft stays).
-      if (memoryTabCtl && memoryTabCtl.loaded()) void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true });
-      return paintMemDefragModelSettings(data);
-    },
-  });
-}
-document.getElementById('memDefragModel')?.addEventListener('change', () => {
-  paintMemDefragEffort(document.getElementById('memDefragEffort')?.value || '');
-});
-// Nothing painted (the settings or the model list failed to load): not a field problem.
-const MODEL_LIST_GONE = { title: 'Not saved', detail: 'The model list did not load. Reload the page to change this.' };
-document.getElementById('memDefragModelSave')?.addEventListener('click', (e) => {
-  // Nothing painted (the settings or the model list failed to load, or the tab is still loading):
-  // a Save would post the empty pair and CLEAR the stored one. Refuse rather than guess.
-  if (!memDefragCatalog.length) { cardAlert(document.getElementById('mem-defrag-model-card'), MODEL_LIST_GONE); return; }
-  const msel = document.getElementById('memDefragModel');
-  const opt = msel.options[msel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(msel, MODEL_GONE_TEXT); return; }
-  const model = msel.value || '';
-  postMemDefragModel({ memoryDefrag: { model, effort: model ? (document.getElementById('memDefragEffort').value || '') : '' } },
-    { button: e.currentTarget });
-});
-document.getElementById('memDefragModelReset')?.addEventListener('click', (e) => postMemDefragModel({ memoryDefrag: null },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-settingsCardDirty('memDefragModelSave');
 
 // ---- Settings › Runs › Workspaces: the models every scan starts with (D17). Create workspace
 // can change them for one scan; Re-scan uses them.
@@ -15296,7 +15001,6 @@ async function loadMemoryTab(sub = '') {
   if (!el.memoryHost) return;
   if (!memoryTabCtl) {
     memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
-    void loadMemDefragModelCard();   // the Defragment model card: its own fetches, never in the scope load's way
   }
   await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -16156,11 +15860,18 @@ async function exportPluginFlow() {
 const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
-let modelsHelpersEl = null;
+// Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
+// titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+const CLAUDE_USER_HELPER_OWN = (data) => ({
+  title: data.titleModel ? { model: data.titleModel } : undefined,
+  classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
+  prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
+  memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+});
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  modelsHelpersEl ||= document.querySelector('.settings-pane[data-tab="models"] .models-helpers');
   let cfg = {};
   try { cfg = await safeJson(await fetch('/api/config')); } catch {}
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
@@ -16170,8 +15881,12 @@ async function paintEngineSettings(data) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
-  const extras = renderEngineSection(root, { level: 'user', roles, catalog, fields, jobs: { claude: [], codex: CODEX_HELPER_JOBS, cursor: [] } });
-  if (modelsHelpersEl) extras.claude.append(modelsHelpersEl);
+  const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
+  for (const job of CLAUDE_USER_HELPER_JOBS) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+    noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
+    defaultLabels: { claude: 'the default model' },
+    jobs: { claude: CLAUDE_USER_HELPER_JOBS, codex: CODEX_HELPER_JOBS, cursor: [] } });
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Settings view: a settings-changed
   // broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'settings') void paintEngineCardStatus(root);
@@ -16226,17 +15941,14 @@ async function loadModelsView() {
   }
 }
 
-// Settings › Models › Title generation + Auto workflow model + PR description model: the pickers list
-// the catalog, so they repaint whenever it loads — a model added a moment ago is selectable without leaving the tab.
+// Settings › Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a
+// moment ago is selectable without leaving the tab.
 async function paintHelperModelCards() {
   try {
     const res = await fetch('/api/settings');
     if (!res.ok) return;
-    const data = await safeJson(res);
-    await paintTitleModelSettings(data);
-    await paintAutoModelSettings(data);
-    await paintPrDescModelSettings(data);
-  } catch { /* the cards keep their last paint */ }
+    await paintEngineSettings(await safeJson(res));
+  } catch { /* the card keeps its last paint */ }
 }
 
 /** The Providers tab: the same card, on a page of its own (§8.1). */
@@ -18352,7 +18064,7 @@ async function pickResumeModel(engine, pause) {
     await confirmModal({ title: 'No other model to resume with', message: `No model ${engineLabel(engine)} can run is set up on another connection. Add one in Settings › Models.`, confirmLabel: 'OK', cancelLabel: 'Close' });
     return null;
   }
-  const options = offered.map((m) => ({ value: m.id, text: m.label || m.id, group: connectionLabel(m) }));
+  const options = modelGroups(offered, { engine }).flatMap((g) => g.models.map((m) => ({ value: m.id, text: modelOptionText(m), group: g.label })));
   const v = await promptModal({
     title: 'Resume with another model',
     message: 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',

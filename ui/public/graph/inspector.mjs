@@ -5,7 +5,7 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
-import { connectionLabel, harnessesOf } from '../../../src/shared/connections.mjs';
+import { harnessesOf, modelGroups, modelSourceSuffix } from '../../../src/shared/connections.mjs';
 import { engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
@@ -70,14 +70,8 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     // (Claude sign-in, ChatGPT sign-in, OpenAI-compatible, …), each model naming the harnesses that run it when that
     // is not Claude Code alone. A pick the run's harness cannot run is skipped at run time (§4.2).
     const harnessNote = (m) => { const hs = harnessesOf(m); return hs.length === 1 && hs[0] === 'claude' ? '' : ` · ${hs.map(engineLabel).join(', ')}`; };
-    const byProvider = new Map();
-    for (const m of offered) {
-      const g = connectionLabel(m);
-      if (!byProvider.has(g)) byProvider.set(g, []);
-      byProvider.get(g).push({ value: m.id, text: (m.label || m.id) + harnessNote(m) });
-    }
-    const groups = [...byProvider].map(([group, items]) => ({ group, items }));
-    const modelItems = groups.length > 1 ? groups : (groups[0]?.items || []);
+    // Grouped by connection like every model picker (src/shared/connections.mjs modelGroups).
+    const modelItems = modelGroups(offered).map((g) => ({ group: g.label, items: g.models.map((m) => ({ value: m.id, text: (m.label || m.id) + modelSourceSuffix(m) + harnessNote(m) })) }));
     body.appendChild(select(doc, 'ins-model', 'model', 'Model', [{ value: '', text: 'inherit' }, ...modelItems], node.config.model));
     // Efforts are per engine: the picked model's own list, else the catalog-wide one.
     const picked = node.config.model ? offered.find((m) => m.id === node.config.model) : null;

@@ -125,3 +125,23 @@ export function runsOnText(connection) {
 /** Engines that own catalog models, for pickers that group by harness. */
 export const CONNECTION_ENGINES = MODEL_ENGINE_NAMES;
 export { ENGINES };
+
+/** Every model dropdown groups its models by connection — what a model signs in or spends with, the one grouping all
+ *  pickers share: the engine's own sign-in first, then the other sign-ins, custom endpoints, then each provider.
+ *  Inside a group the catalog order holds (built-ins newest first, then the user's in the order added). */
+export function modelGroups(models, { engine = 'claude' } = {}) {
+  const rank = (m) => { const c = connectionOf(m); return c.kind === 'signin' ? (c.engine === engine ? 0 : 1) : c.kind === 'env' ? 2 : 3; };
+  const groups = new Map();
+  for (const m of Array.isArray(models) ? models : []) {
+    if (!m || typeof m.id !== 'string') continue;
+    const label = connectionLabel(m);
+    if (!groups.has(label)) groups.set(label, { label, rank: rank(m), models: [] });
+    groups.get(label).models.push(m);
+  }
+  return [...groups.values()].sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label)).map(({ label, models: ms }) => ({ label, models: ms }));
+}
+
+/** Who added a model, as an option suffix (its group already says how it connects): "", " · team policy", " · <plugin>". */
+export function modelSourceSuffix(m) {
+  return m?.custom === 'policy' ? ' · team policy' : m?.custom === 'plugin' ? ` · ${m.plugin || 'plugin'}` : '';
+}

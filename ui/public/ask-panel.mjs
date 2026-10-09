@@ -19,7 +19,8 @@ import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
 import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
-import { runsOn } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
@@ -1941,6 +1942,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
     };
+    // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
+    // only when the section holds more than one connection.
+    const appendByConnection = (models, engine) => {
+      const groups = modelGroups(models, { engine });
+      for (const c of groups) {
+        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        for (const m of c.models) panel.appendChild(modelItem(m));
+      }
+    };
     let shownPane = 'main';
     const renderPane = (pane) => {
       shownPane = pane;
@@ -1964,7 +1974,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) for (const m of splitCatalog(g.models).rest) panel.appendChild(modelItem(m));
+        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) appendByConnection(splitCatalog(g.models).rest, g.engine);
       } else {
         // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
         const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
@@ -1972,7 +1982,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const g of sections) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
           const split = splitCatalog(g.models);
-          for (const m of split.primary) panel.appendChild(modelItem(m));
+          appendByConnection(split.primary, g.engine);
           rest.push(...split.rest);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
@@ -2973,7 +2983,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // model
       const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
       sel.appendChild(opt('', 'inherit (workflow default)'));
-      for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
       sel.value = c.model || '';
       // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
       sel.disabled = !lane.editable || !!row.pinned;

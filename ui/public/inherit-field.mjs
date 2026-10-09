@@ -1,4 +1,5 @@
 import { runsOn, effortsOn } from '../../src/shared/connections.mjs';
+import { appendModelGroups } from './model-options.mjs';
 export const INHERIT_HEAD = Object.freeze({ user: 'Same as my settings', team: 'Team default', default: 'Worca default' });
 // The value comes first, where it comes from second — "Claude (default)", "Opus 5.5 · high (team default)" (night-mode-form's SOURCE_TAG).
 export const INHERIT_TAIL = Object.freeze({ user: 'your setting', team: 'team default', default: 'default' });
@@ -25,6 +26,8 @@ function efforts(doc, select, spec, modelId, keep) {
   const hit = modelId ? (spec.catalog || []).find((model) => model?.id === modelId) : null;
   const own = hit ? effortsOn(hit, spec.engine || 'claude') : []; const list = own.length ? own : (spec.efforts || []); const inh = spec.inherited || {}; const inhEffort = !modelId && inh.value && inh.value.effort;
   select.replaceChildren(option(doc, '', inhEffort ? inheritText(inh.source, inh.value.effort) : 'Model default'));
+  // A slot that stores a model only (Claude's title, Auto and PR description settings): the effort is the model's own.
+  if (spec.noEffort) { select.replaceChildren(option(doc, '', 'Default')); select.disabled = true; select.title = 'This setting keeps a model only: it runs at the model\'s default effort.'; return; }
   for (const effort of list) select.append(option(doc, effort, effort)); select.value = keep && list.includes(keep) ? keep : '';
 }
 export function renderInheritField(doc, spec) {
@@ -33,13 +36,14 @@ export function renderInheritField(doc, spec) {
   const clear = node(doc, 'button', 'btn btn-ghost btn-mini inherit-clear', spec.level === 'project' ? 'Clear' : 'Use default'); clear.type = 'button'; row.append(label, badge, clear); wrap.append(row);
   if (spec.hint) wrap.append(node(doc, 'small', 'hint', spec.hint));
   const inherited = spec.inherited || { value: undefined, source: 'default' }; const format = spec.format || ((value) => value == null ? null : String(value));
-  const shown = spec.kind === 'model' ? formatPair(inherited.value, spec.catalog, spec.defaultLabel || null) : format(inherited.value); let controls;
+  // A model field's Effort has its own select: the Model's inherited choice names the model alone ("Opus 5.5 (default)").
+  const shown = spec.kind === 'model' ? formatPair(inherited.value?.model ? { model: inherited.value.model } : null, spec.catalog, spec.defaultLabel || null) : format(inherited.value); let controls;
   if (spec.kind === 'number') { const input = node(doc, 'input', 'input input-mini inherit-input'); input.type = 'number'; if (spec.min != null) input.min = String(spec.min); if (spec.step != null) input.step = String(spec.step); input.value = spec.own == null ? '' : String(spec.own); input.placeholder = inheritText(inherited.source, shown); controls = [input]; }
   else if (spec.kind === 'select') { const select = node(doc, 'select', 'select inherit-input'); select.append(option(doc, '', inheritText(inherited.source, shown))); for (const item of spec.options || []) select.append(option(doc, item.value, item.label)); select.value = spec.own == null ? '' : (spec.fromValue || String)(spec.own); if (inherited.value != null) dropInheritedTwin(select, (spec.fromValue || String)(inherited.value)); controls = [select]; }
   else { const model = node(doc, 'select', 'select inherit-model'); model.setAttribute('aria-label', `${spec.label} model`);
     // Nothing inherited: the empty choice is the fallback phrase itself ("The workflow's model"), not a value with a source.
     const fallback = !(inherited.value && (inherited.value.model || inherited.value.effort)) && shown;
-    model.append(option(doc, '', fallback ? shown.charAt(0).toUpperCase() + shown.slice(1) : inheritText(inherited.source, shown))); const catalog = (spec.catalog || []).filter((item) => runsOn(item, spec.engine || 'claude')); for (const item of catalog) model.append(option(doc, item.id, item.label || item.id)); const ownModel = spec.own?.model || ''; if (ownModel && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} — not in the catalog`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
+    model.append(option(doc, '', fallback ? shown.charAt(0).toUpperCase() + shown.slice(1) : inheritText(inherited.source, shown))); const catalog = (spec.catalog || []).filter((item) => runsOn(item, spec.engine || 'claude')); appendModelGroups(model, catalog, { engine: spec.engine || 'claude' }); const ownModel = spec.own?.model || ''; if (ownModel && !catalog.some((item) => item.id === ownModel)) model.append(option(doc, ownModel, `${ownModel} — not in the catalog`)); model.value = ownModel; const effort = node(doc, 'select', 'select inherit-effort'); effort.setAttribute('aria-label', `${spec.label} effort`); efforts(doc, effort, spec, ownModel, spec.own?.effort); model.addEventListener('change', () => efforts(doc, effort, spec, model.value, effort.value)); controls = [model, effort]; }
   const line = node(doc, 'div', 'away-input-row inherit-row');
   if (spec.kind === 'model') {   // one row, Model wider than Effort, each named by a caption (the Ask run card's pattern)
     line.classList.add('inherit-pair');
