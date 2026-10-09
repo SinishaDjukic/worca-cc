@@ -109,6 +109,7 @@
   --shadow-sheet:0 18px 60px light-dark(rgba(25,25,27,.14),rgba(0,0,0,.65)),0 2px 6px light-dark(rgba(25,25,27,.06),rgba(0,0,0,.4));
   --shadow-hover:0 6px 18px light-dark(rgba(25,25,27,.10),rgba(0,0,0,.55));
   --shadow-menu:0 12px 34px light-dark(rgba(25,25,27,.12),rgba(0,0,0,.6));
+  --shadow-dock:0 -8px 24px light-dark(rgba(25,25,27,.08),rgba(0,0,0,.45));   /* a panel docked at the bottom (step log drawer) */
   --knob-shadow:0 1px 3px light-dark(rgba(0,0,0,.18),rgba(0,0,0,.6));
   --ask-dock-clearance:96px;
 
@@ -8277,3 +8278,33 @@ button.act-srow-name{cursor:pointer}
 /* A non-Claude engine card's readiness line (GET /api/engines): text only. */
 .engine-card-status{display:block;color:var(--ink-2);font-size:12px;margin:0 0 6px}
 .engine-card-status:empty{display:none}
+
+/* Step log drawer (log-drawer.mjs): a step's log docked under the workflow graph, sticky at the
+   bottom of the viewport so the graph stays in view above it. Height: dragged / arrow keys on
+   the handle (--wf-log-h, kept per browser), else 40% of the viewport within 200–480px.
+   z-index 10: above the graph's zoom cluster (.gv-nav, 6), below menus and modals. */
+.wf-log-drawer{position:sticky;bottom:0;z-index:10;flex:none;margin-top:14px;display:flex;flex-direction:column;
+  height:var(--wf-log-h,clamp(200px,40vh,480px));background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-card) var(--r-card) 0 0;box-shadow:var(--shadow-dock);}
+.wf-log-drawer[hidden]{display:none;}
+.wf-log-resize{flex:none;position:relative;height:10px;cursor:ns-resize;touch-action:none;}
+.wf-log-resize::before{content:'';position:absolute;left:50%;top:4px;width:36px;height:3px;margin-left:-18px;
+  border-radius:2px;background:var(--line);}
+.wf-log-resize:hover::before,.wf-log-resize:focus-visible::before{background:var(--ink-3);}
+.wf-log-resize:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wf-log-head{flex:none;display:flex;align-items:center;gap:8px;padding:0 10px 8px 16px;border-bottom:1px solid var(--line);}
+.wf-log-title{font-size:13px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wf-log-live{font:700 10px/1.4 var(--mono);text-transform:uppercase;letter-spacing:.04em;padding:1px 7px;border-radius:999px;
+  background:var(--green-bg);color:var(--green-ink);}
+.wf-log-live[hidden]{display:none;}
+.wf-log-spacer{flex:1;}
+.wf-log-close{width:28px;height:28px;border:0;border-radius:6px;background:none;color:var(--ink-2);font-size:18px;line-height:1;cursor:pointer;}
+.wf-log-close:hover{background:var(--hover);color:var(--ink);}
+.wf-log-close:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.wf-log-drawer .log.wf-log-body{flex:1;min-height:0;max-height:none;border:0;border-radius:0;padding:10px 16px;}
+.wf-log-drawer .log.wf-log-body:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+/* The card the drawer shows (aria-current, not a class: the contrast baselines key on the class list). */
+.run-flow.gv-host .gv-world .node[aria-current="true"],.hd-graph .run-node[aria-current="true"]{outline:2px solid var(--blue);outline-offset:3px;}
+@media (max-width:760px){
+  .wf-log-drawer{height:var(--wf-log-h,50vh);}
+}

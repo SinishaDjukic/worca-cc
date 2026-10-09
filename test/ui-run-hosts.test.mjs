@@ -369,7 +369,7 @@ test('nodeClicks: a card that has run opens its running (else latest) execution;
   const end = host.querySelector('.node[data-node-id="n_end"]');
   assert.equal(card.getAttribute('role'), 'link');
   assert.equal(card.tabIndex, 0);
-  assert.equal(card.getAttribute('aria-label'), 'Show the live log of Planner');
+  assert.equal(card.getAttribute('aria-label'), 'Show the log of Planner below the workflow');
   assert.equal(end.getAttribute('role'), null, 'a card that never ran has no log to open');
   click(card.querySelector('.nhead .tt'));
   assert.deepEqual(calls, [['row', 'x:n_a:2', 'n_a']], 'the RUNNING execution, not the first');
@@ -832,6 +832,74 @@ test('applyRunLogFilter assigns onto r.logFilter and repaints; focusLogExecution
   assert.equal(screen.dataset.mode, 'details', 'and opens Details when the glance was showing');
   assert.equal(screen.querySelector('.rd-details').hidden, false);
   assert.equal(r.logFilter.execution, 'x:n_a:1');
+  window.location.hash = '';
+});
+
+test('a card click on the Workflow tab opens its log in the drawer under the graph: the graph stays, another card retargets, lines stream in, × closes, Open in Logs narrows the Logs tab', async () => {
+  const window = await bootApp();
+  const np = window.__np;
+  const r = np.upsertRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running', kind: 'run', startedAt: '10:00:00', pendingQuestion: null });
+  np.onState(r, { status: 'running', stepper: MANIFEST, active: [{ nodeId: 'n_a', executionId: 'x:n_a:1' }],
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, status: 'running', activeMs: 0 }] });
+  np.onLog(r, { source: 'planner', level: 'info', text: 'planning the work', nodeId: 'n_a', executionId: 'x:n_a:1', ts: Date.now() });
+  np.onLog(r, { source: 'other', level: 'info', text: 'unrelated line', nodeId: 'n_end', executionId: 'x:n_end:1', ts: Date.now() });
+  window.location.hash = 'running/r1/details/workflow';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((res) => setTimeout(res, 0));
+  const screen = window.document.querySelector('#run-detail').firstElementChild;
+  const wf = screen.querySelector('.rd-sec[data-sec="workflow"]');
+  const drawer = wf.querySelector('.wf-log-drawer');
+  assert.ok(drawer, 'the Workflow section carries the drawer');
+  assert.equal(drawer.hidden, true, 'closed until a card is clicked');
+  const card = screen.querySelector('.rd-graph [data-node-id="n_a"]');
+  assert.equal(card.getAttribute('role'), 'link');
+  card.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.equal(drawer.hidden, false, 'the card opened the drawer');
+  assert.equal(wf.hidden, false, 'the page stays on the Workflow tab');
+  assert.equal(window.location.hash, '#running/r1/details/workflow', 'and the URL does not move');
+  assert.equal(drawer.querySelector('.wf-log-title').textContent, 'Planner');
+  const shown = () => [...drawer.querySelectorAll('.log-line')].map((n) => n.textContent);
+  assert.equal(shown().length, 1);
+  assert.match(shown()[0], /planning the work/);
+  assert.equal(card.getAttribute('aria-current'), 'true', 'the card it shows is marked');
+  assert.equal(r.logFilter.node, '', 'the Logs tab filter is untouched');
+  assert.equal(r.logFilter.execution, '');
+  // A streamed line for the target appears; one for another node does not.
+  np.onLog(r, { source: 'planner', level: 'info', text: 'plan written', nodeId: 'n_a', executionId: 'x:n_a:1', ts: Date.now() });
+  np.onLog(r, { source: 'other', level: 'info', text: 'still unrelated', nodeId: 'n_end', executionId: 'x:n_end:1', ts: Date.now() });
+  assert.equal(shown().length, 2);
+  assert.match(shown()[1], /plan written/);
+  // Another target retargets the same drawer.
+  np.openStepLog(screen.querySelector('.rd-graph .run-flow'), { run: r, runId: 'r1' }, 'x:n_end:1', 'n_end');
+  assert.equal(drawer.querySelector('.wf-log-title').textContent, 'End');
+  assert.deepEqual(shown().map((t) => /unrelated/.test(t)), [true, true]);
+  assert.equal(card.hasAttribute('aria-current'), false, 'the mark moved off the first card');
+  // Switching tabs and back keeps the drawer on its target.
+  np.detailTabsOf(screen).activate('overview');
+  np.detailTabsOf(screen).activate('workflow');
+  const again = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
+  assert.equal(again.hidden, false);
+  assert.equal(again.querySelector('.wf-log-title').textContent, 'End');
+  // Open in Logs: the old path, narrowing the Logs tab to the drawer's target.
+  again.querySelector('.wf-log-full').click();
+  assert.equal(screen.querySelector('.rd-tab[data-sec="logs"]').classList.contains('active'), true);
+  assert.equal(r.logFilter.node, 'n_end');
+  assert.equal(r.logFilter.execution, 'x:n_end:1');
+  // Esc inside the drawer closes it, and only it: the detail screen stays open.
+  np.detailTabsOf(screen).activate('workflow');
+  let last = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
+  last.querySelector('.wf-log-body').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(last.hidden, true);
+  assert.equal(screen.dataset.mode, 'details', 'the page-level Escape did not also leave the detail');
+  assert.match(window.location.hash, /^#running\/r1\/details/);
+  // × closes and clears the target.
+  np.openStepLog(screen.querySelector('.rd-graph .run-flow'), { run: r, runId: 'r1' }, 'x:n_a:1', 'n_a');
+  last = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
+  assert.equal(last.hidden, false);
+  last.querySelector('.wf-log-close').click();
+  assert.equal(last.hidden, true);
+  assert.equal(r.logDrawer, null);
+  assert.equal(screen.querySelector('.rd-graph [aria-current="true"]'), null);
   window.location.hash = '';
 });
 

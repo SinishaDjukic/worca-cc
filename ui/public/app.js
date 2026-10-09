@@ -77,6 +77,7 @@ import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycle
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
+import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
@@ -3121,6 +3122,7 @@ if (typeof window !== 'undefined') {
     destroyGraphMounts,
     applyRunLogFilter,
     focusLogExecution,
+    openStepLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -22535,6 +22537,7 @@ const HD_TABS = [
       const screen = sec.closest('.hd');
       const g = screen && screen.querySelector('.hd-graph');
       if (g && g.parentElement !== sec) sec.appendChild(g);
+      if (sec.__drawer) sec.appendChild(sec.__drawer.el);   // the step log drawer stays under the graph
     } },
   { key: 'clarify', label: 'Q&A', level: 'simple',
     badge: (d) => String(hdClarifyCount(d)),
@@ -22626,10 +22629,19 @@ function wireHdGraphLogLinks(screen) {
     el.setAttribute('role', 'link');
     el.tabIndex = 0;
     const label = el.querySelector('.nmeta b, .nhead .tt');
-    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)}`);
+    el.setAttribute('aria-label', `Show the log of ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)} below the workflow`);
   }
 
+  // A click opens the step's log in the drawer under the graph; its "Open in Logs" runs openInLogs.
   const open = (node) => {
+    const label = node.querySelector('.nmeta b, .nhead .tt');
+    const name = label ? label.textContent : (node.dataset.nodeId || node.dataset.logSource);
+    const target = node.dataset.nodeId
+      ? { node: node.dataset.nodeId, label: name }
+      : { sources: logSourceCandidates(node.dataset.logSource), mark: node.dataset.logSource, label: name };
+    openHdStepLog(screen, target, () => openInLogs(node));
+  };
+  const openInLogs = (node) => {
     const cell = tabs.cells.get('logs');
     if (!cell) return;
     if (node.dataset.nodeId) {
@@ -24557,9 +24569,14 @@ function buildRdWorkflow(sec, ctx) {
     paintRdGraph(screen, ctx.run);
     g.classList.toggle('settled', RD_TERMINAL.includes(ctx.run.status));
   }
+  rdMountLogDrawer(sec, ctx.run);
   sec.__update = (c) => {
     const s = c.screen || (runDetailState && runDetailState.screen);
     if (s) paintRdGraph(s, c.run);
+    if (sec.__drawer && c.run.logDrawer) {
+      sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
+      markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+    }
   };
 }
 
@@ -25408,6 +25425,7 @@ function rdAppendLogFrame(r) {
   if (RD_TERMINAL.includes(r.status)) return;
   const screen = runDetailState && runDetailState.screen;
   if (!screen) return;
+  rdAppendDrawerLine(screen, r);
   const sec = screen.querySelector('.rd-sec[data-sec="logs"]');
   if (!sec) return;
   // Hidden tab: drop the built body so activation rebuilds it from r.logLines —
@@ -25528,6 +25546,7 @@ document.addEventListener('keydown', (e) => {
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
@@ -25567,6 +25586,7 @@ document.addEventListener('keydown', (e) => {
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
@@ -26590,8 +26610,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
     slot = { m: null, ctx: decor };
     slot.m = mountRunGraph(host, {
       mode: decor.mode || 'monitor',
-      onRowClick: (executionId, nodeId) => focusLogExecution(slot.ctx, executionId, nodeId),
-      // Running: a card opens its live log. History links its cards itself (wireHdGraphLogLinks).
+      onRowClick: (executionId, nodeId) => openStepLog(host, slot.ctx, executionId, nodeId),
+      // Running: a card opens its log in the drawer. History links its cards itself (wireHdGraphLogLinks).
       nodeClicks: !decor.record,
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
@@ -26625,6 +26645,174 @@ function applyRunLogFilter(r, patch) {
   const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
   const sec = screen && screen.querySelector('.rd-sec-logs');
   if (sec) { rdPaintLogFilters(sec, r); rdRepaintLog(sec, r); }
+}
+
+// ── Step log drawer (plans/workflow-log-drawer-design.md) ─────────────────────
+// A card or footer-row click on the Workflow tab opens that step's log in a drawer under the
+// graph (log-drawer.mjs), so the graph stays in view; another click retargets it. The drawer
+// filters by its own target ({node, execution}, or a v1 source), never r.logFilter: the Logs
+// tab is narrowed only through the drawer's "Open in Logs" (focusLogExecution). A click from
+// anywhere else (no drawer) keeps the old Logs-tab path.
+const LOG_DRAWER_STORAGE = { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) };
+const LOG_TARGET_CARDS = '.node[data-node-id], .run-node[data-log-source]';
+
+/** Highlight the card the drawer shows (`{node}` or a v1 `{source}`); null clears it. */
+// An attribute, not a class: the contrast baselines key on a node's class list.
+function markLogTarget(root, t) {
+  if (!root) return;
+  const card = logTargetCard(root, t);
+  for (const el of root.querySelectorAll('[aria-current="true"]')) if (el !== card && el.matches(LOG_TARGET_CARDS)) el.removeAttribute('aria-current');
+  if (card) card.setAttribute('aria-current', 'true');
+}
+function logTargetCard(root, t) {
+  if (!root || !t) return null;
+  for (const el of root.querySelectorAll(LOG_TARGET_CARDS)) {
+    if (t.node ? el.dataset.nodeId === t.node : (!!t.mark && el.dataset.logSource === t.mark)) return el;
+  }
+  return null;
+}
+/** The drawer follows the Logs tab's level (Running: Advanced, History: Expert): a Logs tab the
+ *  interface mode hides still exists as a cell, so existence alone is not enough. */
+function logsTabShown(tabs) {
+  const cell = tabs && tabs.cells.get('logs');
+  return !!cell && levelAtLeast((cell.tab && cell.tab.level) || 'simple');
+}
+function stepLabel(stepper, nodeId) {
+  try { return stepper ? nodeLabelLookup(stepper)(nodeId) : nodeId; } catch { return nodeId; }
+}
+/** Render `recs` through `filter` into the drawer's body (tail-capped like the Logs tab). */
+function fillLogDrawerBody(body, recs, filter) {
+  body.innerHTML = '';
+  delete body.dataset.empty;
+  const matches = recs.filter(compileLogFilter(filter));
+  const frag = document.createDocumentFragment();
+  let cycleState = newCycleState();
+  for (const rec of matches.slice(-MAX_LOG_LINES)) cycleState = appendLogRec(frag, rec, cycleState);
+  body.appendChild(frag);
+  if (!matches.length) { body.textContent = 'No log lines for this step yet.'; body.dataset.empty = '1'; }
+  body.__pinned = true;
+  body.scrollTop = body.scrollHeight;
+  return cycleState;
+}
+// The drawer is sticky at the window's bottom, so on a short window it sits over the graph's
+// lower half. On a click, scroll the Workflow section's end to the window's end: the drawer
+// then rests in place under the graph and the graph is fully in view above it.
+function revealLogDrawer(sec) {
+  if (!sec || typeof sec.scrollIntoView !== 'function') return;   // jsdom has no layout
+  const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  sec.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
+}
+function newLogDrawer(sec, { onClose, onOpenInLogs }) {
+  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs });
+  // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
+  d.body.addEventListener('scroll', () => {
+    d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
+  });
+  sec.appendChild(d.el);
+  sec.__drawer = d;
+  return d;
+}
+
+// Running: the target lives on the run (r.logDrawer), so the drawer survives the Workflow
+// section's rebuild when its tab is re-activated.
+function rdMountLogDrawer(sec, r) {
+  newLogDrawer(sec, {
+    onClose: () => { r.logDrawer = null; markLogTarget(sec, null); },
+    onOpenInLogs: () => { const t = r.logDrawer; if (t) focusLogExecution(rdCtx(r), t.execution, t.node); },
+  });
+  if (r.logDrawer) rdPaintLogDrawer(sec, r);
+}
+function rdPaintLogDrawer(sec, r, opener = null) {
+  const d = sec.__drawer;
+  const t = r.logDrawer;
+  if (!d || !t) return;
+  sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
+  d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  markLogTarget(sec, t);
+  if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
+}
+function rdAppendDrawerLine(screen, r) {
+  const sec = screen.querySelector('.rd-sec[data-sec="workflow"]');
+  const d = sec && sec.__drawer;
+  const rec = r.logLines[r.logLines.length - 1];
+  if (!d || sec.hidden || !d.isOpen() || !rec || !r.logDrawer || !logLineVisible(rec, r.logDrawer)) return;
+  clearLogPlaceholder(d.body);
+  sec._drawerCycle = appendLogRec(d.body, rec, sec._drawerCycle ?? null);
+  trimLogDom(d.body);
+  if (d.body.__pinned !== false) schedulePinToBottom(d.body, null);
+}
+
+/** A graph click (card or footer row): into the Workflow tab's drawer when the graph is there. */
+function openStepLog(host, ctx, executionId, nodeId) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  if (ctx.record) {
+    const screen = histDetailState && histDetailState.screen;
+    if (screen && host && host.closest('.hd-graph')) {
+      openHdStepLog(screen, { node: nodeId || '', execution: executionId || '', label: stepLabel(r.stepper, nodeId) },
+        () => focusLogExecution(ctx, executionId, nodeId));
+      return;
+    }
+    focusLogExecution(ctx, executionId, nodeId);
+    return;
+  }
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const sec = host && host.closest('.rd-sec[data-sec="workflow"]');
+  if (!logsTabShown(tabs)) return;
+  if (!sec || !sec.__drawer) { focusLogExecution(ctx, executionId, nodeId); return; }
+  r.logDrawer = { node: nodeId || '', execution: executionId || '' };
+  rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
+}
+
+// History: the saved NDJSON log, fetched once per screen and shared by every drawer target.
+function hdLogRecs(screen) {
+  if (!screen.__logRecs) {
+    const rec = histDetailState.record || { projectKey: histDetailState.key, id: histDetailState.id };
+    screen.__logRecs = fetch(historyLogUrl(rec.id, rec))
+      .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text(); })
+      .then((text) => {
+        const recs = [];
+        for (const raw of text.split('\n')) {
+          const t = raw.trim();
+          if (!t) continue;
+          try { recs.push(projectLogRecord(JSON.parse(t))); } catch { /* a torn final line */ }
+        }
+        return recs;
+      })
+      .catch((e) => { screen.__logRecs = null; throw e; });   // retry on the next click
+  }
+  return screen.__logRecs;
+}
+/** `target`: {node, execution?, label} for a v2 card or row, {sources, mark, label} for a v1 card. */
+function openHdStepLog(screen, target, openInLogs) {
+  const tabs = detailTabsOf(screen);
+  if (!logsTabShown(tabs)) return;
+  const cell = tabs.cells.get('workflow');
+  if (!cell) { openInLogs(); return; }
+  const sec = cell.sec;
+  const d = sec.__drawer || newLogDrawer(sec, {
+    onClose: () => { sec.__logTarget = null; markLogTarget(screen.querySelector('.hd-graph'), null); },
+    onOpenInLogs: () => { if (sec.__logTarget) sec.__logTarget.openInLogs(); },
+  });
+  // The graph joins this section only once the Workflow tab is built, so cards are found from the screen.
+  const graph = screen.querySelector('.hd-graph');
+  const t = { ...target, openInLogs };
+  sec.__logTarget = t;
+  d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  markLogTarget(graph, target);
+  revealLogDrawer(sec);
+  d.body.textContent = 'Loading…';
+  hdLogRecs(screen).then((recs) => {
+    if (sec.__logTarget !== t) return;   // retargeted while the log loaded
+    let filter;
+    if (target.node) filter = { node: target.node, execution: target.execution || '' };
+    else {
+      const seen = new Set(recs.map((x) => x.source));
+      filter = { source: target.sources.find((src) => seen.has(src)) || target.sources[0] };
+    }
+    fillLogDrawerBody(d.body, recs, filter);
+  }, (e) => { if (sec.__logTarget === t) d.body.textContent = `Could not load logs: ${e.message}`; });
 }
 
 /** Footer row -> narrow the log to that execution and bring the log into view.

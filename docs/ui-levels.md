@@ -172,6 +172,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
 | Diff tab (live worktree while running, the final patch after) | A |
 | Live log pane (run page › Logs), log search / copy / auto-scroll | A |
+| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
@@ -193,6 +194,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
+| Step log drawer under the Workflow graph, as on the run page | E — follows the Logs tab |
 
 ### Workflow Composer (page: A)
 
