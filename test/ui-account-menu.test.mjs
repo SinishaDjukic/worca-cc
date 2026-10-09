@@ -289,7 +289,7 @@ test('paintAwayRow: icon, label, hint and tip from describeAwayRow; busy or unre
   paintAwayRow(btn, rowAt('2026-09-28T15:00:00Z'));
   assert.deepEqual([btn.dataset.state, btn.dataset.status, btn.querySelector('.mi-lbl').textContent, btn.querySelector('.mi-hint').textContent],
     ['here', 'here', 'Step away', 'away at 22:00']);
-  assert.match(icon(), /^M10 20H6/, 'here: the step-out arrow');
+  assert.equal(icon(), 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z', 'here: the moon, never a sign-out arrow');
   assert.equal(btn.getAttribute('aria-disabled'), null);
   assert.match(btn.title, /Step away to have worca answer on every run now\.$/);
   paintAwayRow(btn, rowAt('2026-09-28T23:00:00Z'));

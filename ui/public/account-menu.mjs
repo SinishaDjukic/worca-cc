@@ -204,9 +204,9 @@ export function paintIdentityCard(card, acct) {
 
 // ── The away row ─────────────────────────────────────────────────────────────
 
-/** Here: a step-out arrow, where a sign-out would sit. Away: a home, to come back to. */
+/** Here: a moon, the away hours (a step-out arrow read as Sign out). Away: a home, to come back to. */
 const AWAY_ICON_PATHS = Object.freeze({
-  here: ['M10 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4', 'M15 16l4-4-4-4', 'M19 12H9'],
+  here: ['M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z'],
   away: ['M3.5 10.5L12 3.5l8.5 7', 'M5.5 9v11h13V9', 'M10 20v-5.5h4V20'],
 });
 
