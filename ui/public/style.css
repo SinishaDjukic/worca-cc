@@ -286,7 +286,9 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .side-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;padding:0;border:0;
   border-radius:8px;background:transparent;color:var(--ink-2);cursor:pointer;transition:background .15s,color .15s;}
-.side-toggle svg{width:16px;height:16px;flex:none;}
+.side-toggle svg{width:20px;height:20px;flex:none;}
+.side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
+.side-toggle[aria-expanded="false"] .side-toggle-fill{display:inline;}
 .side-toggle:hover{background:var(--field);color:var(--ink);}
 .side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .topnav-new{display:inline-flex;align-items:center;gap:7px;flex:none;height:32px;padding:0 14px 0 12px;border:0;

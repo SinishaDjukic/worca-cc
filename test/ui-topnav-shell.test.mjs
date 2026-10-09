@@ -155,17 +155,20 @@ test('the top bar box: a 48px white grid with a hairline; .main-col is a flex co
 
 // ---- the collapse toggle ----
 
-test('the collapse toggle sits in the bar\'s left slot, before the page name: a static panel-left icon, no chevron, no mark', () => {
+test('the collapse toggle sits in the bar\'s left slot, before the page name: a static panel icon (line while open, filled block on the rail), no chevron, no mark', () => {
   const doc = new JSDOM(html).window.document;
   const btn = doc.getElementById('side-toggle');
   assert.equal(btn.parentElement.className, 'topnav-l');
   assert.equal(btn.nextElementSibling.id, 'topnav-title');
   assert.equal(doc.querySelector('.brand #side-toggle, .sidebar #side-toggle'), null, 'it left the logo row');
   assert.equal(btn.getAttribute('aria-controls'), 'side-rail');
-  assert.equal(btn.querySelector('svg').innerHTML, '<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path>');
-  assert.equal(btn.querySelector('svg').getAttribute('stroke-width'), '1.75');
+  assert.equal(btn.querySelector('svg').innerHTML, '<rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect>');
+  assert.equal(btn.querySelector('svg').getAttribute('stroke-width'), '1.5');
   assert.equal(doc.querySelector('.side-toggle-mark, #side-toggle .chev'), null);
-  assert.match(ruleBody('.side-toggle svg'), /width:16px;height:16px;/);
+  assert.match(ruleBody('.side-toggle svg'), /width:20px;height:20px;/);
+  // The state lives in CSS off aria-expanded, so the markup never changes.
+  assert.equal(ruleBody('.side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line'), 'display:none;');
+  assert.equal(ruleBody('.side-toggle[aria-expanded="false"] .side-toggle-fill'), 'display:inline;');
   for (const sel of ['.sidebar .side-toggle', '.sidebar.collapsed .side-toggle', '.brand .side-toggle-mark']) {
     assert.equal(ruleBody(sel), null, `${sel} is gone`);
   }
