@@ -76,7 +76,7 @@ const state = {
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
-import { createAlerts, mountAlertsCard } from './alerts.mjs';
+import { createAlerts, mountAlertsCard, pauseTitle } from './alerts.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { AWAY_GLYPH } from './away-glyph.mjs';
@@ -662,6 +662,8 @@ const alerts = createAlerts({
 });
 /** The run as alerts.mjs names it: makeRun's '(untitled)' placeholder is no title (the id stands in). */
 const alertRun = (r) => ({ runId: r.runId, title: r.title === '(untitled)' ? '' : r.title });
+/** Paused on a usage limit, an error or a cost cap: it waits on a person like a question does. */
+const pausedOnYou = (r) => r.status === 'paused' && !!pauseTitle(r.pauseReason);
 
 // ---------------------------------------------------------------------------
 // Sidebar collapse (icon rail) + the responsive nav tiers. `sidebarCollapsed` is
@@ -1512,6 +1514,8 @@ function onHello(msg) {
     if (r0.pendingQuestion) alerts.onQuestion(alertRun(rr), r0.pendingQuestion, { backfill: firstHello });
     // Answered while the socket was down: the upsert cleared it without a question-resolved frame.
     else if (prevQuestion && prevQuestion.id != null) alerts.onResolved(alertRun(rr), { id: prevQuestion.id });
+    // A pause is a wait too, under the same backfill rule.
+    if (r0.status === 'paused' && !r0.pendingQuestion) alerts.onPaused(alertRun(rr), r0.pauseReason, { backfill: firstHello });
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
@@ -5829,7 +5833,11 @@ function onDone(r, msg) {
   // A paused run already finished once, as paused. Its stop (or a settle from elsewhere) sends a
   // terminal done on the same runId: finish it again, for real. Never on an `error` frame: onError
   // stays guarded, so a stray error after the pause cannot turn the parked run red.
-  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) r._finished = false;
+  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) {
+    r._finished = false;
+    alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
+  }
+  if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   finishRun(r, msg.status || 'done');
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
@@ -17500,6 +17508,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     await seedResumedLog(data.runId, prevLines, null);  // in-memory pre-pause log → continuous
     // Old paused run is superseded by the resumed live run — drop it so Running
     // shows only the new card (same pipelineId would otherwise render twice).
+    alerts.onResolved(alertRun(r));
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
@@ -21766,7 +21775,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         || (typeof p.branch === 'string' ? p.branch : null);
       if (feat) nr.branchFeature = feat;
     }
-    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
     location.hash = `running/${data.runId}`;   // land on the continuous live card
@@ -29605,7 +29614,7 @@ function updateNavCounts() {
   // One badge on Runs (D11): while anything needs you, the amber Needs-you count shows and
   // CSS hides the live count beside it.
   let waiting = 0;
-  for (const r of runs.values()) if (r.pendingQuestion != null) waiting += 1;
+  for (const r of runs.values()) if (r.pendingQuestion != null || pausedOnYou(r)) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
   const needs = runsNeedsCount();
   const nc = $('#nav-needs-count');

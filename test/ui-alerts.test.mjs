@@ -125,6 +125,46 @@ test('a reconnect hello that no longer lists a pending question closes its notif
   assert.equal(N.shown[0].closed, true);
 });
 
+test('a run paused on a usage limit notifies and joins the badge; stopping it closes the notification', async () => {
+  const { window, N, tick, recv } = await boot();
+  recv(HELLO([]));
+  recv({ type: 'run-created', runId: 'r1', title: 'Limited run', status: 'running' });
+  recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: "You've hit your session limit", limitEngine: 'claude' });
+  await tick();
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(N.shown[0].body, 'Limited run', 'the body names the run, never the limit detail');
+  assert.equal(window.document.title, '(1) Worca CC');
+  recv({ type: 'done', runId: 'r1', status: 'stopped' });
+  await tick();
+  assert.equal(N.shown[0].closed, true);
+  assert.equal(window.document.title, 'Worca CC');
+});
+
+test('a paused run on page load counts on the badge without notifying; a manual pause neither notifies nor counts', async () => {
+  const { window, N, tick, recv } = await boot();
+  recv(HELLO([
+    { runId: 'r1', title: 'Already limited', status: 'paused', pauseReason: 'usage_limit' },
+    { runId: 'r2', title: 'Paused by hand', status: 'paused', pauseReason: null },
+  ]));
+  await tick();
+  assert.equal(N.shown.length, 0);
+  assert.equal(window.document.title, '(1) Worca CC');
+  recv({ type: 'run-created', runId: 'r3', title: 'Paused again', status: 'running' });
+  recv({ type: 'done', runId: 'r3', status: 'paused', reason: null });
+  await tick();
+  assert.equal(N.shown.length, 0);
+});
+
+test('a reconnect hello notifies a pause that happened while the socket was down', async () => {
+  const { N, tick, recv } = await boot();
+  recv(HELLO([{ runId: 'r1', title: 'Running', status: 'running' }]));
+  recv(HELLO([{ runId: 'r1', title: 'Running', status: 'paused', pauseReason: 'cost_total' }]));
+  await tick();
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].title, 'Worca: Cost cap reached');
+});
+
 test('no notification while the tab is visible and focused; the badge still counts', async () => {
   const { window, N, look, tick, recv } = await boot();
   look.visible = true;

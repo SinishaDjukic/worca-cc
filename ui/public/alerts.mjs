@@ -1,5 +1,6 @@
 // ui/public/alerts.mjs — Alerts: desktop notifications and a waiting badge (Settings › General ›
-// Alerts). Only waits that need a person notify (a run's pending question, a schedule problem);
+// Alerts). Only waits that need a person notify (a run's pending question, a run paused on a
+// usage limit, an error or a cost cap, a schedule problem);
 // never while the tab is visible and focused, never for what was already pending when the page
 // loaded, and never twice for one wait (tag worca:<runId>:<questionId>, shared across tabs). The
 // body names the run, never the question. The badge — tab title, favicon dot and, where the
@@ -20,6 +21,18 @@ export const KIND_TITLES = Object.freeze({
   'cost-cap': 'Cost cap reached',
 });
 export const GENERIC_TITLE = 'Waiting for you';
+/** Pause reason (failure-policy REASON) → notification title. A reason not listed — no reason
+ * (Pause pressed) or 'drain' (the server stopping) — waits on nobody, so it never notifies. */
+export const PAUSE_TITLES = Object.freeze({
+  usage_limit: 'Usage limit reached',
+  recoverable: 'Run paused on an error',
+  error: 'Run paused on an error',
+  cost_pipeline: 'Cost cap reached',
+  cost_total: 'Cost cap reached',
+  cost_pipeline_policy: 'Cost cap reached',
+  cost_total_policy: 'Cost cap reached',
+  night_guardrail: 'Night guardrail reached',
+});
 export const SCHEDULE_TITLE = 'Scheduled run needs attention';
 export const BLOCKED_HINT = 'Notifications are blocked for this site in your browser settings.';
 const UNSUPPORTED_HINT = "This browser doesn't support desktop notifications.";
@@ -30,6 +43,12 @@ export function kindTitle(kind) {
   return TITLE_PREFIX + (Object.hasOwn(KIND_TITLES, kind) ? KIND_TITLES[kind] : GENERIC_TITLE);
 }
 export function questionTag(runId, questionId) { return `worca:${runId}:${questionId}`; }
+/** The title for a pause that waits on a person, or null. */
+export function pauseTitle(reason) {
+  return typeof reason === 'string' && Object.hasOwn(PAUSE_TITLES, reason) ? TITLE_PREFIX + PAUSE_TITLES[reason] : null;
+}
+/** A resume starts a new runId, so one pause tag per run is enough. */
+export function pauseTag(runId) { return questionTag(runId, 'pause'); }
 /** `title` with its `(N) ` prefix set to n, or removed at 0. */
 export function titleWithCount(title, n) {
   const base = String(title == null ? '' : title).replace(/^\(\d+\) /, '');
@@ -173,6 +192,12 @@ export function createAlerts({ Notification: N = null, doc, nav = {}, storage = 
       if (!run || !run.runId || !msg) return;
       const tag = questionTag(run.runId, msg.id != null ? msg.id : msg.kind);
       notifyOnce(tag, kindTitle(msg.kind), run.title || run.runId, { runId: run.runId }, backfill);
+    },
+    /** A run paused for `reason`. `backfill`: it was already paused when the page loaded (D7). */
+    onPaused(run, reason, { backfill = false } = {}) {
+      const title = pauseTitle(reason);
+      if (!run || !run.runId || !title) return;
+      notifyOnce(pauseTag(run.runId), title, run.title || run.runId, { runId: run.runId }, backfill);
     },
     onResolved(run, msg) {
       if (!run || !run.runId) return;

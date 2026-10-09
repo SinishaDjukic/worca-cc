@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import {
   KIND_TITLES, kindTitle, questionTag, titleWithCount, badgeCount, readAlertSettings,
-  createAlerts, mountAlertsCard, ALERT_KEYS, BLOCKED_HINT,
+  createAlerts, mountAlertsCard, ALERT_KEYS, BLOCKED_HINT, PAUSE_TITLES, pauseTitle, pauseTag,
 } from '../ui/public/alerts.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -164,6 +164,49 @@ test('question-resolved closes the matching notification only', () => {
   assert.equal(a.N.shown[1].closed, false);
   a.alerts.onQuestion(RUN, Q('q1'));
   assert.equal(a.N.shown.length, 2, 'a replay after the answer does not notify again');
+});
+
+test('pause table: a usage limit, an error and a cost cap each have a title; a manual pause or a drain has none', () => {
+  assert.equal(pauseTitle('usage_limit'), 'Worca: Usage limit reached');
+  assert.equal(pauseTitle('error'), 'Worca: Run paused on an error');
+  assert.equal(pauseTitle('recoverable'), 'Worca: Run paused on an error');
+  for (const r of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']) assert.equal(pauseTitle(r), 'Worca: Cost cap reached', r);
+  assert.equal(pauseTitle('night_guardrail'), 'Worca: Night guardrail reached');
+  for (const r of [null, undefined, '', 'drain', 'toString']) assert.equal(pauseTitle(r), null, String(r));
+  assert.ok(Object.isFrozen(PAUSE_TITLES));
+  assert.equal(pauseTag('r1'), 'worca:r1:pause');
+});
+
+test('a usage-limit pause notifies with the run title, once, and never while the tab is looked at', () => {
+  const a = setup();
+  a.alerts.onPaused(RUN, 'usage_limit');
+  a.alerts.onPaused(RUN, 'usage_limit');
+  assert.equal(a.N.shown.length, 1);
+  assert.equal(a.N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(a.N.shown[0].body, 'Fix the login bug');
+  assert.equal(a.N.shown[0].tag, 'worca:r1:pause');
+  const b = setup({ visible: true, focused: true });
+  b.alerts.onPaused(RUN, 'usage_limit');
+  assert.equal(b.N.shown.length, 0);
+});
+
+test('a pause with no reason (Pause pressed) or a drain does not notify; a backfilled pause does not either', () => {
+  const a = setup();
+  a.alerts.onPaused(RUN, null);
+  a.alerts.onPaused(RUN, 'drain');
+  a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error', { backfill: true });
+  a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error');
+  assert.equal(a.N.shown.length, 0);
+});
+
+test('a pause notification clicks through to the run and closes when the run is resolved', () => {
+  const a = setup();
+  a.alerts.onPaused(RUN, 'cost_total');
+  a.alerts.onResolved(RUN);
+  assert.equal(a.N.shown[0].closed, true);
+  a.alerts.onPaused({ runId: 'r2', title: 'Other' }, 'error');
+  a.N.shown[1].onclick({ preventDefault() {} });
+  assert.deepEqual(a.opened, [{ runId: 'r2' }]);
 });
 
 test('D6: the body never carries the question text, answers or code; a run with no title falls back to its id', () => {
