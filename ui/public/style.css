@@ -3500,6 +3500,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* The menu drops over the sticky .hd-tabs (same z-index, later in the DOM): lift the
    header above them only while it is open, so scrolled tabs still cover the header. */
 .hd-header:has(.hd-menu:not([hidden])){position:relative;z-index:6;}
+/* Likewise the bar (sticky, z-index 5, BEFORE the tabs in the DOM) while its Resume split menu is open. */
+.rd-bar:has(.btn-split-menu:not([hidden])),.hd-bar:has(.btn-split-menu:not([hidden])){z-index:7;}
 /* All items shed their pill dressing in here and become full-width rows. Higher
    specificity than the standalone rules above, which still hold nowhere else.
    display:flex here (not only in the standalone rules): .hd-restore has no
