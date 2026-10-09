@@ -8175,7 +8175,9 @@ span.act-running-title{cursor:default}
 /* Engine & models (engine-settings-view.mjs): the card (level 1) → the engine switch (2) → sections divided by a
    rule, each a heading with its controls on the right (3) → one Model / Effort table (4) → grey notes (5). No card
    nests inside it. */
-.engine-switch{margin:4px 0 0;flex-wrap:wrap;}
+.engine-switch{margin:0;flex-wrap:wrap;}
+.engine-models-head{border-top:1px solid var(--line);margin:18px 0 0;padding-top:16px;}
+.engine-models-head > .hint{display:block;margin:0 0 10px;}
 .engine-card{margin-top:14px;}
 .engine-card-name{margin:0 0 4px;font-size:15px;}
 /* Expert shows the switch, which already names the tab. */
@@ -8186,7 +8188,7 @@ span.act-running-title{cursor:default}
 .engine-slot-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0 8px;}
 .engine-slots .engine-slot-bar > h4{margin:0 auto 0 0;font-size:13.5px;}
 .engine-slot-bar .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
-.engine-slot-head,.engine-slots .inherit-field.engine-slot{display:grid;grid-template-columns:minmax(100px,.8fr) minmax(0,1.8fr) minmax(190px,1fr) 92px;column-gap:10px;align-items:center;}
+.engine-slot-head,.engine-slots .inherit-field.engine-slot{display:grid;grid-template-columns:minmax(100px,.8fr) minmax(0,1.8fr) minmax(190px,1fr) 144px;column-gap:10px;align-items:center;}
 .engine-slot-head{font-size:11.5px;font-weight:600;color:var(--ink-2);padding:0 0 4px;}
 .engine-slots .inherit-field.engine-slot{margin:0;padding:6px 0;border-top:1px solid var(--line);}
 .engine-slots .engine-slot .label-row{min-width:0;flex-wrap:wrap;}
@@ -8198,6 +8200,8 @@ span.act-running-title{cursor:default}
 .engine-slots .engine-slot .inherit-sub-cap{display:none;}
 .engine-slot-actions{display:flex;justify-content:flex-end;gap:6px;}
 .engine-slot-actions .engine-slot-clear{min-width:30px;padding-left:0;padding-right:0;}
+/* Test keeps one width through Testing… and Works, so it never spills into the Effort column. */
+.engine-slot-actions .engine-slot-test{min-width:108px;justify-content:center;}
 .engine-slots .engine-slot-rest{display:block;margin:8px 0 0;}
 /* Project settings put Save right after the section: the same 18px gap a .field leaves. */
 .pd-settings-body .engine-card{margin-bottom:18px;}

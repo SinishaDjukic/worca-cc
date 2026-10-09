@@ -97,7 +97,10 @@ export function renderEngineSection(host, options) {
   const runEngine = run.own ?? run.inherited?.value;
   const first = MODEL_ENGINE_NAMES.includes(runEngine) ? runEngine : 'claude';
   const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
-  host.append(sw);
+  // A titled block under a rule: the switch picks which engine's models show; it is not part of Default engine.
+  const head = doc.createElement('div'); head.className = 'field engine-models-head'; head.dataset.minLevel = 'advanced';
+  head.append(Object.assign(doc.createElement('span'), { className: 'label', textContent: 'Models per engine' }), Object.assign(doc.createElement('small'), { className: 'hint', textContent: 'Each engine keeps its own step and helper models. They apply whenever a run uses that engine.' }), sw);
+  host.append(head);
   const cards = {};
   const pick = (engine) => {
     for (const [e, c] of Object.entries(cards)) c.hidden = e !== engine;
