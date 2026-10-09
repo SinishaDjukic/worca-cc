@@ -1,5 +1,5 @@
-// test/ui-sidebar-collapse.test.mjs — the sidebar's two states: the 298px
-// labelled column and the 76px icon rail: jsdom behaviour driven through the
+// test/ui-sidebar-collapse.test.mjs — the sidebar's two states: the 220px
+// labelled column and the 60px icon rail: jsdom behaviour driven through the
 // REAL app.js against the REAL index.html (harness lifted from
 // test/ui-pipeline-tabs.test.mjs:15-36).
 import { test, afterEach } from 'node:test';
@@ -32,7 +32,7 @@ const budgetFixture = () => ({
 
 async function boot({ seed = null, breakStorage = false,
                       poisonToggle = false, noBudget = false,
-                      budgetOver = null } = {}) {
+                      budgetOver = null, resizeObserver = null } = {}) {
   // index.html SHIPS aria-expanded="true" / title="Collapse menu" /
   // aria-label="Collapse menu" on #side-toggle, so asserting those after an
   // EXPANDED boot passes even when applySidebarCollapsed() never ran — proven by
@@ -116,6 +116,7 @@ async function boot({ seed = null, breakStorage = false,
   // indicator into a later COLLAPSED test's #side-spend. Park it a day out, and
   // do it BEFORE the import. Seam: test/ui-budget-indicator.test.mjs:89-91.
   window.__budgetTickMs = DAY;
+  if (resizeObserver) window.ResizeObserver = resizeObserver;   // jsdom has none
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));
@@ -182,7 +183,8 @@ test('storage that throws (private mode) boots expanded and still toggles', asyn
 test('every collapsed nav button gains a tooltip, and loses it on expand', async () => {
   const { window, click } = await boot();
   const doc = window.document;
-  const rows = () => [...doc.querySelectorAll('.nav button[data-nav]')]
+  // The rail's own squares (children of .nav): Agents and Scripts sit in the Nodes flyout, labels showing.
+  const rows = () => [...doc.querySelectorAll('.nav > button[data-nav]')]
     .map((b) => [b.dataset.nav, b.title]);
   assert.deepEqual(rows().filter(([n, t]) => n !== 'runs' && t), [],
     'expanded rows must not grow redundant tooltips — the label is right there');
@@ -198,4 +200,55 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
     + 'refreshAllCounts, app.js:14034)');
   click('#side-toggle');
   assert.equal(doc.querySelector('.nav button[data-nav="composer"]').hasAttribute('title'), false);
+});
+
+// ---- The band hairlines (style.css .under-top / .under-bottom, app.js#paintSideEdges) ----
+
+/** jsdom has no layout: give #side-scroll the scroll position and metrics a test chooses. */
+function stubScroll(el, m) {
+  for (const k of ['scrollTop', 'clientHeight', 'scrollHeight']) {
+    Object.defineProperty(el, k, { configurable: true, get: () => m[k], set: (v) => { m[k] = v; } });
+  }
+  return m;
+}
+
+test('the band hairlines follow #side-scroll: under-top once scrolled, under-bottom while more is below; repainted on scroll, resize, the rail toggle and a level change', async () => {
+  const { window, click } = await boot();
+  const doc = window.document;
+  const aside = doc.querySelector('.sidebar');
+  const band = doc.getElementById('side-scroll');
+  const m = stubScroll(band, { scrollTop: 0, clientHeight: 400, scrollHeight: 900 });
+  const edges = () => [aside.classList.contains('under-top'), aside.classList.contains('under-bottom')];
+  band.dispatchEvent(new window.Event('scroll'));
+  assert.deepEqual(edges(), [false, true], 'at the top: only the foot hairline (more below)');
+  m.scrollTop = 250; band.dispatchEvent(new window.Event('scroll'));
+  assert.deepEqual(edges(), [true, true], 'mid-way: both');
+  m.scrollTop = 500; band.dispatchEvent(new window.Event('scroll'));
+  assert.deepEqual(edges(), [true, false], 'at the end: only the logo-row hairline');
+  m.scrollTop = 499.5; band.dispatchEvent(new window.Event('scroll'));
+  assert.deepEqual(edges(), [true, false], 'a subpixel short of the end (zoom) still counts as the end');
+  m.scrollTop = 0; m.scrollHeight = 400; window.dispatchEvent(new window.Event('resize'));
+  assert.deepEqual(edges(), [false, false], 'a resize that fits every row clears both');
+  m.scrollHeight = 900; click('#side-toggle');
+  assert.deepEqual(edges(), [false, true], 'the rail toggle repaints');
+  m.scrollHeight = 400; doc.dispatchEvent(new window.CustomEvent('worca:level', { detail: { level: 'expert' } }));
+  assert.deepEqual(edges(), [false, false], 'a level change repaints');
+});
+
+test('a row or the foot changing height repaints the hairlines (a ResizeObserver on the band and the nav)', async () => {
+  const made = [];
+  class FakeResizeObserver {
+    constructor(cb) { this.cb = cb; this.targets = []; made.push(this); }
+    observe(el) { this.targets.push(el); }
+    unobserve() {} disconnect() {}
+  }
+  const { window } = await boot({ resizeObserver: FakeResizeObserver });
+  const doc = window.document;
+  const band = doc.getElementById('side-scroll');
+  const ro = made.find((o) => o.targets.includes(band));
+  assert.ok(ro, 'the scroll band is observed');
+  assert.ok(ro.targets.includes(doc.querySelector('#side-scroll > .nav')), 'and the nav inside it (rows added or kept)');
+  stubScroll(band, { scrollTop: 0, clientHeight: 300, scrollHeight: 640 });
+  ro.cb([]);
+  assert.equal(doc.querySelector('.sidebar').classList.contains('under-bottom'), true);
 });

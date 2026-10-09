@@ -54,6 +54,7 @@
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
+  --amber-ink-strong:light-dark(#8E550B,#F0B45A);
   /* Script-only families (script-wizard plan S10): the same lightness as the six above, both themes. */
   --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);
   --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
@@ -130,82 +131,94 @@ body{
 .app{display:flex;height:100vh;}
 
 /* ---------- Sidebar ---------- */
-/* `width` is inert while .app is a flex row — flex-basis determines the used
-   main size, and that is what actually animates (measured: 298 -> 270.8 ->
-   125.1 -> 76 over 200ms). `width` is listed too so the fallback path animates
-   if the flex context ever changes. It must stay a TRANSITION: the blanket at
-   :905 kills every transition under prefers-reduced-motion, but only four
-   selectors' animations.
-   This comment is deliberately OUTSIDE the braces. The style tests' ruleBody()
-   helpers capture up to the first closing brace, so a comment inside a rule
-   body truncates the capture (the pinned-sidebar pins on this rule are no
-   longer tested). */
+/* Three bands in one column: the logo row (.brand) and the foot (.side-foot) stay put,
+   and #side-scroll between them is the only thing that scrolls — .sidebar itself never
+   does. 220px wide; the rail (.sidebar.collapsed, "Collapsible sidebar" below) is 60px.
+   `width` is inert while .app is a flex row — flex-basis decides the used main size,
+   and that is what animates. `width` is listed too so the fallback path animates if
+   the flex context ever changes. It must stay a TRANSITION: the reduced-motion blanket
+   kills every transition, but only four selectors' animations.
+   This comment is deliberately OUTSIDE the braces. The style tests' ruleBody() helpers
+   capture up to the first closing brace, so a comment inside a rule body truncates the
+   capture. */
 .sidebar{
-  width:298px;flex:0 0 298px;
+  width:220px;flex:0 0 220px;min-height:0;
   background:var(--panel);
-  padding:26px 18px 10px;
   display:flex;flex-direction:column;
   border-right:1px solid var(--line);
-  overflow-y:auto;
+  overflow:hidden;
   transition:flex-basis .2s cubic-bezier(.65,.02,.28,1),
              width .2s cubic-bezier(.65,.02,.28,1);
 }
-.brand{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px;margin-bottom:24px;}
-.brand .logo{display:block;height:34px;aspect-ratio:512/190;background:var(--ink);
+/* The fixed top band: the wordmark, the mock pill and the collapse toggle. Its border is
+   transparent at rest and turns --line while the pages scroll under it (.under-top). */
+.brand{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 10px 0 20px;
+  border-bottom:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-top .brand{border-bottom-color:var(--line);}
+.brand .logo{display:block;height:32px;aspect-ratio:512/190;background:var(--ink);
   -webkit-mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;mask:url(/assets/worca-logo-mask.png) center/contain no-repeat;}
+/* The scrolling band. A column flex box so .nav can grow to the band's full height:
+   .nav-sep's margin-top:auto then parks the mode switch and Settings at its end. */
+.side-scroll{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+  overflow-y:auto;overflow-x:hidden;padding:11px 10px 10px;scrollbar-width:thin;}
 
-.nav{display:flex;flex-direction:column;gap:2px;flex:1 1 auto;}
+.nav{display:flex;flex-direction:column;gap:1px;flex:1 0 auto;}
+/* One even rhythm: every row is 29px tall with a 1px gap (a 30px pitch), and nothing
+   adds a gap of its own. The icon sits in a 20px slot (the 16px glyph + 2px a side),
+   so the label starts 39px in whatever leads the row (an icon, the New pipeline tile,
+   the mode icon). The CSS stroke-width beats each SVG's stroke-width attribute (a
+   presentation hint), so every glyph draws at 1.6. The label span takes the free
+   width and ellipsizes; counts and chevrons follow it. */
 .nav button{
-  display:flex;align-items:center;gap:13px;width:100%;margin:0;
-  padding:8px 13px;border:0;border-radius:13px;
+  position:relative;display:flex;align-items:center;gap:10px;width:100%;height:29px;margin:0;
+  padding:0 8px 0 9px;border:0;border-radius:8px;
   background:transparent;color:var(--ink-2);
-  font-family:inherit;font-size:13px;line-height:inherit;font-weight:500;
-  text-align:left;cursor:pointer;
+  font-family:inherit;font-size:12.5px;line-height:1;font-weight:400;
+  text-align:left;white-space:nowrap;cursor:pointer;
   transition:background .15s,color .15s;
 }
-.nav button svg{width:19px;height:19px;flex:0 0 auto;stroke-width:1.9;}
-.nav button:hover{background:var(--hover);color:var(--ink);}
-.nav button.active{background:var(--ink);color:var(--on-ink);}
-.nav button.active svg{stroke:var(--on-ink);}
+.nav button svg{width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1.6;}
+/* line-height:1.4 keeps g, p and y inside the label's own box: its overflow:hidden (the ellipsis)
+   would clip them at the row's line-height:1. */
+.nav button > span:not(.nav-count){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
+/* Hover is the light field grey; the open page the deeper --hover grey with ink and
+   500 — a soft fill, never the old black bar (the rail squares too). */
+.nav button:hover{background:var(--field);color:var(--ink);}
+.nav button.active{background:var(--hover);color:var(--ink);font-weight:500;}
 .nav button:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-/* Sentence case, not caps: the markup already ships "Activity"/"Build"/"Manage",
-   so the label is whatever the HTML says. The .11em tracking and the 10.5px size
-   existed to keep ALL-CAPS legible; sentence case needs neither, and at 10.5px a
-   lowercase x-height reads a size smaller than caps did, so the size goes up as
-   the tracking comes down.
-   The padding is deliberately lopsided — 24px above, 5px below. A heading
-   belongs to the items UNDER it, so the big gap has to fall between groups, not
-   between a heading and its own first row. */
-.nav-sect{font-size:11.5px;font-weight:600;letter-spacing:.01em;text-transform:none;
-  color:var(--ink-3);padding:24px 13px 5px;user-select:none;}
-/* Settings is the only row that hangs between two edges — the divider above it
-   and the spend card below — so both gaps are set here and in .side-foot's
-   padding-top, and they must stay equal. 8 + the 2px .nav gap = the 10px the
-   foot pads with. */
-.nav-sep{margin-top:auto;margin-bottom:8px;border-top:1px solid var(--line);}
-/* Primary action: outlined at rest so it doesn't fight the dark current-view
-   fill; border thickness is absorbed into padding to keep row height equal. */
-.nav button.nav-cta{border:1.5px solid var(--ink);color:var(--ink);font-weight:600;
-  padding:6.5px 11.5px;}
-.nav button.nav-cta:hover{background:var(--hover);}
-.nav button.nav-cta.active{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.nav-count{margin-left:auto;min-width:22px;height:22px;padding:0 7px;border-radius:999px;
-  display:grid;place-items:center;font-size:11.5px;font-weight:700;}
-.nav-count.n-amber{background:var(--amber);color:var(--on-status);}
-.nav-count.n-grey{background:var(--field);color:var(--ink-3);}
-/* On the hovered item's grey, the badge turns white so it stays a badge. */
-.nav button:hover:not(.active) .nav-count.n-grey{background:var(--panel);}
-.nav button.active .nav-count{background:var(--on-ink-wash);color:var(--on-ink);}
-/* The Runs live count: green = work in flight. Green is applied by app.js ONLY while
-   the count is >0 — at zero the badge falls back to n-grey, the inert-inventory
-   treatment the Schedules count uses, so a permanently green pill cannot dilute the
-   green that should catch the eye. It keeps its colour on the dark active fill (the
-   generic active rule above would wash it into translucent white). */
-.nav-count.n-run{background:var(--green);color:var(--on-status);}
-/* Schedules' unread-problems badge sits beside its grey count */
+/* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
+   padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
+   rows UNDER it, so the big gap falls between groups. The first group (New pipeline,
+   Runs, Schedules, Statistics, Team metrics) has no label at all. */
+.nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
+  color:var(--ink-3);user-select:none;}
+/* The divider above the mode switch and Settings. .nav fills #side-scroll (flex:1 0 auto),
+   so margin-top:auto parks the two at the band's end while the pages are short; once the
+   band scrolls they follow the last group. The line is the box's bottom edge with 8px
+   above and below it, so it never touches the row before it. */
+.nav-sep{flex:none;margin:auto 4px 8px;padding-top:8px;border-bottom:1px solid var(--line);}
+/* New pipeline: a normal row led by an 18px ink tile with a "+", ink label at 500, so it
+   reads first without an outline or a fill of its own. The tile is an <i>, not a span:
+   the rail visually hides a row's direct span children (the labels). 18px + 1px a side
+   fills the same 20px slot every icon sits in. */
+.nav button.nav-new{color:var(--ink);font-weight:500;}
+.nav-tile{display:grid;place-items:center;flex:0 0 auto;width:18px;height:18px;margin:0 1px;
+  border-radius:5px;background:var(--ink);color:var(--on-ink);font-style:normal;}
+.nav .nav-tile svg{width:12px;height:12px;margin:0;stroke-width:2.2;}
+/* Counts: a plain grey mono number, and the amber "needs you" count is the sidebar's one
+   coloured pill. The grey is --ink-2, not the labels' --ink-3: a count carries information
+   (on the rail too). A zero is hidden with the `hidden` attribute (app.js keeps the element
+   and its number), so no row carries a number that says nothing. `.nav-count.n-grey`
+   clears the .n-grey disc utility's fill AND restates the colour: that utility sits later in
+   the file at the same specificity and would paint --ink-3. The gs-pill count styles itself. */
+.nav-count{flex:none;margin-left:auto;font-family:var(--mono);font-size:11px;font-weight:500;line-height:1;
+  color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.nav-count.n-grey{background:none;color:var(--ink-2);}
+.nav-count.n-amber{display:inline-flex;align-items:center;justify-content:center;min-width:20px;
+  height:18px;padding:0 6px;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);}
+/* Schedules' unread-problems pill sits beside its grey count */
 #nav-schedules-unread{margin-left:6px;}
-.nav-count[hidden]{display:none;}   /* author display:grid beats the UA [hidden] rule */
-.nav button.active .nav-count.n-run{background:var(--green);color:var(--on-status);}
+.nav-count[hidden]{display:none;}
 
 /* Parent roll-up "needs you" dot on the phone bar's menu button */
 .nav-rollup {
@@ -214,54 +227,22 @@ body{
   animation: pulse 1.3s ease-in-out infinite;
 }
 
-/* Child pipeline rows nested under Running — tree-connector style (mirrors the
-   sub-agents tree: a vertical spine on the left with a branch into each dot). */
-.nav-children { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 0; }
-.nav-children.hidden, .nav-children.collapsed { display: none; }
-/* Scoped `.nav .nav-child` so these rows outrank the generic `.nav button` rule
-   (padding:11px 13px / gap:13px), which otherwise flattens the left inset and
-   parks the dot on top of the elbow connector. */
-.nav .nav-child {
-  position: relative;
-  display: flex; align-items: center; gap: 9px;
-  padding: 6px 10px 6px 28px; border-radius: 9px;
-  color: var(--ink-2);
-  min-width: 0;
-}
-/* Rounded elbow: vertical run from the top of the row down to the dot center,
-   then curving right toward the dot (stops 7px short of it). */
-.nav-child::before {
-  content: ""; position: absolute;
-  left: 9px; top: -2px;
-  width: 12px; height: calc(50% + 2px);
-  border-left: 1.5px solid var(--line-2);
-  border-bottom: 1.5px solid var(--line-2);
-  border-bottom-left-radius: 7px;
-  pointer-events: none;
-}
-/* Continuation: keeps the spine unbroken between rows (not after the last). */
-.nav-child:not(:last-child)::after {
-  content: ""; position: absolute;
-  left: 9px; top: 50%; bottom: -4px;
-  width: 1.5px; background: var(--line-2);
-  pointer-events: none;
-}
-.nav .nav-child:hover { background: var(--field); color: var(--ink); }
-/* Selected: gentle tint + soft ring, not a heavy dark fill.
-   Scoped under .nav to outrank the global `.nav button.active` dark-fill rule. */
-.nav .nav-child.active { background: var(--field); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
-/* Static group (Nodes › Agents, Scripts). The parent is a disclosure: it never
-   takes the dark current-page fill (`.active` belongs to the child page) and
-   reads as --ink via .has-active while a child is open. The children reuse the
-   Running-row elbow above, but carry an icon where a run row carries a dot;
-   `.nav .nav-child > svg` (0,2,1) out-ranks `.nav button svg` (0,1,2). */
-.nav .nav-group.has-active { color: var(--ink); font-weight: 600; }
-.nav .nav-group-chev { width: 14px; height: 14px; margin-left: auto; color: var(--ink-3); transition: transform .2s; }
-.nav-group[aria-expanded="false"] .nav-group-chev { transform: rotate(-90deg); }
-.nav .nav-child > svg { width: 17px; height: 17px; }
-/* `.nav button.active svg` (0,2,2) paints the stroke --on-ink for the dark fill;
-   a child's fill is the soft --field tint, so its icon stays --ink. */
-.nav .nav-child.active svg { stroke: var(--ink); }
+/* Nodes (Agents, Scripts) open in a side flyout that side-flyout.mjs places, fixed,
+   beside the sidebar. The row takes the open-page fill while a child page is shown
+   (.has-active) and the hover grey while its flyout is open; the chevron points at the
+   flyout. */
+.nav .nav-group.has-active{background:var(--hover);color:var(--ink);font-weight:500;}
+.nav .nav-group[aria-expanded="true"]:not(.has-active){background:var(--field);color:var(--ink);}
+.nav .nav-group-chev{flex:none;width:14px;height:14px;margin:0;color:var(--ink-3);stroke-width:1.8;}
+/* The popup card (the mockup's menu): panel, hairline, 12px corners and the menu shadow,
+   172px wide, its rows the sidebar's own at 30px. It lives inside <nav> for keyboard
+   order, so the rail's rules use `.nav > button` and never reach these rows. z 43: over
+   the phone drawer (42) it opens from, under a running tour's scrim (44+). */
+.nav-fly{position:fixed;z-index:43;display:flex;flex-direction:column;gap:1px;width:172px;padding:5px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-menu);}
+.nav-fly[hidden]{display:none;}
+.nav-fly-k{padding:6px 9px 5px;font-size:10.5px;font-weight:500;line-height:1.2;color:var(--ink-3);}
+.nav .nav-fly button{height:30px;}
 
 .side-project{margin:0 4px 22px;padding-bottom:22px;border-bottom:1px solid var(--line);}
 .side-project .sp-label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;
@@ -269,11 +250,12 @@ body{
 .side-project .sp-select{padding:11px 38px 11px 13px;font-size:13.5px;font-weight:600;border-radius:12px;}
 .nav-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
   color:var(--ink-3);padding:8px 12px 6px;}
-/* The three numbers are one number: the toggle hangs between the spend card and
-   the rail's bottom edge exactly as Settings hangs between the divider and that
-   same card, so padding-top (above Settings), gap (above the toggle) and
-   .sidebar's padding-bottom (below it) all read 10px. */
-.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:10px;padding-top:10px;}
+/* The fixed bottom band: who is signed in, the away switch, Running actions and the
+   spend card. It never scrolls; its border turns --line while more pages sit below
+   (.under-bottom). */
+.side-foot{flex:none;display:flex;flex-direction:column;gap:8px;padding:8px 10px 10px;
+  border-top:1px solid transparent;transition:border-color .15s;}
+.sidebar.under-bottom .side-foot{border-top-color:var(--line);}
 /* "Signed in as" (attribution, not an account menu): one quiet line above the spend card. */
 .side-who{padding:0 12px;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .side-who[hidden]{display:none;}
@@ -1380,10 +1362,11 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .badge.paused{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge{background:var(--amber-bg);color:var(--amber-ink);}
 .badge.hist-retained-badge[hidden]{display:none;}
-/* The server's mock mode, beside the wordmark: .brand spreads its row, so it parks left. */
-.brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;
-  /* Solid chip: --amber-ink on --amber-bg is 3.9:1 in light, below the 4.5:1 text floor. */
-  background:var(--amber-ink);color:var(--on-status);}
+/* The server's mock mode, in the logo row between the wordmark and the toggle: its
+   margin-right:auto parks the toggle at the row's end (on the rail the row stacks and the
+   pill sits under the mark). A solid chip: --amber-ink on --amber-bg is 3.9:1 in light,
+   below the 4.5:1 text floor. */
+.brand .side-mock-pill{margin-right:auto;padding:3px 7px;cursor:default;background:var(--amber-ink);color:var(--on-status);}
 .brand .side-mock-pill[hidden]{display:none;}
 
 /* ---------- Retained-work banner (the saved run's page) ---------- */
@@ -4357,10 +4340,6 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    one shell shows, and a z-index there would trap the tour's .guide-lift (z 45) under its scrim. */
 .runs-shell[data-layout="slide"] .runs-pane > :is(.run-shell,.hist-shell).detail-open{z-index:1;}
 .runs-shell.no-anim > *{transition:none !important;}
-/* One badge on Runs (D11): the amber Needs-you count (.n-amber) replaces the live count while
-   shown, and stays amber on the active (dark) item — the generic active rule would wash it out. */
-#nav-needs-count:not([hidden]) + #nav-running-count{display:none;}
-.nav button.active #nav-needs-count{background:var(--amber);color:var(--on-status);}
 /* Run after this one (the list card's old schedule-after button): a quiet pill beside Pause/Stop,
    on the run page's bar and the saved run's (.hd-after). */
 .hd-after,.rd-after{display:flex;align-items:center;gap:8px;padding:9px 15px;border:1.5px solid var(--line);
@@ -4991,69 +4970,62 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .stop-confirm:disabled{opacity:.6;cursor:default;}
 .stop-cancel:focus-visible,.stop-confirm:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
-/* ---------- Collapsible sidebar: the 76px icon rail ---------- */
-/* No rule here restyles anything the expanded 298px column already had: 21 of
-   them are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
-   `.side-toggle*`, `.spend-ring*`, `.spend-stack*`) style
-   nodes that exist only because of this feature. Below 1080px the rail is
-   forced (tablets) and at 760px the full column becomes the phone drawer;
-   app.js#railCollapsed decides, and the stored preference only applies above
-   1080px.
+/* ---------- Collapsible sidebar: the 60px icon rail ---------- */
+/* No rule here restyles anything the expanded 220px column already had: the rail
+   rules are scoped under `.sidebar.collapsed`, and the rest (`.brand .logo-mark`,
+   `.side-toggle*`, `.spend-ring*`, `.spend-stack*`) style nodes that exist only
+   because of this feature. Below 1080px the rail is forced (tablets) and at 760px
+   the full column becomes the phone drawer; app.js#railCollapsed decides, and the
+   stored preference only applies above 1080px.
    HOUSE RULE for this whole block: no comment inside a rule body, and no
    closing brace in any comment — ruleBody() stops its capture at the first one
    and both would break the tests. */
-.brand .logo-mark{display:none;width:32px;height:32px;border-radius:50%;background:var(--ink);
+.brand .logo-mark{display:none;width:26px;height:26px;border-radius:50%;background:var(--ink);
   -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
   mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-/* The toggle ends the wordmark row: the mock pill's margin-right:auto (or the
+/* The toggle ends the logo row: the mock pill's margin-right:auto (or the
    row's space-between) parks it at the right edge. The round mark inside it
    shows only on the rail, where mark + chevron are one target. */
 .side-toggle{display:flex;align-items:center;justify-content:center;
-  width:30px;height:30px;flex:0 0 auto;padding:0;border:0;border-radius:9px;
+  width:28px;height:28px;flex:0 0 auto;padding:0;border:0;border-radius:8px;
   background:transparent;color:var(--ink-2);cursor:pointer;
   transition:background .15s,color .15s;}
-.side-toggle svg{width:20px;height:20px;flex:0 0 auto;}
-.side-toggle:hover{background:var(--hover);color:var(--ink);}
+.side-toggle svg{width:18px;height:18px;flex:0 0 auto;}
+.side-toggle:hover{background:var(--field);color:var(--ink);}
 .side-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .brand .side-toggle-mark{display:none;}
 
-/* 76 - 1px border-right - 36px padding = a 39px content box. But
-   ::-webkit-scrollbar (:898) makes the vertical gutter SPACE-CONSUMING, and the
-   rail's own scroll height is ~967px with four runs — on a 900px window that
-   gutter takes another 10px and shoves the icon column 5px off centre. Suppress
-   it here only; the rail still scrolls by wheel and keyboard, and the base
-   overflow-y is deliberately NOT restated (a test asserts it isn't). */
-.sidebar.collapsed{width:76px;flex:0 0 76px;padding:26px 18px 10px;
-  scrollbar-width:none;}
-.sidebar.collapsed::-webkit-scrollbar{width:0;height:0;}
-/* The nav must not jump when the rail collapses: the first tile sits at
-   26 + 34 + 24 = 84px expanded (sidebar padding-top + wordmark + .brand
-   margin-bottom), so the rail keeps the same 26px top padding above and makes
-   up the difference below. 26, not 24, because the round mark is 32px tall
-   against the wordmark's 34 — the gap absorbs the 2px so the sum still lands
-   on 84. */
-.sidebar.collapsed .brand{flex-direction:column;gap:6px;margin-bottom:26px;padding:0;}
+/* 60 - 1px border-right = 59px, and #side-scroll pads 10px a side: a 39px content box
+   for the 40px squares. ::-webkit-scrollbar makes the vertical gutter SPACE-CONSUMING
+   and would shove the squares off centre, so the rail's scroll band hides it; the band
+   still scrolls by wheel and keyboard. */
+.sidebar.collapsed{width:60px;flex:0 0 60px;}
+.sidebar.collapsed .side-scroll{scrollbar-width:none;}
+.sidebar.collapsed .side-scroll::-webkit-scrollbar{width:0;height:0;}
+/* The logo row stacks: the toggle (mark + ">") on top, the mock pill under it. */
+.sidebar.collapsed .brand{flex-direction:column;justify-content:center;gap:6px;padding:16px 0 10px;}
 .sidebar.collapsed .logo{display:none;}
 .sidebar.collapsed .logo-mark{display:block;}
 .sidebar.collapsed .brand > .logo-mark{display:none;}
 .sidebar.collapsed .brand .side-mock-pill{margin-right:0;padding:2px 4px;font-size:9px;letter-spacing:.02em;}
-/* On the rail the toggle IS the mark: the 32px mark plus a 14px ">" in the
-   empty padding to its right, one button. The negative margins take the 3px
-   hover pad and the chevron out of layout, so the mark sits exactly where the
-   bare mark did (centred, 26 + 32 + 26 = 84 to the first tile) and the rail
-   stays 76px wide: the chevron lands in the right padding, before the border. */
-.sidebar.collapsed .side-toggle{width:auto;height:auto;gap:1px;padding:3px;
-  margin:-3px -18px -3px -3px;border-radius:12px;order:-1;}
+/* On the rail the toggle IS the mark: the 26px mark plus a small ">" hung outside the
+   button box on its right (position:absolute, left:100%), one button. The mark stays
+   centred in the 60px column and the chevron lands in the gap beside it. */
+.sidebar.collapsed .side-toggle{position:relative;width:auto;height:auto;padding:3px;border-radius:10px;order:-1;}
 .sidebar.collapsed .side-toggle .side-toggle-mark{display:block;}
-.sidebar.collapsed .side-toggle svg{width:14px;height:14px;stroke-width:2.6;}
+.sidebar.collapsed .side-toggle svg{position:absolute;left:100%;top:50%;width:11px;height:11px;
+  margin:-5.5px 0 0 1px;stroke-width:2.6;}
 
-/* (0,3,1): out-ranks `.nav button` (0,1,1), `.nav button:hover` (0,2,1) and
-   `.nav button.nav-cta` (0,2,1). `flex:0 0 auto` is NOT decoration: .nav is a
-   column flex container whose items default to shrinkable, and these boxes are
-   fixed-size by design. */
-.sidebar.collapsed .nav{align-items:center;gap:6px;}
-.sidebar.collapsed .nav button{position:relative;flex:0 0 auto;
-  width:40px;height:40px;padding:0;gap:0;justify-content:center;border-radius:12px;}
+/* The rail's rows: 40x34 squares, 3px apart, centred in the 39px content box; hover and
+   the open page keep the column's greys. Child combinators only (`.nav > button`, and
+   the Getting started pill one level down in its host), so the rows of a flyout inside
+   <nav> keep their full-row look. (0,3,1) out-ranks `.nav button` (0,1,1),
+   `.nav button:hover` (0,2,1) and `.nav button.nav-new` (0,2,1). `flex:0 0 auto` is NOT
+   decoration: .nav is a column flex container whose items default to shrinkable, and
+   these boxes are fixed-size by design. */
+.sidebar.collapsed .nav{align-items:center;gap:3px;}
+.sidebar.collapsed .nav > button,.sidebar.collapsed .gs-pill-host > button{flex:0 0 auto;width:40px;height:34px;padding:0;gap:0;justify-content:center;}
+.sidebar.collapsed .nav .gs-pill .gs-pill-count{display:none;}
 /* NOT display:none. This span is the ONLY source of an accessible name for
    every nav button — index.html carries no aria-label on any of the 12 and the
    SVGs carry no title element — and display:none removes it from the
@@ -5064,59 +5036,34 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    deprecated and its successor is what modern engines honour. position:absolute
    takes it out of flow, so the 40px square still centres its glyph, and the
    button above is position:relative. The Runs badges carry .nav-count, so the
-   :not() guards keep this off them; the child combinator keeps it to the label. */
-.sidebar.collapsed .nav button > span:not(.nav-count):not(.nav-rollup){
+   :not() guards keep this off them; the child combinators keep it to the label of a
+   row of the rail (never a row of a flyout inside <nav>). */
+.sidebar.collapsed .nav > button > span:not(.nav-count):not(.nav-rollup),
+.sidebar.collapsed .gs-pill-host > button > span:not(.nav-count){
   position:absolute;width:1px;height:1px;padding:0;margin:-1px;
   overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
-/* New pipeline is the one filled control on the rail; outlined-at-rest only
-   makes sense next to labels. These are (0,4,1) and (0,5,1), so they outrank
-   `.nav button:hover` (:100, 0,2,1), `.nav button.nav-cta` (:109, 0,2,1),
-   `.nav button.nav-cta:hover` (:111, 0,3,1) and `.nav button.nav-cta.active`
-   (:112, 0,3,1). Without its own hover the rail's only filled control is
-   hover-dead: the (0,4,1) fill would beat the (0,3,1) hover and nothing would
-   change. brightness() keeps the mock's darker-on-hover intent inside the
-   palette, and matches ten existing hover rules in this file. */
-.sidebar.collapsed .nav button.nav-cta{background:var(--ink);color:var(--on-ink);}
-.sidebar.collapsed .nav button.nav-cta svg{stroke:var(--on-ink);}
-.sidebar.collapsed .nav button.nav-cta:hover{filter:brightness(.55);}
 
-/* Section headers keep their text node; font-size:0 hides it (the ui-nav-sections
-   test that read the rail's source order through it is gone). (They are not
-   exposed as named a11y nodes in either state, so that is NOT the reason.) 26px
-   hairline, per the mock. */
-.sidebar.collapsed .nav-sect{width:26px;height:1px;margin:10px auto;padding:0;
-  font-size:0;letter-spacing:0;background:var(--line);overflow:hidden;}
+/* Section labels keep their text node; font-size:0 hides it. (They are not exposed as
+   named a11y nodes in either state, so that is NOT the reason.) What is left is a 1px
+   hairline across the 39px box, 6px in from each side, per the mockup. */
+.sidebar.collapsed .nav-sect{align-self:stretch;height:1px;margin:10px 6px;padding:0;font-size:0;
+  letter-spacing:0;background:var(--line);overflow:hidden;}
 
-.sidebar.collapsed .nav-count{position:absolute;top:-2px;right:-2px;margin:0;
-  min-width:17px;height:17px;padding:0 4px;font-size:10px;
-  border:2px solid var(--panel);}
-/* A grey zero pinned to a 40px square is noise. The Runs item shows one badge in the
-   corner either way (the Needs-you count hides the live one, #nav-needs-count's rule),
-   and updateNavCounts puts both numbers in the button's title AND aria-label. */
-.sidebar.collapsed .nav-count.n-grey{display:none;}
+/* On the rail a count rides the square's top-right corner, small. A zero is already
+   hidden; Runs shows one badge either way (updateNavCounts hides the live count behind
+   the Needs-you pill and writes both numbers into the button's title and aria-label),
+   and the Schedules grey number steps aside while its unread pill shows. */
+.sidebar.collapsed .nav-count{position:absolute;top:3px;right:2px;margin:0;font-size:9.5px;}
+.sidebar.collapsed .nav-count.n-amber{min-width:15px;height:15px;padding:0 4px;}
+.sidebar.collapsed .nav-count.n-grey:has(~ .nav-count.n-amber:not([hidden])){display:none;}
 
-/* The rail reproduces the expanded 10px on all four edges around Settings and
-   the toggle. padding-top is 9, not 10, because the foot's own 1px border-top
-   is what the tile is measured from — the two together are the 10. The nav-sep
-   override does the same arithmetic against the 6px collapsed .nav gap. */
-.sidebar.collapsed .nav-sep{width:26px;margin-top:auto;margin-bottom:4px;}
-.sidebar.collapsed .side-foot{align-items:center;gap:10px;
-  padding-top:9px;border-top:1px solid var(--line);}
+/* The divider above the mode switch spans the box like a section hairline; the rail's
+   foot centres its tiles inside a 4px side padding (51px wide). */
+.sidebar.collapsed .nav-sep{align-self:stretch;margin:auto 6px 6px;}
+.sidebar.collapsed .side-foot{align-items:center;padding:8px 4px 10px;}
 
-.sidebar.collapsed .nav-children{align-items:center;gap:5px;margin-top:5px;}
-/* Nodes on the rail: no room for a parent row, so it goes and its two children
-   stand as ordinary 40px squares — the rail reads exactly as it did before the
-   group existed. The children must show even while the group is folded, so the
-   (0,3,0) rule out-ranks `.nav-children.collapsed` (0,2,0). The elbow has
-   nothing to hang from here, and an open child takes the same dark fill as
-   every other current-page square (beats `.nav .nav-child.active` on class
-   count). */
-.sidebar.collapsed .nav-group{display:none;}
-.sidebar.collapsed .nav-group-children.collapsed{display:flex;}
-.sidebar.collapsed .nav-child::before,.sidebar.collapsed .nav-child::after{content:none;}
-.sidebar.collapsed .nav .nav-child > svg{width:19px;height:19px;}
-.sidebar.collapsed .nav .nav-child.active{background:var(--ink);color:var(--on-ink);box-shadow:none;}
-.sidebar.collapsed .nav .nav-child.active svg{stroke:var(--on-ink);}
+/* Nodes on the rail: one square (no chevron) that opens the same flyout to the right. */
+.sidebar.collapsed .nav-group-chev{display:none;}
 /* ---- rail budget ring ---- */
 /* `.spend-ring` (0,1,0) ties `.spend-ind` (:1607-1608, 0,1,0) and wins the tie
    on source order, which is what lets it override display / width / text-align /
@@ -5170,7 +5117,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 
 /* ---------- Responsive nav tiers ---------- */
 /* Three tiers, one sidebar. Above 1080px nothing here applies. 761-1080px
-   (tablets) app.js#railCollapsed forces the 76px rail above, so the only rule
+   (tablets) app.js#railCollapsed forces the 60px rail above, so the only rule
    left is hiding the toggle that could not change anything. At 760px and below
    the phone bar (#mbar) appears and the aside turns into an off-canvas drawer:
    fixed, translated out, visibility:hidden so nothing in it is focusable until
@@ -5203,7 +5150,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
     mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
   .mbar-title{min-width:0;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--ink);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(298px,86vw);
+  .sidebar{position:fixed;top:0;bottom:0;left:0;z-index:42;width:min(220px,86vw);
     box-shadow:var(--shadow-sheet);transform:translateX(-100%);visibility:hidden;
     transition:transform .22s cubic-bezier(.65,.02,.28,1),visibility 0s linear .22s;}
   body.nav-open .sidebar{transform:none;visibility:visible;
@@ -5221,14 +5168,14 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 /* Fixed full-height dock over the content column; children restore pointer
    events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
    and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
-   reusable. Left offsets track the rail: 298px expanded, 76px collapsed
+   reusable. Left offsets track the rail: 220px expanded, 60px collapsed
    (.sidebar / .sidebar.collapsed own those widths). */
-.ask-dock{position:fixed;top:0;bottom:0;right:0;left:298px;z-index:40;pointer-events:none;
+.ask-dock{position:fixed;top:0;bottom:0;right:0;left:220px;z-index:40;pointer-events:none;
   display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
   padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
-body.rail-collapsed .ask-dock{left:76px;}
+body.rail-collapsed .ask-dock{left:60px;}
 /* On phones the sidebar is an off-canvas drawer (Responsive nav tiers) while
-   .collapsed may still be present — restate the higher-specificity selector or left:76px wins. */
+   .collapsed may still be present — restate the higher-specificity selector or left:60px wins. */
 @media (max-width:760px){
   .ask-dock,body.rail-collapsed .ask-dock{left:0;}
 }
@@ -6395,20 +6342,25 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
   animation:gs-draw var(--t,.6s) cubic-bezier(.45,0,.3,1) both;animation-delay:calc(var(--tile-delay,0s) + var(--d,0s));}
 @keyframes gs-draw{to{stroke-dashoffset:0;}}
 
-/* Sidebar pill under New pipeline: mounted by app.js (not in the shell — the 10-button
-   nav census stays), styled by .nav button; the count wears the accent. */
+/* Sidebar pill under New pipeline: mounted by app.js right after that row (not in the
+   shell — the nav census stays), styled by .nav button at the same 29px rhythm; the
+   count wears the accent. */
 .gs-pill-host[hidden]{display:none;}
-/* The pill wears the guide's own violet and its halo, so it reads as "the tour is
-   here" from any view — the one animated thing in the rail. */
-.nav button.gs-pill{font-weight:600;color:var(--violet-ink);border:1.5px solid var(--violet);padding:6.5px 11.5px;
+/* The pill wears the guide's own violet as a full outline, and its halo, so it reads as
+   "the tour is here" from any view — the one animated thing in the sidebar. The 1.5px
+   border comes out of the padding, so its icon and label sit where every row's do. */
+.nav button.gs-pill{font-weight:500;color:var(--violet-ink);border:1.5px solid var(--violet);padding:0 6.5px 0 7.5px;
   animation:gs-pill-glow 2.4s ease-out infinite;}
 .nav button.gs-pill:hover{background:var(--violet-bg);color:var(--violet-ink);}
 .nav button.gs-pill.active{background:var(--violet-bg);border-color:var(--violet);color:var(--violet-ink);animation:none;}
 .nav button.gs-pill.active svg{stroke:var(--violet-ink);}
 .nav button.gs-pill.active .gs-pill-count{background:var(--panel);color:var(--violet-ink);}
 .nav button.gs-pill svg{stroke:var(--violet-ink);}
-/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate). */
-.nav button.gs-pill .gs-pill-count{background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
+/* Violet ink on the violet wash (not white on solid violet: 3.4:1 at 11px fails the light gate).
+   A pill of its own: the sidebar's other counts are bare numbers. */
+.nav button.gs-pill .gs-pill-count{display:inline-flex;align-items:center;justify-content:center;flex:none;
+  height:18px;padding:0 6px;border-radius:999px;
+  background:var(--violet-bg);color:var(--violet-ink);font-family:var(--mono);font-size:11px;}
 @keyframes gs-pill-glow{
   0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--violet) 50%,transparent);}
   70%{box-shadow:0 0 0 9px color-mix(in srgb,var(--violet) 0%,transparent);}
@@ -6727,12 +6679,12 @@ a.ask-card-task-title:hover{text-decoration-color:currentColor;}
 /* An <i>, not a <span>: the collapsed rail visually hides every direct span child of a nav button
    (the labels), and this icon is the one thing that must survive there. */
 .lv-icon-slot{display:inline-grid;place-items:center;flex:0 0 auto;font-style:normal;}
-.nav button.nav-mode .lv-icon{width:19px;height:19px;}
+.nav button.nav-mode .lv-icon{width:16px;height:16px;margin:0;}
 .lv-icon .lv-off{opacity:.26;}
 .lv-icon path{transition:opacity .2s;}
 
 /* Sidebar item: a plain `.nav button`. It is an action, never the current view. */
-.nav button.nav-mode .lv-icon-slot{width:19px;height:19px;}
+.nav button.nav-mode .lv-icon-slot{width:20px;height:20px;}
 
 /* Level pill (banner, hidden-settings note). Colour is semantic to the level. */
 .lv-pill{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;
@@ -8121,19 +8073,33 @@ input.gv-name:focus-visible{outline:none;}
 .act-notice.err{background:var(--red-bg);color:var(--ink);border-radius:var(--r-ctrl);padding:10px 14px}
 .act-notice.ok{color:var(--green-ink)}
 .act-page-link{color:var(--blue-ink-strong);text-decoration:underline;text-underline-offset:2px;white-space:nowrap;}   /* a page an Actions message names (appendWithPageLinks) */
-/* spacing comes from .side-foot's gap:10px; no margin */
-#side-actions{border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);padding:10px 12px}
+/* Running actions in the sidebar foot (issue #529), compact: one 26px row per running service —
+   a green dot, "<run title> · <label :port>" cut with an ellipsis, a square Stop. No card and no
+   header; the uptime is the row's title. Spacing comes from .side-foot's gap; no margin. */
 #side-actions[hidden]{display:none}
-.act-running{display:grid;gap:6px}
-.act-running .pdot{width:7px;height:7px;border-radius:50%;background:var(--green)}
-.act-running-heading{font-weight:600;color:var(--ink)}
-.act-running-count{color:var(--ink-2)}
-.act-running-title{background:none;border:none;padding:0;font:inherit;color:var(--ink);cursor:pointer;text-align:left}
-span.act-running-title{cursor:default}
-.act-running-row .act-label,.act-running-row .act-uptime{color:var(--ink-2)}
-/* A collapsed rail keeps only the dot and the count. */
-.sidebar.collapsed #side-actions{padding:8px 6px}
-.sidebar.collapsed #side-actions .act-running-heading,.sidebar.collapsed #side-actions .act-running-row{display:none}
+.act-rows{display:flex;flex-direction:column;gap:1px}
+.side-actions-rows .act-rows{max-height:107px;overflow-y:auto;scrollbar-width:thin}
+.act-srow{display:flex;flex:none;align-items:center;gap:8px;height:26px;padding:0 2px 0 9px;border-radius:8px;font-size:12px;color:var(--ink-2)}
+.act-srow:hover{background:var(--field);color:var(--ink)}
+.act-srow .pdot,.act-tile .pdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--green)}
+.act-srow-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0;border:0;background:none;font:inherit;color:inherit;text-align:left}
+button.act-srow-name{cursor:pointer}
+.act-stop{display:grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--ink-2);cursor:pointer}
+.act-stop:hover{background:var(--red-bg);color:var(--red-ink)}
+.act-stop:focus-visible,.act-srow-name:focus-visible,.act-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Inside a row the ring is drawn inside the control: the rows' scroll box (and the flyout card's)
+   would clip a ring drawn outside it. */
+.act-srow .act-stop:focus-visible,.act-srow .act-srow-name:focus-visible{outline-offset:-2px}
+/* The rail keeps one 40x34 tile — a green dot and the count — that opens the same rows, Stop
+   included, in a side flyout (side-flyout.mjs; the card is .nav-fly), so a running service stays
+   stoppable on the rail too. */
+.act-tile{display:none}
+.sidebar.collapsed .side-actions-rows{display:none}
+.sidebar.collapsed .act-tile{display:flex;align-items:center;justify-content:center;gap:5px;width:40px;height:34px;padding:0;border:0;border-radius:8px;
+  background:transparent;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;cursor:pointer}
+.sidebar.collapsed .act-tile:hover,.sidebar.collapsed .act-tile[aria-expanded="true"]{background:var(--field);color:var(--ink)}
+/* The card never runs past the window (placeFlyout keeps it 8px inside every edge); its rows scroll. */
+.act-fly{width:236px;max-height:calc(100vh - 16px);overflow-y:auto}
 .act-pill{border:none;font:inherit;cursor:pointer}
 .act-pill-slot:empty{display:none}
 .hist-actions-badges{display:inline-flex;gap:6px}

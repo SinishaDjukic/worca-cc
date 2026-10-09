@@ -68,12 +68,12 @@ async function boot({ onboarding = status(['claude']), projects = [], level = nu
 
 // ---- app.js wiring ----
 
-test('boot: the pill mounts under the CTA and routes to the page (where the shelf paints), the welcome shows once', async () => {
+test('boot: the pill mounts under New pipeline and routes to the page (where the shelf paints), the welcome shows once', async () => {
   const { doc, window, posts } = await boot();
   const host = doc.getElementById('getting-started-host');
   assert.equal(host.hidden, true, 'not painted while the page is not open');
-  const cta = doc.querySelector('.nav button.nav-cta');
-  const pillHost = cta.nextElementSibling;
+  const newRow = doc.querySelector('.nav button.nav-new[data-nav="new"]');
+  const pillHost = newRow.nextElementSibling;
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'pill host right under New pipeline');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
   assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census is untouched (Schedules, Team policy and Scripts included; Running and History are one Runs item)');

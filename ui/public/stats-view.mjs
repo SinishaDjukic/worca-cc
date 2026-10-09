@@ -387,7 +387,7 @@ function stackPair(doc, label, value) {
   return pair;
 }
 
-/** Collapsed-rail Spent/Saved stack — what the 76px rail shows while NO total limit is
+/** Collapsed-rail Spent/Saved stack — what the 60px rail shows while NO total limit is
  *  set. A ring needs a denominator; without one it could only print a bare amount in a
  *  disc, with nothing saying what the amount was. The stack drops the disc and states both
  *  figures, a small caps label over a compact amount, in a 40px column: the width of every

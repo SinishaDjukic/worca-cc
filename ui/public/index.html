@@ -45,93 +45,97 @@
           </button>
         </div>
 
-        <nav class="nav" aria-label="Primary">
-          <button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-            <span>New pipeline</span>
-          </button>
-
-          <div class="nav-sect">Activity</div>
-          <button type="button" data-nav="runs" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
-            <span>Runs</span>
-            <!-- One badge (D11): the amber Needs-you count while anything needs you, else the
-                 live count. The live count starts grey: zero running IS the resting state, and
-                 app.js (updateNavCounts) swaps in n-run as soon as anything is live. -->
-            <span class="nav-count n-amber" id="nav-needs-count" hidden>0</span>
-            <span class="nav-count n-grey" id="nav-running-count">0</span>
-          </button>
-          <button type="button" data-nav="schedules" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
-            <span>Schedules</span>
-            <!-- Waiting runs + active repeating schedules (grey: waiting is the resting state);
-                 the amber twin counts UNREAD PROBLEMS in the activity feed. -->
-            <span class="nav-count n-grey" id="nav-schedules-count">0</span>
-            <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
-          </button>
-          <button type="button" data-nav="stats" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
-            <span>Statistics</span>
-          </button>
-          <button type="button" data-nav="team-metrics" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
-            <span>Team metrics</span>
-          </button>
-
-          <div class="nav-sect" data-min-level="advanced">Build</div>
-          <button type="button" data-nav="composer" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
-            <span>Workflow Composer</span>
-          </button>
-          <!-- Nodes: the two composer node types. A disclosure, not a route — it carries no
-               data-nav, so the router never marks it active; app.js#setNodesCollapsed owns
-               aria-expanded + the box's .collapsed and remembers a fold. The children keep their
-               own data-nav: the `.nav button[data-nav]` snapshot reaches nested buttons. -->
-          <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert" aria-expanded="true" aria-controls="nav-nodes-children">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
-            <span>Nodes</span>
-            <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
-          </button>
-          <div class="nav-children nav-group-children" id="nav-nodes-children" data-min-level="expert">
-            <button type="button" class="nav-child" data-nav="agents" data-min-level="expert">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
-              <span>Agents</span>
+        <!-- The one scrolling band: the logo row above and .side-foot below stay put. -->
+        <div class="side-scroll" id="side-scroll">
+          <nav class="nav" aria-label="Primary">
+            <button type="button" class="active nav-new" data-nav="new" data-min-level="simple">
+              <i class="nav-tile" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg></i>
+              <span>New pipeline</span>
             </button>
-            <button type="button" class="nav-child" data-nav="scripts" data-min-level="expert">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
-              <span>Scripts</span>
+            <button type="button" data-nav="runs" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
+              <span>Runs</span>
+              <!-- One badge (D11): the amber Needs-you pill while anything needs you, else the live
+                   count as a plain grey number. A zero is hidden (app.js#updateNavCounts). -->
+              <span class="nav-count n-amber" id="nav-needs-count" hidden>0</span>
+              <span class="nav-count n-grey" id="nav-running-count" hidden>0</span>
             </button>
-          </div>
+            <button type="button" data-nav="schedules" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
+              <span>Schedules</span>
+              <!-- Waiting runs + active repeating schedules (a grey number: waiting is the resting
+                   state); the amber pill counts UNREAD PROBLEMS in the activity feed. A zero is hidden. -->
+              <span class="nav-count n-grey" id="nav-schedules-count" hidden>0</span>
+              <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
+            </button>
+            <button type="button" data-nav="stats" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
+              <span>Statistics</span>
+            </button>
+            <button type="button" data-nav="team-metrics" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
+              <span>Team metrics</span>
+            </button>
 
-          <div class="nav-sect">Manage</div>
-          <button type="button" data-nav="projects" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
-            <span>Projects</span>
-          </button>
-          <button type="button" data-nav="workspaces" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
-            <span>Workspaces</span>
-          </button>
-          <button type="button" data-nav="team-policy" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
-            <span>Team policy</span>
-          </button>
+            <div class="nav-sect" data-min-level="advanced">Build</div>
+            <button type="button" data-nav="composer" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+              <span>Workflow Composer</span>
+            </button>
+            <!-- Nodes: the two composer node types, in a side flyout (side-flyout.mjs) so Manage
+                 never moves. The row is not a route — no data-nav, the router never marks it
+                 active; app.js tints it (.has-active) while Agents or Scripts is open. The flyout
+                 sits INSIDE <nav>, right after its row (DOM order = keyboard order), position:fixed,
+                 so the `.nav button[data-nav]` snapshot still reaches Agents and Scripts. -->
+            <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert"
+                    aria-haspopup="menu" aria-expanded="false" aria-controls="nav-nodes-fly">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
+              <span>Nodes</span>
+              <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </button>
+            <div class="nav-fly" id="nav-nodes-fly" role="menu" aria-label="Nodes" data-min-level="expert" hidden>
+              <div class="nav-fly-k" aria-hidden="true">Nodes</div>
+              <button type="button" class="nav-child" role="menuitem" data-nav="agents" data-min-level="expert">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
+                <span>Agents</span>
+              </button>
+              <button type="button" class="nav-child" role="menuitem" data-nav="scripts" data-min-level="expert">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
+                <span>Scripts</span>
+              </button>
+            </div>
 
-          <div class="nav-sep" aria-hidden="true"></div>
-          <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
-               and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
-               repaints it, and on the collapsed rail it is all that shows. -->
-          <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
-            <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
-            <span class="lv-name">Expert</span>
-          </button>
-          <button type="button" data-nav="settings" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
-            <span>Settings</span>
-          </button>
-        </nav>
 
-        <div class="side-foot">
+            <div class="nav-sect">Manage</div>
+            <button type="button" data-nav="projects" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+              <span>Projects</span>
+            </button>
+            <button type="button" data-nav="workspaces" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
+              <span>Workspaces</span>
+            </button>
+            <button type="button" data-nav="team-policy" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+              <span>Team policy</span>
+            </button>
+
+            <div class="nav-sep" aria-hidden="true"></div>
+            <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
+                 and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
+                 repaints it, and on the collapsed rail it is all that shows. -->
+            <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
+              <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
+              <span class="lv-name">Expert</span>
+            </button>
+            <button type="button" data-nav="settings" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
+              <span>Settings</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="side-foot" id="side-foot">
           <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
                identity proxy or an operator-set name; a local install never shows it. -->
           <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
@@ -139,8 +143,17 @@
                away hours included (wording §3.8). Pause stays in Settings › Away mode. -->
           <div id="side-away"></div>
           <!-- Running actions (issue #529): its own mount, since paintBudget replaces #side-spend's children.
-               Not level-gated: it shows only while a service runs, and it must stay stoppable. -->
-          <div id="side-actions" class="side-actions" hidden aria-label="Running actions"></div>
+               Not level-gated: it shows only while a service runs, and it must stay stoppable. The column
+               shows the rows (app.js#paintRunningActions); the rail shows one tile (a green dot and the
+               count) that opens the same rows, Stop included, in a side flyout. -->
+          <div id="side-actions" class="side-actions" role="group" hidden aria-label="Running actions">
+            <div class="side-actions-rows" id="side-actions-rows"></div>
+            <button type="button" class="act-tile" id="side-actions-tile" aria-haspopup="menu" aria-expanded="false" aria-controls="side-actions-fly"><span class="pdot" aria-hidden="true"></span><span class="act-tile-n">0</span></button>
+            <div class="nav-fly act-fly" id="side-actions-fly" role="menu" aria-label="Running actions" hidden>
+              <div class="nav-fly-k" aria-hidden="true">Running actions</div>
+              <div class="act-fly-rows" id="side-actions-fly-rows"></div>
+            </div>
+          </div>
           <div id="side-spend"></div>
         </div>
       </aside>

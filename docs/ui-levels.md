@@ -126,11 +126,12 @@ be skipped by forgetting it.
 
 | Element | Level |
 |---|---|
-| New pipeline, Getting started, Running, History, Projects, Settings | S |
+| New pipeline, Getting started, Runs, Projects, Settings | S |
+| Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
 | Ask Worca button, sidebar spend indicator, the mode item | S |
 | Statistics, Workflow Composer, Workspaces | A |
-| Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread |
-| Team metrics, Team policy, Nodes (Agents, Scripts) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the whole group stays hidden and the banner says where you are; Advanced keeps it with the open child |
+| Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
+| Team metrics, Team policy, Nodes (Agents and Scripts, in a side flyout) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the row and its flyout stay hidden and the banner says where you are; Advanced keeps the Nodes row and its flyout with the open child |
 
 ### New pipeline
 
@@ -164,7 +165,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
-| Running-action pill in the header, sidebar Running actions card | all — shown only while a service runs |
+| Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
 | Agents tab, worktree row, Auto proposal tunables table | E |
@@ -180,7 +181,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Diff tab, diff pill, inline comments; Create PR / View PR; branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
-| Running-action pill in the header, sidebar Running actions card | all — shown only while a service runs |
+| Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 
 ### Workflow Composer (page: A)

@@ -1,5 +1,5 @@
 // test/ui-mobile-nav.test.mjs — the three navigation tiers. Desktop (>1080px): the
-// sidebar, or the 76px rail by preference. Tablet (761-1080px): the rail, always,
+// sidebar, or the 60px rail by preference. Tablet (761-1080px): the rail, always,
 // preference untouched. Phone (<=760px): the #mbar top bar whose hamburger opens the
 // FULL sidebar as a slide-in drawer (counts, live runs, spend, signed-in: parity).
 // jsdom has no matchMedia, so boot() installs a width-driven stub BEFORE app.js loads.
@@ -91,7 +91,8 @@ async function boot({ width = 1280, seed = {} } = {}) {
   const $ = (s) => window.document.querySelector(s);
   const click = (s) => (typeof s === 'string' ? $(s) : s)
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  const key = (k) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+  // cancelable, as a real keydown is: an open popup consumes Escape with preventDefault.
+  const key = (k) => window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
   return { window, $, click, key, recv, resize: media.resize };
 }
 
@@ -117,7 +118,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
     { name: 'tablet: the icon rail is forced without touching the stored preference', run: async () => {
       const { $, window, recv } = await boot({ width: 900 });
       assert.ok($('.sidebar').classList.contains('collapsed'), 'rail on tablets');
-      assert.ok(window.document.body.classList.contains('rail-collapsed'), 'the Ask dock follows (left:76px)');
+      assert.ok(window.document.body.classList.contains('rail-collapsed'), 'the Ask dock follows (left:60px)');
       assert.equal(window.localStorage.getItem(SIDEBAR_KEY), null, 'nothing persisted');
       assert.equal($('.nav button[data-nav="composer"]').title, 'Workflow Composer', 'rail tooltips');
       recv({ type: 'hello', runs: [live('auth-fix')] });
@@ -140,7 +141,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
 
 // One phone boot, the steps in order: each row starts where the previous one left the page
 // (drawer closed, on New pipeline → Statistics → Runs), and a failing row names its step.
-test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; disclosure and mode switch do not close it', async () => {
+test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; the Nodes flyout and the mode switch do not close it', async () => {
   const { $, click, key, resize, window } = await boot({ width: 390 });
   await checkRows([
     { name: 'phone: open, close by scrim / close button / Escape; focus and inert are managed', run: async () => {
@@ -164,12 +165,16 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       click('#mbar-menu'); key('Escape');
       assert.equal(body.classList.contains('nav-open'), false);
     } },
-    { name: 'phone: a route closes the drawer and names the page in the bar; disclosure and mode switch do not', run: async () => {
+    { name: 'phone: a route closes the drawer and names the page in the bar; the Nodes flyout and the mode switch do not', run: async () => {
       const body = window.document.body;
       assert.equal($('#mbar-title').textContent, 'New pipeline');
       click('#mbar-menu');
       click('.nav .nav-group[data-nav-group="nodes"]');
-      assert.ok(body.classList.contains('nav-open'), 'folding Nodes keeps the drawer open');
+      assert.ok(body.classList.contains('nav-open'), 'opening Nodes keeps the drawer open');
+      assert.equal($('#nav-nodes-fly').hidden, false, 'its flyout opens over the drawer');
+      key('Escape');
+      assert.equal($('#nav-nodes-fly').hidden, true, 'Escape closes the flyout…');
+      assert.ok(body.classList.contains('nav-open'), '…and only the flyout');
       click('#nav-mode');
       assert.ok(body.classList.contains('nav-open'), 'the mode dialog opens over the drawer');
       assert.equal($('#mode-modal').classList.contains('hidden'), false);
@@ -189,6 +194,17 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       await tick();
       assert.equal(window.document.body.classList.contains('nav-open'), false);
       assert.equal($('#mbar-title').textContent, 'Runs');
+    } },
+    { name: 'phone: Agents in the Nodes flyout routes, and puts the flyout and the drawer away', run: async () => {
+      click('#mbar-menu');
+      click('.nav .nav-group[data-nav-group="nodes"]');
+      assert.equal($('#nav-nodes-fly').hidden, false);
+      click('#nav-nodes-fly button[data-nav="agents"]');
+      await tick();
+      assert.equal(window.location.hash, '#agents');
+      assert.equal($('#nav-nodes-fly').hidden, true);
+      assert.equal(window.document.body.classList.contains('nav-open'), false);
+      assert.equal($('#mbar-title').textContent, 'Agents');
     } },
     { name: 'resizing across tiers closes the drawer and re-derives the rail', run: async () => {
       click('#mbar-menu');

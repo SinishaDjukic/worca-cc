@@ -93,7 +93,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
   worktree is removed; the branch stays.
-- **Live cockpit** — **Runs** (under Activity) lists every run, live and
+- **Live cockpit** — **Runs** in the sidebar lists every run, live and
   finished, with **All / Live / Finished / Needs you** tabs, search, and
   grouping by project or date. A live run's page shows its state and current
   step, ticking time, cost and changed files, and a **Live view** of the running
@@ -331,8 +331,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Configure once** — commands live on the project's **Actions** tab, stacks
   on the workspace's; Settings › Runs › **Actions** sets the keep policy, port
   range, editor and terminal. All Actions tabs and that card are Advanced
-  level; the sidebar's **Running actions** card shows at every level while a
-  service runs, with **Stop**.
+  level; the sidebar's **Running actions** rows show at every level while a
+  service runs, each with **Stop** (on the collapsed rail, one tile opens them).
 - **People start commands, agents don't** — every start goes by action id from
   stored config; Ask Worca can read and propose actions but never runs one; a
   hosted Worca runs nothing unless `WORCA_ACTIONS_REMOTE=1`. See
@@ -583,7 +583,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
-- **One list for every project** — **Runs** (sidebar Activity) shows live,
+- **One list for every project** — **Runs** in the sidebar shows live,
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
 

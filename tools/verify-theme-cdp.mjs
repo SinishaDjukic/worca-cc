@@ -335,9 +335,10 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // FORCED through the CSS domain, element by element, in every theme.
 // A selector with no element on the current screen is skipped (nodeId 0). At 5a22ca47 `.icon-btn` and `.field-clear`
 // have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
-// so a future element is sampled; `.sidebar.collapsed .nav button.nav-cta` matches only in the rail-collapsed state.
+// so a future element is sampled; `.sidebar.collapsed .nav > button.nav-new` matches only in the rail-collapsed state.
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
-  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav button.nav-cta', '.nav button', '.spend-ind', '.hd-tree-file', '.ap'];
+  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav > button.nav-new', '.nav button', '.spend-ind', '.hd-tree-file', '.ap',
+  '.act-srow', '.act-stop'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a
   // querySelector error THROW — a swallowed "Could not find node" would silently drop hover coverage.

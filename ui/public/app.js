@@ -93,7 +93,7 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
 import { createScriptsController } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionsCard, historyActionBadges, createActionsController } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -203,6 +203,7 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwaySwitch } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { createFlyout } from './side-flyout.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
@@ -698,6 +699,31 @@ function railCollapsed() {
   return sidebarCollapsed;
 }
 
+// ── Band hairlines ──────────────────────────────────────────────────────────
+// The logo row and the foot stay put while #side-scroll scrolls between them: a hairline
+// shows at an edge only while pages run under it (style.css .under-top / .under-bottom).
+// Repainted on scroll, resize, every rail change (repaintNavMode) and level change, and —
+// through a ResizeObserver on the band and the nav — whenever rows or the foot change height.
+// Looked up per call (no module-level const): repaintNavMode may run before this line does.
+function paintSideEdges() {
+  const aside = $('.sidebar');
+  const band = document.getElementById('side-scroll');
+  if (!aside || !band) return;
+  aside.classList.toggle('under-top', band.scrollTop > 0);
+  aside.classList.toggle('under-bottom', band.scrollTop + band.clientHeight < band.scrollHeight - 1);
+}
+{
+  const band = document.getElementById('side-scroll');
+  band?.addEventListener('scroll', paintSideEdges, { passive: true });
+  window.addEventListener('resize', paintSideEdges);
+  if (band && typeof window.ResizeObserver === 'function') {
+    const ro = new window.ResizeObserver(() => paintSideEdges());
+    ro.observe(band);
+    const nav = band.querySelector(':scope > .nav');
+    if (nav) ro.observe(nav);
+  }
+}
+
 function applySidebarCollapsed() {
   const collapsed = railCollapsed();
   const aside = $('.sidebar');
@@ -727,7 +753,9 @@ function applySidebarCollapsed() {
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
-  for (const b of $$('.nav button[data-nav]:not([data-nav="runs"])')) {
+  // The rail's own squares only (children of .nav): the Nodes row (a flyout trigger, no data-nav) gets
+  // its label too, while Agents and Scripts inside its flyout show theirs and need no tooltip.
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]), .nav > .nav-group')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -749,6 +777,7 @@ function repaintNavMode() {
   renderPipelineTabs();          // child rows <-> initials tiles
   paintBudget();                 // spend block <-> budget ring
   paintFreeDaily();              // the free-request line shows only in the full column
+  paintSideEdges();              // the band heights moved
 }
 
 function setSidebarCollapsed(v) {
@@ -761,38 +790,36 @@ function setSidebarCollapsed(v) {
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
 
-// ── Nodes group (Agents + Scripts) ──────────────────────────────────────────
-// A static disclosure in the Build section. It carries no data-nav, so the
-// router never marks it active; it owns aria-expanded + the box's .collapsed
-// and remembers a fold across reloads. showView tints it while a child page is
-// open and unfolds it on the way in, so "where am I" never hides.
-const NODES_GROUP_KEY = 'worca-cc.nav.nodes.collapsed';
+// ── Nodes (Agents + Scripts): a side flyout off the Build section ─────────────
+// The row is not a route (no data-nav), so the router never marks it active; showView
+// tints it (.has-active) while a child page is open. Its flyout (#nav-nodes-fly) lives
+// inside <nav>, so navLinks and paintLevelBanner reach Agents and Scripts like any row;
+// side-flyout.mjs opens it beside the sidebar (column, rail and phone drawer alike) and
+// closes it on a route, Escape, an outside click, a resize or a scroll of the pages.
 const nodesGroup = $('.nav .nav-group[data-nav-group="nodes"]');
-const nodesGroupBox = $('#nav-nodes-children');
-const NODES_GROUP_VIEWS = nodesGroupBox
-  ? [...nodesGroupBox.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
-function readNodesCollapsed() {
-  try { return localStorage.getItem(NODES_GROUP_KEY) === '1'; }
-  catch { return false; }                    // private mode / storage disabled
-}
-function paintNodesGroup(folded) {
-  if (!nodesGroup || !nodesGroupBox) return;
-  nodesGroup.setAttribute('aria-expanded', folded ? 'false' : 'true');
-  nodesGroupBox.classList.toggle('collapsed', !!folded);
-}
-function setNodesCollapsed(folded) {
-  paintNodesGroup(folded);
-  try { if (folded) localStorage.setItem(NODES_GROUP_KEY, '1'); else localStorage.removeItem(NODES_GROUP_KEY); }
-  catch { /* private mode: the fold lives for this page only */ }
-}
-nodesGroup?.addEventListener('click', () => setNodesCollapsed(nodesGroup.getAttribute('aria-expanded') !== 'false'));
-paintNodesGroup(readNodesCollapsed());
+const nodesFly = $('#nav-nodes-fly');
+const NODES_GROUP_VIEWS = nodesFly ? [...nodesFly.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
+const nodesFlyout = nodesGroup && nodesFly
+  ? createFlyout({ doc: document, win: window, trigger: nodesGroup, menu: nodesFly, mode: 'side', closeOn: $('#side-scroll') })
+  : null;
+// A mode change can hide the Nodes row, and so its flyout, while the flyout is open (a change pushed
+// from another tab, say): an open popup nobody can see would take the next Escape. Put it away.
+document.addEventListener('worca:level', () => nodesFlyout?.close());
+// The old inline disclosure remembered a fold under this key; nothing reads it any more.
+try { localStorage.removeItem('worca-cc.nav.nodes.collapsed'); } catch { /* private mode */ }
+// The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
+// included, in a side flyout — so a running service stays stoppable on the rail too.
+const sideActionsTile = $('#side-actions-tile');
+const sideActionsFly = $('#side-actions-fly');
+const sideActionsFlyout = sideActionsTile && sideActionsFly
+  ? createFlyout({ doc: document, win: window, trigger: sideActionsTile, menu: sideActionsFly, mode: 'side' })
+  : null;
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
 // .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
 // not a gesture. This script is deferred, so the class lands after the first
-// style pass and the transition fires: measured in headless Chrome, the rail
-// slid 298px -> 76px on every reload (transitionstart at ~50ms, still 297px
-// wide). Suppress it for this one call, force the layout so the collapsed width
+// style pass and the transition fires: measured in headless Chrome, the column
+// slid into the rail on every reload (transitionstart at ~50ms, still one pixel
+// short of full width). Suppress it for this one call, force the layout so the collapsed width
 // becomes the transition's start value, then hand the transition back.
 const railAtBoot = railCollapsed() ? $('.sidebar') : null;
 if (railAtBoot) railAtBoot.style.transition = 'none';
@@ -807,7 +834,7 @@ if (railAtBoot) {
 // is open the page behind is inert (inert, not aria-hidden: only inert removes
 // focusability — see the track screens), focus starts on #side-close and comes back
 // to the hamburger. Any route closes it: a drawer button here, and showView for
-// back/forward and deep links. The Nodes disclosure and the mode switch keep it open.
+// back/forward and deep links. The Nodes row (it opens its flyout) and the mode switch keep it open.
 let mobileNavOpen = false;
 const mbarMenu = $('#mbar-menu');
 const navScrim = $('#nav-scrim');
@@ -15456,10 +15483,49 @@ function paintRunningActions() {
   const running = state.actionsRunning || [];
   const side = document.getElementById('side-actions');
   if (side) {
-    const card = renderRunningActionsCard(running.filter((s) => s.kind === 'service'),
-      { doc: document, titleOf: (s) => s.runTitle || s.runId, onStop: stopActionInstance, onOpen: openActionRun });
-    side.replaceChildren(...(card ? [card] : []));
-    side.hidden = !card;
+    const services = running.filter((s) => s.kind === 'service');
+    const opts = { doc: document, titleOf: (s) => s.runTitle || s.runId, onStop: stopActionInstance,
+      onOpen: (s) => { sideActionsFlyout?.close(); openActionRun(s); } };
+    // The column's rows and the rail flyout's copy (its buttons are menu items). A repaint under a
+    // focused row (a Stop just pressed, in the column or in the open flyout) keeps focus in that list:
+    // the same control of the same row while its service still runs, else the same control of the
+    // first row. With no service left, focus goes to the open page's row — never to <body>.
+    const colHost = document.getElementById('side-actions-rows');
+    const flyHost = document.getElementById('side-actions-fly-rows');
+    const focusHost = [colHost, flyHost].find((host) => host && host.contains(document.activeElement)) || null;
+    const focused = focusHost ? document.activeElement : null;
+    const focusedId = focused?.closest('.act-srow')?.dataset.instanceId;
+    const focusedPart = focused?.classList.contains('act-stop') ? '.act-stop' : '.act-srow-name';
+    const tileFocused = !!sideActionsTile && document.activeElement === sideActionsTile;   // the rail tile goes with the last row
+    const rows = renderRunningActionRows(services, opts);
+    const flyRows = renderRunningActionRows(services, { ...opts, menu: true });
+    colHost?.replaceChildren(...(rows ? [rows] : []));
+    flyHost?.replaceChildren(...(flyRows ? [flyRows] : []));
+    const n = rows ? rows.children.length : 0;
+    if (sideActionsTile) {
+      const label = `${n} running action${n === 1 ? '' : 's'}`;
+      sideActionsTile.querySelector('.act-tile-n').textContent = String(n);
+      sideActionsTile.setAttribute('aria-label', label);
+      sideActionsTile.title = label;
+    }
+    side.hidden = !rows;
+    if (!rows) sideActionsFlyout?.close();
+    else if (sideActionsFlyout?.isOpen()) sideActionsFlyout.reposition();   // the card grew or shrank beside its tile
+    if ((focused && !focused.isConnected) || (tileFocused && !rows)) {
+      const host = rows && (focusHost === colHost || sideActionsFlyout?.isOpen()) ? focusHost : null;
+      const row = host && [...host.querySelectorAll('.act-srow')].find((r) => r.dataset.instanceId === focusedId);
+      // The same control of the same row, else that row's other button (its name is plain text once its
+      // run loses its saved row), else the same control of the first row.
+      const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button')
+        || host.querySelector(`button${focusedPart}`) || host.querySelector('button'));
+      // Else the open page's row, or the first sidebar control that takes focus here: a control that is
+      // not shown ignores focus() (the Nodes row Simple hides, the rail toggle on a tablet or a phone),
+      // and New pipeline shows at every level, in the column and on the rail.
+      for (const el of [next, $('.nav > button.active'), $('.nav > .nav-group.has-active'), $('#side-toggle'), $('.nav > button[data-nav="new"]')]) {
+        el?.focus();
+        if (el && document.activeElement === el) break;
+      }
+    }
   }
   paintActionsHeaders();
   paintHistActionBadges();
@@ -29568,24 +29634,16 @@ function runsNeedsCount() {
 }
 function updateNavCounts() {
   const live = liveRuns().length;
-  const c = $('#nav-running-count');
-  if (c) {
-    c.textContent = String(live);
-    // Green means "work in flight", so it is only spent when it carries that
-    // signal: at zero the badge drops to the sidebar's inert-inventory grey,
-    // the same treatment the Schedules count gets. A permanently green
-    // pill reads as active and dilutes the green that should catch the eye.
-    c.classList.toggle('n-run', live > 0);
-    c.classList.toggle('n-grey', live === 0);
-  }
-  // One badge on Runs (D11): while anything needs you, the amber Needs-you count shows and
-  // CSS hides the live count beside it.
   let waiting = 0;
   for (const r of runs.values()) if (r.pendingQuestion != null) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
   const needs = runsNeedsCount();
+  // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
+  // count as a plain grey number. A zero is hidden; each element keeps its number.
   const nc = $('#nav-needs-count');
   if (nc) { nc.textContent = String(needs); nc.hidden = needs === 0; }
+  const c = $('#nav-running-count');
+  if (c) { c.textContent = String(live); c.hidden = live === 0 || needs > 0; }
   // The rail shows no label and only one badge, so the button's own name has to carry
   // both numbers. aria-label as well as title: a title is a DESCRIPTION, and
   // name-from-contents would otherwise announce this button as bare "4".
@@ -29637,7 +29695,9 @@ function paintScheduleCounts(c) {
   const inUse = !!((c.scheduled || 0) + (c.missed || 0) + (c.recurring || 0) + (c.unread || 0));
   if (inUse !== schedulesInUse) { schedulesInUse = inUse; paintLevelBanner(); }
   if (el.navSchedulesCount && Number.isFinite(c.scheduled)) {
-    el.navSchedulesCount.textContent = String((c.scheduled || 0) + (c.missed || 0));
+    const n = (c.scheduled || 0) + (c.missed || 0);
+    el.navSchedulesCount.textContent = String(n);
+    el.navSchedulesCount.hidden = n === 0;               // a zero is hidden; the number stays
   }
   if (el.navSchedulesUnread && Number.isFinite(c.unread)) {
     el.navSchedulesUnread.textContent = String(c.unread);
@@ -29660,16 +29720,16 @@ let gsPillHost = null;
 let gsWelcomeUnbind = null;
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
-/** The pill lives under the New pipeline CTA. Mounted here, not in the shell, so
- *  the sidebar's static 10-button census (ui-nav-*.test.mjs) is untouched. */
+/** The pill lives right under the New pipeline row. Mounted here, not in the shell, so
+ *  the sidebar's static button census (ui-onboarding-shell, ui-levels) is untouched. */
 function gsEnsurePillHost() {
   if (gsPillHost && gsPillHost.isConnected) return gsPillHost;
-  const cta = document.querySelector('.nav button.nav-cta');
-  if (!cta) return null;
+  const newRow = document.querySelector('.nav button[data-nav="new"]');
+  if (!newRow) return null;
   gsPillHost = document.createElement('div');
   gsPillHost.className = 'gs-pill-host';
   gsPillHost.hidden = true;
-  cta.insertAdjacentElement('afterend', gsPillHost);
+  newRow.insertAdjacentElement('afterend', gsPillHost);
   return gsPillHost;
 }
 
@@ -30387,13 +30447,13 @@ function paintLevelBanner() {
     keepVisible(b, (above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)))
       || (nav === 'schedules' && schedulesInUse));
   }
-  // The Nodes parent and its box are not routes, so the loop above never reaches
-  // them: keep both with the child, or the kept row sits inside a hidden box
-  // (the box is expert-gated too) with its elbow hanging off nothing.
+  // The Nodes row and its flyout are not routes, so the loop above never reaches them:
+  // keep both with the open child, or the kept row hides inside an expert-gated flyout
+  // that has no visible row to open it from.
   if (nodesGroup) {
     const keep = above && !hideNodes && NODES_GROUP_VIEWS.includes(currentShownView);
     keepVisible(nodesGroup, keep);
-    keepVisible(nodesGroupBox, keep);
+    keepVisible(nodesFly, keep);
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -30416,6 +30476,7 @@ const levelListeners = [];
 function onLevelChange(fn) { levelListeners.push(fn); }
 document.addEventListener('worca:level', () => {
   paintLevelBanner();
+  paintSideEdges();              // rows came or went
   for (const fn of levelListeners) { try { fn(currentLevel()); } catch (e) { console.warn('[worca] level repaint failed', e); } }
 });
 
@@ -30587,13 +30648,11 @@ function showView(name, param = '') {
   });
   paintMobileBar(viewSection(name));
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
-  // Nodes (Agents, Scripts): tint the parent while a child page is open, and
-  // unfold it — a deep link or a drawer click must never land on a hidden row.
-  if (nodesGroup) {
-    const inNodes = NODES_GROUP_VIEWS.includes(name);
-    nodesGroup.classList.toggle('has-active', inNodes);
-    if (inNodes && nodesGroup.getAttribute('aria-expanded') === 'false') setNodesCollapsed(false);
-  }
+  // Nodes (Agents, Scripts): the row takes the open-page fill while a child page is shown,
+  // and any route puts its flyout away (a click inside it already did).
+  if (nodesGroup) nodesGroup.classList.toggle('has-active', NODES_GROUP_VIEWS.includes(name));
+  nodesFlyout?.close();
+  sideActionsFlyout?.close();
   // Body flags let CSS drop .main's padding for the full-height pages (the Runs panes).
   document.body.classList.toggle('view-runs', RUNS_VIEWS.has(name));
   document.body.classList.toggle('view-projects', name === 'projects');
