@@ -3448,6 +3448,8 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 /* 30px is the row-1 size; on a 12.5px meta line the pip shrinks to match the text. */
 .hd-row2 .hd-sic{width:24px;height:24px;}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
+/* New text on this line meets 4.5:1 (--ink-2); the older --ink-3 parts sit in the light contrast baseline, which only shrinks. */
+.hd-meta .hd-engine{color:var(--ink-2);}
 .hd-diffcounts{display:inline-flex;align-items:center;gap:6px;}
 .hd-dot{font-weight:700;color:var(--ink);}
 .hd-status-word{font:600 12.5px var(--sans);}
