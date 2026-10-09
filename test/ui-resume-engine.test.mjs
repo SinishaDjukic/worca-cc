@@ -289,17 +289,21 @@ test('History detail: a refused switch offers the consent and re-sends with it',
   assert.deepEqual([ctx.resumes[1].engine, ctx.resumes[1].allowUnguardedEngine], ['codex', true]);
 });
 
-test('History detail at simple level: a usage limit the engine hit puts "Resume on <other>" in the bar', async () => {
+// The bar carries no "Resume on <engine>" buttons of its own: the Resume split's menu holds them, and its caret
+// (Advanced and up) shows at every mode while a usage limit the engine hit offers one.
+test('History detail at simple level: a usage limit the engine hit shows the Resume caret, whose menu resumes on the other engine', async () => {
   const ctx = await boot({ level: 'simple', fetchHandler: histFetch('codex') });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
-  const btn = ctx.doc.querySelector('#hist-detail .hd-bar .hd-resume-switch');
-  assert.ok(btn, 'the bar carries the button');
-  assert.equal(btn.hidden, false);
-  assert.equal(btn.hasAttribute('data-min-level'), false, 'not gated by the interface level');
-  assert.equal(btn.textContent.trim(), 'Resume on Claude');
-  assert.equal(btn.title, NOTE);
-  btn.click();
+  assert.equal(ctx.doc.querySelector('#hist-detail .hd-resume-switch'), null, 'no separate engine buttons');
+  const more = ctx.doc.querySelector('#hist-detail .hd-resume-more');
+  assert.equal(more.dataset.minLevel, 'advanced');
+  assert.equal(more.dataset.levelKeep, '1', 'kept on screen in Simple');
+  more.click();
+  await ctx.settle();
+  const item = [...ctx.doc.querySelectorAll('.hd-resume-menu .resume-on-other')].find((i) => !i.hidden && i.dataset.engine === 'claude');
+  assert.equal(item.querySelector('b').textContent, 'Resume on Claude');
+  item.click();
   await ctx.settle();
   assert.equal(modal(ctx.doc).title, 'Resume on Claude?');
   ctx.doc.getElementById('confirm-ok').click();
@@ -308,12 +312,12 @@ test('History detail at simple level: a usage limit the engine hit puts "Resume 
   assert.deepEqual([ctx.resumes[0].pipelineId, ctx.resumes[0].engine], ['fcec04e8', 'claude']);
 });
 
-test('History detail: other pauses, and a limit that was not the engine\'s, put no switch in the bar', async () => {
+test('History detail: other pauses, and a limit that was not the engine\'s, leave the caret to Advanced', async () => {
   for (const opts of [{ limitEngine: null }, { pauseReason: 'error' }, { pauseReason: null }]) {
     const ctx = await boot({ level: 'simple', fetchHandler: histFetch('codex', opts) });
     ctx.go(`history/${KEY}/fcec04e8`);
     await ctx.settle(8);
-    assert.equal(ctx.doc.querySelector('#hist-detail .hd-resume-switch').hidden, true, JSON.stringify(opts));
+    assert.equal(ctx.doc.querySelector('#hist-detail .hd-resume-more').dataset.levelKeep, undefined, JSON.stringify(opts));
   }
 });
 
@@ -365,25 +369,14 @@ test('run page banner: only the ready engines are offered after a usage limit', 
   }
 });
 
-test('History detail bar: only the ready engines; the second clone resumes on its own engine', async () => {
-  const { handler } = countingEngines(['claude', 'codex', 'cursor'], histFetch('claude'));
-  const ctx = await boot({ level: 'simple', fetchHandler: handler });
-  ctx.go(`history/${KEY}/fcec04e8`);
-  await ctx.settle(12);
-  const btns = [...ctx.doc.querySelectorAll('#hist-detail .hd-bar .hd-resume-switch')].filter((b) => !b.hidden);
-  assert.deepEqual(btns.map((b) => b.dataset.engine), ['codex', 'cursor']);
-  btns[1].querySelector('.hd-btn-label').click();
-  await ctx.settle();
-  assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
-  ctx.doc.getElementById('confirm-ok').click();
-  await ctx.settle(8);
-  assert.deepEqual([ctx.resumes.at(-1).pipelineId, ctx.resumes.at(-1).engine], ['fcec04e8', 'cursor']);
-
-  const notReady = countingEngines(['claude', 'codex'], histFetch('claude'));
-  const ctx2 = await boot({ level: 'simple', fetchHandler: notReady.handler });
-  ctx2.go(`history/${KEY}/fcec04e8`);
-  await ctx2.settle(12);
-  assert.deepEqual([...ctx2.doc.querySelectorAll('#hist-detail .hd-bar .hd-resume-switch')].filter((b) => !b.hidden).map((b) => b.dataset.engine), ['codex']);
+test('History detail: the caret shows in Simple only while another engine is ready', async () => {
+  for (const [ready, keep] of [[['claude', 'codex', 'cursor'], '1'], [['claude', 'codex'], '1'], [['claude'], undefined]]) {
+    const { handler } = countingEngines(ready, histFetch('claude'));
+    const ctx = await boot({ level: 'simple', fetchHandler: handler });
+    ctx.go(`history/${KEY}/fcec04e8`);
+    await ctx.settle(12);
+    assert.equal(ctx.doc.querySelector('#hist-detail .hd-resume-more').dataset.levelKeep, keep, ready.join(','));
+  }
 });
 
 test('History detail menu: one item per other engine, ready or not; the second one sends its engine', async () => {
@@ -425,4 +418,15 @@ test('run page: a second frame of the same paused run leaves the open menu\'s it
   ctx.recv({ type: 'state', runId: 'r1', status: 'paused', runEngine: 'codex' });
   await ctx.settle(4);
   assert.equal(item.isConnected, true, 'not re-cloned under the open menu');
+});
+
+test('History detail Overview names the run\'s engine under the title', async () => {
+  for (const [engine, label] of [['codex', 'Codex'], ['claude', 'Claude']]) {
+    const ctx = await boot({ fetchHandler: histFetch(engine, { pauseReason: 'error', limitEngine: null }) });
+    ctx.go(`history/${KEY}/fcec04e8`);
+    await ctx.settle(8);
+    const seg = ctx.doc.querySelector('#hist-detail .hd-meta .hd-engine');
+    assert.equal(seg.textContent, label, engine);
+    assert.equal(seg.previousElementSibling.className, 'hd-dot');
+  }
 });

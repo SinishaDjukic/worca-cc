@@ -5909,7 +5909,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
    just above it (--ask-box-top). */
 .ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
-.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:var(--r-card);}
+.ask-pop-model{right:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:292px;border-radius:var(--r-card);
+  max-height:min(420px,70%);overflow-y:auto;overscroll-behavior:contain;}   /* ~10 rows, then it scrolls, like the scope and MCP pickers */
 /* The per-chat MCP picker (MCP registry §9.4) opens over the scope pill it sits beside. Level 1 rows hold a
    small switch and a drill button; level 2 rows a copy name and its switch. */
 .ask-pop-mcp{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
@@ -6543,14 +6544,15 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .btn-split > .btn-split-more:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .btn-split > .btn-split-more:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .btn-split > .btn-go:disabled,.btn-split > .btn-split-more:disabled{opacity:.45;cursor:not-allowed;transform:none;filter:none;}
-.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;padding:6px;
+/* Never wider than 340px (or the viewport): a long engine note wraps instead of pushing the menu off screen. */
+.btn-split-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;min-width:230px;max-width:min(340px,calc(100vw - 32px));padding:6px;
   background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:var(--shadow-menu);}
 .btn-split-menu[hidden]{display:none;}
 .btn-split-menu button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;text-align:left;
   background:transparent;border:none;border-radius:11px;padding:10px 12px;font-family:inherit;cursor:pointer;color:var(--ink);}
 .btn-split-menu button:hover,.btn-split-menu button:focus-visible{background:var(--hover);outline:none;}
 .btn-split-menu b{font-weight:600;font-size:13.5px;}
-.btn-split-menu small{font-size:12px;color:var(--ink-3);}
+.btn-split-menu small{font-size:12px;color:var(--ink-3);white-space:normal;line-height:1.4;}
 .btn-split.mini > .btn-go:first-child{padding:9px 14px 9px 16px;font-size:12.5px;}
 .btn-split.mini > .btn-split-more{padding:0 12px 0 9px;}
 .btn-split.mini .btn-split-menu{bottom:auto;top:calc(100% + 8px);}

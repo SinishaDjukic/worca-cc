@@ -21220,10 +21220,6 @@ function gateHdResume(btn, { reason, detail }) {
 // a resume point exists — v1 points were retired by the v2 upgrade; a LIVE snapshot has no
 // `resumable` field, so `!== false` keeps the live path untouched).
 // Idempotent: runs on load, when the row lands and on every run frame (renderRunningView).
-/** The bar's "Resume on <engine>" buttons (.hd-resume-switch): a paused run whose engine hit its own
- *  usage limit, read off the live run when this tab has one, else the saved state. One button per offered
- *  engine (`ready`: the ready engines, null = all), cloned before the hidden index.html template; the bar's
- *  one delegated listener handles them. An unchanged offer is left alone. */
 /** The pause the history bar reads: the live run's when this tab has one, else the saved state's. */
 function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
@@ -21231,23 +21227,12 @@ function hdPauseOf(live, screen, data, record) {
     ? { reason: live.pauseReason, limitEngine: live.limitEngine }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine };
 }
+/** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
+ *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
+ *  such an offer it shows at every mode, so Simple can switch too. `ready`: the ready engines, null = all. */
 function paintHdResumeSwitch(screen, record, data, live, resumable, ready = null) {
-  const tpl = screen.querySelector('.hd-resume-switch[data-template]') || screen.querySelector('.hd-resume-switch');
-  if (!tpl) return;
-  tpl.dataset.template = '1'; tpl.hidden = true;
   const offers = resumable ? usageLimitSwitches(hdPauseOf(live, screen, data, record), ready) : [];
-  const sig = offers.join(',');
-  if (tpl.dataset.engineSig === sig) return;
-  tpl.dataset.engineSig = sig;
-  screen.querySelectorAll('.hd-resume-switch:not([data-template])').forEach((b) => b.remove());
-  for (const e of offers) {
-    const btn = tpl.cloneNode(true);
-    delete btn.dataset.template; delete btn.dataset.engineSig;
-    btn.hidden = false; btn.dataset.engine = e;
-    btn.querySelector('.hd-btn-label').textContent = `Resume on ${engineLabel(e)}`;
-    btn.title = engineSwitchNote(e);
-    tpl.before(btn);
-  }
+  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0);
 }
 
 /** The engine a saved run resumes on by default: its live run's, else the saved state's. */
@@ -21586,6 +21571,14 @@ function paintHdHeaderMeta(screen, record, data) {
   w.className = `hd-status-word st-${family}`;
   w.textContent = word;
   meta.appendChild(w);
+  // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
+  const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
+  meta.appendChild(hdDot());
+  const eng = document.createElement('span');
+  eng.className = 'hd-engine';
+  eng.textContent = engineLabel(engine);
+  eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  meta.appendChild(eng);
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   const hdCost = runCostText(st, st.totalCostUsd, '');
   for (const [cls, text, strong] of [
@@ -22071,17 +22064,6 @@ function setupHdActions(screen, record, data) {
   resumeBtn.addEventListener('click', () => {
     const r = hdCurrentRecord(record);              // never the load-time object
     resumePipeline(r, r.projectDir || null, resumeBtn);
-  });
-
-  // "Resume on <engine>" after a usage limit (paintHdResumeSwitch clones them later, so one delegated
-  // listener on the bar). Resume's own button carries the busy state, so a click while it is in flight does nothing.
-  const hdBar = screen.querySelector('.hd-resume-switch')?.parentElement;
-  hdBar?.addEventListener('click', (e) => {
-    const btn = e.target.closest('.hd-resume-switch:not([data-template])');
-    if (!btn || !hdBar.contains(btn)) return;
-    if (!btn.dataset.engine || resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
-    const r = hdCurrentRecord(record);
-    resumePipelineOnEngine(r, hdRunEngine(r, data), resumeBtn, btn.dataset.engine);
   });
 
   // Scheduled resume ("Resume at…" in the split's menu); paintHdLive gates the item.
