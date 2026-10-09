@@ -159,11 +159,40 @@ export const GRAPH_WORKSPACE_SCAN_WORKFLOW = deepFreeze({
   ],
 });
 
+/** The PR fix workflow every Watch PR fix run starts (pr-watch.mjs FIX_WORKFLOW_ID): Implementation
+ *  -> Review Implementation, the blocking review looping back into the implementer. There is no
+ *  planner: the task (the fix brief) feeds both plan ports. Reserved like wf_workspace_scan and NEVER
+ *  listed — only the PR watcher starts it — so it runs on every home, not only one with a saved row.
+ *  The id has an underscore so no NAME can slug onto it (slugify maps "_" to "-"). */
+export const PR_FIX_WORKFLOW_ID = 'wf_pr_fix';
+export const PR_FIX_WORKFLOW_NAME = 'PR fix';
+export const GRAPH_PR_FIX_WORKFLOW = deepFreeze({
+  id: PR_FIX_WORKFLOW_ID,
+  name: PR_FIX_WORKFLOW_NAME,
+  version: 2,
+  domain: 'coding',
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z',
+  nodes: [
+    { id: 'n_task', kind: 'task', x: 40, y: 200, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 320, y: 200, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 600, y: 200, config: {} },
+    { id: 'n_end', kind: 'end', x: 880, y: 200, config: {} },
+  ],
+  wires: [
+    { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w2', from: { node: 'n_task', port: 'task' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w4', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w5', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+  ],
+});
+
 /** The ids no saved row may claim: writeGraphWorkflow re-mints them, listWorkflows hides them,
- *  DELETE refuses them. wf_workspace_scan is reserved but never listed anywhere. Order is NOT
+ *  DELETE refuses them. wf_workspace_scan and wf_pr_fix are reserved but never listed anywhere. Order is NOT
  *  significant — GET /api/workflows and the Ask catalog list the graph built-ins in their own
  *  fixed order (Default, then Memory defragment).
  *  NOTE: `ui/public/graph/composer.mjs` keeps a twin of this list as a `Set` (`.has`), not an
  *  Array (`.includes`) — the two are not interchangeable. */
-export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID]);
+export const RESERVED_WORKFLOW_IDS = Object.freeze([GRAPH_DEFAULT_WORKFLOW.id, AUTO_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, PR_FIX_WORKFLOW_ID]);
 export function isReservedWorkflowId(id) { return RESERVED_WORKFLOW_IDS.includes(id); }

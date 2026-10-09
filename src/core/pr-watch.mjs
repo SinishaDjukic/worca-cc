@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from './db.mjs';
 import { capBytes } from './git-info.mjs';
+import { PR_FIX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 
 export const MAX_FIX_RUNS = 3;
 /** Every fix run is an unattended Implement ⇄ Review: the origin's own workflow may start with
- *  Clarify (blocks unattended) and re-plan the whole feature for one review comment. */
-export const FIX_WORKFLOW_ID = 'wf_implement-review';
+ *  Clarify (blocks unattended) and re-plan the whole feature for one review comment. It is the
+ *  built-in wf_pr_fix, never a saved row, so a fix run starts on every home. */
+export const FIX_WORKFLOW_ID = PR_FIX_WORKFLOW_ID;
 export const WATCH_MARKER = '<!-- worca:pr-watch -->';
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const PASSING = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);

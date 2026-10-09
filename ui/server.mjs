@@ -288,7 +288,7 @@ import {
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS } from '../src/core/graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -9667,6 +9667,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
+  if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });

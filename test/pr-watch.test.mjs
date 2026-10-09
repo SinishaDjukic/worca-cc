@@ -170,7 +170,7 @@ test('one fix run batches failures, review threads and change requests, then pub
   const { body, opts } = io.calls.start[0];
   assert.match(body.prompt, /log 11/); assert.match(body.prompt, /> fix 22/); assert.match(body.prompt, /> redo/);
   assert.match(body.prompt, /untrusted/);
-  assert.equal(FIX_WORKFLOW_ID, 'wf_implement-review');
+  assert.equal(FIX_WORKFLOW_ID, 'wf_pr_fix', 'the built-in PR fix workflow, not a saved row');
   assert.deepEqual([body.projectDir, body.workflowId, body.guardrailsId, body.featureBranch, body.sourceBranch, body.syncBeforeStart],
     ['/repo', FIX_WORKFLOW_ID, 'g1', 'feat/x', 'main', false]);
   // Unattended Implement ⇄ Review on the origin's engine and mock flag; per-node models stay project defaults.

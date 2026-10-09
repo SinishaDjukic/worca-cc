@@ -11,7 +11,7 @@ import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, persistMemberPrState } from '../src/core/artifacts.mjs';
-import { getWatch, updateWatch, setWatch, reserveBatch, watchRun } from '../src/core/pr-watch.mjs';
+import { getWatch, updateWatch, setWatch, reserveBatch, watchRun, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
@@ -237,6 +237,24 @@ test('a reserved fix run id reaches its new pipeline: the start links it inside 
     assert.ok(pid, 'the pipeline was linked to its reservation');
     assert.deepEqual([getWatch(prUrl).status, getWatch(prUrl).activePipelineId], ['fixing', pid]);
   } finally { await stopAndSettle(runs, (e) => e.id === 'run-wire-1'); }
+});
+
+test('a fix-run start body (as prepareAndStart builds it) is accepted on a home with no saved workflows', async () => {
+  assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM workflows WHERE id = ?').get(FIX_WORKFLOW_ID).n, 0);
+  let out = null;
+  const res = { statusCode: 200, status(c) { this.statusCode = c; return this; }, json(b) { out = { status: this.statusCode, body: b }; return this; } };
+  const body = { prompt: 'Fix the failing check', title: 'Fix PR #7 feedback', projectDir: gitDir('prwatch-builtin'),
+    workflowId: FIX_WORKFLOW_ID, humanInLoop: false, mock: true, syncBeforeStart: false };
+  await server.startRunHandler({ body, headers: {}, _startedBy: 'pr-watch', _runId: 'run-builtin-1' }, res);
+  try {
+    assert.equal(out.status, 200, JSON.stringify(out.body));
+  } finally { await stopAndSettle(runs, (e) => e.id === 'run-builtin-1'); }
+});
+
+test('DELETE /api/workflows refuses the reserved PR fix workflow', async () => {
+  const r = await fetch(`${base}/api/workflows/${FIX_WORKFLOW_ID}`, { method: 'DELETE' });
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /PR fix workflow cannot be deleted/);
 });
 
 test('pr-watch-changed frames carry the store key History uses: a workspace run\'s is workspaces/<wk>', () => {

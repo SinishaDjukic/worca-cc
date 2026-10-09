@@ -199,7 +199,8 @@ Watch PR is opt-in in Ship It and is available beside an open PR at the advanced
 level. It supports github.com only and batches failed checks plus trusted author,
 owner, member, or collaborator feedback into at most three automatic fix runs.
 Review text is untrusted code feedback. Each fix run is an unattended
-Implement ⇄ Review (`wf_implement-review`) on the PR's own branch: it keeps the
+Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
+workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
 original run's guardrails and engine (and a mock run's mock flag), never asks a
 person, and uses the project's default agent models. A PR merged or closed while
 a fix ran is not pushed to. Turning the watch off stops new work;
