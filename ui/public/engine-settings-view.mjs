@@ -15,12 +15,13 @@ const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, sou
  *  `what`: "step" | "helper job". `from`: where unset rows come from ("your settings", "Worca's defaults"). */
 function slotTable(doc, cls, title, rows, { what, from }) {
   const box = doc.createElement('div'); box.className = `engine-slots ${cls}`;
-  const head = doc.createElement('h4'); head.textContent = title; box.append(head);
+  // The title and the controls share one bar ABOVE the table, so they stay put as rows come and go.
+  const bar = doc.createElement('div'); bar.className = 'engine-slot-bar';
+  const head = doc.createElement('h4'); head.textContent = title; bar.append(head); box.append(bar);
   const cols = doc.createElement('div'); cols.className = 'engine-slot-head';
   cols.append(doc.createElement('span'), Object.assign(doc.createElement('span'), { textContent: 'Model' }), Object.assign(doc.createElement('span'), { textContent: 'Effort' }));
   box.append(cols);
   for (const r of rows) { r.el.classList.add('engine-slot'); r.el.hidden = !r.set; box.append(r.el); }
-  const foot = doc.createElement('div'); foot.className = 'engine-slot-foot';
   const rest = doc.createElement('small'); rest.className = 'hint engine-slot-rest';
   const add = doc.createElement('select'); add.className = 'select engine-slot-add'; add.setAttribute('aria-label', `Override a ${what}`);
   const all = doc.createElement('button'); all.type = 'button'; all.className = 'btn btn-ghost btn-mini engine-slot-all'; all.dataset.minLevel = 'expert';
@@ -49,7 +50,7 @@ function slotTable(doc, cls, title, rows, { what, from }) {
     for (const r of rows) r.el.hidden = !showAll && !r.set && r.el.dataset.dirty !== '1';
     paint();
   });
-  foot.append(rest, add, all); box.append(foot); paint();
+  bar.append(add, all); box.append(rest); paint();
   return box;
 }
 

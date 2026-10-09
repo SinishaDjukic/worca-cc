@@ -8182,14 +8182,15 @@ span.act-running-title{cursor:default}
 .engine-slots .engine-slot .label-row{min-width:0;flex-wrap:wrap;}
 .engine-slots .engine-slot .inherit-row{grid-column:2 / 4;}
 .engine-slots .engine-slot .inherit-sub-cap{display:none;}
-.engine-slot-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding-top:8px;}
-.engine-slot-foot .engine-slot-rest{margin:0;flex:1 1 220px;}
-.engine-slot-foot .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
+.engine-slot-bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0 8px;}
+.engine-slots .engine-slot-bar > h4{margin:0 auto 0 0;}
+.engine-slot-bar .engine-slot-add{width:auto;max-width:240px;padding:7px 32px 7px 12px;font-size:12.5px;}
+.engine-slots .engine-slot-rest{margin:8px 0 0;}
 .engine-helpers-fold{margin-top:12px;}
 /* Project settings put Save right after the section: the same 18px gap a .field leaves. */
 .pd-settings-body .engine-card{margin-bottom:18px;}
 .engine-helpers-fold > summary{cursor:pointer;font-weight:600;font-size:13px;}
-.engine-helpers-fold .engine-helpers > h4{display:none;}
+.engine-helpers-fold .engine-helpers > .engine-slot-bar > h4{visibility:hidden;}
 @media (max-width:640px){
   .engine-slot-head{display:none;}
   .engine-slots .inherit-field.engine-slot{grid-template-columns:1fr;row-gap:6px;}
