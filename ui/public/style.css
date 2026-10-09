@@ -78,6 +78,9 @@
   --peach-wash:light-dark(#FEF6EC,#2A2219); --peach-line:light-dark(#F1DCBD,#504029);
   /* Ask Worca run card head wash (mockup 2026-09-06): Worca-authored, same hue as the Auto tag. */
   --violet-wash:light-dark(#F6F4FC,#211E2E);
+  /* The top bar search's open pill (the chat-first canvas, 2026-10-09): a coral line and a soft halo. */
+  --search-line:light-dark(rgba(221,107,77,.45),rgba(240,154,124,.45));
+  --search-ring:light-dark(rgba(221,107,77,.24),rgba(240,154,124,.26));
 
   /* Semantic tokens introduced by the theme work (spec §3.2). Each light arm is
      the literal it replaced, so the light theme did not move. */
@@ -289,6 +292,47 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .topnav-new svg{width:14px;height:14px;flex:none;}
 .topnav-new:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .topnav-new:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Search or ask (.tsearch, topnav-search.mjs): a 34px pill in the centre slot with its listbox under it,
+   as wide as the pill and 360px at least. Open, the pill wears the coral line and halo (--search-line,
+   --search-ring). Open, the whole search stacks at z 41 (nothing above it makes a stacking context): over
+   the run pages' sticky bars, the terminal pane (39) and the Ask dock (40), whose open sheet would cover
+   the listbox, and under the phone drawer (42), the flyouts (43), a tour (44) and the modals (50 and up).
+   Phones fold the pill into #tsearch-open (the "Responsive nav tiers" block); #tsearch-close lives only there. */
+.tsearch{position:relative;width:100%;min-width:0;}
+.tsearch.is-open{z-index:41;}
+.tsearch-open,.tsearch-close{display:none;}
+.tsearch-field{display:flex;align-items:center;gap:9px;height:34px;padding:0 6px 0 13px;border-radius:999px;
+  background:var(--field);box-shadow:0 0 0 1px var(--line);color:var(--ink-3);cursor:text;transition:box-shadow .15s;}
+.tsearch-field:hover{box-shadow:0 0 0 1px var(--hover-outline);}
+.tsearch.is-open .tsearch-field{background:var(--panel);box-shadow:0 0 0 1px var(--search-line),0 0 0 4px var(--search-ring);color:var(--ink-2);}
+.tsearch-ic{width:16px;height:16px;flex:none;}
+.tsearch-input{flex:1;min-width:0;height:100%;padding:0;border:0;outline:none;background:transparent;color:var(--ink);
+  font:400 13.5px var(--sans);-webkit-appearance:none;appearance:none;}
+.tsearch-input::placeholder{color:var(--ink-2);}
+.tsearch-input::-webkit-search-cancel-button,.tsearch-input::-webkit-search-decoration{-webkit-appearance:none;}
+.tsearch-kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
+  border-radius:6px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink-3);
+  font:500 11px/1 var(--sans);white-space:nowrap;}
+.tsearch-kbd:empty{display:none;}
+.tsearch-pop{position:absolute;z-index:30;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:100%;min-width:360px;
+  max-height:min(480px,calc(100vh - 72px));overflow-y:auto;display:flex;flex-direction:column;padding:6px;
+  border-radius:var(--r-card);background:var(--panel);box-shadow:0 0 0 1px var(--line-2),var(--shadow-pop);}
+.tsearch-pop[hidden]{display:none;}
+.tsearch-group{display:flex;flex-direction:column;}
+.tsearch-label{padding:8px 10px 4px;font-size:11.5px;line-height:14px;font-weight:500;color:var(--ink-3);}
+.tsearch-opt{display:flex;align-items:center;gap:10px;flex:none;min-height:34px;padding:0 10px;border-radius:var(--r-ctrl);
+  color:var(--ink);font-size:13.5px;white-space:nowrap;cursor:pointer;}
+.tsearch-opt.is-active{background:var(--hover);}
+.tsearch-opt .tsearch-ic{color:var(--ink-3);}
+.tsearch-title{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.tsearch-meta{flex:0 1 auto;min-width:0;max-width:55%;margin-left:auto;padding-left:12px;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px;color:var(--ink-3);}
+.tsearch-dot{flex:none;width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--seq);}
+.tsearch-dot.tone-need{background:var(--amber);}
+.tsearch-dot.tone-run{background:var(--blue);}
+.tsearch-dot.tone-fail{background:var(--red);}
+.tsearch-none{padding:8px 10px;font-size:13px;color:var(--ink-3);}
+.tsearch-sep{flex:none;height:1px;margin:4px 8px;background:var(--line);}
 .topbar{display:flex;align-items:center;justify-content:space-between;
   gap:24px;margin-bottom:22px;}
 .topbar .sub{color:var(--ink-2);font-size:13.5px;}
@@ -5135,6 +5179,22 @@ button.rd-srow:hover{background:var(--hover-on-field);}
   .topnav{grid-template-columns:minmax(0,1fr) auto auto;gap:8px;}
   .topnav-new{width:32px;padding:0;justify-content:center;}
   .topnav-new-label{display:none;}
+  .tsearch{width:auto;}
+  .tsearch-field{display:none;}
+  .tsearch-open{display:flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;border:0;
+    border-radius:999px;background:transparent;color:var(--ink-2);cursor:pointer;}
+  .tsearch-open svg{width:18px;height:18px;}
+  .tsearch-open:hover{background:var(--hover);color:var(--ink);}
+  .tsearch-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .tsearch.is-open::before{content:"";position:fixed;top:0;left:0;right:0;z-index:30;height:48px;background:var(--panel);}
+  .tsearch.is-open .tsearch-field{display:flex;position:fixed;top:7px;left:8px;right:8px;z-index:31;}
+  .tsearch.is-open .tsearch-open{visibility:hidden;}
+  .tsearch.is-open .tsearch-kbd{display:none;}
+  .tsearch.is-open .tsearch-close{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;padding:0;
+    border:0;border-radius:999px;background:transparent;color:var(--ink-2);cursor:pointer;}
+  .tsearch-close svg{width:16px;height:16px;}
+  .tsearch-close:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+  .tsearch-pop{position:fixed;top:56px;left:8px;right:8px;width:auto;min-width:0;transform:none;max-height:calc(100vh - 72px);}
 }
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
@@ -5258,7 +5318,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   opacity:0;pointer-events:none;transform:translate(4px,50%);
   transition:opacity .12s ease-out,transform .12s ease-out;}
 .ask-tip.is-shown{opacity:1;transform:translate(0,50%);}
-.ask-tip .ask-kbd{background:var(--panel);color:var(--ink);}
 @media (hover:none){.ask-tip{display:none;}}
 @media (max-width:760px){
   .ask-pill{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));}
@@ -5287,8 +5346,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-pill.is-live .ask-pill-mark>.ask-pill-logo{opacity:0;transform:scale(.35);
   transition-duration:.52s;transition-timing-function:cubic-bezier(.4,0,.7,.2);}
 .ask-pill.is-live .ask-pill-mark>.ask-orb{opacity:1;transition-duration:.52s;transition-timing-function:cubic-bezier(.2,.7,.3,1);}
-.ask-kbd{padding:3px 7px;border-radius:7px;background:var(--field);color:var(--ink-3);
-  font-family:var(--mono);font-weight:400;font-size:10.5px;}
 
 /* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
    transcript column and the composer box share --ask-col-max and centre under it,

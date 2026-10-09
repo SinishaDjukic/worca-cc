@@ -198,7 +198,28 @@
             </button>
             <h1 class="topnav-title" id="topnav-title"></h1>
           </div>
-          <div class="topnav-c"></div>
+          <div class="topnav-c">
+            <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
+                 input and opens the listbox under it; its last row hands what was typed to Ask Worca.
+                 Phones fold the pill into #tsearch-open, which shows the input as a full-width row
+                 with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
+            <div class="tsearch">
+              <button type="button" class="tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              </button>
+              <div class="tsearch-field">
+                <svg class="tsearch-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                <input type="search" class="tsearch-input" id="tsearch-input" role="combobox" placeholder="Search or ask"
+                       aria-label="Search or ask" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop"
+                       aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false">
+                <kbd class="tsearch-kbd" aria-hidden="true"></kbd>
+                <button type="button" class="tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+              </div>
+              <div class="tsearch-pop" id="tsearch-pop" role="listbox" aria-label="Search or ask" tabindex="-1" hidden></div>
+            </div>
+          </div>
           <div class="topnav-r">
             <!-- New run: the way to the #new page, at every interface mode and every width (the
                  sidebar has no row for it). app.js routes it like a nav row; it is never lit as

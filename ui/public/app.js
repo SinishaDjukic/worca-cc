@@ -204,6 +204,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
@@ -806,6 +807,45 @@ const sideActionsFly = $('#side-actions-fly');
 const sideActionsFlyout = sideActionsTile && sideActionsFly
   ? createFlyout({ doc: document, win: window, trigger: sideActionsTile, menu: sideActionsFly, mode: 'side' })
   : null;
+
+// ── Top bar search (topnav-search.mjs over global-search.mjs) ─────────────────────────────────
+// Created here, before any page-level Escape handler: its capture listener consumes the Escape that
+// closes it, so a run's detail never steps back on the same key. Runs, projects and workspaces are
+// read from memory on every render; workflows and schedules are fetched when the popover opens —
+// never per keystroke — and kept for the next open.
+const topnavLazy = { workflows: [], schedules: [], tickets: [] };
+async function loadTopnavLazy() {
+  const [workflows, sched] = await Promise.all([
+    listWorkflowsApi(),
+    fetch('/api/schedules').then((res) => (res.ok ? safeJson(res) : null)).catch(() => null),
+    withWorkspaces(),
+  ]);
+  if (workflows) topnavLazy.workflows = workflows.map((w) => ({ id: w.id, name: w.name, builtin: isReservedWorkflowId(w.id) }));
+  if (sched) {
+    topnavLazy.schedules = Array.isArray(sched.schedules) ? sched.schedules : [];
+    topnavLazy.tickets = Array.isArray(sched.tickets) ? sched.tickets : [];
+  }
+}
+function topnavSources() {
+  return {
+    live: overviewRuns().map(runsLiveItem),
+    history: (state.historyAll || []).filter(Boolean).map(runsHistItem),
+    projects: (state.projects || []).map((p) => ({ key: p.key, name: p.name || projectName(p.path) })),
+    workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
+    ...topnavLazy,
+  };
+}
+const topnavSearchRoot = $('.topnav-c .tsearch');
+if (topnavSearchRoot) createTopnavSearch({
+  doc: document, win: window, root: topnavSearchRoot,
+  getSources: topnavSources,
+  loadLazy: loadTopnavLazy,
+  // The Ask Worca row: what was typed goes to the composer; nothing typed just opens the chat.
+  onAsk: (query) => { if (query) askPanel?.appendToComposer(query); else askPanel?.open(); },
+  navigate: (href) => { location.hash = href; },
+  openWorkflow: (id) => { void openComposerFromAsk(id); },
+});
+
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
 // .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
 // not a gesture. This script is deferred, so the class lands after the first

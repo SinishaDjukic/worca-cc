@@ -199,15 +199,6 @@ export function scriptToolLine(short, block = {}) {
   return { target: [noun, key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
 }
 
-/** The launcher's shortcut hint: the keydown handler accepts BOTH Meta+K and
- *  Ctrl+K, but the glyph shown must match the viewer's OS — '⌘K' is meaningless
- *  on Windows/Linux, where the working chord is Ctrl+K. */
-export function shortcutLabel(win) {
-  const nav = win?.navigator;
-  const platform = String(nav?.userAgentData?.platform || nav?.platform || '');
-  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
-}
-
 /**
  * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
  * .ask-sheet{width:min(821px,100%);height:min(669px,calc(100% - 20px))}. The
@@ -499,13 +490,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pill.addEventListener('click', openSheet);
 
     // The tooltip is a sibling of the button (a button's face holds no other widget); style.css .ask-tip
-    // places it to the left. aria-describedby gives assistive tech the shortcut the face no longer shows.
+    // places it to the left. It only names the round button, which aria-label already does for assistive
+    // tech, so nothing points at it. ⌘K / Ctrl K belongs to the top bar's search.
     const tip = make('div', 'ask-tip');
     tip.id = 'ask-pill-tip';
     tip.setAttribute('role', 'tooltip');
     tip.appendChild(make('span', null, 'Ask Worca'));
-    tip.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
-    pill.setAttribute('aria-describedby', tip.id);
     pill.addEventListener('pointerenter', () => {
       clearTipTimer();
       st.tipTimer = setTimeout(showTip, PILL_TIP_DELAY_MS);
@@ -1474,22 +1464,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       && (containsNode(root, e.target) || containsNode(root, doc.activeElement));
   }
 
-  function isToggleCombo(e) {
-    return (e.metaKey || e.ctrlKey) && !e.altKey && typeof e.key === 'string' && e.key.toLowerCase() === 'k';
-  }
-
   function onDocKeydown(e) {
     if (st.destroyed) return;
     if (e.key === 'Escape' && el.tip && el.tip.classList.contains('is-shown')) hideTip();   // the tooltip yields, the key carries on
     if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
-    if (isToggleCombo(e)) {
-      // The terminal pane (#573) owns its keys: Ctrl+K is the shell's kill-line there.
-      if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane')) return;
-      if (e.repeat || e.isComposing) return;
-      e.preventDefault();
-      toggleSheet();
-      return;
-    }
     if (e.key === 'Escape' && ownsKey(e) && st.popover) closePopover({ focusTrigger: true });
     // Escape with nothing open is an owned no-op — app.js's handlers already
     // returned via ownsKey(); the sheet itself never closes on Escape (§10.4).
@@ -1508,7 +1486,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // `.hd-cmt-card` joins the allowlist: its "Ask Worca" button appends to the
     // composer, and pointerdown lands BEFORE the click that would open the sheet.
     // `.term-pane` too: Ask's terminal is shared, so the user clicks and types there while the chat stays open.
-    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane')) return;
+    // `.tsearch` (the top bar search) too: its listbox opens over the sheet, and a close here would move focus
+    // out of its input mid-press, closing it before the pressed row gets its click.
+    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane, .tsearch')) return;
     closeSheet();
   }
 

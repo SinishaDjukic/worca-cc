@@ -44,9 +44,9 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
         assert.match(b.dataset.minLevel || '', LEVEL_RE, `nav item "${b.textContent.trim()}" has no data-min-level`);
       }
     } },
-    { name: 'every top bar action carries an explicit level; New run shows at every level', run: () => {
+    { name: 'every top bar action (the search\'s buttons included) carries an explicit level; New run shows at every level', run: () => {
       const doc = shell();
-      const actions = [...doc.querySelectorAll('.topnav-r button')];
+      const actions = [...doc.querySelectorAll('.topnav-c button, .topnav-r button')];
       assert.ok(actions.length >= 1, 'the top bar is present');
       for (const b of actions) assert.match(b.dataset.minLevel || '', LEVEL_RE, `top bar action "${b.textContent.trim()}" has no data-min-level`);
       assert.equal(doc.getElementById('topnav-new').dataset.minLevel, 'simple');

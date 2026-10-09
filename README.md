@@ -379,7 +379,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Ask Worca
 
-- **An assistant on every view** — the **Ask Worca** pill (⌘K / Ctrl K) opens a chat that
+- **An assistant on every view** — the **Ask Worca** pill, or the last row of the top bar's
+  search (⌘K / Ctrl K), opens a chat that
   answers from Worca's own records: runs, their diffs, progress and clarify answers, workflows
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
