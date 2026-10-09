@@ -15899,8 +15899,8 @@ async function paintEngineCardStatus(root) {
   for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
     const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
     // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
-    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${e.reason || 'its check did not answer'}.`
-      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${e.reason}.` : ''}`;
+    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
+      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
