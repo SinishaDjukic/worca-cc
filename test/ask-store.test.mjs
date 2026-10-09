@@ -539,3 +539,32 @@ test('agentMode (#574): on by default; a patch stores false and true (0/1, never
   assert.equal(updateThread(t.id, { agentMode: true }).agentMode, true);
   assert.equal(updateThread(t.id, { title: 'x' }).agentMode, true, 'other patches leave it alone');
 });
+
+test('listThreads/countThreads q: title OR message text, LIKE wildcards literal, owner scope kept', async () => {
+  const a = createThread({ title: 'QZ7deploy the 100% plan', createdBy: 'ann' });
+  const b = createThread({ title: 'Unrelated', createdBy: 'ann' });
+  appendMessage(b.id, { role: 'user', text: 'why does the qz7snake_case key break?' });
+  const c = createThread({ title: 'Other owner qz7snake_case', createdBy: 'bob' });
+  const d = createThread({ title: 'Legacy qz7deploy', createdBy: null });
+  const ids = (rows) => rows.map((t) => t.id).sort();
+
+  await checkRows([
+    { name: 'title match, case-insensitive', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7DEPLOY' })), [a.id, d.id].sort()) },
+    { name: 'message-text match', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7snake_case key' })), [b.id]) },
+    { name: '% is literal', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7deploy the 100%' })), [a.id]) },
+    { name: '_ is literal', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7snakeXcase' })), []) },
+    { name: 'visibleTo still scopes', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7snake_case', visibleTo: 'ann' })), [b.id]) },
+    { name: 'legacy ownerless rows stay visible', run: () => assert.deepEqual(ids(listThreads({ q: 'qz7deploy', visibleTo: 'ann' })), [a.id, d.id].sort()) },
+    { name: 'blank q = no filter', run: () => assert.equal(countThreads({ q: '   ' }), countThreads()) },
+    { name: 'countThreads counts matches uncapped', run: () => {
+      assert.deepEqual(ids(listThreads({ q: 'qz7snake_case' })), [b.id, c.id].sort());
+      assert.equal(countThreads({ q: 'qz7snake_case' }), 2);
+      assert.equal(countThreads({ q: 'qz7snake_case', visibleTo: 'ann' }), 1);
+      assert.equal(listThreads({ q: 'qz7snake_case', limit: 1 }).length, 1);
+    } },
+    { name: 'a thread matching in many messages is listed once', run: () => {
+      appendMessage(b.id, { role: 'assistant', text: 'qz7snake_case again' });
+      assert.equal(listThreads({ q: 'qz7snake_case' }).filter((t) => t.id === b.id).length, 1);
+    } },
+  ]);
+});

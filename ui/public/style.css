@@ -5960,6 +5960,13 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
 .ask-pop-caption-row{display:flex;align-items:baseline;gap:8px;}
 .ask-pop-caption-meter{margin-left:auto;padding-right:10px;font-family:var(--mono);font-size:10px;color:var(--ink-3);}
+/* History search: sits between the pinned caption and the scrolling rows, so it stays
+   put while the list scrolls. type=search keeps the native clear button. */
+.ask-threads-search{display:block;box-sizing:border-box;width:calc(100% - 12px);margin:0 6px 6px;
+  padding:7px 10px;border:1px solid var(--line);border-radius:10px;background:var(--field);
+  font:inherit;font-size:12.5px;color:var(--ink);outline:none;}
+.ask-threads-search::placeholder{color:var(--ink-3);}
+.ask-threads-search:focus-visible{border-color:var(--blue-ink);}
 .ask-pop-empty{padding:10px 10px 12px;font-size:12px;color:var(--ink-3);}
 .ask-pop-divider{height:1px;margin:6px 11px;background:var(--line);}
 .ask-pop-group { padding: 6px 12px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); }
@@ -5993,9 +6000,10 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The threads list is the only scrollport in a popover: /api/ask/threads returns up
    to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
    unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
-   on a short one -- the popover starts 46px down and the sheet is 100vh - 46px at most.
+   on a short one -- the popover starts 46px down; caption + search take ~80px, and the
+   sheet is 100vh - 46px at most.
    The radius clips the rows so they do not bleed over the panel's own corners. */
-.ask-threads-list{max-height:min(360px,calc(100vh - 200px));overflow-y:auto;overscroll-behavior:contain;
+.ask-threads-list{max-height:min(360px,calc(100vh - 240px));overflow-y:auto;overscroll-behavior:contain;
   border-radius:10px;}
 .ask-thread-row{display:flex;align-items:center;border-radius:10px;}
 .ask-thread-row:hover{background:var(--hover);}

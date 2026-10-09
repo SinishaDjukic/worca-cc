@@ -155,7 +155,10 @@ test('ask-panel: popover menu keyboard — roving focus, wrap, Home/End, Enter, 
   await tick();
   const pop = doc.querySelector('.ask-pop');
   const items = [...pop.querySelectorAll('[role="menuitem"]')];
-  assert.equal(doc.activeElement, items[0], 'first item focused on open');
+  const search = pop.querySelector('input.ask-threads-search');
+  assert.equal(doc.activeElement, search, 'the History search field is focused on open');
+  key(window, search, 'ArrowDown');
+  assert.equal(doc.activeElement, items[0], 'ArrowDown enters the rows');
   key(window, items[0], 'ArrowDown');
   assert.equal(doc.activeElement, items[1]);
   key(window, items[1], 'ArrowDown');
