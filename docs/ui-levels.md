@@ -14,9 +14,9 @@ and update the [catalogue](#catalogue).
 
 | Level | Who | What it shows |
 |---|---|---|
-| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result. Budget limits. Nothing here can break a run. |
-| `advanced` | Regular use | How a run executes and what it changed: branches, guardrails, per-agent model and effort, the live log, the diff, pull requests, workflows built from existing agents, plugins, memory files. |
-| `expert` | Authoring and team setup | Everything: agent, model and guardrail authoring, routing env and secrets, fan-out and loop limits, log filters, per-node run detail, diagnostics, team metrics. |
+| `simple` | New to Worca | The core loop: pick a project, describe the task, watch the run, answer its questions, read the result. Budget limits. The Workflows view: workflows, agents and scripts. Nothing here can break a run. |
+| `advanced` | Regular use | How a run executes and what it changed: branches, guardrails, per-agent model and effort, the live log, the diff, pull requests, plugins, memory files. |
+| `expert` | Authoring and team setup | Everything: model and guardrail authoring, routing env and secrets, fan-out and loop limits, log filters, per-node run detail, diagnostics, team metrics. |
 
 Levels are **cumulative**. Advanced shows everything Simple shows; Expert shows
 all. Nothing exists only at a lower level, so raising the mode never removes
@@ -132,15 +132,16 @@ be skipped by forgetting it.
 | Element | Level |
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
+| Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
 | Ask Worca button | S |
 | The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
-| Statistics, Workflow Composer, Workspaces | A |
+| Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
 | Add-ons: Models, Providers | E — like every page, the open one keeps its row at a lower mode while the banner names its level |
 | Schedules | A — kept visible at every level while anything is scheduled, missed, repeating or unread; its grey count and amber unread pill each hide at zero |
-| Team metrics, Team policy, Nodes (Agents and Scripts, in a side flyout) | E — Nodes is the one entry Simple never keeps: with Agents or Scripts open, the row and its flyout stay hidden and the banner says where you are; Advanced keeps the Nodes row and its flyout with the open child |
+| Team metrics, Team policy | E |
 
 ### New pipeline
 
@@ -194,28 +195,25 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 
-### Workflow Composer (page: A)
+### Workflows
+
+The full-screen editor (`#workflows`) is Simple, and nothing inside it is
+gated: the view shows the same controls at every level.
 
 | Element | Level |
 |---|---|
-| Saved pipelines, canvas editing, agent palette, Save, Import, Export as JSON, validation chips | A |
-| Inspector: model, effort | A |
-| Script inspector: origin and runtime chips, params (what the card runs is never hidden); the Import dialog's command list | A |
-| "Create agent…" in the palette (wizard with name, description, system prompt) | A |
-| AND / OR / Combine nodes and input count | E |
-| Scripts group in the palette (placing a card that runs a command) | E |
-| Script inspector: timeout, await all inputs, port list and port editor | E |
-| Inspector: fan-out, sub-agent model, ask questions, await all inputs, seed the plan store, port list; loop max cycles | E |
-| Legend, save-dialog Domain, export as skill or plugin, legacy and archived rows | E |
+| The canvas, the top bar (Back, Workflows ▾ with New canvas, Open…, Import… and Export…, the name and its validation chip, the Library toggle, Save), Auto-layout and the zoom menu | all |
+| The "+" menu: Task, End, AND, OR, Combine, Agent…, Script…, New agent…, New script… | all |
+| The selection toolbar and its More / Params popover: model, effort, fan-out, ask questions, await all inputs, input count, seed the plan store, loop max cycles; a script's params, timeout and port editor | all |
+| The Library: Agents, Scripts and Workflows tabs, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
+| The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
+| The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
+| The composer chat in the dock | all |
+| The save dialog's Domain | all |
+| Export as a Claude Code skill or a Worca plugin (the shared Export dialog) | E |
 
-### Agents (page: E)
-
-Everything on the page, and the full agent form (runner type, ports, side
-effect, mock role, workspace variants).
-
-### Scripts (page: E)
-
-Everything on the page: the list, the runtime step, the workspace and the bench under its editor.
+The old addresses `#composer`, `#agents`, `#scripts` and `#agent-create` land
+inside the view.
 
 ### Projects and Workspaces
 

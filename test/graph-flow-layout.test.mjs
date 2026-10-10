@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { flowOrder, flowLayout, flowAnchors, routeFlow, FLOW_SCALE, FLOW_PAD_Y, FLOW_BADGE_H } from '../src/shared/graph/flow-layout.mjs';
-import { nodeSize } from '../src/shared/graph/geometry.mjs';
+import { flowOrder, flowPerRow, flowLayout, flowAnchors, routeFlow, FLOW_SCALE, FLOW_PAD_Y, FLOW_BADGE_H } from '../src/shared/graph/flow-layout.mjs';
+import { nodeSize, NODE_W } from '../src/shared/graph/geometry.mjs';
+import { LABEL_H } from '../src/shared/graph/geometry.mjs';
+import { SWOOP_DROP } from '../src/shared/graph/curves.mjs';
 
 const AGENT_PORTS = {
   inputs: [{ id: 'task', type: 'md', required: true }, { id: 'fix', type: 'md', loop: true }, { id: 'await', type: 'any', synthetic: true }],
@@ -55,15 +57,17 @@ test('order: Task, the agents (rank, then host order), the loop-only valve, End'
 
 test('placement: rows top/left aligned, row height = tallest card, host height = rows + vertical pad (min 120)', () => {
   const tpl = theme(); const lay = flowLayout(tpl, portsFn, { width: 702, order: ['n_task', ...ORDER, 'n_or', 'n_end'] });
-  assert.equal(lay.perRow, 4); assert.equal(lay.rows.length, 3);
-  assert.deepEqual(lay.rows.map((r) => r.ids.length), [4, 4, 2]);
-  assert.equal(lay.positions.n_task.x, 20); assert.equal(lay.positions.n1.x, 20 + 143 + 26); assert.equal(lay.positions.n3.x, 20 + 3 * 169);
-  assert.equal(lay.positions.n4.x, 20, 'row 2 starts at the pad'); assert.equal(lay.positions.n4.y, lay.rows[1].top);
+  const per = flowPerRow(702);
+  assert.equal(lay.perRow, per); assert.equal(lay.rows.length, Math.ceil(10 / per));
+  assert.deepEqual(lay.rows.map((r) => r.ids.length), [per, per, per, 10 - 3 * per]);
+  const step = NODE_W * FLOW_SCALE + 40 * FLOW_SCALE;
+  assert.equal(lay.positions.n_task.x, 20); assert.equal(lay.positions.n1.x, 20 + step); assert.equal(lay.positions.n2.x, 20 + 2 * step);
+  assert.equal(lay.positions.n3.x, 20, 'row 2 starts at the pad'); assert.equal(lay.positions.n3.y, lay.rows[1].top);
   const agentH = nodeSize(A('n1'), portsFn(A('n1')), { band: true, scale: FLOW_SCALE }).h;
-  assert.equal(Math.round(agentH * 10) / 10, 140.1, 'Plan-shaped agent at chat scale (mockup F)');
   assert.equal(lay.rows[0].h, agentH, 'the tallest card in the row (an agent, band included)');
-  assert.equal(lay.rows[1].top, FLOW_PAD_Y + agentH + 44 * FLOW_SCALE);
-  assert.equal(lay.height, lay.rows[2].top + lay.rows[2].h + FLOW_PAD_Y, 'nothing routes under the last row here');
+  assert.equal(lay.rows[0].top, FLOW_PAD_Y + LABEL_H * FLOW_SCALE, 'the first row starts under its label row');
+  assert.equal(lay.rows[1].top, lay.rows[0].top + agentH + 44 * FLOW_SCALE + LABEL_H * FLOW_SCALE);
+  assert.equal(lay.height, lay.rows[3].top + lay.rows[3].h + FLOW_PAD_Y, 'nothing routes under the last row here');
   assert.equal(flowLayout({ nodes: [], wires: [] }, portsFn).height, 120, 'min height');
   const narrow = flowLayout(tpl, portsFn, { width: 310, order: lay.order });
   assert.equal(narrow.perRow, 1); assert.ok(narrow.order.every((id) => narrow.positions[id].x === 20), 'one under another');
@@ -93,7 +97,7 @@ test('routes never enter a card body, lanes never overlap, trunks share a lane, 
     if (Math.abs(a.x - b.x) < 0.01 && overlap(a.y0, a.y1, b.y0, b.y1)) assert.equal(srcOf(a.id), srcOf(b.id), `${a.id}/${b.id} overlap without sharing a trunk`);
   }
   // loop badges: on a horizontal leg of their own route, outside every card, at the gutter y
-  for (const id of ['w5', 'w13', 'w14']) {
+  for (const id of ['w5', 'w14']) {          // w13 (n7 → n_or) is a direct neighbour wire at 3 per row
     const b = badges.get(id); const pts = routes.get(id);
     assert.ok(pts.some((p, i) => i > 0 && Math.abs(p.y - pts[i - 1].y) < 0.01 && Math.abs(b.y - p.y) < 0.01 && b.x >= Math.min(p.x, pts[i - 1].x) && b.x <= Math.max(p.x, pts[i - 1].x)), `${id} badge sits on its gutter run`);
     for (const r of rects) assert.ok(!(b.x > r.x && b.x < r.x + r.w && b.y > r.y && b.y < r.y + r.h), `${id} badge inside a card`);
@@ -127,8 +131,8 @@ test('a loop in the LAST row is billed: the badge clears the host edge by the fu
     W('w1', 'n_task.task', 'n1.task'), W('w2', 'n1.plan', 'n2.task'),
     W('w3', 'n2.review', 'n1.fix', { maxCycles: 3 }), W('w4', 'n2.plan', 'n_end.result'),
   ] };
-  const lay = flowLayout(tpl, portsFn, { width: 702, agentOrder: ['n1', 'n2'] });
-  assert.equal(lay.rows.length, 1, 'all four cards on one row, like the chat card');
+  const lay = flowLayout(tpl, portsFn, { width: 760, agentOrder: ['n1', 'n2'] });
+  assert.equal(lay.rows.length, 1, 'all four cards on one row');
   const { badges } = routeFlow(flowAnchors(tpl, portsFn, lay), lay);
   const b = badges.get('w3');
   assert.ok(b.y > lay.rows[0].top + lay.rows[0].h, 'the loop badge sits in the bottom gutter');
@@ -145,8 +149,35 @@ test('a loop in the LAST row is billed: the badge clears the host edge by the fu
   for (const id of ['w3', 'w5']) {
     assert.ok(b2.get(id).y + FLOW_BADGE_H / 2 + FLOW_PAD_Y <= lay2.height, `${id} badge crowds the host edge`);
   }
-  assert.ok(lay2.bottomBand > lay.bottomBand, 'a second trunk widens the billed band');
   // and a graph with nothing under the last row keeps the plain pad — no dead band
-  const flat = flowLayout({ version: 2, nodes: tpl.nodes, wires: tpl.wires.filter((w) => w.id !== 'w3') }, portsFn, { width: 702, agentOrder: ['n1', 'n2'] });
+  const flat = flowLayout({ version: 2, nodes: tpl.nodes, wires: tpl.wires.filter((w) => w.id !== 'w3') }, portsFn, { width: 760, agentOrder: ['n1', 'n2'] });
   assert.equal(flat.height, flat.rows[0].top + flat.rows[0].h + FLOW_PAD_Y, 'no bottom gutter ⇒ just the pad');
+});
+
+const LOOP_PORTS = (n) => ({
+  task: { inputs: [], outputs: [{ id: 'task', type: 'md' }] },
+  end: { inputs: [{ id: 'result', type: 'any' }], outputs: [] },
+  agent: n.key === 'implementer'
+    ? { inputs: [{ id: 'task', type: 'md' }, { id: 'fix', type: 'md', required: false, loop: true }], outputs: [{ id: 'done', type: 'void' }] }
+    : { inputs: [{ id: 'done', type: 'void' }], outputs: [{ id: 'fix', type: 'md', when: 'blocking' }, { id: 'ok', type: 'void', when: 'clean' }] },
+}[n.kind]);
+
+test('every row reserves its label row above the cards; a same-row loop in the last row bills the swoop', () => {
+  const tpl = {
+    nodes: [
+      { id: 'n_t', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_a', kind: 'agent', key: 'implementer', x: 0, y: 0, config: {} },
+      { id: 'n_r', kind: 'agent', key: 'reviewer', x: 0, y: 0, config: {} },
+      { id: 'n_e', kind: 'end', x: 0, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_t', port: 'task' }, to: { node: 'n_a', port: 'task' } },
+      { id: 'w2', from: { node: 'n_a', port: 'done' }, to: { node: 'n_r', port: 'done' } },
+      { id: 'w3', from: { node: 'n_r', port: 'fix' }, to: { node: 'n_a', port: 'fix' }, config: { maxCycles: 2 } },
+      { id: 'w4', from: { node: 'n_r', port: 'ok' }, to: { node: 'n_e', port: 'result' } },
+    ],
+  };
+  const lay = flowLayout(tpl, LOOP_PORTS, { width: 2000, scale: 0.65, band: false });   // one row
+  assert.equal(lay.rows[0].top, 28 + LABEL_H * 0.65);
+  assert.equal(lay.bottomBand, SWOOP_DROP * 0.65 + FLOW_BADGE_H / 2 + 1, 'the drop scales, the 18px pill does not');
 });

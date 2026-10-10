@@ -115,7 +115,7 @@ class AgentGen extends EventEmitter {
       `## Pipeline neighbors\n\n` +
       `Agents expected to run BEFORE this one (their OUTPUT ports are what this agent's inputs get wired to):\n${j(this.expectedBefore)}\n\n` +
       `Agents expected to run AFTER this one (their INPUT ports are what this agent's outputs feed):\n${j(this.expectedAfter)}\n\n` +
-      'Wires are drawn in the composer and only require matching port TYPES, so port ids are yours ' +
+      'Wires are drawn on the Workflows canvas and only require matching port TYPES, so port ids are yours ' +
       'to choose: declare the ports this agent actually needs, and reuse a neighbor\'s id only when ' +
       'it genuinely names the same payload.\n\n'
     );
@@ -169,9 +169,9 @@ class AgentGen extends EventEmitter {
       '"explore"|"task"|"review", "workspaceVariantOf": "<agentKey>" (requires scope ' +
       '"workspace-only"), "placeable": false, "mockRole" (omit unless mimicking a built-in ' +
       'writer; unknown values dropped).\n' +
-      '"description" is the palette blurb: 1-2 plain sentences, max 160 chars total and the ' +
-      'FIRST sentence max 75 chars (the palette card clamps at 1-2 short lines). It is shown under ' +
-      'the agent name in the composer palette — say what the agent does and what it reads/writes.\n' +
+      '"description" is the Library blurb: 1-2 plain sentences, max 160 chars total and the ' +
+      'FIRST sentence max 75 chars (the Library row clamps at 1-2 short lines). It is shown under ' +
+      'the agent name in the Workflows Library — say what the agent does and what it reads/writes.\n' +
       'Questions flags: asksQuestions=true if the agent may need a user decision mid-task ' +
       '(the orchestrator pauses it and resumes it with the answers). questionsLocked=true ONLY if ' +
       "asking the user is the agent's whole purpose (the user then cannot toggle it in the " +

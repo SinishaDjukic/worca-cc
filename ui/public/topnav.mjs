@@ -17,9 +17,7 @@ export const PAGE_TITLES = Object.freeze({
   schedules: 'Schedules',
   stats: 'Statistics',
   'team-metrics': 'Team metrics',
-  composer: 'Workflow Composer',
-  agents: 'Agents',
-  scripts: 'Scripts',
+  workflows: 'Workflows',
   marketplace: 'Marketplace',
   connectors: 'Connectors',
   models: 'Models',
@@ -28,7 +26,6 @@ export const PAGE_TITLES = Object.freeze({
   workspaces: 'Workspaces',
   'team-policy': 'Team policy',
   'workspace-create': 'New workspace',
-  'agent-create': 'New agent',
   settings: 'Settings',
 });
 

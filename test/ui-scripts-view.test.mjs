@@ -294,7 +294,8 @@ async function boot({ scripts = SCRIPTS } = {}) {
     window.dispatchEvent(new window.Event('hashchange'));
     for (let i = 0; i < 4; i += 1) await tick();
   };
-  await go('scripts');
+  // #workflows/scripts only opens the Library: the sheet mounts the Scripts controller.
+  await go('workflows/scripts/new');
   return { window, go, seen };
 }
 
@@ -307,21 +308,18 @@ test('a scripts-changed frame drops the cache and repaints the open page', async
   assert.deepEqual(window.__scripts.ctl() === null, false);
 });
 
-test('a scripts-changed frame marks the composer palette dirty: re-entering the composer re-reads the scripts', async () => {
+test('a scripts-changed frame reloads the registry at once while the Workflows view is open; an in-view hop costs no request', async () => {
   const { go, seen } = await boot();
   const reads = () => seen.filter(([, u]) => u === '/api/scripts').length;
   const settle = async () => { for (let i = 0; i < 8; i += 1) await tick(); };
-  await go('composer'); await settle();
-  await go('scripts'); await settle();
-  const clean = reads();
-  await go('composer'); await settle();
-  assert.equal(reads(), clean, 'a clean re-entry costs no request');
-  await go('scripts'); await settle();
+  await settle();
+  const before = reads();
   WSStub.last.deliver({ type: 'scripts-changed', action: 'created' });
   await settle();
   const afterFrame = reads();
-  await go('composer'); await settle();
-  assert.equal(reads(), afterFrame + 1, 'a script saved on the Scripts page (or by the CLI) reaches an open composer palette');
+  assert.equal(afterFrame, before + 1, 'a script saved elsewhere (or by the CLI) reaches the open view at once');
+  await go('workflows'); await settle();
+  assert.equal(reads(), afterFrame, 'an in-view hop (#workflows/scripts/new → #workflows) costs no request');
 });
 
 test('a host WITH python: the list drops the chip, and the reason is the probe`s own sentence', () => {
@@ -335,4 +333,75 @@ test('a host WITH python: the list drops the chip, and the reason is the probe`s
   const pane = renderScriptsList(SCRIPTS, { doc, runtimes: withPython, caseState: new Map() });
   assert.equal(pane.querySelectorAll('.script-warn').length, 0);
   assert.equal(renderScriptsList(SCRIPTS, { doc, runtimes: RUNTIMES, caseState: new Map() }).querySelectorAll('.script-warn').length, 1);
+});
+
+test('openDraft(draft) shows a NEW script at Build & test with the draft\'s meta, code and its cases pending', async () => {
+  const s = await mountCtl();
+  await s.ctl.openDraft({ meta: { key: 'runLint', displayName: 'Run lint', runtime: 'shell', description: 'Lints.', inputs: [], outputs: [] },
+    source: 'npm run lint', cases: [{ id: 'ok', name: 'passes', expect: { verdict: 'clean' } }] });
+  const root = s.host.querySelector('.wz-step-2');
+  assert.ok(root, 'step 2');
+  assert.equal(root.querySelector('[data-field="meta:displayName"]').value, 'Run lint');
+  assert.equal(root.querySelector('.script-source').dataset.srcMode, 'file', 'a drafted shell PROGRAM, not the template command');
+  assert.equal(root.querySelector('[data-field="script:source"]').value, 'npm run lint');
+  assert.equal(s.ctl.isDirty(), true, 'a draft is unsaved');
+  assert.deepEqual(s.ctl.pendingCases().map((c) => c.id), ['ok']);
+});
+
+test('openDraft keeps the draft\'s DECLARED ports; Save writes its pending cases after the create', async () => {
+  const s = await mountCtl();
+  await s.ctl.openDraft({ meta: { key: 'mdReport', displayName: 'MD report', runtime: 'node', description: 'Writes a report.',
+    inputs: [{ id: 'plan', type: 'md', required: true }], outputs: [{ id: 'report', type: 'md', when: 'always', filename: 'report.md' }] },
+    source: 'export default async function run() { return {}; }\n', cases: [{ id: 'c1', name: 'one', expect: { verdict: 'clean' } }] });
+  s.host.querySelector('.script-save').click();
+  await tick(); await tick();
+  const create = s.api.calls.find((c) => c[0] === 'create');
+  assert.deepEqual(create[1].meta.inputs.map((p) => [p.id, p.type, p.required]), [['plan', 'md', true]]);
+  assert.deepEqual(create[1].meta.outputs.map((p) => [p.id, p.filename]), [['report', 'report.md']]);
+  const i = s.api.calls.findIndex((c) => c[0] === 'writeCases');
+  assert.ok(i > s.api.calls.indexOf(create), 'cases are written after the script exists');
+  assert.deepEqual(s.api.calls[i].slice(1), ['mdReport', [{ id: 'c1', name: 'one', expect: { verdict: 'clean' } }]]);
+  assert.equal(s.nav.at(-1), 'scripts/mdReport');
+  assert.deepEqual(s.ctl.pendingCases(), []);
+  const t = await mountCtl();
+  await t.ctl.openDraft({ meta: { key: 'x1', displayName: 'X one', runtime: 'node', inputs: [], outputs: [] }, source: 'export default async function run() {}\n', cases: [{ id: 'k', name: 'k', expect: {} }] });
+  await t.ctl.route('');
+  await t.ctl.route('new/node');
+  assert.deepEqual(t.ctl.pendingCases(), [], 'a later plain New script inherits nothing');
+});
+
+test('openDraft paints the draft even when a later route() supersedes its own (a scripts-changed frame during the runtimes probe)', async () => {
+  const held = [];
+  let calls = 0;
+  // The first two probes hang until released (the draft's own route, then the frame's); later ones answer at once.
+  const s = await mountCtl({}, { runtimes: () => (++calls <= 2 ? new Promise((r) => held.push(() => r(ok(RUNTIMES)))) : Promise.resolve(ok(RUNTIMES))) });
+  const opened = s.ctl.openDraft({ meta: { key: 'runLint', displayName: 'Run lint', runtime: 'shell', inputs: [], outputs: [] }, source: 'npm run lint', cases: [] });
+  s.ctl.onChanged();                                  // the frame: a second route() while the first awaits its probe
+  held[0]();                                          // the superseded route answers first and paints nothing
+  await tick(); await tick();
+  held[1]();
+  await opened;
+  const root = s.host.querySelector('.wz-step-2');
+  assert.ok(root, 'step 2');
+  assert.equal(root.querySelector('[data-field="meta:displayName"]').value, 'Run lint');
+  assert.equal(root.querySelector('[data-field="script:source"]').value, 'npm run lint');
+});
+
+test('a drafted shell script routes on its exit code only when the draft says so; a rename keeps the drafted key', async () => {
+  const saveMeta = async (s) => { s.host.querySelector('.script-save').click(); await tick(); await tick(); return s.api.calls.find((c) => c[0] === 'create')[1].meta; };
+  const plain = await mountCtl();
+  await plain.ctl.openDraft({ meta: { key: 'runLint', displayName: 'Run lint', runtime: 'shell', inputs: [], outputs: [{ id: 'log', type: 'md', when: 'always', filename: 'lint.md' }] },
+    source: 'npm run lint\n', cases: [] });
+  const name = plain.host.querySelector('[data-field="meta:displayName"]');
+  name.value = 'Lint everything';
+  name.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+  const m = await saveMeta(plain);
+  assert.equal(m.key, 'runLint', 'the chat may have placed the draft under this key already');
+  assert.equal(m.displayName, 'Lint everything');
+  assert.deepEqual(m.outputs.map((p) => p.id), ['log'], 'no minted pass / fail');
+  assert.ok(!m.verdict, 'no verdict');
+  const gate = await mountCtl();
+  await gate.ctl.openDraft({ meta: { key: 'gate', displayName: 'Gate', runtime: 'shell', inputs: [], outputs: [{ id: 'fail', type: 'md', when: 'blocking', filename: 'fail.md' }] },
+    source: 'npm test\n', cases: [] });
+  assert.ok((await saveMeta(gate)).verdict, 'a when-gated output: the draft routes on the exit code');
 });

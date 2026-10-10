@@ -95,7 +95,9 @@ export async function listAgents() {
 /** Full read: { meta (with origin), markdown } or null. */
 export async function readAgent(key) {
   if (!AGENT_KEY_RE.test(String(key || ''))) return null;
-  const meta = loadAgentRegistry()[key];
+  const registry = loadAgentRegistry();
+  // Own keys only: the registry is a plain object, so `constructor` or `toString` would read as an agent.
+  const meta = Object.hasOwn(registry, key) ? registry[key] : null;
   if (!meta) return null;
   let markdown = '';
   if (meta.agentPath) {
@@ -125,11 +127,18 @@ export async function createAgent({ meta: rawMeta, markdown } = {}) {
   if (formIssues.length) throw askFormError(formIssues);
   const meta = normalizeMeta(raw);
   if (!meta) throw err('invalid agent metadata', 'BAD_REQUEST');
-  const existing = loadAgentRegistry()[key];
+  const all = loadAgentRegistry();
+  const existing = all[key];
   if (existing && existing.origin === 'builtin') {
     throw err(`"${key}" is a built-in agent — duplicate it under a new name instead`, 'BUILTIN');
   }
   if (existing) throw err(`a user agent "${key}" already exists`, 'DUPLICATE');
+  // macOS and Windows filesystems are case-INSENSITIVE: `codeReviewer` and `codereviewer` are two registry keys but
+  // ONE <key>.md and ONE <key>.meta.json, so a key differing only in case would overwrite the other agent without a word.
+  const twin = Object.keys(all).find((k) => k !== key && k.toLowerCase() === key.toLowerCase());
+  if (twin) {
+    throw err(`an agent "${twin}" already exists — agent keys differ only in case, and one file holds both on macOS and Windows`, 'DUPLICATE');
+  }
   const dir = requireUserDir();
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, `${key}.md`), markdown, 'utf8');

@@ -21,27 +21,27 @@ export const LEVEL_INFO = Object.freeze({
     label: 'Simple',
     who: 'New to Worca',
     desc: 'Pick a project, describe the task, watch the run, answer its questions and read the result. Nothing here can break a run.',
-    adds: 'Shows: New run, Runs, Projects, budget limits and Ask Worca.',
+    adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Ask Worca.',
   }),
   advanced: Object.freeze({
     label: 'Advanced',
     who: 'Regular use',
     desc: 'Control how a run executes and review what it changed: branches, guardrails, per-agent models, the diff, pull requests and your own workflows.',
-    adds: 'Adds: Schedules, Statistics, Workflow Composer, Workspaces, the Marketplace and Connectors pages, memory and the live log.',
+    adds: 'Adds: Schedules, Statistics, Workspaces, the Marketplace and Connectors pages, memory and the live log.',
   }),
   expert: Object.freeze({
     label: 'Expert',
     who: 'Authoring and team setup',
     desc: 'Everything. Author agents, models and guardrail sets, tune fan-out and loop limits, filter logs by execution and run team metrics.',
-    adds: 'Adds: Agents, Scripts, Team metrics, Team policy, the Models and Providers pages, diagnostics and every per-node tunable.',
+    adds: 'Adds: Team metrics, Team policy, the Models and Providers pages, diagnostics.',
   }),
 });
 
 /** One line per mode for the account menu's Interface mode side menu. */
 export const LEVEL_SHORT = Object.freeze({
   simple: 'The core loop: start a run, answer it, read the result.',
-  advanced: 'Adds schedules, statistics, workflows, the marketplace and connectors.',
-  expert: 'Everything, including nodes, models, providers and team policy.',
+  advanced: 'Adds schedules, statistics, the marketplace and connectors.',
+  expert: 'Everything, including models, providers and team policy.',
 });
 
 export function isUiLevel(v) { return UI_LEVELS.includes(v); }

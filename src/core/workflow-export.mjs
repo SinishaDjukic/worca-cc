@@ -514,7 +514,7 @@ function instanceKey(resolved, instanceId) {
 function makeSkillMd(set, nameFor) {
   const { tpl, slug, resolved, nodes, loops } = set;
   const desc = (
-    `Run the "${tpl.name}" workflow (exported from Worca Composer) end-to-end in this repo: ` +
+    `Run the "${tpl.name}" workflow (exported from Worca) end-to-end in this repo: ` +
     `${resolved.steps.map((g) => g.map((n) => n.uiPhase).join('+')).join(' → ')}. ` +
     `Clarify asks you real questions; feedback loops iterate on critical/major issues.`
   ).replace(/\n+/g, ' ');   // collapse any newline (e.g. from tpl.name) so the quoted scalar stays one line

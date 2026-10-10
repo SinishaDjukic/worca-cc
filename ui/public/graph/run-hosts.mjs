@@ -267,7 +267,7 @@ export function mountRunGraph(hostEl, opts = {}) {
       const linked = !!cardExecution(el.dataset.nodeId);
       if (linked === (el.getAttribute('role') === 'link')) continue;
       if (linked) {
-        const tt = el.querySelector('.nhead .tt');
+        const tt = el.querySelector('.nlabel .tt');
         el.setAttribute('role', 'link');
         el.tabIndex = 0;
         el.setAttribute('aria-label', `Show the live log of ${tt ? tt.textContent : el.dataset.nodeId}`);

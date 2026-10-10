@@ -26,7 +26,8 @@ const RUNTIME = new Map([
   ['#runs-list [data-run-id]', ['runs-list.mjs', 'a.dataset.runId = r.runId']],                 // the Runs list card
   ['#projects-list .pl-item', ['app.js', /function buildProjectRow\(p\) \{\s*const item = document\.createElement\('div'\);\s*item\.className = 'pl-item';/]],
   ['#projects-list .pl-row', ['app.js', /function buildProjectRow\(p\) \{[\s\S]{0,300}row\.className = 'pl-row';/]],
-  ['#gv-saved-list .pl-row', ['app.js', /els\.savedList\.replaceChildren\(\);[\s\S]{0,400}row\.className = 'pl-row';/]],   // gvRenderSaved
+  ['#wfv-library .wfl-wf', ['workflows/library.mjs', /wfl-wf/]],                                // the Library's Workflows rows
+  ['#wfv-library [data-tab="workflows"]', ['workflows/library.mjs', 'b.dataset.tab = t']],     // the Library's tabs
   ['.ask-pill', ['ask-panel.mjs', "make('button', 'ask-pill')"]],
   ['.ask-input', ['ask-panel.mjs', "el.input.className = 'ask-input'"]],
   ['.ask-send', ['ask-panel.mjs', "make('button', 'ask-send')"]],
@@ -98,4 +99,53 @@ test('every guide hop has at least one target that exists in the page', async ()
       assert.deepEqual([...RUNTIME.keys()].filter((s) => !used.has(s)), []);
     } },
   ]);
+});
+
+// The Workflows view's stage (`.wfv-stage{…isolation:isolate}`) and its floating bars (`.wfv-float{position:absolute;
+// z-index:20}`) are stacking contexts: a ringed control inside one (`.guide-target`, z 45) stays UNDER the guide's
+// scrim (z 44) unless the hop also lifts each of them (`.guide-lift`). Chrome then sends the click to the scrim and
+// the tour sticks on that hop ("Leave the editor" never leaves); jsdom has no cascade, so this pins the hop text.
+test('a hop ringing a control inside the Workflows stage lifts every stacking context around it', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.wfv-float\{[^}]*position:absolute;[^}]*z-index:\d+/, 'the floating bars are a stacking context');
+  assert.match(css, /\.wfv-stage\{[^}]*isolation:isolate/, 'the stage is a stacking context');
+  const rows = [];
+  for (const m of section.matchAll(/\btarget:\s*/g)) {
+    const expr = readExpr(section, m.index + m[0].length).trim();
+    if (NOT_HOPS.has(expr) || /^[A-Za-z_$][\w$]*$/.test(expr)) continue;
+    for (const sel of literals(expr)) {
+      let node = null; try { node = document.querySelector(sel); } catch { /* not a selector */ }
+      const traps = node ? ['.wfv-float', '.wfv-stage'].map((c) => node.closest(c)).filter(Boolean) : [];
+      if (!traps.length) continue;
+      const hop = readExpr(section, section.lastIndexOf('{ id:', m.index));
+      const lift = literals((hop.match(/\blift:\s*(\[[^\]]*\])/) || [])[1] || '');
+      for (const t of traps) rows.push({ at: `app.js:${lineOf(m.index)} ${sel} under .${t.className.split(' ')[0]}`, ok: lift.some((l) => t.matches(l)) });
+    }
+  }
+  assert.ok(rows.length >= 4, `found ${rows.length} trapped hops (the Library toggle, the canvas, the chat and Back at least)`);
+  assert.deepEqual(rows.filter((r) => !r.ok).map((r) => r.at), []);
+});
+
+// At <= 760 px the Library is an overlay (Task C1: `@media (max-width:760px){.wfl{position:absolute;…z-index:35…}}`):
+// a stacking context under the guide's scrim (z 44). A hop ringing a control inside it (the Workflows tab, a saved
+// workflow's row) must lift `.wfl` too, or Chrome sends the click to the scrim and the tour sticks on "Switch to
+// Workflows" — on a narrow window only (wider, the Library is a plain flex column). Its rows are painted at runtime:
+// resolve them by their `#id` scope.
+test('a hop ringing a control inside the Library lifts the Library (its narrow-screen overlay is a stacking context)', () => {
+  const rows = [];
+  for (const m of section.matchAll(/\btarget:\s*/g)) {
+    const expr = readExpr(section, m.index + m[0].length).trim();
+    if (NOT_HOPS.has(expr) || /^[A-Za-z_$][\w$]*$/.test(expr)) continue;
+    for (const sel of literals(expr)) {
+      const scope = (sel.match(/^#[\w-]+/) || [])[0];
+      let node = null; try { node = document.querySelector(sel) || (scope ? document.querySelector(scope) : null); } catch { /* not a selector */ }
+      const lib = node ? node.closest('.wfl') : null;
+      if (!lib) continue;
+      const hop = readExpr(section, section.lastIndexOf('{ id:', m.index));
+      const lift = literals((hop.match(/\blift:\s*(\[[^\]]*\])/) || [])[1] || '');
+      rows.push({ at: `app.js:${lineOf(m.index)} ${sel}`, ok: lift.some((l) => lib.matches(l)) });
+    }
+  }
+  assert.ok(rows.length >= 3, `found ${rows.length} hops inside the Library (the Workflows tab and the two Open Default targets at least)`);
+  assert.deepEqual(rows.filter((r) => !r.ok).map((r) => r.at), []);
 });

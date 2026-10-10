@@ -13,7 +13,7 @@
 //   … --out DIR             where the per-theme JSON reports go
 //   … --states a,b          run only these state ids (debugging). Most states build on
 //                           the screen the previous one left (new-error←new, running-list-
-//                           compact←running-list, composer-*←composer, ask-*-picker←ask-sheet,
+//                           compact←running-list, ask-*-picker←ask-sheet,
 //                           modal-*←modal-confirm): pick a CONTIGUOUS run. The identity
 //                           compare is skipped under --states (a skipped state would read
 //                           as "every row vanished").
@@ -409,25 +409,16 @@ const states = [
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
-  // The fresh canvas holds a Task and an End node only (no <select> in their inspectors); the
-  // seeded default pipeline (.pl-item[data-id=wf_default], click loads it) carries agent nodes.
-  // Node selection lives in the stage's pointerdown hit-test (graph/composer.mjs onDown → hitNodeAt →
-  // select), so a synthetic click never opens the inspector: press and release a real pointer.
-  ['composer', async () => { await go('composer'); await until(`document.querySelector('[data-view="composer"] .gv-world .node')`, 'composer nodes');
-    await until(`document.querySelector('.pl-item[data-id="wf_default"] .pl-row')`, 'the saved-pipeline list (rendered after listWorkflows)');
-    await clickSel('.pl-item[data-id="wf_default"] .pl-row');
-    await until(`document.querySelector('[data-view="composer"] .gv-world .node.node-agent .nhead')`, 'an agent node of the default pipeline');
-    const c = await ev(`(()=>{const b=document.querySelector('[data-view="composer"] .gv-world .node.node-agent .nhead').getBoundingClientRect();return {x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2)};})()`);
-    await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 });
-    await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', buttons: 0, clickCount: 1 });
-    await until(`document.querySelector('.ins-panel.ins-agent .ins-select')`, 'the agent inspector'); await freeze('composer'); }],
-  ['composer-palette-filtered', async () => { await ev(`(()=>{const f=document.querySelector('.pal-filter');f.value='rev';f.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`); await freeze('filter'); }, async () => { await ev(`(()=>{const f=document.querySelector('.pal-filter');f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`); }],
-  // #gv-save is disabled on the default canvas: render the dialog through the
-  // module's own exports instead (the same markup the button would open).
-  ['composer-save-dialog', async () => { await ev(`(async()=>{const m=await import('/graph/save-dialog.mjs');const d=m.renderSaveDialog({name:'Theme proof',domain:'',domains:[],title:'Save pipeline',note:'',doc:document});d.id='theme-proof-dialog';document.body.appendChild(d);m.openDialog(d);return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
-    async () => { await ev(`(()=>{const d=document.getElementById('theme-proof-dialog');if(d){try{d.close();}catch{}d.remove();}return 1;})()`); }],
-  ['agents', async () => { await go('agents'); }],
-  ['agent-create', async () => { await go('agent-create'); }],
+  // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts tab,
+  // the save dialog the engine opens itself, the agent sheet and the open chat.
+  ['workflows', async () => { await go('workflows'); await until(`document.querySelector('[data-view="workflows"] .gv-world .node')`, 'workflow nodes'); await freeze('workflows'); }],
+  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
+  ['workflows-save-dialog', async () => { await go('workflows'); await until(`window.__gv && window.__gv()`, 'the canvas engine');
+    await ev(`(()=>{window.__gv().c.openSaveDialog();return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
+    async () => { await ev(`(()=>{const d=document.querySelector('.save-dialog[open]');if(d){try{d.close();}catch{}}return 1;})()`); }],
+  ['workflows-agent-sheet', async () => { await go('workflows/agents/new'); await until(`document.querySelector('#wfv-sheet:not([hidden]) .wfv-pane[data-pane="agent-new"]:not([hidden])')`, 'the agent sheet'); await freeze('sheet'); }],
+  ['workflows-chat-open', async () => { await go('workflows'); await until(`document.getElementById('wfc-input')`, 'the chat dock');
+    await ev(`(()=>{document.getElementById('wfc-input').focus();return 1;})()`); await until(`document.querySelector('.wfc-shell[data-open="true"]')`, 'the open chat'); await freeze('chat'); }],
   ['projects', async () => { await go('projects'); }],
   // The project page: register a folder through the API first (the proof's home has none), then
   // open it — Overview + header. The Memory tab is the Settings grid already audited above.

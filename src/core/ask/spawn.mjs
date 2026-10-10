@@ -139,9 +139,10 @@ export function buildMockMarkers(card) {
  * @param {object|null} [o.registry]  resolveRegistry()'s result for this turn (MCP registry §9.2); no copies ⇒ ignored
  * @param {{url:string, token:string}|null} [o.commands]  agent mode's command bridge for this turn (#574); null ⇒ no command tools
  * @param {{pluginDirs:string[], names:string[]}|null} [o.skills]  this turn's set-skill mount (skills registry §4.4); no plugin dir ⇒ ignored
+ * @param {boolean} [o.composer]  a Workflows-chat turn: no Task built-in
  * @returns {object} runClaude options
  */
-export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, skills = null, engine = 'claude' } = {}) {
+export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, skills = null, engine = 'claude', composer = false } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   if (engine === 'codex') return buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands });
@@ -158,7 +159,10 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   // denied. Skills without `allowed-tools` (most set skills, bundled `simplify`, …) load without any rule.
   const skillAllows = sk && Array.isArray(sk.names) ? sk.names.filter((n) => typeof n === 'string' && QUALIFIED_SKILL_RE.test(n)).map((n) => `Skill(${n})`) : [];
   // With copies, ToolSearch keeps their schemas deferred: `--tools` without it sends every MCP schema in full (§16.1 #9).
-  const builtins = reg ? [...ASK_BUILTIN_TOOLS, 'ToolSearch'] : [...ASK_BUILTIN_TOOLS];
+  // The Workflows chat (composer) gets no Task: a sub-agent's edit_canvas / draft_* calls would change the MCP child's
+  // working canvas, but only main-stream tool results become cards (events.mjs onToolResults) — the user would never see them.
+  const own = composer ? ASK_BUILTIN_TOOLS.filter((t) => t !== 'Task') : [...ASK_BUILTIN_TOOLS];
+  const builtins = reg ? [...own, 'ToolSearch'] : own;
   // A stdio copy starts through the launcher, which reads the keep-list from the scrubbed claude env (§5.5.1).
   const stdio = !!reg && Object.values(reg.servers).some((srv) => srv && typeof srv.command === 'string');
   return {

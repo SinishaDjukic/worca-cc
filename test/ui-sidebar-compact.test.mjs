@@ -76,6 +76,7 @@ test('row rhythm: 32px rows a 4px gap apart, 13.5px medium labels, 16px icons at
   assert.match(ruleBody('.nav button svg'), /width:16px;height:16px;margin:0 2px;flex:0 0 auto;stroke-width:1\.6;/);
   assert.match(ruleBody('.nav button > span:not(.nav-count)'), /min-width:0;overflow:hidden;text-overflow:ellipsis;/);
   assert.match(ruleBody('.nav-sect'), /padding:15px 10px 6px;font-size:11px;font-weight:500;/);
+  assert.match(ruleBody('.nav-sect'), /color:var\(--side-ink\);/, 'group labels share the rows\' ink: --ink-3 fails 4.5:1 on --side-bg');
 });
 
 test('the open page is a soft grey fill and hover the lighter field grey; nothing paints a row black', () => {

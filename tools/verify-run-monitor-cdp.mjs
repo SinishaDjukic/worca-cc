@@ -17,7 +17,7 @@
 //     (1a)     the Runs list row carries no graph, log or inline panel; a waiting run sits in Needs you
 //     (3)       the 26/22px footer bands and offsetHeight === nodeSize()
 //     (4a)(4b)  computed animationName on a live wire, live and under .settled
-//     (5)       the COMPUTED font-size that hides the composer's <=N pill
+//     (5)       the RENDERED <=N pill (a visible .wmax) beside the Nx count
 //     (6)       stage-box stability across the wheel + drag sequence, the
 //               measured cluster box, and the computed `grabbing` cursor on
 //               the CARD the drag started from
@@ -27,7 +27,7 @@
 //     (4b) `.rd-graph.settled` live AND terminal -> test/ui-running-detail.test.mjs
 //     (5) the <=N / Nx DOM split + the suppression RULES,
 //     (6) the wheel preventDefault policy + the pan delta,
-//     (7) both ornaments outside .nhead + their negative absolute offsets
+//     (7) both ornaments outside .nlabel + their negative absolute offsets
 //                                               -> test/ui-graph-interactions.test.mjs
 //     (6) the wheel policy, the drag threshold + pan delta and the cluster's
 //         clamps, (8)(8b) the End chip and the quiescence copy,
@@ -156,6 +156,12 @@ listeners.push((m) => {
   if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errors.push((m.params.args || []).map((a) => a.value || a.description).join(' '));
 });
 await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Log.enable');
+// Pin the CSS viewport to the 1280×900 the window asks for. --window-size does not
+// set it the same way everywhere: macOS headless gives 1280×813, the Linux CI runner
+// less. The run detail pane scrolls, and since the top bar (#653) moved it 48px down
+// the monitor's nav cluster (bottom ≈809px) sat below a short fold — a CDP click
+// there lands on nothing, so check (6)'s zoom and fit presses did nothing on CI only.
+await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 async function ev(expr) {
   const r = await cdp('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
@@ -623,18 +629,18 @@ try {
       before: s1.cards.map((c) => [c.id, c.bands, c.offsetHeight, c.styleHeight, c.want]),
       after: s2.cards.map((c) => [c.id, c.bands, c.offsetHeight, c.styleHeight, c.want]) });
 
-  // (5) the loop badge shows ONLY `N×` (the composer's `≤N` pill is font-size:0)
+  // (5) the loop badge shows its `≤N` budget pill and, once the loop delivered, the `N×` count beside it
   const badges = await ev(`(()=>[...document.querySelectorAll('${HD} .gv-world .wbadge')].map((b)=>{
-    const f=b.querySelector('.wfired');const cb=getComputedStyle(b);
+    const f=b.querySelector('.wfired');const mx=b.querySelector('.wmax');const cb=getComputedStyle(b);
     return {wireId:b.dataset.wireId,badgeText:b.textContent,badgeFontSize:cb.fontSize,badgeDisplay:cb.display,
+      max:mx?mx.textContent:null,maxVisible:!!(mx&&mx.getClientRects().length&&parseFloat(getComputedStyle(mx).fontSize)>0),
       fired:f?f.textContent:null,firedFontSize:f?getComputedStyle(f).fontSize:null,
       firedVisible:!!(f&&f.getClientRects().length)};}))()`);
   const fired = badges.filter((b) => b.fired);
-  check(5, 'the loop badge renders ONLY the N× delivery count (the ≤N budget pill is font-size:0)',
+  check(5, 'the loop badge shows the ≤N budget pill AND, once delivered, the N× count',
     badges.length >= 1 && fired.length >= 1
-    && fired.every((b) => b.badgeFontSize === '0px' && b.badgeDisplay !== 'none'
-      && /^\d+×$/.test(b.fired) && b.firedVisible && parseFloat(b.firedFontSize) > 0
-      && b.badgeText.startsWith('≤')), badges);
+    && badges.every((b) => b.badgeDisplay !== 'none' && b.maxVisible && /^≤\d+$/.test(b.max || ''))
+    && fired.every((b) => /^\d+×$/.test(b.fired) && b.firedVisible && parseFloat(b.firedFontSize) > 0), badges);
 
   // (7) header ornaments never cover a card title. The `.nrun` duration·cost
   // pills are the run's own; this workflow holds no wire gate, so the `.ngate`
@@ -652,18 +658,20 @@ try {
   const chrome7 = await ev(`(()=>{
     const out=[];
     for(const el of document.querySelectorAll('${HD} .gv-world .node')){
-      const tt=el.querySelector(':scope > .nhead .tt');
+      const tt=el.querySelector(':scope > .nlabel .tt');
       if(!tt)continue;
       // offset* is UNSCALED and relative to the .node (its offsetParent for both
       // the absolutely-positioned ornaments and the static title span), so the
       // whole comparison is in real CSS pixels, free of the world transform.
+      const nb=el.getBoundingClientRect();const z=nb.width/el.offsetWidth||1;
+      const box=(e)=>{const r=e.getBoundingClientRect();return {t:(r.top-nb.top)/z,b:(r.bottom-nb.top)/z,l:(r.left-nb.left)/z,r:(r.right-nb.left)/z};};
       const fs=parseFloat(getComputedStyle(tt).fontSize);
-      const line={t:tt.offsetTop,b:tt.offsetTop+tt.offsetHeight,l:tt.offsetLeft,r:tt.offsetLeft+tt.offsetWidth};
-      const em={t:line.t+(tt.offsetHeight-fs)/2,b:line.t+(tt.offsetHeight+fs)/2,l:line.l,r:line.r};
-      for(const sel of ['.nrun','.ngate']){
-        const orn=el.querySelector(':scope > '+sel);
+      const line=box(tt);const lh=line.b-line.t;
+      const em={t:line.t+(lh-fs)/2,b:line.t+(lh+fs)/2,l:line.l,r:line.r};
+      for(const [sel,q] of [['.nrun',':scope > .nlabel > .nrun'],['.ngate',':scope > .ngate']]){
+        const orn=el.querySelector(q);
         if(!orn)continue;
-        const a={t:orn.offsetTop,b:orn.offsetTop+orn.offsetHeight,l:orn.offsetLeft,r:orn.offsetLeft+orn.offsetWidth};
+        const a=box(orn);
         const xOverlap=Math.max(0,Math.min(a.r,line.r)-Math.max(a.l,line.l));
         out.push({node:el.dataset.nodeId,orn:sel,ornBox:a,lineBox:line,fontSize:fs,
           xOverlapPx:+xOverlap.toFixed(2),

@@ -319,14 +319,15 @@ test('levelMenuHtml: Simple / Advanced / Expert as radio items with the bars, a 
   assert.deepEqual(opts.map((o) => o.getAttribute('aria-checked')), ['false', 'true', 'false']);
   assert.deepEqual(opts.map((o) => o.querySelectorAll('.lv-bars rect.on').length), [1, 2, 3], 'the bars show how much is on screen');
   assert.deepEqual(opts.map((o) => o.querySelector('.lv-opt-desc').textContent), UI_LEVELS.map((l) => LEVEL_SHORT[l]));
-  assert.equal(LEVEL_SHORT.advanced, 'Adds schedules, statistics, workflows, the marketplace and connectors.');
+  assert.equal(LEVEL_SHORT.advanced, 'Adds schedules, statistics, the marketplace and connectors.');
   for (const o of opts) assert.equal(o.type, 'button');
 });
 
 test('the side menu and the dialog agree on what each mode adds: the Add-ons pages, never "plugins"', () => {
   const says = (l) => `${LEVEL_SHORT[l]} ${LEVEL_INFO[l].adds}`.toLowerCase();
   for (const page of ['marketplace', 'connectors']) assert.match(says('advanced'), new RegExp(page), `Advanced adds ${page}`);
-  for (const page of ['models', 'providers', 'team policy', 'scripts']) assert.match(LEVEL_INFO.expert.adds.toLowerCase(), new RegExp(page), `Expert adds ${page}`);
+  for (const page of ['models', 'providers', 'team policy']) assert.match(LEVEL_INFO.expert.adds.toLowerCase(), new RegExp(page), `Expert adds ${page}`);
+  assert.match(LEVEL_INFO.simple.adds, /Workflows/, 'Simple shows the Workflows view (agents and scripts included)');
   assert.match(LEVEL_INFO.advanced.adds, /Schedules/);
   for (const l of UI_LEVELS) assert.doesNotMatch(says(l), /plugins/, `${l}: the Plugins tab is the Marketplace page now`);
 });

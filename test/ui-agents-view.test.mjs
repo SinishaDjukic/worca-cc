@@ -62,20 +62,20 @@ async function boot({ fetchHandler } = {}) {
   return { window, ws: () => WSStub.last }; // ws accessor: Task 7's wizard tests destructure it
 }
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true }));
-const goAgents = async (window) => {
-  window.location.hash = 'agents';
+const goAgents = async (window, key) => {
+  window.location.hash = `workflows/agents/${key}`;
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 };
 
-test('agents view renders cards: origin badge, typed/void port pills, port-summary fallback, not-placeable badge', async () => {
-  const { window } = await boot();
-  await goAgents(window);
+test('the agent sheet shows ONE card: origin badge, typed/void port pills, port-summary fallback, not-placeable badge', async () => {
   await checkRows([
-    { name: 'agents view renders grouped cards with origin badges + typed port pills', run: async () => {
+    { name: 'a built-in agent: one card, origin badge + typed port pills, no not-placeable badge', run: async () => {
+      const { window } = await boot();
+      await goAgents(window, 'planner');
       const cards = window.document.querySelectorAll('.agent-card');
-      assert.equal(cards.length, 2);
+      assert.equal(cards.length, 1, 'the sheet shows one agent — the Library is the list');
       const planner = cards[0];
       assert.equal(planner.querySelector('.agent-origin').textContent, 'builtin');
       assert.equal(planner.querySelector('.agent-sub').textContent, 'planner \u00b7 producer \u2014 architecture');
@@ -87,18 +87,17 @@ test('agents view renders cards: origin badge, typed/void port pills, port-summa
       assert.ok(planner.querySelector('.agent-head .agent-io'), 'io block is inside .agent-head');
       assert.equal(planner.querySelector('.agent-io-in .agent-io-label').textContent, 'Input');
       assert.equal(planner.querySelector('.agent-io-out .agent-io-label').textContent, 'Output');
+      assert.equal(planner.querySelector('.agent-not-placeable').hidden, true);
     } },
-    { name: 'a description-less agent falls back to its port summary, and void pills are marked', run: async () => {
-      const docs = window.document.querySelectorAll('.agent-card')[1];
+    { name: 'a description-less agent falls back to its port summary, void pills are marked, placeable:false raises the badge', run: async () => {
+      const { window } = await boot();
+      await goAgents(window, 'docsWriter');
+      const docs = window.document.querySelector('.agent-card');
       assert.equal(docs.querySelector('.agent-sub').textContent, 'docsWriter \u00b7 verifier \u2014 Reads plan; produces review.');
       const out = docs.querySelectorAll('.agent-chips-out .agent-chip');
       assert.equal(out[1].textContent, 'pass \u00b7 void');
       assert.ok(out[1].classList.contains('void'), 'a void port pill is visually distinct');
       assert.ok(!out[0].classList.contains('void'));
-    } },
-    { name: 'placeable:false raises the amber "not placeable" badge, and only there', run: async () => {
-      const [planner, docs] = window.document.querySelectorAll('.agent-card');
-      assert.equal(planner.querySelector('.agent-not-placeable').hidden, true);
       const badge = docs.querySelector('.agent-not-placeable');
       assert.equal(badge.hidden, false);
       assert.equal(badge.textContent, 'not placeable');
@@ -120,7 +119,7 @@ test('Delete issues DELETE /api/agents/:key; a 409 keeps the card + surfaces the
       return null;
     },
   });
-  await goAgents(window);
+  await goAgents(window, 'docsWriter');
   const doc = window.document;
   const card = doc.querySelector('.agent-card[data-agent-key="docsWriter"]');
   click(window, card.querySelector('.agent-delete'));
@@ -148,7 +147,7 @@ test('Duplicate on a builtin GETs the full agent then POSTs a copy with a fresh 
       return null;
     },
   });
-  await goAgents(window);
+  await goAgents(window, 'planner');
   const doc = window.document;
   click(window, doc.querySelector('.agent-card[data-agent-key="planner"] .agent-duplicate'));
   await new Promise((r) => setTimeout(r, 0));

@@ -48,6 +48,7 @@ import { scheduleDefaults } from '../settings.mjs';
 import { ASK_ENGINES } from '../model-env.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
+import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
 import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
@@ -124,6 +125,7 @@ class AskTurn extends EventEmitter {
     engine = 'claude', images = [], mcpCodexNote = false,
     skills = null,
     agentMode = true,
+    composer = null,
     deps = {},
   } = {}) {
     super();
@@ -160,6 +162,8 @@ class AskTurn extends EventEmitter {
     this.web = web && web.enabled === true ? web : null;
     // Agent mode (#574): this chat's switch (the server already folded in whether commands exist here at all).
     this.agentMode = agentMode !== false;
+    // Workflows chat (D13): the page session + open document its composer cards are stamped with; null on an Ask chat.
+    this.composer = composer && typeof composer === 'object' ? { sessionId: composer.sessionId || null, docToken: composer.docToken || null } : null;
     this.commands = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
@@ -653,6 +657,18 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /** Workflows chat (D13): a composer tool's RESULT becomes a card the dock applies — canvas-edit (applied at
+   *  once, inline Undo), workflow-build (Apply to canvas), agent-draft / script-draft (Save). Errors stay tool rows. */
+  _onComposerResult(name, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    const card = composerCardFrom(name, out, this.composer);
+    if (!card) return;
+    if (!this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'proposed', card })) return;   // finished reducer
+    this._persistBlocks();
+  }
+
   /** RESULT: re-validate the returned shape in the parent (assemble, validateGraph, match, buildProposal) and flip the block. */
   async _onWorkflowResult(toolUseId, text, isError) {
     const d = this.deps;
@@ -719,12 +735,17 @@ class AskTurn extends EventEmitter {
       // carries no override, which is the default.
       resolveCost: (cliCostUsd, usage) => d.resolveModelCost(this.model, cliCostUsd, usage),
       limits: d.limits,
-      onProposal: ({ input }) => this._onProposal(input),
-      onWorkflowStart: ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
+      // A composer turn (the Workflows chat) shows only its own cards. Its MCP child refuses Ask's tools, but the CLI
+      // still reports a hallucinated propose_run as an is_error result — which onProposal re-validates into a
+      // "Proposal rejected: …" notice — and a propose_workflow tool_use opens a building card before any result.
+      // (onWorkflowResult needs the card onWorkflowStart made, so it stays inert there.)
+      onProposal: this.composer ? null : ({ input }) => this._onProposal(input),
+      onWorkflowStart: this.composer ? null : ({ toolUseId, input }) => this._onWorkflowStart(toolUseId, input),
       onWorkflowResult: ({ toolUseId, text, isError }) => this._onWorkflowResult(toolUseId, text, isError),   // the hook's `input` is not needed here: the card is rebuilt from `out`
-      onTrackRun: ({ input, isError }) => this._onTrackRun(input, isError),
+      onComposerResult: ({ name, text, isError }) => this._onComposerResult(name, text, isError),
+      onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
-      onAwaySwitch: ({ text, isError }) => this._onAwaySwitch(text, isError),
+      onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onAwayProposal: ({ input, text, isError }) => this._onAwayProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
@@ -1218,6 +1239,7 @@ class AskTurn extends EventEmitter {
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
         ...(this.engine === 'codex' ? { engine: 'codex' } : {}),
         commands: this.commands,
+        ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.
         skills: this.skills && this.skillMount ? { pluginDirs: this.skillMount.pluginDirs, names: this.skillNames } : null,
       });

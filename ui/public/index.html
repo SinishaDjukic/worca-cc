@@ -52,33 +52,11 @@
               <span>Team metrics</span>
             </button>
 
-            <div class="nav-sect" data-min-level="advanced">Build</div>
-            <button type="button" data-nav="composer" data-min-level="advanced">
+            <div class="nav-sect" data-min-level="simple">Build</div>
+            <button type="button" data-nav="workflows" data-min-level="simple">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
-              <span>Workflow Composer</span>
+              <span>Workflows</span>
             </button>
-            <!-- Nodes: the two composer node types, in a side flyout (side-flyout.mjs) so Manage
-                 never moves. The row is not a route — no data-nav, the router never marks it
-                 active; app.js tints it (.has-active) while Agents or Scripts is open. The flyout
-                 sits INSIDE <nav>, right after its row (DOM order = keyboard order), position:fixed,
-                 so the `.nav button[data-nav]` snapshot still reaches Agents and Scripts. -->
-            <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert"
-                    aria-haspopup="menu" aria-expanded="false" aria-controls="nav-nodes-fly">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
-              <span>Nodes</span>
-              <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
-            </button>
-            <div class="nav-fly" id="nav-nodes-fly" role="menu" aria-label="Nodes" data-min-level="expert" hidden>
-              <div class="nav-fly-k" aria-hidden="true">Nodes</div>
-              <button type="button" class="nav-child" role="menuitem" data-nav="agents" data-min-level="expert">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
-                <span>Agents</span>
-              </button>
-              <button type="button" class="nav-child" role="menuitem" data-nav="scripts" data-min-level="expert">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
-                <span>Scripts</span>
-              </button>
-            </div>
 
             <!-- Add-ons: four Settings tabs that became pages of their own (Plugins → Marketplace,
                  Sets → Connectors, Models, Providers). Old #settings/<tab> addresses land here
@@ -1259,70 +1237,6 @@
         </section>
         <!-- /view workspace-create -->
 
-        <!-- ===== VIEW: AGENTS ===== -->
-        <section class="view hidden" data-view="agents">
-          <div class="topbar">
-            <div>
-              <div class="sub">Built-in and custom agents — the typed ports each one reads and writes drive the Composer</div>
-            </div>
-            <button type="button" id="agent-create-btn" class="btn btn-primary btn-mini">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create agent
-            </button>
-          </div>
-          <p id="agents-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="agents-list"></div>
-
-          <template id="agent-card-tpl">
-            <section class="card agent-card">
-              <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
-                <div class="agent-h-meta">
-                  <b class="agent-name"></b>
-                  <span class="agent-origin badge"></span>
-                  <span class="agent-not-placeable badge" hidden>not placeable</span>
-                  <small class="agent-sub"></small>
-                  <div class="agent-io">
-                    <div class="agent-io-row agent-io-in">
-                      <span class="agent-io-label">Input</span>
-                      <div class="agent-chips agent-chips-in"></div>
-                    </div>
-                    <div class="agent-io-row agent-io-out">
-                      <span class="agent-io-label">Output</span>
-                      <div class="agent-chips agent-chips-out"></div>
-                    </div>
-                  </div>
-                </div>
-                <div class="agent-actions">
-                  <button type="button" class="agent-edit btn btn-ghost btn-mini" title="Edit this agent">Edit</button>
-                  <button type="button" class="agent-duplicate btn btn-ghost btn-mini" title="Duplicate as a user agent">Duplicate</button>
-                  <button type="button" class="agent-delete btn btn-danger btn-mini" title="Delete this agent">Delete</button>
-                </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-              </div>
-              <div class="agent-detail" hidden>
-                <pre class="agent-md-view viewer"></pre>
-                <div class="agent-forms-view" hidden></div>
-                <div class="agent-edit-pane" hidden>
-                  <div class="agent-form"></div>
-                  <p class="agent-edit-msg form-msg" aria-live="polite"></p>
-                  <div class="actions" style="justify-content:flex-end">
-                    <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
-                    <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </template>
-        </section>
-        <!-- /view agents -->
-
-        <!-- ===== VIEW: SCRIPTS ===== -->
-        <section class="view hidden" data-view="scripts">
-          <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
-          <div id="scripts-host" class="scripts-host"></div>
-        </section>
-        <!-- /view scripts -->
-
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
           <!-- Two-screen slide track, twin of History's #hist-shell: the list and the project
@@ -1390,155 +1304,185 @@
         </section>
         <!-- /view projects -->
 
-        <!-- ===== VIEW: AGENT CREATE (wizard) ===== -->
-        <section class="view hidden" data-view="agent-create">
-          <div class="topbar">
-            <div>
-              <div class="sub">Describe the agent, let the builder draft it, then review and save</div>
-            </div>
-            <button type="button" id="agw-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
-          </div>
-
-          <section class="card" style="max-width:820px">
-            <!-- Step 1: brief -->
-            <div class="wiz-step" id="agw-step-1">
-              <div class="field"><label for="agw-name">Agent name</label>
-                <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
-              <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
-                <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
-              <div class="field"><label for="agw-details">Detailed description</label>
-                <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
-              <div class="row-2">
-                <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
-                  <div id="agw-before" class="chip-select"></div></div>
-                <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
-                  <div id="agw-after" class="chip-select"></div></div>
+        <!-- ===== VIEW: WORKFLOWS (full screen: canvas + Library + composer chat) ===== -->
+        <!-- The editor of record for workflows, agents and scripts (replaced #composer, #agents,
+             #scripts, #agent-create; app.js MOVED_ROUTES keeps their addresses). Visible at every
+             interface level. Everything that is not the canvas carries data-canvas-keys="off", so
+             the composer's document keydown never edits the graph from there. -->
+        <section class="view hidden" data-view="workflows">
+          <div class="wfv" id="wfv">
+            <div class="wfv-stage" id="wfv-stage">
+              <div class="wfv-canvas gv-canvas" id="wfv-canvas">
+                <div class="gv-chip" id="wfv-chip" hidden></div>
               </div>
-              <div class="switch-row" style="margin-top:14px">
-                <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
-                <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
-              </div>
-              <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
-                <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
-              </div>
-              <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="agw-start" class="btn-go" disabled>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
-                  Generate agent
-                </button>
-              </div>
-            </div>
-
-            <!-- Step 2: live generation -->
-            <div class="wiz-step hidden" id="agw-step-2">
-              <div class="ws-loader" role="status" aria-live="polite">
-                <div class="spinner" aria-hidden="true"></div>
-                <div class="status-label" id="agw-status">Starting&hellip;</div>
-              </div>
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
-              </div>
-            </div>
-
-            <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
-            <div class="wiz-step hidden" id="agw-step-3">
-              <div class="agent-form"></div>
-              <p id="agw-msg" class="form-msg" aria-live="polite"></p>
-              <div class="actions" style="justify-content:space-between">
-                <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
-                <button type="button" id="agw-save" class="btn-go">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Save agent
-                </button>
-              </div>
-            </div>
-          </section>
-        </section>
-        <!-- /view agent-create -->
-
-        <!-- ===== VIEW: WORKFLOW COMPOSER (v2 node graph) ===== -->
-        <section class="view hidden" data-view="composer">
-          <section class="card gv-editor">
-            <div class="gv-head" id="gv-head">
-              <input id="gv-name" class="gv-name" type="text" spellcheck="false" placeholder="Untitled pipeline" aria-label="Pipeline name">
-              <button type="button" class="gv-errchip" id="gv-errors" hidden></button>
-              <span class="sp"></span>
-              <button type="button" class="btn-ghost" id="gv-new">New canvas</button>
-              <button type="button" class="btn-ghost" id="gv-autolayout">Auto-layout</button>
-              <button type="button" class="btn-go" id="gv-save">Save</button>
-            </div>
-            <!-- The stage is created INSIDE #gv-canvas by createGraphView. The chip
-                 and the inspector rail are its SIBLINGS: a pointerdown on them can
-                 never reach the stage, so capture can never retarget their click.
-                 The rail carries BOTH panes — the agent palette and the inspector —
-                 switched by `data-tab`; `data-open` still collapses the whole rail. -->
-            <div class="gv-canvas" id="gv-canvas">
-              <div class="gv-chip" id="gv-chip" hidden></div>
-              <div class="gv-ins-rail" id="gv-ins-rail" data-open="open" data-tab="agents">
-                <div class="gv-ins-bar">
-                  <button type="button" class="gv-ins-toggle" id="gv-ins-toggle" aria-expanded="true" aria-label="Collapse inspector"><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
-                  <div class="gv-tabs" id="gv-ins-tabs" role="tablist" aria-label="Rail panes">
-                    <button type="button" class="gv-tab" role="tab" data-tab="agents" aria-selected="true">Agents</button>
-                    <button type="button" class="gv-tab" role="tab" data-tab="info" aria-selected="false" tabindex="-1">Info</button>
-                  </div>
+              <div class="wfv-float wfv-tl" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-icon-btn" id="wfv-back" aria-label="Back" title="Back">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <button type="button" class="wfv-btn wfv-menu-btn" id="wfv-wf-menu" aria-haspopup="menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+                    <span>Workflows</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
+                  <button type="button" class="wfv-errchip" id="wfv-errors" hidden></button>
+                  <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
                 </div>
-                <div class="gv-ins-pane gv-agents-pane" id="gv-agents-pane">
-                  <div class="gv-pal-head">
-                    <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
-                  </div>
-                  <div class="gv-palette" id="gv-palette"></div>
-                  <!-- The advanced door to the agent wizard (the Agents page is expert, docs/ui-levels.md). -->
-                  <button type="button" class="pal-create" id="gv-create-agent" data-min-level="advanced">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-                    Create agent&hellip;
+              </div>
+              <div class="wfv-float wfv-tr" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-icon-btn" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+                  </button>
+                  <span class="wfv-savewrap" id="wfv-savewrap"><button type="button" class="wfv-btn wfv-btn-primary" id="wfv-save">Save</button></span>
+                </div>
+              </div>
+              <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
+                <button type="button" class="wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </button>
+                <div class="wfc" id="wfc" data-canvas-keys="off"></div>
+              </div>
+              <div class="wfv-float wfv-br" id="wfv-br" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-btn" id="wfv-autolayout">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" transform="rotate(45 10 14.5)" d="M9.4 7.1h1.2a1.3 1.3 0 0 1 1.3 1.3v12.2a1.3 1.3 0 0 1-1.3 1.3h-1.2a1.3 1.3 0 0 1-1.3-1.3V8.4a1.3 1.3 0 0 1 1.3-1.3zM9.1 8.4v2.4h1.8V8.4z"></path><path d="M9 2.9Q9.79 5.71 12.6 6.5Q9.79 7.29 9 10.1Q8.21 7.29 5.4 6.5Q8.21 5.71 9 2.9ZM17.6 2.6Q18.26 4.94 20.6 5.6Q18.26 6.26 17.6 8.6Q16.94 6.26 14.6 5.6Q16.94 4.94 17.6 2.6ZM18.2 11.4Q18.68 13.12 20.4 13.6Q18.68 14.08 18.2 15.8Q17.72 14.08 16 13.6Q17.72 13.12 18.2 11.4Z"></path></svg>
+                    <span>Auto-layout</span>
                   </button>
                 </div>
-                <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-btn wfv-zoom" id="wfv-zoom" aria-haspopup="menu" aria-expanded="false" aria-label="Zoom">
+                    <span id="wfv-zoom-label">100%</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"></path></svg>
+                  </button>
+                </div>
               </div>
-              <!-- The canvas nav cluster: the ONLY on-canvas controls (the
-                   rebuild spec's "gestures only" line was reversed by the user
-                   on 2026-09-10). A SIBLING of the stage, like the chip and the
-                   rail, so a pointerdown on a button can never reach the stage's
-                   gesture pipeline. It must come AFTER #gv-ins-rail: the
-                   collapsed-rail offset in style.css is a `~` sibling selector,
-                   which only looks forward. -->
-              <div class="gv-nav" id="gv-nav">
-                <button type="button" class="gv-nav-btn" id="gv-zoom-in" aria-label="Zoom in" title="Zoom in"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg></button>
-                <button type="button" class="gv-nav-btn" id="gv-zoom-out" aria-label="Zoom out" title="Zoom out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg></button>
-                <button type="button" class="gv-nav-btn" id="gv-center" aria-label="Fit graph to view" title="Fit graph to view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg></button>
-              </div>
+              <div class="wfv-overlay" id="wfv-overlay" data-canvas-keys="off"></div>
             </div>
-            <!-- The key belongs to the whole editor, canvas AND rail — not to a
-                 palette card that no longer exists. -->
-            <div class="gv-foot">
-              <span class="gv-legend" id="gv-legend" data-min-level="expert">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
-            </div>
-          </section>
+            <aside class="wfl" id="wfv-library" aria-label="Library" data-open="true" data-canvas-keys="off"></aside>
+            <div class="wfv-sheet" id="wfv-sheet" role="dialog" aria-modal="true" aria-labelledby="wfv-sheet-title" data-canvas-keys="off" hidden>
+              <div class="wfv-sheet-card">
+                <div class="wfv-sheet-head">
+                  <h2 class="wfv-sheet-title" id="wfv-sheet-title"></h2>
+                  <button type="button" class="wfv-icon-btn" id="wfv-sheet-close" aria-label="Close" title="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                  </button>
+                </div>
+                <div class="wfv-sheet-body">
+                  <div class="wfv-pane" data-pane="agent" hidden>
+                    <p id="agents-msg" class="form-msg" aria-live="polite"></p>
+                    <div class="run-list" id="agents-list"></div>
+                    <template id="agent-card-tpl">
+                      <section class="card agent-card">
+                        <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
+                          <div class="agent-h-meta">
+                            <b class="agent-name"></b>
+                            <span class="agent-origin badge"></span>
+                            <span class="agent-not-placeable badge" hidden>not placeable</span>
+                            <small class="agent-sub"></small>
+                            <div class="agent-io">
+                              <div class="agent-io-row agent-io-in">
+                                <span class="agent-io-label">Input</span>
+                                <div class="agent-chips agent-chips-in"></div>
+                              </div>
+                              <div class="agent-io-row agent-io-out">
+                                <span class="agent-io-label">Output</span>
+                                <div class="agent-chips agent-chips-out"></div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="agent-actions">
+                            <button type="button" class="agent-edit btn btn-ghost btn-mini" title="Edit this agent">Edit</button>
+                            <button type="button" class="agent-duplicate btn btn-ghost btn-mini" title="Duplicate as a user agent">Duplicate</button>
+                            <button type="button" class="agent-delete btn btn-danger btn-mini" title="Delete this agent">Delete</button>
+                          </div>
+                          <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        </div>
+                        <div class="agent-detail" hidden>
+                          <pre class="agent-md-view viewer"></pre>
+                          <div class="agent-forms-view" hidden></div>
+                          <div class="agent-edit-pane" hidden>
+                            <div class="agent-form"></div>
+                            <p class="agent-edit-msg form-msg" aria-live="polite"></p>
+                            <div class="actions" style="justify-content:flex-end">
+                              <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
+                              <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    </template>
+                  </div>
+                  <div class="wfv-pane" data-pane="agent-new" hidden>
+                    <!-- Step 1: brief -->
+                    <div class="wiz-step" id="agw-step-1">
+                      <div class="field"><label for="agw-name">Agent name</label>
+                        <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
+                        <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-details">Detailed description</label>
+                        <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
+                      <div class="row-2">
+                        <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
+                          <div id="agw-before" class="chip-select"></div></div>
+                        <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
+                          <div id="agw-after" class="chip-select"></div></div>
+                      </div>
+                      <div class="switch-row" style="margin-top:14px">
+                        <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                        <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
+                      </div>
+                      <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
+                        <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
+                      </div>
+                      <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-close" class="btn btn-ghost btn-mini">Cancel</button>
+                        <button type="button" id="agw-start" class="btn-go" disabled>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                          Generate agent
+                        </button>
+                      </div>
+                    </div>
 
-          <section class="card gv-saved">
-            <div class="saved-head">
-              <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
-              <!-- Import a workflow another Worca user shared as JSON (#421): the
-                   file goes through POST /api/workflows/import-json — the same validator
-                   the composer's Save uses; a taken name gets a " (2)" suffix. -->
-              <div class="saved-head-actions">
-                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as a JSON file">Import…</button>
-                <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
+                    <!-- Step 2: live generation -->
+                    <div class="wiz-step hidden" id="agw-step-2">
+                      <div class="ws-loader" role="status" aria-live="polite">
+                        <div class="spinner" aria-hidden="true"></div>
+                        <div class="status-label" id="agw-status">Starting&hellip;</div>
+                      </div>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
+                      </div>
+                    </div>
+
+                    <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
+                    <div class="wiz-step hidden" id="agw-step-3">
+                      <div class="agent-form"></div>
+                      <p id="agw-msg" class="form-msg" aria-live="polite"></p>
+                      <div class="actions" style="justify-content:space-between">
+                        <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
+                        <button type="button" id="agw-save" class="btn-go">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                          Save agent
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="wfv-pane" data-pane="script" hidden>
+                    <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
+                    <div id="scripts-host" class="scripts-host"></div>
+                  </div>
+                </div>
               </div>
             </div>
-            <!-- One tab per domain; the row itself no longer repeats the domain.
-                 Rendered by gvRenderSaved(); hidden while the library is empty. -->
-            <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
-            <div class="saved-list" id="gv-saved-list"></div>
-            <div class="gv-archived" id="gv-archived" data-min-level="expert" hidden></div>
-            <!-- A refused DELETE (the built-in, a 404, a 500) has to land
-                 SOMEWHERE: same .form-msg line every other list view uses. -->
-            <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
-          </section>
-          <div id="gv-dialog-host"></div>
+            <div id="wfv-dialog-host"></div>
+          </div>
         </section>
-        <!-- /view composer -->
+        <!-- /view workflows -->
 
         <!-- ===== VIEW: SETTINGS (tabbed) =====
              Guardrails used to be a top-level view; it is a pane here now (the
