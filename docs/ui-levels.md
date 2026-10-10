@@ -205,7 +205,7 @@ gated: the view shows the same controls at every level.
 | The canvas, the top bar (Back, Workflows ▾ with New canvas, Open…, Import… and Export…, the name and its validation chip, the Library toggle, Save), Auto-layout and the zoom menu | all |
 | The "+" menu: Task, End, AND, OR, Combine, Agent…, Script…, New agent…, New script… | all |
 | The selection toolbar and its More / Params popover: model, effort, fan-out, ask questions, await all inputs, input count, seed the plan store, loop max cycles; a script's params, timeout and port editor | all |
-| The Library: Agents, Scripts and Workflows tabs, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
+| The Library: its Agents, Scripts and Workflows folders (domain subfolders, Flow, Archived) with the breadcrumb and the filter, every row action (Add to canvas, View, Edit, Duplicate, Delete, Open, Export), New agent and New script, legacy and archived rows | all |
 | The agent sheet: the full agent form (runner type, ports, side effect, mock role, workspace variants) and the agent wizard | all |
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |

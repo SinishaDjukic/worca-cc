@@ -2627,7 +2627,13 @@ async function initWorkflows() {
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
     notify: (o) => notify(o),
     allLevels: true,              // every setting at every interface level (D5)
-    insetRight: () => (window.innerWidth <= 760 && wfvLibrary && wfvLibrary.isOpen() ? 316 : 0),
+    // The 380px Library overlay + its 8px edge + 8px air, while a useful 200px band stays beside it. On a phone the
+    // overlay covers the stage, and a fit into the 1px left over shrank the graph to a dot: fit the whole stage then.
+    insetRight: () => {
+      if (!(window.innerWidth <= 760 && wfvLibrary && wfvLibrary.isOpen())) return 0;
+      const stageW = gvComposer ? gvComposer.view.stage.getBoundingClientRect().width : 0;
+      return stageW - 396 >= 200 ? 396 : 0;
+    },
   });
   gvComposer.mount();
   gvComposer.hooks.onSaved = () => { void wfvRefreshWorkflows(); };
@@ -30222,13 +30228,25 @@ function gsHops(step, g) {
       // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
       // and start a run from New run (the pick persists the workflow: that is the derived tick).
       const lib = document.getElementById('wfv-library');
+      // The Library browses folders (Library › Workflows › <domain>): Default sits in its domain's folder whenever
+      // Workflows holds more than one domain. Once its row shows — there, or in a filter's flat list — both folder hops
+      // are done. gsHops is re-derived on every reconsider, so `defFolder` follows the list as it loads.
+      const defFolder = (wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows']).join('/');
+      const defShown = () => !!lib && !!lib.querySelector('.wfl-wf[data-id="wf_default"]');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
         NAV('workflows', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
         { id: 'library', target: '#wfv-lib-toggle', lift: ['.wfv-float', '.wfv-stage'], met: () => !!lib && lib.dataset.open === 'true', skipWhenMet: true,
           text: 'Open the Library: your agents, scripts and saved workflows.' },
-        { id: 'tab', target: '#wfv-library [data-tab="workflows"]', lift: ['.wfl'], met: () => !!lib && lib.dataset.tab === 'workflows', skipWhenMet: true,
-          text: 'Switch to Workflows.' },
+        // A filter query lists its matches flat, with no folder row and no back row (and Home has no Library crumb):
+        // the filter button, always in the header, is the last fallback — a click closes the filter and clears it.
+        { id: 'tab', target: ['#wfv-library [data-tab="workflows"]', '#wfv-library #wfl-crumb-home', '#wfv-library #wfl-filter-btn'], lift: ['.wfl'],
+          met: () => !!lib && (lib.dataset.tab === 'workflows' || defShown()), skipWhenMet: true,
+          text: ['Open the Workflows folder.', 'Go back up to the Library: the Workflows folder is there.', 'Close the filter: the folders are under it.'] },
+        { id: 'folder', target: [`#wfv-library .wfl-folder[data-folder="${defFolder}"]`, '#wfv-library #wfl-up', '#wfv-library #wfl-crumb-home', '#wfv-library #wfl-filter-btn'], lift: ['.wfl'],
+          met: () => !defFolder.includes('/') || defShown(), skipWhenMet: true,
+          text: [`Open “${defFolder.split('/').pop()}”: the built-in Default workflow lives in this folder.`, 'Go back up: Default lives in another folder.',
+            'Go back up to the Library: the filter hides the folders here.', 'Close the filter: the folders are under it.'] },
         { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
           met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
           text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',

@@ -1,16 +1,32 @@
 // ui/public/workflows/library.mjs
-// The Workflows view's Library card (composer-mockup.html library.js): Agents · Scripts · Workflows,
-// a filter, All / Built-in / Yours (Workflows: domain chips), domain groups, rows that drag onto the
-// canvas (HTML5 DnD, application/x-worca — BRIEF.md), an inline detail with every action the old
-// Agents and Scripts pages had, and New agent / New script. Pure DOM over the data app.js hands in
+// The Workflows view's Library card (composer-mockup.html library.js), browsed as folders. Home lists Agents ·
+// Scripts · Workflows with their registry counts. Agents and Scripts split into their domainGroups() (one group
+// lists its rows straight away; `shared` rows sit in every domain) and Agents ends with the pinned Flow folder;
+// Workflows splits by domain and ends with Archived. A breadcrumb walks back up and every folder below Home opens
+// with a "↰ <parent>" row. All / Built-in / Yours narrow Agents and Scripts; a filter query lists every match under
+// the open folder as one flat list. Rows drag onto the canvas (HTML5 DnD, application/x-worca — BRIEF.md) and open an
+// inline detail with every action the old Agents and Scripts pages had. Pure DOM over the data app.js hands in
 // (setData); every action is a callback. Every string from user data goes through textContent.
 import { safeAgentIcon, SCRIPT_GLYPH, thumbnailFor } from '../graph/view.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
 
-export const TABS = Object.freeze(['agents', 'scripts', 'workflows']);
-const TAB_LABEL = { agents: 'Agents', scripts: 'Scripts', workflows: 'Workflows' };
+/** The top folders, in Home's order. */
+export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
+/** The pinned subfolders: Agents › Flow, Workflows › Archived. A domain matches `^[a-z][a-z0-9-]{0,31}$` (agent-meta,
+ *  script-meta and workflows.mjs DOMAIN_RE), so a leading `_` never names one. */
+export const FLOW = '_flow';
+export const ARCHIVED = '_archived';
+const ROOT_LABEL = 'Library';
+const TOP_LABEL = { agents: 'Agents', scripts: 'Scripts', workflows: 'Workflows' };
 const NOUN = { agents: 'agents', scripts: 'scripts', workflows: 'workflows' };
+const KIND_TOP = { agent: 'agents', script: 'scripts', workflow: 'workflows' };
+const PINNED_KINDS = new Set(['flow', 'archived']);
+const FOLDER_GLYPH = '<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.6l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>';
+const UP_GLYPH = '<path d="M9 14L4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>';
+const SEP_GLYPH = '<path d="M9 6l6 6-6 6"/>';
+const PLUS_GLYPH = '<path d="M12 6v12M6 12h12"/>';
+const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>';
 const FLOW_DESC = {
   task: 'The pipeline entry: the prompt and its attached files.',
   end: 'The pipeline sink. A token arriving here completes the run.',
@@ -50,13 +66,19 @@ export function domainGroups(list) {
     .filter((g) => g.items.length);
 }
 
+/** Workflow domains in the old domain chips' order: by name, then `general`, then `shared`. */
+export function workflowDomains(list) {
+  const ds = [...new Set((Array.isArray(list) ? list : []).filter(Boolean).map((w) => w.domain || 'general'))];
+  return ds.sort((a, b) => (a === 'shared') - (b === 'shared') || (a === 'general') - (b === 'general') || a.localeCompare(b));
+}
+
 /**
  * @param {object} o
  * @param {Document} o.doc
  * @param {HTMLElement} o.host  aside#wfv-library
  * @param {object} o.actions  {addToCanvas(entry), openWorkflow(id), deleteWorkflow(wf), deleteArchived(wf),
  *   exportWorkflow(wf), newAgent(), newScript(), viewAgent(key), editAgent(key), deleteAgent(agent),
- *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node)}
+ *   duplicateAgent(agent), openScript(key), deleteScript(script), duplicateScript(script), portsFn(node), closeLibrary()}
  */
 export function createLibrary({ doc, host, actions }) {
   const win = doc.defaultView || globalThis;
@@ -70,9 +92,10 @@ export function createLibrary({ doc, host, actions }) {
     s.innerHTML = body;                                 // repo-shipped glyphs or safeAgentIcon output only
     return s;
   };
+  // `path`: [] Home, [top], [top, domain | FLOW | ARCHIVED] — always resolved by where() before a paint.
   const st = {
-    tab: 'agents', query: '', filterOpen: false, chip: 'all', domain: 'all', open: false,
-    collapsed: new Set(), expanded: new Set(), flash: '',
+    path: [], query: '', filterOpen: false, chip: 'all', open: false,
+    expanded: new Set(), flash: '',
     data: { agents: [], scripts: [], workflows: [], archived: [], placedKinds: [], openId: '', newIds: new Set(), runtimes: null, loadError: '', retry: null },
   };
 
@@ -80,17 +103,105 @@ export function createLibrary({ doc, host, actions }) {
   const q = () => st.query.trim().toLowerCase();
   const matches = (...fields) => { const s = q(); return !s || fields.some((f) => String(f || '').toLowerCase().includes(s)); };
   const origin = (x) => (x.origin === 'user' ? 'yours' : 'builtin');
-  const chipOk = (x) => st.chip === 'all' || origin(x) === st.chip;
-  function agentRows() {
-    return st.data.agents.filter((a) => a && chipOk(a) && matches(a.displayName, a.key, portLineOf(a)));
+  // All / Built-in / Yours narrow Agents and Scripts only: Home and Workflows show no chips.
+  const chipOk = (x) => !(st.path[0] === 'agents' || st.path[0] === 'scripts') || st.chip === 'all' || origin(x) === st.chip;
+  const HIT = {
+    agent: (a) => matches(a.displayName, a.key, portLineOf(a)),
+    script: (s) => matches(s.displayName, s.key, s.runtime, s.origin, portLineOf(s)),
+    flow: (f) => matches(f.label, f.kind, FLOW_PORT_LINE[f.kind]),
+    workflow: (w) => matches(w.name, w.id, w.domain),
+    archived: (w) => matches(w.name, w.id, w.domain),
+  };
+  const rowId = (kind, x) => (kind === 'flow' ? `flow:${x.kind}` : kind === 'workflow' || kind === 'archived' ? `${kind}:${x.id}` : `${kind}:${x.key}`);
+  const dataOf = (name) => (Array.isArray(st.data[name]) ? st.data[name] : []).filter(Boolean);
+
+  /** A top folder's domain subfolders, read from the whole registry (a chip never reshapes the tree); [] when it holds
+   *  one group or none — its rows then sit in the top folder itself. */
+  function domainsOf(top) {
+    const ds = top === 'workflows' ? workflowDomains(dataOf('workflows')) : domainGroups(dataOf(top)).map((g) => g.id);
+    return ds.length > 1 ? ds : [];
   }
-  function scriptRows() {
-    return st.data.scripts.filter((s) => s && chipOk(s) && matches(s.displayName, s.key, s.runtime, s.origin, portLineOf(s)));
+  /** A top folder's groups in folder order; `at` is the folder listing `items` (the top folder itself, or one of its
+   *  subfolders). `chipped: false` ignores All / Built-in / Yours — where a row LIVES (highlight, folderOf). */
+  function groupsOf(top, chipped = true) {
+    const ds = domainsOf(top);
+    if (top === 'workflows') {
+      const wfs = dataOf('workflows');
+      const out = ds.length ? ds.map((d) => ({ at: [top, d], kind: 'workflow', items: wfs.filter((w) => (w.domain || 'general') === d) }))
+        : [{ at: [top], kind: 'workflow', items: wfs }];
+      const arch = dataOf('archived');
+      if (arch.length) out.push({ at: [top, ARCHIVED], kind: 'archived', items: arch });
+      return out;
+    }
+    const kind = top === 'agents' ? 'agent' : 'script';
+    const groups = domainGroups(dataOf(top).filter((x) => !chipped || chipOk(x)));
+    const out = ds.length ? ds.map((d) => ({ at: [top, d], kind, items: (groups.find((g) => g.id === d) || { items: [] }).items }))
+      : [{ at: [top], kind, items: groups.flatMap((g) => g.items) }];
+    // The flow cards are built-ins: Yours hides them.
+    if (top === 'agents') out.push({ at: [top, FLOW], kind: 'flow', items: !chipped || chipOk({ origin: 'builtin' }) ? FLOW_CARDS : [] });
+    return out;
   }
-  function workflowRows() {
-    return st.data.workflows.filter((w) => w && (st.domain === 'all' || (w.domain || 'general') === st.domain) && matches(w.name, w.id, w.domain));
+  /** The folder on screen: st.path cut back to one that exists (a domain whose last row went, an emptied Archived). */
+  function where() {
+    const [top, sub] = st.path;
+    if (!TOPS.includes(top)) return [];
+    return sub != null && groupsOf(top, false).some((g) => g.at[1] === sub) ? [top, sub] : [top];
   }
-  const flowRows = () => (st.chip === 'yours' ? [] : FLOW_CARDS.filter((f) => matches(f.label, f.kind, FLOW_PORT_LINE[f.kind])));
+  /** Every row under a folder (Home: all three), in folder order, with the folder listing it. A row two folders list
+   *  (a `shared` agent sits in every domain) comes once, at the first. */
+  function rowsUnder(path, chipped = true) {
+    const [top, sub] = path;
+    const out = [];
+    const seen = new Set();
+    for (const g of (top ? [top] : TOPS).flatMap((t) => groupsOf(t, chipped))) {
+      if (sub != null && g.at[1] !== sub) continue;
+      for (const x of g.items) {
+        const id = rowId(g.kind, x);
+        if (!seen.has(id)) { seen.add(id); out.push({ kind: g.kind, x, at: g.at }); }
+      }
+    }
+    return out;
+  }
+  /** The folder holding a row: [top, domain] or [top] (one group — or not listed yet). */
+  function folderOf(kind, key) {
+    const top = KIND_TOP[kind];
+    if (!top) return [];
+    const hit = rowsUnder([top], false).find((r) => r.kind === kind && (kind === 'workflow' ? r.x.id : r.x.key) === key);
+    return hit ? [...hit.at] : [top];
+  }
+  const folderLabel = (path) => (!path.length ? ROOT_LABEL : path.length === 1 ? TOP_LABEL[path[0]]
+    : path[1] === FLOW ? 'Flow' : path[1] === ARCHIVED ? 'Archived' : path[1]);
+  /** "Agents › coding": the folder a filter result lives in. */
+  const whereLabel = (path) => path.map((_, i) => folderLabel(path.slice(0, i + 1))).join(' › ');
+  const nounOf = (path) => (!path.length ? 'items' : path[1] === FLOW ? 'flow cards' : path[1] === ARCHIVED ? 'archived' : NOUN[path[0]]);
+
+  // ── navigation ─────────────────────────────────────────────────────────────
+  let navAt = -Infinity;
+  /** Show a folder. Leaving a top folder resets its chip; every move clears the query (the filter box stays open). */
+  function go(path, focusKey = null) {
+    const next = path.slice(0, 2);
+    if (next[0] !== st.path[0]) st.chip = 'all';
+    st.path = next;
+    st.query = '';
+    navAt = Date.now();
+    render(focusKey);
+  }
+  /** A folder row, the back row and a crumb move on one click and repaint the card, so a double-click's second press
+   *  lands on whatever row now sits under the pointer (it would open a workflow, go up twice, or move focus to <body>,
+   *  where the canvas takes Delete). Swallow it; keyboard activation (detail 0) and the filter's word select stay. */
+  const swallowSecondPress = (ev) => {
+    if (!(ev.detail > 1) || Date.now() - navAt > 500) return;
+    if (ev.target && ev.target.closest && ev.target.closest('input')) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+  };
+  host.addEventListener('mousedown', swallowSecondPress, true);
+  host.addEventListener('click', swallowSecondPress, true);
+  /** Up to `depth` (0 = Home): focus lands on the folder row this move came out of. */
+  function up(depth) {
+    const from = where();
+    go(from.slice(0, depth), `folder:${from.slice(0, depth + 1).join('/')}`);
+  }
 
   // ── chrome ─────────────────────────────────────────────────────────────────
   function header() {
@@ -114,14 +225,52 @@ export function createLibrary({ doc, host, actions }) {
     head.append(filterBtn, close);
     return head;
   }
-  function filterBox() {
+  /** Library › Agents › coding: every crumb but the last walks up; the right side holds the top folder's "+". */
+  function crumbs(path) {
+    const bar = h('nav', 'wfl-crumbs');
+    bar.setAttribute('aria-label', 'Library folders');
+    const trail = h('div', 'wfl-trail');
+    for (let depth = 0; depth <= path.length; depth += 1) {
+      const label = folderLabel(path.slice(0, depth));
+      if (depth) { const sep = svg(SEP_GLYPH); sep.classList.add('wfl-csep'); trail.appendChild(sep); }
+      if (depth === path.length) {
+        const cur = h('span', 'wfl-crumb is-current', label);
+        cur.setAttribute('aria-current', 'location');
+        trail.appendChild(cur);
+        break;
+      }
+      const b = h('button', 'wfl-crumb', label);
+      b.type = 'button';
+      b.dataset.crumb = String(depth);
+      b.dataset.focusKey = `crumb:${depth}`;
+      if (!depth) b.id = 'wfl-crumb-home';           // the tour rings it from inside a folder (Home's rows are gone)
+      b.addEventListener('click', () => up(depth));
+      trail.appendChild(b);
+    }
+    bar.appendChild(trail);
+    const top = path[0];
+    if (top === 'agents' || top === 'scripts') {
+      const agents = top === 'agents';
+      const nb = h('button', 'wfv-icon-btn wfl-new');
+      nb.type = 'button';
+      nb.id = agents ? 'wfl-new-agent' : 'wfl-new-script';
+      nb.title = agents ? 'New agent' : 'New script';
+      nb.setAttribute('aria-label', nb.title);
+      nb.appendChild(svg(PLUS_GLYPH));
+      nb.addEventListener('click', () => act(agents ? 'newAgent' : 'newScript'));
+      bar.appendChild(nb);
+    }
+    return bar;
+  }
+  function filterBox(path) {
     const box = h('div', 'wfl-search');
     box.hidden = !st.filterOpen;
     const input = h('input', 'wfl-filter-input');
     input.id = 'wfl-filter';
     input.type = 'search';
-    input.placeholder = `Filter ${NOUN[st.tab]}…`;
-    input.setAttribute('aria-label', `Filter ${NOUN[st.tab]}`);
+    const what = path.length ? nounOf(path) : 'the Library';
+    input.placeholder = `Filter ${what}…`;
+    input.setAttribute('aria-label', `Filter ${what}`);
     input.value = st.query;
     // Typing repaints the rows only: the input stays, so the caret and an IME composition survive.
     input.addEventListener('input', () => { st.query = input.value; repaintRows(); });
@@ -134,63 +283,43 @@ export function createLibrary({ doc, host, actions }) {
     box.appendChild(input);
     return box;
   }
-  function tabs() {
-    const seg = h('div', 'wfl-seg');
-    seg.setAttribute('role', 'tablist');
-    seg.setAttribute('aria-label', 'Library');
-    // The count is the registry (not the pinned flow cards, not the filter).
-    const counts = { agents: st.data.agents.length, scripts: st.data.scripts.length, workflows: st.data.workflows.length };
-    for (const t of TABS) {
-      const b = h('button', 'wfl-tab');
-      b.type = 'button';
-      b.id = `wfl-tab-${t}`;
-      b.dataset.tab = t;
-      b.setAttribute('role', 'tab');
-      b.setAttribute('aria-selected', st.tab === t ? 'true' : 'false');
-      b.tabIndex = st.tab === t ? 0 : -1;
-      b.append(doc.createTextNode(TAB_LABEL[t]), h('span', 'wfl-n mono', String(counts[t])));
-      b.addEventListener('click', () => { open(t); });
-      b.addEventListener('keydown', (ev) => {
-        if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
-        ev.preventDefault();
-        const i = TABS.indexOf(st.tab) + (ev.key === 'ArrowRight' ? 1 : -1);
-        open(TABS[(i + TABS.length) % TABS.length], `wfl-tab-${TABS[(i + TABS.length) % TABS.length]}`);
-      });
-      seg.appendChild(b);
-    }
-    return seg;
-  }
-  function tools() {
+  function chipRow() {
     const row = h('div', 'wfl-tools');
-    const chip = (key, text, pressed, onClick) => {
-      const c = h('button', 'wfl-chip', text);
-      c.type = 'button';
-      c.dataset.chip = key;
-      c.dataset.focusKey = `chip:${key}`;            // a repaint returns focus here, never to <body> (where the canvas takes Delete)
-      c.setAttribute('aria-pressed', pressed ? 'true' : 'false');
-      c.addEventListener('click', onClick);
-      return c;
-    };
-    if (st.tab === 'workflows') {
-      const ds = new Map();
-      for (const w of st.data.workflows) { const d = w.domain || 'general'; ds.set(d, (ds.get(d) || 0) + 1); }
-      const order = [...ds.keys()].sort((a, b) => (a === 'shared') - (b === 'shared') || (a === 'general') - (b === 'general') || a.localeCompare(b));
-      row.appendChild(chip('all', `All ${st.data.workflows.length}`, st.domain === 'all', () => { st.domain = 'all'; render(); }));
-      for (const d of order) row.appendChild(chip(d, `${d} ${ds.get(d)}`, st.domain === d, () => { st.domain = d; render(); }));
-      return row;
-    }
     for (const [k, t] of [['all', 'All'], ['builtin', 'Built-in'], ['yours', 'Yours']]) {
-      row.appendChild(chip(k, t, st.chip === k, () => { st.chip = k; render(); }));
+      const c = h('button', 'wfl-chip', t);
+      c.type = 'button';
+      c.dataset.chip = k;
+      c.dataset.focusKey = `chip:${k}`;            // a repaint returns focus here, never to <body> (where the canvas takes Delete)
+      c.setAttribute('aria-pressed', st.chip === k ? 'true' : 'false');
+      c.addEventListener('click', () => { st.chip = k; render(); });
+      row.appendChild(c);
     }
-    const nb = h('button', 'wfv-btn wfl-new', st.tab === 'agents' ? '+ New agent' : '+ New script');
-    nb.type = 'button';
-    nb.id = st.tab === 'agents' ? 'wfl-new-agent' : 'wfl-new-script';
-    nb.addEventListener('click', () => act(st.tab === 'agents' ? 'newAgent' : 'newScript'));
-    row.appendChild(nb);
     return row;
   }
 
   // ── rows ───────────────────────────────────────────────────────────────────
+  function folderRow(path, count) {
+    const key = path.join('/');
+    const row = h('button', 'wfl-folder');
+    row.type = 'button';
+    row.dataset.folder = key;
+    row.dataset.focusKey = `folder:${key}`;
+    row.append(svg(FOLDER_GLYPH), h('span', 'wfl-fname', folderLabel(path)), h('span', 'wfl-fn mono', String(count)));
+    row.addEventListener('click', () => go(path, 'wfl-up'));     // entering a folder focuses its back row
+    return row;
+  }
+  /** "↰ <parent>": the first row of every folder below Home. */
+  function upRow(path) {
+    const parent = path.slice(0, -1);
+    const label = folderLabel(parent);
+    const b = h('button', 'wfl-up');
+    b.type = 'button';
+    b.id = 'wfl-up';
+    b.setAttribute('aria-label', `Back to ${label}`);
+    b.append(svg(UP_GLYPH), h('span', 'wfl-fname', label));
+    b.addEventListener('click', () => up(parent.length));
+    return b;
+  }
   function tile(fam, glyph, viewBox) {
     const t = h('span', `wfl-ic h-${fam}`);
     t.appendChild(svg(glyph, viewBox));
@@ -225,7 +354,8 @@ export function createLibrary({ doc, host, actions }) {
     });
     return row;
   }
-  function itemRow({ id, kind, key, name, sub, chips = [], fam, glyph, viewBox, draggable, detail }) {
+  /** `at`: the folder path a filter result lives in (tagged under its port line); null in a folder listing. */
+  function itemRow({ id, kind, key, name, sub, chips = [], fam, glyph, viewBox, draggable, detail, at = null }) {
     const item = h('div', `wfl-item${st.flash === id ? ' is-flash' : ''}`);
     item.dataset.item = id;
     const row = h('div', 'wfl-row');
@@ -251,6 +381,7 @@ export function createLibrary({ doc, host, actions }) {
     l1.appendChild(h('span', 'wfl-name', name));
     for (const c of chips) l1.appendChild(h('span', `wfl-qchip${c.mono ? ' mono' : ''}`, c.text));
     txt.append(l1, h('span', 'wfl-l2 mono', sub));
+    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
     main.append(tile(fam, glyph, viewBox), txt);
     const toggle = () => { if (st.expanded.has(id)) st.expanded.delete(id); else st.expanded.add(id); render(id); };
     main.addEventListener('click', toggle);
@@ -262,7 +393,7 @@ export function createLibrary({ doc, host, actions }) {
       add.title = 'Add to canvas';
       add.setAttribute('aria-label', `Add ${name} to canvas`);
       add.dataset.focusKey = `${id}:add`;
-      add.appendChild(svg('<path d="M12 6v12M6 12h12"/>'));
+      add.appendChild(svg(PLUS_GLYPH));
       add.addEventListener('click', () => act('addToCanvas', key ? { kind, key } : { kind }));
       row.appendChild(add);
     }
@@ -272,7 +403,7 @@ export function createLibrary({ doc, host, actions }) {
   }
 
   const pluginOf = (x) => (typeof x.origin === 'string' && x.origin.startsWith('plugin:') ? x.origin : '');
-  function agentItem(a) {
+  function agentItem(a, at = null) {
     // Workspace-only agents run only inside a workspace scan: the palette never offered them and the run
     // assembler refuses them (WORKSPACE_ONLY_AGENT) — listed, never placed.
     const wsOnly = a.scope === 'workspace-only';
@@ -284,7 +415,7 @@ export function createLibrary({ doc, host, actions }) {
     if (wsOnly) chips.push({ text: 'workspace only' });
     else if (!placeable) chips.push({ text: 'not placeable' });
     const id = `agent:${a.key}`;
-    return itemRow({ id, kind: 'agent', key: a.key, name: a.displayName || a.key, sub: portLineOf(a), chips,
+    return itemRow({ id, kind: 'agent', key: a.key, name: a.displayName || a.key, sub: portLineOf(a), chips, at,
       fam: a.color || 'blue', glyph: safeAgentIcon(a) || '', viewBox: '0 0 24 24', draggable: placeable,
       detail: () => {
         const d = h('div', 'wfl-detail');
@@ -302,7 +433,7 @@ export function createLibrary({ doc, host, actions }) {
         return d;
       } });
   }
-  function scriptItem(s) {
+  function scriptItem(s, at = null) {
     const user = s.origin === 'user';
     const placeable = s.placeable !== false;
     const chips = [{ text: s.runtime || 'script', mono: true }];
@@ -314,7 +445,7 @@ export function createLibrary({ doc, host, actions }) {
     if (s.runtime === 'python' && probe && probe.ok === false) chips.push({ text: 'python not found' });   // a notice, never a block
     const id = `script:${s.key}`;
     return itemRow({ id, kind: 'script', key: s.key, name: s.displayName || s.key,
-      sub: s.ports === 'config' ? 'in/out (per card)' : portLineOf(s), chips,
+      sub: s.ports === 'config' ? 'in/out (per card)' : portLineOf(s), chips, at,
       fam: s.color || 'amber', glyph: safeAgentIcon(s) || SCRIPT_GLYPH, viewBox: '0 0 24 24', draggable: placeable,
       detail: () => {
         const d = h('div', 'wfl-detail');
@@ -339,11 +470,11 @@ export function createLibrary({ doc, host, actions }) {
         return d;
       } });
   }
-  function flowItem(f) {
+  function flowItem(f, at = null) {
     const placed = new Set(st.data.placedKinds || []);
     const single = (f.kind === 'task' || f.kind === 'end') && placed.has(f.kind);
     const id = `flow:${f.kind}`;
-    const item = itemRow({ id, kind: f.kind, key: null, name: f.label, sub: FLOW_PORT_LINE[f.kind] || '',
+    const item = itemRow({ id, kind: f.kind, key: null, name: f.label, sub: FLOW_PORT_LINE[f.kind] || '', at,
       chips: single ? [{ text: '1 placed' }] : [], fam: 'flow', glyph: FLOW_ICON[f.kind], viewBox: '0 0 20 20', draggable: !single,
       detail: () => {
         const d = h('div', 'wfl-detail');
@@ -354,24 +485,7 @@ export function createLibrary({ doc, host, actions }) {
     if (single) item.classList.add('is-placed');
     return item;
   }
-  function group(id, label, items, { pinned = false } = {}) {
-    const g = h('section', 'wfl-group');
-    g.dataset.group = id;
-    const collapsed = st.collapsed.has(id) && !q();
-    const head = h('button', 'wfl-gh');
-    head.type = 'button';
-    head.dataset.focusKey = `group:${id}`;
-    head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    head.appendChild(svg('<path d="M6 9l6 6 6-6"/>'));
-    head.append(h('span', 'wfl-gl', label), h('span', 'wfl-gn mono', String(items.length)));
-    if (pinned) head.appendChild(h('span', 'wfl-qchip', 'pinned'));
-    head.addEventListener('click', () => { if (st.collapsed.has(id)) st.collapsed.delete(id); else st.collapsed.add(id); render(`group:${id}`); });
-    g.appendChild(head);
-    if (!collapsed) for (const it of items) g.appendChild(it);
-    return g;
-  }
-
-  function workflowItem(w) {
+  function workflowItem(w, at = null) {
     const v2 = w.version === 2;
     const item = h('div', `wfl-item wfl-wf${st.flash === `workflow:${w.id}` ? ' is-flash' : ''}${v2 ? '' : ' is-legacy'}`);
     item.dataset.id = w.id;
@@ -396,6 +510,7 @@ export function createLibrary({ doc, host, actions }) {
     if (st.data.newIds && st.data.newIds.has(w.id)) l3.appendChild(h('span', 'wfl-qchip is-new', 'NEW'));
     if (st.data.openId === w.id) l3.appendChild(h('span', 'wfl-qchip is-open', 'Open'));
     if (l3.childNodes.length) txt.appendChild(l3);
+    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
     main.append(thumb, txt);
     if (v2) {
       main.addEventListener('click', () => act('openWorkflow', w.id));
@@ -417,19 +532,51 @@ export function createLibrary({ doc, host, actions }) {
       del.type = 'button';
       del.title = 'Delete pipeline';
       del.setAttribute('aria-label', `Delete "${w.name || w.id}"`);
-      del.appendChild(svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'));
+      del.appendChild(svg(TRASH_GLYPH));
       del.addEventListener('click', () => act('deleteWorkflow', w));
       tail.appendChild(del);
     }
     item.appendChild(tail);
     return item;
   }
+  /** An archived workflow (Workflows › Archived): its name and id, deleted for good from its own button (app.js asks first).
+   *  Never `.wfl-wf` — the tour's fallback "any workflow row" must not ring it. */
+  function archivedItem(w, at = null) {
+    const item = h('div', 'wfl-item wfl-arch');
+    item.dataset.item = `archived:${w.id}`;
+    const main = h('div', 'wfl-main');
+    const txt = h('span', 'wfl-txt');
+    const l1 = h('span', 'wfl-l1');
+    l1.appendChild(h('span', 'wfl-name', w.name || w.id));
+    txt.append(l1, h('span', 'wfl-l2 mono', w.id));
+    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
+    main.appendChild(txt);
+    item.appendChild(main);
+    const tail = h('span', 'wfl-wf-actions');
+    const del = h('button', 'wfv-icon-btn wfl-del');
+    del.type = 'button';
+    del.title = 'Delete permanently';
+    del.setAttribute('aria-label', `Delete "${w.name || w.id}" permanently`);
+    del.dataset.focusKey = `archived:${w.id}:del`;
+    del.appendChild(svg(TRASH_GLYPH));
+    del.addEventListener('click', () => act('deleteArchived', w));
+    tail.appendChild(del);
+    item.appendChild(tail);
+    return item;
+  }
+  function rowEl(kind, x, at = null) {
+    if (kind === 'agent') return agentItem(x, at);
+    if (kind === 'script') return scriptItem(x, at);
+    if (kind === 'flow') return flowItem(x, at);
+    if (kind === 'workflow') return workflowItem(x, at);
+    return archivedItem(x, at);
+  }
 
   // ── render ─────────────────────────────────────────────────────────────────
   function listBody() {
+    const path = where();
+    const [top, sub] = path;
     const list = h('div', 'wfl-list');
-    let visible = 0;
-    const empty = () => list.appendChild(h('p', 'wfl-empty', q() ? `No ${NOUN[st.tab]} match “${st.query.trim()}”` : `No ${NOUN[st.tab]}`));
     if (st.data.loadError) {
       const err = h('p', 'wfl-empty', st.data.loadError);
       if (typeof st.data.retry === 'function') {
@@ -440,77 +587,78 @@ export function createLibrary({ doc, host, actions }) {
       }
       list.appendChild(err);
     }
-    if (st.tab === 'agents') {
-      const rows = agentRows();
-      for (const g of domainGroups(rows)) list.appendChild(group(g.id, g.label, g.items.map(agentItem)));
-      visible = rows.length;
-      const flows = flowRows();
-      if (flows.length) list.appendChild(group('flow', 'Flow', flows.map(flowItem), { pinned: true }));
-      if (!rows.length && !flows.length) empty();
-    } else if (st.tab === 'scripts') {
-      const rows = scriptRows();
-      for (const g of domainGroups(rows)) list.appendChild(group(g.id, g.label, g.items.map(scriptItem)));
-      visible = rows.length;
-      if (!rows.length) empty();
-    } else {
-      const rows = workflowRows();
-      visible = rows.length;
-      for (const w of rows) list.appendChild(workflowItem(w));
-      if (!rows.length) empty();
-      const arch = st.data.archived || [];
-      if (arch.length) {
-        const g = h('section', 'wfl-group wfl-archived');
-        g.appendChild(h('div', 'wfl-gh', `Archived (${arch.length})`));
-        for (const w of arch) {
-          const c = h('button', 'wfl-chip', `${w.name || w.id} ×`);
-          c.type = 'button';
-          c.title = 'Delete permanently';
-          c.addEventListener('click', () => act('deleteArchived', w));
-          g.appendChild(c);
-        }
-        list.appendChild(g);
-      }
+    if (q()) {
+      // A query lists every match under this folder as one flat list, each row tagged with the folder holding it.
+      const hits = rowsUnder(path).filter((r) => HIT[r.kind](r.x));
+      for (const r of hits) list.appendChild(rowEl(r.kind, r.x, r.at));
+      if (!hits.length) list.appendChild(h('p', 'wfl-empty', `No ${nounOf(path)} match “${st.query.trim()}”`));
+      return { list, count: hits.length };
     }
-    return { list, visible };
+    if (!top) {
+      for (const t of TOPS) {
+        const row = folderRow([t], dataOf(t).length);    // the registry's count, as the tabs had
+        row.dataset.tab = t;                             // the tour and the proofs find a top folder by it
+        list.appendChild(row);
+      }
+    } else {
+      list.appendChild(upRow(path));
+      for (const g of groupsOf(top)) {
+        if (sub != null && g.at[1] !== sub) continue;
+        if (sub == null && g.at.length === 2) { if (g.items.length) list.appendChild(folderRow(g.at, g.items.length)); }
+        else for (const x of g.items) list.appendChild(rowEl(g.kind, x));
+      }
+      if (!list.querySelector('.wfl-item, .wfl-folder')) list.appendChild(h('p', 'wfl-empty', `No ${nounOf(path)}`));
+    }
+    const rows = rowsUnder(path);
+    const pinned = sub === FLOW || sub === ARCHIVED;
+    return { list, count: pinned ? rows.length : rows.filter((r) => !PINNED_KINDS.has(r.kind)).length };
   }
 
   function repaintRows() {
     const oldList = host.querySelector('.wfl-list');
     const oldFoot = host.querySelector('.wfl-foot');
     if (!oldList || !oldFoot) { render('wfl-filter'); return; }
-    const { list, visible } = listBody();
+    const { list, count } = listBody();
     oldList.replaceWith(list);
-    oldFoot.textContent = `${visible} ${NOUN[st.tab]}`;
+    oldFoot.textContent = `${count} ${nounOf(where())}`;
   }
 
   /** Full repaint; focus returns to the element that had it (by id or data-focus-key). */
   function render(focusKey = null) {
     const active = doc.activeElement && host.contains(doc.activeElement) ? doc.activeElement : null;
     const want = focusKey || (active && (active.id || active.dataset.focusKey)) || null;
+    st.path = where();                                   // a folder a refresh emptied gives way to its parent
+    const at = st.path.join('/') || 'home';
     const prevList = host.querySelector('.wfl-list');
-    const keepTop = prevList && host.dataset.tab === st.tab ? prevList.scrollTop : 0;   // a data refresh never scrolls the list away
-    host.dataset.tab = st.tab;
+    const keepTop = prevList && host.dataset.path === at ? prevList.scrollTop : 0;   // a data refresh never scrolls the list away
+    host.dataset.tab = st.path[0] || 'home';
+    host.dataset.path = at;
     host.dataset.open = st.open ? 'true' : 'false';
-    const { list, visible } = listBody();
-    const foot = h('div', 'wfl-foot', `${visible} ${NOUN[st.tab]}`);
-    host.replaceChildren(header(), filterBox(), tabs(), tools(), list, foot);
+    const { list, count } = listBody();
+    const foot = h('div', 'wfl-foot', `${count} ${nounOf(st.path)}`);
+    const chips = st.path[0] === 'agents' || st.path[0] === 'scripts' ? [chipRow()] : [];
+    host.replaceChildren(header(), crumbs(st.path), filterBox(st.path), ...chips, list, foot);
     if (keepTop) list.scrollTop = keepTop;
     if (want) {
       // Never build a selector from a key: `#agent:planner` is an INVALID selector (Chrome throws a SyntaxError
       // after the repaint, focus falls to <body>, and the canvas then takes Delete/arrows). jsdom accepts it.
-      const byId = doc.getElementById(want);
+      const own = (id) => { const n = doc.getElementById(id); return n && host.contains(n) ? n : null; };
       const keyed = (k) => [...host.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === k);
-      let el = (byId && host.contains(byId) ? byId : null) || keyed(want);
-      // The control is gone (a placed Task / End loses its "+" and its Add to canvas, an opener's row was deleted):
-      // its row (the key up to its last ':'), else the open tab — never <body>.
+      let el = own(want) || keyed(want);
+      // The control is gone (a placed Task / End loses its "+" and its Add to canvas, an opener's row was deleted or is
+      // in another folder now): its row (the key up to its last ':'), else the back row, else Home's first folder, else
+      // the filter button — never <body>.
       for (let k = want; !el && k.lastIndexOf(':') > 0;) { k = k.slice(0, k.lastIndexOf(':')); el = keyed(k); }
-      if (!el) el = doc.getElementById(`wfl-tab-${st.tab}`);
+      if (!el) el = own('wfl-up') || host.querySelector('.wfl-folder') || own('wfl-filter-btn');
       if (el && el.focus) el.focus();
     }
   }
 
+  /** A top folder (the shell menu's Open… / Agent… / Script…, #workflows/agents|scripts). Already inside it — in one of
+   *  its subfolders too — stays put: a sheet closing back to its tab address must not repaint the opener's row away
+   *  (focus would fall to <body>, where the canvas takes Delete). */
   function open(tab, focusKey = null) {
-    if (TABS.includes(tab) && tab !== st.tab) { st.tab = tab; st.query = ''; st.chip = 'all'; st.domain = 'all'; }
+    if (TOPS.includes(tab) && st.path[0] !== tab) { st.path = [tab]; st.query = ''; st.chip = 'all'; }
     render(focusKey);
   }
 
@@ -518,15 +666,24 @@ export function createLibrary({ doc, host, actions }) {
   return {
     render,
     open,
+    /** Any folder: [] Home, [top], [top, domain | FLOW | ARCHIVED]; one that does not exist shows its parent. */
+    openFolder(path, focusKey = null) {
+      const p = (Array.isArray(path) ? path : []).filter((s) => typeof s === 'string').slice(0, 2);
+      if (p.length && !TOPS.includes(p[0])) return;
+      go(p, focusKey);
+    },
+    folderOf,
     setData(patch) { st.data = { ...st.data, ...patch }; render(); },
     setOpen(v) { st.open = Boolean(v); host.dataset.open = st.open ? 'true' : 'false'; host.hidden = false; },
     isOpen: () => st.open,
-    tab: () => st.tab,
-    /** After a save / duplicate / import: show the row (tab, no filter, expanded) and wash it for 1.6 s. */
+    /** The top folder on screen ('home' at Home). */
+    tab: () => where()[0] || 'home',
+    path: () => where(),
+    /** After a save / duplicate / import: show the row (its folder AND domain subfolder, no filter, no chip, expanded)
+     *  and wash it for 1.6 s. */
     highlight(kind, key) {
-      const tab = kind === 'workflow' ? 'workflows' : kind === 'script' ? 'scripts' : 'agents';
-      st.tab = tab; st.query = ''; st.chip = 'all'; st.domain = 'all'; st.filterOpen = false;
-      st.collapsed.clear();                           // a folded group would hide the row being shown
+      st.chip = 'all'; st.query = ''; st.filterOpen = false;
+      st.path = folderOf(kind, key);
       const id = `${kind}:${key}`;
       if (kind !== 'workflow') st.expanded.add(id);
       st.flash = id;
@@ -537,6 +694,11 @@ export function createLibrary({ doc, host, actions }) {
       win.clearTimeout(flashT);
       flashT = win.setTimeout(() => { st.flash = ''; const n = [...host.querySelectorAll('.wfl-item')].find((x) => x.dataset.item === id); if (n) n.classList.remove('is-flash'); }, 1600);
     },
-    destroy() { win.clearTimeout(flashT); host.replaceChildren(); },
+    destroy() {
+      win.clearTimeout(flashT);
+      host.removeEventListener('mousedown', swallowSecondPress, true);
+      host.removeEventListener('click', swallowSecondPress, true);
+      host.replaceChildren();
+    },
   };
 }

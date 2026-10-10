@@ -855,7 +855,10 @@ const SHOTS = [
   { name: 'actions', level: 'advanced', hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}/details/actions`,
     prep: () => until2("document.querySelector('.act-card .act-log, .act-card pre')", 'action log') },
   { name: 'composer', level: 'advanced', hash: () => 'workflows',
-    prep: async () => { await until2('document.querySelector(\'#wfv-library [data-tab="workflows"]\')', 'library tabs'); await click('#wfv-library [data-tab="workflows"]');
+    prep: async () => { await until2('window.__wfv && window.__wfv.library()', 'the Library'); await ev("(()=>{window.__wfv.library().openFolder([]);return 1;})()");
+      await until2('document.querySelector(\'#wfv-library [data-tab="workflows"]\')', 'library folders'); await click('#wfv-library [data-tab="workflows"]');
+      // Default sits in its domain's folder whenever Workflows holds more than one domain.
+      await ev("(()=>{const p=window.__wfv.library().folderOf('workflow','wf_default');const e=p.length>1&&[...document.querySelectorAll('#wfv-library .wfl-folder')].find((f)=>f.dataset.folder===p.join('/'));if(e)e.click();return 1;})()");
       await until2('document.querySelector(\'#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main\')', 'workflow list'); await click('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main');
       await until2("document.querySelectorAll('#wfv-canvas .gv-world .node').length >= 4", 'agent nodes'); } },
   { name: 'stats', level: 'advanced', hash: () => 'stats',
@@ -867,7 +870,9 @@ const SHOTS = [
       await until2("document.querySelector('#tm-body .tm-kpis') && !document.querySelector('#tm-sync .is-busy')", 'team metrics range'); } },
   { name: 'workspace-map', level: 'advanced', hash: () => `workspaces/${ws.id}/map`,
     prep: () => until2("document.querySelector('#ws-detail .pd-sec[data-sec=\"map\"] svg.wm-graph')", 'map graph') },
-  { name: 'scripts', level: 'expert', hash: () => 'workflows/scripts', prep: () => until2("document.querySelectorAll('#wfv-library .wfl-item[data-item^=\"script:\"]').length >= 5", 'script rows') },
+  { name: 'scripts', level: 'expert', hash: () => 'workflows/scripts',
+    prep: async () => { await until2("document.querySelector('#wfv-library .wfl-folder[data-folder=\"scripts/general\"]')", 'script folders'); await click('#wfv-library .wfl-folder[data-folder="scripts/general"]');
+      await until2("document.querySelectorAll('#wfv-library .wfl-item[data-item^=\"script:\"]').length >= 5", 'script rows'); } },
   // The sheet is drag-resizable and remembers its size; a tall one shows the whole chat.
   { name: 'ask-worca', level: 'simple', hash: () => 'new',
     before: `localStorage.setItem('worca-cc.ask.thread', ${JSON.stringify(askThread.id)});localStorage.setItem('worca-cc.ask.size', '{"w":960,"h":1090}')`,

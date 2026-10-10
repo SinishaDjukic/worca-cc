@@ -43,7 +43,7 @@ const GITDIFF = SCRIPTS.find((s) => s.key === 'gitDiff');
 const tick = async (n = 1) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
 async function go(w, h) { w.location.hash = h; w.dispatchEvent(new w.Event('hashchange')); for (let i = 0; i < 6; i += 1) await tick(); }
 
-async function boot({ agentsFail = false, workflows = null, del = null } = {}) {
+async function boot({ agentsFail = false, workflows = null, del = null, onboarding = null } = {}) {
   const rows = workflows || [DEFAULT_ROW, V2_ROW, V1_ROW];
   const deletes = [];
   const importBodies = [];
@@ -75,6 +75,7 @@ async function boot({ agentsFail = false, workflows = null, del = null } = {}) {
       if (sk[2] === '/cases') return json({ cases: [], userCases: [], casesWritable: true });
       return json({ meta, source: '// x\n', sourceWin32: '', sourcePath: '/x/' + meta.key, sourceTruncated: false, cases: [], userCases: [], casesWritable: true });
     }
+    if (onboarding && path.endsWith('/api/onboarding')) return json(onboarding);   // the Getting started status (tours)
     if (path.endsWith('/api/ask/models')) return json({ default: { model: 'claude-opus-5-5', effort: 'high' }, models: [] });
     if (path.endsWith('/api/ask/threads') && method === 'POST') return json({ thread: { id: 'ask_0000abcd', mode: 'composer', title: null } }, 201);
     if (/\/api\/ask\/threads\/[^/]+\/messages$/.test(path) && method === 'POST') return json({ userMessageId: 'askm_0000aaaa', assistantMessageId: 'askm_0000bbbb' }, 202);
@@ -152,6 +153,7 @@ test('MAJ-16: an agent mutation made off the view refreshes the Library and port
   const { window: win } = await boot();
   await go(win, 'workflows');
   const doc = win.document;
+  win.__wfv.library().openFolder(['agents', 'coding']);   // planner (and, later, tester) sit in the coding folder
   assert.ok(doc.querySelector('#wfv-library .wfl-item[data-item="agent:planner"]'), 'precondition: planner in the Library');
   assert.equal(doc.querySelector('#wfv-library .wfl-item[data-item="agent:tester"]'), null, 'precondition: no tester yet');
   assert.ok(win.__gv().v.ports({ id: 'n1', kind: 'agent', key: 'planner' }).inputs.some((p) => p.id === 'revise'),
@@ -212,6 +214,7 @@ test('MAJ-16: re-entry refetches the registry only after an invalidation, and a 
       assert.match(doc.querySelector('#wfv-library').textContent, /Couldn.t load agents/, 'the reload failed');
       win.__failAgents(false);
       await reenterView(win);
+      win.__wfv.library().openFolder(['agents', 'coding']);
       assert.ok(doc.querySelector('#wfv-library .wfl-item[data-item="agent:tester"]'), 'the retry lands on the next re-entry');
     } },
   ]);
@@ -281,13 +284,14 @@ test('MAJ-16: after a registry reload the OPEN canvas is re-validated against th
   assert.equal(doc.getElementById('wfv-save').disabled, true, 'Save is disabled instead of 422ing later');
 });
 
-test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open with three tabs', async () => {
+test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open at Home with three folders', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows');
   const doc = w.document;
   assert.ok(doc.body.classList.contains('view-workflows'));
   assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, 2);
-  assert.deepEqual([...doc.querySelectorAll('#wfv-library [role="tab"]')].map((t) => t.dataset.tab), ['agents', 'scripts', 'workflows']);
+  assert.equal(doc.getElementById('wfv-library').dataset.tab, 'home');
+  assert.deepEqual([...doc.querySelectorAll('#wfv-library .wfl-folder')].map((t) => t.dataset.tab), ['agents', 'scripts', 'workflows']);
   assert.equal(typeof w.__gv, 'function');
 });
 
@@ -743,7 +747,7 @@ test('a Library Delete on an agent confirms with the old text, deletes, toasts, 
     ? { ...r, json: async () => { const v = await r.json(); return { ...v, agents: v.agents.filter((a) => a.key !== 'docsWriter') }; } } : r));
   try {
     const lib = w.__wfv.library();
-    lib.open('agents');
+    lib.openFolder(['agents', 'general']);                 // docsWriter's domain folder
     w.document.querySelector('.wfl-item[data-item="agent:docsWriter"] .wfl-main').click();
     [...w.document.querySelectorAll('.wfl-item[data-item="agent:docsWriter"] .wfl-actions button')].find((b) => b.textContent === 'Delete').click();
     await tick();
@@ -782,6 +786,7 @@ test('a Library Duplicate on a script saves <key>Copy, toasts, and shows the new
 test('drag-free add: a Library "+" spawns the agent on the canvas and selects it', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows/agents');
+  w.__wfv.library().openFolder(['agents', 'coding']);
   const c = w.__gv().c;
   const n0 = c.template().nodes.length;
   w.document.querySelector('.wfl-item[data-item="agent:planner"] .wfl-add').click();
@@ -886,6 +891,7 @@ test('Duplicate on the agent sheet (View on a built-in) moves the sheet to the c
 test('the sheet takes focus and the view behind it goes inert; Escape closes it and focus returns to the Library action', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows/agents');
+  w.__wfv.library().openFolder(['agents', 'coding']);
   const doc = w.document;
   const behind = ['wfv-stage', 'wfv-library'];
   const esc = () => doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
@@ -932,6 +938,7 @@ test('deleting the agent its sheet shows hands focus to the Library toggle, neve
   globalThis.fetch = (u, init) => real(u, init).then((r) => (/\/api\/agents(\?|$)/.test(String(u)) && requests.some((q) => q.method === 'DELETE')
     ? new Promise((done) => setTimeout(() => done({ ...r, json: async () => { const v = await r.json(); return { ...v, agents: v.agents.filter((a) => a.key !== 'docsWriter') }; } }), 30)) : r));
   try {
+    w.__wfv.library().openFolder(['agents', 'general']);
     doc.querySelector('.wfl-item[data-item="agent:docsWriter"] .wfl-main').click();
     const edit = [...doc.querySelectorAll('.wfl-item[data-item="agent:docsWriter"] .wfl-actions button')].find((b) => b.textContent === 'Edit');
     edit.focus();
@@ -1020,8 +1027,8 @@ test('an archived workflow is deleted only after a confirm: it is permanent, and
     ? json({ workflows: requests.some((q) => q.method === 'DELETE' && q.url.endsWith('/wf_arch')) ? [] : [ARCH] }) : real(u, init));
   try {
     await go(w, 'workflows');
-    w.__wfv.library().open('workflows');
-    const chip = () => w.document.querySelector('#wfv-library .wfl-archived .wfl-chip');
+    w.__wfv.library().openFolder(['workflows', '_archived']);   // the Archived folder (library.mjs ARCHIVED)
+    const chip = () => w.document.querySelector('#wfv-library .wfl-arch .wfl-del');
     chip().click();
     await tick();
     assert.equal(w.document.getElementById('confirm-modal').classList.contains('hidden'), false, 'it asks first');
@@ -1582,12 +1589,12 @@ test('review M1: after a zoom-menu pick, a toolbar toggle or the Library End "+"
   assert.equal(doc.activeElement, zoom, 'the zoom trigger');
   delOnFocus();
   assert.ok(c.template().nodes.some((n) => n.id === end.id), 'a zoom pick then Delete: End stays');
-  // Delete End, then place it again from the Library's Flow group.
+  // Delete End, then place it again from the Library's Flow folder.
   c.select({ kind: 'node', id: end.id });
   c.deleteSelection();                                    // the user's own delete (applyOps refuses a batch losing End)
   assert.equal(c.template().nodes.some((n) => n.kind === 'end'), false);
   await tick(2);
-  w.__wfv.library().open('agents');
+  w.__wfv.library().openFolder(['agents', '_flow']);        // the pinned Flow folder (library.mjs FLOW)
   const add = doc.querySelector('#wfv-library .wfl-item[data-item="flow:end"] .wfl-add');
   add.focus();
   add.click();
@@ -1676,4 +1683,95 @@ test('Workflows chat through app.js: a picked file rides the message as base64, 
   assert.deepEqual(JSON.parse(msg.body).attachments, [{ name: 'spec.md', dataBase64: Buffer.from('# Spec').toString('base64') }]);
   assert.equal(w.document.querySelectorAll('#wfc .wfc-file').length, 0, 'the chips clear after the 202');
   assert.deepEqual([...w.document.querySelectorAll('#wfc .wfc-upill')].map((x) => x.textContent), ['spec.md']);
+});
+
+test('closing a sheet to its tab address (#workflows/agents) keeps the Library in its folder and the focus on the opener', async () => {
+  const { window: w } = await boot();
+  await go(w, 'workflows/agents');
+  const doc = w.document;
+  w.__wfv.library().openFolder(['agents', 'coding']);
+  doc.querySelector('.wfl-item[data-item="agent:planner"] .wfl-main').click();
+  const view = [...doc.querySelectorAll('.wfl-item[data-item="agent:planner"] .wfl-actions button')].find((b) => b.textContent === 'View');
+  view.focus();
+  view.click();
+  await tick(6);
+  assert.equal(doc.getElementById('wfv-sheet').hidden, false, 'precondition: the agent sheet is open');
+  await go(w, 'workflows/agents');                          // routeWorkflows('agents'): close the sheet, then open('agents')
+  assert.equal(doc.getElementById('wfv-sheet').hidden, true);
+  assert.equal(doc.getElementById('wfv-library').dataset.path, 'agents/coding', 'still in the coding folder');
+  assert.equal(doc.activeElement.dataset.focusKey, 'agent:planner:View', 'focus back on the opener, never the fallback or <body>');
+});
+
+test('the open Library overlay is kept clear of a fit only while a useful band stays beside it: at 390 px the graph fits the whole stage, never a 1 px band', async () => {
+  const { window: w } = await boot();
+  await go(w, 'workflows');
+  const doc = w.document;
+  const { c, v } = w.__gv();
+  // jsdom has no layout: the window width and the stage the view measures, at a phone and at the 760 px overlay edge.
+  const size = (inner, stage) => {
+    Object.defineProperty(w, 'innerWidth', { configurable: true, value: inner });
+    v.stage.getBoundingClientRect = () => ({ left: 8, top: 60, width: stage, height: 700, right: 8 + stage, bottom: 760, x: 8, y: 60 });
+  };
+  /** The graph's left and right edges on the stage after the last fit. */
+  const span = () => { const b = v.bounds(0); const t = v.getTransform(); return [b.x * t.z + t.x, (b.x + b.w) * t.z + t.x, t.z]; };
+  size(390, 374);
+  if (!w.__wfv.library().isOpen()) doc.getElementById('wfv-lib-toggle').click();
+  assert.equal(w.__wfv.library().isOpen(), true, 'precondition: the Library overlay is open');
+  w.__wfv.library().openFolder(['workflows']);
+  doc.querySelector('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main').click();
+  await tick(8);
+  assert.equal(doc.getElementById('wfv-name').value, 'Default', 'precondition: Default is on the canvas');
+  let [left, right, z] = span();
+  assert.ok(z > 0.1, `the graph is readable (zoom ${z}), not a dot`);
+  assert.ok(left >= 0 && right <= 374 && right - left > 200, `it spans the 374 px stage: ${left}..${right}`);
+  size(760, 744);                                          // the overlay leaves 744 − 396 = 348 px: the fit stays left of it
+  c.fit();
+  [left, right] = span();
+  assert.ok(left >= 0 && right <= 744 - 396 + 0.5, `it fits the band beside the overlay: ${left}..${right}`);
+});
+
+test('the Workflows tour survives a Library filter query: the filter button (at Home), the Library crumb (in a folder), Default itself when the query shows it', async () => {
+  const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy'];
+  const onboarding = { steps: Object.fromEntries(STEPS.map((id) => [id, id === 'claude'])), done: 1, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: true };
+  const MINE = { ...V2_ROW, id: 'wf_mine', name: 'Mine', domain: 'general' };
+  const { window: w } = await boot({ onboarding, workflows: [DEFAULT_ROW, V2_ROW, MINE] });
+  const doc = w.document;
+  // jsdom has no layout: every control outside a hidden subtree gets a box, so guide-spot sees it as showing.
+  const ZERO = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0 };
+  const BOX = { left: 10, top: 10, width: 100, height: 30, right: 110, bottom: 40, x: 10, y: 10 };
+  w.Element.prototype.getBoundingClientRect = function () { return this.closest('[hidden], .hidden') ? ZERO : BOX; };
+  const target = () => doc.querySelector('.guide-layer')?.dataset.target || '';
+  const text = () => doc.querySelector('.guide-layer .guide-text')?.textContent || '';
+  const until = async (fn, ms = 3000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 20)); return fn(); };
+  const query = (v) => { const f = doc.getElementById('wfl-filter'); f.value = v; f.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  await go(w, 'getting-started');
+  doc.querySelector('.gs-tile[data-step="workflows"]').click();
+  await tick(4);
+  doc.querySelector('.nav button[data-nav="workflows"]').click();
+  await go(w, 'workflows');
+  assert.equal(await until(() => target() === '#wfv-library [data-tab="workflows"]'), true, `the tour opens the Workflows folder: ${target()}`);
+  try {
+    // At Home a query hides the three folders, and Home has no Library crumb: the filter button is what is left.
+    doc.getElementById('wfl-filter-btn').click();
+    query('zzz');
+    assert.equal(await until(() => target() === '#wfv-library #wfl-filter-btn'), true, `Home + a query: ${target()}`);
+    assert.equal(text(), 'Close the filter: the folders are under it.');
+    await tick(20);
+    assert.equal(target(), '#wfv-library #wfl-filter-btn', 'the tour stays up (it never gives up on a hidden target)');
+    doc.getElementById('wfl-filter-btn').click();          // closes the filter and clears the query
+    assert.equal(await until(() => target() === '#wfv-library [data-tab="workflows"]'), true, `the folders are back: ${target()}`);
+    doc.querySelector('#wfv-library .wfl-folder[data-tab="workflows"]').click();
+    assert.equal(await until(() => target() === '#wfv-library .wfl-folder[data-folder="workflows/coding"]'), true, `then Default's folder: ${target()}`);
+    // Inside Workflows a query hides the folder rows and the back row: the Library crumb goes up and clears it.
+    doc.getElementById('wfl-filter-btn').click();
+    query('zzz');
+    assert.equal(await until(() => target() === '#wfv-library #wfl-crumb-home'), true, `Workflows + a query: ${target()}`);
+    assert.equal(text(), 'Go back up to the Library: the filter hides the folders here.');
+    // A query that lists Default: both folder hops are done, the tour rings Default in the flat list.
+    query('def');
+    assert.equal(await until(() => target() === '#wfv-library .wfl-wf[data-id="wf_default"]'), true, `Workflows + "def": ${target()}`);
+  } finally {
+    doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }));
+    await tick(2);
+  }
 });

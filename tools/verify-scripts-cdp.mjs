@@ -189,13 +189,21 @@ const clickIn = (sel) => ev(`(()=>{const n=document.querySelector('${VIEW} ${sel
 const setTheme = async (attr) => { await ev(`document.documentElement.dataset.theme=${JSON.stringify(attr)};0`); await settle(`theme ${attr}`); };
 
 try {
-  // ---- (1) the Library's Scripts tab lists the built-ins; no sheet is open ----------
+  // ---- (1) the Library's Scripts folder lists the built-ins by domain; no sheet is open ----------
   await go('workflows/scripts', { first: true });
-  await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library rows painted');
-  const list = await ev(`(()=>({keys:[...document.querySelectorAll('#wfv-library .wfl-item[data-item^="script:"]')].map(c=>c.dataset.item.slice(7)),
-      sheetHidden:document.getElementById('wfv-sheet').hidden}))()`);
-  check('1', 'the Library\'s Scripts tab lists the shell, js and gitDiff rows and the sheet is hidden',
-    list.sheetHidden === true && ['shell', 'js', 'gitDiff'].every((k) => list.keys.includes(k)), list);
+  await until(`document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]')`, 'the Library\'s Scripts folders painted');
+  {
+    const into = (folder) => ev(`(()=>{const f=[...document.querySelectorAll('#wfv-library .wfl-folder')].find((e)=>e.dataset.folder==='scripts/${folder}');if(!f)return [];f.click();
+      return [...document.querySelectorAll('#wfv-library .wfl-item[data-item^="script:"]')].map((c)=>c.dataset.item.slice(7));})()`);
+    const folders = await ev(`[...document.querySelectorAll('#wfv-library .wfl-folder')].map((f)=>f.dataset.folder)`);
+    const general = await into('general');
+    await ev(`(()=>{document.getElementById('wfl-up').click();return 1;})()`);
+    const coding = await into('coding');
+    const list = { folders, general, coding, sheetHidden: await ev(`document.getElementById('wfv-sheet').hidden`) };
+    check('1', 'the Library\'s Scripts folder holds a folder per domain; general lists the shell and js rows, coding the gitDiff row; the sheet is hidden',
+      list.sheetHidden === true && ['scripts/coding', 'scripts/general'].every((f) => list.folders.includes(f))
+      && ['shell', 'js'].every((k) => list.general.includes(k)) && list.coding.includes('gitDiff'), list);
+  }
 
   // ---- (2) the no-prose rule, in the LIVE app -------------------------------
   const prose = await ev(`(()=>{const v=document.querySelector('${PANE}');

@@ -409,10 +409,12 @@ const states = [
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
-  // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts tab,
+  // The Workflows view (full screen): the canvas with the Library open (at Home), the Library's Scripts › general folder,
   // the save dialog the engine opens itself, the agent sheet and the open chat.
   ['workflows', async () => { await go('workflows'); await until(`document.querySelector('[data-view="workflows"] .gv-world .node')`, 'workflow nodes'); await freeze('workflows'); }],
-  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
+  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]')`, 'the Library script folders');
+    await ev(`(()=>{document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]').click();return 1;})()`);
+    await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
   ['workflows-save-dialog', async () => { await go('workflows'); await until(`window.__gv && window.__gv()`, 'the canvas engine');
     await ev(`(()=>{window.__gv().c.openSaveDialog();return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
     async () => { await ev(`(()=>{const d=document.querySelector('.save-dialog[open]');if(d){try{d.close();}catch{}}return 1;})()`); }],
