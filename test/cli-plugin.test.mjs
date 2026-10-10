@@ -283,7 +283,7 @@ function workflowRows(home) {
   const mod = pathToFileURL(resolve(__dirname, '..', 'src', 'core', 'workflows.mjs')).href;
   const src = `const m = await import(${JSON.stringify(mod)});`
     + 'const ws = await m.listWorkflows();'
-    // wf_presentation (schema V30) and wf_architecture_c4 (V54) are shipped seeds on
+    // wf_presentation (schema V30) and wf_architecture_c4 (V55) are shipped seeds on
     // every store; this helper is about plugin-authored rows, so drop them.
     + 'const seeds = ["wf_presentation", "wf_architecture_c4"];'
     + 'process.stdout.write(JSON.stringify(ws.filter((w) => !seeds.includes(w.id)).map((w) => ({ id: w.id, name: w.name }))));';

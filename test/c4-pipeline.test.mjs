@@ -1,7 +1,7 @@
 // The Architecture (C4) pipeline's deterministic half: the check rules (c4-check.mjs), the setup
 // form data discovery builds (c4-discover.mjs), the render plan and the browser search
 // (c4-render.mjs, c4-raster.mjs), where the cards look on a project vs a workspace run
-// (c4-paths.mjs), the offline architect (src/core/c4-mock.mjs) and the V54 seed. The viewer's
+// (c4-paths.mjs), the offline architect (src/core/c4-mock.mjs) and the V55 seed. The viewer's
 // parser and layouts are covered by test/c4-view.test.mjs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -195,7 +195,7 @@ test('the mock architect honours the setup answers and writes a file the check p
   assert.equal(writeMockC4({ modelPath: join(pdir, 'c4-model.json'), cwd: proj }).path, 'docs/architecture/architecture.c4');
 });
 
-test('V54 seeds wf_architecture_c4 on a fresh DB, and it validates against the shipped sidecars', () => {
+test('V55 seeds wf_architecture_c4 on a fresh DB, and it validates against the shipped sidecars', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
   const row = db.prepare('SELECT * FROM workflows WHERE id = ?').get(ARCHITECTURE_WORKFLOW_ID);

@@ -12,7 +12,8 @@ work clears quality gates, pausing to ask *you* the questions that matter, and
 keeping every run isolated in its own git worktree and branch. Pick **Auto**
 and Worca chooses the workflow for the task, draw your own in **Workflows** (or
 ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
-a slide deck.
+a slide deck, or **Architecture (C4)** to keep a diagram of your code that
+draws itself from the code.
 
 It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
 Claude Code — all running the same engine — and chat plugins (Telegram, Slack,
@@ -127,6 +128,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
     Workspace Usage and Workspace Synthesis, which only the scan can place.
   - *Presentations* — Deck Clarify, Narrative Spine, Visual System, Deck
     Builder, Deck Audit, Deck Review, Deck Outputs, Deck Export.
+  - *Architecture* — C4: setup (the which-file, which-bands form) and C4:
+    architect (reads the code, writes the LikeC4 model).
   - *Memory defragment* — restructures one memory scope.
 - **Agents in the Library** — **Workflows › Library › Agents** lists every agent
   with its ports; built-ins are read-only, so **Duplicate** one to get an
@@ -169,7 +172,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   expectation (verdict, fired ports, summary text); **Run all** re-runs every
   case.
 - **Shipped scripts** — Shell, JavaScript and Python cards, Git diff, and the
-  steps behind the presentation and workspace-map workflows come built in.
+  steps behind the presentation, architecture and workspace-map workflows come
+  built in.
   Plugins can ship scripts and test cases of their own.
 
 ![The Workflows view with the Library on its Scripts tab: built-in Git diff, Workspace map, Deck PDF, Deck audio, Deck bundle, Shell, JavaScript and Python rows grouped by domain, each with a runtime chip and its port line, under the All, Built-in and Yours chips and a + New script button, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
@@ -256,6 +260,24 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   The audit and the PDF need Chrome, Chromium or Edge; the script cards need
   Python 3.8+. The narrated deck linked from
   [`docs/why-worca.md`](docs/why-worca.md) runs on the same kit.
+
+### Architecture (C4)
+
+- **A model of your code, kept by your code** — the built-in **Architecture
+  (C4)** workflow (`worca --workflow wf_architecture_c4 --prompt "…"`, on a
+  project or a workspace) finds the project's LikeC4 files, asks on one card
+  which to update — or where to create one and how to group the deployment
+  sheet into bands, each with prose criteria for what belongs in it — and which
+  images to export. The architect reads the code and writes the model; a check
+  card parses it with the viewer's own parser and sends blocking problems back,
+  up to 2 cycles.
+- **Drawn the same everywhere** — open the `.c4` from a run's **Artifacts** tab
+  and it draws in Worca's viewer, with a view picker, an info rail, hover and
+  selection highlighting, a JPEG button and **Full screen**. The render card
+  writes SVG, JPEG or PNG of every view with the same renderer (JPEG and PNG
+  need Chrome, Chromium or Edge). Worca's own model is
+  [`docs/architecture/architecture.c4`](docs/architecture/architecture.c4);
+  the design is [`docs/architecture-c4.md`](docs/architecture-c4.md).
 
 ### Guardrails
 

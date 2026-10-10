@@ -1,5 +1,5 @@
 // src/core/graph/architecture-workflow.mjs
-// The shipped Architecture (C4) workflow. Seeded by schema V54 as a v2 row (INSERT OR IGNORE), so a
+// The shipped Architecture (C4) workflow. Seeded by schema V55 as a v2 row (INSERT OR IGNORE), so a
 // user who edits or deletes it keeps their choice; refreshed on later bumps only while the stored
 // shape is one worca shipped (ARCHITECTURE_SHIPPED_FINGERPRINTS), exactly like the Presentation seed.
 //
