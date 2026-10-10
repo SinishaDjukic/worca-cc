@@ -19,7 +19,7 @@
 //     (10)      the 300px Library card right of the stage, open, three tabs
 //     (11)      the top bar's rendered controls; the app chrome computes display:none
 //     (12)      frosted cards: a backdrop blur and a 0.4–0.6 alpha in both themes
-//     (13)      the PAINTED wires are cubic beziers; a loop's pill sits under its cards
+//     (13)      the PAINTED wires are orthogonal lane routes; a loop's pill sits under its cards
 //     (14)      the zoom menu's items and a real Zoom in (100% -> 120%); the zoom and
 //               "+" menus open flush with their trigger's right / left edge
 //     (15)      a script placed from the Library: its runtime in the label row,
@@ -443,7 +443,7 @@ try {
     JSON.stringify(items) === JSON.stringify(['Zoom in', 'Zoom out', 'Fit graph to view']) && z100 === '100%' && z120 === '120%' && !!zi && flush,
     { items, z100, z120, zoom: zb, zoomMenu, add: ab, addMenu });
 
-  // ---- (13) wires are cubic beziers and may cross cards; a loop swoops UNDER ----
+  // ---- (13) wires are orthogonal lanes (lanes.mjs) and may cross cards; a loop returns UNDER ----
   await load();
   await ev(`(()=>{const {c}=window.__gv();c.loadTemplate({id:'',name:'loop',version:2,domain:'coding',
     nodes:[{id:'n_impl',kind:'agent',key:'implementer',x:100,y:100,config:{}},{id:'n_rev',kind:'agent',key:'reviewer',x:460,y:100,config:{}}],
@@ -454,8 +454,8 @@ try {
     const pill=document.querySelector('#wfv-canvas .wbadge');const pr=pill&&pill.getBoundingClientRect();
     const cards=['n_impl','n_rev'].map((id)=>{const e=document.querySelector('#wfv-canvas [data-node-id="'+id+'"]');return e?e.getBoundingClientRect().bottom:null;});
     return {ds,pillY:pr?pr.top+pr.height/2:null,pillText:pill?pill.textContent.trim():'',cards};})()`);
-  check(13, 'every committed wire is a cubic bezier (C, no L); the loop pill sits under both cards and reads ≤N',
-    loop.ds.length >= 2 && loop.ds.every((d) => d.includes(' C ') && !d.includes(' L '))
+  check(13, 'every committed wire is an orthogonal lane route (straight runs and rounded corners, no C / S / A); the loop pill sits under both cards and reads ≤N',
+    loop.ds.length >= 2 && loop.ds.every((d) => d.includes(' L ') && !/[CSA]/.test(d))
     && loop.pillY != null && loop.cards.every((b) => b != null && loop.pillY > b) && /^≤\d+/.test(loop.pillText), loop);
 
   // ---- (15) a script placed from the Library, its Params popover, both themes ----
