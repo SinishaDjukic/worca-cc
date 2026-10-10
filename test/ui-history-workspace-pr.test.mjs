@@ -362,11 +362,15 @@ test('workspace Ship it: Watch PR resets on open and one snapshot applies to eve
   assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
 });
 
-test('workspace detail: each open member PR gets its own watch control and state', async () => {
+const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
+  status: { tone: 'ok', label: 'Ready to merge', detail: 'All 3 checks passed' }, watch });
+const ovRows = (w) => [...w.document.querySelectorAll('#hist-detail .hd-ov-pr')];
+
+test('workspace detail: each open member PR gets its own Overview row, watch and Watch switch', async () => {
   const states = { [API]: { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1' },
     [WEB]: { watching: false, status: null, reason: null, activePipelineId: null } };
   const arms = (url, opts) => {
-    if (/\/api\/pr\/watch\?/.test(url)) return ok(states[new URL(url, 'http://x').searchParams.get('memberKey')]);
+    if (/\/api\/pr\/checks\?/.test(url)) return ok(memberChecks(states[new URL(url, 'http://x').searchParams.get('memberKey')]));
     if (url.endsWith('/api/pr/watch') && opts.method === 'POST') return fail(500, { error: 'nope' });
     return null;
   };
@@ -374,26 +378,30 @@ test('workspace detail: each open member PR gets its own watch control and state
     member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
     member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } }),
     member(DOC, 'doc', { pr: { state: 'MERGED', url: 'https://github.com/o/doc/pull/3' } })])] });
-  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
-  const lis = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')];
-  const stateOf = (li) => li.querySelector('.hd-pr-watch-state')?.textContent ?? null;
-  assert.deepEqual(lis.map(stateOf), ['Fixing', '', null], 'merged members get no control');
-  // Same level gate as the run-level control in the header.
-  for (const el of lis[0].querySelectorAll('.hd-pr-watch, .hd-pr-watch-state')) assert.equal(el.dataset.minLevel, 'advanced');
-  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-header .hd-row1 .hd-pr-watch').hidden, true, 'no run-level control on a workspace');
-  click(ctx.window, lis[1].querySelector('.hd-pr-watch')); await settle(ctx.window);
-  assert.match(cardAlertOf(lis[1]).detail, /nope/);
-  assert.equal(cardAlertOf(lis[0]), null, 'the alert belongs to the member row');
+  await openDetail(ctx, `${wksDetailHash}/details/overview`); await settle(ctx.window, 6);
+  const rows = ovRows(ctx.window);
+  assert.equal(rows.length, 2, 'a merged member gets no row');
+  assert.match(rows[0].querySelector('.hd-ov-pr-label').textContent, /^Pull request · /);
+  assert.match(rows[0].textContent, /Fixing/);
+  assert.doesNotMatch(rows[1].textContent, /Fixing|Watching/);
+  for (const row of rows) assert.equal(row.querySelector('.rd-prs-watch').dataset.minLevel, 'advanced');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-pr-watch'), null, 'no switch in the header or its repo rows');
+  click(ctx.window, rows[1].querySelector('.rd-prs-watch')); await settle(ctx.window);
+  const post = ctx.calls.find((c) => c.url.endsWith('/api/pr/watch') && c.opts.method === 'POST');
+  assert.deepEqual(JSON.parse(post.opts.body), { id: ROW.id, projectKey: WKS_KEY, memberKey: WEB, watch: true });
+  assert.match(rows[1].querySelector('.rd-prs-watch').title, /nope/);
+  assert.doesNotMatch(rows[0].querySelector('.rd-prs-watch').title, /nope/, 'the failure belongs to the member row');
 });
 
-test('workspace detail: pr-watch-changed for the run\'s store key refetches only the named member', async () => {
-  const arms = (url) => (/\/api\/pr\/watch\?/.test(url) ? ok({ watching: true, status: 'watching', reason: null, activePipelineId: null }) : null);
+test('workspace detail: pr-watch-changed for the run\'s store key rereads only the named member', async () => {
+  const arms = (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(memberChecks({ watching: true, status: 'watching', reason: null, activePipelineId: null })) : null);
   const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
     member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
     member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } })])] });
-  await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
-  const gets = (mk) => ctx.calls.filter((c) => /\/api\/pr\/watch\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === mk).length;
+  await openDetail(ctx, `${wksDetailHash}/details/overview`); await settle(ctx.window, 6);
+  const gets = (mk) => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === mk).length;
   const before = [gets(API), gets(WEB)];
+  assert.deepEqual(before.map((n) => n > 0), [true, true]);
   const send = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', pipelineId: ROW.id, ...msg }) });
   send({ projectKey: KEY, memberKey: API });                  // a member's own project key is not the run's store key
   await settle(ctx.window);

@@ -1248,15 +1248,8 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === 'pr-watch-changed') {
-    if (!msg.memberKey) refreshRdPrStatus(msg.projectKey, msg.pipelineId);
-    // Exact identity only: the open detail's project and run, then the matching member row.
-    const { record, screen } = histDetailState;
-    if (record && screen && record.id === msg.pipelineId && record.projectKey === msg.projectKey) {
-      const host = msg.memberKey
-        ? [...screen.querySelectorAll('.hd-pr-repo')].find((li) => li.dataset.memberKey === msg.memberKey)
-        : (record.target === 'workspace' ? null : screen.querySelector('.hd-header'));
-      if (host && !host.querySelector('.hd-pr-watch')?.hidden) void paintHdPrWatch(screen, record, host, msg.memberKey || '');
-    }
+    // Exact identity: the run's store key, its id and (a workspace's) member.
+    refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
     return;
   }
 
@@ -21200,6 +21193,7 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
 }
@@ -21430,10 +21424,6 @@ function paintHdLive(screen, record, data) {
 function paintHdPr(screen, record, data) {
   const btn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
-  const watchBtn = screen.querySelector('.hd-pr-watch');
-  const watchState = screen.querySelector('.hd-pr-watch-state');
-  if (watchBtn) watchBtn.hidden = true;
-  if (watchState) watchState.hidden = true;
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
@@ -21448,7 +21438,6 @@ function paintHdPr(screen, record, data) {
     link.href = pr.url;
     link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
     link.classList.toggle('merged', prState === 'MERGED');
-    if (prState === 'OPEN') void paintHdPrWatch(screen, record, screen.querySelector('.hd-header'));
     return;
   }
   if (!histPrEligible(record) || record.pr === undefined) return;
@@ -21460,11 +21449,8 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
-// Watch PR (#619): detail-local state keyed by project + run + member, never stored on the record
-// (refreshHdFromRow replaces records). Each key has its own generation, so a stale GET or POST
-// response, or one for a screen that has since closed, never repaints.
-const hdPrWatchGen = new Map();
-const hdPrWatchKey = (record, memberKey = '') => `${record.projectKey || ''}\u0000${record.id}\u0000${memberKey}`;
+// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs) and the run
+// page card (paintRdPrCta), both drawn by paintRdPrStatus.
 const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
 // Words only while the watch is doing something: the switch already says on or off.
 function hdPrWatchLabel(state) {
@@ -21475,7 +21461,7 @@ function hdPrWatchLabel(state) {
 }
 const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
 const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
-/** The Watch switch's face: the word and the track, on or off. Shared by the header and the run page card. */
+/** The Watch switch's face: the word and the track, on or off. */
 function prWatchSwitchFace(watching) {
   const sw = document.createElement('span');
   sw.className = `switch${watching ? ' on' : ''}`;
@@ -21484,66 +21470,13 @@ function prWatchSwitchFace(watching) {
   word.textContent = 'Watch';
   return [word, sw];
 }
-/** Paint one Watch PR control. `host` owns the button, its state label and its inline alert. */
-async function paintHdPrWatch(screen, record, host, memberKey = '') {
-  const btn = host?.querySelector('.hd-pr-watch');
-  const label = host?.querySelector('.hd-pr-watch-state');
-  if (!btn || !label) return;
-  const key = hdPrWatchKey(record, memberKey);
-  const bump = () => { const g = (hdPrWatchGen.get(key) || 0) + 1; hdPrWatchGen.set(key, g); return g; };
-  const live = (g) => hdPrWatchGen.get(key) === g && histDetailState.screen === screen && histDetailState.record?.id === record.id;
-  const scope = { id: record.id, projectKey: record.projectKey, ...(memberKey ? { memberKey } : {}) };
-  let shown = null;
-  const render = (state) => {
-    shown = state;
-    const doing = hdPrWatchLabel(state);
-    label.textContent = doing;
-    label.dataset.tone = hdPrWatchTone(state);
-    label.hidden = !doing;
-    btn.replaceChildren(...prWatchSwitchFace(!!state.watching));
-    btn.setAttribute('aria-pressed', String(!!state.watching));
-    btn.title = HD_PR_WATCH_TIP;
-    btn.hidden = false;
-  };
-  const gen = bump();
-  try {
-    const res = await fetch(`/api/pr/watch?${new URLSearchParams(scope)}`);
-    const state = await safeJson(res);
-    if (!res.ok || !state) throw new Error(state?.error || `HTTP ${res.status}`);
-    if (!live(gen)) return;
-    render(state);
-  } catch {
-    // Not watchable here (another forge or host, a closed PR) or an older server: no control.
-    if (live(gen)) { btn.hidden = true; label.hidden = true; }
-    return;
-  }
-  btn.onclick = async () => {
-    const g = bump();
-    btn.disabled = true;
-    cardAlert(host, null);
-    try {
-      const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...scope, watch: !shown.watching }) });
-      const next = await safeJson(r);
-      if (!r.ok || !next) throw new Error(next?.error || `HTTP ${r.status}`);
-      if (live(g)) render(next);
-    } catch (err) {
-      if (live(g)) cardAlert(host, { title: 'Could not change Watch PR', detail: err.message });
-    } finally { btn.disabled = false; }
-  };
-}
-
 // Workspace header: every member repo on its own line (clarification: per-repo links
 // live here, the card shows the aggregate), plus Create PR while any can still ship.
 function paintHdWsPr(record, data, btn, repos) {
   const members = histWsMembers(record);
   if (wsPrPending(record)) return;                   // enrichment pending (row or any member)
   if (repos && members.length) {
-    for (const m of members) {
-      const li = repos.appendChild(hdWsRepoItem(m));
-      // Each open member PR is watched on its own (#619).
-      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') void paintHdPrWatch(histDetailState.screen, record, li, m.memberKey);
-    }
+    for (const m of members) repos.appendChild(hdWsRepoItem(m));
     repos.hidden = false;
   }
   if (!histPrEligible(record)) return;
@@ -21572,14 +21505,6 @@ function hdWsRepoItem(m) {
     pill.dataset.minLevel = 'expert';
     pill.hidden = true;
     li.appendChild(pill);
-    if (prStateOf(m.pr) === 'OPEN') {
-      const watch = document.createElement('button');
-      watch.type = 'button'; watch.className = 'hd-pr-watch'; watch.hidden = true;
-      watch.textContent = 'Watch'; watch.dataset.minLevel = 'advanced';
-      const state = document.createElement('span');
-      state.className = 'hd-pr-watch-state hint'; state.hidden = true; state.dataset.minLevel = 'advanced';
-      li.append(' ', watch, ' ', state);
-    }
   } else {
     const note = document.createElement('span');
     note.className = 'hd-pr-repo-note';
@@ -24419,6 +24344,11 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
   }
   wrap.appendChild(verdict);
+  // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
+  const prs = document.createElement('div');
+  prs.className = 'hd-ov-prs';
+  wrap.appendChild(prs);
+  paintHdOvPrs(prs, record);
   if (isTerminalStatus(record.status)) {
     const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
     wrap.appendChild(strip);
@@ -29239,7 +29169,8 @@ function rdFilesChanged(r) {
 const PR_STATUS_STALE_MS = 15000;
 const PR_STATUS_POLL_MS = 20000;
 const prStatusCache = new Map();
-const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}`;
+const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}\u0000${scope.memberKey || ''}`;
+const prScopeBody = (scope) => ({ id: scope.id, projectKey: scope.projectKey, ...(scope.memberKey ? { memberKey: scope.memberKey } : {}) });
 function paintRdPrStatus(host, scope) {
   if (!host) return;
   if (!scope) { host.hidden = true; host.dataset.key = ''; clearTimeout(host._prTimer); return; }
@@ -29249,14 +29180,27 @@ function paintRdPrStatus(host, scope) {
   if (cached) renderRdPrStatus(host, scope, cached);
   if (!host._prLoading && (!cached || Date.now() - cached.at > PR_STATUS_STALE_MS)) void loadRdPrStatus(host, scope);
 }
+// One GET per PR in flight: the run page card and the Overview row can show the same PR at once.
+const prStatusReads = new Map();
+function readPrStatus(key, q) {
+  if (!prStatusReads.has(key)) {
+    const p = fetch(`/api/pr/checks?${q}`).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null)
+      .finally(() => prStatusReads.delete(key));
+    prStatusReads.set(key, p);
+  }
+  return prStatusReads.get(key);
+}
 async function loadRdPrStatus(host, scope) {
   const key = prStatusKey(scope);
-  const q = new URLSearchParams({ id: scope.id, projectKey: scope.projectKey || '' });
+  const q = new URLSearchParams({ projectKey: '', ...prScopeBody(scope) });
   clearTimeout(host._prTimer);
   host._prLoading = true;
+  host._prAgain = false;
   let c;
-  try { c = await fetch(`/api/pr/checks?${q}`).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null); }
+  try { c = await readPrStatus(key, q); }
   finally { host._prLoading = false; }
+  // A change announced while this read was in flight: read once more, the answer may predate it.
+  if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, scope); return; }
   const w = c?.watch;
   const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
     status: c?.status && typeof c.status.label === 'string' ? c.status : null,
@@ -29324,7 +29268,7 @@ function renderRdPrStatus(host, scope, s) {
         let patch;
         try {
           const r = await fetch('/api/pr/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: scope.id, projectKey: scope.projectKey }) });
+            body: JSON.stringify(prScopeBody(scope)) });
           const out = await safeJson(r);
           if (!r.ok || !out) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { watch: out?.watch });
           patch = { watch: out, resolveError: null };
@@ -29365,7 +29309,7 @@ function renderRdPrStatus(host, scope, s) {
       sw.classList.add('disabled');
       try {
         const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: scope.id, projectKey: scope.projectKey, watch: !wst.watching }) });
+          body: JSON.stringify({ ...prScopeBody(scope), watch: !wst.watching }) });
         const nextWatch = await safeJson(r);
         if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
         const next = { ...(prStatusCache.get(prStatusKey(scope)) || s), watch: nextWatch };
@@ -29383,13 +29327,48 @@ function renderRdPrStatus(host, scope, s) {
   host.replaceChildren(...parts);
   host.hidden = !tone && !wst;
 }
-/** pr-watch-changed: re-read every status line showing that run (a watch toggled elsewhere, a fix run). */
-function refreshRdPrStatus(projectKey, id) {
-  const key = prStatusKey({ projectKey, id });
+/** pr-watch-changed: re-read every status line showing that PR (a watch toggled elsewhere, a fix run). */
+function refreshRdPrStatus(projectKey, id, memberKey = '') {
+  const scope = { projectKey, id, ...(memberKey ? { memberKey } : {}) };
+  const key = prStatusKey(scope);
   prStatusCache.delete(key);
   for (const host of document.querySelectorAll('.rd-pr-status')) {
-    if (host.dataset.key === key && !host._prLoading) void loadRdPrStatus(host, { projectKey, id });
+    if (host.dataset.key !== key) continue;
+    if (host._prLoading) host._prAgain = true;
+    else void loadRdPrStatus(host, scope);
   }
+}
+
+/** Overview tab: one row per open pull request under the review verdict (a workspace run: one per
+ *  member repo), each drawn by paintRdPrStatus. Rows are rebuilt only when the set of PRs changes. */
+function paintHdOvPrs(box, record) {
+  if (!box || !record) return;
+  const scopes = [];
+  if (record.target === 'workspace' && hasWsMembers(record)) {
+    for (const m of histWsMembers(record)) {
+      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') scopes.push({ id: record.id, projectKey: record.projectKey, memberKey: m.memberKey, name: m.name || m.memberKey });
+    }
+  } else if (record.pr && typeof record.pr === 'object' && String(record.pr.state || '').toUpperCase() === 'OPEN' && record.pr.url) {
+    scopes.push({ id: record.id, projectKey: record.projectKey, name: '' });
+  }
+  const sig = JSON.stringify(scopes);
+  if (box.dataset.sig !== sig) {
+    box.dataset.sig = sig;
+    box.replaceChildren(...scopes.map((sc) => {
+      const row = document.createElement('div');
+      row.className = 'hd-ov-pr';
+      const label = document.createElement('span');
+      label.className = 'hd-ov-pr-label';
+      label.textContent = sc.name ? `Pull request · ${sc.name}` : 'Pull request';
+      const host = document.createElement('div');
+      host.className = 'rd-pr-status hd-ov-pr-status';
+      host.hidden = true;
+      row.append(label, host);
+      return row;
+    }));
+  }
+  const hosts = box.querySelectorAll('.hd-ov-pr-status');
+  scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
 }
 
 // The pull request button under the result, in its slot (paintPrCta). Same tri-state as

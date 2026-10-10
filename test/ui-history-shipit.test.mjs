@@ -1255,9 +1255,6 @@ test('"Will close owner/repo#N" shows only for an issue-sourced run', async () =
 const watchBox = (modal) => modal.querySelector('.shipit-watch-input');
 const GH_PR = 'https://github.com/me/repo/pull/7';
 const openRow = () => row({ pr: { state: 'OPEN', url: GH_PR } });
-const hdWatch = (w) => w.document.querySelector('#hist-detail .hd-header .hd-pr-watch');
-const hdWatchState = (w) => w.document.querySelector('#hist-detail .hd-header .hd-pr-watch-state');
-const watchGets = (ctx) => ctx.calls.filter((c) => /\/api\/pr\/watch\?/.test(c.url));
 const watchPosts = (ctx) => ctx.calls.filter((c) => c.url.endsWith('/api/pr/watch') && c.opts.method === 'POST');
 const WATCH = (over = {}) => ({ watching: true, status: 'watching', reason: null, activePipelineId: null, ...over });
 
@@ -1280,95 +1277,94 @@ test('Watch PR: unchecked on every open; ticked sends watch:true, unticked sends
   assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)));
 });
 
-test('History: an open PR shows its watch switch; words only while the watch acts', async () => {
+// The Overview tab's PR row (paintHdOvPrs -> paintRdPrStatus): GitHub's verdict, what the watch is doing,
+// and the Watch switch. One GET /api/pr/checks answers all three.
+const ovHash = `${detailHash}/details/overview`;
+const ovPr = (w) => w.document.querySelector('#hist-detail .hd-ov-pr');
+const ovStatus = (w) => ovPr(w)?.querySelector('.rd-pr-status');
+const ovSwitch = (w) => ovStatus(w)?.querySelector('.rd-prs-watch');
+const checksGets = (ctx) => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url));
+const CHECKS = (over = {}) => ({ checks: { state: 'passing', total: 12, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
+  status: { tone: 'ok', label: 'Ready to merge', detail: 'All 12 checks passed' }, watch: WATCH(), ...over });
+
+test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only while it acts; the header has no switch', async () => {
   for (const [state, label, pressed] of [
     [WATCH(), '', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
     [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
-    [WATCH({ watching: false, status: 'fixing', resolving: true }), 'Resolving conflicts', 'false'],
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
-    const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/watch\?/.test(url) ? ok(state) : null) });
-    await openDetail(ctx); await settle(ctx.window);
-    assert.equal(hdWatchState(ctx.window).textContent, label);
-    assert.equal(hdWatchState(ctx.window).hidden, !label, 'no words for a plain on or off');
-    assert.equal(hdWatch(ctx.window).hidden, false);
-    assert.equal(hdWatch(ctx.window).textContent, 'Watch');
-    assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), pressed);
-    assert.equal(hdWatch(ctx.window).querySelector('.switch').classList.contains('on'), pressed === 'true');
-    const q = new URL(watchGets(ctx)[0].url, 'http://x').searchParams;
+    const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(CHECKS({ watch: state })) : null) });
+    await openDetail(ctx, ovHash); await settle(ctx.window);
+    assert.equal(ovStatus(ctx.window).hidden, false);
+    assert.match(ovPr(ctx.window).textContent, /^Pull request/);
+    assert.match(ovStatus(ctx.window).textContent, /Ready to merge·All 12 checks passed/);
+    if (label) assert.match(ovStatus(ctx.window).textContent, new RegExp(label));
+    else assert.doesNotMatch(ovStatus(ctx.window).textContent, /Watching|Fixing|Needs a person|Disabled/);
+    assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), pressed);
+    assert.equal(ovSwitch(ctx.window).dataset.minLevel, 'advanced');
+    assert.equal(ctx.window.document.querySelector('#hist-detail .hd-pr-watch'), null, 'the Watch switch left the header');
+    const q = new URL(checksGets(ctx)[0].url, 'http://x').searchParams;
     assert.deepEqual([q.get('id'), q.get('projectKey'), q.get('memberKey')], [ROW.id, KEY, null]);
   }
 });
 
-test('History: an unwatchable PR (another host, older server) shows no control', async () => {
-  const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/watch\?/.test(url) ? fail(400, { error: 'an open github.com pull request is required' }) : null) });
-  await openDetail(ctx); await settle(ctx.window);
-  assert.equal(hdWatch(ctx.window).hidden, true);
-  assert.equal(hdWatchState(ctx.window).hidden, true);
+test('Overview: a PR GitHub cannot answer for (another host, older server) shows no row', async () => {
+  const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? fail(400, { error: 'an open github.com pull request is required' }) : null) });
+  await openDetail(ctx, ovHash); await settle(ctx.window);
+  assert.equal(ovStatus(ctx.window).hidden, true);
 });
 
-test('History: toggling POSTs the flip and repaints; a failure raises an inline alert', async () => {
+test('Overview: the Watch switch POSTs the flip and repaints; a failure keeps the shown state and says why', async () => {
   let failPost = false;
   const arms = (url, opts) => {
-    if (/\/api\/pr\/watch\?/.test(url)) return ok(WATCH({ watching: false, status: null }));
+    if (/\/api\/pr\/checks\?/.test(url)) return ok(CHECKS({ watch: WATCH({ watching: false, status: null }) }));
     if (url.endsWith('/api/pr/watch') && opts.method === 'POST') {
       return failPost ? fail(500, { error: 'disk full' }) : ok(WATCH({ watching: JSON.parse(opts.body).watch }));
     }
     return null;
   };
   const ctx = await bootShip({ rows: [openRow()], arms });
-  await openDetail(ctx); await settle(ctx.window);
-  click(ctx.window, hdWatch(ctx.window)); await settle(ctx.window);
+  await openDetail(ctx, ovHash); await settle(ctx.window);
+  click(ctx.window, ovSwitch(ctx.window)); await settle(ctx.window);
   assert.deepEqual(JSON.parse(watchPosts(ctx)[0].opts.body), { id: ROW.id, projectKey: KEY, watch: true });
-  assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), 'true');
+  assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
   failPost = true;
-  click(ctx.window, hdWatch(ctx.window)); await settle(ctx.window);
+  click(ctx.window, ovSwitch(ctx.window)); await settle(ctx.window);
   assert.equal(JSON.parse(watchPosts(ctx)[1].opts.body).watch, false);
-  const header = ctx.window.document.querySelector('#hist-detail .hd-header');
-  assert.equal(header.querySelector('.card-alert').getAttribute('role'), 'alert');
-  assert.match(cardAlertOf(header).detail, /disk full/);
-  assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), 'true', 'a failed toggle keeps the shown state');
-  assert.equal(hdWatch(ctx.window).disabled, false);
+  assert.equal(ovSwitch(ctx.window).querySelector('[role="switch"]').getAttribute('aria-checked'), 'true', 'a failed toggle keeps the shown state');
+  assert.match(ovSwitch(ctx.window).title, /Could not change Watch: disk full/);
 });
 
-test('History: a stale watch response never repaints over a newer one', async () => {
+test('Overview: a change announced while a read is in flight reads again, so the older answer never sticks', async () => {
   const pending = [];
-  const arms = (url) => {
-    if (!/\/api\/pr\/watch\?/.test(url)) return null;
-    return new Promise((resolve) => pending.push(resolve));
-  };
+  const arms = (url) => (/\/api\/pr\/checks\?/.test(url) ? new Promise((resolve) => pending.push(resolve)) : null);
   const ctx = await bootShip({ rows: [openRow()], arms });
-  await openDetail(ctx);
-  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', projectKey: KEY, pipelineId: ROW.id, memberKey: null }) });
-  await settle(ctx.window);
-  // The header control is still hidden (its first GET has not answered), so the frame waits for it.
+  await openDetail(ctx, ovHash); await settle(ctx.window);
   assert.equal(pending.length, 1);
-  pending[0]({ ok: true, status: 200, json: async () => WATCH() });
-  await settle(ctx.window);
-  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', projectKey: KEY, pipelineId: ROW.id, memberKey: null }) });
   ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', projectKey: KEY, pipelineId: ROW.id, memberKey: null }) });
   await settle(ctx.window);
-  assert.equal(pending.length, 3);
-  pending[2]({ ok: true, status: 200, json: async () => WATCH({ status: 'fixing' }) });
+  assert.equal(pending.length, 1, 'no second read while the first is in flight');
+  pending[0]({ ok: true, status: 200, json: async () => CHECKS() });
   await settle(ctx.window);
-  pending[1]({ ok: true, status: 200, json: async () => WATCH({ status: 'needs-person' }) });
+  assert.equal(pending.length, 2, 'the announced change is read once the first answer lands');
+  pending[1]({ ok: true, status: 200, json: async () => CHECKS({ watch: WATCH({ status: 'fixing' }) }) });
   await settle(ctx.window);
-  assert.equal(hdWatchState(ctx.window).textContent, 'Fixing', 'the older response is dropped');
+  assert.match(ovStatus(ctx.window).textContent, /Fixing/);
 });
 
-test('History: pr-watch-changed refetches only for the exact open run', async () => {
-  const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/watch\?/.test(url) ? ok(WATCH()) : null) });
-  await openDetail(ctx); await settle(ctx.window);
-  const before = watchGets(ctx).length;
+test('Overview: pr-watch-changed rereads only the exact PR', async () => {
+  const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(CHECKS()) : null) });
+  await openDetail(ctx, ovHash); await settle(ctx.window);
+  const before = checksGets(ctx).length;
   const send = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', memberKey: null, ...msg }) });
   send({ projectKey: 'proj-other-00000000', pipelineId: ROW.id });
   send({ projectKey: KEY, pipelineId: 'deadbeef' });
   send({ projectKey: KEY, pipelineId: ROW.id, memberKey: 'api-00000001' });
   await settle(ctx.window);
-  assert.equal(watchGets(ctx).length, before);
+  assert.equal(checksGets(ctx).length, before);
   send({ projectKey: KEY, pipelineId: ROW.id });
   await settle(ctx.window);
-  assert.equal(watchGets(ctx).length, before + 1);
+  assert.equal(checksGets(ctx).length, before + 1);
 });
