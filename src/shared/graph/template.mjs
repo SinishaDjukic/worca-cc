@@ -24,6 +24,9 @@ export function normalizeTemplate(raw) {
   };
   const canvas = normalizeCanvas(t.canvas);
   if (canvas) template.canvas = canvas;     // view state, engine-ignored — but it round-trips
+  // A workflow whose agents never query a code graph opts out of the per-run build (see
+  // RunHarness._buildWorktreeGraph). Only `false` is stored: absent means the default, build it.
+  if (t.codeGraph === false) template.codeGraph = false;
   return template;
 }
 

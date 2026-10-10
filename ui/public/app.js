@@ -1247,6 +1247,12 @@ function handleServerMessage(msg) {
     return;
   }
 
+  if (msg.type === 'pr-watch-changed') {
+    // Exact identity: the run's store key, its id and (a workspace's) member.
+    refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
+    return;
+  }
+
   // Sidebar-count mutations (pipeline delete, project/workspace create+delete) are
   // broadcast globally with NO runId. Re-read the authoritative counts; if the affected
   // view is open, also reload it so its rows reflect the change. Handle BEFORE the
@@ -20596,6 +20602,7 @@ function openShipItModal(record, data) {
   cardAlert(card, null);
   resetShipItDesc(modal);
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
+  q('.shipit-watch-input').checked = false;
   const okBtn = q('.shipit-ok');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
@@ -20711,6 +20718,7 @@ function openShipItModal(record, data) {
     if (description.trim()) payload.body = description;
     // Draft only when ticked; unticked sends nothing (the server's default is not a draft).
     if (q('.shipit-draft-input').checked) payload.draft = true;
+    if (q('.shipit-watch-input').checked) payload.watch = true;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -20981,6 +20989,7 @@ function openShipItWsModal(record, data) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return;
   const q = (sel) => modal.querySelector(sel);
+  q('.shipit-watch-input').checked = false;
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
@@ -21047,6 +21056,7 @@ function openShipItWsModal(record, data) {
   // ticked, so the next click retries exactly those. Cancel stops before the next repo.
   const onOk = async () => {
     const batch = picked();
+    const watch = q('.shipit-watch-input').checked;
     if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
@@ -21060,7 +21070,7 @@ function openShipItWsModal(record, data) {
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(shipItRowPayload(record, r)),
+          body: JSON.stringify({ ...shipItRowPayload(record, r), ...(watch ? { watch: true } : {}) }),
         });
         const dd = await safeJson(res);
         if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -21183,6 +21193,7 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
 }
@@ -21240,7 +21251,10 @@ function paintHdGlance(screen, record, data) {
   const createBtn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
   const slot = glance.querySelector('.rd-pr-slot');
-  if (shown(link) && !link.hidden) {
+  const linked = shown(link) && !link.hidden;
+  paintRdPrStatus(glance.querySelector('.rd-pr-status'),
+    linked && pr === 'OPEN' && record.target !== 'workspace' ? { id: record.id, projectKey: record.projectKey } : null);
+  if (linked) {
     paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
   } else if (shown(createBtn) && !createBtn.hidden) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
@@ -21435,6 +21449,28 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
+// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs) and the run
+// page card (paintRdPrCta), both drawn by paintRdPrStatus.
+const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
+// Words only while the watch is doing something: the switch already says on or off.
+function hdPrWatchLabel(state) {
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.mergingBase) return `Merging ${state.mergingBase} in`;
+  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
+  if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
+  return state.status === 'needs-person' ? 'Needs a person' : '';
+}
+const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
+const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
+/** The Watch switch's face: the word and the track, on or off. */
+function prWatchSwitchFace(watching) {
+  const sw = document.createElement('span');
+  sw.className = `switch${watching ? ' on' : ''}`;
+  sw.setAttribute('aria-hidden', 'true');
+  const word = document.createElement('span');
+  word.textContent = 'Watch';
+  return [word, sw];
+}
 // Workspace header: every member repo on its own line (clarification: per-repo links
 // live here, the card shows the aggregate), plus Create PR while any can still ship.
 function paintHdWsPr(record, data, btn, repos) {
@@ -24309,6 +24345,11 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
   }
   wrap.appendChild(verdict);
+  // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
+  const prs = document.createElement('div');
+  prs.className = 'hd-ov-prs';
+  wrap.appendChild(prs);
+  paintHdOvPrs(prs, record);
   if (isTerminalStatus(record.status)) {
     const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
     wrap.appendChild(strip);
@@ -29121,6 +29162,216 @@ function rdFilesChanged(r) {
   return s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null;
 }
 
+// The open PR's own state under its button (.rd-pr-status): its checks (passed, running,
+// failed), a merge conflict, and the Watch PR toggle, whose words show only while a watch is
+// doing something (fixing, or waiting for a person). GitHub PRs only (GET /api/pr/checks).
+// One answer per run is cached so the glance's frequent repaints never refetch; a cached answer
+// older than PR_STATUS_STALE_MS is re-read on the next paint, and running checks poll.
+const PR_STATUS_STALE_MS = 15000;
+const PR_STATUS_POLL_MS = 20000;
+const prStatusCache = new Map();
+const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}\u0000${scope.memberKey || ''}`;
+const prScopeBody = (scope) => ({ id: scope.id, projectKey: scope.projectKey, ...(scope.memberKey ? { memberKey: scope.memberKey } : {}) });
+function paintRdPrStatus(host, scope) {
+  if (!host) return;
+  if (!scope) { host.hidden = true; host.dataset.key = ''; clearTimeout(host._prTimer); return; }
+  const key = prStatusKey(scope);
+  const cached = prStatusCache.get(key);
+  if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
+  if (cached) renderRdPrStatus(host, scope, cached);
+  if (!host._prLoading && (!cached || Date.now() - cached.at > PR_STATUS_STALE_MS)) void loadRdPrStatus(host, scope);
+}
+// One GET per PR in flight: the run page card and the Overview row can show the same PR at once.
+const prStatusReads = new Map();
+function readPrStatus(key, q) {
+  if (!prStatusReads.has(key)) {
+    const p = fetch(`/api/pr/checks?${q}`).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null)
+      .finally(() => prStatusReads.delete(key));
+    prStatusReads.set(key, p);
+  }
+  return prStatusReads.get(key);
+}
+async function loadRdPrStatus(host, scope) {
+  const key = prStatusKey(scope);
+  const q = new URLSearchParams({ projectKey: '', ...prScopeBody(scope) });
+  clearTimeout(host._prTimer);
+  host._prLoading = true;
+  host._prAgain = false;
+  let c;
+  try { c = await readPrStatus(key, q); }
+  finally { host._prLoading = false; }
+  // A change announced while this read was in flight: read once more, the answer may predate it.
+  if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, scope); return; }
+  const w = c?.watch;
+  const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
+    status: c?.status && typeof c.status.label === 'string' ? c.status : null,
+    watch: w && typeof w.watching === 'boolean' ? w : null };
+  prStatusCache.set(key, next);
+  if (host.dataset.key !== key) return;            // the slot moved to another run meanwhile
+  renderRdPrStatus(host, scope, next);
+  if (next.checks?.state === 'pending') {
+    host._prTimer = setTimeout(() => {
+      if (host.dataset.key === key && host.isConnected && host.offsetParent) void loadRdPrStatus(host, scope);
+    }, PR_STATUS_POLL_MS);
+  }
+}
+const PR_STATUS_ICONS = {
+  'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
+  'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
+  none: '<circle cx="12" cy="12" r="9"/>',
+};
+function renderRdPrStatus(host, scope, s) {
+  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
+  const c = s.checks;
+  const wst = s.watch;
+  // The headline: GitHub's merge verdict (GET /api/pr/checks `status`: Ready to merge, Merge
+  // conflicts, Review required, the checks…), its checks line when the verdict is about something
+  // else, then what the watch is doing.
+  const v = s.status;
+  const [tone, text] = v && v.label ? [v.tone === 'none' ? 'none' : `is-${v.tone}`, v.label]
+    : c ? ['none', 'No checks'] : [null, ''];
+  const notes = [];
+  if (v && v.label && v.detail) notes.push(span('rd-prs-detail', v.detail));
+  if (wst) {
+    const doing = hdPrWatchLabel(wst);
+    if (doing) notes.push(span(hdPrWatchTone(wst) === 'bad' ? 'is-bad' : 'is-run', doing));
+    // The fix run the watch started: its live page while it runs here, else its saved run.
+    if (HD_PR_WATCH_ACTIVE.has(wst.status) && wst.activePipelineId) {
+      const pid = wst.activePipelineId;
+      const a = document.createElement('a');
+      a.className = 'rd-prs-link';
+      a.href = `#history/${scope.projectKey}/${pid}`;
+      a.textContent = 'View fix run';
+      a.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        const live = [...runs.values()].find((x) => x.pipelineId === pid && !RD_TERMINAL.includes(x.status));
+        if (live) { e.preventDefault(); location.hash = `running/${live.runId}`; }
+      });
+      notes.push(a);
+    }
+    // Resolve: GitHub reports conflicts and no watch will fix them on its own (off, or waiting for a
+    // person). One fix run merges the base into the PR branch and pushes (POST /api/pr/resolve).
+    if (v?.tone === 'bad' && v.label === 'Merge conflicts' && !HD_PR_WATCH_ACTIVE.has(wst.status)
+      && (!wst.watching || wst.status === 'needs-person')) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rd-prs-link';
+      b.textContent = 'Resolve';
+      b.title = 'Merge the base branch into this pull request in a fix run, then push';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        const k = prStatusKey(scope);
+        let patch;
+        try {
+          const r = await fetch('/api/pr/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prScopeBody(scope)) });
+          const out = await safeJson(r);
+          if (!r.ok || !out) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { watch: out?.watch });
+          patch = { watch: out, resolveError: null };
+        } catch (err) {
+          patch = { resolveError: err.message, ...(err.watch && typeof err.watch.watching === 'boolean' ? { watch: err.watch } : {}) };
+        }
+        const next = { ...(prStatusCache.get(k) || s), ...patch };
+        prStatusCache.set(k, next);
+        if (host.dataset.key === k) renderRdPrStatus(host, scope, next);
+      });
+      notes.push(b);
+      if (s.resolveError) notes.push(span('is-bad', s.resolveError));
+    }
+  }
+  const parts = [];
+  if (tone) {
+    const sum = document.createElement('span');
+    sum.className = 'rd-prs-sum';
+    sum.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
+    sum.appendChild(span('rd-prs-text', text));
+    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
+    parts.push(sum);
+  }
+  if (wst) {
+    const row = document.createElement('label');
+    row.className = 'rd-prs-watch';
+    row.dataset.minLevel = 'advanced';
+    row.title = HD_PR_WATCH_TIP;
+    const [word, sw] = prWatchSwitchFace(!!wst.watching);
+    sw.removeAttribute('aria-hidden');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!wst.watching));
+    sw.setAttribute('aria-label', 'Watch this pull request');
+    sw.tabIndex = 0;
+    row.append(word, sw);
+    const toggle = async () => {
+      if (sw.classList.contains('disabled')) return;
+      sw.classList.add('disabled');
+      try {
+        const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...prScopeBody(scope), watch: !wst.watching }) });
+        const nextWatch = await safeJson(r);
+        if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
+        const next = { ...(prStatusCache.get(prStatusKey(scope)) || s), watch: nextWatch };
+        prStatusCache.set(prStatusKey(scope), next);
+        if (host.dataset.key === prStatusKey(scope)) renderRdPrStatus(host, scope, next);
+      } catch (err) {
+        sw.classList.remove('disabled');
+        row.title = `Could not change Watch: ${err.message}`;
+      }
+    };
+    row.addEventListener('click', (e) => { e.preventDefault(); void toggle(); });
+    sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); void toggle(); } });
+    parts.push(row);
+  }
+  host.replaceChildren(...parts);
+  host.hidden = !tone && !wst;
+}
+/** pr-watch-changed: re-read every status line showing that PR (a watch toggled elsewhere, a fix run). */
+function refreshRdPrStatus(projectKey, id, memberKey = '') {
+  const scope = { projectKey, id, ...(memberKey ? { memberKey } : {}) };
+  const key = prStatusKey(scope);
+  prStatusCache.delete(key);
+  for (const host of document.querySelectorAll('.rd-pr-status')) {
+    if (host.dataset.key !== key) continue;
+    if (host._prLoading) host._prAgain = true;
+    else void loadRdPrStatus(host, scope);
+  }
+}
+
+/** Overview tab: one row per open pull request under the review verdict (a workspace run: one per
+ *  member repo), each drawn by paintRdPrStatus. Rows are rebuilt only when the set of PRs changes. */
+function paintHdOvPrs(box, record) {
+  if (!box || !record) return;
+  const scopes = [];
+  if (record.target === 'workspace' && hasWsMembers(record)) {
+    for (const m of histWsMembers(record)) {
+      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') scopes.push({ id: record.id, projectKey: record.projectKey, memberKey: m.memberKey, name: m.name || m.memberKey });
+    }
+  } else if (record.pr && typeof record.pr === 'object' && String(record.pr.state || '').toUpperCase() === 'OPEN' && record.pr.url) {
+    scopes.push({ id: record.id, projectKey: record.projectKey, name: '' });
+  }
+  const sig = JSON.stringify(scopes);
+  if (box.dataset.sig !== sig) {
+    box.dataset.sig = sig;
+    box.replaceChildren(...scopes.map((sc) => {
+      const row = document.createElement('div');
+      row.className = 'hd-ov-pr';
+      const label = document.createElement('span');
+      label.className = 'hd-ov-pr-label';
+      label.textContent = sc.name ? `Pull request · ${sc.name}` : 'Pull request';
+      const host = document.createElement('div');
+      host.className = 'rd-pr-status hd-ov-pr-status';
+      host.hidden = true;
+      row.append(label, host);
+      return row;
+    }));
+  }
+  const hosts = box.querySelectorAll('.hd-ov-pr-status');
+  scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
+}
+
 // The pull request button under the result, in its slot (paintPrCta). Same tri-state as
 // paintHdPr: an open or merged PR links, `null` (resolved, none) offers Create when
 // eligible, `undefined` (the lookup runs) and a History row not loaded yet hold the
@@ -29131,15 +29382,20 @@ function rdFilesChanged(r) {
 function paintRdPrCta(screen, r) {
   const slot = screen.querySelector('.rd-pr-slot');
   if (!slot) return;
+  const status = screen.querySelector('.rd-pr-status');
   const key = r.status === 'done' ? historyKeyForRun(r) : '';
-  if (!key) { paintPrCta(slot, { state: 'none' }); return; }
+  if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
   const record = rdHistoryRecord(r);
-  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); return; }
+  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-  } else if (histPrEligible(record) && record.pr !== undefined) {
+    paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
+    return;
+  }
+  paintRdPrStatus(status, null);
+  if (histPrEligible(record) && record.pr !== undefined) {
     paintPrCta(slot, {
       state: 'create', cls: 'rd-create-pr',
       onClick: () => {

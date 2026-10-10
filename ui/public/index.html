@@ -785,7 +785,11 @@
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- The Live view panel. The clip lets the narrow layout open its height while the
                      graph host keeps its final size (no fit chasing a growing box). It is `inert`:
@@ -928,7 +932,11 @@
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
                        the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
                 <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
@@ -2511,6 +2519,7 @@
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="check-row" for="shipit-draft-input"><input id="shipit-draft-input" class="shipit-draft-input" type="checkbox" /> Open as draft</label>
+          <label class="check-row" for="shipit-watch-input"><input id="shipit-watch-input" class="shipit-watch-input" type="checkbox" /> Watch PR</label>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>

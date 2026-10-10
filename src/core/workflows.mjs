@@ -32,7 +32,7 @@ import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
-  GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID,
+  GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
@@ -225,6 +225,7 @@ function rowToTpl(r) {
     base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     base.wires = Array.isArray(graph.wires) ? graph.wires : [];
     if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
+    if (graph.codeGraph === false) base.codeGraph = false;
     return base;
   }
   base.steps = parseArr(r.steps);
@@ -324,6 +325,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
   if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
+  if (tpl?.codeGraph === false) graph.codeGraph = false;
 
   getDb();
   const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);
@@ -371,6 +373,7 @@ export async function readWorkflow(id, opts = {}) {
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
+  if (id === PR_FIX_WORKFLOW_ID) return GRAPH_PR_FIX_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -535,6 +538,7 @@ export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
+  if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;

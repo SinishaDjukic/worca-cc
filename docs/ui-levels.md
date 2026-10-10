@@ -195,6 +195,32 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 
+An open github.com pull request shows its state as GitHub's merge box would
+(Draft, Merge conflicts, Changes requested, checks failed or running, Review
+required, Out of date, Blocked, Ready to merge) in two places: the footer of the
+run page's pull request button, and a "Pull request" row under the review verdict
+on the Overview tab (one row per repository for a workspace run). Both show at
+every level; the Watch switch in them is advanced.
+
+Watch PR is opt-in, also in Ship It. It supports github.com only and batches
+failed checks, merge conflicts and trusted author, owner, member or collaborator
+feedback into at most three automatic fix runs. Checks that also fail on the base
+branch are skipped, counted apart on the checks line ("· 2 also failing on dev")
+and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
+re-run once per PR commit before any fix; a failure the base head has no result for
+yet waits up to 30 minutes for it; and when the PR is behind its base and the base
+head passes the failing check, the first fix run only merges the base in. Review
+text is untrusted code feedback. Each fix run is an unattended
+Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
+workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
+original run's guardrails and engine (and a mock run's mock flag), never asks a
+person, and uses the project's default agent models. A PR merged or closed while
+a fix ran is not pushed to. Turning the watch off stops new work;
+already-active work drains through publishing. Turning an idle watch off and on
+resets its run allowance. Worca replies to review threads without resolving them.
+With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
+base branch in once.
+
 ### Workflows
 
 The full-screen editor (`#workflows`) is Simple, and nothing inside it is

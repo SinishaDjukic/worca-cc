@@ -336,3 +336,77 @@ test('histPrEligible: workspace eligibility is computed across members', async (
   assert.equal(histPrEligible(ws([member(WEB, 'web', { affected: false })])), false, 'no changes');
   assert.equal(histPrEligible({ target: 'workspace' }), false, 'no member facts (legacy/lite row)');
 });
+
+// ---- Watch PR (#619) ----------------------------------------------------------
+test('workspace Ship it: Watch PR resets on open and one snapshot applies to every member request', async () => {
+  const arms = (url, opts) => {
+    if (url.endsWith('/api/pr/crosslink')) return ok({ ok: true, edited: [], failed: [] });
+    if (!(url.endsWith('/api/pr') && opts.method === 'POST')) return null;
+    const b = JSON.parse(opts.body);
+    // Unticking while the batch runs must not split it.
+    modalOf(globalThis.window).querySelector('.shipit-watch-input').checked = false;
+    return ok({ ok: true, url: `https://github.com/o/${b.memberKey}/pull/1`, mergeable: 'MERGEABLE', existed: false, memberKey: b.memberKey, watching: !!b.watch });
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([member(API, 'api'), member(WEB, 'web')])] });
+  await openDetail(ctx, wksDetailHash);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  let modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-watch-input').checked, false);
+  modal.querySelector('.shipit-watch-input').checked = true;
+  click(ctx.window, modal.querySelector('.shipit-cancel')); await settle(ctx.window);
+  click(ctx.window, hdPr(ctx.window)); await settle(ctx.window, 6);
+  modal = modalOf(ctx.window);
+  assert.equal(modal.querySelector('.shipit-watch-input').checked, false, 'reset on the next open');
+  modal.querySelector('.shipit-watch-input').checked = true;
+  click(ctx.window, modal.querySelector('.shipit-ok')); await settle(ctx.window, 10);
+  assert.deepEqual(prPosts(ctx).map((c) => [JSON.parse(c.opts.body).memberKey, JSON.parse(c.opts.body).watch]), [[API, true], [WEB, true]]);
+});
+
+const memberChecks = (watch) => ({ checks: { state: 'passing', total: 3, failed: 0, pending: 0, skipped: 0 }, mergeable: 'MERGEABLE',
+  status: { tone: 'ok', label: 'Ready to merge', detail: 'All 3 checks passed' }, watch });
+const ovRows = (w) => [...w.document.querySelectorAll('#hist-detail .hd-ov-pr')];
+
+test('workspace detail: each open member PR gets its own Overview row, watch and Watch switch', async () => {
+  const states = { [API]: { watching: true, status: 'fixing', reason: null, activePipelineId: 'f1' },
+    [WEB]: { watching: false, status: null, reason: null, activePipelineId: null } };
+  const arms = (url, opts) => {
+    if (/\/api\/pr\/checks\?/.test(url)) return ok(memberChecks(states[new URL(url, 'http://x').searchParams.get('memberKey')]));
+    if (url.endsWith('/api/pr/watch') && opts.method === 'POST') return fail(500, { error: 'nope' });
+    return null;
+  };
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } }),
+    member(DOC, 'doc', { pr: { state: 'MERGED', url: 'https://github.com/o/doc/pull/3' } })])] });
+  await openDetail(ctx, `${wksDetailHash}/details/overview`); await settle(ctx.window, 6);
+  const rows = ovRows(ctx.window);
+  assert.equal(rows.length, 2, 'a merged member gets no row');
+  assert.match(rows[0].querySelector('.hd-ov-pr-label').textContent, /^Pull request · /);
+  assert.match(rows[0].textContent, /Fixing/);
+  assert.doesNotMatch(rows[1].textContent, /Fixing|Watching/);
+  for (const row of rows) assert.equal(row.querySelector('.rd-prs-watch').dataset.minLevel, 'advanced');
+  assert.equal(ctx.window.document.querySelector('#hist-detail .hd-pr-watch'), null, 'no switch in the header or its repo rows');
+  click(ctx.window, rows[1].querySelector('.rd-prs-watch')); await settle(ctx.window);
+  const post = ctx.calls.find((c) => c.url.endsWith('/api/pr/watch') && c.opts.method === 'POST');
+  assert.deepEqual(JSON.parse(post.opts.body), { id: ROW.id, projectKey: WKS_KEY, memberKey: WEB, watch: true });
+  assert.match(rows[1].querySelector('.rd-prs-watch').title, /nope/);
+  assert.doesNotMatch(rows[0].querySelector('.rd-prs-watch').title, /nope/, 'the failure belongs to the member row');
+});
+
+test('workspace detail: pr-watch-changed for the run\'s store key rereads only the named member', async () => {
+  const arms = (url) => (/\/api\/pr\/checks\?/.test(url) ? ok(memberChecks({ watching: true, status: 'watching', reason: null, activePipelineId: null })) : null);
+  const ctx = await bootShip({ detail: WS_DETAIL, arms, rows: [wsRow([
+    member(API, 'api', { pr: { state: 'OPEN', url: 'https://github.com/o/api/pull/1' } }),
+    member(WEB, 'web', { pr: { state: 'OPEN', url: 'https://github.com/o/web/pull/2' } })])] });
+  await openDetail(ctx, `${wksDetailHash}/details/overview`); await settle(ctx.window, 6);
+  const gets = (mk) => ctx.calls.filter((c) => /\/api\/pr\/checks\?/.test(c.url) && new URL(c.url, 'http://x').searchParams.get('memberKey') === mk).length;
+  const before = [gets(API), gets(WEB)];
+  assert.deepEqual(before.map((n) => n > 0), [true, true]);
+  const send = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'pr-watch-changed', pipelineId: ROW.id, ...msg }) });
+  send({ projectKey: KEY, memberKey: API });                  // a member's own project key is not the run's store key
+  await settle(ctx.window);
+  assert.deepEqual([gets(API), gets(WEB)], before);
+  send({ projectKey: WKS_KEY, memberKey: API });
+  await settle(ctx.window);
+  assert.deepEqual([gets(API), gets(WEB)], [before[0] + 1, before[1]]);
+});
