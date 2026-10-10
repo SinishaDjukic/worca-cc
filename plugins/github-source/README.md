@@ -59,6 +59,6 @@ results.
 This directory (`plugins/github-source` in the worca-cc repo) is the source of
 truth AND the distribution point: the worca-cc repo is itself a plugin
 marketplace (see the root `worca-cc-marketplace.json`), registered by default
-in every worca-cc install. Users get this plugin from Plugins → Available, or:
+in every worca-cc install. Users get this plugin from Marketplace → Available, or:
 
     worca plugin install github-source

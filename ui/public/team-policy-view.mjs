@@ -418,7 +418,7 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
   actions.append(requiredActions(doc, reqs));
   head.append(actions);
   card.append(head);
-  card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Plugins page.'));
+  card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Marketplace page.'));
   if (!reqs.length) card.append(h(doc, 'div', 'hist-empty', 'This policy expects no plugins.'));
   else {
     const table = h(doc, 'table', 'tm-tbl tp-tbl tp-plugins-tbl');
@@ -443,7 +443,7 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
       const act = h(doc, 'td', 'tp-plugin-act');
       if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…'); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }   // quiet: the head carries the primary action
       else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', 'Update…'); b.dataset.name = r.name; act.append(b); }
-      else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Plugins page'));
+      else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Marketplace page'));
       else if (r.config) { const b = btn(doc, 'pl-policy-configure', 'Configure…'); b.dataset.name = r.name; act.append(b); }
       tr.append(name, want, have, state, act);
       tbody.append(tr);
@@ -497,7 +497,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
   root.append(sc);
   const mc = h(doc, 'section', 'card tp-catalog-models');
   const mh = h(doc, 'div', 'card-head');
-  mh.append(h(doc, 'h2', null, 'Models'), h(doc, 'small', 'hint', 'Selectable everywhere a model is chosen · Settings › Models'));
+  mh.append(h(doc, 'h2', null, 'Models'), h(doc, 'small', 'hint', 'Selectable everywhere a model is chosen · the Models page'));
   mc.append(mh);
   if (!models.length) mc.append(h(doc, 'div', 'hist-empty', 'This policy ships no models.'));
   else {
@@ -1612,7 +1612,7 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   root.append(list);
   const trust = h(doc, 'label', 'switch-row tp-trust-row');
   const cb = h(doc, 'input', 'sw-input tp-trust'); cb.type = 'checkbox'; cb.checked = !!trusted; cb.dataset.home = home || '';
-  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Plugins page at any time.`));
+  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Marketplace page at any time.`));
   trust.append(cb, h(doc, 'span', 'switch switch-sm'), txt);
   root.append(trust);
   // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).

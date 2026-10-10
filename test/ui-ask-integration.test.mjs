@@ -142,7 +142,7 @@ test('ui-ask-integration: Escape is routed by focus location', async () => {
   keydown(window, input, { key: 'Escape' });
   await settle(window);
   assert.equal(window.location.hash, '#running/r1', 'sheet-owned Escape left the detail alone');
-  keydown(window, window.document.body, { key: 'k', metaKey: true }); // ⌘K closes the sheet
+  window.document.querySelector('.ask-header button[aria-label="Close"]').click();
   await settle(window);
   keydown(window, window.document.body, { key: 'Escape' });
   await settle(window);
@@ -160,7 +160,7 @@ test('ui-ask-integration: Escape is routed by focus location', async () => {
   keydown(window, input2, { key: 'Escape' });
   await settle(window);
   assert.equal(window.location.hash, '#running/r1', 'slide: sheet-owned Escape still leaves the detail alone');
-  keydown(window, window.document.body, { key: 'k', metaKey: true }); // ⌘K closes the sheet
+  window.document.querySelector('.ask-header button[aria-label="Close"]').click();
   await settle(window);
   keydown(window, window.document.body, { key: 'Escape' });
   await settle(window);

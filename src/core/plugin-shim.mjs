@@ -94,7 +94,7 @@ function loadSource(plugin, sourceId) {
   const lock = readPluginsLock();
   const entry = lock[plugin];
   if (!entry) throw new PluginOpError('plugin', `plugin "${plugin}" is not installed`);
-  if (entry.enabled === false) throw new PluginOpError('plugin', `plugin "${plugin}" is disabled — enable it in the Plugins view`);
+  if (entry.enabled === false) throw new PluginOpError('plugin', `plugin "${plugin}" is disabled — enable it on the Marketplace page`);
   const dir = pluginCurrentDir(plugin);
   let manifest;
   try {
@@ -157,7 +157,7 @@ function assertProfileInvariant({ plugin, sourceId, source, profile, allowLegacy
       }
     } else if (!listProfileIds(plugin).includes(profile)) {
       throw new PluginOpError('plugin',
-        `plugin "${plugin}" has no profile "${profile}" — create it in Plugins settings (or POST /api/plugins/${plugin}/profiles) first`);
+        `plugin "${plugin}" has no profile "${profile}" — create it on the Marketplace page (or POST /api/plugins/${plugin}/profiles) first`);
     }
   } else if (profile && profile !== DEFAULT_PROFILE) {
     throw new PluginOpError('plugin', `task source "${plugin}/${sourceId}" does not use profiles`);

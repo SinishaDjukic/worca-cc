@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createAskTurn, CODEX_NOT_READY_CODE, CODEX_SETUP_DOCS_URL, CODEX_NO_LOCKDOWN_MESSAGE } from '../src/core/ask/turn.mjs';
+import { createAskTurn, CODEX_NOT_READY_CODE, CODEX_SETUP_DOCS_URL } from '../src/core/ask/turn.mjs';
 import { createThread, appendMessage, getMessage, getThread } from '../src/core/ask/store.mjs';
 
 useTempHome(after);
@@ -19,8 +19,7 @@ after(() => {
   }
   rmSync(scratchHome, { recursive: true, force: true });
 });
-// Task 0 (a) was NOT CONFIRMED (plans/ask-on-codex-spike.md): CODEX_ASK_LOCKDOWN is null and a real Codex turn refuses.
-// These tests inject a lockdown to cover the turn a lockable codex runs.
+// A short lockdown and a codex that has its features: what reaches the spawn is the adapter's concern (codex-ask-adapter).
 const TEST_LOCKDOWN = () => ['--disable', 'shell_tool'];
 
 function seed() {
@@ -41,6 +40,7 @@ function makeTurn(s, over = {}, deps = {}) {
       generateTitle: async () => '',
       failedBecauseSignedOut: async () => { throw new Error('never asked on Codex'); },
       codexPreflight: async () => ({}),
+      codexAskSupport: async () => ({}),
       codexLockdown: TEST_LOCKDOWN,
       memoryMount: async () => null,
       ...deps,
@@ -86,12 +86,27 @@ test('codexPreflight refusal: ask-error code codex-not-ready, a notice with the 
 
 test('a relayed Codex turn skips the preflight: it would check the server user\'s codex, not the agent user\'s', async () => {
   const s = seed();
-  let asked = 0;
+  let asked = 0; let supported = 0;
   const { turn, calls } = makeTurn(s, {}, { codexPreflight: async () => { asked += 1; return { refusal: 'server user is not signed in' }; },
+    codexAskSupport: async () => { supported += 1; return {}; },
     agentRelay: () => ({ token: 't', dispose() {} }), runClaudeImpl: async (o) => reply(o) });
   await turn.run();
   assert.equal(asked, 0);
+  assert.equal(supported, 1, 'the lockdown flags are the binary\'s: checked for a relayed turn too');
   assert.equal(calls.length, 1);
+});
+
+test('a codex without every lockdown flag refuses with "update codex", a setup notice, no spawn', async () => {
+  const s = seed();
+  const { turn, frames, calls } = makeTurn(s, {}, {
+    codexAskSupport: async () => ({ refusal: 'this codex cannot switch off view_image for a chat — update codex to 0.162 or newer' }),
+    runClaudeImpl: async (o) => reply(o) });
+  await turn.run();
+  assert.equal(calls.length, 0);
+  const err = frames.find((f) => f.type === 'ask-error');
+  assert.equal(err.code, CODEX_NOT_READY_CODE);
+  assert.match(err.message, /update codex to 0\.162/);
+  assert.ok(getMessage(s.asst.id).blocks.some((b) => b.kind === 'notice' && b.href === CODEX_SETUP_DOCS_URL && /view_image/.test(b.text)));
 });
 
 test('a preflight warning proceeds', async () => {
@@ -109,12 +124,11 @@ test('no lockdown on this codex: the turn refuses before any spawn', async () =>
   assert.match(frames.find((f) => f.type === 'ask-error').message, /Ask on Codex is unavailable/);
 });
 
-test('the shipped codex has no lockdown: a Codex turn refuses with the unavailable message, before any spawn', async () => {
+test('the shipped lockdown lets a Codex turn start', async () => {
   const s = seed();
-  const { turn, frames, calls } = makeTurn(s, {}, { codexLockdown: undefined, runClaudeImpl: async (o) => reply(o) });
+  const { turn, calls } = makeTurn(s, {}, { codexLockdown: undefined, runClaudeImpl: async (o) => reply(o) });
   await turn.run();
-  assert.equal(calls.length, 0);
-  assert.equal(frames.find((f) => f.type === 'ask-error').message, CODEX_NO_LOCKDOWN_MESSAGE);
+  assert.equal(calls.length, 1);
 });
 
 test('a codex resume that finds no thread retries fresh on Codex', async () => {

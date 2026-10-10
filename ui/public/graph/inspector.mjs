@@ -5,7 +5,8 @@
 // listener, routing on `data-field`. Capability rows are gated by META
 // BOOLEANS: a new agent's sidecar drives its panel with no UI change.
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
-import { ENGINE_NAMES, engineChoiceLabel } from '../../../src/shared/engine-switch.mjs';
+import { harnessesOf, modelGroups, modelSourceSuffix } from '../../../src/shared/connections.mjs';
+import { engineLabel } from '../../../src/shared/engine-switch.mjs';
 import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, wirableParams, hasParamsPort } from '../../../src/shared/graph/script-meta.mjs';
 // The DOM primitives and the two script forms live in ../script-forms.mjs so the
 // composer, the Scripts page's Overview tab and the Test tab share ONE copy (C3).
@@ -65,11 +66,12 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     // Hidden built-ins (#422) leave the list unless one is THIS node's stored
     // pick — it still resolves at run time and must stay visible here.
     const offered = models.filter((m) => m && (!m.hidden || m.id === node.config.model));
-    // D10: a node knows no run engine, so with another engine's models in the catalog the list is grouped
-    // per engine (Claude / Codex / Cursor); a pick of another engine is skipped at run time (§4.2).
-    const itemsOf = (engine) => offered.filter((m) => (m.engine || 'claude') === engine).map((m) => ({ value: m.id, text: m.label || m.id }));
-    const groups = ENGINE_NAMES.map((e) => ({ group: engineChoiceLabel(e), items: itemsOf(e) })).filter((g) => g.items.length);
-    const modelItems = groups.some((g) => g.group !== 'Claude') ? groups : itemsOf('claude');
+    // A node knows no run engine: with more than one provider in the catalog the list is grouped by provider
+    // (Claude sign-in, ChatGPT sign-in, OpenAI-compatible, …), each model naming the harnesses that run it when that
+    // is not Claude Code alone. A pick the run's harness cannot run is skipped at run time (§4.2).
+    const harnessNote = (m) => { const hs = harnessesOf(m); return hs.length === 1 && hs[0] === 'claude' ? '' : ` · ${hs.map(engineLabel).join(', ')}`; };
+    // Grouped by connection like every model picker (src/shared/connections.mjs modelGroups).
+    const modelItems = modelGroups(offered).map((g) => ({ group: g.label, items: g.models.map((m) => ({ value: m.id, text: (m.label || m.id) + modelSourceSuffix(m) + harnessNote(m) })) }));
     body.appendChild(select(doc, 'ins-model', 'model', 'Model', [{ value: '', text: 'inherit' }, ...modelItems], node.config.model));
     // Efforts are per engine: the picked model's own list, else the catalog-wide one.
     const picked = node.config.model ? offered.find((m) => m.id === node.config.model) : null;

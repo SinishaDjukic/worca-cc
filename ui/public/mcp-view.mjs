@@ -1,5 +1,5 @@
 // ui/public/mcp-view.mjs
-// Settings › Sets (tab key mcp; docs/mcp-servers.md, docs/skills.md): the Sets view (configure), the Servers and
+// The Connectors page (docs/mcp-servers.md, docs/skills.md): the Sets view (configure), the Servers and
 // Skills views (read-only catalogs), the member cards and Add server — plus the project Sets tab, the workspace
 // overview card and the Settings › Ask Worca block. The manual definition form is mcp-definition-form.mjs.
 // Every write goes through `api(method, path, body)` and repaints from the server's read models; no
@@ -23,9 +23,9 @@ function button(doc, cls, label, data = {}) {
   return b;
 }
 
-// ── routes: #settings/mcp (General), #settings/mcp/sets/<id>, #settings/mcp/servers, #settings/mcp/skills ──
+// ── routes: #connectors (General), #connectors/sets/<id>, #connectors/servers, #connectors/skills ──
 // The Skills view has its own constant: a set may be named "Skills", and mcpRoute('skills') is that set.
-export const MCP_SKILLS_ROUTE = 'settings/mcp/skills';
+export const MCP_SKILLS_ROUTE = 'connectors/skills';
 export function parseMcpParam(sub = '') {
   if (sub === 'servers') return { view: 'servers', setId: null };
   if (sub === 'skills') return { view: 'skills', setId: null };
@@ -37,8 +37,8 @@ export function parseMcpParam(sub = '') {
   return { view: 'sets', setId: 'general' };
 }
 export function mcpRoute(setId) {
-  if (setId === null) return 'settings/mcp/servers';
-  return setId === 'general' ? 'settings/mcp' : `settings/mcp/sets/${enc(setId)}`;
+  if (setId === null) return 'connectors/servers';
+  return setId === 'general' ? 'connectors' : `connectors/sets/${enc(setId)}`;
 }
 
 // The team-requirements strip (docs/team-policy.md) is filled by team-policy code: fn(el) after each render.
@@ -123,7 +123,7 @@ export function collectFieldInputs(root) {
   return { values, secrets };
 }
 
-// ── the Settings tab controller ──────────────────────────────────────────────────────────────────
+// ── the Connectors page controller ──────────────────────────────────────────────────────────────────
 export function createMcpView({ host, api, navigate, confirm, modal, doc = globalThis.document, now = () => Date.now(), notify = null }) {
   const st = { view: 'sets', setId: 'general', sets: null, set: null, servers: null, skills: null, testing: new Set(), msg: '', msgKind: '',
     md: new Map(), mdOpen: new Set() };   // SKILL.md drawers: the text (or error) per skill id, and the ids shown open
@@ -181,7 +181,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   function topbar() {
     const bar = h(doc, 'div', 'topbar');
     const title = h(doc, 'div');
-    title.append(h(doc, 'h1', '', 'Sets'), h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
+    title.append(h(doc, 'div', 'sub', 'MCP servers and skills worca’s agents and Ask Worca get, grouped in sets attached to projects'));
     const seg = h(doc, 'div', 'seg');
     seg.setAttribute('role', 'group');
     seg.setAttribute('aria-label', 'View');
@@ -870,7 +870,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
     }
     if (!first) {
       const why = cat.length ? 'Every skill in the catalog is in this set already.'
-        : 'No skills yet. Install a plugin that ships some, or Import skill in Settings › Sets › Skills.';
+        : 'No skills yet. Install a plugin that ships some, or Import skill in Connectors › Skills.';
       modal.open(`Add skill to ${set.name}`, h(doc, 'p', 'hint', why), [['Close', 'btn btn-ghost btn-mini', () => modal.close()]]);
       return;
     }
@@ -951,7 +951,7 @@ export function createMcpView({ host, api, navigate, confirm, modal, doc = globa
   host.addEventListener('focusout', (e) => { if (e.target.dataset && e.target.dataset.field) void onChange(e); });
 
   return {
-    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #settings/mcp/). */
+    /** Route entry: '' | 'sets/<id>' | 'servers' | 'skills' (the part after #connectors/). */
     show(sub = '') {
       const r = parseMcpParam(sub);
       st.view = r.view;
@@ -1000,10 +1000,11 @@ export function renderResolution(doc, title, preview, sets, what = 'project') {
 const SKILL_LAYER_WORDS = {
   'sideload-disabled': 'this machine’s managed Claude Code settings turn off --plugin-dir',
   'cli-no-plugin-dir': 'this Claude Code has no --plugin-dir',
+  'engine-no-skill-mount': 'this run has no .agents/skills mount for its engine',
 };
-/** `blocked`: this machine loads no set skill (preview.skills.layer.blocked) — a row with no skip reason still never loads. */
+/** `blocked`: no set skill loads (preview.skills.layer.blocked) — a row with no skip reason still never loads. */
 function skillStatus(r, blocked = false) {
-  if (!r.reason) return blocked ? 'not loaded on this machine' : 'ok';
+  if (!r.reason) return blocked ? 'not loaded' : 'ok';
   if (r.reason === 'off') return 'off';
   if (r.reason === 'needs-consent') return `off — ${r.why || 'turn it on in the team checklist'}`;
   return r.why || r.reason;
@@ -1033,7 +1034,7 @@ function skillLayerNote(doc, preview) {
   const sk = preview.skills || {};
   if (sk.newer) return h(doc, 'p', 'hint err', 'Set files need a newer Worca: no skills from sets reach runs');
   const b = sk.layer && sk.layer.blocked;
-  return b ? h(doc, 'p', 'hint warn', `skills from sets not loaded on this machine: ${sk.layer.text || SKILL_LAYER_WORDS[b] || b}`) : null;
+  return b ? h(doc, 'p', 'hint warn', `skills from sets not loaded: ${sk.layer.text || SKILL_LAYER_WORDS[b] || b}`) : null;
 }
 /** "Skills in runs on X" (spec §6.5): the name agents call · set link · status or skip reason. */
 export function renderSkillResolution(doc, title, preview, what = 'project') {
@@ -1044,7 +1045,8 @@ export function renderSkillResolution(doc, title, preview, what = 'project') {
   const rows = skillRows(doc, preview);
   if (!rows.length) { if (preview.skills !== null) card.appendChild(h(doc, 'p', 'hint', `No skills in runs on this ${what}`)); return card; }
   card.append(...rows, h(doc, 'small', 'hint',
-    'Each set reaches a run as a plugin of its own: agents call /<set>:<skill>. A skill the project commits under .claude/skills keeps its bare /name.'));
+    'Each set reaches a run as a plugin of its own: agents call /<set>:<skill>. A skill the project commits under .claude/skills keeps its bare /name. '
+    + 'A run on an engine other than Claude gets them in its .agents/skills by name, <set>-<skill> when the name is taken.'));
   return card;
 }
 
@@ -1185,7 +1187,7 @@ export async function paintAskMcpBlock(host, { api, doc = globalThis.document })
   }
   row.appendChild(h(doc, 'span', 'hint', 'plus the sets of the projects a chat works on'));
   const a = h(doc, 'a', '', 'Edit General set');
-  a.href = '#settings/mcp/sets/general';
+  a.href = '#connectors/sets/general';
   row.appendChild(a);
   const label = h(doc, 'div', 'label-row');
   label.appendChild(h(doc, 'label', '', 'Sets'));

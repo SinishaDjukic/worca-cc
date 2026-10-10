@@ -68,7 +68,9 @@ test('boot paints Runs + Schedules from /api/counts (no number on Projects/Works
   await checkRows([
     { name: 'boot paints Runs + Schedules from /api/counts and no number on Projects/Workspaces', run: async () => {
       assert.equal(doc.querySelector('#nav-running-count').textContent, '0');
+      assert.equal(doc.querySelector('#nav-running-count').hidden, true, 'a zero is hidden');
       assert.equal(doc.querySelector('#nav-schedules-count').textContent, '5');
+      assert.equal(doc.querySelector('#nav-schedules-count').hidden, false);
       for (const nav of ['projects', 'workspaces']) {
         const b = navButton(doc, nav);
         assert.ok(b, `${nav} nav button present`);
@@ -84,6 +86,14 @@ test('boot paints Runs + Schedules from /api/counts (no number on Projects/Works
 
       assert.ok(calls.filter((u) => u.includes('/api/counts')).length > before, 're-read /api/counts');
       assert.doesNotMatch(navButton(doc, 'projects').textContent, /\d/, 'Projects shows no number');
+    } },
+    { name: 'a Schedules count back at zero hides (the element keeps its number)', run: async () => {
+      box.counts = { pipelines: 0, projects: 2, workspaces: 0, schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } };
+      wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'projects-changed', action: 'deleted' }) });
+      await new Promise((r) => setTimeout(r, 5));
+      const n = doc.querySelector('#nav-schedules-count');
+      assert.equal(n.textContent, '0');
+      assert.equal(n.hidden, true);
     } },
   ]);
 });

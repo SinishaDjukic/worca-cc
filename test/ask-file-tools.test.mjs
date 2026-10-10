@@ -2,10 +2,11 @@
 // allowed under wt/**, att/** and the memory mount; every ASK_DENY_RULES path refused; symlinks resolved.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createAskFileReader, askFileRoots, defaultFileDeps, AskFileError, ASK_FILE_LIMITS } from '../src/core/ask/file-deps.mjs';
 import { createAskTools, AskToolError } from '../src/core/ask/tools.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
@@ -113,6 +114,20 @@ test('grep: a catastrophically backtracking pattern is stopped at the time limit
     assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
     assert.ok(ticks >= 3, `the event loop kept turning (${ticks} ticks)`);
   } finally { rmSync(join(wt, 'src', 'redos.txt'), { force: true }); }
+});
+
+test('grep: each search worker loads only the reader and its small imports, not the Worca home\'s database or settings', () => {
+  // Those modules (projects.mjs → db.mjs, store.mjs, settings.mjs) once made up about a third of a worker's start.
+  const seen = new Set();
+  const visit = (file) => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    for (const [, spec] of readFileSync(file, 'utf8').matchAll(/^\s*(?:import|export)\b[^'"]*?\bfrom\s+['"](\.[^'"]+)['"]/gm)) visit(join(dirname(file), spec));
+  };
+  const askDir = dirname(fileURLToPath(new URL('../src/core/ask/grep-worker.mjs', import.meta.url)));
+  visit(join(askDir, 'grep-worker.mjs'));
+  const rel = [...seen].map((f) => f.slice(dirname(askDir).length + 1).split('\\').join('/')).sort();
+  assert.deepEqual(rel, ['ask/deny-rules.mjs', 'ask/file-reader.mjs', 'ask/grep-worker.mjs', 'ask/redact.mjs', 'chat/redact.mjs']);
 });
 
 test('grep: the turn ending stops a running search', async () => {

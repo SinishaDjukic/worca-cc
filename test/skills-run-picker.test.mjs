@@ -65,12 +65,20 @@ test('New Pipeline Sets picker: skills beside servers — label, rows, keys, ski
       [...pop.querySelectorAll('.mcp-runs-row input')].find((i) => i.dataset.keys === 'docs|skill:library:style-guide').click();
       assert.deepEqual(calls, [[['docs|skill:library:style-guide'], false]]);
     } },
+    { name: 'another engine: a skill row shows the name its .agents/skills would give it', run: () => {
+      const p = preview();
+      p.skills.mounted = p.skills.mounted.map((m) => ({ ...m, agentName: m.name === 'deploy-checklist' ? 'billing-deploy-checklist' : m.name }));
+      const pop = renderMcpRunsPop(p, [], { doc, onToggle: () => {} });
+      const names = [...pop.querySelectorAll('.mcp-runs-row.is-skill:not(.is-skipped)')].map((r) => r.textContent);
+      assert.ok(names.some((t) => t.includes('billing-deploy-checklist')));
+      assert.ok(names.some((t) => t.includes('release-notes') && !t.includes('billing:release-notes')));
+    } },
     { name: 'a blocked layer: one muted line naming why, no skill rows, the set box over servers only', run: () => {
       const pop = renderMcpRunsPop(preview(BLOCKED), [], { doc, onToggle: () => {} });
       const first = pop.firstElementChild;
       assert.ok(first.classList.contains('mcp-runs-blocked'));
-      assert.equal(first.textContent, `skills from sets not loaded on this machine: ${skillLayerText('sideload-disabled')}`);
-      assert.doesNotMatch(first.textContent, /machine: skills from sets/, 'the prefix is written once');
+      assert.equal(first.textContent, `skills from sets not loaded: ${skillLayerText('sideload-disabled')}`);
+      assert.doesNotMatch(first.textContent, /loaded: skills from sets/, 'the prefix is written once');
       assert.equal(pop.querySelectorAll('.mcp-runs-row.is-skill').length, 0);
       assert.deepEqual([...pop.querySelectorAll('.mcp-runs-set')].map((l) => l.textContent), ['Billing'], 'sets with nothing but skills drop out');
       assert.equal(pop.querySelector('.mcp-runs-set input').dataset.keys, 'billing|manual:pg');

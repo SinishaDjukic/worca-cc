@@ -1,4 +1,4 @@
-// test/codex-adapter.test.mjs — the codex engine adapter (plans/harness-bridge-design.md §10):
+// test/codex-adapter.test.mjs — the codex engine adapter:
 // argv, the `exec --json` normalizer against real captures (test/fixtures/codex), cost
 // estimation from cumulative usage, error classification, and the spawn path.
 import { test, after } from 'node:test';

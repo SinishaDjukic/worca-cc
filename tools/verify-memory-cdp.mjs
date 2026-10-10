@@ -202,14 +202,14 @@ try {
   const head = await ev(`(()=>{const p=document.querySelector('${PANE}');const b=p.querySelector('.mem-health .badge');return {
     badge:b.textContent,cls:b.className,rows:[...p.querySelectorAll('.mem-row')].map(r=>r.dataset.name),
     hooks:[...p.querySelectorAll('.mem-row-hook')].map(r=>r.textContent),
-    h1:p.querySelector('.topbar h1').textContent,hint:(p.querySelector('.mem-host-hint')||{}).textContent||null,
+    title:document.getElementById('topnav-title').textContent,hint:(p.querySelector('.mem-host-hint')||{}).textContent||null,
     defragText:p.querySelector('.mem-defrag').textContent,defragDisabled:p.querySelector('.mem-defrag').disabled,
     runEl:!!p.querySelector('.mem-run'),tab:document.querySelector('#settings-tabs button[data-tab="memory"]').classList.contains('on')};})()`);
   check('1', 'the Memory tab is selected and titled, the scope is Healthy, the three seeded files are listed, and Defragment is enabled with a hint naming the fallback host',
-    head.tab === true && head.h1 === 'Memory' && head.badge === 'Healthy' && /\bgreen\b/.test(head.cls)
+    head.tab === true && head.title === 'Settings' && head.badge === 'Healthy' && /\bgreen\b/.test(head.cls)
     && head.rows.join(',') === 'style,testing,traps' && head.hooks.join('|') === 'Terse commit subjects.|How the suite runs|grep -P does not exist on macOS.'
     && head.defragDisabled === false && head.runEl === false
-    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof — pick another project on the New pipeline page.', head);
+    && head.defragText === 'Defragment' && head.hint === 'Runs on memproof — pick another project on the New run page.', head);
 
   // ---- (2) the deep link opens the file, read-locked on its name -------------
   await go('settings/memory/testing');

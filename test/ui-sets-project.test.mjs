@@ -89,21 +89,21 @@ test('Skills in runs on X: qualified names, set links, statuses and skip reasons
         ['team-platfor:deploy-checklist', 'Team · acme/platform', 'off — turn it on in the team checklist'],
       ]);
       assert.deepEqual([...card.querySelectorAll('.mcp-res-row a')].map((a) => a.getAttribute('href')).slice(3),
-        ['#settings/mcp/sets/billing', '#settings/mcp', '#settings/mcp/sets/team-acme-platform-9333']);
+        ['#connectors/sets/billing', '#connectors', '#connectors/sets/team-acme-platform-9333']);
       assert.equal(card.querySelectorAll('.mcp-res-skip').length, 3, 'skipped rows read as skips');
       assert.match(card.lastChild.textContent, /agents call \/<set>:<skill>/);
     } },
     { name: 'a blocked layer is one muted line; a newer store says so; nothing in runs says so', run: () => {
       const blocked = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { ...SKILLS, layer: { blocked: 'sideload-disabled' } } });
       assert.equal(blocked.querySelector('p.hint.warn').textContent,
-        'skills from sets not loaded on this machine: this machine’s managed Claude Code settings turn off --plugin-dir');
-      assert.deepEqual(cells(blocked).map((c) => c[2]), ['off', 'plugin disabled', 'not loaded on this machine', 'not loaded on this machine',
-        'not loaded on this machine', 'off — turn it on in the team checklist'], 'no row reads ok on a machine that loads no set skill');
+        'skills from sets not loaded: this machine’s managed Claude Code settings turn off --plugin-dir');
+      assert.deepEqual(cells(blocked).map((c) => c[2]), ['off', 'plugin disabled', 'not loaded', 'not loaded',
+        'not loaded', 'off — turn it on in the team checklist'], 'no row reads ok on a machine that loads no set skill');
       const cli = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { ...SKILLS, layer: { blocked: 'cli-no-plugin-dir' } } });
-      assert.equal(cli.querySelector('p.hint.warn').textContent, 'skills from sets not loaded on this machine: this Claude Code has no --plugin-dir');
+      assert.equal(cli.querySelector('p.hint.warn').textContent, 'skills from sets not loaded: this Claude Code has no --plugin-dir');
       const said = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { ...SKILLS,
         layer: { blocked: 'cli-no-plugin-dir', text: 'this Claude Code has no --plugin-dir option' } } });
-      assert.equal(said.querySelector('p.hint.warn').textContent, 'skills from sets not loaded on this machine: this Claude Code has no --plugin-dir option',
+      assert.equal(said.querySelector('p.hint.warn').textContent, 'skills from sets not loaded: this Claude Code has no --plugin-dir option',
         'the preview\'s own words (layer.text, P1 skillLayerText) win: one wording on every surface');
       const newer = renderSkillResolution(doc, 'x', { ...PREVIEW, skills: { mounted: [], plugins: [], skipped: [], newer: true } });
       assert.equal(newer.querySelector('p.hint.err').textContent, 'Set files need a newer Worca: no skills from sets reach runs');
@@ -201,7 +201,7 @@ test('workspace Overview: "Sets from member projects" — member chips with set 
   const blocked = renderMemberSets(doc, { name: 'checkout', preview: { ...PREVIEW, copies: [], skipped: [], skills: { mounted: [], plugins: [], skipped: [],
     layer: { blocked: 'cli-no-plugin-dir' } } }, sets: SETS, members: MEMBERS });
   assert.deepEqual([...blocked.querySelectorAll('.sk-res-group p.hint')].map((p) => p.textContent), ['No MCP servers in runs on this workspace',
-    'skills from sets not loaded on this machine: this Claude Code has no --plugin-dir', 'No skills in runs on this workspace']);
+    'skills from sets not loaded: this Claude Code has no --plugin-dir', 'No skills in runs on this workspace']);
   const failed = renderMemberSets(doc, { name: 'checkout', preview: { ...PREVIEW, skills: null }, sets: SETS, members: MEMBERS });
   assert.deepEqual([...failed.querySelectorAll('.sk-res-group')[1].querySelectorAll('p.hint')].map((p) => p.textContent),
     ['Skills from sets could not be resolved: reload the page to try again'], 'a failed skills half is not "no skills"');
@@ -224,7 +224,7 @@ test('Settings › Ask Worca: General\'s servers and skills as chips, the edit l
     'an off or missing skill reaches no chat: no chip');
   assert.equal(host.querySelector('.sk-chip').title, 'Drive worca');
   assert.equal(host.querySelector('.sk-chip .sk-kind').textContent, 'Skill');
-  assert.equal(host.querySelector('a').getAttribute('href'), '#settings/mcp/sets/general');
+  assert.equal(host.querySelector('a').getAttribute('href'), '#connectors/sets/general');
   assert.equal(host.lastChild.textContent, 'The Skill tool is on only for turns that mount at least one skill; shell blocks never run in Ask.');
   const bare = doc.createElement('div');
   await paintAskMcpBlock(bare, { api: fakeApi().api, doc });

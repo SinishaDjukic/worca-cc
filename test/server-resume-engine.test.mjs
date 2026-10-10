@@ -105,6 +105,7 @@ test('a refused switch answers 409 before anything resumes; the consent re-send 
   assert.equal(data.code, 'engine-refused');
   assert.equal(data.overridable, true);
   assert.match(data.error, /^engine codex: guardrail set "normal" has permission rules this engine cannot enforce/);
+  assert.doesNotMatch(data.error, /--allow-unguarded-engine/, 'worded for the UI');
   assert.equal(runs.size, before, 'no run entry is left behind');
   const { readPipelineForResume } = await import('../src/core/artifacts.mjs');
   assert.equal(readPipelineForResume(id).row.status, 'paused', 'the run stays paused');

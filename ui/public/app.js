@@ -79,7 +79,6 @@ import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
-import { AWAY_GLYPH } from './away-glyph.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -93,12 +92,13 @@ import {
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
 import { createScriptsController } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionsCard, historyActionBadges, createActionsController } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -127,12 +127,13 @@ import {
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
-import { renderFreeDaily, freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
+import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, otherEngines, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -150,7 +151,8 @@ import {
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
-import { renderStatsBody, renderBudgetIndicator, renderBudgetRing, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
 import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -172,6 +174,7 @@ import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewer
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
+import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmptyState, renderTmSkeleton, renderPooledBudgetTile } from './team-metrics-view.mjs';
 // Team policy (team-policy design §11): the Projects cell, the enable dialog, the page (read +
 // edit), the workspace line, the Settings readout, the New pipeline notes, the Plugins strip.
@@ -200,9 +203,14 @@ import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswe
 import { parseWindow } from '../../src/shared/away-mode/activation.mjs';
 import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shared/cost/breakdown.mjs';
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
-import { describeRun, describeNewRun, describeAwaySwitch } from '../../src/shared/away-mode/describe.mjs';
+import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { createFlyout } from './side-flyout.mjs';
+import { createTopnavSearch } from './topnav-search.mjs';
+import { pageTitle } from './topnav.mjs';
+import { activityCounts } from './activity-model.mjs';
+import { createActivityMenu } from './activity-menu.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
@@ -250,6 +258,7 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -265,6 +274,7 @@ function readyEngines(onLoad) {
     engineReadyLoading = fetch('/api/engines').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
       engineReady = Array.isArray(d?.engines) ? d.engines.filter((e) => e.ready).map((e) => e.name) : null;   // null: offer all
       engineReadyAt = Date.now();
+      setEngineLocks(d?.engines); applyEngineLocks();
       const waiters = [...engineReadyWaiters]; engineReadyWaiters.clear();
       for (const w of waiters) { try { w(); } catch { /* one painter must not stop the others */ } }
     }).finally(() => { engineReadyLoading = null; });
@@ -344,7 +354,7 @@ const el = {
   nightMode: $('#nightMode'),
   memoryScopeRow: $('#memory-scope-row'),
   memoryScopeSeg: $('#memory-scope-seg'),
-  engineSeg: $('#engine-seg'),
+  engineSelect: $('#engineSelect'),
   engineHint: $('#engine-hint'),
   engineDefaultHint: $('#engine-default-hint'),
   engineRefusal: $('#engineRefusal'),
@@ -405,7 +415,6 @@ const el = {
   wizSizeNote: $('#wiz-size-note'),
   wizStartScan: $('#wiz-start-scan'),
   wizClose: $('#wiz-close'),
-  wizTitle: $('#wiz-title'),
   wizScanModel: $('#wiz-scan-model'),
   wizScanEffort: $('#wiz-scan-effort'),
 
@@ -698,6 +707,31 @@ function railCollapsed() {
   return sidebarCollapsed;
 }
 
+// ── Band hairlines ──────────────────────────────────────────────────────────
+// The logo row and the foot stay put while #side-scroll scrolls between them: a hairline
+// shows at an edge only while pages run under it (style.css .under-top / .under-bottom).
+// Repainted on scroll, resize, every rail change (repaintNavMode) and level change, and —
+// through a ResizeObserver on the band and the nav — whenever rows or the foot change height.
+// Looked up per call (no module-level const): repaintNavMode may run before this line does.
+function paintSideEdges() {
+  const aside = $('.sidebar');
+  const band = document.getElementById('side-scroll');
+  if (!aside || !band) return;
+  aside.classList.toggle('under-top', band.scrollTop > 0);
+  aside.classList.toggle('under-bottom', band.scrollTop + band.clientHeight < band.scrollHeight - 1);
+}
+{
+  const band = document.getElementById('side-scroll');
+  band?.addEventListener('scroll', paintSideEdges, { passive: true });
+  window.addEventListener('resize', paintSideEdges);
+  if (band && typeof window.ResizeObserver === 'function') {
+    const ro = new window.ResizeObserver(() => paintSideEdges());
+    ro.observe(band);
+    const nav = band.querySelector(':scope > .nav');
+    if (nav) ro.observe(nav);
+  }
+}
+
 function applySidebarCollapsed() {
   const collapsed = railCollapsed();
   const aside = $('.sidebar');
@@ -709,12 +743,6 @@ function applySidebarCollapsed() {
     const label = collapsed ? 'Expand menu' : 'Collapse menu';
     btn.title = label;
     btn.setAttribute('aria-label', label);
-    // The glyph is one bare chevron pointing the way the rail will move: "<"
-    // while expanded (click to pull it in), ">" while collapsed (click to push
-    // it back out). Rewriting `d` rather than mirroring in CSS keeps the arrow
-    // optically centred — scaleX(-1) on a chevron shifts its visual mass.
-    const chev = btn.querySelector('svg .chev');
-    if (chev) chev.setAttribute('d', collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6');
   }
   // The rail has no visible labels, so mirror each button's label into a native
   // tooltip while collapsed (the mock does this on all twelve). Written by JS,
@@ -727,7 +755,9 @@ function applySidebarCollapsed() {
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
-  for (const b of $$('.nav button[data-nav]:not([data-nav="runs"])')) {
+  // The rail's own squares only (children of .nav): the Nodes row (a flyout trigger, no data-nav) gets
+  // its label too, while Agents and Scripts inside its flyout show theirs and need no tooltip.
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]), .nav > .nav-group')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -747,8 +777,7 @@ function repaintNavMode() {
   applySidebarCollapsed();
   updateNavCounts();             // Runs' title/aria-label (both states)
   renderPipelineTabs();          // child rows <-> initials tiles
-  paintBudget();                 // spend block <-> budget ring
-  paintFreeDaily();              // the free-request line shows only in the full column
+  paintSideEdges();              // the band heights moved
 }
 
 function setSidebarCollapsed(v) {
@@ -761,38 +790,75 @@ function setSidebarCollapsed(v) {
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
 
-// ── Nodes group (Agents + Scripts) ──────────────────────────────────────────
-// A static disclosure in the Build section. It carries no data-nav, so the
-// router never marks it active; it owns aria-expanded + the box's .collapsed
-// and remembers a fold across reloads. showView tints it while a child page is
-// open and unfolds it on the way in, so "where am I" never hides.
-const NODES_GROUP_KEY = 'worca-cc.nav.nodes.collapsed';
+// ── Nodes (Agents + Scripts): a side flyout off the Build section ─────────────
+// The row is not a route (no data-nav), so the router never marks it active; showView
+// tints it (.has-active) while a child page is open. Its flyout (#nav-nodes-fly) lives
+// inside <nav>, so navLinks and paintLevelBanner reach Agents and Scripts like any row;
+// side-flyout.mjs opens it beside the sidebar (column, rail and phone drawer alike) and
+// closes it on a route, Escape, an outside click, a resize or a scroll of the pages.
 const nodesGroup = $('.nav .nav-group[data-nav-group="nodes"]');
-const nodesGroupBox = $('#nav-nodes-children');
-const NODES_GROUP_VIEWS = nodesGroupBox
-  ? [...nodesGroupBox.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
-function readNodesCollapsed() {
-  try { return localStorage.getItem(NODES_GROUP_KEY) === '1'; }
-  catch { return false; }                    // private mode / storage disabled
+const nodesFly = $('#nav-nodes-fly');
+const NODES_GROUP_VIEWS = nodesFly ? [...nodesFly.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
+const nodesFlyout = nodesGroup && nodesFly
+  ? createFlyout({ doc: document, win: window, trigger: nodesGroup, menu: nodesFly, mode: 'side', closeOn: $('#side-scroll') })
+  : null;
+// A mode change can hide the Nodes row, and so its flyout, while the flyout is open (a change pushed
+// from another tab, say): an open popup nobody can see would take the next Escape. Put it away.
+document.addEventListener('worca:level', () => nodesFlyout?.close());
+// The old inline disclosure remembered a fold under this key; nothing reads it any more.
+try { localStorage.removeItem('worca-cc.nav.nodes.collapsed'); } catch { /* private mode */ }
+// The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
+// included, in a side flyout — so a running service stays stoppable on the rail too.
+const sideActionsTile = $('#side-actions-tile');
+const sideActionsFly = $('#side-actions-fly');
+const sideActionsFlyout = sideActionsTile && sideActionsFly
+  ? createFlyout({ doc: document, win: window, trigger: sideActionsTile, menu: sideActionsFly, mode: 'side' })
+  : null;
+
+// ── Top bar search (topnav-search.mjs over global-search.mjs) ─────────────────────────────────
+// Created here, before any page-level Escape handler: its capture listener consumes the Escape that
+// closes it, so a run's detail never steps back on the same key. Runs, projects and workspaces are
+// read from memory on every render; workflows and schedules are fetched when the popover opens —
+// never per keystroke — and kept for the next open.
+const topnavLazy = { workflows: [], schedules: [], tickets: [] };
+async function loadTopnavLazy() {
+  const [workflows, sched] = await Promise.all([
+    listWorkflowsApi(),
+    fetch('/api/schedules').then((res) => (res.ok ? safeJson(res) : null)).catch(() => null),
+    withWorkspaces(),
+  ]);
+  if (workflows) topnavLazy.workflows = workflows.map((w) => ({ id: w.id, name: w.name, builtin: isReservedWorkflowId(w.id) }));
+  if (sched) {
+    topnavLazy.schedules = Array.isArray(sched.schedules) ? sched.schedules : [];
+    topnavLazy.tickets = Array.isArray(sched.tickets) ? sched.tickets : [];
+  }
 }
-function paintNodesGroup(folded) {
-  if (!nodesGroup || !nodesGroupBox) return;
-  nodesGroup.setAttribute('aria-expanded', folded ? 'false' : 'true');
-  nodesGroupBox.classList.toggle('collapsed', !!folded);
+function topnavSources() {
+  return {
+    live: overviewRuns().map(runsLiveItem),
+    history: (state.historyAll || []).filter(Boolean).map(runsHistItem),
+    projects: (state.projects || []).map((p) => ({ key: p.key, name: p.name || projectName(p.path) })),
+    workspaces: (state.workspaces || []).map((w) => ({ id: w.id, name: w.name, projectCount: (w.projectPaths || []).length })),
+    ...topnavLazy,
+  };
 }
-function setNodesCollapsed(folded) {
-  paintNodesGroup(folded);
-  try { if (folded) localStorage.setItem(NODES_GROUP_KEY, '1'); else localStorage.removeItem(NODES_GROUP_KEY); }
-  catch { /* private mode: the fold lives for this page only */ }
-}
-nodesGroup?.addEventListener('click', () => setNodesCollapsed(nodesGroup.getAttribute('aria-expanded') !== 'false'));
-paintNodesGroup(readNodesCollapsed());
+const topnavSearchRoot = $('.topnav-c .tsearch');
+if (topnavSearchRoot) createTopnavSearch({
+  doc: document, win: window, root: topnavSearchRoot,
+  getSources: topnavSources,
+  loadLazy: loadTopnavLazy,
+  // The Ask Worca row: what was typed goes to the composer; nothing typed just opens the chat.
+  onAsk: (query) => { if (query) askPanel?.appendToComposer(query); else askPanel?.open(); },
+  navigate: (href) => { location.hash = href; },
+  openWorkflow: (id) => { void openComposerFromAsk(id); },
+});
+
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
 // .2s (style.css:84-85) so the toggle animates; a restore is a starting state,
 // not a gesture. This script is deferred, so the class lands after the first
-// style pass and the transition fires: measured in headless Chrome, the rail
-// slid 298px -> 76px on every reload (transitionstart at ~50ms, still 297px
-// wide). Suppress it for this one call, force the layout so the collapsed width
+// style pass and the transition fires: measured in headless Chrome, the column
+// slid into the rail on every reload (transitionstart at ~50ms, still one pixel
+// short of full width). Suppress it for this one call, force the layout so the collapsed width
 // becomes the transition's start value, then hand the transition back.
 const railAtBoot = railCollapsed() ? $('.sidebar') : null;
 if (railAtBoot) railAtBoot.style.transition = 'none';
@@ -807,7 +873,8 @@ if (railAtBoot) {
 // is open the page behind is inert (inert, not aria-hidden: only inert removes
 // focusability — see the track screens), focus starts on #side-close and comes back
 // to the hamburger. Any route closes it: a drawer button here, and showView for
-// back/forward and deep links. The Nodes disclosure and the mode switch keep it open.
+// back/forward and deep links. Only a route closes it: a popup trigger (the Nodes row, the account
+// corner) and a button inside a popup that is not a page keep it open.
 let mobileNavOpen = false;
 const mbarMenu = $('#mbar-menu');
 const navScrim = $('#nav-scrim');
@@ -820,7 +887,7 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#mbar'), $('body > .ask-dock'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .ask-dock'), $('body > .term-pane')]) {
     if (n) n.toggleAttribute('inert', next);
   }
   if (next) $('#side-close')?.focus();
@@ -832,7 +899,9 @@ $('#side-close')?.addEventListener('click', () => setMobileNavOpen(false));
 $('.sidebar')?.addEventListener('click', (e) => {
   if (!mobileNavOpen) return;
   const b = e.target.closest && e.target.closest('button');
-  if (!b || b.matches('.nav-group, [data-mode-open]')) return;
+  // A popup trigger, or a button inside a popup that is not a page (a mode, the away row), is no
+  // route; a page inside a popup ([data-nav]: Settings, Details, Raise limit, Free requests) is.
+  if (!b || b.matches('[aria-haspopup]') || (b.closest('[role="menu"]') && !b.matches('[data-nav]'))) return;
   setMobileNavOpen(false);
 });
 document.addEventListener('keydown', (e) => {
@@ -851,19 +920,16 @@ for (const m of [phoneNavMq, railTierMq]) {
   if (typeof m.addEventListener === 'function') m.addEventListener('change', onNavTierChange);
   else if (typeof m.addListener === 'function') m.addListener(onNavTierChange);   // Safari < 14
 }
-// Pages with no sidebar entry of their own still need a name in the phone bar.
-const MBAR_TITLES = { 'getting-started': 'Getting started', 'workspace-create': 'New workspace', 'agent-create': 'New agent' };
-function paintMobileBar(name) {
-  const t = $('#mbar-title');
-  if (!t) return;
-  const b = $(`.nav button[data-nav="${name}"]`);
-  const label = b && b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
-  t.textContent = (label && label.textContent.trim()) || MBAR_TITLES[name] || 'Worca';
+/** The top bar names the open page (topnav.mjs#pageTitle). `name` is the route itself, so
+ *  #running/<id> and #history/<key>/<id> read "Runs" like the list. Painted on every showView. */
+function paintTopnavTitle(name) {
+  const t = document.getElementById('topnav-title');
+  if (t) t.textContent = pageTitle(name);
 }
 
 // ---------------------------------------------------------------------------
-// Spend indicator. One /api/budget snapshot drives the sidebar block (the
-// drawer on phones) and the New-view creation gate. Refreshed at boot, on
+// Spend. One /api/budget snapshot drives the ring around the account avatar, the
+// account menu's spend card and the New-view creation gate. Refreshed at boot, on
 // every `hello`, on `budget-changed`/`pipelines-changed`, and on a slow tick.
 // ---------------------------------------------------------------------------
 const budgetState = { budget: null, timer: null, fetching: false, pending: false, lastFetchMs: 0 };
@@ -904,15 +970,11 @@ async function refreshFreeDaily({ force = false } = {}) {
   paintFreeDaily();
 }
 
-/** The free-request line rides the spend mount, under the spend block (full rail only). */
+/** The free-request row closes the account menu's spend card (paintSpendCard). */
 function paintFreeDaily() {
-  const mount = document.getElementById('side-spend');
-  if (!mount) return;
-  mount.querySelector('.free-ind')?.remove();
-  const node = railCollapsed() ? null : renderFreeDaily(freeDailyState.status);
-  if (node) mount.appendChild(node);
+  paintSpendCard();
   applyFreeDailyToNewView();
-  if (currentView() === 'settings' && currentSettingsTab === 'providers') paintProviderFreeDaily();
+  if (currentView() === 'providers') paintProviderFreeDaily();
 }
 
 /** The new-run form: warn when a node's model is :free and fewer requests are left than a run takes. */
@@ -963,16 +1025,10 @@ async function refreshBudget() {
 
 function paintBudget() {
   const b = budgetState.budget;
-  const mount = document.getElementById('side-spend');
   if (!b) return;
-  if (mount) {
-    // The rail has room for a compact twin, not a labelled block: a 38px ring under a
-    // total limit, the 40px Spent/Saved stack without one (renderBudgetRing picks).
-    const render = railCollapsed() ? renderBudgetRing : renderBudgetIndicator;
-    mount.replaceChildren(render(b,
-      { fmt: { usd: fmtUsd, usd4: fmtUsd4, duration: fmtDuration, estTitle } }));
-    paintFreeDaily();   // the free-request line sits under the block this just replaced
-  }
+  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  paintAccount();
+  paintSpendCard();
   applyBudgetToNewView();
   if (currentView() === 'settings' && currentSettingsTab === 'runs') paintBudgetReadout();
   repaintCostBanners();
@@ -1058,13 +1114,6 @@ function personLabel(v) {
   const n = personShown(v);
   return !n ? '' : isViewer(n) ? 'you' : n;
 }
-/** Up to two initials: an email's local part (or a display name) split on . _ - and spaces. */
-function personInitials(name) {
-  const base = String(name || '').trim().split('@')[0];
-  const parts = base.split(/[\s._-]+/).filter(Boolean);
-  const ini = parts.slice(0, 2).map((w) => w[0]).join('').toUpperCase();
-  return /^[A-Z0-9]{1,2}$/.test(ini) ? ini : (ini ? ini.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?' : '?');
-}
 /** A neutral initials circle; `title` is the full sentence. Text only, never markup. */
 function personIni(name, title) {
   const el = document.createElement('span');
@@ -1087,9 +1136,9 @@ function personChip(name, verb = 'Started by') {
   return chip;
 }
 
-// "Signed in as" in the rail foot, and the viewer every people-label compares against.
+// The account corner and its identity card, and the viewer every people-label compares against.
+// Fetched once at boot; a failed call leaves "Profile" (nobody in particular).
 async function loadWhoami() {
-  const box = document.getElementById('side-who');
   try {
     const res = await fetch('/api/whoami');
     if (!res.ok) return;
@@ -1097,11 +1146,9 @@ async function loadWhoami() {
     const name = attributedName(who && who.name);
     viewer.shared = !!(who && who.shared === true && name);
     viewer.name = viewer.shared ? name : null;
-    if (box) {
-      box.querySelector('.side-who-name').textContent = viewer.shared ? name : '';
-      box.title = viewer.shared ? `Signed in as ${name}` : '';
-      box.hidden = !viewer.shared;
-    }
+    acctState.account = describeAccount(who);
+    paintAccount();
+    paintIdentityCard(document.getElementById('acct-id'), acctState.account);
     if (viewer.shared) repaintPeople();
   } catch { /* nobody is shown */ }
 }
@@ -1115,14 +1162,51 @@ function repaintPeople() {
   try { schedulesView.repaint(); } catch { /* not booted */ }
 }
 
-// The indicator is re-rendered on every paint, and .side-foot sits OUTSIDE the
-// <nav> that navLinks snapshots at boot — so route it from a container listener
-// rather than the [data-nav] delegation.
-document.getElementById('side-spend').addEventListener('click', (e) => {
-  // The OpenRouter free-request line (same mount) opens the Providers tab, where its key lives.
-  if (e.target.closest('.free-ind')) location.hash = 'settings/providers';
-  else if (e.target.closest('.spend-ind')) location.hash = 'stats';
+// ── The account corner and its menu (account-menu.mjs) ─────────────────────────
+// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
+// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
+// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the away row,
+// and the appearance icons last. A level, an away or a theme change leaves it open; a route closes it.
+const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
+const acctBtn = document.getElementById('side-acct');
+const acctMenu = document.getElementById('acct-menu');
+// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false });
+// Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
+// closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
+createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+function paintAccount() {
+  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+}
+paintAccount();                // the first paint: "Profile" until /api/whoami answers
+
+/** The spend card: the budget snapshot and the free-request row; shown at every interface mode. */
+function paintSpendCard() {
+  const mount = document.getElementById('acct-spend');
+  if (!mount) return;
+  const card = renderSpendCard(budgetState.budget, { fmt: { usd: fmtUsd, usd4: fmtUsd4 }, free: freeDailyState.status });
+  // Re-rendered under the keyboard (a budget tick, pipelines-changed, a free-request refresh): focus
+  // stays on the same button of the new card, or goes back to the corner when that button is gone.
+  const focused = mount.contains(document.activeElement) ? (document.activeElement.closest('.mc-free') ? '.mc-free' : '.mc-btn') : null;
+  mount.replaceChildren(...(card ? [card] : []));
+  mount.hidden = !card;
+  if (focused) (mount.querySelector(focused) || acctBtn).focus();
+  if (acctFly.isOpen()) acctFly.reposition();
+}
+// The card's buttons are re-rendered on every paint, so route the menu from the container. Settings
+// is a navLinks row (it lights while Settings is open); the rest name their view in data-nav (which
+// also closes the menu) and, when they open one card of it, the full hash in data-hash.
+acctMenu.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-nav]');
+  if (!b || b.id === 'acct-settings') return;
+  const target = b.dataset.hash || b.dataset.nav;
+  if (location.hash.slice(1) === target) showView(...splitRoute(target));
+  else location.hash = target;
 });
+function splitRoute(target) {
+  const i = target.indexOf('/');
+  return i === -1 ? [target, ''] : [target.slice(0, i), target.slice(i + 1)];
+}
 
 // ---------------------------------------------------------------------------
 // Server message router. Multi-run: every run's events arrive here (the server
@@ -1203,6 +1287,7 @@ function handleServerMessage(msg) {
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
     refreshAllCounts();
+    activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
     if (currentView() === 'schedules' || inRunsView()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); });
     return;
   }
@@ -1219,7 +1304,7 @@ function handleServerMessage(msg) {
     // and reloads the scope (the health hint names the model), and the Memory defragment workflow's
     // memo is dropped so its agent rows re-read the pinned pair — at once when New pipeline is
     // showing it (an entry to New pipeline drops the whole memo anyway).
-    if (memoryTabCtl) { void loadMemDefragModelCard(); void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true }); }
+    if (memoryTabCtl) void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true });
     delete state.workflowCache[MEMORY_DEFRAG_WORKFLOW_ID];
     if (currentView() === 'new' && state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) void renderWorkflowConfig(state.workflowId);
     void refreshAwayBodies().catch(() => {});
@@ -1286,8 +1371,8 @@ function handleServerMessage(msg) {
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
     if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
     if (currentView() === 'settings' && currentSettingsTab === 'runs') paintTeamCapsReadout(true);
-    if (currentView() === 'settings' && currentSettingsTab === 'plugins') paintPluginsPolicy(true);
-    if (currentView() === 'settings' && currentSettingsTab === 'mcp') refreshMcpSurfaces();   // the MCP strip and the Team set
+    if (currentView() === 'marketplace') paintPluginsPolicy(true);
+    if (currentView() === 'connectors') refreshMcpSurfaces();   // the MCP strip and the Team set
     if (currentView() === 'new') schedulePolicyLine();
     return;
   }
@@ -3102,46 +3187,22 @@ if (typeof window !== 'undefined') {
 // {model,effort}. Shared by the legacy default-stage rows and the dynamic
 // per-node rows so the dropdown contents + effort filtering live in one place.
 function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
-  // Model dropdown: "(default model)", then the models grouped — user-defined
-  // (global + legacy project) first, plugin-provided second, built-ins third,
-  // each group sorted alphabetically by label — then "+ Add model…".
-  // Provenance is carried by the optgroup label, not a per-option suffix; only
-  // when the same LABEL appears more than once does a plugin option get its
-  // plugin name appended (design §9.6, collision-only), and the observed §4.6
-  // "cost not verified" flag still marks an option.
+  // Model dropdown: "(default model)", then the models grouped by connection (model-options.mjs, the grouping every
+  // picker shares) — then "+ Add model…". An option names who added it (team policy, a plugin), and the observed §4.6
+  // "cost not verified" flag still marks it.
   modelSel.innerHTML = '';
   modelSel.appendChild(option('', '(default model)'));
-  // D10: New pipeline offers the run engine's models only — another engine's model would be
-  // skipped at run time. `sel.engine` names another engine for a caller that has one.
+  // D10: New pipeline offers the models the run's harness can run only (src/shared/connections.mjs) — any
+  // other would be skipped at run time. `sel.engine` names another engine for a caller that has one.
   const engine = sel.engine || state.engine || 'claude';
-  const ofEngine = (m) => (m.engine || 'claude') === engine;
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-  const labelCounts = new Map();
-  for (const m of state.models) {
-    const lc = (m.label || m.id).toLowerCase();
-    labelCounts.set(lc, (labelCounts.get(lc) || 0) + 1);
-  }
+  const ofEngine = (m) => runsOn(m, engine);
   // A bridged model whose provider is not usable (model-bridge-design.md §8.5)
   // leaves the list — unless it is THIS selection, which is then labelled so.
   const usable = (m) => ofEngine(m) && (!m.needsSignIn || m.id === sel.model);
-  const optgroup = (label, models) => {
-    if (!models.length) return;
-    const og = document.createElement('optgroup');
-    og.label = label;
-    for (const m of models) {
-      const ambiguous = m.custom === 'plugin' && labelCounts.get((m.label || m.id).toLowerCase()) > 1;
-      const viaSuffix = m.bridged && !(m.label || m.id).toLowerCase().includes(m.bridged) ? ` · ${m.bridged}` : '';
-      og.appendChild(option(m.id,
-        m.label + (ambiguous ? ` (${m.plugin})` : '') + viaSuffix + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id)));
-    }
-    modelSel.appendChild(og);
-  };
-  optgroup('Your models', state.models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy' && usable(m)).sort(byLabel));
-  optgroup('Team policy', state.models.filter((m) => m.custom === 'policy' && usable(m)).sort(byLabel));
-  optgroup('Plugins', state.models.filter((m) => m.custom === 'plugin' && usable(m)).sort(byLabel));
   // "Hide built-in models" (#422): a hidden built-in leaves the list — unless
   // it is THIS selection, which still resolves and must stay visible.
-  optgroup('Built-in', state.models.filter((m) => !m.custom && ofEngine(m) && (!m.hidden || m.id === sel.model)).sort(byLabel));
+  appendModelGroups(modelSel, state.models.filter((m) => usable(m) && (m.custom || !m.hidden || m.id === sel.model)), {
+    engine, text: (m) => modelOptionText(m) + (m.costUnreliable ? ' ⚠cost' : '') + (m.needsSignIn ? ' (needs sign-in)' : '') + credentialSuffix(m.id) });
   modelSel.appendChild(option('__add__', '+ Add model…'));
   modelSel.value = sel.model || '';
 
@@ -3152,8 +3213,10 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   const model = modelById(modelSel.value);
   effortSel.innerHTML = '';
   effortSel.appendChild(option('', model ? '(default effort)' : '(pick a model first)'));
-  (model ? model.efforts : []).forEach((e) => effortSel.appendChild(option(e, e)));
-  effortSel.value = sel.effort && model && model.efforts.includes(sel.effort) ? sel.effort : '';
+  // A model on two harnesses keeps its own efforts; this run's harness offers them mapped (effortsOn).
+  const offeredEfforts = model ? effortsOn(model, engine) : [];
+  offeredEfforts.forEach((e) => effortSel.appendChild(option(e, e)));
+  effortSel.value = sel.effort && offeredEfforts.includes(sel.effort) ? sel.effort : '';
 
   modelSel.disabled = false;
   effortSel.disabled = !model;
@@ -3162,7 +3225,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' — needs sign-in (Settings › Models › Providers)' : '');
+      + (model && model.needsSignIn ? ' — needs sign-in (the Providers page)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -3702,11 +3765,13 @@ function renderAgentRows(rows) {
     // re-sent on save: say so, so it is never invisible — picking a model here replaces it.
     if (row.enginePair && row.enginePair.model) {
       const entry = modelById(row.enginePair.model);
-      // The model's own engine; a pick the catalog no longer holds is the other engine's (Codex on a Claude run).
-      const owner = entry ? engineLabel(entry.engine || 'claude') : (state.engine === 'claude' ? 'Codex' : 'Claude');
+      // The model's own engine; a pick the catalog no longer holds belongs to an engine this run is not on.
+      const owner = entry ? harnessesLabel(entry) : null;
       const kept = document.createElement('small');
       kept.className = 'agent-kept-pick hint';
-      kept.textContent = `Your ${owner} pick ${(entry && entry.label) || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`;
+      kept.textContent = owner
+        ? `Your ${owner} pick ${entry.label || row.enginePair.model} is kept for ${owner} runs — choose a model here to replace it.`
+        : `Your pick ${row.enginePair.model} is kept for runs on its own engine — choose a model here to replace it.`;
       body.appendChild(kept);
     }
 
@@ -3867,17 +3932,27 @@ if (el.memoryScopeSeg) {
 // Engine (harness bridge §10.4): per run, never remembered — every New pipeline starts on Claude.
 function setRunEngine(engine) {
   const prev = state.engine;
-  state.engine = ENGINE_NAMES.includes(engine) ? engine : 'claude';
-  for (const b of el.engineSeg ? el.engineSeg.querySelectorAll('button[data-engine]') : []) {
-    const on = b.dataset.engine === state.engine;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
+  // An engine the instance never starts (the credential broker is on) is not preselected: New pipeline falls back to Claude.
+  state.engine = ENGINE_NAMES.includes(engine) && engineLock(engine) === null ? engine : 'claude';
+  if (el.engineSelect) el.engineSelect.value = state.engine;
+  keepVisible(document.getElementById('engine-row'), state.engine !== 'claude');   // Simple shows a non-Claude engine
   paintEngineHints();
   showEngineRefusal(null);
-  // D10: the agent rows offer the run engine's models only — repaint them for the new engine.
-  if (prev !== state.engine) void renderWorkflowConfig(state.workflowId);
+  // D10: the agent rows offer the run engine's models only — repaint them for the new engine. The Sets
+  // picker too: another engine names set skills as its .agents/skills mount would.
+  if (prev !== state.engine) {
+    void renderWorkflowConfig(state.workflowId);
+    if (currentView() === 'new') schedulePolicyLine();
+  }
 }
+
+// Boot: learn which engines this instance never starts (GET /api/engine-locks runs no preflight), so every picker
+// greys them out before anyone presses Start, and New pipeline moves off one.
+fetch('/api/engine-locks').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((d) => {
+  if (!Array.isArray(d?.engines)) return;
+  setEngineLocks(d.engines); applyEngineLocks();
+  if (engineLock(state.engine) !== null) setRunEngine('claude');
+});
 
 function runSlotDefaults() { return state.runDefaults?.steps?.[state.engine] || null; }
 function paintEngineHints() {
@@ -3887,8 +3962,8 @@ function paintEngineHints() {
     el.engineHint.textContent = state.engine === 'copilot'
       ? 'GitHub Copilot CLI runs this pipeline, including titles and summaries, on its default model unless the run names one. Sign in once with copilot login.'
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
-      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Settings › Models › ${engineLabel(state.engine)}`}.`
-      : `Codex runs this pipeline, including titles and summaries. Models: ${project ? 'project Settings' : 'Settings › Models › Codex'}`;
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -3920,19 +3995,12 @@ function showEngineRefusal(data) {
   if (!data || !data.overridable) el.engineAllowUnguarded.checked = false;
 }
 
-if (el.engineSeg) {
-  for (const b of el.engineSeg.querySelectorAll('button[data-engine]')) {
-    if (!isBetaEngine(b.dataset.engine)) continue;
-    const beta = document.createElement('span');
-    beta.className = 'badge violet beta-badge';
-    beta.textContent = 'Beta';
-    b.append(beta);
-  }
-  el.engineSeg.addEventListener('click', (e) => {
-    const btn = e.target.closest && e.target.closest('button[data-engine]');
-    if (!btn) return;
+if (el.engineSelect) {
+  // An <option> holds text only: a beta engine says so in its label.
+  for (const o of el.engineSelect.options) if (isBetaEngine(o.value)) o.textContent += ' (Beta)';
+  el.engineSelect.addEventListener('change', () => {
     state.engineTouched = true;
-    setRunEngine(btn.dataset.engine);
+    setRunEngine(el.engineSelect.value);
   });
 }
 
@@ -4128,7 +4196,7 @@ function goAddModel(restore) {
   // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
-  showView('settings', 'models');
+  showView('models');
 }
 
 // Delegated change handler for every config control inside #pipeline-config.
@@ -6086,9 +6154,9 @@ async function mountPluginSourcePane(src) {
     msg.className = 'hint err';
     msg.textContent = message;
     const link = document.createElement('a');
-    link.href = '#settings/plugins';
-    link.textContent = 'Open Plugins settings';
-    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'settings/plugins'; });
+    link.href = '#marketplace';
+    link.textContent = 'Open the Marketplace page';
+    link.addEventListener('click', (e) => { e.preventDefault(); location.hash = 'marketplace'; });
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'btn btn-ghost btn-mini';
@@ -9292,7 +9360,7 @@ function resetWizStep1Hint() {
   hint.classList.remove('err');
   claudeSignedOutHints.delete(hint);
   hint.textContent = usable.length < 2
-    ? 'Onboard at least two projects (in New Pipeline) to create a workspace.'
+    ? 'Onboard at least two projects (in New run) to create a workspace.'
     : 'Select two or more projects to scan their interconnections.';
 }
 
@@ -11595,7 +11663,7 @@ function buildPdSettings(sec, key) {
   const p = projectByKey(key);
   if (!p) return;
   const host = document.createElement('div'); host.className = 'pd-settings'; sec.appendChild(host);
-  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path });
+  mountProjectSettings(host, { projectKey: p.key, projectDir: p.path, onTest: testModelRow });
   sec.appendChild(buildPdNightCard(p));
 }
 
@@ -11758,14 +11826,25 @@ function modalShell({
       const lab = document.createElement('label');
       lab.textContent = f.label;
       lab.htmlFor = `confirm-f-${f.id}`;
-      const inp = document.createElement('input');
-      inp.type = 'text';
-      inp.className = 'input';
+      // `options` [{value, text, group?}] makes the field a select (grouped when any option names a group).
+      const inp = document.createElement(Array.isArray(f.options) ? 'select' : 'input');
+      if (Array.isArray(f.options)) {
+        inp.className = 'select';
+        let og = null;
+        for (const o of f.options) {
+          const opt = document.createElement('option');
+          opt.value = o.value; opt.textContent = o.text ?? o.value;
+          if (o.group) { if (!og || og.label !== o.group) { og = document.createElement('optgroup'); og.label = o.group; inp.appendChild(og); } og.appendChild(opt); } else inp.appendChild(opt);
+        }
+      } else {
+        inp.type = 'text';
+        inp.className = 'input';
+        inp.placeholder = f.placeholder || '';
+        inp.autocomplete = 'off';
+      }
       inp.id = `confirm-f-${f.id}`;
       inp.dataset.fieldId = f.id;
       inp.value = f.value || '';
-      inp.placeholder = f.placeholder || '';
-      inp.autocomplete = 'off';
       if (f.mono) inp.style.fontFamily = 'var(--mono)';
       wrap.append(lab, inp);
       if (f.hint) {
@@ -13119,6 +13198,12 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
+  // The Models page loads the same payload (its Engines card and helper pickers) but sits outside
+  // Settings, so the line above is not on screen there: say it on the page's own line, and take it
+  // back once a load works (only that message: the line also reports imports and deletes).
+  if (currentView() !== 'models') return;
+  if (text) setModelsMsg(`Could not load settings: ${text}`, 'err-inline');
+  else if (el.modelsMsg && el.modelsMsg.textContent.startsWith('Could not load settings: ')) setModelsMsg('');
 }
 
 async function loadSettings() {
@@ -13138,9 +13223,6 @@ async function loadSettings() {
     paintSyncSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
-    await paintTitleModelSettings(data);
-    await paintAutoModelSettings(data);
-    await paintPrDescModelSettings(data);
     await paintEngineSettings(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
@@ -13514,8 +13596,8 @@ function settingsCardPainted(saveId) { settingsCardDirty(saveId)?.markClean(); }
 
 // ── Appearance (dark-mode design §5.3) ──────────────────────────────────────
 // The mode lives in settings.json and is server-rendered into <html data-theme>
-// for the first paint; this block keeps it live: the segmented control, the
-// theme-color meta, the `worca:theme` event the thinking orb listens to, and
+// for the first paint; this block keeps it live: the two switchers (Settings ›
+// General's segmented control, the account menu's icons), the theme-color meta, the `worca:theme` event the thinking orb listens to, and
 // the OS-change listener for system mode. Nothing is stored in this browser.
 const THEME_MODES = ['system', 'light', 'dark'];
 function syncThemeColorMeta() {
@@ -13540,22 +13622,25 @@ function applyTheme(mode) {
 const themeNotSaved = (detail) => notify({ tone: 'err', title: 'Theme not saved', detail, key: 'theme' });
 let confirmedTheme = 'system';       // the last SERVER-confirmed mode (GET, POST 200, settings-changed)
 let themeSeq = 0;                    // out-of-order POST resolutions never repaint a stale answer
+const THEME_SWITCHERS = '#theme-seg button[data-theme-mode], #acct-theme button[data-theme-mode]';
+/** Light `mode` in both switchers: aria-pressed on the Settings buttons, aria-checked on the menu's radios. */
+function paintThemeButtons(mode) {
+  for (const b of document.querySelectorAll(THEME_SWITCHERS)) {
+    const on = b.dataset.themeMode === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute(b.getAttribute('role') === 'menuitemradio' ? 'aria-checked' : 'aria-pressed', on ? 'true' : 'false');
+  }
+}
 function paintTheme(mode) {
   const m = applyTheme(mode);
   confirmedTheme = m;
-  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
-    const on = b.dataset.themeMode === m;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  }
+  paintThemeButtons(m);
 }
 async function chooseTheme(mode) {
   const mine = ++themeSeq;
   const previous = confirmedTheme;
   applyTheme(mode);                                                        // optimistic (not a confirmation)
-  for (const b of document.querySelectorAll('#theme-seg button[data-theme-mode]')) {
-    b.classList.toggle('on', b.dataset.themeMode === mode); b.setAttribute('aria-pressed', b.dataset.themeMode === mode ? 'true' : 'false');
-  }
+  paintThemeButtons(mode);
   let res; let data;
   try {
     res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: mode }) });
@@ -13573,9 +13658,20 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
-document.getElementById('theme-seg')?.addEventListener('click', (e) => {
-  const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
-  if (btn) chooseTheme(btn.dataset.themeMode);
+for (const id of ['theme-seg', 'acct-theme']) {
+  document.getElementById(id)?.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
+    if (btn) chooseTheme(btn.dataset.themeMode);
+  });
+}
+// The menu's icons are one row: Left and Right move between them (the menu's Up and Down walk every item).
+document.getElementById('acct-theme')?.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  const list = [...e.currentTarget.querySelectorAll('button[data-theme-mode]')];
+  const i = list.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  list[(i + (e.key === 'ArrowRight' ? 1 : list.length - 1)) % list.length].focus();
 });
 // Boot: the shell arrived with the stored mode on <html>; normalise it, sync the
 // meta, tell the orb, and seed `confirmedTheme` + the seg buttons from it (paintTheme,
@@ -13635,7 +13731,7 @@ async function paintNightSettings(data) {
     if (!d) { if (host.dataset.dirty !== '1' && data) paintNightFallback(host, data); return; }
     state.awayMode = d;
     paintAwayStatus(d.toggle, !!parseWindow(d.config.window));
-    paintSideAway();
+    paintAwayMenuRow();
     if (host.dataset.dirty === '1') { updateAwaySummary(host, { toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now(), inherited: d.inherited }); return; }   // keep unsaved edits
     renderNightForm(host, { level: 'user', values: d.user, effective: d.config, sources: d.sources, inherited: d.inherited, toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now(), statusEl: awayStatusEl, models });
     // Never on the keep-dirty branch above: settings-changed from another card's save lands
@@ -13793,7 +13889,7 @@ async function paintAskEngine(data, { force = false } = {}) {
   if (seq !== askEnginePaintSeq) return;
   if (!force && Object.keys(readAskEngineSection(root)).length) return;   // the user started editing while it loaded
   const catalog = Array.isArray(cat?.models) ? cat.models.map((m) => ({ ...m, engine: m.engine || 'claude' })) : [];
-  renderAskEngineSection(root, { catalog, askEngine: data.askEngine ?? undefined, askModels: data.askModels || {}, defaults: cat?.defaults || {} });
+  renderAskEngineSection(root, { catalog, askEngine: data.askEngine ?? undefined, askModels: data.askModels || {}, defaults: cat?.defaults || {}, onTest: testModelRow, status: document.getElementById('askEngineMsg') });
 }
 function askLimitsCard() { return document.getElementById('ask-settings-card'); }
 function postAskLimits(body, opts = {}) {
@@ -13947,15 +14043,9 @@ document.getElementById('debugSpawnReset')?.addEventListener('click', (e) => pos
   { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('debugSpawnSave');
 
-// ---- Title generation card (#422) ----
-// A SELECT over the project-less catalog, never a text field: free text could
-// store an id resolveModelEnv cannot route, and the failure would only show up
-// as a missing title minutes into a run. Same optgroups + order as the New
-// Pipeline picker. `titleModelCatalog` is fetched on every Settings paint so the
-// options track catalog edits without a reload.
-const TITLE_MODEL_DEFAULT_LABEL = "Same as the run's model";
-let titleModelCatalog = [];
-function setTitleModelMsg(text, kind) { setHintMsg('titleModelMsg', text, kind); }
+// ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
+// (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
+// list builder the workspace scan picker uses, and a row's Test.
 async function fetchTitleModelCatalog() {
   try {
     const res = await fetch('/api/config');
@@ -13963,115 +14053,17 @@ async function fetchTitleModelCatalog() {
     return res.ok && Array.isArray(data.models) ? data.models : [];
   } catch { return []; }
 }
-function buildTitleModelOptions(sel, stored) {
-  sel.innerHTML = '';
-  sel.appendChild(option('', TITLE_MODEL_DEFAULT_LABEL));
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
-  // Legacy per-project entries are not global — titles are; hidden built-ins
-  // stay out unless one IS the stored pick (it still resolves).
-  // Claude's title slot (D10): Codex models belong to the Codex engine card (Plan 2).
-  const models = titleModelCatalog.filter((m) => m && (m.engine || 'claude') === 'claude' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
-  const group = (label, xs) => {
-    if (!xs.length) return;
-    const og = document.createElement('optgroup');
-    og.label = label;
-    for (const m of xs) og.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
-    sel.appendChild(og);
-  };
-  group('Your models', models.filter((m) => m.custom && m.custom !== 'plugin' && m.custom !== 'policy').sort(byLabel));
-  group('Team policy', models.filter((m) => m.custom === 'policy').sort(byLabel));
-  group('From plugins', models.filter((m) => m.custom === 'plugin').sort(byLabel));
-  group('Built-in', models.filter((m) => !m.custom).sort(byLabel));
-  if (stored && !models.some((m) => m.id === stored)) {
-    // Loud degrade: the stored id left the catalog (plugin removed, entry deleted).
-    const o = option(stored, `${stored} — not installed`);
-    o.disabled = true;
-    sel.appendChild(o);
-  }
-  sel.value = stored;
-}
-async function paintTitleModelSettings(data) {
-  const sel = document.getElementById('titleModel');
-  if (!sel) return;
-  titleModelCatalog = await fetchTitleModelCatalog();
-  const stored = typeof data.titleModel === 'string' ? data.titleModel : '';
-  buildTitleModelOptions(sel, stored);
-  const eff = data.titleModelEffective || {};
-  let note = '', kind = '';
-  if (eff.source === 'env') {
-    note = `WORCA_TITLE_MODEL is set in the environment: titles use ${eff.model} regardless of this setting.`; kind = 'warn';
-  } else if (eff.stale) {
-    note = `Model "${eff.stale}" is no longer in the catalog — titles fall back to the run's model.`; kind = 'warn';
-  }
-  setHintMsg('titleModelEnvNote', note, kind);
-  const testBtn = document.getElementById('titleModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('titleModelSave');
-}
 // A not-installed pick on a model card is a field problem: the select says what to do.
 const MODEL_GONE_TEXT = 'That model is no longer installed. Pick another, or use the default.';
-function postTitleModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('title-model-settings-card'), paint: paintTitleModelSettings,
-    dirty: settingsCardDirty('titleModelSave'), appliesWhen: 'Applies to the next title.', ...opts,
-  });
-}
-document.getElementById('titleModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('titleModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postTitleModel({ titleModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('titleModelReset')?.addEventListener('click', (e) => postTitleModel({ titleModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('titleModel')?.addEventListener('change', () => {
-  const sel = document.getElementById('titleModel');
-  const testBtn = document.getElementById('titleModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-});
-// Test = the Models-view Test button verbatim (POST /api/models/:id/test): one
-// tiny spawn through the id's catalog routing. Without it the first evidence of
-// a bad pick is a missing title three minutes into a run. Shared by BOTH model
-// cards (title generation and the Auto workflow model) — one implementation.
-// #555: Test shows busy → done on the button. The model's reply stays in the card's line
-// (green); a failure is a card alert above the buttons. The paint-time and change-time
-// disabled toggles keep the no-model rule; idleDisabled holds it after a Test.
-async function testModelFromSettings(selectId, buttonId, setMsg) {
-  const sel = document.getElementById(selectId);
-  const btn = document.getElementById(buttonId);
-  const id = sel.value;
-  if (!id) return;
-  const card = btn.closest('section.card');
-  cardAlert(card, null);
-  setMsg('');
-  const noModel = () => !sel.value || !!sel.options[sel.selectedIndex]?.disabled;
-  const r = await withButton(btn, async () => {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
-      const data = (await safeJson(res)) || {};
-      if (!res.ok) return { ok: false, error: data.error || `The server answered ${res.status}.` };
-      return data.ok ? { ok: true, text: data.text } : { ok: false, error: data.hint || data.message || 'The model did not reply.' };
-    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
-  }, { busy: 'Testing…', done: 'Works', idleDisabled: noModel });
-  if (r.skipped) return;
-  if (r.ok) setMsg(`${id} replied: ${r.text}`, 'ok');
-  else cardAlert(card, { title: `${id} did not answer`, detail: r.error });
-}
-document.getElementById('titleModelTest')?.addEventListener('click', () => testModelFromSettings('titleModel', 'titleModelTest', setTitleModelMsg));
-settingsCardDirty('titleModelSave');
-
-// ---- Auto workflow model (spec D14 / §7.7): the model that classifies a task into a workflow.
-// Reuses fetchTitleModelCatalog (the project-less /api/config catalog), setHintMsg and
-// postSettingsCard. The option list is FLAT on purpose (no optgroups): one plain list.
+// Nothing painted (the settings or the model list failed to load): not a field problem.
+const MODEL_LIST_GONE = { title: 'Not saved', detail: 'The model list did not load. Reload the page to change this.' };
 const AUTO_MODEL_DEFAULT_LABEL = 'Default (Sonnet-class)';
-function setAutoModelMsg(text, kind) { setHintMsg('autoModelMsg', text, kind); }
 function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel = AUTO_MODEL_DEFAULT_LABEL) {
   sel.innerHTML = '';
   sel.appendChild(option('', defaultLabel));
-  const byLabel = (a, b) => (a.label || a.id).localeCompare(b.label || b.id, undefined, { sensitivity: 'base' });
   // Claude's utility slots (Auto, PR description, defragment, workspace scan): Claude models only (D10).
-  const models = catalog.filter((m) => m && (m.engine || 'claude') === 'claude' && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored)).sort(byLabel);
-  for (const m of models) sel.appendChild(option(m.id, (m.label || m.id) + (m.custom === 'plugin' && m.plugin ? ` (${m.plugin})` : '')));
+  const models = catalog.filter((m) => m && runsOn(m, 'claude') && m.custom !== 'project' && (!m.hidden || m.id === stored) && (!m.needsSignIn || m.id === stored));
+  appendModelGroups(sel, models);
   // Only a MISSING model is condemned. fetchTitleModelCatalog returns [] on any
   // non-OK/throw, so an unreachable catalog would otherwise disable Save and Test on
   // a perfectly good setting — `stale` is the caller's verdict, not this list's.
@@ -14082,187 +14074,22 @@ function buildAutoModelOptions(sel, stored, catalog, stale = false, defaultLabel
   }
   sel.value = stored;
 }
-async function paintAutoModelSettings(data) {
-  const sel = document.getElementById('autoModel');
-  if (!sel) return;
-  const catalog = await fetchTitleModelCatalog();                     // the same project-less /api/config catalog
-  const stored = typeof data.autoWorkflowModel === 'string' ? data.autoWorkflowModel : '';
-  // autoWorkflowModelEffective is {model, source} only (no `stale`, unlike titleModelEffective).
-  const eff = data.autoWorkflowModelEffective || {};
-  // The SERVER decides staleness: autoModelState() reports source 'settings' only when the
-  // stored id resolved against the real catalog, so anything else with an id stored means it
-  // did not. An older server sends no `source` at all — there the client catalog is the only
-  // evidence, and an EMPTY one is a failed GET, not an empty catalog, so it condemns nothing.
-  const stale = !!stored && (eff.source
-    ? (eff.source !== 'settings' && eff.source !== 'env')
-    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
-  buildAutoModelOptions(sel, stored, catalog, stale);
-  const effModel = eff.model || 'the default model';
-  let note = '', kind = '';
-  if (eff.source === 'env') { note = `WORCA_AUTO_MODEL is set in the environment: Auto uses ${effModel} regardless of this setting.`; kind = 'warn'; }
-  else if (stale) { note = `Model "${stored}" is no longer in the catalog — Auto uses ${effModel} (the default).`; kind = 'warn'; }
-  else if (eff.source === 'settings') note = `Auto classifies with ${effModel}.`;
-  else note = `Auto classifies with ${effModel} (the default).`;
-  setHintMsg('autoModelEnvNote', note, kind);
-  const testBtn = document.getElementById('autoModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('autoModelSave');
-}
-function postAutoModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('auto-model-settings-card'), paint: paintAutoModelSettings,
-    dirty: settingsCardDirty('autoModelSave'), appliesWhen: 'Applies to the next Auto run.', ...opts,
-  });
-}
-document.getElementById('autoModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('autoModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postAutoModel({ autoWorkflowModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('autoModelReset')?.addEventListener('click', (e) => postAutoModel({ autoWorkflowModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('autoModel')?.addEventListener('change', () => { const sel = document.getElementById('autoModel'); const b = document.getElementById('autoModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
-document.getElementById('autoModelTest')?.addEventListener('click', () => testModelFromSettings('autoModel', 'autoModelTest', setAutoModelMsg));
-settingsCardDirty('autoModelSave');
 
-// ---- PR description model: the model behind the "Ship it?" modal's Generate with AI.
-// The Auto workflow card's recipe verbatim (buildAutoModelOptions, the server-decided
-// staleness, postSettingsCard), minus the env override that card has.
-function setPrDescModelMsg(text, kind) { setHintMsg('prDescModelMsg', text, kind); }
-async function paintPrDescModelSettings(data) {
-  const sel = document.getElementById('prDescModel');
-  if (!sel) return;
-  const catalog = await fetchTitleModelCatalog();
-  const stored = typeof data.prDescriptionModel === 'string' ? data.prDescriptionModel : '';
-  const eff = data.prDescriptionModelEffective || {};
-  const stale = !!stored && (eff.source
-    ? eff.source !== 'settings'
-    : (catalog.length > 0 && !catalog.some((m) => m && m.id === stored)));
-  buildAutoModelOptions(sel, stored, catalog, stale);
-  const effModel = eff.model || 'the default model';
-  let note = '', kind = '';
-  if (stale) { note = `Model "${stored}" is no longer in the catalog — PR descriptions use ${effModel} (the default).`; kind = 'warn'; }
-  else if (eff.source === 'settings') note = `PR descriptions are written with ${effModel}.`;
-  else note = `PR descriptions are written with ${effModel} (the default).`;
-  setHintMsg('prDescModelNote', note, kind);
-  const testBtn = document.getElementById('prDescModelTest');
-  if (testBtn) testBtn.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled;
-  settingsCardPainted('prDescModelSave');
+/** A slot row's Test: the Models view's Test (POST /api/models/:id/test), one tiny prompt through the id's catalog
+ *  routing. The reply or the failure is a toast; the button shows busy → done. */
+async function testModelRow(id, btn) {
+  if (!id) return;
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
+      const data = (await safeJson(res)) || {};
+      if (!res.ok) return { ok: false, error: data.error || `The server answered ${res.status}.` };
+      return data.ok ? { ok: true, text: data.text } : { ok: false, error: data.hint || data.message || 'The model did not reply.' };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  notify(r.ok ? { tone: 'ok', title: `${id} replied`, detail: r.text } : { tone: 'err', title: `${id} did not answer`, detail: r.error });
 }
-function postPrDescModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('pr-description-model-settings-card'), paint: paintPrDescModelSettings,
-    dirty: settingsCardDirty('prDescModelSave'), appliesWhen: 'Applies to the next Generate with AI.', ...opts,
-  });
-}
-document.getElementById('prDescModelSave')?.addEventListener('click', (e) => {
-  const sel = document.getElementById('prDescModel');
-  const opt = sel.options[sel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(sel, MODEL_GONE_TEXT); return; }
-  postPrDescModel({ prDescriptionModel: sel.value || '' }, { button: e.currentTarget });
-});
-document.getElementById('prDescModelReset')?.addEventListener('click', (e) => postPrDescModel({ prDescriptionModel: '' },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-document.getElementById('prDescModel')?.addEventListener('change', () => { const sel = document.getElementById('prDescModel'); const b = document.getElementById('prDescModelTest'); if (b) b.disabled = !sel.value || sel.options[sel.selectedIndex]?.disabled; });
-document.getElementById('prDescModelTest')?.addEventListener('click', () => testModelFromSettings('prDescModel', 'prDescModelTest', setPrDescModelMsg));
-settingsCardDirty('prDescModelSave');
-
-// ---- Settings › Memory: the Defragment model (memory-defrag-model.mjs) — the model + effort EVERY
-// Memory defragment run uses. The flat list of the Auto card (buildAutoModelOptions) over the same
-// project-less catalog (fetchTitleModelCatalog), "(default)" first; the effort list is the chosen
-// model's own, and clearing the model clears the effort (the pair rule).
-const MEM_DEFRAG_DEFAULT_LABEL = '(default)';
-let memDefragCatalog = [];
-function setMemDefragMsg(text, kind) { setHintMsg('memDefragModelMsg', text, kind); }
-const memDefragLabel = (id) => { const m = memDefragCatalog.find((x) => x && x.id === id); return m ? (m.label || m.id) : id; };
-function paintMemDefragEffort(keep) {
-  const msel = document.getElementById('memDefragModel');
-  const esel = document.getElementById('memDefragEffort');
-  if (!msel || !esel) return;
-  const m = msel.value ? memDefragCatalog.find((x) => x && x.id === msel.value) : null;
-  const efforts = m && Array.isArray(m.efforts) ? m.efforts : [];
-  esel.innerHTML = '';
-  esel.appendChild(option('', m ? '(model default)' : '(pick a model first)'));
-  for (const e of efforts) esel.appendChild(option(e, e));
-  esel.value = keep && efforts.includes(keep) ? keep : '';
-  esel.disabled = !m;
-}
-async function paintMemDefragModelSettings(data) {
-  const msel = document.getElementById('memDefragModel');
-  if (!msel) return;
-  memDefragCatalog = await fetchTitleModelCatalog();
-  const pair = data && data.memoryDefrag && typeof data.memoryDefrag === 'object' ? data.memoryDefrag : {};
-  const raw = typeof pair.model === 'string' ? pair.model : '';
-  // A run matches the stored id case-insensitively (memory-defrag-model.mjs), and so does the card.
-  const hit = raw ? memDefragCatalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === raw.toLowerCase()) : null;
-  const stored = hit ? hit.id : raw;
-  // An EMPTY catalog is a failed GET, not an empty catalog: it condemns nothing (the Auto card's rule).
-  const stale = !!stored && memDefragCatalog.length > 0 && !hit;
-  buildAutoModelOptions(msel, stored, memDefragCatalog, stale, MEM_DEFRAG_DEFAULT_LABEL);
-  paintMemDefragEffort(typeof pair.effort === 'string' ? pair.effort : '');
-  // docs/ui-levels.md rule 2: a stored pick stays visible below Expert — New pipeline's locked row
-  // and the health card name it at every level.
-  keepVisible(document.getElementById('mem-defrag-model-card'), !!stored);
-  const def = typeof data.memoryDefragDefault === 'string' && data.memoryDefragDefault ? memDefragLabel(data.memoryDefragDefault) : 'the workflow default';
-  const fallback = `${def}, or the model a project picked for the Memory defragmenter`;
-  // A stored effort the model no longer offers is dropped at run time: the note must not promise it.
-  const effortGone = !!(hit && pair.effort && !(Array.isArray(hit.efforts) && hit.efforts.includes(pair.effort)));
-  let note = '', kind = '';
-  if (stale) { note = `Model "${stored}" is no longer in the catalog — defragment runs fall back to ${fallback}.`; kind = 'warn'; }
-  else if (effortGone) { note = `Every Memory defragment run uses ${memDefragLabel(stored)} at its default effort — it no longer offers "${pair.effort}".`; kind = 'warn'; }
-  else if (stored) note = `Every Memory defragment run uses ${memDefragLabel(stored)}${pair.effort ? ` · ${pair.effort}` : ''}, whatever the project picked.`;
-  else note = `Unset: defragment runs use ${fallback}.`;
-  setHintMsg('memDefragModelNote', note, kind);
-  settingsCardPainted('memDefragModelSave');
-}
-/** Once per visit to the tab (loadMemoryTab) and on a settings-changed frame — never per file route,
- *  so an unsaved pick survives opening a file. */
-async function loadMemDefragModelCard() {
-  if (!document.getElementById('memDefragModel')) return;
-  try {
-    const res = await fetch('/api/settings');
-    const data = await safeJson(res);
-    // A failed re-read leaves the previous paint on screen: forget its catalog so Save refuses
-    // rather than posting that (possibly outdated) pair over another tab's change.
-    if (!res.ok) { memDefragCatalog = []; setMemDefragMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    await paintMemDefragModelSettings(data);
-    // A re-read that worked lifts the error a failed one (or a refused Save) left behind — never a
-    // "Saved." line (that is not an error, and this runs on the save's own frame too).
-    const msg = document.getElementById('memDefragModelMsg');
-    if (msg && msg.classList.contains('err') && memDefragCatalog.length) setMemDefragMsg('');
-  } catch (e) { memDefragCatalog = []; setMemDefragMsg(e.message, 'err'); }
-}
-function postMemDefragModel(body, opts = {}) {
-  return postSettingsCard(body, {
-    card: document.getElementById('mem-defrag-model-card'), dirty: settingsCardDirty('memDefragModelSave'),
-    appliesWhen: 'Applies to the next defragment run.', ...opts,
-    paint: (data) => {
-      // The health card's hint names the pair: reload the scope (keepDraft — an open draft stays).
-      if (memoryTabCtl && memoryTabCtl.loaded()) void memoryTabCtl.load(memoryTabCtl.selectedName(), { keepDraft: true });
-      return paintMemDefragModelSettings(data);
-    },
-  });
-}
-document.getElementById('memDefragModel')?.addEventListener('change', () => {
-  paintMemDefragEffort(document.getElementById('memDefragEffort')?.value || '');
-});
-// Nothing painted (the settings or the model list failed to load): not a field problem.
-const MODEL_LIST_GONE = { title: 'Not saved', detail: 'The model list did not load. Reload the page to change this.' };
-document.getElementById('memDefragModelSave')?.addEventListener('click', (e) => {
-  // Nothing painted (the settings or the model list failed to load, or the tab is still loading):
-  // a Save would post the empty pair and CLEAR the stored one. Refuse rather than guess.
-  if (!memDefragCatalog.length) { cardAlert(document.getElementById('mem-defrag-model-card'), MODEL_LIST_GONE); return; }
-  const msel = document.getElementById('memDefragModel');
-  const opt = msel.options[msel.selectedIndex];
-  if (opt && opt.disabled) { fieldError(msel, MODEL_GONE_TEXT); return; }
-  const model = msel.value || '';
-  postMemDefragModel({ memoryDefrag: { model, effort: model ? (document.getElementById('memDefragEffort').value || '') : '' } },
-    { button: e.currentTarget });
-});
-document.getElementById('memDefragModelReset')?.addEventListener('click', (e) => postMemDefragModel({ memoryDefrag: null },
-  { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
-settingsCardDirty('memDefragModelSave');
 
 // ---- Settings › Runs › Workspaces: the models every scan starts with (D17). Create workspace
 // can change them for one scan; Re-scan uses them.
@@ -15286,7 +15113,6 @@ async function loadMemoryTab(sub = '') {
   if (!el.memoryHost) return;
   if (!memoryTabCtl) {
     memoryTabCtl = createMemoryController({ host: el.memoryHost, msgEl: el.memoryMsg, scopeKey: 'global', hostProject: globalDefragHost });
-    void loadMemDefragModelCard();   // the Defragment model card: its own fetches, never in the scope load's way
   }
   await memoryTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -15463,10 +15289,49 @@ function paintRunningActions() {
   const running = state.actionsRunning || [];
   const side = document.getElementById('side-actions');
   if (side) {
-    const card = renderRunningActionsCard(running.filter((s) => s.kind === 'service'),
-      { doc: document, titleOf: (s) => s.runTitle || s.runId, onStop: stopActionInstance, onOpen: openActionRun });
-    side.replaceChildren(...(card ? [card] : []));
-    side.hidden = !card;
+    const services = running.filter((s) => s.kind === 'service');
+    const opts = { doc: document, titleOf: (s) => s.runTitle || s.runId, onStop: stopActionInstance,
+      onOpen: (s) => { sideActionsFlyout?.close(); openActionRun(s); } };
+    // The column's rows and the rail flyout's copy (its buttons are menu items). A repaint under a
+    // focused row (a Stop just pressed, in the column or in the open flyout) keeps focus in that list:
+    // the same control of the same row while its service still runs, else the same control of the
+    // first row. With no service left, focus goes to the open page's row — never to <body>.
+    const colHost = document.getElementById('side-actions-rows');
+    const flyHost = document.getElementById('side-actions-fly-rows');
+    const focusHost = [colHost, flyHost].find((host) => host && host.contains(document.activeElement)) || null;
+    const focused = focusHost ? document.activeElement : null;
+    const focusedId = focused?.closest('.act-srow')?.dataset.instanceId;
+    const focusedPart = focused?.classList.contains('act-stop') ? '.act-stop' : '.act-srow-name';
+    const tileFocused = !!sideActionsTile && document.activeElement === sideActionsTile;   // the rail tile goes with the last row
+    const rows = renderRunningActionRows(services, opts);
+    const flyRows = renderRunningActionRows(services, { ...opts, menu: true });
+    colHost?.replaceChildren(...(rows ? [rows] : []));
+    flyHost?.replaceChildren(...(flyRows ? [flyRows] : []));
+    const n = rows ? rows.children.length : 0;
+    if (sideActionsTile) {
+      const label = `${n} running action${n === 1 ? '' : 's'}`;
+      sideActionsTile.querySelector('.act-tile-n').textContent = String(n);
+      sideActionsTile.setAttribute('aria-label', label);
+      sideActionsTile.title = label;
+    }
+    side.hidden = !rows;
+    if (!rows) sideActionsFlyout?.close();
+    else if (sideActionsFlyout?.isOpen()) sideActionsFlyout.reposition();   // the card grew or shrank beside its tile
+    if ((focused && !focused.isConnected) || (tileFocused && !rows)) {
+      const host = rows && (focusHost === colHost || sideActionsFlyout?.isOpen()) ? focusHost : null;
+      const row = host && [...host.querySelectorAll('.act-srow')].find((r) => r.dataset.instanceId === focusedId);
+      // The same control of the same row, else that row's other button (its name is plain text once its
+      // run loses its saved row), else the same control of the first row.
+      const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button')
+        || host.querySelector(`button${focusedPart}`) || host.querySelector('button'));
+      // Else the open page's row, or the first control that takes focus here: a control that is
+      // not shown ignores focus() (the Nodes row Simple hides, the collapse toggle on a tablet or a
+      // phone), and New run in the top bar shows at every level and every width.
+      for (const el of [next, $('.nav > button.active'), $('.nav > .nav-group.has-active'), $('#side-toggle'), $('#topnav-new')]) {
+        el?.focus();
+        if (el && document.activeElement === el) break;
+      }
+    }
   }
   paintActionsHeaders();
   paintHistActionBadges();
@@ -16135,7 +16000,7 @@ async function exportPluginFlow() {
     const data = await safeJson(res);
     if (!res.ok) return say(data.error || `HTTP ${res.status}`);
     mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Plugins view.`, 'ok');
+    setModelsMsg(`Plugin scaffold written to ${data.dir} — git init + push it, then teammates install it from the Marketplace page.`, 'ok');
     renderModelsViewBody();
   } catch (e) {
     say(e.message);
@@ -16145,11 +16010,18 @@ async function exportPluginFlow() {
 const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
-let modelsHelpersEl = null;
+// Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
+// titles, Auto and PR descriptions (no effort), and the Memory defragment pair. No user-level overview slot.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag'];
+const CLAUDE_USER_HELPER_OWN = (data) => ({
+  title: data.titleModel ? { model: data.titleModel } : undefined,
+  classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
+  prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
+  memoryDefrag: data.memoryDefrag && data.memoryDefrag.model ? { model: data.memoryDefrag.model, ...(data.memoryDefrag.effort ? { effort: data.memoryDefrag.effort } : {}) } : undefined,
+});
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  modelsHelpersEl ||= document.querySelector('.settings-pane[data-tab="models"] .models-helpers');
   let cfg = {};
   try { cfg = await safeJson(await fetch('/api/config')); } catch {}
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
@@ -16159,11 +16031,15 @@ async function paintEngineSettings(data) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
-  const extras = renderEngineSection(root, { level: 'user', roles, catalog, fields, jobs: { claude: [], codex: CODEX_HELPER_JOBS, cursor: [] } });
-  if (modelsHelpersEl) extras.claude.append(modelsHelpersEl);
-  // Each non-Claude card's readiness line (GET /api/engines). Only on the Settings view: a settings-changed
-  // broadcast repaints this from any view, and that must not spawn a preflight.
-  if (currentView() === 'settings') void paintEngineCardStatus(root);
+  const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
+  for (const job of CLAUDE_USER_HELPER_JOBS) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+    noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
+    defaultLabels: { claude: 'the default model' },
+    jobs: { claude: CLAUDE_USER_HELPER_JOBS, codex: CODEX_HELPER_JOBS, cursor: [] } });
+  // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
+  // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
+  if (currentView() === 'models') void paintEngineCardStatus(root);
 }
 /** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
  *  with no `engines` array leaves the lines empty. */
@@ -16172,7 +16048,9 @@ async function paintEngineCardStatus(root) {
   try { const res = await fetch('/api/engines'); const d = res.ok ? await safeJson(res) : null; list = Array.isArray(d?.engines) ? d.engines : null; } catch { list = null; }
   for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
     const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
-    line.textContent = !e ? '' : !e.ready ? `Not ready — ${e.reason || 'unknown'}` : e.reason ? `Ready — ${e.reason}` : 'Ready';
+    // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
+    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
+      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
@@ -16215,20 +16093,17 @@ async function loadModelsView() {
   }
 }
 
-// Settings › Models › Title generation + Auto workflow model + PR description model: the pickers list
-// the catalog, so they repaint whenever it loads — a model added a moment ago is selectable without leaving the tab.
+// Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
+// selectable without leaving the page.
 async function paintHelperModelCards() {
   try {
     const res = await fetch('/api/settings');
     if (!res.ok) return;
-    const data = await safeJson(res);
-    await paintTitleModelSettings(data);
-    await paintAutoModelSettings(data);
-    await paintPrDescModelSettings(data);
-  } catch { /* the cards keep their last paint */ }
+    await paintEngineSettings(await safeJson(res));
+  } catch { /* the card keeps its last paint */ }
 }
 
-/** The Providers tab: the same card, on a page of its own (§8.1). */
+/** The Providers page: the same card, on a page of its own (§8.1). */
 async function loadProvidersView() {
   if (!el.providersList) return;
   setProvidersMsg('');
@@ -16254,28 +16129,37 @@ function renderProvidersViewBody() {
   refreshFreeDaily({ force: true });
 }
 
-/** A page-level message, on whichever of the two tabs is showing. */
+/** A page-level message, on whichever of the two pages is showing. */
 function setTabMsg(text, kind) {
-  if (currentSettingsTab === 'providers') setProvidersMsg(text, kind);
+  if (currentView() === 'providers') setProvidersMsg(text, kind);
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own tab now, but its flows still repaint by name. */
+/** The providers card lives on its own page now, but its flows still repaint by name. */
 function repaintProviders() {
-  if (currentSettingsTab === 'providers') renderProvidersViewBody();
-  else if (currentSettingsTab === 'models') renderModelsViewBody();
+  if (currentView() === 'providers') renderProvidersViewBody();
+  else if (currentView() === 'models') renderModelsViewBody();
 }
 
 // ── Providers (model-bridge-design.md §8.1/§8.2/§8.4) ──────────────────────
 /** The providers card's home: its own tab's list. */
 function providerRoot() { return el.providersList; }
 
-function setProviderMsg(name, text, err) {
+/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it. */
+function providerAlert(name, title, detail) {
+  const row = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"]`);
+  if (row) cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+}
+
+/** The card's grey guidance line; an error goes to providerAlert under `title` instead. '' clears both. */
+function setProviderMsg(name, text, err, title = 'Something went wrong') {
   const root = providerRoot();
   const row = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-msg`);
+  if (err) { providerAlert(name, title, text); if (row) row.textContent = ''; return; }
+  if (!text) providerAlert(name, null);
   if (!row) return;
   row.textContent = text || '';
-  row.className = `hint mv-pv-msg${err ? ' err' : ''}`;
+  row.className = 'hint mv-pv-msg';
 }
 
 async function reloadProviders() {
@@ -16297,7 +16181,7 @@ async function ensureCopilotTerms({ force = false } = {}) {
   if (!ok) return false;
   const res = await fetch('/api/providers/copilot/acknowledge', { method: 'POST' });
   const data = await safeJson(res);
-  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true); return false; }
+  if (!res.ok) { setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Notice not acknowledged'); return false; }
   mvState.providers = data;
   return true;
 }
@@ -16310,7 +16194,7 @@ async function copilotSignInFlow() {
   try {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
-    if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true);
+    if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
     mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
     repaintProviders();
     const poll = async () => {
@@ -16341,7 +16225,7 @@ async function copilotSignInFlow() {
     };
     copilotPollTimer = setTimeout(poll, Math.max(3, Number(flow.interval) || 5) * 1000);
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Sign-in did not start');
   }
 }
 
@@ -16351,13 +16235,13 @@ async function copilotSignOutFlow() {
   try {
     const res = await fetch('/api/providers/copilot/logout', { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true);
+    if (!res.ok) return setProviderMsg('copilot', data.error || `HTTP ${res.status}`, true, 'Not signed out');
     mvState.providers = data;
     mvState.copilotModels = [];
     setTabMsg('Signed out of GitHub Copilot.', 'ok');
     await refreshModelsEverywhere();
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Not signed out');
   }
 }
 
@@ -16376,22 +16260,13 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true); return; }
+  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
     const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
-}
-
-/** The Test-connection verdict, in the pill beside the button (and the row's hint line with it). */
-function setProviderResult(name, state, text) {
-  const root = providerRoot();
-  const pill = root && root.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
-  if (!pill) return;
-  pill.className = `mv-pv-result${state ? ` is-on is-${state}` : ''}`;
-  pill.textContent = text || '';
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -16407,38 +16282,34 @@ async function clearSpeechCacheFlow(btn) {
   try {
     const res = await fetch('/api/speech/cache', { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) { setProviderMsg('speech', data.error || `HTTP ${res.status}`, true); btn.disabled = false; return; }
+    if (!res.ok) { setProviderMsg('speech', data.error || `HTTP ${res.status}`, true, 'Speech models not removed'); btn.disabled = false; return; }
     mvState.providers = data.providers;
     repaintProviders();
-    setProviderMsg('speech', `Removed ${formatSpeechBytes(data.removed)} of speech models.`);
+    notify({ tone: 'ok', title: 'Speech models removed', detail: `Freed ${formatSpeechBytes(data.removed)}.` });
   } catch (e) {
-    setProviderMsg('speech', e.message, true);
+    setProviderMsg('speech', `Worca did not answer (${e.message}).`, true, 'Speech models not removed');
     btn.disabled = false;
   }
 }
 
-/** The Speech row's per-service Test (docs/speech.md): tests what is on screen, like testProviderFlow. */
+/** The Speech row's per-service Test (docs/speech.md): tests what is on screen, like testProviderFlow.
+ *  Testing… → Works on the button, with what answered in a toast; a failure is the card's alert (#555). */
 async function testSpeechFlow(btn) {
   const kind = btn.dataset.kind;
   const typed = (collectSpeechRow(providerRoot()) || {})[kind] || {};
-  const root = providerRoot();
-  const pill = root && root.querySelector(`.mv-sp-result[data-kind="${kind}"]`);
-  const show = (state, text) => { if (pill) { pill.className = `mv-pv-result mv-sp-result${state ? ` is-on is-${state}` : ''}`; pill.textContent = text || ''; } };
   const what = kind === 'stt' ? 'Speech-to-text' : 'Text-to-speech';
-  btn.disabled = true;
-  show('busy', 'Testing…');
   setProviderMsg('speech', '');
-  try {
-    const res = await fetch('/api/providers/speech/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, ...typed }) });
-    const data = await safeJson(res);
-    if (data.ok) { show('ok', 'Reachable'); setProviderMsg('speech', `${what}: ${data.detail || 'answered'}.`); }
-    else { show('err', 'Failed'); setProviderMsg('speech', `${what}: ${data.message || data.error || `HTTP ${res.status}`}`, true); }
-  } catch (e) {
-    show('err', 'Failed');
-    setProviderMsg('speech', e.message, true);
-  } finally {
-    btn.disabled = false;
-  }
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/speech/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind, ...typed }) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return { ok: true, detail: data.detail };
+      return { ok: false, error: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
+  else setProviderMsg('speech', r.error, true, `${what} test failed`);
 }
 
 async function testProviderFlow(btn) {
@@ -16446,38 +16317,31 @@ async function testProviderFlow(btn) {
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
   const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
-  const pill = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .mv-pv-result`);
-  if (pill) pill.title = '';
-  setProviderResult(name, 'busy', 'Testing…');
+  const label = PROVIDER_LABELS[name] || name;
   setProviderMsg(name, '');
-  // #555: the button shows Testing… → "Connected"; the pill keeps the verdict; the line only errors.
-  await withButton(btn, async () => {
+  // #555: the button shows Testing… → Connected, the toast says what answered; a failure is the card's alert.
+  const r = await withButton(btn, async () => {
     try {
       const res = await fetch(`/api/providers/${encodeURIComponent(name)}/test`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...(typed.baseUrl ? { baseUrl: typed.baseUrl } : {}), ...(typed.apiKey !== undefined ? { apiKey: typed.apiKey } : {}) }),
       });
-      const data = await safeJson(res);
+      const data = (await safeJson(res)) || {};
       const where = typed.baseUrl || (mvState.providers && mvState.providers[name] && mvState.providers[name].baseUrl) || '';
-      const unsaved = hasUnsavedProviderEdits(name, typed);
       if (data.ok) {
-        setProviderResult(name, 'ok', `Reachable${data.models != null ? ` — ${data.models} model${data.models === 1 ? '' : 's'}` : ''}`);
+        const models = data.models != null ? ` with ${data.models} model${data.models === 1 ? '' : 's'}` : '';
         // `detail` is what the endpoint says about the key itself — OpenRouter's credit, free-model
-        // allowance and rate limit (provider-ops formatOpenRouterKeyInfo); never the key. It rides on
-        // the pill's tooltip now that the row's line carries only errors.
-        if (pill) pill.title = `${where}${data.models != null ? ` answered with ${data.models} model${data.models === 1 ? '' : 's'}` : ' answered'}.${data.detail ? ` Key: ${data.detail}.` : ''}${unsaved ? ' Press Save to keep these settings.' : ''}`;
-        return { ok: true };
+        // allowance and rate limit (provider-ops formatOpenRouterKeyInfo); never the key.
+        const detail = `${where || label} answered${models}.${data.detail ? ` Key: ${data.detail}.` : ''}${hasUnsavedProviderEdits(name, typed) ? ' Press Save to keep these settings.' : ''}`;
+        return { ok: true, detail };
       }
-      const why = data.message || data.error || `HTTP ${res.status}`;
-      setProviderResult(name, 'err', 'Failed');
-      setProviderMsg(name, `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}`, true);
-      return { ok: false };
-    } catch (e) {
-      setProviderResult(name, 'err', 'Failed');
-      setProviderMsg(name, e.message, true);
-      return { ok: false };
-    }
+      const why = data.message || data.error || `The server answered ${res.status}.`;
+      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}` };
+    } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
   }, { busy: 'Testing…', done: 'Connected' });
+  if (r.skipped) return;
+  if (r.ok) notify({ tone: 'ok', key: `provider-test-${name}`, title: `${label} connected`, detail: r.detail });
+  else setProviderMsg(name, r.error, true, `${label}: connection failed`);
 }
 
 /** Whether the row carries edits the user has not saved — the test used them, the runs will not. */
@@ -16505,8 +16369,9 @@ async function refreshCopilotQuotaFlow(btn) {
     const data = await safeJson(res);
     if (res.ok) { mvState.providers = data; repaintProviders(); }
     if (res.ok && !data.copilot?.quota) setProviderMsg('copilot', 'GitHub reported no premium-request quota for this account.');
+    else if (!res.ok) setProviderMsg('copilot', data?.error || `The server answered ${res.status}.`, true, 'Usage not refreshed');
   } catch (e) {
-    setProviderMsg('copilot', e.message, true);
+    setProviderMsg('copilot', `Worca did not answer (${e.message}).`, true, 'Usage not refreshed');
   } finally {
     btn.disabled = false;
   }
@@ -16550,10 +16415,10 @@ function paintImportSource() {
 
 /**
  * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers tab's shortcut: the dialog opens over the catalog the import will fill.
+ *   Providers page's shortcut: the dialog opens over the catalog the import will fill.
  */
 function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentSettingsTab !== 'models') showView('settings', 'models');
+  if (goToModels && currentView() !== 'models') showView('models');
   mimp.lastFocus = document.activeElement;
   const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   mimp.source = source || (connected ? 'copilot' : 'openai');
@@ -16660,7 +16525,7 @@ async function importModelsFlow() {
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
     closeImportDialog();
-    if (currentSettingsTab !== 'models') showView('settings', 'models');
+    if (currentView() !== 'models') showView('models');
     setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
@@ -16673,9 +16538,9 @@ async function importModelsFlow() {
   }
 }
 
-/** A catalog row's "needs sign-in" now LEAVES for the Providers tab and lands on the row. */
+/** A catalog row's "needs sign-in" now LEAVES for the Providers page and lands on the row. */
 function goToProviders(provider) {
-  if (currentSettingsTab !== 'providers') showView('settings', 'providers');
+  if (currentView() !== 'providers') showView('providers');
   setTimeout(() => focusProviderRow(provider), 0);
 }
 
@@ -16692,9 +16557,9 @@ function focusProviderRow(provider) {
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
   await loadModelsView();
-  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // The Providers page shares mvState.providers with the catalog: a sign-in, a key or a cap that
   // just changed must show on whichever of the two the user is looking at.
-  if (currentSettingsTab === 'providers') renderProvidersViewBody();
+  if (currentView() === 'providers') renderProvidersViewBody();
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -16861,7 +16726,7 @@ async function testModelFlow(btn) {
   }
 }
 
-// The Providers tab's own delegation (§8.1): the same buttons, on the page that now owns them.
+// The Providers page's own delegation (§8.1): the same buttons, on the page that now owns them.
 if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
@@ -17424,7 +17289,7 @@ async function confirmCostOverride(runId, btn) {
 }
 
 /** POST /api/resume's body: every option a resume carries, resent as-is after each question. */
-function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false } = {}) {
+function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, policyReason = null, baseAck = false, engine = null, allowUnguardedEngine = false, model = null } = {}) {
   return {
     pipelineId, baseCheck: true,
     ...(baseAck ? { baseAck: true } : {}),
@@ -17432,6 +17297,7 @@ function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, po
     ...(pastTeamCap ? { pastTeamCap: true, ...(policyReason ? { policyReason } : {}) } : {}),
     ...(engine ? { engine } : {}),
     ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
@@ -18173,7 +18039,7 @@ async function paintMcpRuns() {
     try {
       const r = await fetch('/api/mcp/preview', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels() }),
+        body: JSON.stringify({ target: kind === 'project' ? { projectKey: scope.slice(i + 1) } : { workspaceId: scope.slice(i + 1) }, models: selectedRunModels(), engine: state.engine }),
       });
       data = r.ok ? await safeJson(r) : null;
     } catch { data = null; }
@@ -18296,29 +18162,58 @@ async function confirmPastTeamCap(runId, btn) {
 // the saved run, and the run page's usage-limit banner. The consent is New pipeline's own.
 const ENGINE_UNGUARDED_LABEL = 'Allow unguarded: run without the rules this engine cannot enforce';
 
-/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and one
- *  "Resume on <engine>" per other engine, whose line says what switching does. Every other engine is
- *  listed (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
+/** A Resume menu's engine items: "Resume on <saved engine>" (what the button does) and, when the pause
+ *  offers the switch (a usage limit the engine hit, as the banner and the History bar), one "Resume on
+ *  <engine>" per other engine, whose line says what switching does. Every other engine is listed, ready
+ *  or not (the user picks; the resume gate explains a refusal). The index.html `.resume-on-other` is the
  *  hidden template; clones go before it, and the menu's one delegated listener handles them. Every frame
  *  repaints, so an unchanged menu is left alone: re-cloning under an open menu would lose a click. */
-function paintResumeEngineItems(menu, runEngine) {
+function paintResumeEngineItems(menu, runEngine, pause) {
   if (!menu) return;
   const saved = runEngine || 'claude';
-  if (menu.dataset.engineSig === saved) return;
-  menu.dataset.engineSig = saved;
+  const offers = usageLimitSwitches(pause || {});
+  const sig = `${saved}|${offers.join(',')}|${pause?.reason || ''}`;
+  if (menu.dataset.engineSig === sig) return;
+  menu.dataset.engineSig = sig;
+  // Any usage limit — the sign-in's or a provider's: a model on another connection has its own allowance.
+  const withModel = menu.querySelector('.resume-with-model');
+  if (withModel) withModel.hidden = pause?.reason !== 'usage_limit';
+  menu.dataset.limitEngine = pause?.limitEngine || '';   // read by the item's click (pickResumeModel)
   const savedItem = menu.querySelector('.resume-on-saved');
   if (savedItem) savedItem.querySelector('b').textContent = `Resume on ${engineLabel(saved)}`;
   const tpl = menu.querySelector('.resume-on-other[data-template]') || menu.querySelector('.resume-on-other');
   if (!tpl) return;
   tpl.dataset.template = '1'; tpl.hidden = true;
   menu.querySelectorAll('.resume-on-other:not([data-template])').forEach((b) => b.remove());
-  for (const e of otherEngines(saved)) {
+  for (const e of offers) {
     const item = tpl.cloneNode(true);
     delete item.dataset.template; item.hidden = false; item.dataset.engine = e;
     item.querySelector('b').textContent = `Resume on ${engineLabel(e)}`;
     item.querySelector('small').textContent = engineSwitchNote(e);
     tpl.before(item);
   }
+}
+
+/** "Resume with another model…" (a usage limit): the model every remaining step runs on, picked from the ones the
+ *  run's harness can run on another connection (src/shared/connections.mjs), grouped by provider. null = cancelled. */
+async function pickResumeModel(engine, pause) {
+  let rows = [];
+  try { rows = (await safeJson(await fetch('/api/config'))).models || []; } catch { rows = []; }
+  // A sign-in's limit is spent for every model on that sign-in; a provider's names itself in the pause detail.
+  const spent = pause && pause.limitEngine ? `signin:${pause.limitEngine}` : null;
+  const offered = rows.filter((m) => m && runsOn(m, engine) && !m.needsSignIn && !m.hidden && m.custom !== 'project' && connectionKey(m) !== spent);
+  if (!offered.length) {
+    await confirmModal({ title: 'No other model to resume with', message: `No model ${engineLabel(engine)} can run is set up on another connection. Add one on the Models page.`, confirmLabel: 'OK', cancelLabel: 'Close' });
+    return null;
+  }
+  const options = modelGroups(offered, { engine }).flatMap((g) => g.models.map((m) => ({ value: m.id, text: modelOptionText(m), group: g.label })));
+  const v = await promptModal({
+    title: 'Resume with another model',
+    message: 'Every remaining step of this run runs on the model you pick. A model on another provider has its own allowance.',
+    confirmLabel: 'Resume',
+    fields: [{ id: 'model', label: 'Model', options, value: options[0].value, required: true }],
+  });
+  return v && v.model ? v.model : null;
 }
 
 /** Before a paused run moves to another engine: what that does. true = go. */
@@ -18411,7 +18306,7 @@ async function handlePolicyPluginClick(e) {
   // secrets blank) — the same pane the Plugins page opens from the card.
   if (t.classList.contains('pl-policy-configure')) {
     closePluginModal();
-    if (location.hash.slice(1) !== 'settings/plugins') location.hash = 'settings/plugins';
+    if (location.hash.slice(1) !== 'marketplace') location.hash = 'marketplace';
     const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
     await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
     return true;
@@ -18489,12 +18384,12 @@ async function paintMcpStrip(host) {
 }
 setMcpStripRenderer((host) => { void paintMcpStrip(host); });
 /** After a Team action, every surface that shows Team state reads it again: `openSetId` (Install, Set <field>) opens
- *  that Team set; on the MCP tab the pane reloads (its paint repaints the strip), so a card never contradicts the strip;
- *  the Team policy page reloads ("Yours", deviations). */
+ *  that Team set; on the Connectors page the view reloads (its paint repaints the strip), so a card never contradicts the
+ *  strip; the Team policy page reloads ("Yours", deviations). */
 function refreshMcpSurfaces(openSetId = null) {
-  const to = openSetId ? `settings/mcp/sets/${encodeURIComponent(openSetId)}` : null;
+  const to = openSetId ? `connectors/sets/${encodeURIComponent(openSetId)}` : null;
   if (to && location.hash.slice(1) !== to) { location.hash = to; return; }
-  if (currentView() === 'settings' && currentSettingsTab === 'mcp') { void mcpTab().show(location.hash.slice(1).replace(/^settings\/mcp\/?/, '')); return; }
+  if (currentView() === 'connectors') { void mcpTab().show(parseHash()[1]); return; }
   if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
 }
 async function runMcpTeamAction(r, action, { owner = null } = {}) {
@@ -21179,10 +21074,6 @@ function gateHdResume(btn, { reason, detail }) {
 // a resume point exists — v1 points were retired by the v2 upgrade; a LIVE snapshot has no
 // `resumable` field, so `!== false` keeps the live path untouched).
 // Idempotent: runs on load, when the row lands and on every run frame (renderRunningView).
-/** The bar's "Resume on <engine>" buttons (.hd-resume-switch): a paused run whose engine hit its own
- *  usage limit, read off the live run when this tab has one, else the saved state. One button per offered
- *  engine (`ready`: the ready engines, null = all), cloned before the hidden index.html template; the bar's
- *  one delegated listener handles them. An unchanged offer is left alone. */
 /** The pause the history bar reads: the live run's when this tab has one, else the saved state's. */
 function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
@@ -21190,23 +21081,12 @@ function hdPauseOf(live, screen, data, record) {
     ? { reason: live.pauseReason, limitEngine: live.limitEngine }
     : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine };
 }
+/** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
+ *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
+ *  such an offer it shows at every mode, so Simple can switch too. `ready`: the ready engines, null = all. */
 function paintHdResumeSwitch(screen, record, data, live, resumable, ready = null) {
-  const tpl = screen.querySelector('.hd-resume-switch[data-template]') || screen.querySelector('.hd-resume-switch');
-  if (!tpl) return;
-  tpl.dataset.template = '1'; tpl.hidden = true;
   const offers = resumable ? usageLimitSwitches(hdPauseOf(live, screen, data, record), ready) : [];
-  const sig = offers.join(',');
-  if (tpl.dataset.engineSig === sig) return;
-  tpl.dataset.engineSig = sig;
-  screen.querySelectorAll('.hd-resume-switch:not([data-template])').forEach((b) => b.remove());
-  for (const e of offers) {
-    const btn = tpl.cloneNode(true);
-    delete btn.dataset.template; delete btn.dataset.engineSig;
-    btn.hidden = false; btn.dataset.engine = e;
-    btn.querySelector('.hd-btn-label').textContent = `Resume on ${engineLabel(e)}`;
-    btn.title = engineSwitchNote(e);
-    tpl.before(btn);
-  }
+  keepVisible(screen.querySelector('.hd-resume-more'), offers.length > 0);
 }
 
 /** The engine a saved run resumes on by default: its live run's, else the saved state's. */
@@ -21269,7 +21149,7 @@ function paintHdLive(screen, record, data) {
   gateHdResume(resumeBtn, gate);
   // Scheduled resume ("Resume at…" in the split's menu): every resumable pause; cap pauses
   // KEEP the arrow but DISABLE the item (clarify: caps are live decisions).
-  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data));
+  paintResumeEngineItems(resumeMenu, hdRunEngine(record, data), hdPauseOf(live, screen, data, record));
   const resumeAtItem = screen.querySelector('.hd-resume-at-item');
   if (resumeAtItem) {
     const refused = SCHEDULE_REFUSED_PAUSE.has(gate.reason);
@@ -21545,6 +21425,14 @@ function paintHdHeaderMeta(screen, record, data) {
   w.className = `hd-status-word st-${family}`;
   w.textContent = word;
   meta.appendChild(w);
+  // The engine that runs the agents (a resume on another engine shows the new one): every run names it.
+  const engine = ENGINE_NAMES.includes(st.runEngine) ? st.runEngine : 'claude';
+  meta.appendChild(hdDot());
+  const eng = document.createElement('span');
+  eng.className = 'hd-engine';
+  eng.textContent = engineLabel(engine);
+  eng.title = `Engine: ${engineLabel(engine)}${isBetaEngine(engine) ? ' (beta)' : ''} runs this run's agents`;
+  meta.appendChild(eng);
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   const hdCost = runCostText(st, st.totalCostUsd, '');
   for (const [cls, text, strong] of [
@@ -21785,8 +21673,12 @@ const SCHEDULE_REFUSED_PAUSE = new Set(['cost_pipeline', 'cost_total', 'cost_pip
  * (one-off time; missed-slot policy pre-selected to Skip per the clarify answer — the
  * user may still pick "Start it late"), then POSTs the ticket.
  */
-async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null }, btn) {
+async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspaceId = null, runEngine = null, pause = null }, btn) {
+  // After a usage limit the run's engine hit, the resume may go to another engine (each has its own allowance).
+  const saved = runEngine || 'claude';
+  const others = usageLimitSwitches(pause || {});
   const res = await openScheduleSheet({
+    engine: others.length ? { choices: [saved, ...others].map((e) => [e, engineLabel(e)]), value: saved } : null,
     mode: 'ticket',
     allowAfter: false,                    // a resume ticket can never chain (createTicket throws)
     initial: { ifMissed: 'skip' },        // pre-selected, not locked — "Start it late" stays available
@@ -21803,6 +21695,7 @@ async function scheduleResumeAt({ pipelineId, title, projectDir = null, workspac
       body: JSON.stringify({
         pipelineId, scheduledFor: res.scheduledFor, ifMissed: res.ifMissed,
         ...(res.ifMissed === 'run' && res.graceMin != null ? { graceMin: res.graceMin } : {}),
+        ...(res.engine ? { engine: res.engine } : {}),
       }),
     });
     const data = await safeJson(r);
@@ -22027,17 +21920,6 @@ function setupHdActions(screen, record, data) {
     resumePipeline(r, r.projectDir || null, resumeBtn);
   });
 
-  // "Resume on <engine>" after a usage limit (paintHdResumeSwitch clones them later, so one delegated
-  // listener on the bar). Resume's own button carries the busy state, so a click while it is in flight does nothing.
-  const hdBar = screen.querySelector('.hd-resume-switch')?.parentElement;
-  hdBar?.addEventListener('click', (e) => {
-    const btn = e.target.closest('.hd-resume-switch:not([data-template])');
-    if (!btn || !hdBar.contains(btn)) return;
-    if (!btn.dataset.engine || resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
-    const r = hdCurrentRecord(record);
-    resumePipelineOnEngine(r, hdRunEngine(r, data), resumeBtn, btn.dataset.engine);
-  });
-
   // Scheduled resume ("Resume at…" in the split's menu); paintHdLive gates the item.
   const resumeMore = screen.querySelector('.hd-resume-more');
   const resumeMenu = screen.querySelector('.hd-resume-menu');
@@ -22056,13 +21938,18 @@ function setupHdActions(screen, record, data) {
     // The engine items (paintResumeEngineItems), read at CLICK time like Resume itself. Their clones are
     // painted after setup, so one delegated listener on the menu.
     resumeMenu.addEventListener('click', (e) => {
-      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+      const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
       if (!item || !resumeMenu.contains(item)) return;
       e.stopPropagation();
       closeResumeMenu();
       if (resumeBtn.disabled || resumeBtn.dataset.resumeState === 'busy') return;
       const r = hdCurrentRecord(record);
       const saved = hdRunEngine(r, data);
+      if (item.classList.contains('resume-with-model')) {
+        pickResumeModel(saved, { reason: 'usage_limit', limitEngine: resumeMenu.dataset.limitEngine || null })
+          .then((model) => { if (model) resumePipeline(r, r.projectDir || null, resumeBtn, { model }); });
+        return;
+      }
       resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
     });
     resumeAtItem.addEventListener('click', (e) => {
@@ -22070,7 +21957,8 @@ function setupHdActions(screen, record, data) {
       if (resumeAtItem.disabled) return;
       closeResumeMenu();
       const r = hdCurrentRecord(record);   // never the load-time object (record-identity rule)
-      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null }, resumeAtItem);
+      scheduleResumeAt({ pipelineId: r.id, title: r.title, projectDir: r.projectDir || null, workspaceId: r.workspaceId || null,
+        runEngine: hdRunEngine(r, data), pause: hdPauseOf(hdLiveRun(r), screen, data, r) }, resumeAtItem);
     });
     resumeMenu.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.stopPropagation(); closeResumeMenu(); resumeMore.focus(); }
@@ -25136,7 +25024,8 @@ function rdStateCopy(r, stepName) {
   if (r.pauseReason === 'usage_limit') {
     // OpenRouter's daily free requests: the detail already says when they come back and what to do.
     if (/^OpenRouter's free-model requests/.test(r.pauseDetail || '')) return `Paused — ${r.pauseDetail}.`;
-    return `Paused — session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
+    const whose = r.limitEngine ? `${engineLabel(r.limitEngine)}'s ` : '';
+    return `Paused — ${whose}session/usage limit reached${r.pauseDetail ? ` (${r.pauseDetail})` : ''}. Resume after the reset.`;
   }
   if (r.pauseReason && (r.status === 'paused' || r.status === 'pausing' || r.status === 'interrupted')) {
     // A legacy reason is the orchestrator's own text (a pre-policy session/usage-limit line).
@@ -25190,6 +25079,21 @@ function rdOvStateBanner(host, r) {
       const pauseBtn = document.querySelector('#run-detail .rd-pause');
       if (pauseBtn && pauseBtn.disabled) return;
       resumeRunOnEngine(r.runId, pauseBtn || btn, other);
+    });
+    host.append(btn);
+  }
+  // Any usage limit, the sign-in's or a provider's: another model on another connection has its own allowance.
+  if (isPaused(r) && r.pipelineId && r.pauseReason === 'usage_limit') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-mini rd-ov-model';
+    btn.textContent = 'Resume with another model…';
+    btn.title = 'Every remaining step runs on the model you pick';
+    btn.addEventListener('click', async () => {
+      const pauseBtn = document.querySelector('#run-detail .rd-pause');
+      if (pauseBtn && pauseBtn.disabled) return;
+      const model = await pickResumeModel(r.runEngine || 'claude', pause);
+      if (model) resumeRunFromCard(r.runId, pauseBtn || btn, { model });
     });
     host.append(btn);
   }
@@ -26337,7 +26241,7 @@ function statusPill(r) {
     // An error pause is parked and resumable (never dead), so it stays in the amber family.
     if (r.pauseReason === 'error') return { family: 'amber', text: 'Paused · error' };
     if (r.pauseReason === 'recoverable') return { family: 'amber', text: 'Paused · recoverable' };
-    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: 'Paused · usage limit' };
+    if (r.pauseReason === 'usage_limit') return { family: 'amber', text: r.limitEngine ? `Paused · ${engineLabel(r.limitEngine)} usage limit` : 'Paused · usage limit' };
     return { family: 'amber', text: 'Paused' };
   }
   // Same family as `paused`: an interrupted run is parked and resumable, and
@@ -26505,7 +26409,7 @@ function stepModelByNode(stepper, runEngine = 'claude') {
   for (const n of stepper.graph.nodes) {
     if (!n || n.kind !== 'agent' || !n.id || typeof n.model !== 'string' || !n.model) continue;
     const entry = modelById(n.model);
-    if (entry && (entry.engine || 'claude') !== runEngine) continue;
+    if (entry && !runsOn(entry, runEngine)) continue;
     out[n.id] = { model: n.model, effort: typeof n.effort === 'string' ? n.effort : '' };
   }
   return out;
@@ -27631,7 +27535,7 @@ function paintRunsList() {
       refocus = { key: a.dataset.rowKey || '', slot: a.dataset.slot || 'group',
         pid: a.dataset.pipelineId || '', group: a.dataset.rowKey ? '' : (a.dataset.groupKey || '') };
     }
-    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New pipeline.', note }));
+    host.replaceChildren(...renderRunsList(document, model, { emptyText: 'No runs yet. Start one from New run.', note }));
   }
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
@@ -28181,13 +28085,18 @@ function openRunDetail(runId, { instant = false } = {}) {
   // CLICK time; the toggle carries the busy state, as for a plain Resume. Clones are painted after
   // setup, so one delegated listener on the menu.
   rdResumeMenu.addEventListener('click', (e) => {
-    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template])');
+    const item = e.target.closest('.resume-on-saved, .resume-on-other:not([data-template]), .resume-with-model');
     if (!item || !rdResumeMenu.contains(item)) return;
     e.stopPropagation();
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
     const pauseBtn = screen.querySelector('.rd-pause');
     if (!r || !pauseBtn || pauseBtn.disabled) return;
+    if (item.classList.contains('resume-with-model')) {
+      pickResumeModel(r.runEngine || 'claude', { reason: r.pauseReason, limitEngine: r.limitEngine })
+        .then((model) => { if (model) resumeRunFromCard(r.runId, pauseBtn, { model }); });
+      return;
+    }
     const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
     resumeRunOnEngine(r.runId, pauseBtn, engine);
   });
@@ -28196,7 +28105,8 @@ function openRunDetail(runId, { instant = false } = {}) {
     if (rdResumeAt.disabled) return;
     closeRdResumeMenu();
     const r = runs.get(runDetailState.runId);
-    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null }, rdResumeAt);
+    if (r && r.pipelineId) scheduleResumeAt({ pipelineId: r.pipelineId, title: r.title, projectDir: r.projectDir || '', workspaceId: r.workspaceId || null,
+      runEngine: r.runEngine, pause: { reason: r.pauseReason, limitEngine: r.limitEngine } }, rdResumeAt);
   });
   rdResumeMenu.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.stopPropagation(); closeRdResumeMenu(); rdResumeMore.focus(); }
@@ -29536,7 +29446,7 @@ function paintRdHeader(screen, r) {
     resumeAt.disabled = refused;
     resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
   }
-  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine);
+  paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
   const ns = screen.querySelector('.rd-night');
@@ -29565,33 +29475,31 @@ function renderPipelineTabs() {
 }
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
-// as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou).
-function runsNeedsCount() {
-  return countNeedsYou({
-    live: overviewRuns().map((r) => ({ pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
+// as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
+// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
+// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+function runsNeedsInput() {
+  return {
+    live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r) })),
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
-  });
+    active: liveRuns().map((r) => ({ runId: r.runId })),
+  };
+}
+function runsNeedsCount() {
+  return countNeedsYou(runsNeedsInput());
 }
 function updateNavCounts() {
   const live = liveRuns().length;
-  const c = $('#nav-running-count');
-  if (c) {
-    c.textContent = String(live);
-    // Green means "work in flight", so it is only spent when it carries that
-    // signal: at zero the badge drops to the sidebar's inert-inventory grey,
-    // the same treatment the Schedules count gets. A permanently green
-    // pill reads as active and dilutes the green that should catch the eye.
-    c.classList.toggle('n-run', live > 0);
-    c.classList.toggle('n-grey', live === 0);
-  }
-  // One badge on Runs (D11): while anything needs you, the amber Needs-you count shows and
-  // CSS hides the live count beside it.
   let waiting = 0;
   for (const r of runs.values()) if (r.pendingQuestion != null) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
   const needs = runsNeedsCount();
+  // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
+  // count as a plain grey number. A zero is hidden; each element keeps its number.
   const nc = $('#nav-needs-count');
   if (nc) { nc.textContent = String(needs); nc.hidden = needs === 0; }
+  const c = $('#nav-running-count');
+  if (c) { c.textContent = String(live); c.hidden = live === 0 || needs > 0; }
   // The rail shows no label and only one badge, so the button's own name has to carry
   // both numbers. aria-label as well as title: a title is a DESCRIPTION, and
   // name-from-contents would otherwise announce this button as bare "4".
@@ -29611,6 +29519,7 @@ function updateNavCounts() {
     if (t !== 'Runs' || railed) rb.title = t; else rb.removeAttribute('title');
     rb.setAttribute('aria-label', t);
   }
+  activityMenu?.refresh();       // the top bar's Activity badge (and its open list), from the same runs
 }
 
 // Single authoritative refresh for the sidebar counts. Only Runs and Schedules carry a
@@ -29643,7 +29552,9 @@ function paintScheduleCounts(c) {
   const inUse = !!((c.scheduled || 0) + (c.missed || 0) + (c.recurring || 0) + (c.unread || 0));
   if (inUse !== schedulesInUse) { schedulesInUse = inUse; paintLevelBanner(); }
   if (el.navSchedulesCount && Number.isFinite(c.scheduled)) {
-    el.navSchedulesCount.textContent = String((c.scheduled || 0) + (c.missed || 0));
+    const n = (c.scheduled || 0) + (c.missed || 0);
+    el.navSchedulesCount.textContent = String(n);
+    el.navSchedulesCount.hidden = n === 0;               // a zero is hidden; the number stays
   }
   if (el.navSchedulesUnread && Number.isFinite(c.unread)) {
     el.navSchedulesUnread.textContent = String(c.unread);
@@ -29666,16 +29577,17 @@ let gsPillHost = null;
 let gsWelcomeUnbind = null;
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
-/** The pill lives under the New pipeline CTA. Mounted here, not in the shell, so
- *  the sidebar's static 10-button census (ui-nav-*.test.mjs) is untouched. */
+/** The pill is the nav's first row (New run has no sidebar row: it is the top bar's button).
+ *  Mounted here, not in the shell, so the sidebar's static button census (ui-onboarding-shell,
+ *  ui-levels) is untouched. */
 function gsEnsurePillHost() {
   if (gsPillHost && gsPillHost.isConnected) return gsPillHost;
-  const cta = document.querySelector('.nav button.nav-cta');
-  if (!cta) return null;
+  const nav = document.querySelector('.nav');
+  if (!nav) return null;
   gsPillHost = document.createElement('div');
   gsPillHost.className = 'gs-pill-host';
   gsPillHost.hidden = true;
-  cta.insertAdjacentElement('afterend', gsPillHost);
+  nav.prepend(gsPillHost);
   return gsPillHost;
 }
 
@@ -29827,11 +29739,12 @@ document.addEventListener('keydown', (e) => {
 // is itself a hop: the sidebar entry is ringed and the user's own click routes,
 // so they learn where things live. `final` hops end the guide on the click.
 const onView = (v) => currentShownView === v;
-/** Ring the sidebar entry for `view` (on a phone gsPhoneNavHop rings the menu button first).
+/** Ring the sidebar entry for `view` (on a phone gsPhoneNavHop rings the menu button first);
+ *  New run has no sidebar entry, so its hop rings the top bar's #topnav-new (on every width).
  *  A view the user is already on is never a stop: the hop passes on arrival, without a ring. */
 const NAV = (view, text, also = []) => ({
   id: `nav:${view}`, nav: view, views: [view, ...also], text,   // `also`: views reached from it that count as "there" (a wizard)
-  target: [`.nav button[data-nav="${view}"]`],
+  target: [view === 'new' ? '#topnav-new' : `.nav button[data-nav="${view}"]`],
 });
 const noProjectPicked = () => {
   const sel = document.getElementById('projectSelect');
@@ -29882,6 +29795,8 @@ function gsWalk(hops, g) {
 }
 /** The dialog is up (a .viewer-modal without `hidden`). */
 const gsDialogUp = (id) => { const m = document.getElementById(id); return !!(m && !m.classList.contains('hidden')); };
+/** An account popup is open (#acct-menu, #lvl-menu: the `hidden` attribute). */
+const gsMenuUp = (id) => { const m = document.getElementById(id); return !!(m && !m.hidden); };
 /** The run just started, on its own page (beginRun opens it): the closing stops of every tour
  *  that starts one — what it is doing, its numbers, a waiting question (only while one waits),
  *  then the rows that open each part of it. `first` is the tour's own line for the first stop.
@@ -29971,9 +29886,9 @@ function gsAddProjectHops(g, navText, addText) {
 }
 /** A guide never fails on a control the interface mode hides (docs/ui-levels.md): when every
  *  candidate target exists but sits above the mode, the hop becomes "raise the mode" — the
- *  sidebar item first, then the right card once the dialog is up, then Done so the tour is
- *  seen to carry on from behind the dialog. Choosing re-derives the original hop through the
- *  page watcher, like any other click. */
+ *  account corner first, then the menu's Interface mode row, then the mode in its side menu.
+ *  Choosing re-derives the original hop through the page watcher, like any other click. With
+ *  the dialog open (Settings › General › Change…), the hop rings its card, then Done. */
 function gsRaiseLevelHop(hop) {
   const sels = Array.isArray(hop.target) ? hop.target : [hop.target];
   const dialogUp = gsDialogUp('mode-modal');
@@ -29992,8 +29907,15 @@ function gsRaiseLevelHop(hop) {
   if (dialogUp) {
     return { target: `#mode-cards [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}, then Done.` };
   }
-  return { target: ['#nav-mode'],
-    text: `This step is part of ${label} mode. Open the mode switch to show it.` };
+  // An open account menu: point into it. Pointer hops draw no scrim, and the ring sits above the popups.
+  if (gsMenuUp('lvl-menu')) {
+    return { target: `#lvl-menu [data-level-choice="${need}"]`, mode: 'pointer', text: `Choose ${label}.` };
+  }
+  if (gsMenuUp('acct-menu')) {
+    return { target: '#acct-lvl', mode: 'pointer', text: `Open Interface mode and choose ${label}.` };
+  }
+  return { target: ['#side-acct'],
+    text: `This step is part of ${label} mode. Open your account menu to show it.` };
 }
 /** On a phone the sidebar is a shut drawer whose buttons still have a box, so guide-spot
  *  would ring them off-screen. A hop whose control lives in #side-rail first rings the
@@ -30006,7 +29928,7 @@ function gsPhoneNavHop(hop) {
   if (!inDrawer) return hop;
   if (!mobileNavOpen) {
     const t = Array.isArray(hop.text) ? hop.text[0] : hop.text;
-    return { target: '#mbar-menu', lift: ['.mbar'], text: `Open the menu. ${t || ''}`.trim() };
+    return { target: '#mbar-menu', lift: ['.topnav'], text: `Open the menu. ${t || ''}`.trim() };
   }
   return { ...hop, lift: [...(hop.lift || []), '.sidebar'] };
 }
@@ -30258,7 +30180,7 @@ function gsScrollTop() {
 }
 
 // A step whose controls sit above the interface mode (docs/ui-levels.md) asks ONCE, before the tour
-// moves the user anywhere: a mid-tour detour to the mode switch reads as the guide losing its place.
+// moves the user anywhere: a mid-tour detour to the account menu reads as the guide losing its place.
 // Declining leaves the mode and the page as they were. (gsRaiseLevelHop stays as the fallback for a
 // mode lowered while a tour runs.)
 async function startGuide(step) {
@@ -30269,12 +30191,12 @@ async function startGuide(step) {
     const ok = await confirmModal({
       title: `Switch to ${info.label}?`,
       message: `“${def.label}” uses controls that ${LEVEL_INFO[currentLevel()].label} hides. `
-        + `Switch to ${info.label} to follow the tour — you can change it back any time from the sidebar.`,
+        + `Switch to ${info.label} to follow the tour — you can change it back any time from your account menu.`,
       confirmLabel: `Switch to ${info.label} and start`,
       cancelLabel: 'Not now',
     });
     if (!ok) return;
-    await levelCtl.choose(need);
+    await levelCtl.choose(need, { report: false });   // a refusal reads once: in the dialog below, no toast
     if (!levelAtLeast(need)) { levelCtl.open(null, { keepMsg: true }); return; }   // save failed and reverted: show why
   }
   runGuideFor(step);
@@ -30334,16 +30256,20 @@ function onboardingViewChanged(name) {
 loadOnboarding();
 
 const views = $$('.view');
-const navLinks = $$('.nav button[data-nav]');
+// Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.
+const navLinks = $$('.nav button[data-nav], #acct-settings');
 // [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
-// plugins/guardrails/models LEFT this array: they are Settings tabs now, reached
-// as #settings/<tab> (legacy bare hashes redirect — see LEGACY_TAB_VIEWS).
-const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings'];
+// guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
+// (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
+// Settings tabs once, pages of their own now.
+const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history']);
+// The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
+const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
 const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
@@ -30360,19 +30286,22 @@ const levelCtl = createLevelController({
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     return { ok: true, level: data.uiLevel };
   },
+  // A pick from the account menu's side menu that the server refused: the check went back, say why.
+  onError: (error) => notify({ tone: 'err', title: 'Could not save the mode', detail: error, key: 'ui-level-save' }),
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
   'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
-  schedules: 'advanced',
+  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
 });
-const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', plugins: 'advanced', mcp: 'advanced', memory: 'advanced', models: 'expert', providers: 'expert' });
+const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
-  guardrails: 'Guardrails', plugins: 'Plugins', mcp: 'Sets', memory: 'Memory', models: 'Models', providers: 'Providers', ask: 'Ask Worca',
+  guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
+  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
 });
 function pageMinLevel() {
@@ -30393,13 +30322,13 @@ function paintLevelBanner() {
     keepVisible(b, (above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)))
       || (nav === 'schedules' && schedulesInUse));
   }
-  // The Nodes parent and its box are not routes, so the loop above never reaches
-  // them: keep both with the child, or the kept row sits inside a hidden box
-  // (the box is expert-gated too) with its elbow hanging off nothing.
+  // The Nodes row and its flyout are not routes, so the loop above never reaches them:
+  // keep both with the open child, or the kept row hides inside an expert-gated flyout
+  // that has no visible row to open it from.
   if (nodesGroup) {
     const keep = above && !hideNodes && NODES_GROUP_VIEWS.includes(currentShownView);
     keepVisible(nodesGroup, keep);
-    keepVisible(nodesGroupBox, keep);
+    keepVisible(nodesFly, keep);
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -30422,6 +30351,7 @@ const levelListeners = [];
 function onLevelChange(fn) { levelListeners.push(fn); }
 document.addEventListener('worca:level', () => {
   paintLevelBanner();
+  paintSideEdges();              // rows came or went
   for (const fn of levelListeners) { try { fn(currentLevel()); } catch (e) { console.warn('[worca] level repaint failed', e); } }
 });
 
@@ -30429,17 +30359,24 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory', 'plugins', 'mcp', 'models', 'providers'];
-// The tabs whose cards GET /api/settings paints (loadSettings paints every card, wherever it sits).
-// Models is not one: loadModelsView repaints its two helper-model cards with the catalog.
-// Tabs whose cards are painted from GET /api/settings (loadSettings). Models holds the Engines
-// card and the Claude helper pickers, so a link or reload straight to it must load them too.
-const SETTINGS_FORM_TABS = ['general', 'runs', 'ask', 'models'];
+const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory'];
+// Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
+// it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
+const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
-// Old top-level hashes keep working. The hashchange listener DROPS any view it
-// does not know, so without this map a bookmark or an old in-app link would
-// silently do nothing at all.
-const LEGACY_TAB_VIEWS = { plugins: 'plugins', guardrails: 'guardrails', models: 'models' };
+// Old addresses keep working. The hashchange listener DROPS a view it does not know
+// and parseSettingsParam reads an unknown tab as General, so without this map a
+// bookmark or an old in-app link would do nothing, or land on the wrong page. Each
+// old prefix maps to the address it means now; the rest of the path rides along
+// (#guardrails/<id> -> #settings/guardrails/<id>).
+const MOVED_ROUTES = Object.freeze({
+  plugins: 'marketplace',                 // top-level views from before Settings had tabs
+  guardrails: 'settings/guardrails',
+  'settings/plugins': 'marketplace',      // Settings tabs that became pages of their own
+  'settings/mcp': 'connectors',
+  'settings/models': 'models',
+  'settings/providers': 'providers',
+});
 
 // '' | 'bogus' | 'general' -> ['general', ''];  'guardrails/gr_x' -> ['guardrails', 'gr_x']
 function parseSettingsParam(param = '') {
@@ -30453,16 +30390,37 @@ function settingsParamFor(tab, sub = '') {
   if (tab === 'general') return '';
   return sub ? `${tab}/${sub}` : tab;
 }
-// null for a real view; otherwise the [view, param] the legacy hash maps to.
-function legacyTabRoute(view, param = '') {
-  const tab = LEGACY_TAB_VIEWS[view];
-  return tab ? ['settings', settingsParamFor(tab, param)] : null;
+// null for a page's own address; otherwise the [view, param] an old one means now.
+function redirectRoute(view, param = '') {
+  const path = param ? `${view}/${param}` : view;
+  for (const [from, to] of Object.entries(MOVED_ROUTES)) {
+    if (path !== from && !path.startsWith(`${from}/`)) continue;
+    const rest = path.slice(from.length + 1);
+    const hash = rest ? `${to}/${rest}` : to;
+    const i = hash.indexOf('/');
+    return i === -1 ? [hash, ''] : [hash.slice(0, i), hash.slice(i + 1)];
+  }
+  return null;
 }
+// Swap the old address for the new one IN PLACE: a pushed entry would send Back to the
+// old address, which redirects forward again, so Back could never get past it. Unlike
+// replaceRoute (a bounce, routed on a microtask), the caller routes right away.
+function rewriteHash([view, param]) {
+  try { window.history.replaceState(null, '', `#${param ? `${view}/${param}` : view}`); } catch { /* sandboxed */ }
+}
+// Test hook: lets a test call the router the way an in-app caller does.
+if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
 // The Settings tab currently painted, so the leave-guards below can fire on a
 // TAB transition and not only on a view transition.
 let currentSettingsTab = null;
 
 function showView(name, param = '') {
+  // A caller that still names a Settings tab that became a page ('settings' + 'providers…')
+  // lands on that page: parseSettingsParam would read the unknown tab as General.
+  if (name === 'settings') {
+    const moved = redirectRoute(name, param);
+    if (moved) return showView(moved[0], moved[1]);
+  }
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -30522,8 +30480,13 @@ function showView(name, param = '') {
     // The Memory controller owns two delegated listeners and a painted host; a tab switch tears it
     // down so the next entry mounts a fresh one (and a stray frame paints nothing).
     if (currentSettingsTab === 'memory' && memoryTabCtl) { memoryTabCtl.destroy(); memoryTabCtl = null; }
-    // MCP servers' pickers and forms open in #plugin-modal, which lives outside the pane.
-    if (currentSettingsTab === 'mcp') closePluginModal();
+  }
+  // The Add-ons pages were Settings tabs, and their leave-guards came with them: the info-tip
+  // bubble lives on <body>, so nothing hides it with the page.
+  if (ADDON_VIEWS.includes(currentShownView) && name !== currentShownView) {
+    hideInfoTip();
+    // Connectors' pickers and forms open in #plugin-modal, which lives outside the page.
+    if (currentShownView === 'connectors') closePluginModal();
   }
   // Moving between the three Runs routes swaps the pane at once; going back to the bare
   // list (#runs) slides the detail away in the narrow layout and hands focus back to its
@@ -30591,15 +30554,14 @@ function showView(name, param = '') {
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  paintMobileBar(viewSection(name));
+  paintTopnavTitle(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
-  // Nodes (Agents, Scripts): tint the parent while a child page is open, and
-  // unfold it — a deep link or a drawer click must never land on a hidden row.
-  if (nodesGroup) {
-    const inNodes = NODES_GROUP_VIEWS.includes(name);
-    nodesGroup.classList.toggle('has-active', inNodes);
-    if (inNodes && nodesGroup.getAttribute('aria-expanded') === 'false') setNodesCollapsed(false);
-  }
+  // Nodes (Agents, Scripts): the row takes the open-page fill while a child page is shown,
+  // and any route puts its flyout away (a click inside it already did).
+  if (nodesGroup) nodesGroup.classList.toggle('has-active', NODES_GROUP_VIEWS.includes(name));
+  nodesFlyout?.close();
+  sideActionsFlyout?.close();
+  acctFly.close();           // ...and the account menu (Settings, Details, Raise limit, Free requests)
   // Body flags let CSS drop .main's padding for the full-height pages (the Runs panes).
   document.body.classList.toggle('view-runs', RUNS_VIEWS.has(name));
   document.body.classList.toggle('view-projects', name === 'projects');
@@ -30667,6 +30629,15 @@ function showView(name, param = '') {
   }
   if (name === 'composer') initComposer();
   if (name === 'settings') showSettingsTab(param);
+  if (name === 'marketplace') loadPluginsView({ refresh: true });
+  if (name === 'connectors') void mcpTab().show(param);
+  if (name === 'models') {
+    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link
+    // or a reload straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine').
+    void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
+    loadModelsView();
+  }
+  if (name === 'providers') loadProvidersView();
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -30720,24 +30691,24 @@ function showSettingsTab(param = '') {
   paintLevelBanner();
   if (SETTINGS_FORM_TABS.includes(tab)) {
     // '#settings/runs/actions' and the like: a link to one card (the Actions tab's "Set one in Settings").
-    const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
-    void loadSettings().then(() => {
-      if (!card || card.closest('.settings-pane')?.dataset.tab !== tab) return;
-      card.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
-    });
+    void loadSettings().then(() => focusSettingsCard(settingsPanes.find((p) => p.dataset.tab === tab), sub));
   }
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
-  if (tab === 'models') loadModelsView(sub);
-  if (tab === 'providers') loadProvidersView();
-  if (tab === 'plugins') loadPluginsView({ refresh: true });
   if (tab === 'memory') loadMemoryTab(sub);
-  if (tab === 'mcp') void mcpTab().show(sub);
 }
 
-// Settings › Sets (tab key mcp; mcp-view.mjs): one controller, made on first entry; its sub-route
-// ('', 'sets/<id>', 'servers', 'skills') rides behind #settings/mcp/.
+// A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
+// `<sub>-settings-card` inside `scope` and focus its first field. Any other sub is ignored.
+function focusSettingsCard(scope, sub) {
+  const card = sub ? document.getElementById(`${sub}-settings-card`) : null;
+  if (!card || !scope || !scope.contains(card)) return;
+  card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  card.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+}
+
+// The Connectors page (mcp-view.mjs): one controller, made on first entry; its sub-route
+// ('', 'sets/<id>', 'servers', 'skills') rides behind #connectors/.
 async function mcpApi(method, path, body) {
   try {
     const res = await fetch(path, body === undefined ? { method }
@@ -30751,7 +30722,7 @@ let mcpViewCtl = null;
 function mcpTab() {
   if (!mcpViewCtl) {
     mcpViewCtl = createMcpView({
-      host: document.querySelector('.settings-pane[data-tab="mcp"]'),
+      host: document.querySelector('[data-view="connectors"]'),
       api: mcpApi,
       navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
       confirm: confirmModal,
@@ -30771,7 +30742,7 @@ function mcpTab() {
 let currentShownView = null;
 // True only while showView() is writing location.hash itself, to prevent re-entry.
 let syncingHash = false;
-// Boot paint of the mode item / Settings card. Here, not beside levelCtl: a first paint can
+// Boot paint of the account menu's mode row / Settings card. Here, not beside levelCtl: a first paint can
 // dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
 levelCtl.paint();
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
@@ -30797,6 +30768,36 @@ navLinks.forEach((b) =>
     else location.hash = name;
   })
 );
+// New run (#topnav-new): the top bar's way to the #new page (the sidebar has no row for it). It
+// routes exactly like a nav row — hash-first, and a direct showView when the hash already says
+// #new — but carries no data-nav, so the router never lights it as the open page.
+$('#topnav-new')?.addEventListener('click', () => {
+  if (location.hash.slice(1) === 'new') showView('new');
+  else location.hash = 'new';
+});
+
+// Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
+// scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
+// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
+// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
+// opens. A row routes like New run from Ask: close the Ask sheet, then route, or the page opens under it.
+activityMenu = $('#topnav-activity') ? createActivityMenu({
+  button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
+  getCounts: () => activityCounts(runsNeedsInput()),
+  getRuns: () => ({
+    live: overviewRuns().map(runsLiveItem),
+    history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
+    active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+  }),
+  loadSchedules: async () => {
+    await withWorkspaces();                              // a workspace's ticket names its workspace
+    const res = await fetch('/api/schedules');
+    return res.ok ? safeJson(res) : null;
+  },
+  placeOf: (x) => runsGroupFor({ projectDir: x.projectDir || '', workspaceId: x.workspaceId || '', projectKey: x.projectKey || '' }).name,
+  tz: browserTimeZone(),
+  navigate: (hash) => { askPanel?.close(); location.hash = hash; },
+}) : null;
 
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
@@ -30815,10 +30816,10 @@ window.addEventListener('hashchange', () => {
   // the single-render guarantee; genuine user-driven hash changes still route normally.
   if (syncingHash) { syncingHash = false; return; }
   const [view, param] = parseHash();
-  // A legacy top-level hash (#plugins, #guardrails/<id>, …) routes to its
-  // Settings tab; showView rewrites the hash to the canonical #settings/<tab>.
-  const legacy = legacyTabRoute(view, param);
-  if (legacy) { showView(legacy[0], legacy[1]); return; }
+  // An old address (#plugins, #guardrails/<id>, a Settings tab that became a page …) is
+  // swapped for the one it means now before anything renders (redirectRoute).
+  const moved = redirectRoute(view, param);
+  if (moved) { rewriteHash(moved); showView(moved[0], moved[1]); return; }
   if (VIEW_NAMES.includes(view)) showView(view, param);
 });
 
@@ -30838,7 +30839,7 @@ function rdTickHosts(r) {
 }
 
 function timerTick() {
-  try { paintSideAway(); } catch { /* the word moves with the clock (away hours start and end) */ }
+  try { paintAwayMenuRow(); } catch { /* the row moves with the clock (away hours start and end) */ }
   // The Away mode pill counts down while the run WAITS on a question, which the loop below skips.
   try { const open = rdOpenRun(); if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open); } catch { /* a closed test window must not throw from a timer */ }
   for (const r of runs.values()) {
@@ -31033,6 +31034,8 @@ async function applyAskPrefill() {
   if (!p) return;
   newPipelinePrefill = null;
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
+  // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
+  if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // force the prompt source — the three-step reset of the segment handler
   state.activePluginSource = null;
   el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
@@ -31156,79 +31159,52 @@ async function refreshAwayBodies() {
     // An open project tab: the status is global, so its summary follows (unsaved edits survive).
     for (const host of document.querySelectorAll('.pd-night-form')) { if (host.querySelector('.away-summary')) updateAwaySummary(host, { toggle: d.toggle, hereSince: d.hereSince ?? null, now: Date.now() }); }
   }
-  _sideAwayRead = true;
-  paintNewRunAwayHint(); paintSideAway();
+  _awayRowRead = true;
+  paintNewRunAwayHint(); paintAwayMenuRow();
   await Promise.all(Object.keys(state.awayModeByDir).map(async (dir) => { const x = await fetchAwayMode(dir); if (x) state.awayModeByDir[dir] = x; }));
   const open = rdOpenRun();
   if (open && runDetailState.screen) paintRdAwayPill(runDetailState.screen, open);
 }
-// ---- The sidebar's "I'm here | I'm away" control ----
-// The lit side is what applies right now, the away hours included. Clicking the other side says it:
-// "I'm away" = "I'm away now"; "I'm here" = here, even inside the away hours (the next ones apply by
-// themselves). Pause stays in Settings. Unread settings leave it disabled; a click opens Settings › Runs.
-let _sideAwaySig = '';
-let _sideAwayBusy = false;
-let _sideAwayErr = '';            // the last failed click, kept in the tooltip until the next one
-let _sideAwayRead = false;        // the first GET has answered (until then the slot stays empty, never "could not be read")
-let _sideAwayNote = '';           // "Away hours started / ended" from the server, shown for a minute under the control
-let _sideAwayNoteTimer = null;
-const SIDE_AWAY_NOTE_MS = 60_000;
-const sideAwayMount = document.getElementById('side-away');   // held, like awayStatusEl: the 1 s tick paints this page's own mount
-const SIDE_AWAY_ICONS = {         // shown alone on the collapsed menu
-  here: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z"></path></svg>',
-  away: AWAY_GLYPH,                // shared with the workflow graph's Away mode band (away-glyph.mjs)
-};
-function paintSideAway() {
-  const mount = sideAwayMount;
-  if (!mount || !_sideAwayRead) return;
+// ---- The account menu's away row (last in the menu) ----
+// "Step away" while you count as here (posts "I'm away now"); "I'm back" while you count as away,
+// the away hours included (posts "I'm here", which skips the rest of them). With per-person Away
+// mode the server answers and stores the signed-in person's own switch, so this reads it the same
+// way. Pause stays in Settings. Unread settings leave the row disabled; a click opens Settings › Runs.
+let _awayRowSig = '';
+let _awayRowBusy = false;
+let _awayRowErr = '';             // the last failed click, kept in the tip until the next one
+let _awayRowRead = false;         // the first GET has answered (until then the row keeps its first paint)
+const awayRow = document.getElementById('acct-away');
+function paintAwayMenuRow() {
+  if (!awayRow || !_awayRowRead) return;
   const d0 = state.awayMode;
-  const s = describeAwaySwitch({ config: d0 ? d0.config : null, toggle: d0 ? d0.toggle : 'auto', hereSince: d0 ? d0.hereSince : null, now: Date.now() });
-  const sig = JSON.stringify([s, _sideAwayBusy, _sideAwayErr, _sideAwayNote]);
-  if (sig === _sideAwaySig && mount.firstChild) return;      // the 1 s tick repaints only on a change
-  _sideAwaySig = sig;
-  const seg = document.createElement('div');
-  seg.className = 'seg side-away'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Away mode');
-  seg.dataset.status = s.status;
-  seg.title = _sideAwayErr ? `${s.tip} (Could not change it: ${_sideAwayErr})` : s.tip;
-  for (const [side, label] of [['here', "I'm here"], ['away', "I'm away"]]) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.dataset.side = side;
-    const on = s.side === side;
-    b.className = on ? 'on' : '';
-    b.setAttribute('aria-pressed', String(on));
-    if (s.disabled || _sideAwayBusy) b.setAttribute('aria-disabled', 'true');
-    b.innerHTML = SIDE_AWAY_ICONS[side];
-    b.append(Object.assign(document.createElement('span'), { className: 'side-away-label', textContent: label }));
-    b.setAttribute('aria-label', label);
-    seg.append(b);
-  }
-  const note = _sideAwayNote ? Object.assign(document.createElement('small'), { className: 'hint side-away-note', textContent: _sideAwayNote }) : null;
-  if (note) note.setAttribute('role', 'status');
-  mount.replaceChildren(seg, ...(note ? [note] : []));
+  const row = describeAwayRow({ config: d0 ? d0.config : null, toggle: d0 ? d0.toggle : 'auto', hereSince: d0 ? d0.hereSince : null, now: Date.now() });
+  const sig = JSON.stringify([row, _awayRowBusy, _awayRowErr]);
+  if (sig === _awayRowSig) return;                          // the 1 s tick repaints only on a change
+  _awayRowSig = sig;
+  const wasAway = acctState.away?.state === 'away';
+  acctState.away = row;
+  paintAwayRow(awayRow, row, { busy: _awayRowBusy, err: _awayRowErr });
+  if (wasAway !== (row.state === 'away')) paintAccount();  // the violet dot and the label
 }
-/** The server's away-hours edge (night/hours-watch.mjs): one line for a minute, and a fresh status. */
+/** The server's away-hours edge (night/hours-watch.mjs): a toast ("Away mode", the server's sentence), and a fresh status. */
 function onAwayHoursEdge(msg) {
-  _sideAwayNote = typeof msg.text === 'string' ? msg.text : '';
-  if (_sideAwayNoteTimer) clearTimeout(_sideAwayNoteTimer);
-  _sideAwayNoteTimer = setTimeout(() => { _sideAwayNote = ''; _sideAwayNoteTimer = null; paintSideAway(); }, SIDE_AWAY_NOTE_MS);
+  if (typeof msg.text === 'string' && msg.text) notify({ tone: 'info', title: 'Away mode', detail: msg.text, key: 'away-edge' });
   void refreshAwayBodies().catch(() => {});
-  paintSideAway();
 }
-sideAwayMount?.addEventListener('click', async (e) => {
-  const b = e.target.closest('.side-away button[data-side]');
-  if (!b || _sideAwayBusy) return;
+awayRow?.addEventListener('click', async () => {
+  if (_awayRowBusy) return;
   const d0 = state.awayMode;
-  if (!d0 || b.getAttribute('aria-disabled') === 'true') { location.hash = 'settings/runs'; return; }
-  if (b.getAttribute('aria-pressed') === 'true') return;     // already what applies
-  _sideAwayBusy = true; _sideAwayErr = ''; paintSideAway();
+  if (!d0 || !acctState.away || acctState.away.disabled) { location.hash = 'settings/runs'; return; }
+  _awayRowBusy = true; _awayRowErr = ''; paintAwayMenuRow();
   try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nightModeToggle: b.dataset.side === 'away' ? 'on' : 'here' }) });
-    if (!res.ok) _sideAwayErr = (await safeJson(res)).error || `HTTP ${res.status}`;
-  } catch (err) { _sideAwayErr = err.message || 'network error'; }
-  _sideAwayBusy = false;
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nightModeToggle: acctState.away.state === 'away' ? 'here' : 'on' }) });
+    if (!res.ok) _awayRowErr = (await safeJson(res)).error || `HTTP ${res.status}`;
+  } catch (err) { _awayRowErr = err.message || 'network error'; }
+  _awayRowBusy = false;
   // settings-changed does the same; the newest refresh wins
   await refreshAwayBodies().catch((e) => notify({ tone: 'err', title: 'Could not refresh Away mode', detail: e.message, key: 'away-refresh' }));
-  paintSideAway();
+  paintAwayMenuRow();
 });
 
 /** The New-run "Mark this run" hint, from the user-level settings (the project is not fixed until submit). */
@@ -31242,7 +31218,7 @@ function paintNewRunAwayHint() {
 // ---------------------------------------------------------------------------
 syncSourceToggle();
 loadProjects();
-void refreshAwayBodies().catch(() => {});   // the sidebar switch (and the New-run hint) need the user-level body
+void refreshAwayBodies().catch(() => {});   // the account menu's away row (and the New-run hint) need the user-level body
 connectWS();
 // Restore the New-Pipeline target (project | workspace). 'workspace' lazy-loads
 // the workspace options + re-points the config panel; 'project' is the default.
@@ -31251,8 +31227,8 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to New.
 const [bootView, bootParam] = parseHash();
-const bootLegacy = legacyTabRoute(bootView, bootParam);
-if (bootLegacy) showView(bootLegacy[0], bootLegacy[1]);
+const bootMoved = redirectRoute(bootView, bootParam);
+if (bootMoved) { rewriteHash(bootMoved); showView(bootMoved[0], bootMoved[1]); }
 else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
 refreshAllCounts();
 refreshBudget();
@@ -31264,7 +31240,7 @@ loadWhoami();
 {
   const repaintPickers = () => {
     if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'settings' && currentSettingsTab === 'models') loadModelsView();
+    if (currentView() === 'models') loadModelsView();
   };
   loadCredentials().then((d) => { if (d) repaintPickers(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });
@@ -31674,7 +31650,7 @@ function bindExportModal() {
         exportShowDone({
           title: `Plugin "${applied.name}" v${applied.version} exported`,
           lines: [['Folder', applied.dir], ['Files', files]],
-          next: exportNextStep('Share the folder. The recipient pastes its path into Plugins → Add marketplace, or runs ',
+          next: exportNextStep('Share the folder. The recipient pastes its path into Add marketplace on the Marketplace page, or runs ',
             `worca plugin link ${applied.dir}`, ' — once; after a re-export they run worca plugin reimport.'),
         });
       } else {                                                    // Claude Code skill

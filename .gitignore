@@ -26,3 +26,4 @@ docker/.pack/
 # docs-site/build.mjs serves them without this data-URI copy
 docs/changelog/worca-app-v*.html
 !docs/changelog/worca-app-v*.src.html
+test/live/out/

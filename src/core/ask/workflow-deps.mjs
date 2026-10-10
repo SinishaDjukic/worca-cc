@@ -23,6 +23,7 @@ import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
+import { runsOn } from '../../shared/connections.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -96,17 +97,25 @@ function dropUnknownModels(shape, models) {
   return warnings;
 }
 
+/** The catalog rows one engine runs (a row without `engine` is Claude's, as in the orchestrator's Auto filter). */
+export function modelsOfEngine(all, engine) {
+  const want = engine || 'claude';
+  return (Array.isArray(all) ? all : []).filter((m) => m && runsOn(m, want));
+}
+
 /**
  * The deterministic half (spec §8.2): assemble (validateGraph inside), match, buildProposal. Pure w.r.t. the workflows table.
  * Also resolves the target project (v4) or workspace: the parent needs its NAME for the card and the context header, and
  * the MCP child's result may not carry it (the mock never does). A workspace's project overrides are its primary member's.
- * @param {{shape:object, projectKey?:string|null, workspaceId?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null}} o
+ * `engine` (the chat's, default claude) narrows the catalog when `models` is not given: a card never offers another
+ * engine's models as node options (a Claude chat's card offering gpt-* ids, whose pick the run would then drop).
+ * @param {{shape:object, projectKey?:string|null, workspaceId?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null, engine?:string|null}} o
  * @returns {Promise<{proposal:object, template:object, match:{id,name}|null, tunables:object, shape:object, summary:string, project:{key,name,path}|null, workspace:{id,name,members:string[]}|null}>}
  * @throws {ShapeError} on an unassemblable shape
  */
-export async function revalidateWorkflowProposal({ shape, projectKey = null, workspaceId = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null }) {
+export async function revalidateWorkflowProposal({ shape, projectKey = null, workspaceId = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null, engine = null }) {
   const reg = registry || loadAgentRegistry();
-  const catalog = models || await listModels('');
+  const catalog = models || modelsOfEngine(await listModels(''), engine);
   const built = assembleShape(shape, { registry: reg, humanInLoop: true });
   const match = findEquivalentWorkflow(built.template, await autoCandidates());
   const ws = workspaceId ? await workspaceTarget(workspaceId) : null;     // null for an unknown id — never throws (as projectByKey)
@@ -190,7 +199,7 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           : { projectKey: project.key, projectName: flat(project.name, 120), workspaceId: null, workspaceName: null };
         const registry = loadAgentRegistry();
         const all = await listModels('');
-        const models = chatEngine ? all.filter((m) => m && m.engine === chatEngine) : all;
+        const models = modelsOfEngine(all, chatEngine);
         const fingerprint = ws
           ? await fingerprintWorkspace(ws.members, { name: ws.name, description: ws.description })
           : await fingerprintProject(project.path);

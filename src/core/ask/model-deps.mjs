@@ -17,6 +17,7 @@ import {
   endpointModelsForImport, importEndpointModels,
 } from '../bridge/provider-ops.mjs';
 import { UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { harnessesOf } from '../../shared/connections.mjs';
 import { createModelChangeValidator, mergeEditPatch, maskEntry } from './model-proposal.mjs';
 
 const envHas = (name) => typeof process.env[name] === 'string' && process.env[name].trim() !== '';
@@ -48,6 +49,8 @@ export async function listModelsForAsk() {
       id: row.id, label: row.label, source: source[String(row.custom)] || String(row.custom),
       ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.policy ? { policyHome: row.policy } : {}),
       editable: !!g, engine: row.engine || 'claude', efforts: row.efforts,
+      // The engines (harnesses) that can run it, preferred first: a provider model runs on more than one.
+      harnesses: harnessesOf(row),
       connection: up ? 'provider' : row.routed ? 'env' : 'default',
       ...(row.bridged ? { provider: row.bridged, upstreamApi: row.upstreamApi, upstreamModel: row.upstreamModel } : {}),
       ...(row.bridged ? { ready: !row.needsSignIn, ...(row.needsSignIn && up ? { notReady: providerReadiness(up).message } : {}) } : {}),

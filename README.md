@@ -93,7 +93,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
   worktree is removed; the branch stays.
-- **Live cockpit** — **Runs** (under Activity) lists every run, live and
+- **Live cockpit** — **Runs** in the sidebar lists every run, live and
   finished, with **All / Live / Finished / Needs you** tabs, search, and
   grouping by project or date. A live run's page shows its state and current
   step, ticking time, cost and changed files, and a **Live view** of the running
@@ -268,8 +268,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### MCP servers & credential broker
 
 - **Worca's own MCP registry** — servers installed for Worca only, never written into your
-  Claude Code config, that pipeline agents and Ask Worca can call. **Settings › Sets**
-  (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
+  Claude Code config, that pipeline agents and Ask Worca can call. The **Connectors**
+  page (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
   with **Add MCP server** as `stdio`, `http` or `sse`, or required by a team policy), and
   **Sets**, where each server gets its values and secrets, so one server can sit in two sets
   with different credentials, and **Skills**, the skill catalog ([Skills](docs/skills.md)): skills that
@@ -331,8 +331,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Configure once** — commands live on the project's **Actions** tab, stacks
   on the workspace's; Settings › Runs › **Actions** sets the keep policy, port
   range, editor and terminal. All Actions tabs and that card are Advanced
-  level; the sidebar's **Running actions** card shows at every level while a
-  service runs, with **Stop**.
+  level; the sidebar's **Running actions** rows show at every level while a
+  service runs, each with **Stop** (on the collapsed rail, one tile opens them).
 - **People start commands, agents don't** — every start goes by action id from
   stored config; Ask Worca can read and propose actions but never runs one; a
   hosted Worca runs nothing unless `WORCA_ACTIONS_REMOTE=1`. See
@@ -347,7 +347,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc-plugin.json`. It can contribute task sources (e.g. GitHub Issues),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from **Settings › Plugins** (Advanced) or `worca plugin install`;
+  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
   **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
@@ -356,7 +356,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   diffstat, and flags new secrets, changed setup and changed model env, before
   you accept (`worca plugin update --diff` adds the full diff). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
-  Models tab; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
+  Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues task source, the four chat channels below,
@@ -379,7 +379,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Ask Worca
 
-- **An assistant on every view** — the **Ask Worca** pill (⌘K / Ctrl K) opens a chat that
+- **An assistant on every view** — the **Ask Worca** pill, or the last row of the top bar's
+  search (⌘K / Ctrl K), opens a chat that
   answers from Worca's own records: runs, their diffs, progress and clarify answers, workflows
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
@@ -411,8 +412,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **I'm away**
-  on the sidebar's *I'm here | I'm away* switch, Worca answers what a run would wait on: clarifying
+- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+  in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
   read-only review (it can only read files), on the run's engine, scores each option against your
@@ -432,8 +433,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   own cost caps always hold; Worca passes the team's soft cap only if you allow it.
 - **Every answer on record** — the run page lists *Answered for you* (question, answer, reason
   and the deciding model), one group per ask, with the answers to check marked and listed first.
-  A note above it reads like "5 answers while you were away — 2 to check". The
-  sidebar announces when away hours start and end.
+  A note above it reads like "5 answers while you were away — 2 to check". A
+  short notice says when away hours start and end, and a violet dot sits on your avatar while you
+  are away; **I'm back** in the account menu ends it.
 
 ### Scheduled runs
 
@@ -474,8 +476,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Statistics** (Advanced) — pick Today, This week, This month or All time for Spent, Saved
   (estimated human hours × your developer rate, minus spend), Pipeline spend, Ask Worca, Time
   worked, Pipelines finished and PRs merged, plus *Spend per* and *Runs per* charts by hour, day
-  or month (runs split into finished, stopped and failed). A spend indicator in the sidebar shows
-  spend against the budget.
+  or month (runs split into finished, stopped and failed). With a total limit, a ring around your
+  avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
+  menu's spend card has the figures.
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
   pipeline)* or `worca resume <id> --ignore-cost-cap` lifts it for that run. A total cost limit
@@ -546,7 +549,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Models
 
-- **Bring your own models** — *Add model* on **Settings › Models** registers any
+- **Bring your own models** — *Add model* on the **Models** page registers any
   model id (a proxy, a fine-tune, an alternative provider), declares which effort
   levels it supports, and attaches per-model routing env (e.g. `ANTHROPIC_BASE_URL`)
   that is merged into that model's agent spawns. *Share as plugin…* exports your
@@ -554,7 +557,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the repo as a secret each teammate enters once, after installing, under the
   plugin's *Model secrets*.
 - **No first-party account needed** — the *Title generation*, *Auto workflow model*
-  and *PR description model* cards on Settings › Models put Worca's own helper calls
+  and *PR description model* cards on the Models page put Worca's own helper calls
   on a model you pick (left empty, an Ask Worca chat titles itself with its own
   model, a `worca --model` run with that model, and other runs with the built-in
   Haiku); endpoint-routed models carry Claude Code's internal
@@ -566,9 +569,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Gemini and the rest translated to chat completions or the Responses API), any
   OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter) or an
   Anthropic-compatible gateway — no LiteLLM, no second daemon. Sign in or set keys
-  on **Settings › Providers**, then *Import models…* lists what a source serves,
+  on the **Providers** page, then *Import models…* lists what a source serves,
   windows and capabilities included; `worca models` does the same from a terminal.
-  Both tabs are Expert level. See [`docs/models.md`](docs/models.md).
+  Both pages are Expert level. See [`docs/models.md`](docs/models.md).
 
 ### Storage
 
@@ -583,7 +586,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
-- **One list for every project** — **Runs** (sidebar Activity) shows live,
+- **One list for every project** — **Runs** in the sidebar shows live,
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
 
@@ -606,10 +609,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   log. **Expert** shows everything: Agents and Scripts, Team metrics, Team policy, Models,
   diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
   anything.
-- **A view preference, not a permission** — the sidebar button just above **Settings**, which names
-  the current mode, opens the **Interface mode** dialog. A choice applies at
+- **A view preference, not a permission** — **Interface mode** in the account menu (the corner at
+  the foot of the sidebar) names the current mode and lists the three. A choice applies at
   once, for every browser that opens this Worca; **Settings › General › Interface mode › Change…**
-  opens the same dialog. A fresh install starts at Simple, one that already has projects or runs at
+  opens the same choice as a dialog. A fresh install starts at Simple, one that already has projects or runs at
   Expert. A link to a page above your mode still opens it, under a banner offering *Switch to …*;
   values set in a higher mode keep applying, and a question a run waits on shows in every mode. A
   guide step that needs a higher mode asks first (*Switch to Advanced?*). See

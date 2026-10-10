@@ -39,9 +39,10 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
       const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
       assert.match(t.id, /^ask_[0-9a-f]{8}$/);
       assert.deepEqual(Object.keys(t).sort(),
-        ['agentMode', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'id', 'mcpOff', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+        ['agentMode', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'id', 'mcpOff', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
       assert.equal(t.mcpOff, null, 'no MCP picker choices yet (v45)');
       assert.equal(t.agentMode, true, 'agent mode is on by default (v51, #574)');
+      assert.equal(t.engine, null, 'no engine until the first turn stores one (v53, #635)');
       assert.equal(t.createdBy, null, 'ownerless unless created with an owner');
       assert.equal(t.title, null);
       assert.equal(t.sessionId, null);

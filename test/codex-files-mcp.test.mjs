@@ -117,7 +117,7 @@ test('a Codex run says which merged MCP servers its agents will not get; a Claud
   const codex = createOrchestrator({ projectDir: dir, claude: { mock: true, engine: 'codex' } });
   assert.deepEqual(codex._engineMcpWarnings(rc), [
     'engine codex: MCP servers Claude Code loads on its own are not attached on codex: native_one',
-    'engine codex: remote MCP servers are not attached on codex (stdio only): web',
+    'engine codex: MCP servers not attached on codex — remote, and codex attaches stdio servers only: web',
   ]);
   assert.deepEqual(createOrchestrator({ projectDir: dir, claude: { mock: true } })._engineMcpWarnings(rc), []);
 });

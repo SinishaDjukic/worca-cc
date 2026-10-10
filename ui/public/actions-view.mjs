@@ -32,7 +32,7 @@ const builtinTip = (key, label, where = 'the checkout') => (key === 'editor' ? `
 const actionTip = (a) => (a.kind === 'service' ? `Start ${a.label}. It keeps running; its log and Open link show below.` : `Run ${a.label} to the end. Its exit code and log show below.`);
 const portOf = (s) => Object.values(s.ports || {})[0];
 /** "Run :4417", or just "Run" for a service without a port variable (never "Run :undefined"). Used by the
- *  pill, the sidebar rows and the "Running :4417" History badge alike. */
+ *  pill, the sidebar's Running actions rows and the "Running :4417" History badge alike. */
 export const withPort = (text, s) => (portOf(s) != null ? `${text} :${portOf(s)}` : text);
 
 export function formatUptime(ms) {
@@ -108,17 +108,21 @@ export function middleClip(text, max = 56) {
   return `${s.slice(0, head)}…${s.slice(s.length - (max - 1 - head))}`;
 }
 const SVG_NS = 'http://www.w3.org/2000/svg';
-/** A running service's button: a stop square and its own name (■ Start worca), not "Stop Start worca".
- *  Screen readers and the tooltip still say what it does. */
-function stopButton(doc, label, onClick) {
-  const b = btn(doc, '', 'btn-danger act-stop-btn', onClick, `Stop ${label} and free its port`);
-  b.setAttribute('aria-label', `Stop ${label}`);
+/** The stop square every Stop control draws (11px, filled with the current colour). */
+function stopGlyph(doc) {
   const svg = doc.createElementNS(SVG_NS, 'svg');
   for (const [k, v] of [['width', '11'], ['height', '11'], ['viewBox', '0 0 24 24'], ['fill', 'currentColor'], ['aria-hidden', 'true']]) svg.setAttribute(k, v);
   const sq = doc.createElementNS(SVG_NS, 'rect');
   for (const [k, v] of [['x', '5'], ['y', '5'], ['width', '14'], ['height', '14'], ['rx', '2.5']]) sq.setAttribute(k, v);
   svg.append(sq);
-  b.append(svg, h(doc, 'span', null, label));
+  return svg;
+}
+/** A running service's button: a stop square and its own name (■ Start worca), not "Stop Start worca".
+ *  Screen readers and the tooltip still say what it does. */
+function stopButton(doc, label, onClick) {
+  const b = btn(doc, '', 'btn-danger act-stop-btn', onClick, `Stop ${label} and free its port`);
+  b.setAttribute('aria-label', `Stop ${label}`);
+  b.append(stopGlyph(doc), h(doc, 'span', null, label));
   return b;
 }
 function copyIconButton(doc, label, onClick) {
@@ -380,25 +384,38 @@ export function renderShipItStrip(model, { doc, handlers = {} } = {}) {
   return row;
 }
 
-/** Sidebar "Running actions": one row per running service; null when nothing runs. */
-export function renderRunningActionsCard(services, { doc, titleOf = (s) => s.runId, onStop, onOpen } = {}) {
+/** The sidebar's Running actions: one row per running service — a green dot, "<run title> · <label :port>"
+ *  (a button opening the run's Actions tab while the run still has a saved row) and a square Stop. No header: the
+ *  rows are the list. The uptime rides the row's title. `menu: true` marks the buttons as menu items, for the
+ *  rail's flyout. Returns null when nothing runs. */
+export function renderRunningActionRows(services, { doc, titleOf = (s) => s.runId, onStop, onOpen, menu = false, now = Date.now() } = {}) {
   const list = (services || []).filter((s) => ACTIVE.has(s.status));
   if (!list.length) return null;
-  const card = h(doc, 'div', 'act-running');
-  const head = h(doc, 'div', 'act-row act-running-head');
-  head.append(h(doc, 'span', 'pdot'), h(doc, 'span', 'act-running-heading', 'Running actions'), h(doc, 'span', 'act-running-count', String(list.length)));
-  card.append(head);
+  const box = h(doc, 'div', 'act-rows');
   for (const s of list) {
-    const row = h(doc, 'div', 'act-row act-running-row');
+    const row = h(doc, 'div', 'act-srow');
     row.dataset.instanceId = s.instanceId;
-    const title = h(doc, onOpen && s.histKey !== null ? 'button' : 'span', 'act-running-title', titleOf(s));
-    if (title.tagName === 'BUTTON') { title.type = 'button'; title.addEventListener('click', () => onOpen(s)); }
-    row.append(title, h(doc, 'span', 'act-label', withPort(s.label, s)));
-    if (s.startedAt) row.append(h(doc, 'span', 'act-uptime', formatUptime(Date.now() - s.startedAt)));
-    row.append(btn(doc, 'Stop', 'btn-ghost act-stop', () => onStop?.(s), `Stop ${s.label || 'this service'} and free its port`));
-    card.append(row);
+    const text = `${titleOf(s)} · ${withPort(s.label, s)}`;
+    row.title = s.startedAt ? `${text} · up ${formatUptime(now - s.startedAt)}` : text;
+    const openable = !!onOpen && s.histKey !== null;
+    const name = h(doc, openable ? 'button' : 'span', 'act-srow-name', text);
+    if (openable) { name.type = 'button'; name.addEventListener('click', () => onOpen(s)); }
+    const tip = `Stop ${s.label || 'this service'} and free its port`;
+    const stop = h(doc, 'button', 'act-stop');
+    stop.type = 'button';
+    stop.title = tip;
+    stop.setAttribute('aria-label', tip);
+    stop.append(stopGlyph(doc));
+    stop.addEventListener('click', () => onStop?.(s));
+    if (menu) {
+      row.setAttribute('role', 'none');
+      if (openable) name.setAttribute('role', 'menuitem');
+      stop.setAttribute('role', 'menuitem');
+    }
+    row.append(h(doc, 'span', 'pdot'), name, stop);
+    box.append(row);
   }
-  return card;
+  return box;
 }
 
 /** History card badges: `Running :4417`, `N checked out` and `Kept · <policy>`, as `{text, cls}`. */

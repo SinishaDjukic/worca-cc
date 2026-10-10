@@ -190,6 +190,20 @@ test('a Codex run: a Claude Decided by pick reads as stale, and the run\'s Codex
   assert.equal(seen[0].engine, 'codex');
 });
 
+test('a Codex run with no model: an effort codex\'s default model does not offer drops to medium, said once', async () => {
+  await setNightMode({ enabled: true, strategy: 'analysis', graceMinutes: 1, deciderEffort: 'max' });
+  await setNightModeToggle('on');
+  const clock = fakeClock();
+  const { run, seen } = recordingRun();
+  const orch = createOrchestrator({ projectDir: '/tmp/night-dm-codex3', nightClock: clock, nightRunClaude: run, claude: { engine: 'codex' } });
+  const logged = [];
+  orch._log = (source, level, text) => logged.push({ source, level, text });
+  await answerOne(orch, clock, 'cx3');
+  assert.equal(seen[0].model, 'gpt-5.6-sol');
+  assert.equal(seen[0].effort, 'medium');
+  assert.equal(logged.filter((l) => /does not offer effort "max"/.test(l.text)).length, 1, JSON.stringify(logged));
+});
+
 // ── Away mode cost visibility (T2): every review is booked as its own "away" share ─────────────
 const U1200 = { input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
 /** A review that streams ONE message as two content blocks (same id, same usage) and then blocks:
