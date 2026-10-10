@@ -171,6 +171,9 @@ export const GRAPH_PR_FIX_WORKFLOW = deepFreeze({
   name: PR_FIX_WORKFLOW_NAME,
   version: 2,
   domain: 'coding',
+  // A fix brief names the failing check or comment; the agents read the code around it, so the
+  // per-run graphify build (~30 s on this repo) would only delay the fix.
+  codeGraph: false,
   createdAt: '1970-01-01T00:00:00.000Z',
   updatedAt: '1970-01-01T00:00:00.000Z',
   nodes: [

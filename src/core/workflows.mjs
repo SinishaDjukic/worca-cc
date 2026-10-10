@@ -225,6 +225,7 @@ function rowToTpl(r) {
     base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     base.wires = Array.isArray(graph.wires) ? graph.wires : [];
     if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
+    if (graph.codeGraph === false) base.codeGraph = false;
     return base;
   }
   base.steps = parseArr(r.steps);
@@ -324,6 +325,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
   if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
+  if (tpl?.codeGraph === false) graph.codeGraph = false;
 
   getDb();
   const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);

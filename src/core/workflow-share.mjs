@@ -110,6 +110,7 @@ export async function exportGraphJson(id) {
     wires: Array.isArray(tpl.wires) ? tpl.wires : [],
   };
   if (tpl.canvas && typeof tpl.canvas === 'object') out.canvas = tpl.canvas;
+  if (tpl.codeGraph === false) out.codeGraph = false;
   return out;
 }
 
@@ -152,6 +153,7 @@ function prepareGraph(body, { keepId, name }) {
     nodes: Array.isArray(body.nodes) ? body.nodes : [],
     wires: Array.isArray(body.wires) ? body.wires : [],
     ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
+    ...(body.codeGraph === false ? { codeGraph: false } : {}),
   };
   if (!graph.name) throw err('name is required', 'BAD_REQUEST');
   return graph;

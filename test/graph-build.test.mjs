@@ -174,6 +174,32 @@ test('_buildWorktreeGraph guards: mock skips, no worktree skips, kind!=cli clear
   ]);
 });
 
+test('_buildWorktreeGraph: a workflow with codeGraph:false never spawns graphify (single and workspace runs)', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const binDir = await makeTmpDir('worca-cc-bin-');
+  const marker = join(binDir, 'graphify-ran');
+  await fakeGraphify(binDir, `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+  const prevPath = process.env.PATH;
+  process.env.PATH = binDir + ':' + prevPath;
+  try {
+    const orch = newOrch(dir);
+    orch.workDir = await makeTmpDir('worca-cc-work-');
+    orch.state.tools = { kind: 'cli' };
+    orch.state.stepper = { codeGraph: false };
+    orch.pipeline = { dir };
+    orch.toolInstruction = 'SENTINEL';
+    await orch._buildWorktreeGraph();
+    assert.equal(orch.toolInstruction, '', 'no graph, so no instruction to query one');
+    orch.members = [{ projectKey: 'a', projectDir: dir }];
+    orch.workDirs = new Map([['a', orch.workDir]]);
+    await orch._buildWorktreeGraphAll();
+    assert.equal(orch.toolInstructions.get('a'), '');
+    assert.equal(existsSync(marker), false, 'graphify was never spawned');
+  } finally {
+    process.env.PATH = prevPath;
+  }
+});
+
 test('_buildWorktreeGraph: build failure clears the instruction and logs a warning (fail-safe + observable)', async () => {
   const dir = await makeTmpDir();
   const work = await makeTmpDir('worca-cc-work-');

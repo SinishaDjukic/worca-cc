@@ -211,6 +211,7 @@ export function buildGraphManifest(tpl, agentsByKey, opts = {}) {
     ],
     feedbacks: manifestWires.filter((w) => w.loop)
       .map((w) => ({ id: w.id, from: w.from.node, to: w.to.node, maxCycles: w.maxCycles })),
+    ...(tpl?.codeGraph === false ? { codeGraph: false } : {}),
   };
 }
 
