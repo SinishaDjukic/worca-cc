@@ -4,14 +4,14 @@
 // classification, the preflight and the spawn path.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, writeFileSync, chmodSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   buildCopilotArgs, copilotRulePlan, copilotToolPlan, copilotMcpServers, copilotUnattachableMcp, mcpEnvRefNames,
   createCopilotNormalizer, classifyCopilotError, copilotSessionOf, COPILOT_SESSION_PREFIX, copilotCapabilities,
   readCopilotUsage, runCopilotProcess, copilotPreflight, copilotAgentFile, copilotInvestigatorAgent, copilotResumeNotFound,
-  COPILOT_NO_TOOLS, COPILOT_NODE_AGENT,
+  COPILOT_NO_TOOLS, COPILOT_NODE_AGENT, projectCopilotMcpNames,
 } from '../src/core/engines/copilot.mjs';
 import { getEngine, selectRunEngine } from '../src/core/engines/index.mjs';
 import { EVENT_TYPES } from '../src/core/engines/events.mjs';
@@ -256,6 +256,27 @@ test('spawn: the prompt on stdin, the system prompt as the node agent, a session
   assert.deepEqual(result[0].usage, { input_tokens: 900, cache_read_input_tokens: 100, cache_creation_input_tokens: 0, output_tokens: 50 });
   assert.equal(result[0].costUsd, undefined, 'Copilot bills AI credits: no dollar figure');
   assert.deepEqual(readdirSync(join(dir, 'scratch')), [], 'the scratch folder is gone');
+});
+
+test('the project\'s own .mcp.json servers, which Copilot loads by itself in a trusted folder, are turned off unless worca hands them over', POSIX, async () => {
+  const repo = tmp();
+  mkdirSync(join(repo, '.git'));
+  mkdirSync(join(repo, '.github'));
+  const cwd = join(repo, 'pkg');
+  mkdirSync(cwd);
+  writeFileSync(join(repo, '.mcp.json'), JSON.stringify({ mcpServers: { approved: { command: 'node' }, rogue: { command: 'node' } } }));
+  writeFileSync(join(repo, '.github', 'mcp.json'), JSON.stringify({ mcpServers: { shipped: { type: 'http', url: 'https://x.example/' } } }));
+  writeFileSync(join(cwd, '.mcp.json'), '\uFEFF' + JSON.stringify({ mcpServers: { nearer: { command: 'node' } } }));
+  assert.deepEqual(projectCopilotMcpNames(cwd), ['approved', 'nearer', 'rogue', 'shipped']);
+  assert.deepEqual(projectCopilotMcpNames(join(tmp(), 'missing')), [], 'nothing to read: nothing to turn off');
+
+  const mcp = join(repo, 'run-mcp.json');
+  writeFileSync(mcp, JSON.stringify({ mcpServers: { approved: { command: 'node', args: ['/abs/a.js'] } } }));
+  const f = fakeCopilot(repo, { fixture: fixturePath('tools.jsonl'), usage: USAGE(10, 1, 0) });
+  await runCopilotProcess({ bin: f.bin, cwd, prompt: 'x', mcpConfigPath: mcp, usageDir: join(repo, 'usage'), scratchBase: join(repo, 'scratch') });
+  const argv = f.record().argv;
+  const off = argv.flatMap((a, i) => (a === '--disable-mcp-server' ? [argv[i + 1]] : []));
+  assert.deepEqual(off.filter((n) => n !== 'mine').sort(), ['nearer', 'rogue', 'shipped'], 'every project server but the one worca attaches');
 });
 
 test('resume: --resume=<session>, and only the turn\'s delta of the cumulative usage', POSIX, async () => {
