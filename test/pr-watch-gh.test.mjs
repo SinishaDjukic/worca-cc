@@ -234,3 +234,17 @@ test('a PR with no checks at all (null rollup) still fires its review triggers',
   const t = collectTriggers(snap.pr, []);
   assert.deepEqual([t.fire, t.checksSettled, t.handledKeys], [true, true, ['comment:11']]);
 });
+
+test('the snapshot carries the base branch and GitHub\'s mergeable verdict', async () => {
+  runner(async (cmd, args) => {
+    const { query } = graphqlArgs(args);
+    assert.match(query, /headRefOid baseRefName baseRefOid mergeable /);
+    const node = prNode();
+    Object.assign(node.data.repository.pullRequest, { baseRefName: 'dev', baseRefOid: 'b1', mergeable: 'CONFLICTING' });
+    return ok(node);
+  });
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  assert.deepEqual([snap.pr.base, snap.pr.baseSha, snap.pr.mergeable], ['dev', 'b1', 'CONFLICTING']);
+  assert.equal(collectTriggers(snap.pr, []).conflict.base, 'dev');
+});

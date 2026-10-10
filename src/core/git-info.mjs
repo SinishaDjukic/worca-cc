@@ -801,7 +801,7 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
   return { ok: true, data: body.data };
 }
 
-const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
 const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
 
 export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
@@ -820,7 +820,8 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     if (!q.ok) return q;
     const pr = q.data?.repository?.pullRequest;
     if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
-    facts ||= { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null };
+    facts ||= { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null,
+      base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable) };
     const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
     const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
@@ -895,6 +896,23 @@ export async function commitSubjects(projectDir, from, to) {
   const r = await _run('git', ['log', '--format=%s', `${from}..${to}`], { cwd: projectDir });
   return r.ok ? { ok: true, subjects: String(r.stdout || '').split(/\r?\n/).filter(Boolean) }
     : { ok: false, subjects: [], error: (r.stderr || '').trim() || `git exited ${r.code}` };
+}
+
+/**
+ * Did a conflict fix really merge the base? `baseSha` must be an ancestor of `to`, and no line added
+ * between `from` (the PR head it started on) and `to` may be a leftover conflict marker
+ * (`git diff --check` names them; its whitespace complaints are ignored).
+ * Returns { ok, merged, markers: ['file:line', …] }.
+ */
+export async function checkConflictMerge(projectDir, { baseSha, from, to } = {}) {
+  if (!projectDir || !baseSha || !from || !to) return { ok: false, error: 'projectDir, baseSha, from and to are required' };
+  const anc = await _run('git', ['merge-base', '--is-ancestor', baseSha, to], { cwd: projectDir });
+  if (!anc.ok && anc.code !== 1) return { ok: false, error: (anc.stderr || '').trim() || `git exited ${anc.code}` };
+  const d = await _run('git', ['diff', '--check', from, to], { cwd: projectDir });
+  if (!d.ok && d.code !== 2) return { ok: false, error: (d.stderr || '').trim() || `git exited ${d.code}` };
+  const markers = String(d.stdout || '').split(/\r?\n/).filter((l) => /: leftover conflict marker$/.test(l))
+    .map((l) => l.replace(/: leftover conflict marker$/, ''));
+  return { ok: true, merged: anc.ok, markers };
 }
 
 // Test seam: swap the command runner + clear the gh memo. Mirrors server.mjs#_testing.

@@ -1285,6 +1285,7 @@ test('History: an open PR shows its watch switch; words only while the watch act
     [WATCH(), '', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
     [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
+    [WATCH({ watching: false, status: 'fixing', resolving: true }), 'Resolving conflicts', 'false'],
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {

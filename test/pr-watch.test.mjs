@@ -53,6 +53,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
       fastForward: async () => { calls.ff.push(1); if (repo.ahead > 0) return { ok: false, kind: 'diverged' }; repo.headSha = repo.remoteSha; repo.behind = 0; repo.hasLocal = true; return { ok: true }; },
       push: async () => { calls.push.push(repo.headSha); repo.remoteSha = repo.headSha; return { ok: true }; },
       subjects: async ({ from, to }) => { calls.subjects = [from, to]; return io.subjects ? { ok: true, subjects: io.subjects } : { ok: false, subjects: [] }; },
+      checkMerge: async (a) => { calls.checkMerge = a; return io.merge || { ok: true, merged: true, markers: [] }; },
     },
     liveOnBranch: async () => io.liveOnBranch,
     freeCheckout: async (a) => { calls.free.push(a); return { released: false }; },
@@ -569,4 +570,99 @@ test('fix task quotes feedback and caps the log batch at 40 KB', () => {
   const logBytes = (task.match(/> x+/g) || []).reduce((n, s) => n + s.length - 2, 0);
   assert.ok(logBytes <= 40 * 1024, String(logBytes));
   assert.match(replyBody({ runUrl: 'https://x', summary: 'Fixed.' }), /<!-- worca:pr-watch -->/);
+});
+
+const conflicted = (over = {}) => openPr({ mergeable: 'CONFLICTING', base: 'main', baseSha: 'B1', ...over });
+
+test('a merge conflict goes alone, once per PR head and base pair', () => {
+  const pr = conflicted({ contexts: [failing(1)], threads: [thread('T1', 2)] });
+  const t = collectTriggers(pr, []);
+  assert.deepEqual([t.fire, t.handledKeys, t.failures, t.threads, t.conflict],
+    [true, ['conflict:R1@B1'], [], [], { base: 'main', baseSha: 'B1' }]);
+  // Handled: the rest is looked at again; a moved base or head conflicts anew.
+  assert.deepEqual(collectTriggers(pr, ['conflict:R1@B1']).handledKeys, ['check:1', 'comment:2']);
+  assert.deepEqual(collectTriggers({ ...pr, baseSha: 'B2' }, ['conflict:R1@B1']).handledKeys, ['conflict:R1@B2']);
+  // GitHub still computing (UNKNOWN) is no conflict.
+  assert.equal(collectTriggers({ ...pr, mergeable: 'UNKNOWN' }, []).conflict, null);
+  // conflictOnly: the conflict even when handled, and nothing else.
+  assert.equal(collectTriggers(pr, ['conflict:R1@B1'], { conflictOnly: true }).conflict.baseSha, 'B1');
+  assert.equal(collectTriggers({ ...pr, mergeable: 'MERGEABLE' }, [], { conflictOnly: true }).fire, false);
+  const task = buildFixTask({ pr, triggers: { ...t, conflict: { ...t.conflict, remote: 'upstream' } } });
+  assert.match(task, /git merge --no-ff upstream\/main/);
+  assert.match(task, /Never rebase, reset, fetch or force-push/);
+});
+
+test('the watcher merges the base on a conflict, checks the merge, then pushes', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps, watcher } = harness({ pr: conflicted() });
+  const fetched = [];
+  const fetch = deps.git.fetch; deps.git.fetch = async (a) => { fetched.push(a.remote); return fetch(a); };
+  deps.originOf = (w) => ({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main', baseRemote: 'upstream' });
+  await watcher.tick();
+  assert.deepEqual(fetched, ['origin', 'upstream'], 'the base comes from the sync remote, fetched by Worca');
+  const { body } = io.calls.start[0];
+  assert.equal(body.title, 'Resolve PR #1 merge conflicts');
+  assert.match(body.prompt, /git merge --no-ff upstream\/main/);
+  let w = getWatch(URL);
+  assert.deepEqual([w.status, w.handled, w.pending.conflict], ['fixing', ['conflict:R1@B1'], { base: 'main', baseSha: 'B1', remote: 'upstream' }]);
+  finishRun(io, w, 'M1');
+  await watcher.tick(); await watcher.tick();
+  assert.deepEqual(io.calls.checkMerge, { projectDir: '/repo', baseSha: 'B1', from: 'R1', to: 'M1' });
+  assert.deepEqual(io.calls.push, ['M1']);
+  w = getWatch(URL);
+  assert.deepEqual([w.status, w.enabled], ['watching', true]);
+});
+
+test('a conflict fix that did not merge the base, or left markers, is never pushed', async () => {
+  for (const [merge, reason] of [[{ ok: true, merged: false, markers: [] }, 'base-not-merged'],
+    [{ ok: true, merged: true, markers: ['a.js:3'] }, 'conflict-markers']]) {
+    getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+    const origin = seedOrigin();
+    setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+    const { io, watcher } = harness({ pr: conflicted() });
+    io.merge = merge;
+    await watcher.tick();
+    finishRun(io, getWatch(URL), 'M1');
+    await watcher.tick(); await watcher.tick();
+    const w = getWatch(URL);
+    assert.deepEqual([w.status, w.reason, io.calls.push], ['needs-person', reason, []]);
+  }
+});
+
+test('Resolve with Watch off: one conflict fix, pushed, and the watch stays off', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: false });
+  const { io, watcher } = harness({ pr: conflicted({ contexts: [failing(5)] }) });
+  await watcher.tick();
+  assert.equal(io.calls.start.length, 0, 'a switched-off watch never starts on its own');
+  const r = await watcher.resolveOnce(getWatch(URL));
+  assert.equal(r.ok, true);
+  assert.equal(io.calls.start.length, 1);
+  assert.doesNotMatch(io.calls.start[0].body.prompt, /log 5/, 'only the conflict, never the failed checks');
+  let w = getWatch(URL);
+  assert.deepEqual([w.enabled, w.status, w.pending.once], [false, 'fixing', true]);
+  assert.deepEqual((await watcher.resolveOnce(w)).code, 'BUSY');
+  finishRun(io, w, 'M1');
+  await watcher.tick(); await watcher.tick();
+  w = getWatch(URL);
+  assert.deepEqual([w.enabled, w.status, w.reason, io.calls.push], [false, 'ended', 'resolved', ['M1']]);
+  // No conflict now: nothing to resolve.
+  io.pr = openPr();
+  assert.equal((await watcher.resolveOnce(getWatch(URL))).code, 'NO_CONFLICT');
+});
+
+test('Resolve after a capped watch: runs once more, then the cap still holds', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  updateWatch(URL, { status: 'needs-person', reason: 'cap' });
+  getDb().prepare('UPDATE pr_watches SET fix_runs=? WHERE pr_url=?').run(MAX_FIX_RUNS, URL);
+  const { io, watcher } = harness({ pr: conflicted() });
+  const r = await watcher.resolveOnce(getWatch(URL));
+  assert.equal(r.ok, true);
+  assert.equal(getWatch(URL).reason, null);
+  finishRun(io, getWatch(URL), 'M1');
+  await watcher.tick(); await watcher.tick();
+  const w = getWatch(URL);
+  assert.deepEqual([w.status, w.reason, io.calls.push], ['needs-person', 'cap', ['M1']]);
 });

@@ -4812,6 +4812,8 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-prs-detail{color:var(--ink-2);}
 .rd-prs-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
 .rd-prs-link:hover{text-decoration:underline;}
+button.rd-prs-link{background:none;border:0;padding:0;font:inherit;cursor:pointer;}
+button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
 .rd-prs-watch .switch{width:30px;height:18px;}
 .rd-prs-watch .switch::after{top:2px;left:2px;width:14px;height:14px;}

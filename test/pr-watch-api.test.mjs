@@ -76,7 +76,7 @@ const scope = () => ({ id: seeded.id, projectKey: seeded.key });
 test('GET answers the defined shape for an unwatched open PR', async () => {
   const r = await get(scope());
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { watching: false, status: null, reason: null, activePipelineId: null });
+  assert.deepEqual(await r.json(), { watching: false, status: null, reason: null, activePipelineId: null, resolving: false });
 });
 
 test('POST validates watch, turns it on and off, and the stored watch keeps its history', async () => {
@@ -84,14 +84,14 @@ test('POST validates watch, turns it on and off, and the stored watch keeps its 
   assert.equal(r.status, 400); await r.json();
   r = await post('/api/pr/watch', { ...scope(), watch: true });
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { watching: true, status: 'watching', reason: null, activePipelineId: null });
+  assert.deepEqual(await r.json(), { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false });
   assert.equal(getWatch(GH).pipelineId, seeded.id);
   updateWatch(GH, { status: 'fixing', activeRunId: 'r1', activePipelineId: 'fixp' });
   r = await post('/api/pr/watch', { ...scope(), watch: false });
   // Active work drains: only `enabled` flips.
-  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp' });
+  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false });
   r = await get(scope());
-  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp' });
+  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false });
 });
 
 test('a non-github or closed PR, a scope mismatch and an archived origin are refused', async () => {
@@ -147,6 +147,7 @@ test('the watcher origin is the run\'s member project, branch, guardrails, engin
   assert.equal(o.projectDir, repo);
   assert.equal(o.branch, 'worca-cc/watch-me');
   assert.equal(o.sourceBranch, 'main');
+  assert.equal(o.baseRemote, 'origin', 'the conflict fix fetches the base from the project sync remote');
   assert.deepEqual([o.engine, o.mock, Object.hasOwn(o, 'stepper')], ['claude', false, false]);
   const w = server.prWatchOrigin({ pipelineId: wsId, memberKey: 'web-00000002' });
   assert.deepEqual([w.projectDir, w.branch, w.sourceBranch], [webDir, 'worca-cc/feat-web', 'dev']);
@@ -262,4 +263,28 @@ test('pr-watch-changed frames carry the store key History uses: a workspace run\
     { type: 'pr-watch-changed', projectKey: KEY, pipelineId: wsId, memberKey: 'web-00000002' });
   assert.deepEqual(server.prWatchFrame(seeded.id, ''),
     { type: 'pr-watch-changed', projectKey: seeded.key, pipelineId: seeded.id, memberKey: null });
+});
+
+test('POST /api/pr/resolve: refuses with no conflict, while a fix runs, and a workspace without its member', async () => {
+  const prevTok = process.env.WORCA_GH_READ_TOKEN; process.env.WORCA_GH_READ_TOKEN = 'read-token';
+  try {
+    gitInfo.setRunner(async (cmd) => (cmd === 'gh'
+      ? { ok: true, code: 0, stderr: '', stdout: JSON.stringify({ data: { repository: { pullRequest: {
+        url: GH, state: 'OPEN', headRefName: 'worca-cc/watch-me', headRefOid: 'h1', baseRefName: 'main', baseRefOid: 'b1',
+        mergeable: 'MERGEABLE', author: { login: 'me' }, statusCheckRollup: null,
+        reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+        reviews: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } }) }
+      : { ok: false, code: 1, stdout: '', stderr: 'no' }));
+    let r = await post('/api/pr/resolve', scope());
+    const out = await r.json();
+    assert.deepEqual([r.status, out.code, out.watch.watching], [409, 'NO_CONFLICT', false]);
+    assert.equal(getWatch(GH).enabled, false, 'a switched-off watch row owns any later Resolve run');
+
+    updateWatch(GH, { status: 'fixing' });
+    r = await post('/api/pr/resolve', scope());
+    assert.deepEqual([r.status, (await r.json()).code], [409, 'BUSY']);
+
+    r = await post('/api/pr/resolve', { id: wsId, projectKey: KEY });
+    assert.equal(r.status, 400);
+  } finally { if (prevTok === undefined) delete process.env.WORCA_GH_READ_TOKEN; else process.env.WORCA_GH_READ_TOKEN = prevTok; }
 });

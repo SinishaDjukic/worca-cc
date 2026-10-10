@@ -21468,6 +21468,7 @@ const hdPrWatchKey = (record, memberKey = '') => `${record.projectKey || ''}\u00
 const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
 // Words only while the watch is doing something: the switch already says on or off.
 function hdPrWatchLabel(state) {
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
   if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
   if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
   return state.status === 'needs-person' ? 'Needs a person' : '';
@@ -29277,7 +29278,7 @@ const PR_STATUS_ICONS = {
   none: '<circle cx="12" cy="12" r="9"/>',
 };
 function renderRdPrStatus(host, scope, s) {
-  const sig = JSON.stringify([s.checks, s.status, s.watch]);
+  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
@@ -29307,6 +29308,35 @@ function renderRdPrStatus(host, scope, s) {
         if (live) { e.preventDefault(); location.hash = `running/${live.runId}`; }
       });
       notes.push(a);
+    }
+    // Resolve: GitHub reports conflicts and no watch will fix them on its own (off, or waiting for a
+    // person). One fix run merges the base into the PR branch and pushes (POST /api/pr/resolve).
+    if (v?.tone === 'bad' && v.label === 'Merge conflicts' && !HD_PR_WATCH_ACTIVE.has(wst.status)
+      && (!wst.watching || wst.status === 'needs-person')) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rd-prs-link';
+      b.textContent = 'Resolve';
+      b.title = 'Merge the base branch into this pull request in a fix run, then push';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        const k = prStatusKey(scope);
+        let patch;
+        try {
+          const r = await fetch('/api/pr/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: scope.id, projectKey: scope.projectKey }) });
+          const out = await safeJson(r);
+          if (!r.ok || !out) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { watch: out?.watch });
+          patch = { watch: out, resolveError: null };
+        } catch (err) {
+          patch = { resolveError: err.message, ...(err.watch && typeof err.watch.watching === 'boolean' ? { watch: err.watch } : {}) };
+        }
+        const next = { ...(prStatusCache.get(k) || s), ...patch };
+        prStatusCache.set(k, next);
+        if (host.dataset.key === k) renderRdPrStatus(host, scope, next);
+      });
+      notes.push(b);
+      if (s.resolveError) notes.push(span('is-bad', s.resolveError));
     }
   }
   const parts = [];

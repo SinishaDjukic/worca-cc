@@ -273,7 +273,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects } from '../src/core/git-info.mjs';
+  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -5877,7 +5877,8 @@ function prWatchOrigin(w) {
   if (!m?.projectDir || !m.br?.feature) return null;
   let rp = null; try { rp = JSON.parse(row.resume_point || 'null'); } catch { /* unreadable point: not mock */ }
   return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
-    sourceBranch: m.br.source || null, guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
+    sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
+    guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
     mock: rp?.mock === true };
 }
 /** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
@@ -5896,6 +5897,7 @@ const prWatcher = createPrWatcher({
     fastForward: ({ projectDir, branch, remote }) => fastForward(projectDir, { base: branch, remote }),
     push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
     subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
+    checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
   },
   liveOnBranch: liveRunOnBranch,
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
@@ -6962,7 +6964,8 @@ app.post('/api/pr', async (req, res) => {
 });
 
 function watchView(w) {
-  return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null };
+  return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null,
+    resolving: !!w?.pending?.conflict };
 }
 async function prWatchTarget(src, res) {
   const resolved = await resolvePrPipeline(src, res); if (!resolved) return null;
@@ -7000,6 +7003,35 @@ app.post('/api/pr/watch', async (req, res) => {
     broadcast(prWatchFrame(t.id, t.target.memberKey));
     if (w.enabled) kickPrWatch();
     res.json(watchView(w));
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
+// conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
+const RESOLVE_REFUSALS = {
+  BUSY: [409, 'A fix run is already working on this pull request.'],
+  RATE_LIMITED: [429, 'GitHub is rate limiting Worca; try again in a minute.'],
+  ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
+  READ_FAILED: [502, 'Could not read the pull request from GitHub.'],
+  PR_CLOSED: [409, 'The pull request is no longer open.'],
+  NO_CONFLICT: [409, 'GitHub reports no merge conflicts on this pull request now.'],
+  NEEDS_PERSON: [409, 'The branch cannot be fixed unattended right now.'],
+  NOT_STARTED: [409, 'The fix run could not start now (the branch is busy, or git did not answer). Try again.'],
+};
+app.post('/api/pr/resolve', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const t = await prWatchTarget(body, res); if (!t) return;
+    const published = t.target.memberKey ? t.state.branches?.[t.target.memberKey]?.published : t.state.branch?.published;
+    const cur = getWatch(t.pr.url);
+    // No watch row yet: a switched-off one to own the run (setWatch leaves an existing row's switch alone).
+    const w = cur || setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '',
+      pushRemote: published?.remote || 'origin', enabled: false, enabledBy: actorOf(req) });
+    const r = await prWatcher.resolveOnce(w);
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
+    if (r.ok) return res.json(watchView(r.watch));
+    const [status, error] = RESOLVE_REFUSALS[r.code] || [500, 'Could not start the conflict fix.'];
+    const why = r.code === 'NEEDS_PERSON' ? r.watch?.reason : null;
+    res.status(status).json({ error: why ? `${error} (${why})` : error, code: r.code, watch: watchView(r.watch) });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 
