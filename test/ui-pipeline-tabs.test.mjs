@@ -207,15 +207,11 @@ test('a live non-pipeline run renders nowhere in Runs', async () => {
   assert.ok(window.document.querySelector('#runs-list .runs-note'), 'the list shows its empty note');
 });
 
-// One badge on Runs (D11): green = running count; a paused run needs you, so it
-// lands in the amber Needs-you count, hidden at zero. liveRuns() excludes 'paused'
-// so the counts are disjoint.
-//
-// Green is spent only on work in flight. At zero the running badge takes the
-// sidebar's inert-inventory grey (the treatment the Schedules count gets), so a
-// permanently green pill cannot dilute the green that should catch the eye. It
-// is greyed, not hidden: Schedules shows a grey 0 too.
-test('Runs badges: running count is green only while something runs (grey at zero) and excludes paused runs, which count in the amber Needs-you badge', async () => {
+// One badge on Runs (D11): the live count is a plain grey number, hidden at zero and while
+// the amber Needs-you pill shows; a paused run needs you, so it lands in the Needs-you count
+// (hidden at zero). liveRuns() excludes 'paused', so the two counts are disjoint. Never green:
+// the sidebar's one coloured count is the Needs-you pill.
+test('Runs badges: the live count is a grey number hidden at zero and behind the Needs-you pill; a paused run counts in the amber Needs-you pill', async () => {
   // One boot walks the scenario (zero state, hello two runs, pause one, finish the other)
   // and snapshots both badges at each step; the rows read the snapshots.
   const { window, recv } = await boot();
@@ -233,26 +229,22 @@ test('Runs badges: running count is green only while something runs (grey at zer
   recv({ type: 'done', runId: 'seo-pSEO', status: 'done' });       // the last running run finishes
   const finished = snap();
   await checkRows([
-    { name: 'a paused pipeline counts in the amber Needs-you badge; the running count excludes it', run: () => {
-      assert.equal(both.needsHidden, true, 'Needs-you badge hidden at zero');
-      assert.equal(paused.text, '1');
+    { name: 'a paused pipeline counts in the amber Needs-you pill, and the live count steps aside for it', run: () => {
+      assert.equal(both.needsHidden, true, 'Needs-you pill hidden at zero');
+      assert.equal(paused.text, '1', 'the live count still counts the one running');
+      assert.equal(paused.hidden, true, 'one badge: hidden while the Needs-you pill shows');
       assert.equal(paused.needs, '1');
       assert.equal(paused.needsHidden, false);
     } },
-    { name: 'the running badge is green only while something is running, grey at zero', run: () => {
+    { name: 'the live count is a grey number, hidden at zero, never green', run: () => {
       assert.equal(zero.text, '0');
-      assert.ok(zero.grey, 'zero is inert — grey, like Schedules');
-      assert.ok(!zero.green, 'no green when nothing runs');
-      assert.equal(zero.hidden, false, 'greyed, not hidden');
-
+      assert.equal(zero.hidden, true, 'a zero is hidden; the element keeps its number');
       assert.equal(both.text, '2');
-      assert.ok(both.green, 'green once work is in flight');
-      assert.ok(!both.grey);
-
-      // ...and back to grey when the last run finishes.
+      assert.equal(both.hidden, false);
+      assert.ok(both.grey, 'a plain grey number');
       assert.equal(finished.text, '0');
-      assert.ok(finished.grey, 'green must not linger past the work');
-      assert.ok(!finished.green);
+      assert.equal(finished.hidden, true);
+      for (const s of [zero, both, paused, finished]) assert.equal(s.green, false, 'no green .n-run');
     } },
   ]);
 });

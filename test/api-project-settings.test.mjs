@@ -72,7 +72,7 @@ test('one invalid key writes nothing; the 400 names it (Review Focus 5)', async 
     [{ bogus: 1 }, /unknown setting "bogus"/],
     [{ askMaxTurns: 9999 }, /^askMaxTurns must be an integer between 1 and 500$/],
     [{ askMaxTurns: 5, pipelineCostLimitUsd: -1 }, /^pipelineCostLimitUsd must be a positive number of USD$/],
-    [{ askMaxTurns: 5, 'models.codex.steps.planner': { model: 'claude-opus-5-5' } }, /models\.codex\.steps\.planner: "claude-opus-5-5" is a Claude model — this slot picks a Codex model/],
+    [{ askMaxTurns: 5, 'models.codex.steps.planner': { model: 'claude-opus-5-5' } }, /models\.codex\.steps\.planner: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run/],
     [{ 'models.codex.workspaceScan': { model: 'gpt-5.5' } }, /is set per user, not per project/],
     [{ 'models.claude.steps.ghost': { model: 'claude-opus-5-5' } }, /unknown step "ghost"/],
   ];

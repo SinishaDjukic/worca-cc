@@ -1,6 +1,6 @@
 // test/event-golden-replay.test.mjs
 // Pins what the CONSUMERS do with a stream, before they move to the normalized
-// event vocabulary (plans/harness-bridge-design.md §8.2). Every captured claude
+// event vocabulary. Every captured claude
 // stream in test/fixtures/{ask,hooks} plus one mock run per writer role is
 // replayed into (a) orch._onAgentEvent and (b) the Ask Worca turn reducer, and
 // what they emit is compared with test/fixtures/event-golden/<name>.json.

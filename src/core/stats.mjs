@@ -101,10 +101,10 @@ function askTotals(fromMs, toMs) {
   return { spendUsd: roundUsd(row?.s || 0), sessions: row?.sessions || 0, turns: row?.turns || 0 };
 }
 
-/** "Saved this month/week" for the sidebar spend indicator (money-saved design §10): human
+/** "Saved this month/week" for the account menu's spend card (money-saved design §10): human
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
- *  Statistics "Saved" tile for the matching range, so the sidebar and the tile never disagree.
+ *  Statistics "Saved" tile for the matching range, so the spend card and the tile never disagree.
  *  A lean SUM rather than cohortTotals(): /api/budget is refetched on every tick while runs
  *  are live, and the pipeline_steps join TOTALS_SELECT carries is dead weight for one column.
  *  @param {{windowStartMs:number, windowEndMs:number, windowSpendUsd:number}} budget  budgetStatus()

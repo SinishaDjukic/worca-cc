@@ -79,11 +79,11 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     const contrib = h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions));
     const mcp = Number(p.contributions && p.contributions.mcpServers) || 0;
     if (mcp) {
-      // MCP servers are configured in their own Settings tab; the count is the way there.
+      // MCP servers are configured on the Connectors page; the count is the way there.
       if (contrib.textContent === 'no contributions') contrib.textContent = '';
       else contrib.appendChild(doc.createTextNode(' · '));
       const a = h(doc, 'a', 'pl-mcp-link', `${mcp} MCP server${mcp > 1 ? 's' : ''}`);
-      a.href = '#settings/mcp/servers';
+      a.href = '#connectors/servers';
       contrib.appendChild(a);
     }
     card.appendChild(contrib);

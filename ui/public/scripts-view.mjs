@@ -112,13 +112,11 @@ export function buildScriptCard(s, { doc = globalThis.document, runtimes = {}, c
   return card;
 }
 
-/** The list pane: the topbar (title, filter, New script) and the cards. The
- *  filter is a pure argument, so a repaint never loses what was typed. */
+/** The list pane: the topbar (filter, New script — the top bar names the page) and the
+ *  cards. The filter is a pure argument, so a repaint never loses what was typed. */
 export function renderScriptsList(list, { doc = globalThis.document, query = '', runtimes = {}, caseState = new Map() } = {}) {
   const pane = h(doc, 'div', 'scripts-pane');
   const bar = h(doc, 'div', 'topbar');
-  const left = h(doc, 'div');
-  left.appendChild(h(doc, 'h1', '', 'Scripts'));
   const tools = h(doc, 'div', 'scripts-tools');
   const filter = doc.createElement('input');
   filter.type = 'search'; filter.className = 'input script-filter'; filter.value = query;
@@ -126,7 +124,7 @@ export function renderScriptsList(list, { doc = globalThis.document, query = '',
   const add = h(doc, 'button', 'btn btn-primary btn-mini script-new', 'New script');
   add.type = 'button';
   tools.append(filter, add);
-  bar.append(left, tools);
+  bar.append(tools);
   pane.appendChild(bar);
   const rows = h(doc, 'div', 'run-list scripts-list');
   const all = Array.isArray(list) ? list : [];

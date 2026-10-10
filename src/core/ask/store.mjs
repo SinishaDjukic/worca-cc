@@ -56,6 +56,9 @@ function rowToThread(r) {
     mcpOff: parse(r.mcp_off, null),
     // Agent mode (#574): NULL (every chat before v51, and a new one) reads as on.
     agentMode: r.agent_mode == null ? true : r.agent_mode !== 0,
+    // The engine the chat is locked to (#635): written with the model on every turn. NULL (a chat from
+    // before v53) is read from its model (ask/models.mjs chatEngine).
+    engine: r.engine ?? null,
   };
 }
 
@@ -143,10 +146,10 @@ export function countAttachments() {
   return row ? Number(row.n) : 0;
 }
 
-const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode' };
+const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode', engine: 'engine' };
 const JSON_PATCH_KEYS = new Set(['context', 'mcpOff']);
 
-/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode}; unknown keys ignored; always bumps updated_at. */
+/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode, engine}; unknown keys ignored; always bumps updated_at. */
 export function updateThread(id, patch = {}) {
   const db = getDb();
   const sets = [];

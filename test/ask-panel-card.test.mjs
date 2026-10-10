@@ -286,6 +286,7 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     target: 'project', projectDir: '/repos/proj', workflowId: 'wf_default', guardrailsId: 'normal',
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
     memoryScope: null,
+    engine: null,
   });
 });
 
@@ -793,7 +794,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
   // workspace `.ask-mcard-note b`, web and actions `.ask-mcard-note i`, web's exact URL as text):
   // the five bodies are carried whole, cosmetic rows included.
   await checkRows([
-    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', run: async () => {
+    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links the Models page; a removal reads as one', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -823,7 +824,8 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       const done = ctx.doc.querySelector('[data-ask-modcard="applied"]');
       assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied model change');
       assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'oa updated');
-      assert.ok(done.querySelector('a[href="#settings/models"]'));
+      const open = done.querySelector('a[href="#models"]');
+      assert.equal(open && open.textContent, 'Models', 'the card links the Models page');
       assert.equal(done.querySelector('.ask-modcard-warn'), null, 'warnings belong to the proposal');
       const rm = { ...card, kind: 'remove_model', summary: 'Remove model OA', rows: [{ field: 'Label', before: 'OA', after: null }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 5 });
@@ -1061,4 +1063,48 @@ test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and S
   const body = rec.runBodies.at(-1);
   assert.equal('prompt' in body, false);
   assert.deepEqual(body.source, { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', profile: 'acme', inputs: { writeBack: 'yes' } });
+});
+
+// Engines: "Default" sends none (/api/run resolves the user's / project's engine) and names it once the lane has read
+// it; a proposal that names an engine preselects it, and Start and Open in New Pipeline both carry it.
+test('ask-panel-card: the Engine field — Default sends none, a proposed engine rides Start and the New Pipeline handoff', async () => {
+  await checkRows([
+    { name: 'ask-panel-card: Default names the resolved engine and Start sends no engine', run: async () => {
+      const rec = { runEngine: 'codex' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'Codex (default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'OpenCode (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'opencode'], 'Codex is listed once, as the default');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+      assert.equal('engine' in rec.runBodies[0], false);
+    } },
+    { name: 'ask-panel-card: a proposed engine is preselected, stays visible at every mode and is sent', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, engine: 'cursor' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.value, 'cursor');
+      const field = sel.closest('.ask-rp-field');
+      assert.equal(field.dataset.minLevel, 'advanced');
+      assert.equal(field.dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].engine, 'cursor');
+    } },
+    { name: 'ask-panel-card: a picked engine is handed to New Pipeline', run: async () => {
+      const handed = [];
+      const ctx = await openWithCard(PROJECT_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, undefined, 'no proposed engine: Advanced and up only');
+      sel.value = 'codex';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(handed[0].engine, 'codex');
+    } },
+  ]);
 });

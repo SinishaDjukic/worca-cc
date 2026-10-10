@@ -157,3 +157,57 @@ Step 9 printed `clean`. Kept under `test/fixtures/codex/ask-spike/`: `a1-lockdow
 Ask on Codex ships refusing (`CODEX_NO_LOCKDOWN_MESSAGE`) because of (a). To lift it, a codex version must offer a way to
 remove `view_image` and the sub-agent tools (or the owner must decide that image reads outside the roots are acceptable).
 Then set `CODEX_ASK_LOCKDOWN` to the verified list in `src/core/engines/codex.mjs` and re-run this spike.
+
+## (h) codex-cli 0.162.0-alpha.2 — 2026-10-08 (decision 1 of #635: option A, re-run on a newer codex)
+
+- `codex --version`: `codex-cli 0.162.0-alpha.2` (`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`).
+- `codex features list` now has `view_image` (`stable  true`): `--disable view_image` is a feature flag.
+- Every run used a scratch `CODEX_HOME`, `--ephemeral` (no session files) and `--strict-config`. The sign-in was a link
+  to the user's `auth.json`, as worca's managed homes do. Config keys were probed in a home with no sign-in, so a valid
+  key reached a 401 and an unknown one failed at start-up.
+
+**How the tool list was read.** On 0.162 the model's own list of its tools is not reliable: two runs of the same flags
+named different tools. The authoritative list is the request codex sends. Each flag set was run against a local
+stand-in Responses endpoint (`-c model_provider=…` with `base_url = http://127.0.0.1:<port>/v1`) that records the
+request body and answers 400. No model was called. On 0.162 the tools ride the request's `input` as an
+`additional_tools` item:
+- the namespace `functions` holds `exec`, `wait` and `request_user_input`
+- the namespace `collaboration` holds `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents` and
+  `interrupt_agent`
+- `exec` (code mode, JavaScript with no file system or network) names its nested tools in its description
+
+| Flags (all with `--sandbox read-only`, `-m gpt-5.6-sol`) | `exec`'s nested tools | top level |
+|---|---|---|
+| none | `apply_patch`, `create_goal`, `exec_command`, `get_goal`, MCP resource tools, `update_goal`, `view_image`, `write_stdin` | `functions.*`, `collaboration.*` |
+| the lockdown below | `apply_patch`, MCP resource tools (and the chat's MCP tools, see below) | `functions.*`, `collaboration.*` |
+
+- **`view_image` is gone** under `--disable view_image`. Same for the shell (`exec_command`, `write_stdin`) and goals.
+- **The sub-agent tools stay** under every switch tried: `--disable multi_agent`, `--disable multi_agent_v2`,
+  `--disable collaboration_modes`, `-c agents.max_depth=0` and `-c agents.max_concurrent_threads_per_session=1`.
+  `max_concurrent_threads_per_session=0` is rejected ("must be at least 1"). `multi_agent_mode` is not a config key in
+  `exec` (it is a thread setting of the app server).
+- **Code mode must stay on.** With `--disable code_mode_host`, as in the 0.146 list, `exec` fails closed ("Code Mode is
+  unavailable") and the chat's MCP tools are unreachable: a real turn asked to call the spike `echo` tool answered
+  `NO_TOOL`. With code mode on, the same turn ran an `mcp_tool_call` (`spike`/`echo`, `{"echoed":"hello"}`, `completed`).
+  The model then listed `exec`'s nested tools as `apply_patch`, the MCP resource tools and `mcp__spike__echo|env|fail`.
+- **A sub-agent inherits the lockdown.** A real turn asked to spawn one that runs `cat a.txt`, views an image outside the
+  cwd and lists its tools. The sub-agent answered `NO_SHELL`, `NO_IMAGE_TOOL`, and that its only nested tool is
+  `apply_patch`. The parent's stream showed a `collab_tool_call` (`wait`), which the Ask watchdog stops a turn on.
+- **An attached image still reaches the model** with `view_image` off: the request carried one `input_image` item for
+  `-i red.png`.
+
+The final list, `CODEX_ASK_LOCKDOWN` in `src/core/engines/codex.mjs`:
+
+```
+--disable shell_tool --disable unified_exec --disable view_image --disable apps --disable plugins --disable browser_use
+--disable computer_use --disable in_app_browser --disable image_generation --disable multi_agent --disable multi_agent_v2
+--disable tool_suggest --disable goals --disable hooks -c web_search="disabled" --ignore-rules
+```
+
+**Result: CONFIRMED with one accepted residual.**
+- There is no shell, no image viewer and no web search, and worca's MCP tools work.
+- `apply_patch` remains, and the read-only sandbox rejects its writes.
+- The owner accepted the sub-agent tools (#635, decision 1, option A). A sub-agent has the same locked-down tools, and
+  the watchdog stops the chat when one appears.
+- A codex that lacks any of these feature flags (0.146 has no `view_image` switch) is refused before the turn by
+  `codexAskSupport` ("update codex to 0.162 or newer"), not by codex's bare "Unknown feature flag".

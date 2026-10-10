@@ -11,6 +11,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
@@ -451,7 +452,7 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
     if (pluginDisabled(live.origin, readPluginsLock())) {
       const plugin = live.origin.slice('plugin:'.length);
       throw Object.assign(new Error(`workflow "${wanted}" belongs to plugin "${plugin}", which is disabled — `
-        + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
+        + `enable the plugin (the Marketplace page, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
     }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
     if (checkGraph && live.version === 2) assertValidGraph(live, registry, scripts);
@@ -605,7 +606,9 @@ function ownedPair(sel, engine, projectDir) {
   if (!sel || typeof sel !== 'object') return {};
   const model = typeof sel.model === 'string' && sel.model ? sel.model : undefined;
   if (model && !modelForEngine(model, engine, { projectDir: projectDir || null })) return {};
-  const effort = typeof sel.effort === 'string' && sel.effort && (engine === 'claude' || effortsForEngine(engine).includes(sel.effort)) ? sel.effort : undefined;
+  // A model on two harnesses keeps its own engine's efforts: this harness takes the nearest one (effortOn).
+  const own = typeof sel.effort === 'string' && sel.effort ? sel.effort : undefined;
+  const effort = own && (engine === 'claude' || effortsForEngine(engine).includes(own)) ? own : (own && model ? (effortOn(own, engine) || undefined) : undefined);
   return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {

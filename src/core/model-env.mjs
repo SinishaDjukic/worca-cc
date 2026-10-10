@@ -4,13 +4,15 @@
 // reserved-key policy for per-model routing env, whole-value ${VAR}
 // indirection, and the defensive spawn-time filter.
 //
-// This module imports NOTHING. settings.mjs — whose import contract forbids
+// This module imports only the zero-import src/shared/engine-switch.mjs (the engine list). settings.mjs — whose import contract forbids
 // core-graph modules (it would cycle via projects.mjs) — validates catalog
 // writes against this policy, and claude-runner.mjs applies the same policy
 // defensively at spawn time. Keeping the single source of truth in a
 // zero-import leaf lets both sides share it without bending either module's
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
+
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
@@ -21,12 +23,16 @@ export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 export const CURSOR_EFFORTS = [];
 /** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
 export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
-export const MODEL_ENGINES = ['claude', 'codex', 'cursor', 'opencode'];
+export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
 /** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
  *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
-export const RUN_ENGINES = ['claude', 'codex', 'copilot', 'cursor', 'opencode'];
+export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
+/** The engine a run's helper jobs run on. A Cursor or OpenCode run hands them to Claude: they read untrusted text, and
+ *  those engines' shells cannot be switched off (no verified read-only mode). Copilot runs its own on its default model (no helper slots). The memory defrag and
+ *  the workspace scan are agent nodes of the run, not helper jobs. */
+export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
 /** Engines whose models connect through the engine's own sign-in: a catalog entry takes no routing env and no
  *  upstream (cursor-agent's login; OpenCode's providers, `opencode auth login`). */
 export const OWN_SIGNIN_ENGINES = ['cursor', 'opencode'];
@@ -41,15 +47,8 @@ const OPENCODE_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
 export function modelIdProblem(engine, id) {
   return engine === 'opencode' && !OPENCODE_MODEL_ID_RE.test(String(id ?? '')) ? 'an opencode model id is provider/model (as `opencode models` lists it)' : null;
 }
-/** Run engines that hand their helper jobs to Claude: those jobs read untrusted text, and these engines' shells
- *  cannot be switched off (no verified read-only mode). */
-const CLAUDE_HELPED_ENGINES = ['cursor', 'opencode'];
-/** The engine a run's helper jobs run on. A Cursor or OpenCode run hands them to Claude (CLAUDE_HELPED_ENGINES).
- *  Copilot runs its own on its default model (no helper slots). The memory defrag and the workspace scan are agent
- *  nodes of the run, not helper jobs. */
-export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && !CLAUDE_HELPED_ENGINES.includes(engine) ? engine : 'claude'; }
-/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex only while
- *  CODEX_ASK_LOCKDOWN is set; ask/models.mjs checks that). Cursor and OpenCode: none is known (CURSOR_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null). */
+/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
+ *  and a codex that has every flag in it, ask/turn.mjs). Cursor and OpenCode: none is known (CURSOR_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null). */
 export const ASK_ENGINES = ['claude', 'codex'];
 export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS : EFFORTS; }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];

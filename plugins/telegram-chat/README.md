@@ -19,7 +19,7 @@ server and dials out to `api.telegram.org` only.
    worca plugin link plugins/telegram-chat   # dev; or install by repo URL
    ```
 
-   Then in the UI: *Plugins → telegram-chat → Settings* — paste the **Bot
+   Then in the UI: *Marketplace → telegram-chat → Settings* — paste the **Bot
    token** (or set `{"$env":"TELEGRAM_BOT_TOKEN"}` and export the var).
 3. **Find your chat ID**: send `/whoami` to the bot from the chat, then read
    the ID from *Settings → Chat notifications* ("Ignored /whoami from chat …").

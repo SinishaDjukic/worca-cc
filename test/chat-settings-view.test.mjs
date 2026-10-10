@@ -52,7 +52,7 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
           });
 
           const empty = renderChatSettings({ prefs: { notify: {}, channels: {} }, channels: [] }, { doc });
-          assert.match(empty.querySelector('.chat-none').textContent, /No chat channels installed/);
+          assert.equal(empty.querySelector('.chat-none').textContent, 'No chat channels installed. Install a chat plugin (e.g. telegram-chat) on the Marketplace page.');
         } },
       ]);
     } },

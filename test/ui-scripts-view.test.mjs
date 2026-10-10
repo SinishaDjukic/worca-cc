@@ -130,7 +130,8 @@ test('buildScriptCard: badges, chips, port line, case chip, three actions, and t
 
 test('renderScriptsList: the topbar, registry order, and the filter over key/name/runtime/origin', () => {
   const pane = renderScriptsList(SCRIPTS, { doc, runtimes: RUNTIMES });
-  assert.equal(pane.querySelector('h1').textContent, 'Scripts');
+  assert.equal(pane.querySelector('h1'), null, 'the top bar names the page');
+  assert.ok(pane.querySelector('.topbar > .scripts-tools'), 'the bar keeps the filter and New script');
   assert.equal(pane.querySelector('.script-new').textContent, 'New script');
   assert.equal(pane.querySelector('.script-filter').value, '');
   assert.deepEqual([...pane.querySelectorAll('.script-card')].map((c) => c.dataset.scriptKey), ['shell', 'runTests', 'tidy']);

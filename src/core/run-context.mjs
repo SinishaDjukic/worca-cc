@@ -408,15 +408,42 @@ async function skillCandidates(dir, onError) {
     .map((name) => ({ name, source: join(dir, '.claude', 'skills', name) }));
 }
 
+/** The name a skill gets in a mount where `taken` names are in use: its own, else `<prefix><name>`, then `-2`, `-3`… */
+function freeSkillName(taken, name, prefix) {
+  if (!taken.has(name)) return name;
+  const base = `${prefix}${name}`;
+  let effective = base;
+  for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
+  return effective;
+}
+
+/**
+ * The names another engine's set skills would get in its `.agents/skills` (assembleSkills' rule), for a preview
+ * before the run exists: after the skills of `dirs` (each a member or the root layer, its `.claude/skills`) and the
+ * user's own, each set skill in order. Names the checkout tracks and the skills a workflow requires are known only
+ * at run start, so a run can still rename one more.
+ * @param {{dirs?: string[], homeDir?: string|null, setSkills?: Array<{key:string, name:string, prefix:string}>}} a
+ * @returns {Promise<Record<string,string>>} each set skill's key → its name
+ */
+export async function previewSetSkillNames({ dirs = [], homeDir = null, setSkills = [] } = {}) {
+  const taken = new Set();
+  for (const d of [...dirs, homeDir].filter(Boolean)) for (const c of await skillCandidates(d)) taken.add(c.name);
+  const out = {};
+  for (const s of setSkills) taken.add((out[s.key] = freeSkillName(taken, s.name, s.prefix)));
+  return out;
+}
+
 /**
  * Mount every skill entry into ONE target `.claude/skills` dir (§5.6).
  *
  * Entry order IS the collision-precedence order: (1) each member's real dir,
  * members sorted by projectKey; (2) `<projectsRoot>/.claude/skills` (skipped in the
  * home special case — E4 puts `~/.claude/skills` on the scan path regardless of
- * cwd); (3) `requiresSkills` resolutions whose source is `bundle` / `plugin:*`.
+ * cwd); (3) `requiresSkills` resolutions whose source is `bundle` / `plugin:*`;
+ * (4) `setSkills`, another engine's set skills (skills registry: Claude loads them
+ * through --plugin-dir instead), each `{ key, name, source, prefix, origin }`.
  * First occupant keeps the bare name; later occupants are renamed by SOURCE CLASS
- * (`<memberSlug>-`, `root-`, `worca-cc-`) with a deterministic numeric tiebreak, and
+ * (`<memberSlug>-`, `root-`, `worca-cc-`, `<set slug>-`) with a deterministic numeric tiebreak, and
  * their SKILL.md frontmatter `name:` is rewritten to match (gated on V2, PASSED).
  * Dropping is forbidden — R2 requires the skills of ALL members.
  *
@@ -427,11 +454,13 @@ async function skillCandidates(dir, onError) {
  * user's real source file.
  *
  * @returns {Promise<{names:string[], records:Array<object>, renames:Record<string,string>,
- *                    roster:Array<object>, warnings:string[]}>}
+ *                    roster:Array<object>, warnings:string[], setNames:Record<string,string>}>}
+ *          `setNames`: each mounted set skill's `key` → the name it got
  */
 export async function assembleSkills({
   target, members = [], projectsRoot, resolutions, homeDir,
-  mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'),
+  mount = 'copy', trackedNames = new Set(), skipRoot = false, rel = join('.claude', 'skills'), linkUserSkills = false,
+  setSkills = [],
 }) {
   const warnings = [];
   const onError = fsWarner(warnings);        // ENOENT stays silent; a real error is named
@@ -487,6 +516,8 @@ export async function assembleSkills({
     if (!r?.path) continue;
     candidates.push({ name, source: r.path, cls: 'worca-cc', prefix: 'worca-cc-', origin: `worca-cc ${src}` });
   }
+  for (const c of setSkills) candidates.push({ ...c, cls: 'set' });
+  const setNames = {};
 
   // Tracked names occupy the namespace: a rename may never land on one either.
   const taken = new Set(trackedNames);
@@ -499,17 +530,13 @@ export async function assembleSkills({
       );
       continue;
     }
-    let effective = cand.name;
-    if (taken.has(effective)) {
-      const base = `${cand.prefix}${cand.name}`;
-      effective = base;
-      for (let n = 2; taken.has(effective); n++) effective = `${base}-${n}`;
-    }
+    const effective = freeSkillName(taken, cand.name, cand.prefix);
     const renamed = effective !== cand.name;
     const dest = join(target, effective);
     // Symlink mode cannot carry a rename: the frontmatter rewrite would land in the
     // user's real source file. Renamed entries therefore stay copies.
-    const asLink = mount === 'symlink' && !renamed;
+    // `linkUserSkills`: the user's own skills (codex only) are linked whatever the mount setting (see assembleRunContext).
+    const asLink = (mount === 'symlink' || (linkUserSkills && cand.cls === 'user')) && !renamed;
     try {
       const st = await stat(cand.source);                 // follows symlinks: a dangling one throws
       if (!st.isDirectory()) continue;                    // not a skill entry; silently ignored
@@ -537,6 +564,7 @@ export async function assembleSkills({
       ...(asLink ? { mount: 'symlink' } : {}),
     });
     roster.push({ name: effective, origin: cand.origin, renamedFrom: renamed ? cand.name : null });
+    if (cand.cls === 'set') setNames[cand.key] = effective;
   }
 
   if (mount === 'symlink' && names.length) {
@@ -546,7 +574,7 @@ export async function assembleSkills({
       'to restore isolation.',
     );
   }
-  return { names, records, renames, roster, warnings };
+  return { names, records, renames, roster, warnings, setNames };
 }
 
 /** Accept the resolutions map as a Map (fresh run) or a plain object (from run.json). */
@@ -676,6 +704,8 @@ async function transformServer(name, raw, dir, platform) {
  *   reaches a server the CLI loads natively, so the caller withholds the registry layer (§5.5.6).
  *   The committed scan covers `nativeMembers` (default `members`): every member whose worktree is a
  *   spawn cwd, one whose real dir is missing (§8.20, left out of `members`) included.
+ *   `committed` lists those committed servers as `{name, rawName, def, dir, projectDir}` (`def` untransformed,
+ *   `dir` the worktree), for an engine that does not load them on its own (attachCommittedMcp).
  */
 export async function mergeMcpConfigs({
   members = [], projectsRoot, homeDir, isWorkspace = false, platform = process.platform, agentIsolated = false,
@@ -708,6 +738,8 @@ export async function mergeMcpConfigs({
   // recorded that the `--mcp-config` definition WINS (the native server's process
   // is never even spawned), so the generated entry is always the effective one.
   const committedByMember = new Map();
+  /** Every committed server as the CLI loads it natively, for an engine that reads no `.mcp.json` (attachCommittedMcp). */
+  const committed = [];
   if (!isWorkspace) {
     for (const m of nativeMembers ?? sorted) {   // a worktree whose real dir is gone is still a cwd (§8.20)
       if (!m.worktreeDir) continue;
@@ -719,7 +751,10 @@ export async function mergeMcpConfigs({
       else if (parseError) warnings.push(`\`${committedFile}\` could not be parsed (${parseError}); the cross-scope duplicate check (V3(d)) was skipped for this member.`);
       if (!cs) continue;
       const map = new Map();
-      for (const [k, v] of Object.entries(cs)) map.set(normalizeServerName(k), stableStringify(v));
+      for (const [k, v] of Object.entries(cs)) {
+        map.set(normalizeServerName(k), stableStringify(v));
+        committed.push({ name: normalizeServerName(k), rawName: k, def: v, dir: m.worktreeDir, projectDir: m.projectDir });
+      }
       committedByMember.set(m.projectKey, map);
     }
   }
@@ -842,7 +877,7 @@ export async function mergeMcpConfigs({
     }
   }
 
-  return { servers, renames: { mcpServers: renames }, roster, nativeOnly, warnings, userScopeNames, committedNames, committedRefs };
+  return { servers, renames: { mcpServers: renames }, roster, nativeOnly, warnings, userScopeNames, committedNames, committedRefs, committed };
 }
 
 /** One line of catalog text for CLAUDE.md: breaks flattened, clipped to the §4.1 description cap. */
@@ -875,6 +910,79 @@ function localScopeWarning(member, homeDir, why) {
     `\`${join(homeDir || '~', '.claude.json')}\` (${why}); promote them to ` +
     `\`${join(member.projectDir, '.mcp.json')}\` to guarantee delivery.`
   );
+}
+
+// ── the committed .mcp.json on Codex ────────────────────────────────────────
+
+/** A settings file's top-level object, or null: absent (silent), unreadable (named through `onError`), not an object. */
+async function readSettingsObject(file, onError) {
+  const body = await readTextMaybe(file, onError);
+  if (body === null) return null;
+  try {
+    const v = JSON.parse(body.charCodeAt(0) === 0xfeff ? body.slice(1) : body);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch { return null; }
+}
+
+/**
+ * Whether Claude Code runs a `.mcp.json` server of `projectDir` without asking, by its approval keys in the settings
+ * layers it reads for that project: `<homeDir>/.claude/settings.json`, then the project's `.claude/settings.json` and
+ * `.claude/settings.local.json`. The `enabledMcpjsonServers` / `disabledMcpjsonServers` lists add up across the
+ * layers, the last layer that sets `enableAllProjectMcpServers` decides it, and a disabled server is never approved.
+ * Exported for testing.
+ * @returns {Promise<(rawName:string)=>'approved'|'disabled'|'unapproved'>}
+ */
+export async function mcpjsonApproval(projectDir, homeDir, onError) {
+  const files = [
+    homeDir && join(homeDir, '.claude', 'settings.json'),
+    projectDir && join(projectDir, '.claude', 'settings.json'),
+    projectDir && join(projectDir, '.claude', 'settings.local.json'),
+  ].filter(Boolean);
+  const enabled = new Set();
+  const disabled = new Set();
+  let all = false;
+  for (const f of files) {
+    const doc = await readSettingsObject(f, onError);
+    if (!doc) continue;
+    for (const n of Array.isArray(doc.enabledMcpjsonServers) ? doc.enabledMcpjsonServers : []) if (typeof n === 'string') enabled.add(n);
+    for (const n of Array.isArray(doc.disabledMcpjsonServers) ? doc.disabledMcpjsonServers : []) if (typeof n === 'string') disabled.add(n);
+    if (typeof doc.enableAllProjectMcpServers === 'boolean') all = doc.enableAllProjectMcpServers;
+  }
+  return (name) => (disabled.has(name) ? 'disabled' : all || enabled.has(name) ? 'approved' : 'unapproved');
+}
+
+/**
+ * Codex, Copilot and Cursor read no `.mcp.json`, so the committed servers Claude Code loads on its own at a
+ * single-mode cwd would go missing on them. Those Claude Code runs without asking (mcpjsonApproval) join mcp.json,
+ * transformed against the worktree the CLI would load them from, and reach the engine like any other server of the
+ * run, through the same engine checks (run-harness.mjs _engineMcpWarnings). A server the real dir
+ * already defines (the generated definition wins on Claude too, V3(d)) or a root layer took is left as it is. The
+ * rest leave the grant list, and the unapproved ones are named once. Mutates `mcp`.
+ */
+async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings }) {
+  const approvals = new Map();
+  const unapproved = [];
+  for (const c of mcp.committed) {
+    if (Object.hasOwn(mcp.servers, c.name)) continue;
+    if (!approvals.has(c.projectDir)) approvals.set(c.projectDir, await mcpjsonApproval(c.projectDir, homeDir, onError));
+    const verdict = approvals.get(c.projectDir)(c.rawName);
+    if (verdict !== 'approved') {
+      mcp.nativeOnly = mcp.nativeOnly.filter((n) => n !== c.name);
+      if (verdict === 'unapproved') unapproved.push(c.rawName);
+      continue;
+    }
+    const { def, warnings: tw } = await transformServer(c.name, c.def, c.dir, platform);
+    for (const w of tw) warnings.push(w);
+    mcp.servers[c.name] = def;
+    if (c.name !== c.rawName) mcp.renames.mcpServers[c.name] = c.rawName;
+    if (!mcp.roster.some((r) => r.name === c.name)) mcp.roster.push({ name: c.name, origin: 'the committed `.mcp.json` at cwd', renamedFrom: null });
+  }
+  if (unapproved.length) {
+    warnings.push(
+      `engine ${engine}: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
+      'Approve them in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in the project\'s .claude/settings.local.json.',
+    );
+  }
 }
 
 // ── §8.6 ancestor audit ─────────────────────────────────────────────────────
@@ -1062,12 +1170,15 @@ export function generateClaudeMd({
  * @param {((taken:string[]) => Promise<{result:object, catalog:object[]}|null>)|null} [a.registry]
  *        the MCP registry layer (MCP registry design §6.1): called with the names the spawn
  *        already uses; null (or a null answer) adds nothing
+ * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
+ *        `setSkillNames` maps each mounted one's key to the name it got
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
   runRoot, members = [], projectsRoot, isWorkspace = false,
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
+  setSkills = [],
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1150,13 +1261,19 @@ export async function assembleRunContext({
   const skillsRel = skillsRelFor(engine);
   const injectedPaths = {};
   let skillMountDir = null;
-  let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [] };
+  let skillsOut = { names: [], records: [], renames: {}, roster: [], warnings: [], setNames: {} };
   const primary = sorted[0] || null;
+  // Copying the whole of the user's `~/.claude/skills` into every Codex run's checkout costs a copy per run and per
+  // resume, so those entries are linked. A link stays read-only to the agent: codex's sandbox checks the real path,
+  // and `~/.claude/skills` is never a writable root. Copies stay where a link would not serve: an engine without that
+  // sandbox (Copilot's file tools would write through the link), agents under their own user (they cannot read the
+  // server's home), and Windows (its links need a privilege, and its codex sandbox is not relied on).
+  const linkUserSkills = engine === 'codex' && !agentIsolated && platform !== 'win32';
   if (isWorkspace) {
     skillMountDir = join(runRoot, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
     });
     if (skillsOut.records.length) injectedPaths.runRoot = skillsOut.records;
   } else if (primary?.worktreeDir) {
@@ -1165,7 +1282,7 @@ export async function assembleRunContext({
     skillMountDir = join(primary.worktreeDir, skillsRel);
     skillsOut = await assembleSkills({
       target: skillMountDir, members: liveMembers, projectsRoot: rootUsable ? projectsRoot : null,
-      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel,
+      resolutions: requiredSkillResolutions, homeDir, mount, skipRoot: rootIsHome, rel: skillsRel, linkUserSkills, setSkills,
       trackedNames: trackedSkillNames(primary.worktreeDir, skillsRel),
     });
     if (skillsOut.records.length) injectedPaths[primary.projectKey] = skillsOut.records;
@@ -1196,6 +1313,7 @@ export async function assembleRunContext({
     nativeMembers: sorted,                 // §5.5.6: every worktree cwd, a missing real dir included
   });
   for (const w of mcp.warnings) warnings.push(w);
+  if (engine && engine !== 'claude' && mcp.committed.length) await attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings });
   const merged = Object.keys(mcp.servers);
   // Secrets in these definitions reach the run's agents (mcp-secrets.mjs): with the
   // credential broker on they are left out by default, otherwise named.
@@ -1256,7 +1374,7 @@ export async function assembleRunContext({
   } else {
     await rm(join(runRoot, MCP_FILE), { force: true });        // idempotent re-assembly
   }
-  const mcpServerNames = [...written, ...mcp.nativeOnly].sort();
+  const mcpServerNames = [...new Set([...written, ...mcp.nativeOnly])].sort();
   const listed = new Set(mcpServerNames);
 
   // ── 3) CLAUDE.md (§5.4) ──────────────────────────────────────────────────
@@ -1433,6 +1551,7 @@ export async function assembleRunContext({
     mcpServerNames,
     skillMountDir,
     injectedSkillNames: skillsOut.names,
+    setSkillNames: skillsOut.setNames,
     injectedPaths,
     renames,
     warnings,
@@ -1458,7 +1577,8 @@ export async function assembleRunContext({
 
 /**
  * Skills registry (design §4.3): the set-skill clause of a run's audit line — "3 set skills in 2
- * plugins (1 skipped)", or "2 set skills not loaded (sideload-disabled; 1 skipped)" for a blocked
+ * plugins (1 skipped)", on another engine "2 set skills in .agents/skills (deploy, billing-notes;
+ * 1 skipped)", or "2 set skills not loaded (sideload-disabled; 1 skipped)" for a blocked
  * layer. '' without a layer (a run whose target brings no set skill).
  * @param {{mounted:object[], plugins:object[], skipped:object[], blocked:string|null}|null} layer  run-harness `skillLayer`
  * @returns {string}
@@ -1469,6 +1589,8 @@ export function renderSkillAudit(layer) {
   const n = layer.mounted?.length || 0;
   const k = layer.skipped?.length || 0;
   if (layer.blocked) return `${plural(n, 'set skill')} not loaded (${layer.blocked}; ${k} skipped)`;
+  // Another engine: mounted under the names its `.agents/skills` gave them (`<set slug>-<name>` on a clash).
+  if (layer.rel) return `${plural(n, 'set skill')} in ${layer.rel} (${n ? `${(layer.names || []).join(', ')}; ` : ''}${k} skipped)`;
   return `${plural(n, 'set skill')} in ${plural(layer.plugins?.length || 0, 'plugin')} (${k} skipped)`;
 }
 

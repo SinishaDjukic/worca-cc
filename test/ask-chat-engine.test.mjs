@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { createAskModels, chatEngine } from '../src/core/ask/models.mjs';
+import { createAskModels, chatEngine, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { CODEX_EFFORTS } from '../src/core/model-env.mjs';
 
@@ -44,6 +44,21 @@ test('chatEngine: the engine of the thread model; unknown or empty is claude', (
   assert.equal(chatEngine({ model: 'claude-opus-5-5' }), 'claude');
   assert.equal(chatEngine({ model: null }), 'claude');
   assert.equal(chatEngine({ model: 'nope-xyz' }), 'claude');
+});
+
+test('chatEngine: the stored engine wins over the model, so a model that left the catalog keeps its chat\'s engine', () => {
+  assert.equal(chatEngine({ model: 'gpt-retired-9', engine: 'codex' }), 'codex');
+  assert.equal(chatEngine({ model: 'gpt-5.5', engine: 'claude' }), 'claude');
+  assert.equal(chatEngine({ model: 'gpt-5.5', engine: 'cursor' }), 'codex', 'an engine Ask does not run on is ignored');
+});
+
+test('eventPick: a Codex chat whose model left the catalog gets the Codex default and a notice naming both', async () => {
+  const pick = await mk().eventPick({ model: 'gpt-retired-9', effort: 'low', engine: 'codex' }, 'codex');
+  assert.deepEqual(pick, { ok: true, model: 'gpt-6-astra', effort: 'medium', fallback: { from: 'gpt-retired-9', engine: 'codex' } });
+  assert.equal(eventFallbackNotice(pick), "This chat's model gpt-retired-9 is not available any more, so this reply uses Codex's default, gpt-6-astra (medium).");
+  const ok = await mk().eventPick({ model: 'gpt-5.5', effort: 'low' }, 'codex');
+  assert.deepEqual(ok, { ok: true, model: 'gpt-5.5', effort: 'low' });
+  assert.equal(eventFallbackNotice(ok), null);
 });
 
 test('askCatalog: both engines; a Codex row says so, a Claude row carries no engine key; defaults per engine', async () => {

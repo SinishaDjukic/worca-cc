@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   classifyTask, ClassifierError, buildClassifierSystemPrompt, buildClassifierUserPrompt, parseShapeReply, checkShapeModels,
   agentVocabulary, summarizeTools, renderAgentCards, shapeForPrompt, withCardsSignal, TASK_TEXT_CAP, EXTRA_TEXT_CAP,
@@ -365,6 +367,28 @@ test('on codex the classifier runs on codex: read-only, its repo look through wo
   assert.ok(o.systemPrompt.includes('read_file, grep and glob'));
   assert.ok(o.systemPrompt.includes('- gpt-5.5 (GPT-5.5): efforts minimal/low/medium/high'));
   assert.equal(/^- claude-/m.test(o.systemPrompt), false, 'no Claude model is offered');
+});
+
+test('on codex a workspace look reads every checkout through worca\'s file tools, named absolute; none becomes writable', async () => {
+  const CODEX = [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['minimal', 'low', 'medium', 'high'], engine: 'codex' }];
+  let cfg = null;
+  const shape = { ...GOOD, stages: [{ agent: 'planner', model: 'gpt-5.5', effort: 'low' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
+  const { run, calls } = fakeRun([(o) => { cfg = JSON.parse(readFileSync(o.mcpConfigPath, 'utf8')); return { text: reply(shape), exitCode: 0 }; }]);
+  const root = join(tmpdir(), 'worca-ws-root');
+  await classifyTask(base({ models: CODEX, model: '', engine: 'codex', repoLook: true, workspace: WS, cwd: root, addDirs: ['/abs/web'] }), { run });
+  const o = calls[0];
+  assert.equal(o.engine, 'codex');
+  assert.equal(o.sandbox, 'read-only');
+  assert.equal(o.maxTurns, 10);
+  assert.equal('addDirs' in o, false, 'a member checkout outside the cwd is a file-tool root, never a writable dir');
+  assert.deepEqual(cfg.mcpServers.worca_files.args.slice(-4), ['--root', root, '--root', '/abs/web']);
+  assert.equal(existsSync(o.mcpConfigPath), false);
+  const sys = o.systemPrompt;
+  assert.ok(sys.includes(`${root} holds read-only checkouts of the repositories listed under Workspace`));
+  assert.ok(sys.includes('read_file, grep and glob tools (absolute paths under the readable checkouts listed there)'));
+  assert.ok(sys.includes(`Readable checkouts: api at ${root}; web at /abs/web. No checkout for ops`), 'the tools take absolute paths: so do the checkouts');
+  assert.ok(sys.includes(WORKSPACE_GUIDE));
+  assert.ok(!sys.includes('is a read-only checkout of the repository the task targets'));
 });
 
 test('on codex without a repo look the classifier gets no file tools and no turn cap', async () => {

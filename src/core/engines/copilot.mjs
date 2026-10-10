@@ -35,7 +35,7 @@ import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from './spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
@@ -178,11 +178,20 @@ export function copilotToolPlan(allowedTools) {
 
 const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** The servers of an --mcp-config document Copilot cannot attach: a bad name, or no command and no url. */
+/** The servers of an --mcp-config document Copilot cannot attach, each with its reason (capabilities.mjs
+ *  describeUnattachableMcp): `incomplete` (no command and no url) or `name` (outside MCP_NAME_RE). */
+export function copilotMcpProblems(servers) {
+  const out = [];
+  for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
+    const reason = !srv || (typeof srv.command !== 'string' && typeof srv.url !== 'string') ? 'incomplete' : MCP_NAME_RE.test(name) ? null : 'name';
+    if (reason) out.push({ name, reason });
+  }
+  return out;
+}
+
+/** The names of the servers copilotMcpProblems finds. */
 export function copilotUnattachableMcp(servers) {
-  return Object.entries(servers && typeof servers === 'object' ? servers : {})
-    .filter(([name, srv]) => !MCP_NAME_RE.test(name) || !srv || (typeof srv.command !== 'string' && typeof srv.url !== 'string'))
-    .map(([name]) => name);
+  return copilotMcpProblems(servers).map((p) => p.name);
 }
 
 /**
@@ -543,8 +552,8 @@ export async function runCopilotProcess({
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
     const all = doc && typeof doc.mcpServers === 'object' ? doc.mcpServers : {};
-    const skipped = copilotUnattachableMcp(all);
-    if (skipped.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] copilot cannot attach these MCP servers — not attached: ${skipped.join(', ')}` });
+    const skipped = copilotMcpProblems(all);
+    if (skipped.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on copilot — ${describeUnattachableMcp('copilot', skipped)}` });
     mcpServers = copilotMcpServers(all);
   }
   const refEnv = {};

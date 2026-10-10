@@ -21,6 +21,7 @@ import { resolveProfile as realResolveProfile } from '../source-bindings.mjs';
 import { listProfileIds as realListProfileIds } from '../plugin-config.mjs';
 import { resolveSourceRef as resolveGitSourceRef } from '../git-sync.mjs';
 import { effectiveSyncSettings } from '../project-sync.mjs';
+import { ENGINE_NAMES } from '../../shared/engine-switch.mjs';
 
 export const PROPOSAL_ERRORS = Object.freeze({
   bothTargets: 'provide workspaceId OR projectKey, not both',
@@ -33,6 +34,7 @@ export const PROPOSAL_ERRORS = Object.freeze({
   unknownWorkflow: (id) => `unknown workflowId "${id}"`,
   memoryScopeType: 'memoryScope must be "global" or "project"',
   guardrailsType: 'guardrailsId must be a string',
+  unknownEngine: (e) => `unknown engine "${e}" — one of ${ENGINE_NAMES.join(', ')}, or omit it for the user's default`,
   unknownGuardrails: (id) => `unknown guardrailsId "${id}"`,
   permissive: 'guardrailsId "permissive" is not allowed for proposed runs — use "normal" or a stricter set',
   briefRequired: 'brief is required',
@@ -191,6 +193,13 @@ export function createProposalValidator({
     if (guardrailsId === 'permissive') errors.push(PROPOSAL_ERRORS.permissive);
     else if (guardrailsId && !(await readGuardrailSet(guardrailsId))) errors.push(PROPOSAL_ERRORS.unknownGuardrails(guardrailsId));
 
+    // ── engine: only when named; omitted, /api/run resolves the user's / project's default ──
+    let engine = null;
+    if (inp.engine !== undefined && inp.engine !== null && inp.engine !== '') {
+      const e = typeof inp.engine === 'string' ? inp.engine.trim().toLowerCase() : '';
+      if (ENGINE_NAMES.includes(e)) engine = e; else errors.push(PROPOSAL_ERRORS.unknownEngine(String(inp.engine)));
+    }
+
     // ── task source (source-spec.mjs): a reference the run fetches at start ──
     const src = validateRunSource(inp.source, { target, listTaskSources, resolveProfile });
     if (!src.ok) errors.push(...src.errors);
@@ -279,6 +288,8 @@ export function createProposalValidator({
         // Likewise a proposal whose task is a plugin task (an issue), not a brief.
         ...(runSource ? { source: runSource } : {}),
         ...(sourceWarning ? { sourceWarning } : {}),
+        // Only a proposal that names an engine: the card otherwise starts on the default, like New pipeline.
+        ...(engine ? { engine } : {}),
         // Only when the source is remote-only, behind its remote or unverifiable (offline).
         ...(sourceRef ? { sourceRef } : {}) },
     };

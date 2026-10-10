@@ -929,11 +929,11 @@ export function taskHeader(ctx, title) {
   // Codex and OpenCode list the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
   const nodeEngine = ctx.node?.engine || 'claude';
   const skillsHint = nodeEngine === 'codex' || nodeEngine === 'opencode'
-    ? `Project, root and your personal skills are mounted at .agents/skills for this run and are listed for ` +
+    ? `Project, root, set and your personal skills are mounted at .agents/skills for this run and are listed for ` +
       `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
       `skills) rather than guessing conventions.\n\n`
     : nodeEngine !== 'claude'
-    ? `Project, root and your personal skills are mounted at .agents/skills for this run — each folder's SKILL.md ` +
+    ? `Project, root, set and your personal skills are mounted at .agents/skills for this run — each folder's SKILL.md ` +
       `describes one skill; read any that fit (e.g. design, framework-pattern, or knowledge-graph skills) rather ` +
       `than guessing conventions.\n\n`
     : detached

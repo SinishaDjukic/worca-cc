@@ -79,7 +79,7 @@ test('mock channel is connected; /help round-trips through the full pipeline', a
   assert.equal(channelHost.status()[0].state, 'connected');
   clearMockSentMessages();
   await inject('/help');
-  assert.match(lastReplyText(), /worca-cc chat commands/);
+  assert.match(lastReplyText(), /Worca chat commands/);
   const sent = mockSentMessages().at(-1);
   assert.equal(sent.plugin, NAME);
   assert.equal(sent.chatId, '42', 'reply goes to the originating chat');

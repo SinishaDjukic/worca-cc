@@ -52,7 +52,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
   chBox.appendChild(h(doc, 'div', 'label-row', 'Channels'));
   const rows = channels || [];
   if (!rows.length) {
-    chBox.appendChild(h(doc, 'small', 'hint chat-none', 'No chat channels installed. Install a chat plugin (e.g. telegram-chat) in the Plugins view.'));
+    chBox.appendChild(h(doc, 'small', 'hint chat-none', 'No chat channels installed. Install a chat plugin (e.g. telegram-chat) on the Marketplace page.'));
   }
   for (const c of rows) {
     const key = `${c.plugin}/${c.channelId}`;
@@ -86,7 +86,7 @@ export function renderChatSettings({ prefs, channels } = {}, { doc = globalThis.
     const cmd = c.capabilities?.inbound !== false && c.commands ? c.commands : null;
     if (cmd && cmd.allowed === 0) {
       const off = h(doc, 'small', 'hint warn chat-commands-off',
-        `Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID in Plugins → ${c.plugin} → Settings.`);
+        `Commands are off: no chat is in Allowed chat IDs, so replies like /approve are ignored. Add the chat ID on the Marketplace page: ${c.plugin} › Settings.`);
       off.dataset.channelKey = key;
       chBox.appendChild(off);
     }

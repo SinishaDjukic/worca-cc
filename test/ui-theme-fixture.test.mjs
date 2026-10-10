@@ -30,7 +30,7 @@ test('the theme audit kitchen-sink fixture is a script-free fragment whose every
     { name: 'the fixture covers every log level, status family and the diff/syntax classes (as class tokens, not substrings)', run: () => {
       const classes = classSet(readFileSync(fixturePath, 'utf8'));
       for (const c of ['lvl-phase', 'lvl-artifact', 'lvl-error', 'lvl-warn', 'lvl-system', 'sub-agent',
-        'n-amber', 'n-run', 'rc-sic', 'rc-status-word', 'rd-ov-chip', 'st-green', 'st-peach', 'st-red', 'st-blue', 'st-violet', 'st-amber',
+        'n-amber', 'n-grey', 'rc-sic', 'rc-status-word', 'rd-ov-chip', 'st-green', 'st-peach', 'st-red', 'st-blue', 'st-violet', 'st-amber',
         'hd-dl-add', 'hd-dl-del', 'hd-dl-hunk', 'hljs-comment', 'hljs-keyword', 'hljs-type', 'hljs-string', 'hljs-literal', 'hljs-title',
         'qpanel', 'qopt', 'sel', 'ask-md', 'ask-answer', 'results-trunc', 'retained-banner', 'run-warn', 'viewer', 'info-bubble', 'chart-tip',
         'switch', 'seg', 'h-blue', 'h-green', 'h-peach', 'h-flow', 'dot', 'void', 'any', 'gdot'])
