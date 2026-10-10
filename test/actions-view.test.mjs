@@ -306,12 +306,13 @@ test('controller: a declined Discard sends nothing', async () => {
   ctl.destroy();
 });
 
-test('middleClip keeps both ends', async () => {
+test('middleClip keeps the first max - 1 characters and ends with "…"', async () => {
   const { middleClip } = await import('../ui/public/actions-view.mjs');
   assert.equal(middleClip('short'), 'short');
+  assert.equal(middleClip('x'.repeat(20), 20), 'x'.repeat(20));
   const c = middleClip('a'.repeat(40) + 'END', 20);
   assert.equal(c.length, 20);
-  assert.ok(c.startsWith('aaaa') && c.endsWith('END') && c.includes('…'));
+  assert.equal(c, `${'a'.repeat(19)}…`);
 });
 
 test('controller: Terminal before Check out asks, then checks out this member and opens it; Cancel does nothing', async () => {
