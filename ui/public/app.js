@@ -29253,56 +29253,74 @@ async function loadRdPrStatus(host, scope) {
     }, PR_STATUS_POLL_MS);
   }
 }
+const PR_STATUS_ICONS = {
+  'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
+  'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  none: '<circle cx="12" cy="12" r="9"/>',
+};
 function renderRdPrStatus(host, scope, s) {
   const sig = JSON.stringify([s.checks, s.mergeable, s.watch]);
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
-  const pill = (cls, text, title = '') => {
-    const el = document.createElement('span');
-    el.className = `rd-prs-pill ${cls}`;
-    el.textContent = text;
-    if (title) el.title = title;
-    return el;
-  };
-  const parts = [];
+  const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
   const c = s.checks;
-  if (c && c.state === 'failing') parts.push(pill('is-bad', `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`));
-  else if (c && c.state === 'pending') parts.push(pill('is-run', `Checks running · ${c.total - c.pending} of ${c.total} done`));
-  else if (c && c.state === 'passing') parts.push(pill('is-ok', c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`));
-  if (s.mergeable === 'CONFLICTING') parts.push(pill('is-bad', 'Conflicts', 'The pull request cannot merge until its conflicts are resolved'));
   const wst = s.watch;
+  // The headline: the checks, coloured by the worst; then a conflict and what the watch is doing.
+  const [tone, text] = !c ? [null, ''] : c.state === 'failing' ? ['is-bad', `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`]
+    : c.state === 'pending' ? ['is-run', `Checks running · ${c.total - c.pending} of ${c.total} done`]
+      : c.state === 'passing' ? ['is-ok', c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`]
+        : ['none', 'No checks'];
+  const notes = [];
+  if (s.mergeable === 'CONFLICTING') notes.push(span('is-bad', 'Conflicts'));
   if (wst) {
-    const doing = !wst.watching ? (HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Disabled — finishing' : '')
+    const doing = !wst.watching ? (HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Disabled, finishing a fix' : '')
       : HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Fixing' : wst.status === 'needs-person' ? 'Needs a person' : '';
-    if (doing) parts.push(pill(wst.status === 'needs-person' ? 'is-bad' : 'is-run', doing));
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-ghost btn-mini rd-prs-watch';
-    btn.dataset.minLevel = 'advanced';
-    btn.textContent = wst.watching ? 'Stop watching' : 'Watch PR';
-    btn.title = wst.watching ? 'Worca follows this PR and starts a fix run when checks fail or reviewers ask for changes'
-      : 'Follow this PR: start a fix run when checks fail or reviewers ask for changes';
-    btn.setAttribute('aria-pressed', String(!!wst.watching));
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
+    if (doing) notes.push(span(wst.status === 'needs-person' ? 'is-bad' : 'is-run', doing));
+  }
+  const parts = [];
+  if (tone) {
+    const sum = document.createElement('span');
+    sum.className = 'rd-prs-sum';
+    sum.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
+    sum.appendChild(span('rd-prs-text', text));
+    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
+    parts.push(sum);
+  }
+  if (wst) {
+    const row = document.createElement('label');
+    row.className = 'rd-prs-watch';
+    row.dataset.minLevel = 'advanced';
+    row.title = 'Watch: start a fix run when checks fail or reviewers ask for changes';
+    const sw = document.createElement('span');
+    sw.className = `switch${wst.watching ? ' on' : ''}`;
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!wst.watching));
+    sw.setAttribute('aria-label', 'Watch this pull request');
+    sw.tabIndex = 0;
+    row.append(span('', 'Watch'), sw);
+    const toggle = async () => {
+      if (sw.classList.contains('disabled')) return;
+      sw.classList.add('disabled');
       try {
         const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: scope.id, projectKey: scope.projectKey, watch: !wst.watching }) });
         const nextWatch = await safeJson(r);
         if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
-        const cur = prStatusCache.get(prStatusKey(scope)) || s;
-        const next = { ...cur, watch: nextWatch };
+        const next = { ...(prStatusCache.get(prStatusKey(scope)) || s), watch: nextWatch };
         prStatusCache.set(prStatusKey(scope), next);
         if (host.dataset.key === prStatusKey(scope)) renderRdPrStatus(host, scope, next);
       } catch (err) {
-        btn.disabled = false;
-        btn.title = `Could not change Watch PR: ${err.message}`;
+        sw.classList.remove('disabled');
+        row.title = `Could not change Watch: ${err.message}`;
       }
-    });
-    parts.push(btn);
+    };
+    row.addEventListener('click', (e) => { e.preventDefault(); void toggle(); });
+    sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); void toggle(); } });
+    parts.push(row);
   }
   host.replaceChildren(...parts);
-  host.hidden = !parts.length;
+  host.hidden = !tone && !wst;
 }
 /** pr-watch-changed: re-read every status line showing that run (a watch toggled elsewhere, a fix run). */
 function refreshRdPrStatus(projectKey, id) {

@@ -4783,13 +4783,25 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    the placeholder fades out and the slot then folds away (the one height change, at the end). */
 .rd-pr-slot{position:relative;border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
-.rd-pr-status{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:10px;}
 .rd-pr-status[hidden]{display:none;}
-.rd-prs-pill{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap;}
-.rd-prs-pill.is-ok{background:var(--green-bg);color:var(--green-ink);}
-.rd-prs-pill.is-run{background:var(--amber-bg);color:var(--amber-ink);}
-.rd-prs-pill.is-bad{background:var(--red-bg);color:var(--red-ink);}
-.rd-prs-watch{padding:4px 10px;font-size:12px;}
+/* An open PR with a status: the button and its footer are one card. */
+.rd-pr-box:has(> .rd-pr-status:not([hidden])){border-radius:var(--r-ctrl);overflow:hidden;background:var(--blue-wash);
+  box-shadow:inset 0 0 0 1px var(--blue-line);}
+.rd-pr-box:has(> .rd-pr-status:not([hidden])) .rd-cta{border-radius:var(--r-ctrl) var(--r-ctrl) 0 0;}
+.rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
+  border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
+.rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
+.rd-prs-ico{flex:0 0 auto;}
+.rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
+.rd-prs-sum .is-run,.rd-prs-ico.is-run{color:var(--amber-ink);}
+.rd-prs-sum .is-bad,.rd-prs-ico.is-bad{color:var(--red-ink);}
+.rd-prs-ico.is-run{animation:ws-spin 1.2s linear infinite;}
+.rd-prs-text{font-weight:600;color:var(--ink);}
+.rd-prs-sep{color:var(--ink-3);}
+.rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
+.rd-prs-watch .switch{width:30px;height:18px;}
+.rd-prs-watch .switch::after{top:2px;left:2px;width:14px;height:14px;}
+.rd-prs-watch .switch.on::after{left:14px;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > .rd-cta{position:relative;}   /* above the colour layer */
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:9px;box-sizing:border-box;width:100%;padding:13px;
