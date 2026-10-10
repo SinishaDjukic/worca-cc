@@ -1,0 +1,20 @@
+{
+  "key": "c4Discover",
+  "metaVersion": 2,
+  "displayName": "C4: discover",
+  "description": "Finds the LikeC4 files (.c4, .likec4) in the run's checkout, or in every member of a workspace, and lists each one's views and grouping bands. No model call.",
+  "domain": "architecture",
+  "color": "teal",
+  "icon": "<circle cx=\"11\" cy=\"11\" r=\"6.5\"/><path d=\"M16 16l4.5 4.5\" stroke-linecap=\"round\"/>",
+  "order": 60,
+  "runtime": "node",
+  "file": "c4-discover.mjs",
+  "inputs": [ { "id": "task", "type": "md" } ],
+  "outputs": [
+    { "id": "found", "type": "json", "when": "always", "filename": "c4-found.json" },
+    { "id": "brief", "type": "md", "when": "always", "filename": "c4-discover.md" }
+  ],
+  "params": [
+    { "id": "ignore", "type": "string", "label": "Folders to skip (comma separated)", "default": "node_modules,.git,dist,build,.worca-cc" }
+  ]
+}

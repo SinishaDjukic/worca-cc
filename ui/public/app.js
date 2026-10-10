@@ -173,9 +173,10 @@ import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { BINARY_KINDS, isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
-// dispatch to the byte kinds, so upstream's module stays byte-identical.
+// dispatch to the byte kinds, so upstream's module stays byte-identical;
+// artifact-view-c4.mjs re-exports THAT and adds the `c4` kind (the <worca-c4> viewer).
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
-  renderMarkdown as renderArtifactMarkdown } from './artifact-view-media.mjs';
+  renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
@@ -425,6 +426,7 @@ const el = {
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
+  viewerFull: $('#viewer-full'),
   viewer: $('#viewer'),
   viewerClose: $('#viewer-close'),
 
@@ -26110,6 +26112,8 @@ el.reportDownload.addEventListener('click', () => {
 
 // The shared viewer with a plain string: errors, notices, anything that is text.
 function showViewer(title, text) {
+  setViewerFull(false);
+  el.viewerFull.hidden = true;
   el.viewerTitle.textContent = title || 'Saved pipeline';
   // Only hideViewer cleared this, so an artifact fetch that failed rendered its
   // error string — and any saved pipeline opened next without closing the modal —
@@ -26128,6 +26132,7 @@ function showViewer(title, text) {
  *  `title` is the FULL heading text, as it is for showViewer: callers pass
  *  their own "Saved: "/"Artifact: " prefix. */
 function showViewerHost(title) {
+  el.viewerFull.hidden = false;
   el.viewerTitle.textContent = title || 'Saved pipeline';
   const host = document.createElement('div');
   host.className = 'artifact-view';
@@ -26141,7 +26146,30 @@ function showViewerHost(title) {
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   return host;
 }
+// Full screen for a typed artifact (a C4 diagram, a deck, a PDF, an image): the browser's own full
+// screen on the modal's card where the Fullscreen API is available, else the card fills the window.
+// Either way `.is-full` is the one class the CSS keys on, so the two paths look the same.
+function setViewerFull(on) {
+  const card = el.viewerCard.querySelector('.card');
+  const fsEl = document.fullscreenElement;
+  if (on) {
+    el.viewerCard.classList.add('is-full');
+    if (card && typeof card.requestFullscreen === 'function' && !fsEl) card.requestFullscreen().catch(() => {});
+  } else {
+    el.viewerCard.classList.remove('is-full');
+    if (fsEl && fsEl === card && typeof document.exitFullscreen === 'function') document.exitFullscreen().catch(() => {});
+  }
+  el.viewerFull.textContent = on ? 'Exit full screen' : 'Full screen';
+  el.viewerFull.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+el.viewerFull.addEventListener('click', () => setViewerFull(!el.viewerCard.classList.contains('is-full')));
+// Esc in browser full screen leaves it without a keydown reaching the page: follow the browser.
+document.addEventListener('fullscreenchange', () => {
+  const card = el.viewerCard.querySelector('.card');
+  if (!document.fullscreenElement && el.viewerCard.classList.contains('is-full') && card && card.requestFullscreen) setViewerFull(false);
+});
 function hideViewer() {
+  setViewerFull(false);
   el.viewerCard.classList.add('hidden');
   el.viewer.classList.remove('holds-artifact');
   // `.hidden{display:none}` does NOT unload an iframe: a framed deck keeps its
