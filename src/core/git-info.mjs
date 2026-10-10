@@ -449,14 +449,16 @@ const CHECK_FAILED = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUI
 /**
  * Fold gh's `statusCheckRollup` (CheckRun and StatusContext items) into one PR-level answer:
  * `failing` when any check failed, else `pending` while any still runs, else `passing`;
- * `none` when the PR has no checks. Neutral, skipped and stale checks count as passed.
+ * `none` when the PR has no checks that ran. Skipped checks are counted apart (`skipped`, not in
+ * `total`), as GitHub lists them; neutral and stale checks count as passed.
  */
 export function rollupChecks(items) {
-  const out = { state: 'none', total: 0, failed: 0, pending: 0 };
+  const out = { state: 'none', total: 0, failed: 0, pending: 0, skipped: 0 };
   for (const c of Array.isArray(items) ? items : []) {
     const status = c?.__typename === 'StatusContext'
       ? String(c.state || '').toUpperCase()                     // SUCCESS | PENDING | EXPECTED | FAILURE | ERROR
       : String(c?.status || '').toUpperCase() === 'COMPLETED' ? String(c.conclusion || '').toUpperCase() : 'PENDING';
+    if (status === 'SKIPPED') { out.skipped += 1; continue; }
     out.total += 1;
     if (CHECK_FAILED.has(status)) out.failed += 1;
     else if (status === 'PENDING' || status === 'EXPECTED') out.pending += 1;
@@ -467,9 +469,12 @@ export function rollupChecks(items) {
   return out;
 }
 
-const checksLabel = (c) => (c.state === 'failing' ? `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`
-  : c.state === 'pending' ? `Checks running · ${c.total - c.pending} of ${c.total} done`
-    : c.state === 'passing' ? (c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`) : '');
+const checksLabel = (c) => {
+  const main = c.state === 'failing' ? `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`
+    : c.state === 'pending' ? `Checks running · ${c.total - c.pending} of ${c.total} done`
+      : c.state === 'passing' ? (c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`) : '';
+  return main && c.skipped ? `${main}, ${c.skipped} skipped` : main;
+};
 
 /**
  * The PR's one-line verdict, in the order GitHub's merge box weighs it: draft, conflicts, changes
