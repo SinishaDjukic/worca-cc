@@ -8,7 +8,8 @@ import { boot, fixture, loopFixture, portsFn, AGENTS } from './helpers/graph-vie
 import { nodeSize, portAnchor } from '../src/shared/graph/geometry.mjs';
 import { portsOf } from '../src/shared/graph/ports.mjs';
 import { FLOW_PAD_Y, flowPerRow } from '../src/shared/graph/flow-layout.mjs';
-import { wireCurve } from '../src/shared/graph/curves.mjs';
+import { routeGraph } from '../src/shared/graph/lanes.mjs';
+import { classifyLoops } from '../src/shared/graph/loops.mjs';
 
 const viewPath = new URL('../ui/public/graph/view.mjs', import.meta.url).href;
 
@@ -34,14 +35,11 @@ test('wires paint the router\'s orthogonal d strings; ghost is the LAST child of
   const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
   const tpl = fixture();
   view.render(tpl, {});
-  // w1: n_task.task (280,199) -> n_agent.task (400,136)
-  const w1 = curveD(tpl, 'w1', { describe: view.mode === 'edit' });
-  assert.equal(view.wireEl('w1').getAttribute('d'), w1);
-  assert.match(w1, /^M \S+ \S+ C /, 'leaves the output horizontally');
-  // w2: n_agent.plan (620,193) -> n_end.result (760,199)
-  const w2 = curveD(tpl, 'w2', { describe: view.mode === 'edit' });
-  assert.equal(view.wireEl('w2').getAttribute('d'), w2);
-  assert.match(w2, /^M \S+ \S+ C /);
+  // w1: n_task.task (292,172) -> n_agent.task (400,97); w2: n_agent.plan (632,…) -> n_end.result (760,160)
+  for (const id of ['w1', 'w2']) {
+    assert.equal(view.wireEl(id).getAttribute('d'), laneD(tpl, id, { describe: view.mode === 'edit' }));
+    assertLaneRoute(view.wireRoute(id), id);
+  }
   const layer = host.querySelector('svg.gv-wires');
   assert.equal(layer.lastElementChild.getAttribute('class'), 'wire ghost');
   assert.equal(layer.querySelectorAll('path[data-wire-id]').length, 2);
@@ -57,10 +55,11 @@ test('loop wires route as backward wires with a ≤N badge; setWireBadge writes 
       view.render(tpl, {});
       const d = view.wireEl('w4').getAttribute('d');
       assert.ok(view.wireEl('w4').getAttribute('class').includes('loop'), 'classified as a loop wire');
-      // a = n_rev.review (620,537), b = n_agent.fix (400,160): `loop` is colour only
-      // now (D3) — the router treats w4 as a plain backward wire.
-      assert.equal(d, curveD(tpl, 'w4', { describe: view.mode === 'edit' }));
-      assert.match(d, /^M \S+ \S+ C /);
+      // a = n_rev.review (632,…), b = n_agent.fix (400,…): a backward wire — out to the right, back
+      // along a lane, into the input from its left.
+      assert.equal(d, laneD(tpl, 'w4', { describe: view.mode === 'edit' }));
+      const pts = assertLaneRoute(view.wireRoute('w4'), 'w4');
+      assert.ok(pts.some((p) => p.x < pts.at(-1).x - 1) && pts.some((p) => p.x > pts[0].x + 1), 'it doubles back');
       const badge = host.querySelector('.wbadge[data-wire-id="w4"]');
       assert.equal(badge.querySelector('.wmax').textContent, '≤2');
     } },
@@ -136,25 +135,29 @@ test('perf invariants: re-render keeps rows with unchanged port signatures; move
   ]);
 });
 
-test('moveNode rewrites only the wires whose curve changed (a card moved under a swoop sets its floor)', async () => {
+test('moveNode rewrites only the wires whose route changed (a card moved onto a floor lane pushes it down)', async () => {
+  const { LABEL_H } = await import('../src/shared/graph/geometry.mjs');
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, portsFn, agents: AGENTS });
   const tpl = loopFixture();
   const rev = tpl.nodes.find((n) => n.id === 'n_rev');
-  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 swoops under both cards
+  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 returns on a floor lane under both
   const free = { id: 'n_free', kind: 'agent', key: 'planner', x: 2400, y: 80, config: {} };
   tpl.nodes.push(free);
   view.render(tpl, {});
-  assert.equal(view.curveOf('w4').swoop, true);
+  const floor = () => Math.max(...view.wireRoute('w4').map((p) => p.y));
+  const floor0 = floor();
   const pill = () => view.world.querySelector('.wbadge[data-wire-id="w4"]');
   const top0 = parseFloat(pill().style.top);
+  assert.equal(top0, floor0, 'the pill rides the floor lane');
   let n0 = view.stats.wireDUpdates;
-  free.x = 580; free.y = rev.y + 30;                        // inside the swoop's band, lower than both loop cards
+  free.x = 580; free.y = floor0 + LABEL_H - 6;              // its label row now sits on the floor lane, below every other wire
   view.moveNode('n_free');
-  assert.equal(view.stats.wireDUpdates - n0, 1, 'only the swoop whose floor it now sets wrote d');
+  assert.equal(view.stats.wireDUpdates - n0, 1, 'only the loop whose floor lane it now blocks wrote d');
+  assert.ok(floor() > free.y + view.size(free).h, 'the floor lane drops below the moved card');
   assert.ok(parseFloat(pill().style.top) > top0, 'the pill moved down with the floor');
-  assert.equal(view.wireEl('w4').getAttribute('d'), curveD(tpl, 'w4', { describe: true }));
+  assert.equal(view.wireEl('w4').getAttribute('d'), laneD(tpl, 'w4', { describe: true }));
   n0 = view.stats.wireDUpdates;
   free.x = 2400; view.moveNode('n_free');
   assert.equal(view.stats.wireDUpdates - n0, 1, 'the floor returns');
@@ -220,23 +223,23 @@ test('setFooter re-curves when the billed line count changes — growth AND remo
   const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS });
   const tpl = loopFixture();
   const rev = tpl.nodes.find((n) => n.id === 'n_rev');
-  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 swoops under both cards
+  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 returns on a floor lane under both
   tpl.nodes = tpl.nodes.filter((n) => n.id !== 'n_end');
   tpl.wires = tpl.wires.filter((w) => w.to.node !== 'n_end');
   view.render(tpl, {});
   const base = view.wireEl('w4').getAttribute('d');
-  assert.equal(base, curveD(tpl, 'w4'), 'the un-footed swoop');
+  assert.equal(base, laneD(tpl, 'w4'), 'the un-footed floor lane');
   const pill = view.world.querySelector('.wbadge[data-wire-id="w4"]');
   const top0 = pill.style.top;
   const bands = [{ kind: 'strip', leds: ['done'], summary: '1 run · $0.10', expanded: false }];
-  view.setFooter('n_rev', bands);                       // +FOOT_H: the swoop's floor drops
-  assert.notEqual(view.wireEl('w4').getAttribute('d'), base, 'a taller card re-curves the swoop under it');
+  view.setFooter('n_rev', bands);                       // +FOOT_H: the floor lane drops
+  assert.notEqual(view.wireEl('w4').getAttribute('d'), base, 'a taller card re-routes the floor lane under it');
   assert.ok(parseFloat(pill.style.top) > parseFloat(top0), 'and its pill follows the floor down');
   const n0 = view.stats.wireDUpdates;
   view.setFooter('n_rev', bands);                       // same line count: the guard never fires
   assert.equal(view.stats.wireDUpdates, n0, 'an unchanged footer generation writes zero wire d');
   view.setFooter('n_rev', []);                          // removal fires too (the empty-bands exit)
-  assert.equal(view.wireEl('w4').getAttribute('d'), base, 'removal restores the curve byte-for-byte');
+  assert.equal(view.wireEl('w4').getAttribute('d'), base, 'removal restores the route byte-for-byte');
   assert.equal(pill.style.top, top0);
 });
 
@@ -536,13 +539,25 @@ test('monitor left-drag pans past 4px and swallows exactly its own click, even w
 });
 
 /** The d the view must paint for wire `id`: curves.mjs over the same anchors and card boxes. */
-function curveD(tpl, id, { describe = false } = {}) {
-  const w = tpl.wires.find((x) => x.id === id);
-  const by = new Map(tpl.nodes.map((n) => [n.id, n]));
-  const rect = (n) => ({ x: n.x, y: n.y, ...nodeSize(n, portsFn(n), { describe }) });
-  const A = by.get(w.from.node); const B = by.get(w.to.node);
-  return wireCurve(portAnchor(A, portsFn(A), w.from.port, 'out'), portAnchor(B, portsFn(B), w.to.port, 'in'),
-    { from: rect(A), to: rect(B), rects: tpl.nodes.map(rect), self: A === B }).d;
+/** The lane router's own `d` for one wire of `tpl` (what the view must paint, byte for byte). */
+function laneD(tpl, id, { describe = false } = {}) {
+  return routeGraph(tpl, {
+    sizeOf: (n) => nodeSize(n, portsFn(n), { describe }),
+    anchorOf: (n, port, dir) => portAnchor(n, portsFn(n), port, dir),
+    loopWireIds: classifyLoops(tpl, portsFn).loopWireIds,
+    pill: (w) => Number.isInteger(w.config && w.config.maxCycles),
+  }).routes.get(id).d;
+}
+
+/** Every leg axis-aligned; the wire leaves its output and enters its input horizontally, left to right. */
+function assertLaneRoute(pts, id) {
+  assert.ok(pts.length >= 2, `${id} has a route`);
+  for (let i = 1; i < pts.length; i += 1) {
+    assert.ok(pts[i].x === pts[i - 1].x || pts[i].y === pts[i - 1].y, `${id} leg ${i} is horizontal or vertical`);
+  }
+  assert.ok(pts[1].y === pts[0].y && pts[1].x > pts[0].x, `${id} leaves its output to the right`);
+  assert.ok(pts.at(-2).y === pts.at(-1).y && pts.at(-2).x < pts.at(-1).x, `${id} enters its input from the left`);
+  return pts;
 }
 
 test('cards: a label row (tile · title · meta) above a frosted body; edit hosts add the description footer', async () => {
@@ -569,7 +584,7 @@ test('cards: a label row (tile · title · meta) above a frosted body; edit host
   assert.equal(mon.nodeEl(agent.id).querySelector(':scope > .ncap'), null, 'run cards carry no description footer');
 });
 
-test('wires paint curves.mjs d strings, tinted by the SOURCE port type; the ghost stays the last child', async () => {
+test('wires paint lanes.mjs d strings, tinted by the SOURCE port type; the ghost stays the last child', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'static', portsFn, agents: AGENTS });
@@ -577,7 +592,7 @@ test('wires paint curves.mjs d strings, tinted by the SOURCE port type; the ghos
   view.render(tpl, {});
   for (const w of tpl.wires) {
     const path = view.wireEl(w.id);
-    assert.equal(path.getAttribute('d'), curveD(tpl, w.id));
+    assert.equal(path.getAttribute('d'), laneD(tpl, w.id));
     const from = tpl.nodes.find((n) => n.id === w.from.node);
     const type = portsFn(from).outputs.find((p) => p.id === w.from.port).type;
     assert.ok(path.classList.contains(`w-${type}`), `${w.id} tinted w-${type}`);
@@ -585,13 +600,13 @@ test('wires paint curves.mjs d strings, tinted by the SOURCE port type; the ghos
   assert.equal(view.wiresEl.lastElementChild, view.ghostEl);
 });
 
-test('every loop wire carries a ≤N pill (default 3); a same-row loop swoops under with the pill at its lowest point', async () => {
+test('every loop wire carries a ≤N pill (default 3); a same-row loop returns on a floor lane under both cards, its pill on that lane', async () => {
   const { doc, host } = boot();
   const { createGraphView } = await import(viewPath);
   const view = createGraphView(host, { doc, mode: 'monitor', portsFn, agents: AGENTS });
   const tpl = loopFixture();
   const rev = tpl.nodes.find((n) => n.id === 'n_rev');
-  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 swoops under both cards
+  rev.x = 760; rev.y = 80;                                  // same row as n_agent: w4 returns under both cards
   tpl.nodes = tpl.nodes.filter((n) => n.id !== 'n_end');    // keep the row clear
   tpl.wires = tpl.wires.filter((w) => w.to.node !== 'n_end');
   view.render(tpl, {});
@@ -599,8 +614,16 @@ test('every loop wire carries a ≤N pill (default 3); a same-row loop swoops un
   const pill = view.world.querySelector('.wbadge[data-wire-id="w4"]');
   assert.equal(pill.textContent, '≤2');
   const c = view.curveOf('w4');
-  assert.equal(c.swoop, true);
-  assert.equal(pill.style.top, `${Math.max(...c.pts.map((p) => p.y))}px`);
+  const floor = Math.max(...c.pts.map((p) => p.y));
+  for (const id of ['n_agent', 'n_rev']) {
+    const n = tpl.nodes.find((x) => x.id === id);
+    assert.ok(floor > n.y + view.size(n).h, `the floor lane runs under ${id}`);
+  }
+  assert.equal(pill.style.top, `${floor}px`);
+  const run = c.pts.filter((p) => p.y === floor).map((p) => p.x);
+  const x = parseFloat(pill.style.left);
+  assert.ok(x > Math.min(...run) && x < Math.max(...run), 'the pill sits on the floor run');
+  assert.ok(x > rev.x + view.size(rev).w, 'nearest its source, clear of the cards');
   delete tpl.wires.find((w) => w.id === 'w4').config;
   view.render(tpl, {});
   assert.equal(view.world.querySelector('.wbadge[data-wire-id="w4"] .wmax').textContent, '≤3', 'default max cycles');
@@ -674,10 +697,8 @@ test('a loop pill between two STACKED cards stays off the lower card\'s label ro
     const rev = tpl.nodes.find((n) => n.id === 'n_rev');
     rev.x = top.x; rev.y = top.y + view.size(top).h + LABEL_H + gap;
     view.render(tpl, {});
-    const c = view.curveOf('w4');
-    assert.equal(c.swoop, false, 'precondition: a cross-row S, not a swoop');
-    const p = c.mid;
-    // pillPoint's halo (14 x, 9 y) around each card's label row + body
+    const p = view.curveOf('w4').mid;
+    // a halo (14 x, 9 y) around each card's label row + body
     for (const n of [top, rev]) {
       const on = p.x >= n.x - 14 && p.x <= n.x + view.size(n).w + 14 && p.y >= n.y - LABEL_H - 9 && p.y <= n.y + view.size(n).h + 9;
       assert.ok(!on, `gap ${gap}: the ≤N pill at ${JSON.stringify(p)} sits on ${n.id} (label row from y ${n.y - LABEL_H}, body to y ${n.y + view.size(n).h})`);

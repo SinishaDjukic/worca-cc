@@ -3,9 +3,9 @@
 // deterministic, and the markup carries NUMBERS ONLY (no ids, no names, no
 // author text), so the result is safe to hand to innerHTML without escaping.
 // The whole scene is drawn in WORLD space inside one <g transform>, which is
-// what lets it reuse the real curves instead of a second wire geometry.
+// what lets it reuse the real lane routes instead of a second wire geometry.
 import { graphBounds, fitBounds, nodeSize, portAnchor } from './geometry.mjs';
-import { wireCurve } from './curves.mjs';
+import { routeGraph } from './lanes.mjs';
 import { portsOf, findPort } from './ports.mjs';
 import { classifyLoops } from './loops.mjs';
 
@@ -23,22 +23,14 @@ export function thumbnailSvg(tpl, portsFn, opts = {}) {
     + `viewBox="0 0 ${width} ${height}" role="img" aria-hidden="true">`;
   if (!nodes.length) return `${open}</svg>`;
 
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const rectOf = (n) => ({ x: Number(n.x) || 0, y: Number(n.y) || 0, ...nodeSize(n, portsOf(portsFn, n)) });
-  const boxes = nodes.map(rectOf);          // NOT `rects`: the kept tail below declares `const rects` (the <rect> markup)
   const loops = classifyLoops({ ...tpl, nodes }, portsFn).loopWireIds;
-  const drawn = [];
-  for (const w of (Array.isArray(tpl?.wires) ? tpl.wires : [])) {
-    const from = byId.get(w?.from?.node);
-    const to = byId.get(w?.to?.node);
-    if (!from || !to) continue;                                    // dangling (V5) — never draw NaN
-    const fromPorts = portsOf(portsFn, from);
-    const toPorts = portsOf(portsFn, to);
-    if (!findPort(fromPorts, w.from.port, 'out') || !findPort(toPorts, w.to.port, 'in')) continue;
-    const a = portAnchor(from, fromPorts, w.from.port, 'out');
-    const b = portAnchor(to, toPorts, w.to.port, 'in');
-    if (a && b) drawn.push({ c: wireCurve(a, b, { from: rectOf(from), to: rectOf(to), rects: boxes, self: from === to }), loop: loops.has(w.id) });
-  }
+  // A dangling wire (V5) or an unknown port has no anchor and is never drawn — never NaN.
+  const { routes } = routeGraph({ ...tpl, nodes }, {
+    sizeOf: (n) => nodeSize(n, portsOf(portsFn, n)),
+    anchorOf: (n, port, dir) => { const p = portsOf(portsFn, n); return findPort(p, port, dir) ? portAnchor(n, p, port, dir) : null; },
+    loopWireIds: loops,
+  });
+  const drawn = [...routes].map(([id, c]) => ({ c, loop: loops.has(id) }));
   const base = graphBounds({ ...tpl, nodes }, portsFn, { pad: 0 });
   let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
   for (const { c } of drawn) {

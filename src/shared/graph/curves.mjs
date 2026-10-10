@@ -1,6 +1,7 @@
 // src/shared/graph/curves.mjs
-// THE wire shape of every graph worca draws (the composer, the run monitor, the
-// Auto pop-up, Ask's cards, the saved-workflow thumbnails). A wire is ONE smooth
+// The wire shape of the FLOW hosts (the Auto pop-up, Ask's cards — rows that
+// wrap) and of the composer's wiring-drag ghost; the canvas, the run monitor and
+// the saved-workflow thumbnails route through lanes.mjs. A wire is ONE smooth
 // cubic that leaves its output horizontally and enters its input horizontally
 // (the Blueprint "spline"); a backward wire between two cards of the SAME row, and
 // a self loop, is a SWOOP of two cubics that passes UNDER the cards, its lowest

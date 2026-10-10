@@ -65,7 +65,8 @@ test('a card astride the corridor detours in the tile, and no vertex is clipped 
   const d = svg.match(/<path d="([^"]+)"/)[1];
   for (const [, pd] of svg.matchAll(/<path d="([^"]+)"/g)) {
     assert.match(pd, /^M /, 'every wire starts with a move');
-    assert.ok(pd.includes(' C '), 'every wire is a bezier');
+    assert.equal(/[CSA]/.test(pd), false, 'every wire is a lane route: straight runs and rounded corners only');
+    assert.ok(pd.includes(' Q '), 'the detour turns a rounded corner');
   }
   assert.match(svg, /<path [^>]*stroke="#B7B7BC"/, 'a plain wire is grey');
   assert.equal(d.includes('NaN'), false);

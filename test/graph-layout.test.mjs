@@ -89,3 +89,17 @@ test('autoLayout {describe}: a stacked edit-host card clears the label row of th
   const [t2, l2] = lift(autoLayout(tpl, pf));
   assert.ok(l2.y - LABEL_H < t2.y + h, 'without describe the same stack would overlap — the option is what makes room');
 });
+
+test('autoLayout: a card fed only by loop wires sits after the cards it collects from, under their bottoms', async () => {
+  const { deckTemplate, deckPortsFn } = await import('./helpers/deck-fixture.mjs');
+  const tpl = deckTemplate();
+  const pos = autoLayout(tpl, deckPortsFn, { describe: true });
+  const sources = tpl.wires.filter((w) => w.to.node === 'n_or').map((w) => w.from.node);
+  for (const id of sources) assert.ok(pos.n_or.x > pos[id].x, `OR is right of ${id}`);
+  assert.equal(pos.n_or.x, pos.n_end.x, 'one column after the last reviewer: End\'s');
+  const bottom = (id) => pos[id].y + nodeSize(tpl.nodes.find((n) => n.id === id), deckPortsFn(tpl.nodes.find((n) => n.id === id)), { describe: true }).h;
+  assert.ok(pos.n_or.y - LABEL_H > Math.max(...sources.map(bottom)), 'its label row clears every source\'s bottom');
+  assert.ok(pos.n_end.y < pos.n_or.y, 'End keeps the main row');
+  const applied = { ...tpl, nodes: tpl.nodes.map((n) => ({ ...n, ...pos[n.id] })) };
+  assert.deepEqual(autoLayout(applied, deckPortsFn, { describe: true }), pos, 'idempotent');
+});

@@ -22,6 +22,7 @@ import {
 } from '../../../src/shared/graph/geometry.mjs';
 import { flowLayout, FLOW_DEFAULT_WIDTH } from '../../../src/shared/graph/flow-layout.mjs';
 import { wireCurve, ghostCurve } from '../../../src/shared/graph/curves.mjs';
+import { routeGraph } from '../../../src/shared/graph/lanes.mjs';
 import { portsOf, resolveOrOutType, findPort } from '../../../src/shared/graph/ports.mjs';
 import { CANVAS_WARNING_CODES } from '../../../src/shared/graph/validate.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
@@ -152,7 +153,8 @@ export function createGraphView(host, {
   let T = { x: 0, y: 0, z: 1 };
   let current = null;             // last rendered template
   let ctx = null;                 // last render context (ports, loops, wired inputs)
-  let curves = new Map();         // wireId -> {d, pts, mid, swoop} (curves.mjs)
+  let curves = new Map();         // wireId -> {d, pts, mid} (lanes.mjs; a flow host: curves.mjs)
+  let portMap = null;             // wireId -> the OR / AND input it is DRAWN into (lanes.mjs), null = solve
   const stats = { wireDUpdates: 0, ghostUpdates: 0, rectReads: 0 };
 
   const h = (tag, cls, text) => {
@@ -169,10 +171,11 @@ export function createGraphView(host, {
   const portsAt = (node) => portsOf(portsFn, node) || { inputs: [], outputs: [] };
   const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0, ...geo });
 
-  // ------------------------------------------------------------ wire curves
+  // ------------------------------------------------------------ wire routes
   // Every repaint derives the wire shapes from the same model x/y the cards are
-  // placed by (still zero measurement). A wire may pass behind cards; only a
-  // same-row backward wire swoops under them (curves.mjs).
+  // placed by (still zero measurement). The canvas routes every wire together
+  // into orthogonal lanes (lanes.mjs); a flow host, whose rows wrap, keeps one
+  // curve per wire (curves.mjs). A wire may pass behind cards.
   const isNodeObj = (n) => Boolean(n) && typeof n === 'object' && !Array.isArray(n);
   const rectOf = (node) => ({ x: Number(node.x) || 0, y: Number(node.y) || 0, ...sizeOf(node) });
 
@@ -186,9 +189,21 @@ export function createGraphView(host, {
     return t === 'md' || t === 'json' || t === 'void' ? t : 'any';
   }
 
-  /** Recompute every wire's curve (cheap: no search). paintWire writes only the d strings that changed. */
-  function reroute() {
+  /** Recompute every wire's route. paintWire writes only the d strings that changed. `solve` re-picks the
+   *  OR / AND input order (a render); a drag frame keeps the last one, so wires never jump inputs under the
+   *  cursor — the drop's render settles it. */
+  function reroute(solve = false) {
     if (!ctx || !current) return;
+    if (!isFlow) {
+      const out = routeGraph(current, {
+        sizeOf, anchorOf: (node, port, dir) => portAnchor(node, portsAt(node), port, dir, geo),
+        loopWireIds: ctx.loopWireIds, pill: (w) => Number.isInteger(w.config && w.config.maxCycles),
+        portMap: solve ? null : portMap, scale: S,
+      });
+      curves = out.routes;
+      portMap = out.portMap;
+      return;
+    }
     const nodes = current.nodes.filter(isNodeObj);
     // The pill and the swoop floor keep off each card's LABEL ROW too (mockup rectOf: y − LABEL_H … bottom);
     // from/to stay the bare boxes (crossRows reads their bottoms only).
@@ -578,7 +593,7 @@ export function createGraphView(host, {
   function renderWires() {
     const seenW = new Set();
     const seenB = new Set();
-    reroute();                                  // canonical full pass (D15): every render routes from scratch
+    reroute(true);                              // canonical full pass (D15): every render routes from scratch
     incident.clear();
     for (const w of current.wires) {
       if (!w || !w.from || !w.to) continue;
@@ -713,7 +728,7 @@ export function createGraphView(host, {
     let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
     for (const c of curves.values()) {
       for (const p of c.pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
-      y1 = Math.max(y1, c.mid.y + 12);                 // a swoop's pill hangs below its lowest point
+      y1 = Math.max(y1, c.mid.y + 12);                 // a pill hangs below its wire
     }
     return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   }
@@ -922,9 +937,9 @@ export function createGraphView(host, {
         }
       }
     },
-    /** One transform write per dragged node, then a full re-curve (O(wires), no search): a card
-     *  can set a swoop's floor, so moving it may change wires it is not wired to. The dCache gate
-     *  keeps the DOM writes to the wires whose curve actually moved. */
+    /** One transform write per dragged node, then a full re-route with the OR / AND input order held:
+     *  a card bounds the lanes and gaps of wires it is not wired to, so moving it may move them. The
+     *  dCache gate keeps the DOM writes to the wires whose route actually moved. */
     moveNode(nodeId) {
       const node = ctx && ctx.byId.get(nodeId);
       if (!node) return;
@@ -933,8 +948,8 @@ export function createGraphView(host, {
     },
     /** D15: the canonical full pass every gesture must END in. */
     rerouteAll,
-    /** The EXACT painted polyline for a wire (null while dangling): the curve's samples. The hit
-     *  test and the tests consume this, so paint and hit can never diverge. */
+    /** The EXACT painted polyline for a wire (null while dangling): the route's corners (a flow host:
+     *  the curve's samples). The hit test and the tests consume this, so paint and hit can never diverge. */
     wireRoute(wireId) { const c = curves.get(wireId); return c ? c.pts : null; },
     curveOf: (wireId) => curves.get(wireId) || null,
     /** The ghost `d` of the composer's wiring drag (curves.mjs; `mirror`: the drag started on an input). */
@@ -1105,7 +1120,7 @@ export function createGraphView(host, {
       for (const n of navs.splice(0)) n.destroy();
       if (movingTimer) { win.clearTimeout(movingTimer); movingTimer = null; }
       stage.remove();
-      nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear(); curves.clear();
+      nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear(); curves.clear(); portMap = null;
       current = null; ctx = null;
       source = null; flowLay = null; bandOverride = null;
     },
