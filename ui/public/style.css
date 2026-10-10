@@ -24,7 +24,7 @@
   --canvas-2:light-dark(#FBFBF9,#1B1B19);
   --panel:light-dark(#FFFFFF,#222220);
   --side-bg:light-dark(#FAFAFA,#222220);
-  --side-ink:light-dark(#767676,#B4B4AE);
+  --side-ink:light-dark(#737373,#B4B4AE);
   --side-sel-ink:light-dark(#171717,#ECECE8);
   --side-sel-bg:light-dark(#EFEFEF,#353531);
   --surface:light-dark(#FFFFFF,#34342F);
@@ -196,11 +196,12 @@ body{
 /* Group labels, sentence case as the markup writes them ("Build", "Manage"). The
    padding is lopsided on purpose — 15px above, 6px below: a label belongs to the
    rows UNDER it, so the big gap falls between groups. The first group (Runs,
-   Schedules, Statistics, Team metrics) has no label at all. */
+   Schedules, Statistics, Team metrics) has no label at all. They take the rows'
+   --side-ink: --ink-3 reads 2.68:1 on --side-bg, and 11px text needs 4.5:1. */
 .nav-sect{padding:15px 10px 6px;font-size:11px;font-weight:500;line-height:1;
-  color:var(--ink-3);user-select:none;}
+  color:var(--side-ink);user-select:none;}
 /* Counts: a plain grey mono number, and the amber "needs you" count is the sidebar's one
-   coloured pill. The grey is --ink-2, not the labels' --ink-3: a count carries information
+   coloured pill. The grey is --ink-2, darker than the labels' --side-ink: a count carries information
    (on the rail too). A zero is hidden with the `hidden` attribute (app.js keeps the element
    and its number), so no row carries a number that says nothing. `.nav-count.n-grey`
    clears the .n-grey disc utility's fill AND restates the colour: that utility sits later in
