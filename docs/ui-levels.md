@@ -204,8 +204,13 @@ every level; the Watch switch in them is advanced.
 
 Watch PR is opt-in, also in Ship It. It supports github.com only and batches
 failed checks, merge conflicts and trusted author, owner, member or collaborator
-feedback into at most three automatic fix runs, skipping checks that also fail on
-the base branch. Review text is untrusted code feedback. Each fix run is an unattended
+feedback into at most three automatic fix runs. Checks that also fail on the base
+branch are skipped, counted apart on the checks line ("· 2 also failing on dev")
+and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
+re-run once per PR commit before any fix; a failure the base head has no result for
+yet waits up to 30 minutes for it; and when the PR is behind its base and the base
+head passes the failing check, the first fix run only merges the base in. Review
+text is untrusted code feedback. Each fix run is an unattended
 Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
 workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
 original run's guardrails and engine (and a mock run's mock flag), never asks a

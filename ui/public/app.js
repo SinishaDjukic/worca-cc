@@ -21455,6 +21455,7 @@ const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
 // Words only while the watch is doing something: the switch already says on or off.
 function hdPrWatchLabel(state) {
   if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.mergingBase) return `Merging ${state.mergingBase} in`;
   if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
   if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
   return state.status === 'needs-person' ? 'Needs a person' : '';

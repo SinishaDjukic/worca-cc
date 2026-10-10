@@ -1291,6 +1291,8 @@ test('Overview: an open PR row shows GitHub\'s verdict and the watch, words only
   for (const [state, label, pressed] of [
     [WATCH(), '', 'true'],
     [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
+    [WATCH({ status: 'fixing', activePipelineId: 'f1', mergingBase: 'dev' }), 'Merging dev in', 'true'],
+    [WATCH({ status: 'fixing', activePipelineId: 'f1', resolving: true }), 'Resolving conflicts', 'true'],
     [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
     [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
     [WATCH({ watching: false, status: null }), '', 'false'],

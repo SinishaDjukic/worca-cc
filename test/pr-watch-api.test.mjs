@@ -76,7 +76,7 @@ const scope = () => ({ id: seeded.id, projectKey: seeded.key });
 test('GET answers the defined shape for an unwatched open PR', async () => {
   const r = await get(scope());
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { watching: false, status: null, reason: null, activePipelineId: null, resolving: false });
+  assert.deepEqual(await r.json(), { watching: false, status: null, reason: null, activePipelineId: null, resolving: false, mergingBase: null });
 });
 
 test('POST validates watch, turns it on and off, and the stored watch keeps its history', async () => {
@@ -84,14 +84,21 @@ test('POST validates watch, turns it on and off, and the stored watch keeps its 
   assert.equal(r.status, 400); await r.json();
   r = await post('/api/pr/watch', { ...scope(), watch: true });
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false });
+  assert.deepEqual(await r.json(), { watching: true, status: 'watching', reason: null, activePipelineId: null, resolving: false, mergingBase: null });
   assert.equal(getWatch(GH).pipelineId, seeded.id);
   updateWatch(GH, { status: 'fixing', activeRunId: 'r1', activePipelineId: 'fixp' });
   r = await post('/api/pr/watch', { ...scope(), watch: false });
   // Active work drains: only `enabled` flips.
-  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false });
+  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false, mergingBase: null });
   r = await get(scope());
-  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false });
+  assert.deepEqual(await r.json(), { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false, mergingBase: null });
+  // A merge-first fix (behind its base) is no conflict resolution: it names the base it merges.
+  updateWatch(GH, { pending: { conflict: { base: 'main', baseSha: 'B1', why: 'behind' } } });
+  assert.deepEqual(await (await get(scope())).json(),
+    { watching: false, status: 'fixing', reason: null, activePipelineId: 'fixp', resolving: false, mergingBase: 'main' });
+  updateWatch(GH, { pending: { conflict: { base: 'main', baseSha: 'B1' } } });
+  assert.equal((await (await get(scope())).json()).resolving, true);
+  updateWatch(GH, { pending: null });
 });
 
 test('a non-github or closed PR, a scope mismatch and an archived origin are refused', async () => {

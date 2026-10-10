@@ -3,7 +3,7 @@
 import { test, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGithubPrUrl } from '../src/core/forge.mjs';
-import { ghPrWatchSnapshot, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects, _testing as gitInfo } from '../src/core/git-info.mjs';
+import { ghPrWatchSnapshot, ghFailedJobLog, ghRerunFailedJobs, ghReplyToThread, ghPrComment, commitSubjects, _testing as gitInfo } from '../src/core/git-info.mjs';
 import { collectTriggers } from '../src/core/pr-watch.mjs';
 
 const PR = 'https://github.com/acme/app/pull/7';
@@ -212,7 +212,7 @@ test('the snapshot names the checks failing on the base branch head, on the firs
   runner(async (cmd, args) => {
     const { vars } = graphqlArgs(args); seen.push(vars.withBase);
     const node = prNode({ contexts: vars.contextsCursor ? page([check(2)]) : page([check(1)], 'c1') });
-    if (vars.withBase === 'true') node.data.repository.pullRequest.baseRef = { target: { statusCheckRollup: { contexts: { nodes: [
+    if (vars.withBase === 'true') node.data.repository.pullRequest.baseRef = { compare: { behindBy: 3 }, target: { statusCheckRollup: { contexts: { nodes: [
       { __typename: 'CheckRun', name: 'ui proofs', status: 'COMPLETED', conclusion: 'FAILURE' },
       { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS' },
       { __typename: 'CheckRun', name: 'slow', status: 'IN_PROGRESS', conclusion: null },
@@ -224,6 +224,31 @@ test('the snapshot names the checks failing on the base branch head, on the firs
   assert.equal(snap.ok, true, snap.error);
   assert.deepEqual(seen, ['true', 'false']);
   assert.deepEqual(snap.pr.baseFailing, ['ui proofs', 'ci/legacy']);
+  assert.deepEqual([snap.pr.basePassing, snap.pr.basePending, snap.pr.baseSettled, snap.pr.behindBy], [['unit'], ['slow'], false, 3]);
+});
+
+test('the snapshot asks how far the PR is behind its base and which workflow run each check belongs to', async () => {
+  runner(async (cmd, args) => {
+    const { query } = graphqlArgs(args);
+    assert.match(query, /baseRef @include\(if:\$withBase\)\{compare\(headRef:\$headRef\)\{behindBy\}/);
+    assert.match(query, /CheckRun\{[^}]*checkSuite\{workflowRun\{databaseId\}\}/);
+    return ok(prNode({ contexts: page([check(1, { checkSuite: { workflowRun: { databaseId: 555 } } }), check(2, { checkSuite: null })]) }));
+  });
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  assert.deepEqual(snap.pr.contexts.map((c) => [c.name, c.runId, Object.hasOwn(c, 'checkSuite')]), [['c1', 555, false], ['c2', null, false]]);
+  // No base ref or comparison: not behind, base settled, nothing failing.
+  assert.deepEqual([snap.pr.behindBy, snap.pr.baseFailing, snap.pr.baseSettled], [0, [], true]);
+});
+
+test('ghRerunFailedJobs re-runs a workflow run\'s failed jobs with the write credential', async () => {
+  const calls = runner(async () => ({ ok: true, stdout: '', stderr: '', code: 0 }));
+  assert.deepEqual(await ghRerunFailedJobs({ projectDir: '/p', prUrl: PR, runId: 555 }), { ok: true });
+  assert.deepEqual(calls[0].args, ['run', 'rerun', '555', '--failed', '--repo', 'acme/app']);
+  assert.equal(calls[0].opts.env.GH_TOKEN, 'write-token');
+  runner(async () => fail('HTTP 403: API rate limit exceeded'));
+  assert.equal((await ghRerunFailedJobs({ projectDir: '/p', prUrl: PR, runId: 555 })).class, 'rate-limit');
+  assert.equal((await ghRerunFailedJobs({ projectDir: '/p', prUrl: PR })).ok, false);
 });
 
 test('commitSubjects lists subjects between two SHAs', async () => {
@@ -236,8 +261,8 @@ test('GraphQL variables are typed explicitly: strings raw (-f), booleans and the
   const calls = runner(async () => ok(prNode()));
   assert.equal((await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR })).ok, true);
   const { query, vars, flags } = graphqlArgs(calls[0].args);
-  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', withContexts: '-F', withThreads: '-F', withReviews: '-F', withBase: '-F' });
-  assert.deepEqual([vars.number, vars.withContexts, vars.withThreads, vars.withReviews, vars.withBase], ['7', 'true', 'true', 'true', 'true']);
+  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', headRef: '-f', withContexts: '-F', withThreads: '-F', withReviews: '-F', withBase: '-F' });
+  assert.deepEqual([vars.number, vars.headRef, vars.withContexts, vars.withThreads, vars.withReviews, vars.withBase], ['7', 'refs/pull/7/head', 'true', 'true', 'true', 'true']);
   // Required-check detection asks GitHub per pull request, on both check kinds.
   assert.match(query, /CheckRun\{[^}]*isRequired\(pullRequestNumber:\$number\)/);
   assert.match(query, /StatusContext\{[^}]*isRequired\(pullRequestNumber:\$number\)/);

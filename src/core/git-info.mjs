@@ -450,17 +450,19 @@ const CHECK_FAILED = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUI
  * Fold gh's `statusCheckRollup` (CheckRun and StatusContext items) into one PR-level answer:
  * `failing` when any check failed, else `pending` while any still runs, else `passing`;
  * `none` when the PR has no checks that ran. Skipped checks are counted apart (`skipped`, not in
- * `total`), as GitHub lists them; neutral and stale checks count as passed.
+ * `total`), as GitHub lists them; neutral and stale checks count as passed. A failed check whose name
+ * also fails on the base branch head (`baseFailing`) is not the PR's: it counts as `inherited`, not `failed`.
  */
-export function rollupChecks(items) {
-  const out = { state: 'none', total: 0, failed: 0, pending: 0, skipped: 0 };
+export function rollupChecks(items, { baseFailing = [] } = {}) {
+  const out = { state: 'none', total: 0, failed: 0, pending: 0, skipped: 0, inherited: 0 };
+  const inherited = new Set(baseFailing);
   for (const c of Array.isArray(items) ? items : []) {
     const status = c?.__typename === 'StatusContext'
       ? String(c.state || '').toUpperCase()                     // SUCCESS | PENDING | EXPECTED | FAILURE | ERROR
       : String(c?.status || '').toUpperCase() === 'COMPLETED' ? String(c.conclusion || '').toUpperCase() : 'PENDING';
     if (status === 'SKIPPED') { out.skipped += 1; continue; }
     out.total += 1;
-    if (CHECK_FAILED.has(status)) out.failed += 1;
+    if (CHECK_FAILED.has(status)) out[inherited.has(c.name || c.context) ? 'inherited' : 'failed'] += 1;
     else if (status === 'PENDING' || status === 'EXPECTED') out.pending += 1;
   }
   if (out.failed) out.state = 'failing';
@@ -469,24 +471,27 @@ export function rollupChecks(items) {
   return out;
 }
 
-const checksLabel = (c) => {
+const checksLabel = (c, base) => {
+  const n = c.inherited || 0;
   const main = c.state === 'failing' ? `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`
     : c.state === 'pending' ? `Checks running · ${c.total - c.pending} of ${c.total} done`
-      : c.state === 'passing' ? (c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`) : '';
-  return main && c.skipped ? `${main}, ${c.skipped} skipped` : main;
+      : c.state === 'passing' ? (n ? `${c.total - n} of ${c.total} checks passed` : c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`) : '';
+  const withSkipped = main && c.skipped ? `${main}, ${c.skipped} skipped` : main;
+  return withSkipped && n ? `${withSkipped} · ${n} also failing on ${base || 'the base branch'}` : withSkipped;
 };
 
 /**
  * The PR's one-line verdict, in the order GitHub's merge box weighs it: draft, conflicts, changes
  * requested, failing or running checks, review required, behind the base, blocked by branch rules,
- * then ready to merge. `detail` is the checks line when the verdict is about something else.
+ * then ready to merge. `detail` is the checks line when the verdict is about something else; `base`
+ * names the base branch in it ("· 2 also failing on dev").
  * tone: ok | run (checks running) | wait (on a person or the base) | bad | none. GitHub computes mergeStateStatus lazily; UNKNOWN falls back to the checks.
  */
-export function prMergeStatus({ checks, mergeable, mergeState, reviewDecision, draft } = {}) {
+export function prMergeStatus({ checks, mergeable, mergeState, reviewDecision, draft, base } = {}) {
   const c = checks || { state: 'none', total: 0, failed: 0, pending: 0 };
   const state = String(mergeState || '').toUpperCase();
   const review = String(reviewDecision || '').toUpperCase();
-  const detail = checksLabel(c);
+  const detail = checksLabel(c, base);
   const say = (tone, label, withChecks = true) => ({ tone, label, detail: withChecks ? detail : '' });
   if (draft) return say('none', 'Draft');
   if (mergeable === 'CONFLICTING' || state === 'DIRTY') return say('bad', 'Merge conflicts');
@@ -500,19 +505,33 @@ export function prMergeStatus({ checks, mergeable, mergeState, reviewDecision, d
   return detail ? say(c.state === 'passing' ? 'ok' : 'none', detail, false) : say('none', '', false);
 }
 
-/** A github.com PR's checks rollup, mergeability and merge verdict in one gh call; null on any failure. Never throws. */
+/** The names failing on a PR's base branch head and the base branch's name, read with the same fields
+ *  as the watch snapshot. { base: null, failing: [] } on any failure: the line then counts every failure. */
+async function ghPrBaseFailing({ projectDir, prUrl }) {
+  const p = parseGithubPrUrl(prUrl);
+  if (!p) return { base: null, failing: [] };
+  const q = await watchGraphql(BASE_CHECKS_QUERY, { owner: p.owner, repo: p.repo, number: p.number }, { projectDir, repo: `${p.owner}/${p.repo}` });
+  const pr = q.ok ? q.data?.repository?.pullRequest : null;
+  return { base: pr?.baseRefName || null, failing: pr ? baseChecks(pr.baseRef).failing : [] };
+}
+
+/** A github.com PR's checks rollup, mergeability and merge verdict: one gh pr view, plus the base
+ *  branch head's failing checks so the line counts them apart. null on any failure. Never throws. */
 export async function ghPrChecks({ projectDir, prUrl }) {
   const repo = ownerRepoOfPrUrl(prUrl);
   if (!repo || !(await ghUsable())) return null;
   try {
-    const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup'],
-      { cwd: projectDir, env: (await githubEnv('read', { repo })).env });
+    const [r, base] = await Promise.all([
+      _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup'],
+        { cwd: projectDir, env: (await githubEnv('read', { repo })).env }),
+      ghPrBaseFailing({ projectDir, prUrl }).catch(() => ({ base: null, failing: [] })),
+    ]);
     if (!r.ok) return null;
     const v = JSON.parse(r.stdout);
-    const checks = rollupChecks(v.statusCheckRollup);
+    const checks = rollupChecks(v.statusCheckRollup, { baseFailing: base.failing });
     const mergeable = normalizeMergeable(v.mergeable);
-    return { checks, mergeable,
-      status: prMergeStatus({ checks, mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision, draft: v.isDraft === true }) };
+    return { checks, mergeable, base: base.base,
+      status: prMergeStatus({ checks, mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision, draft: v.isDraft === true, base: base.base }) };
   } catch { return null; }
 }
 
@@ -806,18 +825,32 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
   return { ok: true, data: body.data };
 }
 
-const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){target{... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}`;
+// The base branch head's checks: shared by the watch snapshot and the PR card's checks line (ghPrChecks),
+// so both tell the PR's own failures from the base's with the same fields.
+const BASE_TARGET = 'target{... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}';
+// `compare` against refs/pull/<n>/head (it lives in the base repository, fork or not): behindBy is how
+// many base commits the PR lacks.
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
+const BASE_CHECKS_QUERY = `query PrBaseChecks($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){baseRefName baseRef{${BASE_TARGET}}}}}`;
 const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
 
-/** Names of the checks that failed on the base branch's head commit: a PR failing the same check
- *  inherited it. Only completed, non-passing ones; the first 100 contexts (best effort). */
-function baseFailingNames(baseRef) {
+/** The base branch head's checks by name: `failing` (completed, not passing: a PR failing the same
+ *  check inherited it), `passing`, `pending` (still running), and `settled` when nothing runs. Only the
+ *  first 100 contexts (best effort). */
+export function baseChecks(baseRef) {
   const nodes = baseRef?.target?.statusCheckRollup?.contexts?.nodes;
-  if (!Array.isArray(nodes)) return [];
-  const failed = (c) => (c.__typename === 'StatusContext'
-    ? ['FAILURE', 'ERROR'].includes(c.state)
-    : c.status === 'COMPLETED' && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion));
-  return [...new Set(nodes.filter((c) => c && failed(c)).map((c) => c.name || c.context).filter(Boolean))];
+  const out = { failing: [], passing: [], pending: [], settled: true };
+  if (!Array.isArray(nodes)) return out;
+  const sets = { failing: new Set(), passing: new Set(), pending: new Set() };
+  for (const c of nodes) {
+    const name = c?.name || c?.context;
+    if (!name) continue;
+    const state = c.__typename === 'StatusContext'
+      ? (['PENDING', 'EXPECTED'].includes(c.state) ? 'pending' : ['FAILURE', 'ERROR'].includes(c.state) ? 'failing' : 'passing')
+      : c.status !== 'COMPLETED' ? 'pending' : ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion) ? 'passing' : 'failing';
+    sets[state].add(name);
+  }
+  return { failing: [...sets.failing], passing: [...sets.passing], pending: [...sets.pending], settled: sets.pending.size === 0 };
 }
 
 export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
@@ -831,21 +864,28 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
   const contexts = []; const threads = []; const reviews = []; let facts = null;
   for (let pages = 0; pages < 100; pages++) {
     const q = await watchGraphql(WATCH_QUERY, { owner: p.owner, repo: p.repo, number: p.number,
-      contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
+      headRef: `refs/pull/${p.number}/head`, contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
       withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
     if (!q.ok) return q;
     const pr = q.data?.repository?.pullRequest;
     if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
-    facts ||= { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null,
-      base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable),
-      baseFailing: baseFailingNames(pr.baseRef) };
+    if (!facts) {
+      const base = baseChecks(pr.baseRef);
+      facts = { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null,
+        base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable),
+        behindBy: Number(pr.baseRef?.compare?.behindBy) || 0,
+        baseFailing: base.failing, basePassing: base.passing, basePending: base.pending, baseSettled: base.settled };
+    }
     const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
     const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
     if (!cc || !Array.isArray(cc.nodes) || !pageOk(cc.pageInfo) || !tt || !Array.isArray(tt.nodes) || !pageOk(tt.pageInfo) || !rr || !Array.isArray(rr.nodes) || !pageOk(rr.pageInfo)) return { ok: false, class: 'failed', error: 'malformed GitHub pagination' };
     for (const c of cc.nodes) {
       if (typeof c.isRequired !== 'boolean') return { ok: false, class: 'failed', error: 'GitHub omitted isRequired' };
-      contexts.push(c.__typename === 'StatusContext' ? { ...c, type: 'status', headSha: facts.headSha } : { ...c, type: 'check' });
+      if (c.__typename === 'StatusContext') { contexts.push({ ...c, type: 'status', headSha: facts.headSha }); continue; }
+      // The Actions workflow run behind a check run, so its failed jobs can be re-run; null for other apps.
+      const { checkSuite, ...run } = c;
+      contexts.push({ ...run, type: 'check', runId: checkSuite?.workflowRun?.databaseId || null });
     }
     for (const t of tt.nodes) {
       if (!t?.id || !t.comments || !Array.isArray(t.comments.nodes) || !pageOk(t.comments.pageInfo)) return { ok: false, class: 'failed', error: 'malformed review thread' };
@@ -884,6 +924,15 @@ export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {
   // `--log-failed` prefixes every line with "<job>\t<step>\t<timestamp> ": keep only the message.
   const text = redactSecrets(String(r.stdout || '').replace(/^[^\t\n]*\t[^\t\n]*\t\uFEFF?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?/gm, ''));
   return { ok: true, text: failedLogTail(text) };
+}
+
+/** Re-run a workflow run's failed jobs once (a flaky check gets one more try before a fix run). */
+export async function ghRerunFailedJobs({ projectDir, prUrl, runId } = {}) {
+  const p = parseGithubPrUrl(prUrl); if (!p || !runId) return { ok: false, class: 'failed', error: 'invalid re-run request' };
+  const repo = `${p.owner}/${p.repo}`; const cred = await githubEnv('write', { repo });
+  if (cred.error) return { ok: false, class: 'auth', error: cred.error };
+  const r = await _run('gh', ['run', 'rerun', String(runId), '--failed', '--repo', repo], { cwd: projectDir, env: cred.env });
+  return r.ok ? { ok: true } : { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
 }
 
 export const PR_WATCH_LOG_BYTES = 12 * 1024;

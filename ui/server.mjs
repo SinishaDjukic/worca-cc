@@ -273,7 +273,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghRerunFailedJobs, ghReplyToThread, ghPrComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -5890,7 +5890,7 @@ function prWatchFrame(pipelineId, memberKey) {
 }
 const prWatcher = createPrWatcher({
   originOf: prWatchOrigin,
-  gh: { snapshot: ghPrWatchSnapshot, jobLog: ghFailedJobLog, reply: ghReplyToThread, comment: ghPrComment },
+  gh: { snapshot: ghPrWatchSnapshot, jobLog: ghFailedJobLog, rerun: ghRerunFailedJobs, reply: ghReplyToThread, comment: ghPrComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
     status: ({ projectDir, branch, remote }) => syncStatus(projectDir, { base: branch, remote }),
@@ -6965,7 +6965,9 @@ app.post('/api/pr', async (req, res) => {
 
 function watchView(w) {
   return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null,
-    resolving: !!w?.pending?.conflict };
+    resolving: !!w?.pending?.conflict && w.pending.conflict.why !== 'behind',
+    // A merge-first fix: the PR is behind its base and the base head passes the checks failing here.
+    mergingBase: w?.pending?.conflict?.why === 'behind' ? w.pending.conflict.base || null : null };
 }
 async function prWatchTarget(src, res) {
   const resolved = await resolvePrPipeline(src, res); if (!resolved) return null;
@@ -6982,8 +6984,9 @@ app.get('/api/pr/watch', async (req, res) => {
   try { const t = await prWatchTarget(req.query, res); if (t) res.json(watchView(getWatch(t.pr.url))); }
   catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
-// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending }, mergeable, watch }
-// for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot answer).
+// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending, skipped, inherited }, mergeable,
+// base, status, watch } for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot
+// answer). `inherited` counts failures that also fail on the base branch head; they are not in `failed`.
 app.get('/api/pr/checks', async (req, res) => {
   try {
     const t = await prWatchTarget(req.query, res); if (!t) return;

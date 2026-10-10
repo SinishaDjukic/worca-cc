@@ -5,7 +5,7 @@ import { getDb, tx } from '../src/core/db.mjs';
 import { writeState } from '../src/core/artifacts.mjs';
 import {
   collectTriggers, countsAsRequest, reserveBatch, setWatch, getWatch, replyBody, buildFixTask, updateWatch,
-  attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, _testing,
+  attachWatchPipeline, createPrWatcher, createPrWatchRunner, MAX_FIX_RUNS, FIX_WORKFLOW_ID, BASE_WAIT_MS, RERUN_SETTLE_MS, _testing,
 } from '../src/core/pr-watch.mjs';
 
 useTempHome(after, 'pr-watch-');
@@ -30,7 +30,7 @@ const openPr = (over = {}) => ({ url: URL, state: 'OPEN', branch: 'feat/x', head
 /** In-memory IO: a fake repo, GitHub and run launcher. */
 function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
   const repo = { hasLocal: true, hasRemote: true, headSha: 'R1', remoteSha: 'R1', ahead: 0, behind: 0 };
-  const calls = { start: [], reply: [], comment: [], push: [], ff: [], notify: [], snapshot: 0, free: [], attach: [] };
+  const calls = { start: [], reply: [], comment: [], push: [], ff: [], notify: [], snapshot: 0, free: [], attach: [], rerun: [] };
   const live = new Map(); const durable = new Map();
   const io = {
     pr, repo, calls, live, durable, clock,
@@ -46,6 +46,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
       jobLog: async ({ databaseId }) => ({ ok: true, text: `log ${databaseId}` }),
       reply: async (a) => { calls.reply.push(a.threadId); return io.replyFails.has(a.threadId) ? { ok: false, class: 'failed' } : { ok: true }; },
       comment: async (a) => { calls.comment.push(a.body); return { ok: true }; },
+      rerun: async (a) => { calls.rerun.push(a.runId); return io.rerunResult ? io.rerunResult(a) : { ok: true }; },
     },
     git: {
       fetch: async () => ({ ok: true }),
@@ -676,4 +677,162 @@ test('Resolve after a capped watch: runs once more, then the cap still holds', a
   await watcher.tick(); await watcher.tick();
   const w = getWatch(URL);
   assert.deepEqual([w.status, w.reason, io.calls.push], ['needs-person', 'cap', ['M1']]);
+});
+
+// --- Failures the PR did not cause, flaky checks, and a base with no result yet ---
+
+const named = (name, extra = {}) => failing(0, { name, ...extra });
+
+test('failures are sorted: inherited skipped, base still running waits, Actions checks re-run once per head', () => {
+  const pr = { headSha: 'h', contexts: [named('mine', { runId: 9 }), named('also', { runId: 9 }), named('lint', { runId: 4 }),
+    named('old'), { type: 'status', context: 'ci/x', state: 'FAILURE', isRequired: false }],
+  baseFailing: ['old'], basePassing: ['mine', 'also', 'lint', 'ci/x'], baseSettled: true };
+  let t = collectTriggers(pr, []);
+  assert.deepEqual(t.skipped, ['old']);
+  assert.deepEqual(t.reruns, [{ runId: 9, keys: ['rerun:check:mine@h', 'rerun:check:also@h'] }, { runId: 4, keys: ['rerun:check:lint@h'] }]);
+  assert.deepEqual([t.fire, t.failures], [false, []], 'no fix while a re-run is due');
+  // Re-run once: the same head fixes it by hand now; a status context is never re-run.
+  const reran = ['rerun:check:mine@h', 'rerun:check:also@h', 'rerun:check:lint@h'];
+  t = collectTriggers(pr, reran);
+  assert.deepEqual([t.reruns, t.handledKeys], [[], ['check:mine@h', 'check:also@h', 'check:lint@h', 'status:ci/x@h']]);
+  // A new head gets its own re-run.
+  assert.equal(collectTriggers({ ...pr, headSha: 'h2' }, reran).reruns.length, 2);
+
+  // The base has no finished result while it still runs: every failure waits, review requests still fire.
+  const waiting = { ...pr, contexts: [named('mine'), named('slow')], basePassing: ['mine'], basePending: ['slow'], baseSettled: false,
+    threads: [thread('T1', 5)] };
+  t = collectTriggers(waiting, []);
+  assert.deepEqual([t.waitingOnBase, t.failures, t.handledKeys], [['slow'], [], ['comment:5']]);
+  // Missing on a base that is still running (a job that needs another): waits too.
+  assert.deepEqual(collectTriggers({ ...waiting, contexts: [named('later')], basePending: ['slow'] }, []).waitingOnBase, ['later']);
+  // The wait is over, or the base finished without the check: the PR's own.
+  assert.deepEqual(collectTriggers(waiting, [], { baseWaitOver: true }).handledKeys, ['check:mine@h', 'check:slow@h', 'comment:5']);
+  assert.deepEqual(collectTriggers({ ...waiting, contexts: [named('later')], basePending: [], baseSettled: true }, []).handledKeys,
+    ['check:later@h', 'comment:5']);
+});
+
+test('behind its base, and the base head passes the failing check: merge the base in first, alone, once per check', () => {
+  const pr = openPr({ headSha: 'h', base: 'main', baseSha: 'B1', behindBy: 2, contexts: [named('unit'), named('lint')],
+    basePassing: ['unit'], baseSettled: true, threads: [thread('T1', 5)] });
+  let t = collectTriggers(pr, []);
+  assert.deepEqual([t.fire, t.conflict, t.handledKeys, t.threads, t.failures],
+    [true, { base: 'main', baseSha: 'B1', why: 'behind', checks: ['unit'] }, ['behind:unit'], [], []]);
+  // Merged once for that check already: it is fixed by hand with the rest.
+  t = collectTriggers(pr, ['behind:unit']);
+  assert.deepEqual([t.conflict, t.handledKeys], [null, ['check:unit@h', 'check:lint@h', 'comment:5']]);
+  // Up to date with the base, or the base fails it too: no merge.
+  assert.equal(collectTriggers({ ...pr, behindBy: 0 }, []).conflict, null);
+  assert.equal(collectTriggers({ ...pr, basePassing: [], baseFailing: ['unit'] }, []).conflict, null);
+  // A re-run comes first.
+  assert.equal(collectTriggers({ ...pr, contexts: [named('unit', { runId: 3 })] }, []).conflict, null);
+  // The brief: merge, nothing else.
+  const task = buildFixTask({ pr: { url: URL }, triggers: { ...collectTriggers(pr, []).conflict && { conflict: { ...collectTriggers(pr, []).conflict, remote: 'origin' } } } });
+  assert.match(task, /behind its base branch `main`, whose latest commit passes checks that fail here: unit\./);
+  assert.match(task, /git merge --no-ff origin\/main/);
+  assert.match(task, /Change nothing else in this run\./);
+});
+
+test('the fix brief names the checks also failing on the base branch, to leave alone', () => {
+  const pr = { url: URL, base: 'dev', headSha: 'h', contexts: [named('mine'), named('ui proofs'), named('e2e')], baseFailing: ['ui proofs', 'e2e'] };
+  const task = buildFixTask({ pr, triggers: collectTriggers(pr, []) });
+  assert.match(task, /Also failing on the base branch `dev`, not this PR's to fix; leave them alone: ui proofs, e2e\./);
+  assert.doesNotMatch(buildFixTask({ pr: { ...pr, baseFailing: [] }, triggers: collectTriggers({ ...pr, baseFailing: [] }, []) }), /leave them alone/);
+});
+
+test('a failed Actions check is re-run once, recorded before the call; a second failure starts the fix', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps, watcher } = harness({ pr: openPr({ contexts: [named('unit', { databaseId: 1, runId: 77 })] }) });
+  io.rerunResult = () => { assert.deepEqual(getWatch(URL).handled, ['rerun:check:unit@R1'], 'recorded before gh is called'); return { ok: true }; };
+  await watcher.tick();
+  assert.deepEqual([io.calls.rerun, io.calls.start.length], [[77], 0]);
+  // Reads hold until the new attempt shows.
+  const snaps = io.calls.snapshot;
+  io.clock.t += RERUN_SETTLE_MS - 1000; await watcher.tick();
+  assert.equal(io.calls.snapshot, snaps);
+  io.clock.t += 2000;
+  io.pr = openPr({ contexts: [named('unit', { databaseId: 2, runId: 77, status: 'IN_PROGRESS', conclusion: null })] });
+  await watcher.tick();
+  assert.deepEqual([io.calls.rerun.length, io.calls.start.length], [1, 0]);
+  // It fails again: fixed by hand, never re-run twice, even by a restarted watcher.
+  io.pr = openPr({ contexts: [named('unit', { databaseId: 3, runId: 77 })] });
+  await createPrWatcher(deps).tick();
+  assert.deepEqual([io.calls.rerun.length, io.calls.start.length], [1, 1]);
+  assert.match(io.calls.start[0].body.prompt, /log 3/);
+});
+
+test('a re-run passing needs no fix; a rate limit takes the key back and pauses; a refusal falls through to the fix', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps, watcher } = harness({ pr: openPr({ contexts: [named('unit', { runId: 77 })] }) });
+  io.rerunResult = () => ({ ok: false, class: 'rate-limit' });
+  await watcher.tick();
+  let w = getWatch(URL);
+  assert.deepEqual([w.handled, w.retryState.read.class], [[], 'rate-limit']);
+  assert.ok(_testing.rateLimitPause() > io.clock.t);
+
+  _testing.resetRateLimitPause(); updateWatch(URL, { retryState: {} });
+  const logs = []; deps.log = (m) => logs.push(m);
+  io.rerunResult = () => ({ ok: false, class: 'failed', error: 'run is too old' });
+  await createPrWatcher(deps).tick();
+  assert.deepEqual(getWatch(URL).handled, ['rerun:check:unit@R1']);
+  assert.match(logs[0], /refused: run is too old/);
+  io.clock.t += RERUN_SETTLE_MS;
+  await createPrWatcher(deps).tick();
+  assert.equal(io.calls.start.length, 1);
+
+  // Passing after its re-run: nothing to fix.
+  const o2 = seedOrigin();
+  setWatch({ prUrl: URL2, pipelineId: o2, enabled: true });
+  const h2 = harness({ pr: openPr({ url: URL2, contexts: [named('unit', { runId: 5 })] }) });
+  await h2.watcher.tick();
+  h2.io.pr = openPr({ url: URL2, contexts: [named('unit', { runId: 5, conclusion: 'SUCCESS' })] });
+  h2.io.clock.t += RERUN_SETTLE_MS;
+  await h2.watcher.tick();
+  assert.deepEqual([h2.io.calls.rerun, h2.io.calls.start.length], [[5], 0]);
+});
+
+test('a failure waits for the base head\'s result, up to BASE_WAIT_MS, then counts as the PR\'s own', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const pr = openPr({ contexts: [named('unit')], basePending: ['unit'], baseSettled: false });
+  const { io, watcher } = harness({ pr });
+  const t0 = io.clock.t;
+  await watcher.tick();
+  assert.equal(io.calls.start.length, 0);
+  assert.equal(getWatch(URL).retryState.baseWait.since, new Date(t0).toISOString());
+  io.clock.t += BASE_WAIT_MS / 2; await watcher.tick();
+  assert.equal(io.calls.start.length, 0);
+  assert.equal(getWatch(URL).retryState.baseWait.since, new Date(t0).toISOString(), 'the wait is bounded from its start');
+  // The base finishes failing it too: inherited, and the wait ends.
+  io.pr = { ...pr, basePending: [], baseFailing: ['unit'], baseSettled: true };
+  await watcher.tick();
+  assert.deepEqual([io.calls.start.length, getWatch(URL).retryState.baseWait], [0, undefined]);
+  // Waiting again, and the base never finishes: fixed by hand once the wait is over.
+  io.pr = pr; await watcher.tick();
+  io.clock.t += BASE_WAIT_MS; await watcher.tick();
+  assert.equal(io.calls.start.length, 1);
+  assert.deepEqual(getWatch(URL).handled, ['check:unit@R1']);
+});
+
+test('the watcher merges the base in first when the PR is behind and the base head passes, then pushes behind the merge guards', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps, watcher } = harness({ pr: openPr({ base: 'main', baseSha: 'B1', behindBy: 4, contexts: [named('unit')], basePassing: ['unit'], baseSettled: true }) });
+  const fetched = [];
+  const fetch = deps.git.fetch; deps.git.fetch = async (a) => { fetched.push(a.remote); return fetch(a); };
+  deps.originOf = (w) => ({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main', baseRemote: 'upstream' });
+  await watcher.tick();
+  assert.deepEqual(fetched, ['origin', 'upstream']);
+  const { body } = io.calls.start[0];
+  assert.equal(body.title, 'Merge main into PR #1');
+  assert.match(body.prompt, /git merge --no-ff upstream\/main/);
+  let w = getWatch(URL);
+  assert.deepEqual([w.handled, w.pending.conflict], [['behind:unit'], { base: 'main', baseSha: 'B1', why: 'behind', checks: ['unit'], remote: 'upstream' }]);
+  finishRun(io, w, 'M1');
+  await watcher.tick(); await watcher.tick();
+  assert.deepEqual(io.calls.checkMerge, { projectDir: '/repo', baseSha: 'B1', from: 'R1', to: 'M1' });
+  assert.deepEqual(io.calls.push, ['M1']);
+  w = getWatch(URL);
+  assert.deepEqual([w.status, w.fixRuns], ['watching', 1]);
 });
