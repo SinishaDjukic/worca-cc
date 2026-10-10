@@ -397,7 +397,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   function zoomAbout(zNext, sx, sy) {
     const t = T();
-    const z2 = clamp(zNext, ZOOM_MIN, ZOOM_MAX);
+    const z2 = clamp(zNext, view.zoomFloor(), ZOOM_MAX);
     view.setTransform({ x: sx - ((sx - t.x) / t.z) * z2, y: sy - ((sy - t.y) / t.z) * z2, z: z2 });
     paintNav();
   }
@@ -432,7 +432,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     readRect();
     return { x: (R.width - insetRight()) / 2, y: R.height / 2 };
   }
-  /** One discrete zoom press. zoomAbout owns the 0.4..1.6 clamp. */
+  /** One discrete zoom press. zoomAbout owns the clamp: 0.4 (or a lower fit, view.fit)..1.6. */
   function zoomStep(mult) {
     const c = bandCenter();
     zoomAbout(T().z * mult, c.x, c.y);

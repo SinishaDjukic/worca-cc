@@ -733,14 +733,17 @@ export function createGraphView(host, {
     return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   }
   /** `fitBounds` → `{z, tx, ty}` mapped onto this view's `{x, y, z}` transform. */
-  const applyFit = (b, width, height, zoomMax) => {
-    const f = fitBounds(b, { width, height }, { zoomMin: zMin, zoomMax });
+  const applyFit = (b, width, height, zoomMax, zoomMin = zMin) => {
+    const f = fitBounds(b, { width, height }, { zoomMin, zoomMax });
     setTransform({ x: f.tx, y: f.ty, z: f.z });
+    return f;
   };
+  /** The zoom-out floor: zMin, or the last fit() when the graph only fits below it — until the next fit(). */
+  let zFloor = zMin;
 
   /** Zoom about a stage-local point s: w = (s − t)/z is invariant ⇒ t' = s − w·z'. */
   function zoomAbout(zNext, sx, sy) {
-    const z2 = clamp(zNext, zMin, zMax);
+    const z2 = clamp(zNext, zFloor, zMax);
     const wx = (sx - T.x) / T.z;
     const wy = (sy - T.y) / T.z;
     setTransform({ x: sx - wx * z2, y: sy - wy * z2, z: z2 });
@@ -978,14 +981,20 @@ export function createGraphView(host, {
     zoomAbout,
     /** Auto-fit from MODEL bounds into the band left of the floating inspector and above `insetBottom` px of
      *  floating chrome at the bottom (the Workflows chat dock: fitBounds centres inside (0, 0, w, h), so the
-     *  graph lands in the band ABOVE it). Fit NEVER magnifies past 1x; the user zoom range stays zoomMin..zoomMax.
+     *  graph lands in the band ABOVE it). Fit NEVER magnifies past 1x. A graph too big for zoomMin fits below it
+     *  (Presentation), and that fit becomes the zoom-out floor until the next fit; the user zoom range is
+     *  otherwise zoomMin..zoomMax. An unmeasured (hidden) stage keeps the zoomMin clamp.
      *  Runs on view entry/re-entry and template load — and when a chat edit lands out of sight (chat-cards reveal). */
     fit({ insetRight = 0, insetBottom = 0, pad = 60 } = {}) {
       const r = view.readRect();
       const b = bounds(pad);
       if (!b) return;
-      applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, (r.height || 0) - insetBottom), 1);   // never past 1×
+      const measured = r.width > 0 && r.height > 0;
+      const f = applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, (r.height || 0) - insetBottom), 1, measured ? 0 : zMin);   // never past 1×
+      zFloor = Math.min(zMin, f.z);
     },
+    /** The zoom-out floor zoomAbout clamps to (see fit). */
+    zoomFloor: () => zFloor,
     /** Static hosts: fit the graph into a card of width `w` (ResizeObserver-driven). */
     fitToWidth(w) {
       if (isFlow) return view.relayout(w);
