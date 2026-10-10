@@ -29,12 +29,14 @@ test('ghPrChecks: one gh pr view for checks and mergeability; null on gh failure
   const calls = [];
   gitInfo.setRunner(async (cmd, args, opts) => {
     calls.push({ cmd, args, opts });
-    return ok(JSON.stringify({ mergeable: 'CONFLICTING', statusCheckRollup: [run('COMPLETED', 'SUCCESS')] }));
+    return ok(JSON.stringify({ mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY', reviewDecision: '', isDraft: false,
+      statusCheckRollup: [run('COMPLETED', 'SUCCESS')] }));
   });
   assert.deepEqual(await ghPrChecks({ projectDir: '/p', prUrl: PR }),
-    { checks: { state: 'passing', total: 1, failed: 0, pending: 0 }, mergeable: 'CONFLICTING' });
+    { checks: { state: 'passing', total: 1, failed: 0, pending: 0 }, mergeable: 'CONFLICTING',
+      status: { tone: 'bad', label: 'Merge conflicts', detail: 'Check passed' } });
   const gh = calls.filter((c) => c.cmd === 'gh' && c.args[0] === 'pr');
-  assert.deepEqual(gh.map((c) => c.args), [['pr', 'view', PR, '--json', 'mergeable,statusCheckRollup']]);
+  assert.deepEqual(gh.map((c) => c.args), [['pr', 'view', PR, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup']]);
   assert.equal(gh[0].opts.cwd, '/p');
 
   gitInfo.setRunner(async () => ({ ok: false, code: 1, stdout: '', stderr: 'boom' }));
@@ -42,4 +44,29 @@ test('ghPrChecks: one gh pr view for checks and mergeability; null on gh failure
   gitInfo.setRunner(async () => ok('not json'));
   assert.equal(await ghPrChecks({ projectDir: '/p', prUrl: PR }), null);
   assert.equal(await ghPrChecks({ projectDir: '/p', prUrl: 'https://gitlab.com/a/b/-/merge_requests/1' }), null);
+});
+
+test('prMergeStatus: the verdict GitHub\'s merge box would lead with, in its order', async () => {
+  const { prMergeStatus } = await import('../src/core/git-info.mjs');
+  const pass = { state: 'passing', total: 12, failed: 0, pending: 0 };
+  const fail = { state: 'failing', total: 11, failed: 3, pending: 0 };
+  const runs = { state: 'pending', total: 11, failed: 0, pending: 4 };
+  const rows = [
+    [{ checks: pass, mergeState: 'CLEAN' }, 'ok', 'Ready to merge', 'All 12 checks passed'],
+    [{ checks: pass, mergeState: 'UNSTABLE' }, 'ok', 'Ready to merge', 'All 12 checks passed'],
+    [{ checks: pass, draft: true, mergeState: 'DIRTY' }, 'none', 'Draft', 'All 12 checks passed'],
+    [{ checks: fail, mergeable: 'CONFLICTING' }, 'bad', 'Merge conflicts', '3 of 11 checks failed'],
+    [{ checks: pass, mergeState: 'DIRTY' }, 'bad', 'Merge conflicts', 'All 12 checks passed'],
+    [{ checks: pass, reviewDecision: 'CHANGES_REQUESTED', mergeState: 'BLOCKED' }, 'bad', 'Changes requested', 'All 12 checks passed'],
+    [{ checks: fail, mergeState: 'BLOCKED', reviewDecision: 'REVIEW_REQUIRED' }, 'bad', '3 of 11 checks failed', ''],
+    [{ checks: runs, mergeState: 'BLOCKED' }, 'run', 'Checks running · 7 of 11 done', ''],
+    [{ checks: pass, mergeState: 'BLOCKED', reviewDecision: 'REVIEW_REQUIRED' }, 'wait', 'Review required', 'All 12 checks passed'],
+    [{ checks: pass, mergeState: 'BEHIND' }, 'wait', 'Out of date with the base branch', 'All 12 checks passed'],
+    [{ checks: pass, mergeState: 'BLOCKED' }, 'wait', 'Blocked by branch rules', 'All 12 checks passed'],
+    [{ checks: pass, mergeState: 'UNKNOWN' }, 'ok', 'All 12 checks passed', ''],
+    [{ mergeState: 'UNKNOWN' }, 'none', '', ''],
+  ];
+  for (const [input, tone, label, detail] of rows) {
+    assert.deepEqual(prMergeStatus(input), { tone, label, detail }, JSON.stringify(input));
+  }
 });

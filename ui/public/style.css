@@ -4804,11 +4804,12 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
 .rd-prs-ico{flex:0 0 auto;}
 .rd-prs-sum .is-ok,.rd-prs-ico.is-ok{color:var(--green-ink);}
-.rd-prs-sum .is-run,.rd-prs-ico.is-run{color:var(--amber-ink);}
+.rd-prs-sum .is-run,.rd-prs-ico.is-run,.rd-prs-ico.is-wait{color:var(--amber-ink);}
 .rd-prs-sum .is-bad,.rd-prs-ico.is-bad{color:var(--red-ink);}
 .rd-prs-ico.is-run{animation:ws-spin 1.2s linear infinite;}
 .rd-prs-text{font-weight:600;color:var(--ink);}
 .rd-prs-sep{color:var(--ink-3);}
+.rd-prs-detail{color:var(--ink-2);}
 .rd-prs-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
 .rd-prs-link:hover{text-decoration:underline;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}

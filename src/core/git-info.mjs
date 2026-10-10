@@ -467,16 +467,47 @@ export function rollupChecks(items) {
   return out;
 }
 
-/** A github.com PR's checks rollup and mergeability in one gh call; null on any failure. Never throws. */
+const checksLabel = (c) => (c.state === 'failing' ? `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`
+  : c.state === 'pending' ? `Checks running · ${c.total - c.pending} of ${c.total} done`
+    : c.state === 'passing' ? (c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`) : '');
+
+/**
+ * The PR's one-line verdict, in the order GitHub's merge box weighs it: draft, conflicts, changes
+ * requested, failing or running checks, review required, behind the base, blocked by branch rules,
+ * then ready to merge. `detail` is the checks line when the verdict is about something else.
+ * tone: ok | run (checks running) | wait (on a person or the base) | bad | none. GitHub computes mergeStateStatus lazily; UNKNOWN falls back to the checks.
+ */
+export function prMergeStatus({ checks, mergeable, mergeState, reviewDecision, draft } = {}) {
+  const c = checks || { state: 'none', total: 0, failed: 0, pending: 0 };
+  const state = String(mergeState || '').toUpperCase();
+  const review = String(reviewDecision || '').toUpperCase();
+  const detail = checksLabel(c);
+  const say = (tone, label, withChecks = true) => ({ tone, label, detail: withChecks ? detail : '' });
+  if (draft) return say('none', 'Draft');
+  if (mergeable === 'CONFLICTING' || state === 'DIRTY') return say('bad', 'Merge conflicts');
+  if (review === 'CHANGES_REQUESTED') return say('bad', 'Changes requested');
+  if (c.state === 'failing') return say('bad', detail, false);
+  if (c.state === 'pending') return say('run', detail, false);
+  if (review === 'REVIEW_REQUIRED') return say('wait', 'Review required');
+  if (state === 'BEHIND') return say('wait', 'Out of date with the base branch');
+  if (state === 'BLOCKED') return say('wait', 'Blocked by branch rules');
+  if (['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(state)) return say('ok', 'Ready to merge');
+  return detail ? say(c.state === 'passing' ? 'ok' : 'none', detail, false) : say('none', '', false);
+}
+
+/** A github.com PR's checks rollup, mergeability and merge verdict in one gh call; null on any failure. Never throws. */
 export async function ghPrChecks({ projectDir, prUrl }) {
   const repo = ownerRepoOfPrUrl(prUrl);
   if (!repo || !(await ghUsable())) return null;
   try {
-    const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,statusCheckRollup'],
+    const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,mergeStateStatus,reviewDecision,isDraft,statusCheckRollup'],
       { cwd: projectDir, env: (await githubEnv('read', { repo })).env });
     if (!r.ok) return null;
     const v = JSON.parse(r.stdout);
-    return { checks: rollupChecks(v.statusCheckRollup), mergeable: normalizeMergeable(v.mergeable) };
+    const checks = rollupChecks(v.statusCheckRollup);
+    const mergeable = normalizeMergeable(v.mergeable);
+    return { checks, mergeable,
+      status: prMergeStatus({ checks, mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision, draft: v.isDraft === true }) };
   } catch { return null; }
 }
 

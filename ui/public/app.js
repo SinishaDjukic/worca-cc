@@ -29258,6 +29258,7 @@ async function loadRdPrStatus(host, scope) {
   finally { host._prLoading = false; }
   const w = c?.watch;
   const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
+    status: c?.status && typeof c.status.label === 'string' ? c.status : null,
     watch: w && typeof w.watching === 'boolean' ? w : null };
   prStatusCache.set(key, next);
   if (host.dataset.key !== key) return;            // the slot moved to another run meanwhile
@@ -29272,22 +29273,24 @@ const PR_STATUS_ICONS = {
   'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
   'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
   'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
   none: '<circle cx="12" cy="12" r="9"/>',
 };
 function renderRdPrStatus(host, scope, s) {
-  const sig = JSON.stringify([s.checks, s.mergeable, s.watch]);
+  const sig = JSON.stringify([s.checks, s.status, s.watch]);
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
   const c = s.checks;
   const wst = s.watch;
-  // The headline: the checks, coloured by the worst; then a conflict and what the watch is doing.
-  const [tone, text] = !c ? [null, ''] : c.state === 'failing' ? ['is-bad', `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`]
-    : c.state === 'pending' ? ['is-run', `Checks running · ${c.total - c.pending} of ${c.total} done`]
-      : c.state === 'passing' ? ['is-ok', c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`]
-        : ['none', 'No checks'];
+  // The headline: GitHub's merge verdict (GET /api/pr/checks `status`: Ready to merge, Merge
+  // conflicts, Review required, the checks…), its checks line when the verdict is about something
+  // else, then what the watch is doing.
+  const v = s.status;
+  const [tone, text] = v && v.label ? [v.tone === 'none' ? 'none' : `is-${v.tone}`, v.label]
+    : c ? ['none', 'No checks'] : [null, ''];
   const notes = [];
-  if (s.mergeable === 'CONFLICTING') notes.push(span('is-bad', 'Conflicts'));
+  if (v && v.label && v.detail) notes.push(span('rd-prs-detail', v.detail));
   if (wst) {
     const doing = hdPrWatchLabel(wst);
     if (doing) notes.push(span(hdPrWatchTone(wst) === 'bad' ? 'is-bad' : 'is-run', doing));
