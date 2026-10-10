@@ -6979,12 +6979,13 @@ app.get('/api/pr/watch', async (req, res) => {
   try { const t = await prWatchTarget(req.query, res); if (t) res.json(watchView(getWatch(t.pr.url))); }
   catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
-// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending }, mergeable }
-// for a run's open github.com PR (the run page's status pill); checks null when gh cannot answer.
+// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending }, mergeable, watch }
+// for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot answer).
 app.get('/api/pr/checks', async (req, res) => {
   try {
     const t = await prWatchTarget(req.query, res); if (!t) return;
-    res.json((await ghPrChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' });
+    const read = (await ghPrChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' };
+    res.json({ ...read, watch: watchView(getWatch(t.pr.url)) });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 app.post('/api/pr/watch', async (req, res) => {

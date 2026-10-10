@@ -1280,19 +1280,22 @@ test('Watch PR: unchecked on every open; ticked sends watch:true, unticked sends
   assert.ok(!('watch' in JSON.parse(prPosts(ctx)[0].opts.body)));
 });
 
-test('History: an open PR shows its watch state; each state reads as defined', async () => {
-  for (const [state, label, button] of [
-    [WATCH(), 'Watching', 'Stop watching'],
-    [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'Stop watching'],
-    [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'Watch PR'],
-    [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'Stop watching'],
-    [WATCH({ watching: false, status: null }), 'Not watching', 'Watch PR'],
+test('History: an open PR shows its watch switch; words only while the watch acts', async () => {
+  for (const [state, label, pressed] of [
+    [WATCH(), '', 'true'],
+    [WATCH({ status: 'fixing', activePipelineId: 'f1' }), 'Fixing', 'true'],
+    [WATCH({ watching: false, status: 'publishing' }), 'Disabled — finishing', 'false'],
+    [WATCH({ status: 'needs-person', reason: 'cap' }), 'Needs a person', 'true'],
+    [WATCH({ watching: false, status: null }), '', 'false'],
   ]) {
     const ctx = await bootShip({ rows: [openRow()], arms: (url) => (/\/api\/pr\/watch\?/.test(url) ? ok(state) : null) });
     await openDetail(ctx); await settle(ctx.window);
     assert.equal(hdWatchState(ctx.window).textContent, label);
+    assert.equal(hdWatchState(ctx.window).hidden, !label, 'no words for a plain on or off');
     assert.equal(hdWatch(ctx.window).hidden, false);
-    assert.equal(hdWatch(ctx.window).textContent, button);
+    assert.equal(hdWatch(ctx.window).textContent, 'Watch');
+    assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), pressed);
+    assert.equal(hdWatch(ctx.window).querySelector('.switch').classList.contains('on'), pressed === 'true');
     const q = new URL(watchGets(ctx)[0].url, 'http://x').searchParams;
     assert.deepEqual([q.get('id'), q.get('projectKey'), q.get('memberKey')], [ROW.id, KEY, null]);
   }
@@ -1318,7 +1321,6 @@ test('History: toggling POSTs the flip and repaints; a failure raises an inline 
   await openDetail(ctx); await settle(ctx.window);
   click(ctx.window, hdWatch(ctx.window)); await settle(ctx.window);
   assert.deepEqual(JSON.parse(watchPosts(ctx)[0].opts.body), { id: ROW.id, projectKey: KEY, watch: true });
-  assert.equal(hdWatchState(ctx.window).textContent, 'Watching');
   assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), 'true');
   failPost = true;
   click(ctx.window, hdWatch(ctx.window)); await settle(ctx.window);
@@ -1326,7 +1328,7 @@ test('History: toggling POSTs the flip and repaints; a failure raises an inline 
   const header = ctx.window.document.querySelector('#hist-detail .hd-header');
   assert.equal(header.querySelector('.card-alert').getAttribute('role'), 'alert');
   assert.match(cardAlertOf(header).detail, /disk full/);
-  assert.equal(hdWatchState(ctx.window).textContent, 'Watching', 'a failed toggle keeps the shown state');
+  assert.equal(hdWatch(ctx.window).getAttribute('aria-pressed'), 'true', 'a failed toggle keeps the shown state');
   assert.equal(hdWatch(ctx.window).disabled, false);
 });
 

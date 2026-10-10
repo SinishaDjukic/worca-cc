@@ -21466,10 +21466,22 @@ function paintHdPr(screen, record, data) {
 const hdPrWatchGen = new Map();
 const hdPrWatchKey = (record, memberKey = '') => `${record.projectKey || ''}\u0000${record.id}\u0000${memberKey}`;
 const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
+// Words only while the watch is doing something: the switch already says on or off.
 function hdPrWatchLabel(state) {
-  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : 'Not watching';
+  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
   if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
-  return state.status === 'needs-person' ? 'Needs a person' : 'Watching';
+  return state.status === 'needs-person' ? 'Needs a person' : '';
+}
+const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
+const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
+/** The Watch switch's face: the word and the track, on or off. Shared by the header and the run page card. */
+function prWatchSwitchFace(watching) {
+  const sw = document.createElement('span');
+  sw.className = `switch${watching ? ' on' : ''}`;
+  sw.setAttribute('aria-hidden', 'true');
+  const word = document.createElement('span');
+  word.textContent = 'Watch';
+  return [word, sw];
 }
 /** Paint one Watch PR control. `host` owns the button, its state label and its inline alert. */
 async function paintHdPrWatch(screen, record, host, memberKey = '') {
@@ -21483,10 +21495,13 @@ async function paintHdPrWatch(screen, record, host, memberKey = '') {
   let shown = null;
   const render = (state) => {
     shown = state;
-    label.textContent = hdPrWatchLabel(state);
-    label.hidden = false;
-    btn.textContent = state.watching ? 'Stop watching' : 'Watch PR';
+    const doing = hdPrWatchLabel(state);
+    label.textContent = doing;
+    label.dataset.tone = hdPrWatchTone(state);
+    label.hidden = !doing;
+    btn.replaceChildren(...prWatchSwitchFace(!!state.watching));
     btn.setAttribute('aria-pressed', String(!!state.watching));
+    btn.title = HD_PR_WATCH_TIP;
     btn.hidden = false;
   };
   const gen = bump();
@@ -21558,8 +21573,8 @@ function hdWsRepoItem(m) {
     li.appendChild(pill);
     if (prStateOf(m.pr) === 'OPEN') {
       const watch = document.createElement('button');
-      watch.type = 'button'; watch.className = 'hd-pr-watch btn-ghost'; watch.hidden = true;
-      watch.textContent = 'Watch PR'; watch.dataset.minLevel = 'advanced';
+      watch.type = 'button'; watch.className = 'hd-pr-watch'; watch.hidden = true;
+      watch.textContent = 'Watch'; watch.dataset.minLevel = 'advanced';
       const state = document.createElement('span');
       state.className = 'hd-pr-watch-state hint'; state.hidden = true; state.dataset.minLevel = 'advanced';
       li.append(' ', watch, ' ', state);
@@ -29236,12 +29251,12 @@ function paintRdPrStatus(host, scope) {
 async function loadRdPrStatus(host, scope) {
   const key = prStatusKey(scope);
   const q = new URLSearchParams({ id: scope.id, projectKey: scope.projectKey || '' });
-  const read = (url) => fetch(url).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null);
   clearTimeout(host._prTimer);
   host._prLoading = true;
-  let c; let w;
-  try { [c, w] = await Promise.all([read(`/api/pr/checks?${q}`), read(`/api/pr/watch?${q}`)]); }
+  let c;
+  try { c = await fetch(`/api/pr/checks?${q}`).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null); }
   finally { host._prLoading = false; }
+  const w = c?.watch;
   const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
     watch: w && typeof w.watching === 'boolean' ? w : null };
   prStatusCache.set(key, next);
@@ -29274,9 +29289,8 @@ function renderRdPrStatus(host, scope, s) {
   const notes = [];
   if (s.mergeable === 'CONFLICTING') notes.push(span('is-bad', 'Conflicts'));
   if (wst) {
-    const doing = !wst.watching ? (HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Disabled, finishing a fix' : '')
-      : HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Fixing' : wst.status === 'needs-person' ? 'Needs a person' : '';
-    if (doing) notes.push(span(wst.status === 'needs-person' ? 'is-bad' : 'is-run', doing));
+    const doing = hdPrWatchLabel(wst);
+    if (doing) notes.push(span(hdPrWatchTone(wst) === 'bad' ? 'is-bad' : 'is-run', doing));
     // The fix run the watch started: its live page while it runs here, else its saved run.
     if (HD_PR_WATCH_ACTIVE.has(wst.status) && wst.activePipelineId) {
       const pid = wst.activePipelineId;
@@ -29305,14 +29319,14 @@ function renderRdPrStatus(host, scope, s) {
     const row = document.createElement('label');
     row.className = 'rd-prs-watch';
     row.dataset.minLevel = 'advanced';
-    row.title = 'Watch: start a fix run when checks fail or reviewers ask for changes';
-    const sw = document.createElement('span');
-    sw.className = `switch${wst.watching ? ' on' : ''}`;
+    row.title = HD_PR_WATCH_TIP;
+    const [word, sw] = prWatchSwitchFace(!!wst.watching);
+    sw.removeAttribute('aria-hidden');
     sw.setAttribute('role', 'switch');
     sw.setAttribute('aria-checked', String(!!wst.watching));
     sw.setAttribute('aria-label', 'Watch this pull request');
     sw.tabIndex = 0;
-    row.append(span('', 'Watch'), sw);
+    row.append(word, sw);
     const toggle = async () => {
       if (sw.classList.contains('disabled')) return;
       sw.classList.add('disabled');

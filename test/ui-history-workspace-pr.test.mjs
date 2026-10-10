@@ -377,7 +377,7 @@ test('workspace detail: each open member PR gets its own watch control and state
   await openDetail(ctx, wksDetailHash); await settle(ctx.window, 6);
   const lis = [...hdRepos(ctx.window).querySelectorAll('.hd-pr-repo')];
   const stateOf = (li) => li.querySelector('.hd-pr-watch-state')?.textContent ?? null;
-  assert.deepEqual(lis.map(stateOf), ['Fixing', 'Not watching', null], 'merged members get no control');
+  assert.deepEqual(lis.map(stateOf), ['Fixing', '', null], 'merged members get no control');
   // Same level gate as the run-level control in the header.
   for (const el of lis[0].querySelectorAll('.hd-pr-watch, .hd-pr-watch-state')) assert.equal(el.dataset.minLevel, 'advanced');
   assert.equal(ctx.window.document.querySelector('#hist-detail .hd-header .hd-row1 .hd-pr-watch').hidden, true, 'no run-level control on a workspace');
