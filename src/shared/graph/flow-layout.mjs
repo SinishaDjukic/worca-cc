@@ -5,7 +5,8 @@
 // horizontal gutters between rows. Pure and DOM-free like layout.mjs; the view
 // applies the positions and paints the routes. No agent key is read (D23).
 // A port of the 2026-09-05 mockup's layoutFlow()/routeAll() (docs/superpowers/mockups).
-import { NODE_W, nodeSize, portAnchor } from './geometry.mjs';
+import { NODE_W, LABEL_H, nodeSize, portAnchor } from './geometry.mjs';
+import { SWOOP_DROP } from './curves.mjs';
 import { rankNodes } from './layout.mjs';
 import { classifyLoops } from './loops.mjs';
 import { portsOf } from './ports.mjs';
@@ -102,13 +103,14 @@ export function flowLayout(tpl, portsFn, {
     rows[r].ids.push(id);
     pos[id] = { r, c, h, x: 0, y: 0 };
   });
+  // Each row's cards sit LABEL_H·s below the row's top: the label row above every card is part of the row.
   let y = padY;
-  for (const row of rows) { row.top = y; y = y + row.h + rg; }        // left-to-right, the order the tests reproduce
-  // A backwards wire inside the LAST row is routed through the bottom gutter and carries its `N×` badge
-  // there (routeFlow's `g === rows.length - 1` case), so the height must bill that band too — billing the
-  // cards alone left half a badge sitting on the host's border (it read as clipped).
+  for (const row of rows) { row.top = y + LABEL_H * scale; y = row.top + row.h + rg; }
+  // A backwards wire inside the LAST row swoops under it (curves.mjs) and carries its ≤N pill at the
+  // lowest point, so the height bills that band: the drop (scaled) plus half a pill (FLOW_BADGE_H / 2 = 9,
+  // NOT scaled — the pill is 18px on every host) + 1 for its border. Billing the cards alone clipped the pill.
   const trunks = bottomGutterTrunks(tpl, pos, rows.length - 1);
-  const bottomBand = trunks ? END_OFF + Math.min(FLOW_GUT_ROOM, (trunks - 1) * FLOW_LANE) + FLOW_BADGE_H / 2 : 0;
+  const bottomBand = trunks ? SWOOP_DROP * scale + FLOW_BADGE_H / 2 + 1 : 0;
   // Height from the LAST row's own numbers (never `y - rg + padY`: 0.65-scaled sums do not round-trip through
   // a subtraction — 464.775 vs 464.77500000000003 — and the placement test compares with `===`).
   const last = rows[rows.length - 1];

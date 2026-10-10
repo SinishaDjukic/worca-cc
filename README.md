@@ -10,8 +10,8 @@ work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
 keeping every run isolated in its own git worktree and branch. Pick **Auto**
-and Worca chooses the workflow for the task, draw your own in the **Workflow
-Composer**, or start the shipped **Presentation** workflow to turn a brief into
+and Worca chooses the workflow for the task, draw your own in **Workflows** (or
+ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
 a slide deck.
 
 It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
@@ -128,11 +128,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   - *Presentations* — Deck Clarify, Narrative Spine, Visual System, Deck
     Builder, Deck Audit, Deck Review, Deck Outputs, Deck Export.
   - *Memory defragment* — restructures one memory scope.
-- **Agents page** — **Build › Nodes › Agents** (Expert) lists every agent
+- **Agents in the Library** — **Workflows › Library › Agents** lists every agent
   with its ports; built-ins are read-only, so **Duplicate** one to get an
-  editable copy ([docs/ui-levels.md](docs/ui-levels.md#agents-page-e)).
-- **AI-assisted agent creation** — **Create agent** (or **Create agent…** in
-  the composer): give a name, a purpose and a description and Worca drafts
+  editable copy ([docs/ui-levels.md](docs/ui-levels.md#workflows)).
+- **AI-assisted agent creation** — **+ New agent** in the Library (or **New
+  agent…** in the canvas **+** menu): give a name, a purpose and a description and Worca drafts
   both the system prompt and the metadata, or paste your own prompt and let it
   infer just the wiring; edit the draft, **Regenerate**, **Save agent**.
 - **Ask forms** — an agent that needs a human can declare the form its
@@ -144,8 +144,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Implementation, Narrative Spine, Visual System and Deck Outputs ask this way;
   plugins can ship forms too.
 - **Per-agent model & effort** — pick a model and reasoning effort (medium,
-  high, xhigh, max) per agent node: in the composer's **Info** pane for the
-  workflow, or in New pipeline › **Advanced** › **Agents** for one project,
+  high, xhigh, max) per agent node: in the toolbar over a selected agent card
+  in Workflows, or in New pipeline › **Advanced** › **Agents** for one project,
   kept for its later runs (**Save as workflow defaults** moves them into the
   workflow). A project pick beats a team-policy default, which beats the
   workflow's own; `--model` only fills nodes with none. Fan-out agents also
@@ -158,8 +158,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   with your own Node.js, Shell or Python program (Python when the host has an
   interpreter), so a test gate or a transform costs no model call. See
   [docs/scripts.md](docs/scripts.md).
-- **The Scripts page** — **Build › Nodes › Scripts** (Expert) lists every
-  built-in, own and plugin script with its runtime and ports. **New script**
+- **Scripts in the Library** — **Workflows › Library › Scripts** lists every
+  built-in, own and plugin script with its runtime and ports. **+ New script**
   picks a runtime, then reads the ports and params from the code as you type;
   **Duplicate** copies any script into your own folder; **Delete** refuses while
   a saved workflow still places it. Built-in and plugin scripts open read-only.
@@ -172,28 +172,46 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   steps behind the presentation and workspace-map workflows come built in.
   Plugins can ship scripts and test cases of their own.
 
-![Scripts page in Expert mode: built-in Shell, JavaScript, Python, Git diff, Deck PDF, Deck audio and Deck bundle cards, each with a runtime chip and Open and Duplicate buttons, under a Filter scripts box and a New script button](docs/screenshots/scripts.png)
+![The Workflows view with the Library on its Scripts tab: built-in Git diff, Workspace map, Deck PDF, Deck audio, Deck bundle, Shell, JavaScript and Python rows grouped by domain, each with a runtime chip and its port line, under the All, Built-in and Yours chips and a + New script button, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
 
-### Workflow Composer
+### Workflows
 
-- **Compose your own pipeline** — **Build › Workflow Composer** (Advanced) is a
-  canvas: click or drag a card from the palette and wire its typed ports
-  (`md`, `json`, `void`). Each card declares what it consumes and produces, a
+- **A full-screen editor** — **Build › Workflows** (every interface mode) is a
+  canvas of frosted cards: drag a card from the Library, or add one with the
+  black **+**, and wire its typed ports (`md`, `json`, `void`) with smooth
+  wires coloured by type. Each card declares what it consumes and produces, a
   wire only connects compatible ports, and **Save** stays off until the graph
   is valid. A blocking output wired back to an earlier card becomes a loop
-  (drawn amber): a reviewer keeps sending work back until it passes or the
-  loop hits its cycle cap — 3 by default, set per loop wire in Expert mode.
-  Flow cards — **Task** (the run's request), **End** (the result) and, in
-  Expert, **AND**, **OR**, **Combine** — express joins, choices and merges
-  without any code. See [`docs/ui-levels.md`](docs/ui-levels.md#workflow-composer-page-a)
-  for what each level shows.
-- **Saved pipelines** — the list under the canvas is tabbed by domain; click a
-  card to open it. The built-in **Default** and **Memory defragment** open
-  read-only (Save makes a copy). Saved pipelines are offered in New pipeline's
-  **Workflow** picker, and so in schedules.
-- **Share a pipeline** — **Export…** on a saved card offers three formats.
-  A **JSON file** carries the graph only; the recipient picks it up with
-  **Import…** (a taken name gets a ` (2)` suffix; nothing is ever overwritten,
+  (drawn amber, swooping under the cards with a **≤N** pill): a reviewer keeps
+  sending work back until it passes or the loop hits its cycle cap — 3 by
+  default, set per loop wire in its toolbar. Flow cards — **Task** (the run's
+  request), **End** (the result), **AND**, **OR**, **Combine** — express joins,
+  choices and merges without any code. A selected card's toolbar sets its
+  model, effort and await-all; **More** holds every other setting. The top
+  bar keeps only Back, **Workflows ▾** (New canvas, Open…, Import…, Export…),
+  the name, the Library toggle and **Save**; **Auto-layout** and the zoom menu
+  sit bottom right. See [`docs/ui-levels.md`](docs/ui-levels.md#workflows).
+- **The Library** — the card beside the canvas switches between **Agents**,
+  **Scripts** and **Workflows**. Every agent and script action lives there (view,
+  edit, create, duplicate, delete, the script test bench); their editors open in
+  a sheet inside the view. The old `#composer`, `#agents`, `#scripts` and
+  `#agent-create` addresses land in the view.
+- **The composer chat** — the pill beside **+** grows into a chat on Ask Worca's
+  engine that only works on the open canvas: it adds, removes and rewires
+  agent and script cards and sets model, effort, max cycles and await-all (each
+  change lands at once with an inline **Undo**), builds whole workflows
+  (**Apply to canvas** opens one as a new unsaved workflow), and drafts new
+  agents (metadata and system prompt) and scripts (code, interface and test
+  cases, which it can test) that you **Save** from their card. It never runs
+  anything: save the workflow, then start a run from **New run**. **New chat**
+  starts over.
+- **Saved pipelines** — the Library's **Workflows** tab lists them with domain
+  chips; click a row to open it. The built-in **Default** and **Memory
+  defragment** open read-only (Save makes a copy). Saved pipelines are offered
+  in New pipeline's **Workflow** picker, and so in schedules.
+- **Share a pipeline** — **Export…** on a Library row (or in **Workflows ▾**)
+  offers three formats. A **JSON file** carries the graph only; the recipient
+  picks it up with **Workflows ▾ › Import…** (a taken name gets a ` (2)` suffix; nothing is ever overwritten,
   and any script commands are shown for approval first). In Expert, a
   **Claude Code skill** writes a `SKILL.md` plus the agents it dispatches
   under `.claude/`, so the pipeline runs inside Claude Code without Worca
@@ -205,7 +223,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca workflow list`, `worca workflow export <id> --format json|claude|plugin`
   and `worca workflow import <file>`.
 
-![Workflow Composer with the built-in Default pipeline on the canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires back from the reviewers — beside the Agents palette of coding agents with their in/out ports, above the Saved pipelines list tabbed coding, presentation and shared](docs/screenshots/composer.png)
+![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab (Default, Memory defragment, Presentation), with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
 
 ### Presentations
 
@@ -603,11 +621,11 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   says why, and moves on when you do the real thing; Esc or **Skip** leaves it. **Hide from sidebar**
   drops the pill and **Settings › General › Getting started** brings it back. See
   [`docs/getting-started.md`](docs/getting-started.md).
-- **Three interface modes** — **Simple** shows the core loop: New pipeline, Runs, Projects, budget
-  limits and Ask Worca. **Advanced** adds Schedules, Statistics, Workflow Composer and Workspaces,
-  plus branches, guardrails, per-agent models, the diff, pull requests, plugins, memory and the live
-  log. **Expert** shows everything: Agents and Scripts, Team metrics, Team policy, Models,
-  diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
+- **Three interface modes** — **Simple** shows the core loop: New pipeline, Runs, Projects,
+  Workflows (agents and scripts included), budget limits and Ask Worca. **Advanced** adds
+  Schedules, Statistics and Workspaces, plus branches, guardrails, per-agent models, the diff, pull
+  requests, plugins, memory and the live log. **Expert** shows everything: Team metrics, Team
+  policy, Models, diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
   anything.
 - **A view preference, not a permission** — **Interface mode** in the account menu (the corner at
   the foot of the sidebar) names the current mode and lists the three. A choice applies at
@@ -806,7 +824,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Getting started](docs/getting-started.md) — the welcome dialog, the Getting started checklist and its spotlight guides
 - [UI levels](docs/ui-levels.md) — Simple, Advanced and Expert: what each interface mode shows, and where every element sits
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
-- [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Scripts page, testing a script by itself
+- [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan

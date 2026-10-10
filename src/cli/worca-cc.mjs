@@ -1491,7 +1491,7 @@ working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
-const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow (as a Claude Code skill, as
+const WORKFLOW_HELP = `worca workflow — export a saved workflow (as a Claude Code skill, as
 shareable JSON, or as a Worca plugin) and import one shared as JSON
 
 Usage:

@@ -498,3 +498,44 @@ test('POST /messages is 403 while the total cost window is spent — chat stops 
     await setTotalCostLimitUsd(null);
   }
 });
+
+// Workflows view: the composer chat takes attachments through the SAME route path as an Ask chat — stored, the small
+// text ones inlined into the turn prompt, the rest listed on the [worca context] attachments: line for read_attachment.
+const turnOf = async (threadId) => {
+  for (let i = 0; i < 500 && !mod._testing.askJobs.get(threadId)?.turn; i++) await new Promise((r) => setTimeout(r, 10));
+  return mod._testing.askJobs.get(threadId).turn;
+};
+
+test('a composer chat (Workflows view) takes attachments as an Ask chat does: stored, small text inlined, the rest listed for read_attachment', async () => {
+  const thread = (await (await post('/api/ask/threads', { mode: 'composer' })).json()).thread;
+  assert.equal(thread.mode, 'composer');
+  const composer = { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34', graph: { name: 'x', nodes: [], wires: [] }, selection: null, drafts: [] };
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from([0, 1, 2, 0xfe, 0xff])]);
+  const { ws, msgs, opened } = openWs(`?threadId=${thread.id}`);
+  await opened;
+  const ok = await post(`/api/ask/threads/${thread.id}/messages`, {
+    text: 'Build a workflow from the spec', ...MODEL, context: {}, composer,
+    attachments: [
+      { name: 'spec.md', dataBase64: Buffer.from('# Spec\nPlan, then implement.').toString('base64') },
+      { name: 'flow.png', dataBase64: png.toString('base64') },
+    ],
+  });
+  assert.equal(ok.status, 202, 'the Workflows chat no longer refuses attachments');
+  const body = await ok.json();
+  assert.deepEqual(body.attachments.map((a) => [a.name, a.kind, a.mime]), [['spec.md', 'text', 'text/markdown'], ['flow.png', 'image', 'image/png']]);
+  const [spec, flow] = body.attachments;
+  const turn = await turnOf(thread.id);
+  assert.ok(turn.prompt.startsWith('[worca context]'));
+  assert.ok(turn.prompt.includes('[composer canvas]'), 'the canvas still rides the turn');
+  assert.ok(turn.prompt.includes(`attachment ${spec.id} spec.md\n# Spec\nPlan, then implement.`), 'the small text file is inlined');
+  assert.match(turn.prompt, new RegExp(`attachments: ${flow.id} flow\\.png \\(image/png, 1 KB, use read_attachment\\)`), 'the image is listed for read_attachment');
+  assert.doesNotMatch(turn.prompt, /attachments: [^\n]*spec\.md/, 'an inlined file is not listed again');
+  await waitFor(() => framesFor(msgs, thread.id).some((f) => f.type === 'ask-done'));
+  const snap = await snapshot(thread.id);
+  // The ledger orders rows by created_at, then id: two files stored in one millisecond come back in random-id order.
+  assert.deepEqual(snap.attachments.map((a) => a.name).sort(), ['flow.png', 'spec.md']);
+  const user = snap.messages.find((m) => m.role === 'user');
+  assert.ok(user.blocks.some((b) => b.kind === 'attachment' && b.id === flow.id && b.attKind === 'image'));
+  assert.equal(snap.thread.composer.sessionId, 'cs_ab12cd34', 'the canvas is still stored before the turn');
+  ws.close();
+});

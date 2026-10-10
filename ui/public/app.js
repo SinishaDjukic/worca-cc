@@ -43,6 +43,7 @@ const state = {
   workflowCache: {}, // { [id]: WorkflowTemplate } from GET /api/workflows/:id
   stepDefaults: {}, // { [key]: { fanOut } } sidecar defaults from /api/config steps
   agentsList: [], // GET /api/agents?all=1 list for the Agents management view
+  agentSheetKey: '', // the Workflows view's agent sheet (#workflows/agents/<key>) shows this one agent
   scriptsList: [],   // GET /api/scripts cache; dropped on every scripts-changed frame
   mockWriterRoles: [], // closed mock-role list from /api/agents (drives the agent form)
   historyAll: [],    // full /api/history dataset; client-side filter cache
@@ -91,7 +92,7 @@ import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP,
 } from './memory-view.mjs';
-import { createScriptsController } from './scripts-view.mjs';
+import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
@@ -153,12 +154,16 @@ import {
 } from './source-pane.mjs';
 import { renderStatsBody, renderBudgetReadout, renderCostPauseBanner } from './stats-view.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
+import { createLibrary } from './workflows/library.mjs';
+import { createChatDock } from './workflows/chat-dock.mjs';
+import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
 // lived in the composer's saved list, retired in P5 Task 8). P6's Running list is
 // its first caller.
-import { thumbnailFor, createGraphView } from './graph/view.mjs';
+import { createGraphView } from './graph/view.mjs';
 import { manifestPortsFn, manifestTemplate, manifestAgents } from './graph/run-decor.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
@@ -453,7 +458,6 @@ const el = {
   agentsMsg: $('#agents-msg'),
   scriptsHost: $('#scripts-host'),
   scriptsMsg: $('#scripts-msg'),
-  agentCreateBtn: $('#agent-create-btn'),
 
   // Projects management view
   projectsList: $('#projects-list'),
@@ -755,9 +759,8 @@ function applySidebarCollapsed() {
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
-  // The rail's own squares only (children of .nav): the Nodes row (a flyout trigger, no data-nav) gets
-  // its label too, while Agents and Scripts inside its flyout show theirs and need no tooltip.
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]), .nav > .nav-group')) {
+  // The rail's own squares only (children of .nav).
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -790,23 +793,6 @@ function setSidebarCollapsed(v) {
 
 $('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
 
-// ── Nodes (Agents + Scripts): a side flyout off the Build section ─────────────
-// The row is not a route (no data-nav), so the router never marks it active; showView
-// tints it (.has-active) while a child page is open. Its flyout (#nav-nodes-fly) lives
-// inside <nav>, so navLinks and paintLevelBanner reach Agents and Scripts like any row;
-// side-flyout.mjs opens it beside the sidebar (column, rail and phone drawer alike) and
-// closes it on a route, Escape, an outside click, a resize or a scroll of the pages.
-const nodesGroup = $('.nav .nav-group[data-nav-group="nodes"]');
-const nodesFly = $('#nav-nodes-fly');
-const NODES_GROUP_VIEWS = nodesFly ? [...nodesFly.querySelectorAll('button[data-nav]')].map((b) => b.dataset.nav) : [];
-const nodesFlyout = nodesGroup && nodesFly
-  ? createFlyout({ doc: document, win: window, trigger: nodesGroup, menu: nodesFly, mode: 'side', closeOn: $('#side-scroll') })
-  : null;
-// A mode change can hide the Nodes row, and so its flyout, while the flyout is open (a change pushed
-// from another tab, say): an open popup nobody can see would take the next Escape. Put it away.
-document.addEventListener('worca:level', () => nodesFlyout?.close());
-// The old inline disclosure remembered a fold under this key; nothing reads it any more.
-try { localStorage.removeItem('worca-cc.nav.nodes.collapsed'); } catch { /* private mode */ }
 // The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
 // included, in a side flyout — so a running service stays stoppable on the rail too.
 const sideActionsTile = $('#side-actions-tile');
@@ -850,7 +836,7 @@ if (topnavSearchRoot) createTopnavSearch({
   // The Ask Worca row: what was typed goes to the composer; nothing typed just opens the chat.
   onAsk: (query) => { if (query) askPanel?.appendToComposer(query); else askPanel?.open(); },
   navigate: (href) => { location.hash = href; },
-  openWorkflow: (id) => { void openComposerFromAsk(id); },
+  openWorkflow: (id) => { void openWorkflowFromAsk(id); },
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -873,8 +859,8 @@ if (railAtBoot) {
 // is open the page behind is inert (inert, not aria-hidden: only inert removes
 // focusability — see the track screens), focus starts on #side-close and comes back
 // to the hamburger. Any route closes it: a drawer button here, and showView for
-// back/forward and deep links. Only a route closes it: a popup trigger (the Nodes row, the account
-// corner) and a button inside a popup that is not a page keep it open.
+// back/forward and deep links. Only a route closes it: a popup trigger (the account corner) and a
+// button inside a popup that is not a page keep it open.
 let mobileNavOpen = false;
 const mbarMenu = $('#mbar-menu');
 const navScrim = $('#nav-scrim');
@@ -1240,6 +1226,7 @@ function handleServerMessage(msg) {
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
     askPanel?.pushServerFrame(msg);
+    wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -1388,6 +1375,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'scripts-changed') {
     state.scriptsList = [];
     gvAgentsDirty = true;          // the composer re-reads /api/agents AND /api/scripts on re-entry (spec §3.3)
+    if (currentShownView === 'workflows') void gvLoadAgents();
     if (scriptsCtl) scriptsCtl.onChanged();
     return;
   }
@@ -1620,6 +1608,7 @@ function onHello(msg) {
 
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
+  wfvChat?.onHello();
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -2486,20 +2475,30 @@ async function deleteWorkflow(id) {
 
 
 // ---------------------------------------------------------------------------
-// Workflow Composer v2 (node graph). initComposer() mounts ONCE and re-fits on
-// every re-entry; composerExit() (called by showView's leave-guard) unbinds the
-// keyboard and cancels any live gesture.
+// Workflows view (full screen: canvas + Library + composer chat). The composer
+// engine (graph/composer.mjs) mounts ONCE in initWorkflows() and survives leaving
+// the view; workflowsExit() suspends its document listeners and closes the sheet,
+// so Delete/arrows/⌘Z never edit the graph from another view (a PR #359 bug).
 // ---------------------------------------------------------------------------
 let gvComposer = null;
-let gvAgents = [];          // palette list  (GET /api/agents)
-let gvAgentsAll = [];       // ports source  (GET /api/agents?all=1)
-let gvScripts = [];         // script registry (GET /api/scripts): palette Scripts group + ports source
+let gvAgents = [];          // placeable registry   (GET /api/agents)
+let gvAgentsAll = [];       // every agent           (GET /api/agents?all=1): ports source + Library
+let gvScripts = [];         // script registry       (GET /api/scripts)
 let gvPortsFn = portsFnFor({});
-// These three are written ONLY by gvLoadAgents(), which initComposer() skips on
-// re-entry — so without this flag an agent created or re-ported in the Agents
-// view stayed missing (palette) or stale (portsFn, which then calls a wire the
-// server 422s "clean") for the rest of the page session (MAJ-16).
+// Set by every agent/script mutation; the next entry (or the live view, see invalidateAgentCaches) reloads.
 let gvAgentsDirty = false;
+let wfvShell = null;
+let wfvLibrary = null;
+let wfvReturn = 'new';      // Back: the address the user came from (showView records it)
+let wfvSheet = '';          // '' | 'agent' | 'agent-new' | 'script'
+let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtimes), read once: the Library's "python not found" chip
+let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
+const WFV_SESSION = mintId('cs_');   // this page load's composer session: the chat applies only cards stamped with it
+const wfvPendingDraft = { agent: null, script: null };   // a chat draft's Edit…, handed to the route it opens
+const gvNewIds = new Set(); // workflows imported this page session (a NEW pill until reload)
+// A saved workflow id, by the server's own rule (workflows.mjs isSafeWorkflowId): a minted `wf_<slug>` (no
+// length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
+const WF_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 const gvApi = {
   agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
@@ -2569,29 +2568,23 @@ const gvApi = {
   },
 };
 
-function gvEls() {
+function wfvEls() {
   const g = (id) => document.getElementById(id);
   return {
-    canvas: g('gv-canvas'), chip: g('gv-chip'), head: g('gv-head'), name: g('gv-name'),
-    errors: g('gv-errors'), newBtn: g('gv-new'), autoBtn: g('gv-autolayout'), saveBtn: g('gv-save'),
-    insRail: g('gv-ins-rail'), insBody: g('gv-ins-body'), insToggle: g('gv-ins-toggle'),
-    insTabs: g('gv-ins-tabs'), palette: g('gv-palette'), filter: g('gv-agent-filter'),
-    zoomIn: g('gv-zoom-in'), zoomOut: g('gv-zoom-out'), centerBtn: g('gv-center'),
-    savedList: g('gv-saved-list'), savedCount: g('gv-saved-count'), archived: g('gv-archived'),
-    savedMsg: g('gv-saved-msg'), dialogHost: g('gv-dialog-host'),
+    root: g('wfv'), stage: g('wfv-stage'), canvas: g('wfv-canvas'), chip: g('wfv-chip'), back: g('wfv-back'),
+    wfMenu: g('wfv-wf-menu'), name: g('wfv-name'), errors: g('wfv-errors'), importFile: g('wfv-import-file'),
+    libToggle: g('wfv-lib-toggle'), saveWrap: g('wfv-savewrap'), save: g('wfv-save'), add: g('wfv-add'),
+    autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
+    library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
+    dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
   };
 }
 
-// The composer's saved-list message line — the same (text, kind) shape as
-// setAgentsMsg/setPluginsMsg/... elsewhere in this file.
-function setGvSavedMsg(text, kind) {
-  reportStatus(gvEls().savedMsg, 'form-msg', text, kind);
-}
-
 async function gvLoadAgents() {
-  const els = gvEls();
-  els.palette.textContent = 'Loading agents…';
+  if (!gvComposer) return;
   gvComposer.setReady(false);
+  // Only an ok answer is kept: a transient failure would hide the "python not found" chip for the page's life.
+  const runtimes = wfvRuntimes || await scriptsApi.runtimes().then((r) => (r.ok ? (wfvRuntimes = r.data) : {}), () => ({}));
   try {
     const [pal, all, cfg, scripts] = await Promise.all([gvApi.agents(), gvApi.agentsAll(), gvApi.config(), gvApi.scripts()]);
     gvAgentsDirty = false;                       // cleared only on a SUCCESSFUL load
@@ -2601,263 +2594,431 @@ async function gvLoadAgents() {
     gvComposer.setAgents(indexByKey(pal));
     gvComposer.setScripts(indexByKey(scripts));
     gvComposer.setReady(true);
-    gvComposer.paintPalette();
+    wfvLibrary?.setData({ agents: all, scripts, runtimes, loadError: '' });
   } catch {
-    els.palette.replaceChildren();
-    const row = document.createElement('div');
-    row.className = 'gv-pal-err';
-    row.textContent = 'Couldn’t load agents — ';
-    const retry = document.createElement('button');
-    retry.type = 'button'; retry.className = 'gv-retry'; retry.textContent = 'Retry';
-    retry.addEventListener('click', () => { gvLoadAgents(); });
-    row.appendChild(retry);
-    els.palette.appendChild(row);
-    gvComposer.setReady(false);          // Save stays disabled without a registry
+    gvComposer.setReady(false);                  // Save stays disabled without a registry
+    wfvLibrary?.setData({ loadError: 'Couldn’t load agents — ', retry: () => { void gvLoadAgents(); } });
   }
 }
 
-async function initComposer() {
+async function wfvRefreshWorkflows() {
+  scheduleOnboardingRefresh();                   // a user-saved workflow ticks "Shape your own workflow"
+  const [rows, archived] = await Promise.all([gvApi.listWorkflows(), gvApi.listArchived()]);
+  gvComposer?.setSavedDomains([...new Set(rows.map((w) => w.domain || 'general'))].sort());
+  wfvLibrary?.setData({ workflows: rows, archived, newIds: gvNewIds });
+}
+
+/** Mount the engine + chrome ONCE. Resolves true on the first mount. */
+async function initWorkflows() {
   if (gvComposer) {
     gvComposer.resume();
-    // setAgents()/paintPalette() replace wholesale, so a reload is all it takes.
     if (gvAgentsDirty) await gvLoadAgents();
-    await gvRefreshSaved();
-    gvComposer.fit();
-    return;
+    await wfvRefreshWorkflows();
+    return false;
   }
-  gvComposer = createComposer(gvEls(), {
-    doc: document, api: gvApi, storage: (() => { try { return window.localStorage; } catch { return null; } })(),
-    portsFn: (node) => gvPortsFn(node),
+  const els = wfvEls();
+  const insBody = document.createElement('div');
+  insBody.className = 'wfv-ins';
+  gvComposer = createComposer({
+    canvas: els.canvas, chip: els.chip, name: els.name, errors: els.errors, autoBtn: els.autolayout,
+    saveBtn: els.save, saveWrap: els.saveWrap, insBody, dialogHost: els.dialogHost,
+  }, {
+    doc: document, api: gvApi, portsFn: (node) => gvPortsFn(node),
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
     notify: (o) => notify(o),
+    allLevels: true,              // every setting at every interface level (D5)
+    insetRight: () => (window.innerWidth <= 760 && wfvLibrary && wfvLibrary.isOpen() ? 316 : 0),
   });
   gvComposer.mount();
-  gvComposer.newCanvas();
-  gvComposer.hooks.onSaved = () => { gvRefreshSaved(); };
-  // MAJ-6: New canvas and a saved row's Open replace the canvas AND clear the
-  // undo ring, so the work cannot be brought back with ⌘Z. The composer owns
-  // the "is it dirty" half; the app owns the ASKING, through the same
-  // confirmModal every other destructive action in this file uses.
+  gvComposer.hooks.onSaved = () => { void wfvRefreshWorkflows(); };
+  // MAJ-6: New canvas, a Library row's Open and a chat build replace the canvas AND clear the undo ring.
   gvComposer.hooks.confirmDiscard = () => confirmModal({
     title: 'Discard unsaved changes?',
     message: 'This pipeline has edits you have not saved.\n\nReplacing the canvas discards them and clears the undo history.',
     confirmLabel: 'Discard',
     danger: true,
   });
-  // Renaming marks the canvas DIRTY (it is an unsaved edit) — never markSaved().
-  gvEls().name.addEventListener('change', (e) => gvComposer.setName(e.target.value));
+  wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
+  wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
+  wfvChat = createChatDock({
+    doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
+    fetch: (...a) => fetch(...a),
+    sendWs: (obj) => { const sock = state.ws; if (sock && state.wsReady) { try { sock.send(JSON.stringify(obj)); } catch { /* ignore */ } } },
+    storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    renderMarkdown: (text, mount) => {
+      const out = hdMarkdown.render(text);
+      if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+      mount.textContent = text;
+      if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) wfvChat?.repaint(); });
+    },
+    actions: wfvChatActions(),
+    canvas: () => wfvChatCanvas(),
+    stage: els.stage, cluster: document.getElementById('wfv-br'), plus: els.add,   // fit the stage; lift the bars clear
+    confirm: (o) => confirmModal(o),                    // New chat asks before it leaves unsaved drafts behind
+    // Rejects when the list could not be read: the dock drops a pinned project only on a list that loaded.
+    projects: async () => {
+      const r = await fetch('/api/projects');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await safeJson(r);
+      return Array.isArray(d.projects) ? d.projects : [];
+    },
+  });
+  els.sheetClose?.addEventListener('click', () => { void wfvRequestCloseSheet(); });
+  els.sheet?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+    // The Scripts controller owns Escape inside its own host (leaveDetail); the sheet's head is ours.
+    if (wfvSheet === 'script' && el.scriptsHost && el.scriptsHost.contains(ev.target)) return;
+    // A code editor's Escape is its own: it arms the next Tab to leave the field (code-editor.mjs), the one way out
+    // of a field whose Tab indents — closing or asking here (Cancel puts the caret back) would trap the keyboard.
+    if (ev.target && ev.target.closest && ev.target.closest('.code-editor')) return;
+    // The confirm is up and Tab left it for the sheet (it traps no focus): its own document listener answers this
+    // Escape — asking again would stack a second question on it.
+    if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
+    ev.preventDefault();
+    // This Escape is the sheet's alone: the "Discard changes" confirm it may open listens on the document, where the
+    // same keydown, bubbling on, would answer it Cancel at once.
+    ev.stopPropagation();
+    void wfvRequestCloseSheet();
+  });
+  gvComposer.loadTemplate(null);
+  wfvSetLibraryOpen(window.innerWidth > 760);
   await gvLoadAgents();
-  await gvRefreshSaved();
+  await wfvRefreshWorkflows();
   gvComposer.fit();
+  return true;
 }
 
-// The headless-Chrome probe seam (tools/verify-composer-cdp.mjs). It exposes
-// no mutator the UI does not already own — just the live editor and its view.
+function wfvSetLibraryOpen(open) {
+  wfvLibrary?.setOpen(open);
+  wfvShell?.paintLibToggle(open);
+}
+
+function wfvShellActions() {
+  return {
+    back: () => { location.hash = wfvReturn || 'new'; },
+    newCanvas: () => { void gvComposer.newCanvas().then((t) => { if (t) gvComposer.fit(); }); },
+    openLibrary: (tab) => { wfvSetLibraryOpen(true); wfvLibrary?.open(tab); },
+    toggleLibrary: () => wfvSetLibraryOpen(!wfvLibrary.isOpen()),
+    importFile: async (f) => {
+      let obj;
+      try { obj = JSON.parse(await f.text()); }
+      catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
+      await gvImportWorkflowObject(obj);
+    },
+    exportCurrent: () => { const t = gvComposer.template(); if (t.id) openExportModal({ id: t.id, name: t.name || t.id }); },
+    newAgent: () => { location.hash = 'workflows/agents/new'; },
+    newScript: () => { location.hash = 'workflows/scripts/new'; },
+    afterRender: () => {
+      // The chat's cards follow the canvas (an inline Undo stands down after ⌘Z or an own edit): repaint them on EVERY
+      // commit, before the Library's early return below.
+      wfvChat?.repaint();
+      // Every commit re-renders the engine; repaint the Library ONLY when what it shows changed (a full Library
+      // repaint rebuilds every row and thumbnail, resets its scroll and drops a keyboard user's focus).
+      const placed = gvComposer.placedKinds().filter((k) => k === 'task' || k === 'end').sort().join(',');
+      const openId = gvComposer.template().id || '';
+      if (placed === wfvLibSig.placed && openId === wfvLibSig.openId) return;
+      wfvLibSig = { placed, openId };
+      wfvLibrary?.setData({ placedKinds: gvComposer.placedKinds(), openId });
+    },
+  };
+}
+let wfvLibSig = { placed: null, openId: null };
+
+/** What the composer chat sends with EVERY message (D11): the open canvas, its document token, the selection. */
+function wfvChatCanvas() {
+  const t = gvComposer.serialize();
+  return { sessionId: WFV_SESSION, docToken: gvComposer.docToken(), dirty: gvComposer.isDirty(), selection: gvComposer.selection(),
+    graph: { id: t.id || '', name: t.name || '', domain: t.domain || '', nodes: t.nodes, wires: t.wires } };
+}
+
+function wfvChatActions() {
+  return {
+    notify: (o) => notify(o),
+    reloadRegistry: () => gvLoadAgents(),
+    // (key, kind): 'agent' or 'script' narrows the lookup; a build's draft list holds bare keys, so kind may be absent.
+    libraryHas: (key, kind) => (kind !== 'script' && gvAgentsAll.some((a) => a.key === key)) || (kind !== 'agent' && gvScripts.some((s) => s.key === key)),
+    openAgentDraft: (d) => openAgentDraft({ meta: { ...(d.meta || {}), key: d.key }, markdown: d.markdown || '' }),
+    openScriptDraft: (d) => openScriptDraft({ meta: { ...(d.meta || {}), key: d.key }, source: d.source || '', sourceWin32: d.sourceWin32 || null, cases: d.cases || [] }),
+    saveAgentDraft: async (d) => {
+      try {
+        const res = await fetch('/api/agents', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meta: { ...(d.meta || {}), key: d.key }, markdown: d.markdown || '' }) });
+        const data = await safeJson(res);
+        if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+        await invalidateAgentCaches();             // the Library row exists before it is shown
+        notify({ tone: 'ok', title: `Agent "${data.meta.key}" created.` });
+        wfvLibrary?.highlight('agent', data.meta.key);
+        return { ok: true, key: data.meta.key };
+      } catch (e) { return { ok: false, error: e.message }; }
+    },
+    saveScriptDraft: async (d) => {
+      const r = await scriptsApi.create({ meta: { ...(d.meta || {}), key: d.key }, source: d.source || '', sourceWin32: d.sourceWin32 || null });
+      if (!r.ok) return { ok: false, error: (r.data && r.data.error) || `HTTP ${r.status}` };
+      const key = (r.data.meta && r.data.meta.key) || d.key;
+      if (Array.isArray(d.cases) && d.cases.length) {
+        const c = await scriptsApi.writeCases(key, d.cases);
+        if (!c.ok) notify({ tone: 'warn', title: `Saved "${key}". Its test cases were not saved.`, detail: (c.data && c.data.error) || '' });
+      }
+      notify({ tone: 'ok', title: `Saved "${key}".` });
+      await gvLoadAgents();                        // the Library row exists before it is shown
+      wfvLibrary?.highlight('script', key);
+      return { ok: true, key };
+    },
+  };
+}
+
+/** Route the view's param (D6). In-view hops (sheet ↔ canvas, tab ↔ tab) only route. */
+async function routeWorkflows(param = '') {
+  const [head, ...rest] = String(param || '').split('/');
+  const sub = rest.join('/');
+  if (head === 'agents') {
+    // `new/<x>` is the wizard too: an old #agent-create/<x> keeps its tail (MOVED_ROUTES), never agent "new".
+    if (sub === 'new' || sub.startsWith('new/')) { const draft = wfvPendingDraft.agent; wfvPendingDraft.agent = null; wfvOpenSheet('agent-new', { draft }); return; }
+    if (sub) { const [key, mode] = sub.split('/'); wfvOpenSheet('agent', { key, edit: mode === 'edit' }); return; }
+    wfvCloseSheet();
+    wfvShellActions().openLibrary('agents');
+    return;
+  }
+  if (head === 'scripts') {
+    if (sub) {
+      const isNew = sub === 'new' || sub.startsWith('new/');      // a chat draft opens at `new/<runtime>` (C3)
+      const draft = isNew ? wfvPendingDraft.script : null;
+      if (isNew) wfvPendingDraft.script = null;
+      wfvOpenSheet('script', { param: sub, draft });
+      return;
+    }
+    wfvCloseSheet();
+    wfvShellActions().openLibrary('scripts');
+    return;
+  }
+  wfvCloseSheet();
+  if (!head) return;
+  // Any other head names a saved workflow (Ask's "Open in Workflows", the top-bar search, a bookmark): open it
+  // and normalise the hash, or say why not — never nothing.
+  try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
+  if (!WF_ID_RE.test(head)) {
+    notify({ tone: 'err', title: `Could not open "${head}"`, detail: 'It is not a workflow id or a Workflows address.' });
+    return;
+  }
+  let full = null;
+  try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
+  if (!full) {
+    notify({ tone: 'err', title: `Could not open workflow "${head}"`, detail: 'It was deleted or renamed, or Worca did not answer.' });
+    return;
+  }
+  if (await gvComposer.openTemplate(full)) gvComposer.fit();
+}
+
+async function enterWorkflowsView(param = '', prevView = '') {
+  // An in-view hop (sheet <-> canvas, tab <-> tab, #workflows/<id>) only routes: initWorkflows() would refetch
+  // both workflow lists and repaint the whole Library on every hop. While the view is open, agent and script
+  // writes reload the registry themselves (invalidateAgentCaches, the scripts-changed frame).
+  if (prevView === 'workflows' && gvComposer) { await routeWorkflows(param); return; }
+  const first = await initWorkflows();
+  if (!first) gvComposer.fit();
+  await routeWorkflows(param);
+}
+
+// Where focus goes back when the sheet closes: the opener's id, or a Library control's focus key.
+let wfvSheetOpener = null;
+
+function wfvOpenSheet(pane, opts = {}) {
+  const els = wfvEls();
+  if (wfvSheet && wfvSheet !== pane) wfvTearDownPane(wfvSheet);
+  if (!wfvSheet) {
+    // A modal sheet (role=dialog, aria-modal): remember the opener, and take the canvas, its bars, the chat
+    // (all inside #wfv-stage) and the Library out of reach — no Tab, no click, no screen reader behind the scrim.
+    const a = document.activeElement;
+    wfvSheetOpener = a && a !== document.body && !els.sheet.contains(a) ? { id: a.id || '', focusKey: (a.dataset && a.dataset.focusKey) || '' } : null;
+    for (const n of [els.stage, els.library]) n?.setAttribute('inert', '');
+  }
+  wfvSheet = pane;
+  for (const p of els.sheet.querySelectorAll('.wfv-pane')) p.hidden = p.dataset.pane !== pane;
+  els.sheet.hidden = false;
+  wfvShell?.closePopovers();
+  gvComposer.suspend();                          // the canvas keyboard stands down under the sheet
+  let painted = null;
+  if (pane === 'agent-new') { els.sheetTitle.textContent = 'New agent'; painted = enterAgentWizard(opts); }
+  else if (pane === 'agent') { els.sheetTitle.textContent = 'Agent'; painted = openAgentSheet(opts.key, { edit: !!opts.edit }); }
+  else if (pane === 'script') { els.sheetTitle.textContent = 'Script'; mountScriptsView(opts.param || '', { draft: opts.draft || null }); }
+  wfvFocusSheet(pane, painted);
+}
+
+/** Focus moves INTO the sheet: its Close button at once (Escape and Tab work while the pane loads), then the
+ *  pane's first visible field once it has painted — unless the user has moved focus meanwhile. */
+function wfvFocusSheet(pane, painted) {
+  const els = wfvEls();
+  if (!els.sheet.contains(document.activeElement)) els.sheetClose?.focus();
+  void Promise.resolve(painted).then(() => {
+    if (wfvSheet !== pane || document.activeElement !== els.sheetClose) return;
+    const host = els.sheet.querySelector(`.wfv-pane[data-pane="${pane}"]`);
+    const field = host && [...host.querySelectorAll('input, textarea, select')]
+      .find((n) => n.type !== 'hidden' && n.type !== 'file' && !n.disabled && !n.closest('[hidden], .hidden'));
+    if (field) field.focus();
+  });
+}
+
+/** Focus a repaint or a step change dropped — on <body>, or on a control now hidden (Chrome then drops it to <body>,
+ *  where Escape no longer reaches the sheet) — moves to `to`, else to the sheet's Close. A live control keeps it. */
+function wfvRefocus(to) {
+  const a = document.activeElement;
+  if (a !== document.body && !a.closest('[hidden], .hidden')) return;
+  (to || wfvEls().sheetClose).focus();
+}
+
+function wfvTearDownPane(pane) {
+  if (pane === 'script' && scriptsCtl) { scriptsCtl.destroy(); scriptsCtl = null; }
+  if (pane === 'agent-new') {
+    if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
+    resetAgentWizard();
+  }
+  if (pane === 'agent') {
+    for (const p of document.querySelectorAll('#agents-list .agent-edit-pane')) disposeAgentForm(p);
+    state.agentSheetKey = '';
+  }
+}
+
+function wfvCloseSheet() {
+  if (!wfvSheet) return;
+  const pane = wfvSheet;
+  const agentKey = state.agentSheetKey;          // the teardown clears it
+  wfvSheet = '';
+  wfvTearDownPane(pane);
+  if (el.agentsMsg) reportStatus(el.agentsMsg, 'form-msg', '', '');
+  const els = wfvEls();
+  // Focus is handed back when it was in the sheet or is already lost: on <body> or the view around the sheet, or
+  // on a control that went away or a closing dialog hid (Delete's confirm). A live control the user moved to keeps it.
+  const lost = (a) => !a || a.contains(els.sheet) || els.sheet.contains(a) || !a.isConnected || !!a.closest('[hidden], .hidden');
+  const hadFocus = lost(document.activeElement);
+  els.sheet.hidden = true;
+  for (const n of [els.stage, els.library]) n?.removeAttribute('inert');
+  const opener = wfvSheetOpener;
+  wfvSheetOpener = null;
+  if (currentShownView === 'workflows') gvComposer?.resume();
+  if (!hadFocus || currentShownView !== 'workflows') return;
+  // Focus returns to the opener: by id, else a Library control by its focus key (the Library may have
+  // repainted meanwhile; render(key) finds the new node) unless that row is the agent just deleted (its repaint
+  // is on its way and would drop the focus again), else the Library toggle — never <body>.
+  const gone = pane === 'agent' && agentKey && !state.agentsList.some((x) => x.key === agentKey);
+  const byId = opener && opener.id ? document.getElementById(opener.id) : null;
+  if (byId && !byId.closest('[hidden], .hidden')) byId.focus();
+  else if (opener && opener.focusKey && wfvLibrary?.isOpen() && !(gone && `${opener.focusKey}:`.startsWith(`agent:${agentKey}:`))) wfvLibrary.render(opener.focusKey);
+  if (lost(document.activeElement)) els.libToggle?.focus();
+}
+
+/** What closing the sheet now would throw away, as the confirm's message ('' = nothing): a script with unsaved
+ *  changes, an agent card editor someone changed, or the wizard while it generates or shows its generated draft
+ *  (closing tears the wizard down: abortAgentGen, resetAgentWizard — so it is at step 1 whenever another sheet,
+ *  or none, is open). An untouched sheet closes at once. */
+function wfvSheetLoss() {
+  if (wfvSheet === 'script' && scriptsCtl && scriptsCtl.isDirty()) return 'This script has unsaved changes. Leave the page and discard them?';
+  if (wfvSheet === 'agent' && [...document.querySelectorAll('#agents-list .agent-edit-pane')].some(agentEditDirty)) return 'This agent has unsaved changes. Leave and discard them?';
+  if (state.agentWizard.step === 2) return 'The agent is still being generated. Stop it and discard the result?';
+  // A chat draft (Edit… on its card) stays on its card: only edits made here are lost.
+  if (state.agentWizard.step === 3 && state.agentWizard.fromChat) {
+    const s3 = document.getElementById('agw-step-3');
+    return agentEditSnap(s3) === s3.__agentBase ? '' : 'Your changes to this draft are not saved (its chat card keeps the original). Leave and discard them?';
+  }
+  if (state.agentWizard.step === 3) return 'The generated agent is not saved yet. Leave and discard it?';
+  return '';
+}
+
+/** × and Escape ask first when closing would lose work; Cancel keeps the sheet, the work and the caret (modalShell
+ *  restores no focus). The wizard's own Cancel and the card editor's Cancel stay explicit discards. */
+async function wfvRequestCloseSheet() {
+  const loss = wfvSheetLoss();
+  if (loss) {
+    const back = document.activeElement;
+    const ok = await confirmModal({ title: 'Discard changes', message: loss, confirmLabel: 'Discard', danger: true });
+    // Back where it was — or, when that control hid meanwhile (a generation finished under the confirm), the Close.
+    if (!ok) { back.focus(); wfvRefocus(); return; }
+  }
+  wfvGoCanvas();
+}
+
+/** Back to the bare canvas. A sheet opened WITHOUT a hash change (a chat draft's Edit…) leaves the hash at
+ *  #workflows, where assigning it again fires no hashchange — close the sheet directly then. */
+function wfvGoCanvas() {
+  if (location.hash.slice(1) === 'workflows') wfvCloseSheet();
+  else location.hash = 'workflows';
+}
+
+// The headless-Chrome probe seam (tools/verify-composer-cdp.mjs): the live engine and its view.
 if (typeof window !== 'undefined') window.__gv = () => (gvComposer ? { c: gvComposer, v: gvComposer.view } : null);
 if (typeof window !== 'undefined') window.__gvImport = (obj) => gvImportWorkflowObject(obj);   // test seam for the Import dialog
+if (typeof window !== 'undefined') window.__wfv = { routeWorkflows, wfvOpenSheet, wfvCloseSheet, openAgentDraft, openScriptDraft, sheet: () => wfvSheet, library: () => wfvLibrary, chat: () => wfvChat, session: WFV_SESSION };
 
-// Leave-guard: the composer stays MOUNTED (its DOM and undo ring survive), but
-// every document-level listener is unbound and any live gesture is cancelled, so
-// Delete/arrows/⌘Z can never edit the graph from another view (a PR #359 bug).
-function composerExit() {
+// Leave-guard: the engine stays MOUNTED (DOM + undo ring), its document listeners go, the sheet closes.
+function workflowsExit() {
+  wfvCloseSheet();
+  wfvShell?.closePopovers();
+  // The save dialog is modal (showModal): left open in the hidden view it would keep every other page inert.
+  for (const d of document.querySelectorAll('#wfv-dialog-host dialog[open]')) {
+    if (typeof d.close === 'function') d.close(); else d.removeAttribute('open');
+  }
   if (gvComposer) gvComposer.suspend();
 }
 
-// Saved-list state that lives for the PAGE SESSION (not persisted): the selected
-// domain tab, the last fetched rows (tab switches re-render without a fetch),
-// and the ids imported since load — those carry a NEW pill until reload.
-let gvSavedTab = null;
-let gvSavedRows = [];
-const gvNewIds = new Set();
-const gvDomainOf = (wf) => wf.domain || 'general';
-
-/** Scroll the page to its top so the Workflow Composer title AND the canvas are in
- *  view after a row is opened (the saved list sits below the fold). */
-function gvScrollToTop() {
-  const main = document.querySelector('.main');
-  try { if (main && typeof main.scrollTo === 'function') main.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
-  try { if (typeof window.scrollTo === 'function') window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* jsdom */ }
-}
-
-async function gvRefreshSaved() {
-  scheduleOnboardingRefresh();   // a user-saved workflow ticks "Shape your own workflow"
-  gvSavedRows = await gvApi.listWorkflows();
-  gvRenderSaved();
-  await gvRefreshArchived();
-}
-
-function gvRenderSaved() {
-  const els = gvEls();
-  const list = gvSavedRows;
-  els.savedCount.textContent = list.length ? `· ${list.length}` : '';
-  const domains = [...new Set(list.map(gvDomainOf))].sort();
-  gvComposer.setSavedDomains(domains);
-  if (!domains.includes(gvSavedTab)) gvSavedTab = domains[0] || null;
-  // ── One tab per domain (the row no longer repeats the domain) ──
-  const tabs = document.getElementById('gv-saved-tabs');
-  tabs.replaceChildren();
-  tabs.hidden = domains.length === 0;
-  for (const d of domains) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'gv-saved-tab' + (d === gvSavedTab ? ' active' : '');
-    b.dataset.domain = d;
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', d === gvSavedTab ? 'true' : 'false');
-    b.appendChild(document.createTextNode(d));
-    const badge = document.createElement('span');
-    badge.className = 'gv-saved-tab-badge';
-    badge.textContent = String(list.filter((w) => gvDomainOf(w) === d).length);
-    b.appendChild(badge);
-    b.addEventListener('click', () => { gvSavedTab = d; gvRenderSaved(); });
-    tabs.appendChild(b);
-  }
-  els.savedList.replaceChildren();
-  for (const wf of list) {
-    if (gvDomainOf(wf) !== gvSavedTab) continue;
-    const item = document.createElement('div');
-    item.className = 'pl-item';
-    item.dataset.id = wf.id;
-    const row = document.createElement('div');
-    row.className = 'pl-row';
-    // The preview leads the row, so every entry lines up on one left rail; a v1
-    // row has no graph to draw, so it gets the same tile with a `v1` stamp and
-    // the list keeps its column. The SVG carries its own width/height, which is
-    // why the tile is fixed-size — a percentage box strands it in dead space.
-    const thumb = document.createElement('div');
-    thumb.className = 'pl-thumb';
-    // thumbnailFor is numbers-only markup built from the SAME geometry module.
-    if (wf.version === 2) thumb.innerHTML = thumbnailFor(wf, gvPortsFn, { width: 140, height: 54 });
-    else { thumb.classList.add('is-empty'); thumb.textContent = 'v1'; }
-    row.appendChild(thumb);
-    const main = document.createElement('div');
-    main.className = 'pl-main';
-    const name = document.createElement('div');
-    name.className = 'pl-name';
-    name.textContent = wf.name || wf.id;
-    // Imported this page session: a NEW pill until the next reload (gvNewIds is
-    // module state, so a reload clears it by construction).
-    if (gvNewIds.has(wf.id)) {
-      const pill = document.createElement('span');
-      pill.className = 'pl-new';
-      pill.textContent = 'NEW';
-      name.appendChild(pill);
-    }
-    main.append(name);
-    row.appendChild(main);
-    // A plugin-owned row is replaced wholesale by the next `worca plugin update`
-    // (src/core/plugin-workflows.mjs upserts ON CONFLICT), so say so BEFORE the
-    // user starts editing it — the save dialog repeats it and defaults to a copy.
-    const plugin = pluginOriginName(wf.origin);
-    if (plugin) {
-      const tag = document.createElement('span');
-      tag.className = 'pl-origin';
-      tag.textContent = `plugin:${plugin}`;
-      tag.title = `Provided by plugin "${plugin}" — replaced on plugin update`;
-      row.appendChild(tag);
-    }
-    if (wf.origin === 'auto') {
-      // Spec §7.6 / D10: an Auto-created row is an ordinary workflow that Auto will match next time.
-      const tag = document.createElement('span');
-      tag.className = 'pl-origin pl-auto';
-      tag.textContent = 'Auto';
-      tag.title = 'Created by Auto — an ordinary workflow you can open, edit and delete';
-      row.appendChild(tag);
-    }
-    if (wf.version === 2) {
-      // The ROW is the Open action (no Open button): click or Enter/Space on the
-      // card loads it. openTemplate asks before discarding unsaved edits (MAJ-6)
-      // and resolves null when refused — the canvas and the undo ring must then
-      // be left exactly as they were. On success the page scrolls to its top so
-      // the Composer title and the loaded canvas are both in view.
-      row.classList.add('pl-openable');
-      row.tabIndex = 0;
-      row.setAttribute('role', 'button');
-      row.title = `Open "${wf.name || wf.id}"`;
-      const open = async () => {
-        const full = await gvApi.readWorkflow(wf.id);
-        if (!full) return;
-        if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); }
-      };
-      row.addEventListener('click', (e) => {
-        if (e.target && e.target.closest && e.target.closest('button, a, input')) return;   // the row's own actions
-        open();
-      });
-      row.addEventListener('keydown', (e) => {
-        if (e.target !== row) return;
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-      });
-      // ONE Export… entry point (JSON file / Claude Code skill / Worca plugin): the
-      // dialog asks for the format. Available for every v2 row incl. the built-in.
-      const exportBtn = document.createElement('button');
-      exportBtn.type = 'button'; exportBtn.className = 'btn-ghost pl-export';
-      exportBtn.title = 'Export as a JSON file, a Claude Code skill or a Worca plugin';
-      exportBtn.textContent = 'Export…';
-      exportBtn.addEventListener('click', () => openExportModal({ id: wf.id, name: wf.name || wf.id }));
-      // Appended AFTER delete (below): Export… is the last element of every row, so
-      // it sits on the same right edge whether or not the row has a delete.
-      // No delete on the built-in: DELETE /api/workflows/wf_default always answers
-      // 400 (ui/server.mjs), so the button could only ever fail. Opening stays —
-      // the built-in is meant to be opened and saved as a copy.
-      if (!isReservedWorkflowId(wf.id)) {
-        const del = document.createElement('button');
-        del.type = 'button'; del.className = 'pl-del';
-        del.title = `Delete "${wf.name || wf.id}"`;
-        del.setAttribute('aria-label', `Delete "${wf.name || wf.id}"`);
-        del.innerHTML = TRASH_SVG;                          // the one bin icon (static markup)
-        // A delete is destructive and unrecoverable: it asks first, in red — the
-        // guard the v1 composer's saved list owned before it was retired.
-        del.addEventListener('click', async () => {
-          const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
-          const ok = await confirmModal({
-            title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
-            message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.${schedNote}`,
-          });
-          if (!ok) return;
-          const r = await gvApi.deleteWorkflow(wf.id);
-          if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }   // the row stays; say why
-          setGvSavedMsg(`Pipeline deleted: ${wf.name || wf.id}`, 'ok');
-          gvRefreshSaved();
-        });
-        row.appendChild(del);
-      }
-      row.appendChild(exportBtn);
-    } else {
-      const tag = document.createElement('span');
-      tag.className = 'pl-legacy';
-      tag.textContent = 'legacy · runnable until the graph cut-over';
-      row.appendChild(tag);
-      tagLevel(item, 'expert');                 // a v1 template cannot be opened: expert housekeeping
-    }
-    item.appendChild(row);
-    els.savedList.appendChild(item);
-  }
-}
-
-// The Archived footer only exists once V24 (P8) archives rows: it is rendered
-// when — and only when — GET /api/workflows?archived=1 returns at least one row,
-// so it is invisible today and lights up after the break with no further work.
-async function gvRefreshArchived() {
-  const els = gvEls();
-  const rows = await gvApi.listArchived();
-  els.archived.replaceChildren();
-  els.archived.hidden = rows.length === 0;
-  if (!rows.length) return;
-  const head = document.createElement('span');
-  head.textContent = `Archived (${rows.length}) — v1 templates kept but not runnable. `;
-  els.archived.appendChild(head);
-  for (const wf of rows) {
-    const chip = document.createElement('button');
-    chip.type = 'button'; chip.className = 'pl-chip'; chip.textContent = `${wf.name || wf.id} ×`;
-    chip.title = 'Delete permanently';
-    chip.addEventListener('click', async () => {
+function wfvLibraryActions() {
+  const scriptsList = async () => { const r = await scriptsApi.list(); return r.ok && Array.isArray(r.data.scripts) ? r.data.scripts : []; };
+  return {
+    portsFn: (n) => gvPortsFn(n),
+    closeLibrary: () => { wfvSetLibraryOpen(false); document.getElementById('wfv-lib-toggle')?.focus(); },
+    addToCanvas: (payload) => {
+      const node = gvComposer.spawn(toSpawnEntry(payload));
+      if (node) gvComposer.view.centerOn(node.id);
+    },
+    openWorkflow: async (id) => {
+      const full = await gvApi.readWorkflow(id);
+      if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
+    },
+    deleteWorkflow: async (wf) => {
+      const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
+      const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+        message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.${schedNote}` });
+      if (!ok) return;
       const r = await gvApi.deleteWorkflow(wf.id);
-      if (!r.ok) { setGvSavedMsg(r.error, 'err'); return; }
-      setGvSavedMsg('');
-      gvRefreshArchived();
-    });
-    els.archived.appendChild(chip);
-  }
+      if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
+      notify({ tone: 'ok', title: `Pipeline deleted: ${wf.name || wf.id}` });
+      await wfvRefreshWorkflows();
+    },
+    deleteArchived: async (wf) => {
+      // Permanent, and the archived list shows at every level now (D5): ask first, as deleteWorkflow does.
+      const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
+        message: `Delete "${wf.name || wf.id}"?\n\nThis cannot be undone.` });
+      if (!ok) return;
+      const r = await gvApi.deleteWorkflow(wf.id);
+      if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
+      await wfvRefreshWorkflows();
+    },
+    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id }),
+    newAgent: () => { location.hash = 'workflows/agents/new'; },
+    newScript: () => { location.hash = 'workflows/scripts/new'; },
+    viewAgent: (key) => { location.hash = `workflows/agents/${key}`; },
+    editAgent: (key) => { location.hash = `workflows/agents/${key}/edit`; },
+    deleteAgent: (a) => deleteAgentCard(null, a),
+    duplicateAgent: (a) => duplicateAgentCard(a),
+    openScript: (key) => { location.hash = `workflows/scripts/${key}`; },
+    deleteScript: async (s) => {
+      const ok = await confirmModal({ title: 'Delete script', message: `Delete “${s.displayName || s.key}”?`, confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      const r = await scriptsApi.remove(s.key);
+      if (!r.ok) {
+        const why = (r.data && r.data.error) || (r.status === 409 ? 'This script is in use.' : `HTTP ${r.status}`);
+        notify({ tone: 'err', title: 'Cannot delete script', detail: why, key: `script-del-${s.key}` });
+        return;
+      }
+      notify({ tone: 'ok', title: `Deleted "${s.key}".` });
+      void gvLoadAgents();
+    },
+    duplicateScript: async (s) => {
+      const r = await scriptsApi.duplicate(s.key, nextCopyKey(s.key, await scriptsList()));
+      if (!r.ok) { notify({ tone: 'err', title: 'Not duplicated', detail: (r.data && r.data.error) || `HTTP ${r.status}` }); return; }
+      notify({ tone: 'ok', title: `Duplicated as "${r.data.meta.key}".` });
+      await gvLoadAgents();
+      wfvLibrary?.highlight('script', r.data.meta.key);
+    },
+  };
 }
 
 function modelById(id) {
@@ -9425,10 +9586,12 @@ if (typeof window !== 'undefined') {
 
 // After any agent mutation: drop the new-pipeline config registry memo
 // (getAgentsApi) and the run-graph agent-meta cache, so both refetch on demand.
+/** Resolves when the open Workflows view has reloaded its registry (at once off the view: it reloads on re-entry). */
 function invalidateAgentCaches() {
   state.agents = {};
   agentMetaCache.clear();
   gvAgentsDirty = true;           // the composer re-reads /api/agents on re-entry
+  return gvComposer && currentShownView === 'workflows' ? gvLoadAgents() : Promise.resolve();
 }
 
 async function loadAgentsList() {
@@ -9501,6 +9664,12 @@ function renderAgentsList() {
   const host = el.agentsList;
   if (!host) return;
   host.innerHTML = '';
+  // The Workflows view's agent sheet (#workflows/agents/<key>) shows ONE agent; the Library is the list.
+  if (state.agentSheetKey) {
+    const a = state.agentsList.find((x) => x.key === state.agentSheetKey);
+    if (a) host.appendChild(buildAgentCard(a));
+    return;
+  }
   if (!state.agentsList.length) {
     host.appendChild(histEmpty('No agents found — is the server running?'));
     return;
@@ -9601,6 +9770,7 @@ async function deleteAgentCard(card, a) {
     invalidateAgentCaches();
     setAgentsMsg('Agent deleted.', 'ok');
     renderAgentsList();
+    if (state.agentSheetKey === a.key) location.hash = 'workflows/agents';
   } catch (err) { setAgentsMsg(err.message, 'err'); }
 }
 
@@ -9624,6 +9794,9 @@ async function duplicateAgentCard(a) {
     invalidateAgentCaches();
     setAgentsMsg(`Duplicated as "${data.meta.key}".`, 'ok');
     await loadAgentsView();
+    await gvLoadAgents(); wfvLibrary?.highlight('agent', data.meta.key);
+    // A Duplicate from the agent sheet (View on a built-in) moves the sheet to the copy, open for editing.
+    if (state.agentSheetKey) location.hash = `workflows/agents/${data.meta.key}/edit`;
   } catch (err) { setAgentsMsg(err.message, 'err'); }
 }
 
@@ -10278,14 +10451,6 @@ function agentFormRender(host, meta, opts = {}) {
   md.value = typeof opts.markdown === 'string' ? opts.markdown : '';
   frag.appendChild(fmField('System prompt (markdown)', md));
 
-  // Interface mode (docs/ui-levels.md): the Agents page is expert, but the AI wizard is reachable
-  // from the Composer at advanced — there the drafted form is just what a person can judge (name,
-  // description, the prompt itself). Ports, runner type and the rest are the builder's draft, kept
-  // and saved as drafted; expert shows all of it.
-  for (const child of frag.children) {
-    if (!child.querySelector('.agent-f-name, .agent-f-desc, .agent-f-md')) tagLevel(child, 'expert');
-  }
-
   root.replaceChildren(frag);
   refreshAgentForm(root);
   bindAgentForm(root);
@@ -10463,6 +10628,40 @@ function agentFormRead(host) {
   return { meta, markdown: root.querySelector('.agent-f-md').value, problems, problemFields };
 }
 
+/** #workflows/agents/<key>[/edit]: the one agent's card in the sheet — expanded (markdown + forms), or with
+ *  its editor open when it is a user agent and the route says edit. */
+async function openAgentSheet(key, { edit = false } = {}) {
+  for (const p of document.querySelectorAll('#agents-list .agent-edit-pane')) disposeAgentForm(p);
+  state.agentSheetKey = String(key || '');
+  if (!state.agentsList.some((a) => a.key === state.agentSheetKey)) await loadAgentsList();
+  renderAgentsList();
+  const card = [...(el.agentsList ? el.agentsList.querySelectorAll('.agent-card') : [])].find((c) => c.dataset.agentKey === state.agentSheetKey);
+  const a = state.agentsList.find((x) => x.key === state.agentSheetKey);
+  if (!card || !a) {
+    setAgentsMsg(`No agent "${state.agentSheetKey}".`, 'err');
+    // Back after a Delete, or an old #agents/<key>: never an empty sheet over an inert view — land on the Library.
+    if (wfvSheet === 'agent' && currentShownView === 'workflows') {
+      try { window.history.replaceState(null, '', '#workflows/agents'); } catch { /* sandboxed */ }
+      await routeWorkflows('agents');
+    }
+    return;
+  }
+  wfvEls().sheetTitle.textContent = a.displayName || a.key;
+  if (edit && a.origin === 'user') await openAgentEdit(card, a);
+  else toggleAgentDetail(card);
+}
+
+/** The card editor's unsaved work (the sheet's Escape / × ask first, wfvSheetLoss): every control in the pane — a
+ *  form row Save would refuse included — against what openAgentEdit painted. A hidden pane (never opened, Cancelled,
+ *  saved) holds none. A form's live preview is not in it: trying the form there changes nothing Save writes. */
+function agentEditSnap(pane) {
+  return JSON.stringify([...pane.querySelectorAll('input, select, textarea')].filter((n) => !n.closest('.afm-preview'))
+    .map((n) => (n.type === 'checkbox' ? n.checked : n.value)));
+}
+function agentEditDirty(pane) {
+  return !pane.hidden && agentEditSnap(pane) !== pane.__agentBase;
+}
+
 async function openAgentEdit(card, a) {
   const detail = card.querySelector('.agent-detail');
   const head = card.querySelector('.agent-head');
@@ -10475,6 +10674,7 @@ async function openAgentEdit(card, a) {
     mockWriterRoles: state.mockWriterRoles,
     registryKeys: state.agentsList.map((x) => x.key).filter((k) => k !== a.key),
   });
+  pane.__agentBase = agentEditSnap(pane);   // what "unsaved changes" is measured against (agentEditDirty)
   pane.hidden = false;
   pane.querySelector('.agent-edit-cancel').onclick = () => { disposeAgentForm(pane); pane.hidden = true; };
   // #555: a refusal is a card alert directly above this row of buttons.
@@ -10519,6 +10719,14 @@ async function saveAgentEdit(card, a, pane) {
   parts.push(...warns);
   setAgentsMsg(parts.join(' '), warns.length ? 'warn' : 'ok');
   await loadAgentsView();
+  // The agent sheet then shows the saved agent: its address (no longer …/edit), its card unfolded, the focus on its
+  // Edit — loadAgentsView replaced the focused card, and on <body> Escape no longer reaches the sheet. Not when the
+  // sheet closed or moved to another agent during the PUT (the teardown clears agentSheetKey).
+  if (state.agentSheetKey !== a.key) return;
+  try { window.history.replaceState(null, '', `#workflows/agents/${a.key}`); } catch { /* sandboxed */ }
+  const fresh = [...el.agentsList.querySelectorAll('.agent-card')].find((c) => c.dataset.agentKey === a.key);
+  if (fresh) toggleAgentDetail(fresh);
+  wfvRefocus(fresh && fresh.querySelector('.agent-edit'));
 }
 
 if (el.agentsList) {
@@ -10536,11 +10744,12 @@ if (el.agentsList) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     const head = e.target.closest && e.target.closest('.agent-head');
     if (!head) return;
+    // Edit / Duplicate / Delete sit INSIDE the header: their Enter / Space is their own native click, never a fold.
+    if (e.target !== head && e.target.closest('button, a, input, select, textarea')) return;
     e.preventDefault();
     toggleAgentDetail(head.closest('.agent-card'));
   });
 }
-if (el.agentCreateBtn) el.agentCreateBtn.addEventListener('click', () => { location.hash = 'agent-create'; });
 
 // Test hook (mirrors window.__ws).
 if (typeof window !== 'undefined') {
@@ -12463,14 +12672,40 @@ function resetAgentWizard() {
   state.agentWizard = { step: 1, genId: '', abort: null, draft: null, ownMd: false };
 }
 
-async function enterAgentWizard() {
-  if (!state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
+async function enterAgentWizard({ draft = null } = {}) {
+  // A re-entry of the same hash with no new draft must not wipe a chat draft sitting at the review step
+  // (a draft leaves genId empty, so the old guard alone would reset it to step 1).
+  const keepDraft = !draft && state.agentWizard.draft && state.agentWizard.step === 3;
+  if (!keepDraft && !state.agentWizard.genId && !state.agentWizard.abort) resetAgentWizard();
   if (!state.agentsList.length) await loadAgentsList();
   const keys = state.agentsList.filter((a) => a.scope !== 'workspace-only').map((a) => a.key);
   buildChipChecks(el.agwBefore, keys, []);
   buildChipChecks(el.agwAfter, keys, []);
-  showAgentWizardStep(state.agentWizard.step || 1);
+  if (draft && draft.meta) {
+    // A composer-chat draft (D17): straight to the review step, exactly as an agentgen-done draft lands.
+    // Step 1's fields are filled too, so Regenerate posts the draft's name and purpose, not empty ones.
+    if (el.agwName) el.agwName.value = draft.meta.displayName || draft.meta.key || '';
+    if (el.agwPurpose) el.agwPurpose.value = draft.meta.description || '';
+    state.agentWizard.draft = draft;
+    agentFormRender(document.getElementById('agw-step-3'), draft.meta, {
+      markdown: draft.markdown || '', mockWriterRoles: state.mockWriterRoles, registryKeys: state.agentsList.map((a) => a.key),
+    });
+    const s3 = document.getElementById('agw-step-3');
+    s3.__agentBase = agentEditSnap(s3);           // wfvSheetLoss: an untouched chat draft holds nothing to lose
+    state.agentWizard.fromChat = true;
+    state.agentWizard.chatKey = draft.meta.key || '';   // saveGeneratedAgent keeps it (a rename or a Regenerate too)
+    showAgentWizardStep(3);
+  } else {
+    showAgentWizardStep(state.agentWizard.step || 1);
+  }
   syncAgwStartEnabled();
+}
+
+/** The chat's agent card → Edit…: the wizard's review step with the draft (#workflows/agents/new, so Back works). */
+async function openAgentDraft(draft) {
+  wfvPendingDraft.agent = draft;
+  if (location.hash.slice(1) === 'workflows/agents/new') await routeWorkflows('agents/new');
+  else location.hash = 'workflows/agents/new';
 }
 
 function showAgentWizardStep(step) {
@@ -12479,6 +12714,9 @@ function showAgentWizardStep(step) {
     const pane = document.getElementById(`agw-step-${i}`);
     if (pane) pane.classList.toggle('hidden', i !== step);
   }
+  // The step that held the focus is hidden now (Generate, Abort, a finished or failed generation): the new step's
+  // first control takes it, never <body>, where Escape no longer reaches the sheet.
+  wfvRefocus(document.getElementById(`agw-step-${step}`).querySelector('input, button'));
 }
 
 function syncAgwStartEnabled() {
@@ -12490,6 +12728,8 @@ function syncAgwStartEnabled() {
 }
 
 async function startAgentGenerate() {
+  // Generate on step 1 starts a NEW agent, whose key follows its name; Regenerate on step 3 keeps a chat draft's key.
+  if (state.agentWizard.step === 1) state.agentWizard.chatKey = '';
   state.agentWizard.genId = ''; // gate stale events before the POST resolves
   if (el.agwStatus) el.agwStatus.textContent = 'Starting…';
   if (el.agwMsg) el.agwMsg.textContent = '';
@@ -12553,6 +12793,7 @@ function onAgentGenEvent(msg) {
   if (msg.type === 'agentgen-done') {
     state.agentWizard.abort = null;
     state.agentWizard.draft = msg.draft || null;
+    state.agentWizard.fromChat = false;             // a generated (paid) draft: closing loses it
     const root = document.getElementById('agw-step-3');
     if (root && msg.draft) {
       agentFormRender(root, msg.draft.meta || {}, {
@@ -12577,8 +12818,11 @@ async function saveGeneratedAgent() {
   const { meta, markdown, problems } = agentFormRead(root);
   // The wizard derives the key from the FINAL display name (agent-store.mjs:56):
   // the user may rename the draft on Step 3, and the key must follow. Only the
-  // card editor PUTs an existing key.
-  delete meta.key;
+  // card editor PUTs an existing key — and a chat draft (Edit… on its card) keeps the key the chat gave it, renamed or
+  // regenerated: its card's Save & add, its `then` ops and a build card's draft list name the agent by that key (a
+  // derived key left the card offering to save, and to place, the unedited draft as a second agent).
+  if (state.agentWizard.chatKey) meta.key = state.agentWizard.chatKey;
+  else delete meta.key;
   if (problems.length) {   // decision P20: two rows with one form id never reach the store
     if (el.agwMsg) { el.agwMsg.textContent = problems.join(' · '); el.agwMsg.className = 'form-msg err'; }
     return;
@@ -12598,7 +12842,8 @@ async function saveGeneratedAgent() {
     invalidateAgentCaches();
     resetAgentWizard();
     setAgentsMsg(`Agent "${data.meta.key}" created.`, 'ok');
-    location.hash = agentWizardReturn();
+    location.hash = 'workflows/agents';
+    void gvLoadAgents().then(() => wfvLibrary?.highlight('agent', data.meta.key));
   } catch (err) {
     if (el.agwMsg) { el.agwMsg.textContent = err.message; el.agwMsg.className = 'form-msg err'; }
   } finally {
@@ -12624,12 +12869,7 @@ if (el.agwStart) el.agwStart.addEventListener('click', () => startAgentGenerate(
 if (el.agwAbort) el.agwAbort.addEventListener('click', () => { abortAgentGen(); showAgentWizardStep(1); });
 if (el.agwRegen) el.agwRegen.addEventListener('click', () => startAgentGenerate());
 if (el.agwSave) el.agwSave.addEventListener('click', () => saveGeneratedAgent());
-if (el.agwClose) el.agwClose.addEventListener('click', () => { location.hash = agentWizardReturn(); });
-// The wizard has two doors: the Agents page (expert) and the Composer palette's "Create agent…"
-// (advanced, docs/ui-levels.md). Cancel and Save go back through the door that was used.
-let agentWizardFrom = 'agents';
-function agentWizardReturn() { const back = agentWizardFrom; agentWizardFrom = 'agents'; return back; }
-document.getElementById('gv-create-agent')?.addEventListener('click', () => { agentWizardFrom = 'composer'; location.hash = 'agent-create'; });
+if (el.agwClose) el.agwClose.addEventListener('click', () => wfvGoCanvas());
 for (const input of [el.agwName, el.agwPurpose, el.agwOwnMd]) {
   if (input) input.addEventListener('input', syncAgwStartEnabled);
 }
@@ -13393,41 +13633,31 @@ const hideInfoTip = () => {
   if (infoTipIcon) { infoTipIcon.removeAttribute('aria-describedby'); infoTipIcon = null; }
 };
 
-// Palette cards share the settings bubble. Hover uses a ~250ms intent delay so
-// dragging across the palette doesn't strobe tooltips; keyboard focus is instant.
 // relatedTarget guards: mouseover/mouseout bubble through child elements (.phead,
 // .pdesc), so a cursor move BETWEEN children of the same trigger must be a no-op
 // — without the guard the bubble hides and re-arms on every crossing (strobe).
 // contains(null/undefined) is false, so events with no relatedTarget still work.
-const TIP_SELECTOR = '.info-tip, #gv-palette .ap';
-let pillTipTimer = null;
+const TIP_SELECTOR = '.info-tip';
 document.addEventListener('mouseover', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
   if (!t) return;
   if (t.contains(e.relatedTarget)) return; // moved between children of the same trigger
-  if (t.classList.contains('agent-pill')) {
-    clearTimeout(pillTipTimer);
-    pillTipTimer = setTimeout(() => showInfoTip(t), 250);
-  } else {
-    clearTimeout(pillTipTimer);
-    showInfoTip(t);
-  }
+  showInfoTip(t);
 });
 document.addEventListener('mouseout', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
   if (!t) return;
   if (t.contains(e.relatedTarget)) return; // still inside the same trigger
-  clearTimeout(pillTipTimer);
   hideInfoTip();
 });
 document.addEventListener('focusin', (e) => {
   const t = e.target.closest?.(TIP_SELECTOR);
-  if (t) { clearTimeout(pillTipTimer); showInfoTip(t); }
+  if (t) showInfoTip(t);
 });
 document.addEventListener('focusout', (e) => {
-  if (e.target.closest?.(TIP_SELECTOR)) { clearTimeout(pillTipTimer); hideInfoTip(); }
+  if (e.target.closest?.(TIP_SELECTOR)) hideInfoTip();
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { clearTimeout(pillTipTimer); hideInfoTip(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideInfoTip(); });
 
 // ---------------------------------------------------------------------------
 // Settings: budget & cost limits card. Reads the three limit keys off the same
@@ -15325,9 +15555,9 @@ function paintRunningActions() {
       const next = host && (row?.querySelector(`button${focusedPart}`) || row?.querySelector('button')
         || host.querySelector(`button${focusedPart}`) || host.querySelector('button'));
       // Else the open page's row, or the first control that takes focus here: a control that is
-      // not shown ignores focus() (the Nodes row Simple hides, the collapse toggle on a tablet or a
-      // phone), and New run in the top bar shows at every level and every width.
-      for (const el of [next, $('.nav > button.active'), $('.nav > .nav-group.has-active'), $('#side-toggle'), $('#topnav-new')]) {
+      // not shown ignores focus() (the collapse toggle on a tablet or a phone), and New run in the
+      // top bar shows at every level and every width.
+      for (const el of [next, $('.nav > button.active'), $('#side-toggle'), $('#topnav-new')]) {
         el?.focus();
         if (el && document.activeElement === el) break;
       }
@@ -15679,7 +15909,7 @@ async function scriptHighlight(text, language) {
   return escapeHtml(String(text ?? ''));
 }
 
-function mountScriptsView(param = '') {
+function mountScriptsView(param = '', { draft = null } = {}) {
   if (!el.scriptsHost) return;
   if (!scriptsCtl) {
     scriptsCtl = createScriptsController({
@@ -15687,7 +15917,12 @@ function mountScriptsView(param = '') {
       msgEl: el.scriptsMsg,
       api: scriptsApi,
       notify: (o) => notify(o),
-      navigate: (hash) => { if (location.hash.slice(1) !== hash) location.hash = hash; },
+      // The controller speaks Scripts-page addresses ('scripts', 'scripts/<key>', 'scripts/new/<rt>');
+      // the page lives in the Workflows view's sheet now (D6), so they are re-rooted there.
+      navigate: (hash) => {
+        const to = String(hash).replace(/^scripts(?=\/|$)/, 'workflows/scripts');
+        if (location.hash.slice(1) !== to) location.hash = to;
+      },
       confirm: confirmModal,
       highlight: scriptHighlight,
       renderMarkdown: (text, mount) => renderArtifactMarkdown(text, mount, artifactViewerDeps()),
@@ -15710,7 +15945,18 @@ function mountScriptsView(param = '') {
       doc: document,
     });
   }
-  void scriptsCtl.route(param);
+  void (draft ? scriptsCtl.openDraft(draft) : scriptsCtl.route(param));
+}
+
+/** The chat's script card → Edit…: the script wizard at Build & test with the draft. The address names the
+ *  runtime (`new/<rt>`, what the controller itself shows), so the wizard's step-1 pill (`scripts/new`) is a real
+ *  hash change that works. */
+async function openScriptDraft(draft) {
+  const rt = ['node', 'python', 'shell'].includes(draft && draft.meta && draft.meta.runtime) ? draft.meta.runtime : 'node';
+  const to = `workflows/scripts/new/${rt}`;
+  wfvPendingDraft.script = draft;
+  if (location.hash.slice(1) === to) { if (scriptsCtl) { wfvPendingDraft.script = null; await scriptsCtl.openDraft(draft); } else await routeWorkflows(`scripts/new/${rt}`); }
+  else location.hash = to;
 }
 
 if (typeof window !== 'undefined') window.__scripts = { mountScriptsView, scriptsApi, ctl: () => scriptsCtl };
@@ -22621,11 +22867,11 @@ function wireHdGraphLogLinks(screen) {
   // and nothing here re-runs the renderer's structural rebuild. If that ever
   // changes, this pass has to move with it; the listeners would not.
   // v1 cards carry data-log-source and title in `.nmeta b`; v2 (graph) cards carry
-  // data-node-id and title in `.nhead .tt` (the shared renderer's head).
+  // data-node-id and title in `.nlabel .tt` (the shared renderer's head).
   for (const el of graph.querySelectorAll('.run-node[data-log-source], .node[data-node-id]')) {
     el.setAttribute('role', 'link');
     el.tabIndex = 0;
-    const label = el.querySelector('.nmeta b, .nhead .tt');
+    const label = el.querySelector('.nmeta b, .nlabel .tt');
     el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)}`);
   }
 
@@ -29839,8 +30085,8 @@ function gsRunHops(g, mock) {
     mock ? null : {
       id: 'workflow', target: '#workflowSelect', lift: ['.select-wrap'],
       met: () => !(wf && !wf.hidden && (wf.value || '') === AUTO_WORKFLOW_ID),
-      text: 'Choose a built-in workflow for this run — Default is the loop you saw in the Composer. Auto would pick one for you.',
-      already: 'The workflow for this run is picked here — Default is the loop you saw in the Composer; Auto would pick one for you.',
+      text: 'Choose a built-in workflow for this run — Default is the loop you saw in Workflows. Auto would pick one for you.',
+      already: 'The workflow for this run is picked here — Default is the loop you saw in Workflows; Auto would pick one for you.',
     },
     { id: 'prompt', target: '#prompt', met: () => !(prompt && !prompt.hidden && !prompt.value.trim()),
       text: mock
@@ -29973,22 +30219,26 @@ function gsHops(step, g) {
       ];
     }
     case 'workflows': {
-      // Composer: open Default, read the canvas, open the side panel, read it — then back to New
-      // pipeline to pick one for a run (the pick persists it: that is the derived tick) and run it.
-      const rail = document.getElementById('gv-ins-rail');
+      // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
+      // and start a run from New run (the pick persists the workflow: that is the derived tick).
+      const lib = document.getElementById('wfv-library');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
-        NAV('composer', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
-        { id: 'open', target: ['#gv-saved-list .pl-item[data-id="wf_default"] .pl-row', '#gv-saved-list .pl-row'],
-          met: () => !!(document.getElementById('gv-name')?.value || '').trim(),
+        NAV('workflows', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
+        { id: 'library', target: '#wfv-lib-toggle', lift: ['.wfv-float', '.wfv-stage'], met: () => !!lib && lib.dataset.open === 'true', skipWhenMet: true,
+          text: 'Open the Library: your agents, scripts and saved workflows.' },
+        { id: 'tab', target: '#wfv-library [data-tab="workflows"]', lift: ['.wfl'], met: () => !!lib && lib.dataset.tab === 'workflows', skipWhenMet: true,
+          text: 'Switch to Workflows.' },
+        { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
+          met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
           text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',
           already: 'A workflow is already on the canvas. Open Default to see the built-in Plan → Refine → Implement → Review loop.' },
-        { id: 'canvas', info: true, target: '#gv-canvas',
-          text: 'This is the whole workflow. Each card is an agent; the wires carry plans, code and reviews from one to the next. Drag cards, rewire them or drop in other agents — the loop is yours to change.' },
-        { id: 'rail-open', target: '#gv-ins-toggle', lift: ['#gv-ins-rail'], met: () => !rail || rail.dataset.open !== 'collapsed', skipWhenMet: true,
-          text: 'Expand the side panel: it holds the agents you can drop onto the canvas and the settings of whatever you select.' },
-        { id: 'rail', info: true, target: '#gv-ins-rail',
-          text: 'The side panel is the toolbox. Agents lists every agent you can drag onto the canvas, with Create agent… for your own. Info shows what is selected on the canvas: a card’s model and settings, or a wire’s loop limit.' },
+        { id: 'canvas', info: true, target: '#wfv-canvas', lift: ['.wfv-stage'],
+          text: 'This is the whole workflow. Each card is an agent or a script; the wires carry plans, code and reviews from one to the next. Drag cards in from the Library, rewire them, or select one to tune it.' },
+        { id: 'chat', info: true, target: '#wfc', lift: ['.wfv-float', '.wfv-stage'],
+          text: 'Or ask the chat: it adds and rewires steps, tunes models, and drafts new agents and scripts — on this canvas, while you watch.' },
+        { id: 'back', target: '#wfv-back', lift: ['.wfv-float', '.wfv-stage'], met: () => currentView() !== 'workflows',
+          text: 'Leave the editor. Runs start from New run.' },
         NAV('new', 'Now start a run with the workflow that fits your task. Every run starts here.'),
         // The pick is saved per project (PATCH /api/config), so a project has to be picked first.
         { id: 'project', target: '#projectSelect', lift: ['.select-wrap'], met: () => !noProjectPicked(),
@@ -30259,12 +30509,12 @@ loadOnboarding();
 const views = $$('.view');
 // Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.
 const navLinks = $$('.nav button[data-nav], #acct-settings');
-// [v2/C1] composer is PRESERVED; workspaces + workspace-create are appended.
+// workflows took over composer, agents, scripts and agent-create (see MOVED_ROUTES); workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'composer', 'workspaces', 'workspace-create', 'agents', 'scripts', 'agent-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -30292,15 +30542,14 @@ const levelCtl = createLevelController({
 });
 // The lowest mode whose menu lists each page. Pages not named here are simple.
 const VIEW_MIN_LEVEL = Object.freeze({
-  stats: 'advanced', composer: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
-  'agent-create': 'advanced',                 // reachable from the Composer palette at advanced
-  'team-metrics': 'expert', 'team-policy': 'expert', agents: 'expert', scripts: 'expert',
+  stats: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
+  'team-metrics': 'expert', 'team-policy': 'expert',
   schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced' });
 const VIEW_TITLES = Object.freeze({
-  stats: 'Statistics', composer: 'Workflow Composer', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
-  'agent-create': 'Create agent', 'team-metrics': 'Team metrics', 'team-policy': 'Team policy', agents: 'Agents', scripts: 'Scripts',
+  stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
+  'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules',
@@ -30314,22 +30563,10 @@ function paintLevelBanner() {
   const { key, min } = pageMinLevel();
   const above = !levelAtLeast(min);
   // The page you are on keeps its menu entry until you leave it, so "where am I" never vanishes.
-  // Simple is the one exception: the Nodes group (Agents, Scripts) stays hidden as a whole —
-  // in the rail AND the drawer — and the banner alone says where you are. Advanced keeps it.
-  const hideNodes = currentLevel() === 'simple';
   for (const b of $$('.nav button[data-nav]')) {
     const nav = b.dataset.nav;
     // Schedules is Advanced, but a run scheduled from Ask Worca in Simple keeps its entry (rule 2).
-    keepVisible(b, (above && nav === currentShownView && !(hideNodes && NODES_GROUP_VIEWS.includes(nav)))
-      || (nav === 'schedules' && schedulesInUse));
-  }
-  // The Nodes row and its flyout are not routes, so the loop above never reaches them:
-  // keep both with the open child, or the kept row hides inside an expert-gated flyout
-  // that has no visible row to open it from.
-  if (nodesGroup) {
-    const keep = above && !hideNodes && NODES_GROUP_VIEWS.includes(currentShownView);
-    keepVisible(nodesGroup, keep);
-    keepVisible(nodesFly, keep);
+    keepVisible(b, (above && nav === currentShownView) || (nav === 'schedules' && schedulesInUse));
   }
   if (el.settingsTabs) {
     for (const b of el.settingsTabs.querySelectorAll('button[data-tab]')) {
@@ -30377,6 +30614,12 @@ const MOVED_ROUTES = Object.freeze({
   'settings/mcp': 'connectors',
   'settings/models': 'models',
   'settings/providers': 'providers',
+  // The Workflows view took over the Workflow Composer, the Agents page, the Scripts page and the
+  // agent wizard (2026-10 redesign); their addresses (and Ask's #scripts/<key> links) land inside it.
+  composer: 'workflows',
+  agents: 'workflows/agents',
+  scripts: 'workflows/scripts',
+  'agent-create': 'workflows/agents/new',
 });
 
 // '' | 'bogus' | 'general' -> ['general', ''];  'guardrails/gr_x' -> ['guardrails', 'gr_x']
@@ -30458,14 +30701,9 @@ function showView(name, param = '') {
   closeReportModal();
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
-  if (currentShownView === 'composer' && name !== 'composer') composerExit();
+  if (currentShownView === 'workflows' && name !== 'workflows') workflowsExit();
   // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
-  // Same guard for the agent wizard: stop a live generation on the way out.
-  if (currentShownView === 'agent-create' && name !== 'agent-create') {
-    if (state.agentWizard.genId || state.agentWizard.abort) abortAgentGen();
-    resetAgentWizard();
-  }
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
   // switch as well as on a view switch: neither the guardrail wizard (#plugin-modal)
   // nor the info-tip bubble lives inside a [data-view] or a .settings-pane, so
@@ -30497,13 +30735,6 @@ function showView(name, param = '') {
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
-  // The Scripts controller owns two delegated listeners, a painted host and (from
-  // Task 10) a live bench subscription; leaving tears it down so the next entry
-  // mounts a fresh one and a stray frame paints nothing.
-  if (currentShownView === 'scripts' && name !== 'scripts' && scriptsCtl) {
-    scriptsCtl.destroy();
-    scriptsCtl = null;
-  }
   if (currentShownView === 'workspaces' && name !== 'workspaces') closeWsDetail({ instant: true });
   // Same for the live run in the pane (spec §5.1): leaving must not park it mid-slide.
   //
@@ -30524,7 +30755,6 @@ function showView(name, param = '') {
     param = settingsParamFor(tab, sub);
   }
   const prevView = currentShownView;
-  if (prevView === 'agents' && name !== 'agents') setAgentsMsg('');
   if (prevView === 'new' && name !== 'new') setFormMsg('');
   // The schedule sheet and the Start menu are body-level overlays of the view that opened them.
   if (prevView !== name) { closeScheduleSheet(); closeStartMenu(); }
@@ -30542,6 +30772,7 @@ function showView(name, param = '') {
   // Reconstruct the full hash (view + optional param) so a focused Running deep
   // link (running/<id>) is preserved rather than collapsed to a bare view.
   const targetHash = param ? `${name}/${param}` : name;
+  if (name !== 'workflows') wfvReturn = targetHash;
   if (location.hash.slice(1) !== targetHash) {
     syncingHash = true;
     location.hash = targetHash;
@@ -30557,16 +30788,14 @@ function showView(name, param = '') {
   });
   paintTopnavTitle(name);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
-  // Nodes (Agents, Scripts): the row takes the open-page fill while a child page is shown,
-  // and any route puts its flyout away (a click inside it already did).
-  if (nodesGroup) nodesGroup.classList.toggle('has-active', NODES_GROUP_VIEWS.includes(name));
-  nodesFlyout?.close();
+  // Any route puts the Actions flyout away (a click inside it already did).
   sideActionsFlyout?.close();
   acctFly.close();           // ...and the account menu (Settings, Details, Raise limit, Free requests)
   // Body flags let CSS drop .main's padding for the full-height pages (the Runs panes).
   document.body.classList.toggle('view-runs', RUNS_VIEWS.has(name));
   document.body.classList.toggle('view-projects', name === 'projects');
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
+  document.body.classList.toggle('view-workflows', name === 'workflows');
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -30615,9 +30844,6 @@ function showView(name, param = '') {
     else routeWsDetail(param);
   }
   if (name === 'workspace-create') enterWizard();
-  if (name === 'agents') loadAgentsView();
-  if (name === 'scripts') mountScriptsView(param);
-  if (name === 'agent-create') enterAgentWizard();
   // A route entry starts clean: a previous "not registered here" error must not linger (a
   // projects-changed rebuild calls refreshProjectsPage directly and keeps the message).
   if (name === 'projects') {
@@ -30628,7 +30854,7 @@ function showView(name, param = '') {
     if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
-  if (name === 'composer') initComposer();
+  if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });
   if (name === 'connectors') void mcpTab().show(param);
@@ -30645,7 +30871,7 @@ function showView(name, param = '') {
     if (!state.awayMode) void fetchAwayMode().then((d) => { if (d) { state.awayMode = d; paintNewRunAwayHint(); } });
     schedulePolicyLine();                    // team policy notes for the current target (board 8)
     // Drop the per-id workflow memo on every (re-)entry so a workflow re-saved
-    // in Composer repaints with its new topology rather than the cached one.
+    // in the Workflows view repaints with its new topology rather than the cached one.
     state.workflowCache = {};
     // #new/schedule (Schedules › Schedule a run): the sheet opens first, the task comes after.
     // The hash is then plain #new, so Back and a reload never re-open it.
@@ -31011,19 +31237,12 @@ function openNewPipeline(prefill) {
   else location.hash = 'new';
 }
 
-/** Ask Worca's "Open in composer" (spec §8.3, plan PD14): the composer must EXIST before showView fires its own
- *  un-awaited initComposer(); showView('composer') sets #composer itself; openTemplate asks before discarding an
- *  unsaved canvas and may resolve null. */
-async function openComposerFromAsk(workflowId) {
+/** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
+ *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
+async function openWorkflowFromAsk(workflowId) {
   askPanel?.close();
-  try {
-    await initComposer();
-    showView('composer');
-    const full = await gvApi.readWorkflow(workflowId);
-    if (!full || !gvComposer) return false;
-    if (await gvComposer.openTemplate(full)) { gvComposer.fit(); gvScrollToTop(); return true; }
-  } catch (err) { console.error('[worca] open in composer failed:', err && err.message ? err.message : err); }
-  return false;
+  location.hash = `workflows/${workflowId}`;
+  return true;
 }
 
 // Apply a card handoff to the New Pipeline form (§10.2 seam 7). One-shot; runs
@@ -31265,7 +31484,7 @@ askPanel = createAskPanel({
   confirm: confirmModal,
   getPageContext,
   openNewPipeline,
-  openComposer: (id) => { openComposerFromAsk(id); },
+  openComposer: (id) => { openWorkflowFromAsk(id); },
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,
   hljsLoader: diffHljsLoader,
@@ -31304,8 +31523,7 @@ terminalPane.syncOpeners();
 // ---------------------------------------------------------------------------
 // Export to Claude Code — modal wiring. Turns a saved v2 workflow into a runnable
 // skill via POST /api/workflows/:id/export (dry-run = Plan, apply = Apply). The
-// export button is added to each v2 row in the graph-view saved list (gvRenderSaved).
-// (Re-homed from the retired v1 composer after the Node-graph v2 rebase.)
+// modal opens from each v2 row's Export button in the Workflows view's Library and from Workflows ▾ › Export….
 // ---------------------------------------------------------------------------
 
 // #555 D2c: every export status line says whether it is an error.
@@ -31721,7 +31939,7 @@ function gvConfirmScriptImport(list) {
 
 function gvImportError(r) {
   const issues = (r.issues || []).slice(0, 5).map((i) => `${i.code}: ${i.message}`).join(' · ');
-  setGvSavedMsg(r.summary || (issues ? `${r.error} — ${issues}` : r.error), 'err');
+  notify({ tone: 'err', title: 'Not imported', detail: r.summary || (issues ? `${r.error} — ${issues}` : r.error) });
   return false;
 }
 
@@ -31732,26 +31950,12 @@ async function gvImportWorkflowObject(obj) {
   if (confirmed && !(await gvConfirmScriptImport(dry.scriptNodes))) return false;
   const r = await gvApi.importWorkflow(obj, { acceptScripts: confirmed });
   if (!r.ok) return gvImportError(r);
-  gvSavedTab = gvDomainOf(r.workflow);
   gvNewIds.add(r.workflow.id);
-  setGvSavedMsg(r.renamed
+  notify({ tone: 'ok', title: r.renamed
     ? `Imported as "${r.workflow.name}" — "${r.requestedName}" was already taken.`
-    : `Imported "${r.workflow.name}".`, 'ok');
-  await gvRefreshSaved();
+    : `Imported "${r.workflow.name}".` });
+  await wfvRefreshWorkflows();
+  wfvShellActions().openLibrary('workflows');
+  wfvLibrary?.highlight('workflow', r.workflow.id);
   return true;
 }
-function bindGvImport() {
-  const btn = document.getElementById('gv-import-btn');
-  const input = document.getElementById('gv-import-file');
-  if (!btn || !input) return;
-  btn.addEventListener('click', () => { input.value = ''; input.click(); });
-  input.addEventListener('change', async () => {
-    const f = input.files && input.files[0];
-    if (!f) return;
-    let obj;
-    try { obj = JSON.parse(await f.text()); }
-    catch (e) { setGvSavedMsg(`${f.name} is not valid JSON: ${e.message}`, 'err'); return; }
-    await gvImportWorkflowObject(obj);
-  });
-}
-bindGvImport();

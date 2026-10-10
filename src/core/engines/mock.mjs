@@ -170,6 +170,8 @@ function emitRaw(onEvent, raw) {
 }
 
 const ASK_CONTEXT_BLOCK_RE = /\[worca context\][\s\S]*?\[\/worca context\]\s*/;
+// The Workflows chat's open canvas (canvas-summary.mjs; forged markers inside are rewritten, so the first end is its own).
+const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas\]\s*/;
 
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
@@ -191,7 +193,7 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '');
+  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '');
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};

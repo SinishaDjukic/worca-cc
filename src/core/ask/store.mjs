@@ -59,12 +59,12 @@ function rowToThread(r) {
     // The engine the chat is locked to (#635): written with the model on every turn. NULL (a chat from
     // before v53) is read from its model (ask/models.mjs chatEngine).
     engine: r.engine ?? null,
+    // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
+    ...(r.mode ? { mode: r.mode } : {}),
+    ...(r.composer ? { composer: parse(r.composer, null) } : {}),
   };
 }
 
-/** On a shared deployment a person sees their own threads plus ownerless legacy ones. */
-const ownerWhere = (visibleTo, alias = '') => (visibleTo ? ` WHERE (${alias}created_by IS NULL OR ${alias}created_by = ?)` : '');
-const ownerArgs = (visibleTo) => (visibleTo ? [visibleTo] : []);
 function rowToMessage(r) {
   return {
     id: r.id, threadId: r.thread_id, seq: r.seq, role: r.role, text: r.text ?? '',
@@ -91,12 +91,12 @@ function rowToRunLink(r) {
 
 // ── threads ─────────────────────────────────────────────────────────────────
 
-export function createThread({ title = null, model = null, effort = null, createdBy = null } = {}) {
+export function createThread({ title = null, model = null, effort = null, createdBy = null, mode = null } = {}) {
   getDb();
   const id = newAskId('ask');
   const t = now();
-  prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null);
+  prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, mode === 'composer' ? 'composer' : null);
   return getThread(id);
 }
 
@@ -106,21 +106,34 @@ export function getThread(id) {
   return r ? rowToThread(r) : null;
 }
 
-export function listThreads({ limit = 50, visibleTo = null } = {}) {
+/** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9). `mode: 'any'` (the History
+ *  "Delete all" count, which deletes composer chats too) skips the surface filter. */
+function listWhere(visibleTo, mode, alias = '') {
+  const where = [];
+  const args = [];
+  if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
+  if (mode !== 'any') where.push(mode === 'composer' ? `${alias}mode = 'composer'` : `(${alias}mode IS NULL OR ${alias}mode <> 'composer')`);
+  return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', args };
+}
+
+export function listThreads({ limit = 50, visibleTo = null, mode = null } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  const w = listWhere(visibleTo, mode, 't.');
   const rows = prepare(`
     SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
            (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees
-    FROM ask_threads t${ownerWhere(visibleTo, 't.')} ORDER BY t.updated_at DESC, t.id LIMIT ?
-  `).all(...ownerArgs(visibleTo), n);
-  return rows.map((r) => ({ ...rowToThread(r), runLinks: r.run_links, worktrees: r.worktrees }));
+    FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
+  `).all(...w.args, n);
+  // A list row never carries the composer canvas (up to 256 KB each): getThread does.
+  return rows.map((r) => { const { composer: _canvas, ...t } = rowToThread(r); return { ...t, runLinks: r.run_links, worktrees: r.worktrees }; });
 }
 
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. */
-export function countThreads({ visibleTo = null } = {}) {
+export function countThreads({ visibleTo = null, mode = null } = {}) {
   getDb();
-  const row = prepare(`SELECT count(*) AS n FROM ask_threads${ownerWhere(visibleTo)}`).get(...ownerArgs(visibleTo));
+  const w = listWhere(visibleTo, mode);
+  const row = prepare(`SELECT count(*) AS n FROM ask_threads${w.sql}`).get(...w.args);
   return row ? Number(row.n) : 0;
 }
 
@@ -146,10 +159,10 @@ export function countAttachments() {
   return row ? Number(row.n) : 0;
 }
 
-const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode', engine: 'engine' };
-const JSON_PATCH_KEYS = new Set(['context', 'mcpOff']);
+const THREAD_PATCH_COLS = { title: 'title', model: 'model', effort: 'effort', sessionId: 'session_id', context: 'context', mcpOff: 'mcp_off', agentMode: 'agent_mode', engine: 'engine', composer: 'composer' };
+const JSON_PATCH_KEYS = new Set(['context', 'mcpOff', 'composer']);
 
-/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode, engine}; unknown keys ignored; always bumps updated_at. */
+/** Patch ⊆ {title, model, effort, sessionId, context, mcpOff, agentMode, engine, composer}; unknown keys ignored; always bumps updated_at. */
 export function updateThread(id, patch = {}) {
   const db = getDb();
   const sets = [];
@@ -321,7 +334,8 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
-        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'));
+        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
+        || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);

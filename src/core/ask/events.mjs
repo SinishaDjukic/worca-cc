@@ -61,6 +61,8 @@ const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
 // The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
+// The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
+const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
 export function worktreeMutatingCall(name, input) {
   if (!WORKTREE_TOOLS.has(name)) return false;
@@ -140,6 +142,11 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'list_branches': return 'Looking at branches';
     case 'propose_run': return 'Preparing a run';
     case 'propose_workflow': return 'Building a workflow';
+    case 'get_canvas': return 'Reading the canvas';
+    case 'edit_canvas': return 'Changing the canvas';
+    case 'build_workflow': return 'Assembling the graph';
+    case 'draft_agent': return 'Drafting an agent';
+    case 'draft_script': return 'Drafting a script';
     case 'propose_metrics_change': return 'Proposing a metrics change';
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
@@ -277,6 +284,7 @@ export function createTurnReducer({
   onWorktreeMutation = null,
   onMemoryMutation = null,
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
+  onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
   estimateLiveCost = null,
   attachmentNames = {},
   resolveCost = null,
@@ -646,6 +654,13 @@ export function createTurnReducer({
         // carries "error: <message>" and flips the card to failed.
         try {
           const ret = onWorkflowResult({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (COMPOSER_CARD_TOOLS.has(b.name) && typeof onComposerResult === 'function') {
+        // The RAW result text: the parent builds the card from what the child simulated and validated (D13).
+        try {
+          const ret = onComposerResult({ toolUseId: b.id, name: b.name, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

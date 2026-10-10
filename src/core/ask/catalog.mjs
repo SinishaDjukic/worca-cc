@@ -33,7 +33,7 @@ import { agentVocabulary } from '../auto/classify.mjs';
  *  selfLoop mirrors the assembler's BAD_SELF_LOOP rule EXACTLY (assemble.mjs:349,:363-367): the agent's FIRST
  *  `when:'blocking'` output exists and one of its `loop` inputs accepts that type (equal, or the input is `any`).
  *  Read from the registry's port objects, not the card's summary strings. */
-export function shapeAgents(registry) {
+export function shapeAgents(registry, { all = false } = {}) {
   const loops = (m) => {
     const outs = Array.isArray(m?.outputs) ? m.outputs : [];
     const blocking = outs.find((o) => o && o.when === 'blocking') || null;
@@ -41,7 +41,8 @@ export function shapeAgents(registry) {
     const ins = Array.isArray(m?.inputs) ? m.inputs.filter((p) => p && p.loop) : [];
     return ins.some((i) => i.type === 'any' || i.type === blocking.type);
   };
-  return agentVocabulary(registry, { domain: 'coding' })
+  // `all`: every placeable agent, any domain, no cap — the Workflows chat places what the Library offers.
+  return agentVocabulary(registry, all ? { limit: Infinity } : { domain: 'coding' })
     .map((c) => ({
       key: c.key, displayName: c.displayName, purpose: c.purpose, inputs: c.inputs, outputs: c.outputs,
       verifier: c.verifier, clarifier: c.clarifier, selfLoop: loops(registry[c.key]), fanOut: c.fanOut, asksQuestions: c.asksQuestions,
@@ -127,6 +128,8 @@ export function createCatalog({
       workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, projectKeys: [...(w.projectKeys || [])] })),
       workflows: templates.map((t) => shapeWorkflow(t, registry)),
       agents: shapeAgents(registry),
+      // The Workflows chat's placeable set (the Library's: every domain, no cap). Ask keeps `agents`, Auto's vocabulary.
+      allAgents: shapeAgents(registry, { all: true }),
     };
   }
   return { buildCatalog };

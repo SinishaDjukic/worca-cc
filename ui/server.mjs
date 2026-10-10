@@ -104,11 +104,13 @@ import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
 import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
-  buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
+  buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
 import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
+import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
+import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import {
   classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
 } from '../src/core/ask/attachment-kind.mjs';
@@ -9858,12 +9860,13 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    const threads = askListThreads({ limit, visibleTo }).map((t) => {
+    const mode = req.query.mode === 'composer' ? 'composer' : null;
+    const threads = askListThreads({ limit, visibleTo, mode }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
     });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads({ visibleTo }) });
+    res.json({ threads, total: askCountThreads({ visibleTo, mode }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -9874,7 +9877,7 @@ app.get('/api/ask/threads', (req, res) => {
 app.get('/api/ask/history', (req, res) => {
   try {
     res.json({
-      threads: askCountThreads({ visibleTo: askViewer(req) }),
+      threads: askCountThreads({ visibleTo: askViewer(req), mode: 'any' }),
       worktrees: askCountWorktrees(),
       attachments: askCountAttachments(),
       inFlight: askRunningCount(),
@@ -9927,7 +9930,9 @@ app.post('/api/ask/threads', (req, res) => {
       }
       title = body.title.trim() || null;
     }
-    const thread = askCreateThread({ createdBy: actorOf(req) });
+    // Workflows view (D9): the editor's chat is a composer thread — its own toolset, prompt and history list.
+    if (body.mode !== undefined && body.mode !== null && body.mode !== 'composer') return badRequest(res, 'mode must be "composer"');
+    const thread = askCreateThread({ createdBy: actorOf(req), mode: body.mode === 'composer' ? 'composer' : null });
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -10239,6 +10244,13 @@ async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = 
   return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
 }
 
+/** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
+async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claude' } = {}) {
+  // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
+  // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
+  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine === 'codex' ? { engine } : {}) });
+}
+
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
 function askCardScheduleLine(b, tz = null) {
   if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
@@ -10405,6 +10417,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
+        // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
+        const cc = composerHeaderCard(b);
+        if (cc) { cards.push(cc); continue; }
         if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
@@ -10509,6 +10524,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  const composerMode = thread.mode === 'composer';
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
@@ -10588,23 +10604,27 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
-    const mcp = await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
+    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
     // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
     // and is told so once per chat.
     const engine = modelEngine === 'codex' ? 'codex' : 'claude';
-    const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
+    const mcpCodexNote = !composerMode && engine === 'codex' && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
-    const skills = await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
+    const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
-    const agentOn = askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
-    const systemPrompt = await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+    const agentOn = !composerMode && askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
+    const systemPrompt = composerMode
+      ? await askComposerSystemPromptFor(catalog, { web, engine })
+      : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
     const header = askBuildContextHeader(headerCtx);
-    const prompt = askBuildTurnPrompt(header, text, inline);
+    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
+    const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
+    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     const attachmentNames = {};
@@ -10627,6 +10647,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       mcp: engine === 'codex' ? null : mcp.result,
       skills: skills.result,
       agentMode: agentOn,
+      composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,
@@ -10648,7 +10669,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
         // A Codex chat's notice names only the skills that join (#635): it starts no copy.
-        mcpJoinNotice: () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
+        mcpJoinNotice: composerMode ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -10741,6 +10762,16 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: undefined } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.agentMode !== undefined && typeof body.agentMode !== 'boolean') return badRequest(res, 'agentMode must be true or false');
+    // Workflows view (D11): a composer chat sends the open canvas with EVERY message. It is validated here and
+    // stored on the thread before the turn, so the MCP child and the prompt read what the user sees now.
+    let composerState = null;
+    if (thread.mode === 'composer') {
+      // Attachments ride a composer message exactly as an Ask one: validated below (before any write), then stored,
+      // inlined and listed by startAskTurn, whose prompt path is the same for both modes.
+      const pc = validateComposerPayload(body.composer);
+      if (!pc.ok) return badRequest(res, pc.error);
+      composerState = pc.value;
+    }
     // #397: explicit pin beats page context, per field. A context carrying its own
     // `pinned` verdict is authoritative — the selector-aware client already merged
     // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
@@ -10798,6 +10829,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    if (composerState) askUpdateThread(id, { composer: composerState });
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
@@ -11047,6 +11079,15 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && isComposerCard(found.block.card)) {
+      // Workflows chat cards (D13): the dock applies/undoes/saves in the browser and records it here. No event
+      // turn — the next message carries the canvas, so the model sees the result anyway.
+      const next = composerCardPatch(found.block.card, found.block.state, body);
+      if (!next.ok) return res.status(next.status).json({ error: next.error });
+      const block = flipCard(id, cardId, next.patch);
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
     if (found.block.card && found.block.card.type === 'schedule') {
       // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
       // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb

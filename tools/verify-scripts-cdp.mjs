@@ -179,7 +179,8 @@ async function until(expr, tag, tries = 150) {
   }
   throw new Error(`timeout waiting for ${tag}`);
 }
-const VIEW = '[data-view="scripts"]:not(.hidden)';
+const VIEW = '[data-view="workflows"]:not(.hidden) .wfv-pane[data-pane="script"]:not([hidden])';
+const PANE = '.wfv-pane[data-pane="script"]';
 // Every field write goes through the event the page listens to, never .value alone.
 const setField = (name, value, evName = 'input') => ev(
   `(()=>{const n=document.querySelector('${VIEW} [data-field="${name}"]');if(!n)throw new Error('no field ${name}');`
@@ -188,29 +189,28 @@ const clickIn = (sel) => ev(`(()=>{const n=document.querySelector('${VIEW} ${sel
 const setTheme = async (attr) => { await ev(`document.documentElement.dataset.theme=${JSON.stringify(attr)};0`); await settle(`theme ${attr}`); };
 
 try {
-  // ---- (1) the rail entry and the list --------------------------------------
-  await go('scripts', { first: true });
-  await until(`document.querySelector('${VIEW} .script-card')`, 'the list painted');
-  const list = await ev(`(()=>{const rail=[...document.querySelectorAll('.nav button[data-nav]')].map(b=>b.dataset.nav);
-    return {after:rail[rail.indexOf('agents')+1],active:document.querySelector('.nav button[data-nav="scripts"]').classList.contains('active'),
-      keys:[...document.querySelectorAll('${VIEW} .script-card')].map(c=>c.dataset.scriptKey),
-      title:document.getElementById('topnav-title').textContent};})()`);
-  check('1', 'Scripts sits directly under Agents in the rail and the page lists the three built-ins',
-    list.after === 'scripts' && list.active === true && list.title === 'Scripts'
-    && ['shell', 'js', 'gitDiff'].every((k) => list.keys.includes(k)), list);
+  // ---- (1) the Library's Scripts tab lists the built-ins; no sheet is open ----------
+  await go('workflows/scripts', { first: true });
+  await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library rows painted');
+  const list = await ev(`(()=>({keys:[...document.querySelectorAll('#wfv-library .wfl-item[data-item^="script:"]')].map(c=>c.dataset.item.slice(7)),
+      sheetHidden:document.getElementById('wfv-sheet').hidden}))()`);
+  check('1', 'the Library\'s Scripts tab lists the shell, js and gitDiff rows and the sheet is hidden',
+    list.sheetHidden === true && ['shell', 'js', 'gitDiff'].every((k) => list.keys.includes(k)), list);
 
   // ---- (2) the no-prose rule, in the LIVE app -------------------------------
-  const prose = await ev(`(()=>{const v=document.querySelector('[data-view="scripts"]');
+  const prose = await ev(`(()=>{const v=document.querySelector('${PANE}');
     return {p:[...v.querySelectorAll('p')].filter(n=>!n.closest('.bench-out-body')).length,msg:document.getElementById('scripts-msg').tagName};})()`);
-  check('2', 'the Scripts page carries no explanatory prose: zero <p> in the view, and the message line is a div',
+  check('2', 'the script pane carries no explanatory prose: zero <p> in the pane, and the message line is a div',
     prose.p === 0 && prose.msg === 'DIV', prose);
 
   // ---- (3) the wizard (script-wizard plan): pick node, name it, type a program, watch the rows appear, Save
-  await go('scripts/new');
+  await go('workflows/scripts/new');
   await until(`document.querySelector('${VIEW} .wz-step-1 .rt[data-runtime="node"]')`, 'the runtime step');
+  const sheetTitle = await ev(`document.getElementById('wfv-sheet-title').textContent`);
+  check('1b', 'the script sheet opens with the title Script', sheetTitle === 'Script', { sheetTitle });
   await clickIn('.rt[data-runtime="node"]');
   await clickIn('.wz-continue');
-  await until(`location.hash === '#scripts/new/node' && document.querySelector('${VIEW} .wz-step-2 [data-field="meta:displayName"]')`, 'step 2');
+  await until(`location.hash === '#workflows/scripts/new/node' && document.querySelector('${VIEW} .wz-step-2 [data-field="meta:displayName"]')`, 'step 2');
   await setField('meta:displayName', 'Proof script');
   await until(`document.querySelector('${VIEW} [data-field="meta:key"]').value === '${KEY}'`, 'the derived key');
   await setField('script:source', SOURCE);        // the code editor's textarea: its input event is the live-inference hook (150 ms debounce)
@@ -231,7 +231,7 @@ try {
     draftRun.chip === 'unsaved draft' && draftRun.dot === 'clean' && draftRun.fired.includes('out')
     && draftRun.logText.includes('streamed from the proof') && draftFiles.length === 0, { ...draftRun, logText: draftRun.logText.slice(0, 120), draftFiles });
   await clickIn('.script-save');
-  await until(`location.hash === '#scripts/${KEY}'`, 'the save routed to the saved script');
+  await until(`location.hash === '#workflows/scripts/${KEY}'`, 'the save routed to the saved script');
   const saved = await store.readScript(KEY);
   const onDisk = path.basename(saved ? saved.sourcePath || '' : '');
   check('3', 'the page created a node script on the user layer: the meta, the .mjs the store named, and the port it was given',
@@ -241,7 +241,7 @@ try {
     { onDisk, outputs: saved && saved.meta.outputs, dir: store.userScriptsDir() });
 
   // ---- (4) run it in the bench ---------------------------------------------
-  await go(`scripts/${KEY}/test`);
+  await go(`workflows/scripts/${KEY}/test`);
   await until(`document.querySelector('${VIEW} .bench .bench-run')`, 'the Test tab mounted');
   await clickIn('.bench-run');
   await until(`document.querySelector('${VIEW} .bench-status-text').textContent === 'clean'`, 'the bench finished clean', 300);
@@ -330,7 +330,7 @@ try {
     ['adv', 'dirty', 'file'].every((k) => hidden[k].present && hidden[k].attr === true && hidden[k].display === 'none'), hidden);
 
   // ---- (9) the dark theme ----------------------------------------------------
-  const readShell = () => ev(`(()=>{const v=document.querySelector('[data-view="scripts"]');const b=v.querySelector('.bench');
+  const readShell = () => ev(`(()=>{const v=document.querySelector('${PANE}');const b=v.querySelector('.bench');
     return {p:[...v.querySelectorAll('p')].filter(n=>!n.closest('.bench-out-body')).length,colBg:getComputedStyle(v.querySelector('.bench-col')).backgroundColor,
       ink:getComputedStyle(v.querySelector('.bench-status-text')).color,
       dot:getComputedStyle(b.querySelector('.bench-dot')).backgroundColor,

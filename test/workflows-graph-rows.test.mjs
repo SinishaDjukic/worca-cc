@@ -87,7 +87,7 @@ test('assertRunnableWorkflow: NOT_FOUND, ARCHIVED (verbatim), and the happy path
   await assert.rejects(() => assertRunnableWorkflow('wf_run'), (e) => {
     assert.equal(e.code, 'ARCHIVED');
     assert.equal(e.message, 'workflow "wf_run" was archived by the v2 upgrade (v1 template, not runnable) '
-      + '— pick a v2 pipeline or rebuild it in the Composer');
+      + '— pick a v2 pipeline or rebuild it in the Workflows view');
     return true;
   });
 });
@@ -187,7 +187,7 @@ test('assertRunnableWorkflow refuses a template wired to a port its agent no lon
     assert.equal(e.message, 'workflow "wf_ports" no longer matches the agents it uses: '
       + "V5: wire 'w2': 'n_a.review' is not a declared output (wire w2); "
       + "V21: end node 'n_end' input 'result' must be wired (node n_end) "
-      + '— open it in the Composer and re-wire it');
+      + '— open it in the Workflows view and re-wire it');
     assert.deepEqual(e.issues.map((i) => i.code), ['V5', 'V21']);
     return true;
   });
