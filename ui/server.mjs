@@ -5627,7 +5627,7 @@ app.delete('/api/runs/:id', async (req, res) => {
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && e.code === 'RETAINED_WORKTREE') return res.status(409).json({ error: e.message });
+    if (e && (e.code === 'RETAINED_WORKTREE' || e.code === 'HOSTS_SERVER')) return res.status(409).json({ error: e.message });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -5709,7 +5709,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
+    if (e && (e.code === 'SNAPSHOT_FAILED' || e.code === 'HOSTS_SERVER')) return res.status(409).json({ error: e.message });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -6203,7 +6203,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, HOSTS_SERVER: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }

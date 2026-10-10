@@ -139,6 +139,22 @@ test('discard snapshots dirty work, removes the checkout, clears the marker, kee
   assert.ok(!rep.patches[0].startsWith(join(worcaHome(), 'runs', id)), 'never inside the run root');
 });
 
+test('discard refuses a checkout the running server is started from, before stopping anything', async () => {
+  const repo = await freshRepo(); git(repo, ['branch', 'worca-cc/host']);
+  const { id } = await seedDoneRun(repo, 'worca-cc/host');
+  const { members: [m] } = await checkoutRun({ id });
+  const stopped = [];
+  await assert.rejects(
+    discardCheckout({ id, stopServices: async (pk) => { stopped.push(pk); }, hostDirs: [join(m.worktreeDir, 'ui')] }),
+    (e) => e.code === 'HOSTS_SERVER' && e.worktreeDir === m.worktreeDir);
+  assert.deepEqual(stopped, [], 'no service is stopped on a refusal');
+  assert.ok(existsSync(m.worktreeDir), 'the checkout stays');
+  assert.ok(checkoutRecordsFor(lookupPipelineRow(m.projectKey, id)), 'the marker stays');
+  // The cap skips it instead of failing; the default host dirs (this test process) do not match.
+  const cap = await enforceCheckoutCap({ max: 0, busy: new Set() });
+  assert.ok(cap.evicted.includes(id));
+});
+
 test('workspace run: only the selected members are checked out', async () => {
   const { id, members } = await seedWorkspaceDoneRun(2);
   const r = await checkoutRun({ id, members: [members[0].projectKey] });

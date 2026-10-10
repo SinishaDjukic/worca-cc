@@ -34,6 +34,7 @@ import { branchExists, anyPrHost, findPrForBranch } from './git-info.mjs';
 import { retainedWorkPatchName } from './results.mjs';
 import { deleteCommentsForRun } from './diff-comments.mjs';
 import { byActor } from './identity.mjs';
+import { dirHostingServer, hostDirsOfThisProcess, hostsServerMessage } from './host-dirs.mjs';
 
 /**
  * Final PR observation while the branches still exist (spec §6.8.3). A workspace run
@@ -114,7 +115,7 @@ function artifactAbsPath(relPath, pipelineDir, storeRootDir) {
  * single scalar `state.branch`. The state is reconstructed from the DB row by the
  * same reader history uses. Result warnings[] aggregates per-project failures.
  */
-export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id } = {}) {
+export async function archivePipeline({ projectDir = null, key = null, workspaceKey = null, id, hostDirs = hostDirsOfThisProcess() } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
 
   // Resolve the store key ONCE so the run dir and the shared plan/review files are
@@ -182,6 +183,11 @@ export async function archivePipeline({ projectDir = null, key = null, workspace
 
   // Reconstruct state (branch/branches/projects) via the same reader history uses.
   const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
+  // Before any removal: archive deletes the run root and every member worktree.
+  const doomed = [runRoot, state?.branch?.worktreeDir,
+    ...Object.values(state?.branches && typeof state.branches === 'object' ? state.branches : {}).map((br) => br?.worktreeDir)];
+  const hosting = dirHostingServer(doomed, hostDirs);
+  if (hosting) throw err(hostsServerMessage(hosting), 'HOSTS_SERVER');
 
   // The real on-disk run dir (markdown + extras live here). Resolve by the -<id> suffix.
   const storeRootDir = projectStorePath(storeKey);
@@ -346,7 +352,7 @@ export async function restorePipeline({ projectDir = null, key = null, workspace
  * preserving the pipeline row and artifact directory. Every live checkout is
  * snapshotted first; any snapshot failure aborts before removal.
  */
-export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id, by = null } = {}) {
+export async function discardRetainedWorktrees({ projectDir = null, key = null, workspaceKey = null, id, by = null, hostDirs = hostDirsOfThisProcess() } = {}) {
   if (!id || typeof id !== 'string') throw err('id is required', 'BAD_REQUEST');
   const storeKey = workspaceKey
     ? `workspaces/${workspaceKey}`
@@ -374,6 +380,8 @@ export async function discardRetainedWorktrees({ projectDir = null, key = null, 
   if (!retained) {
     return { ok: true, id: row.id, discarded: false, remaining: 0, worktrees: [], patches: [], runRoot: null, warnings: [] };
   }
+  const hosting = dirHostingServer([runRoot, ...retained.members.map((m) => m.worktreeDir)], hostDirs);
+  if (hosting) throw err(hostsServerMessage(hosting), 'HOSTS_SERVER');
 
   const { state } = (await readPipelineByKey(storeKey, row.id)) || { state: null };
   if (!state) throw err('pipeline state is unavailable', 'BAD_REQUEST');

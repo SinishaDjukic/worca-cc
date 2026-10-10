@@ -9,6 +9,7 @@ import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { createWorktree, removeWorktree, worktreePathForBranch, snapshotWorktreePatch } from './worktree.mjs';
 import { staleIndexLockNote } from './git-lock.mjs';
+import { dirHostingServer, hostDirsOfThisProcess, hostsServerMessage } from './host-dirs.mjs';
 import { readRunManifest, writeRunManifest, updateRunManifest, rmGuarded, RETAIN_REASONS } from './run-manifest.mjs';
 import { findPipelineRowById, retainedWorkFor, checkoutRecordsFor, readPrState, appendAuditById,
   readStoreMeta, runRootSweepLookups } from './artifacts.mjs';
@@ -227,11 +228,14 @@ async function patchDirFor(id) {
 }
 
 /** Stop services (callback), snapshot dirty work, remove the checkout, clear the marker. Branch kept. */
-export function discardCheckout({ id, members = null, force = false, stopServices = async () => {}, by = null }) {
+export function discardCheckout({ id, members = null, force = false, stopServices = async () => {}, by = null, hostDirs = hostDirsOfThisProcess() }) {
   return withLock(id, async () => {
     const row = findPipelineRowById(id);
     if (!row) throw cerr('pipeline not found', 'NOT_FOUND');
     const recs = (checkoutRecordsFor(row)?.members || []).filter((m) => !members || members.includes(m.projectKey));
+    // Checked before any service stops: a refusal leaves everything as it was.
+    const hosting = dirHostingServer(recs.filter((r) => !r.external).map((r) => r.worktreeDir), hostDirs);
+    if (hosting) throw cerr(hostsServerMessage(hosting), 'HOSTS_SERVER', { worktreeDir: hosting });
     const patches = []; const removed = []; let failure = null;
     const patchDir = recs.length ? await patchDirFor(row.id) : null;
     const unlinked = [];
@@ -328,8 +332,9 @@ export async function releaseKeptCheckouts({ busy = busyRunIds(), stopServices =
     if (!projectDir) continue;
     const state = await prState({ projectDir, prUrl: pr.url });
     if (state === 'MERGED' || state === 'CLOSED') {
-      await discardCheckout({ id: c.runId, force: true, stopServices, by: `keep policy (PR ${state.toLowerCase()})` });
-      released.push(c.runId);
+      const ok = await discardCheckout({ id: c.runId, force: true, stopServices, by: `keep policy (PR ${state.toLowerCase()})` })
+        .then(() => true, (e) => { if (e.code === 'HOSTS_SERVER') return false; throw e; });
+      if (ok) released.push(c.runId);
     }
   }
   return { released };
