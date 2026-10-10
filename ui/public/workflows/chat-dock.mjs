@@ -1,9 +1,11 @@
 // ui/public/workflows/chat-dock.mjs
 // The Workflows view's chat dock (composer-mockup.html chat.js): a one-line frosted pill beside the black "+"
-// that grows UPWARD into a panel while you type. Scope pill ("Auto" or a registered project), New chat, no
-// attach. It runs on Ask Worca as a composer thread (chat-client.mjs); its cards change the open canvas
-// (chat-cards.mjs). Everything inside carries data-canvas-keys="off" (on #wfc), so typing never edits the graph.
+// that grows UPWARD into a panel while you type. Scope pill ("Auto" or a registered project), New chat, and
+// attachments as in Ask (the paperclip, a drop on the dock, a paste; attach-files.mjs). It runs on Ask Worca as a
+// composer thread (chat-client.mjs); its cards change the open canvas (chat-cards.mjs). Everything inside carries
+// data-canvas-keys="off" (on #wfc), so typing never edits the graph.
 import { createComposerChatClient } from './chat-client.mjs';
+import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
 
@@ -18,6 +20,7 @@ const TOOL_VERB = {
   get_canvas: 'read canvas', edit_canvas: 'edit canvas', build_workflow: 'build workflow', draft_agent: 'draft agent',
   draft_script: 'draft script', test_script: 'test script', get_agent: 'read agent', get_workflow: 'read workflow',
   get_script: 'read script', list_scripts: 'list scripts', list_workflows: 'list workflows', list_projects: 'list projects', list_models: 'list models',
+  read_attachment: 'read attachment',
 };
 const ICON = {
   spark: '<path d="M9 3l1.6 4.4L15 9l-4.4 1.6L9 15l-1.6-4.4L3 9l4.4-1.6z"/><path d="M17.5 13l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/>',
@@ -27,6 +30,7 @@ const ICON = {
   minus: '<path d="M5 12h14"/>',
   folder: '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"/>',
   chev: '<path d="M6 15l6-6 6 6"/>',
+  clip: '<path d="M20.5 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
 };
 
 /**
@@ -73,6 +77,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   let error = '';
   let wasLive = false;
   let ph = 0;
+  let pendingFiles = [];        // the next message's attachments: {name, bytes, dataBase64, attKind, mime}
+  let adding = Promise.resolve();   // the batch of files being read (addFiles): send() waits for it
 
   const client = createComposerChatClient({ fetch: fetchFn, sendWs, storage, onChange: (kind) => schedule(kind) });
   const blocks = () => {
@@ -122,10 +128,31 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const stopBtn = iconBtn('wfc-stop', 'Stop', 'stop');
   stopBtn.hidden = true;
   const sendBtn = iconBtn('wfc-send', 'Send', 'up');
-  row.append(spark, input, scopeBtn, stopBtn, sendBtn);
+  // Attachments, as in Ask (attach-files.mjs): the paperclip opens the picker. Above the row sit the next message's
+  // files as chips and a note saying why one was not attached; over the whole shell sits the drop overlay. The chips
+  // live in .wfc-foot with the row, so the shell's 3-row grid keeps its slots.
+  const attachBtn = iconBtn('wfc-attach', 'Attach files', 'clip');
+  const fileInput = h('input', 'wfc-file-input');
+  fileInput.type = 'file';
+  fileInput.multiple = true;
+  fileInput.accept = ATTACH_ACCEPT;
+  fileInput.hidden = true;
+  row.append(spark, input, attachBtn, fileInput, scopeBtn, stopBtn, sendBtn);
+  const fileRow = h('div', 'wfc-files');
+  fileRow.setAttribute('role', 'group');
+  fileRow.setAttribute('aria-label', 'Attachments for the next message');
+  fileRow.hidden = true;
+  const noteEl = h('p', 'wfc-note');
+  noteEl.hidden = true;
+  const foot = h('div', 'wfc-foot');
+  foot.append(fileRow, noteEl, row);
+  const dropEl = h('div', 'wfc-drop');
+  dropEl.setAttribute('aria-hidden', 'true');
+  dropEl.hidden = true;
+  dropEl.appendChild(h('span', 'wfc-drop-l', 'Drop files to attach'));
   const dot = h('span', 'wfc-dotu');
   dot.hidden = true;
-  shell.append(head, thread, row, dot, sr);
+  shell.append(head, thread, foot, dropEl, dot, sr);
   host.replaceChildren(shell);
 
   // ── fit the stage; keep the bottom-right bars visible (mockup fitWidth + checkLegend) ───────────────────
@@ -217,7 +244,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     // The modal restores no focus: keep it on New chat, never <body> (where the canvas owns Backspace and the arrows).
     if (drafts.length && !(await leaveDrafts(drafts))) { newBtn.focus(); return; }
     if (pending || client.busy()) { input.focus(); return; }          // a reply started while the question was open
-    client.newChat(); cards.reset(); cardEls.clear(); error = ''; render(); input.focus();
+    client.newChat(); cards.reset(); cardEls.clear(); userAtts.clear(); clearFiles(); error = ''; render(); input.focus();
   });
   stopBtn.addEventListener('click', () => { void client.stop(); });
   sendBtn.addEventListener('click', () => { void send(); });
@@ -254,24 +281,151 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
 
   // ── send ───────────────────────────────────────────────────────────────────
   async function send(text = input.value.trim()) {
-    if (!text || client.busy()) return;
-    const payload = { ...canvas(), drafts: cards.pendingDrafts() };
-    const context = { view: 'workflows', pinned: Boolean(scope.pinned), ...(scope.pinned ? { projectKey: scope.projectKey } : {}) };
+    if (!text || pending || client.busy()) return;
     error = '';
+    setNote('');
     pending = true;
     render();
-    const r = await client.send(text, { context, composer: payload });
+    await adding;                                       // a file still being read rides this message, not the next
+    const sent = pendingFiles.slice();
+    const payload = { ...canvas(), drafts: cards.pendingDrafts() };
+    const context = { view: 'workflows', pinned: Boolean(scope.pinned), ...(scope.pinned ? { projectKey: scope.projectKey } : {}) };
+    const r = await client.send(text, { context, composer: payload, attachments: sent });
     pending = false;
-    if (r.ok) { if (input.value.trim() === text) input.value = ''; autosize(); }
+    // The chips clear only once the message is in: a refused send keeps them for the retry.
+    if (r.ok) { if (input.value.trim() === text) input.value = ''; autosize(); dropFiles(sent); }
     else error = r.error || 'Not sent.';
     render();
   }
+
+  // ── attachments (Ask's types, caps and messages: attach-files.mjs) ────────────────────────────────
+  const namePasted = createPasteNamer((parts, name, opts) => new win.File(parts, name, opts));
+  /** Why a file was not attached ('' clears it): shown under the chips, and said once through the live region. */
+  function setNote(text) {
+    noteEl.textContent = text || '';
+    noteEl.hidden = !text;
+    if (text) sr.replaceChildren(h('div', '', text));
+    place();
+  }
+  let shownFiles = [];          // the files the chips show, in order: the one under a focused × (renderFiles)
+  function renderFiles() {
+    // A rebuild under a focused × (a read landing, a sent message leaving) would drop the focus to <body>, where the
+    // canvas owns Backspace and Delete: keep it on that file's ×, else the one now in its place, else the input.
+    const at = [...fileRow.querySelectorAll('.wfc-file-x')].indexOf(doc.activeElement);
+    const was = at >= 0 ? shownFiles[at] : null;
+    fileRow.replaceChildren(...pendingFiles.map((f) => {
+      const chip = h('span', 'wfc-file');
+      chip.title = f.name;
+      if (f.attKind === 'image' && f.dataBase64) {
+        const img = h('img', 'wfc-file-thumb');
+        img.alt = '';                                   // the name beside it says what it is
+        img.src = `data:${f.mime};base64,${f.dataBase64}`;
+        chip.appendChild(img);
+      }
+      const x = h('button', 'wfc-file-x', '×');
+      x.type = 'button';
+      x.setAttribute('aria-label', `Remove ${f.name}`);
+      x.addEventListener('click', () => removeFile(f));
+      chip.append(h('span', 'wfc-file-name', f.name), x);
+      return chip;
+    }));
+    shownFiles = pendingFiles.slice();
+    fileRow.hidden = !pendingFiles.length;
+    if (pendingFiles.length) attachBtn.dataset.count = String(pendingFiles.length); else delete attachBtn.dataset.count;
+    attachBtn.title = pendingFiles.length ? `Attach files (${pendingFiles.length} attached)` : 'Attach files';
+    if (at >= 0) {
+      const xs = [...fileRow.querySelectorAll('.wfc-file-x')];
+      const i = pendingFiles.indexOf(was);
+      (xs[i >= 0 ? i : Math.min(at, xs.length - 1)] || input).focus({ preventScroll: true });
+    }
+    place();                                           // the chips change the shell's height: re-lift the bars now
+  }
+  /** × drops one file. Its button leaves the DOM, and a focus dropped to <body> hands Backspace and Delete to the
+   *  canvas (the selected card would go): move it to the × now in its place, else the one before, else the input. */
+  function removeFile(f) {
+    const at = pendingFiles.indexOf(f);
+    pendingFiles = pendingFiles.filter((p) => p !== f);
+    renderFiles();
+    const xs = [...fileRow.querySelectorAll('.wfc-file-x')];
+    (xs[Math.min(at, xs.length - 1)] || input).focus({ preventScroll: true });
+  }
+  function dropFiles(sent) {
+    if (!sent.length) return;
+    pendingFiles = pendingFiles.filter((p) => !sent.includes(p));
+    renderFiles();
+  }
+  function clearFiles() { pendingFiles = []; setNote(''); renderFiles(); }
+  /** Every way in (the picker, a drop, a paste) lands here, one batch at a time: a batch reads its files before the
+   *  next one checks the caps. The PDF refusal reads the chat's engine: its lock, else the next message's default. */
+  function addFiles(list) {
+    const batch = [...(list || [])];
+    if (!batch.length) return adding;
+    adding = adding.then(() => addBatch(batch)).catch(() => {});
+    return adding;
+  }
+  async function addBatch(batch) {
+    setNote('');
+    let engine = null;
+    try { engine = await client.engine(); } catch { engine = null; }
+    for (const f of batch) {
+      const v = checkAttachment(f, { pending: pendingFiles, engine });
+      if (!v.ok) { setNote(v.error); continue; }
+      let dataBase64 = '';
+      try { dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()), (s) => win.btoa(s)); }
+      catch { setNote(`could not read ${v.name}`); continue; }
+      // Rebuilt from the list as it is NOW: a × pressed while this file was read stays pressed.
+      pendingFiles = [...pendingFiles.filter((p) => p.name !== v.name), { name: v.name, bytes: f.size, dataBase64, attKind: v.attKind, mime: v.mime }];
+    }
+    renderFiles();
+  }
+  // The picker closed (a choice or Cancel): Chrome hands the focus back to the paperclip. Make sure it is never <body>.
+  const keepFocus = () => { if (!host.contains(doc.activeElement)) attachBtn.focus({ preventScroll: true }); };
+  attachBtn.addEventListener('click', () => { expand(); fileInput.click(); });
+  fileInput.addEventListener('change', () => { void addFiles(fileInput.files); fileInput.value = ''; keepFocus(); });
+  fileInput.addEventListener('cancel', keepFocus);
+  input.addEventListener('paste', (ev) => {
+    const list = pastedFiles(ev.clipboardData);
+    if (!list) return;                                  // a text paste goes ahead natively
+    ev.preventDefault();
+    void addFiles(namePasted(list));
+  });
+  // A drop on the dock attaches (Ask's buildDropTarget). Only drags carrying files are touched: a Library card dragged
+  // over the dock keeps its defaults. dragenter/dragleave fire on every child crossed (enter on the new one before
+  // leave on the old), so a depth counter decides when the files really left; drop and dragend reset it.
+  let dragDepth = 0;
+  const endDrag = () => { dragDepth = 0; dropEl.hidden = true; };
+  shell.addEventListener('dragenter', (ev) => {
+    if (!carriesFiles(ev.dataTransfer)) return;
+    ev.preventDefault();
+    dragDepth += 1;
+    dropEl.hidden = false;
+  });
+  shell.addEventListener('dragover', (ev) => {
+    if (!carriesFiles(ev.dataTransfer)) return;
+    ev.preventDefault();
+    try { ev.dataTransfer.dropEffect = 'copy'; } catch { /* read-only in some engines */ }
+  });
+  shell.addEventListener('dragleave', (ev) => {
+    if (!carriesFiles(ev.dataTransfer)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) dropEl.hidden = true;
+  });
+  shell.addEventListener('drop', (ev) => {
+    if (!carriesFiles(ev.dataTransfer)) return;
+    ev.preventDefault();
+    endDrag();
+    expand();
+    // The chips show in the open chat. The focus goes to its input, never <body>, where the canvas owns the keys.
+    input.focus({ preventScroll: true });
+    void addFiles(ev.dataTransfer.files);
+  });
+  shell.addEventListener('dragend', endDrag);
 
   // ── render ─────────────────────────────────────────────────────────────────
   function toolLine(b) {
     const short = String(b.name || '').replace(/^mcp__worca__/, '');
     const i = b.input && typeof b.input === 'object' ? b.input : {};
-    const target = i.summary || i.name || i.displayName || i.key || '';
+    const target = i.summary || i.name || i.displayName || i.key || (short === 'read_attachment' ? attachmentName(i.id) : '') || '';
     const el = h('div', `wfc-tool is-${b.status || 'running'}`);
     el.append(h('span', 'wfc-tool-i', b.status === 'done' ? '✓' : b.status === 'error' ? '!' : '…'),
       h('span', 'mono', `${TOOL_VERB[short] || short}${target ? ` ${String(target).slice(0, 80)}` : ''}`));
@@ -295,6 +449,49 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     return box;
   }
   const cardEls = new Map();    // card id → {sig, el}: the rendered card, reused while its sig holds
+  const userAtts = new Map();   // user message id → {sig, el}: its attachments row, reused while it shows the same files
+  /** A sent message's attachment blocks, in a row under its bubble (null = none). Reused like a card, so a tool frame
+   *  mid-turn never reloads a thumbnail. */
+  function userAttachments(msg) {
+    const atts = (msg.blocks || []).filter((b) => b && b.kind === 'attachment');
+    if (!atts.length) return null;
+    const tid = client.threadId();
+    const sg = JSON.stringify([tid, atts.map((b) => [b.id || null, b.name, b.attKind || 'text'])]);
+    const hit = userAtts.get(msg.id);
+    if (hit && hit.sig === sg) return hit.el;
+    const row2 = h('div', 'wfc-uatts');
+    for (const b of atts) row2.appendChild(attachmentPill(b, tid));
+    userAtts.set(msg.id, { sig: sg, el: row2 });
+    return row2;
+  }
+  /** An image the store has an id for is a thumbnail served by the download route (sniff-checked mime, inline), which
+   *  opens in a new tab. Anything else, including an echo without an id, is a name pill (ask-panel buildAttachmentPill). */
+  function attachmentPill(b, tid) {
+    const name = b.name || (b.attKind === 'image' ? '(image)' : '(attachment)');
+    if (b.attKind === 'image' && b.id && tid) {
+      const url = `/api/ask/threads/${encodeURIComponent(tid)}/attachments/${encodeURIComponent(b.id)}`;
+      const link = h('a', 'wfc-uthumb-link');
+      link.setAttribute('href', url);
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.title = name;
+      const img = h('img', 'wfc-uthumb');
+      img.alt = name;
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('src', url);
+      link.appendChild(img);
+      return link;
+    }
+    const pill = h('span', 'wfc-upill', name);
+    pill.title = name;
+    return pill;
+  }
+  /** read_attachment names an attachment by id: its tool line shows the file name from the thread's ledger. */
+  function attachmentName(id) {
+    const m = client.model();
+    const a = m && id && typeof m.attachments === 'function' ? m.attachments().find((x) => x && x.id === id) : null;
+    return a ? a.name : '';
+  }
   let liveAnswerEl = null;      // the streaming answer's element: a text-only frame rewrites just this node
   let liveLabelEl = null;
   function paintChrome(live) {
@@ -386,6 +583,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       if (msg.role === 'user') {
         if (Array.isArray(msg.blocks) && msg.blocks.some((b) => b && b.synthetic)) continue;
         kids.push(h('div', 'wfc-msg wfc-u', msg.text));
+        const atts = userAttachments(msg);
+        if (atts) kids.push(atts);
         continue;
       }
       const wrap = h('div', 'wfc-msg wfc-a');

@@ -8,6 +8,7 @@ import { toggleMenu, closeMenus } from './menu.mjs';
 import { modelGroups } from '../../../src/shared/connections.mjs';
 import { DEFAULT_MAX_CYCLES, LIMITS } from '../../../src/shared/graph/constants.mjs';
 import { resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
+import { carriesFiles } from '../attach-files.mjs';
 
 export const DND_TYPE = 'application/x-worca';
 export const FLOW_CARDS = Object.freeze([
@@ -129,6 +130,16 @@ export function createWorkflowsShell({ doc, els, composer, actions }) {
     }
     composer.spawnAtClient(entry, ev.clientX, ev.clientY);
   });
+  // A FILE dragged over the view, anywhere but the chat dock (which attaches it, chat-dock.mjs), must never reach the
+  // browser's default: Chrome opens a dropped file in this tab and the unsaved canvas is gone. Claim the drop and refuse
+  // it (dropEffect 'none'). A drag a target already took (the dock; the canvas's own Library drop) is that target's.
+  for (const type of ['dragover', 'drop']) {
+    on(els.root, type, (ev) => {
+      if (ev.defaultPrevented || !carriesFiles(ev.dataTransfer)) return;
+      ev.preventDefault();
+      if (type === 'dragover') { try { ev.dataTransfer.dropEffect = 'none'; } catch { /* read-only in some engines */ } }
+    });
+  }
 
   // ── selection toolbar + More popover ─────────────────────────────────────────
   let tb = null;            // the toolbar element (rebuilt when its signature changes)

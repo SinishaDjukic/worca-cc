@@ -3,6 +3,7 @@
 // 'composer'), its ask-model.mjs reducer (the same per-thread reducer the Ask panel uses), the send path,
 // the stop and card routes, and the frames app.js fans out to it. No DOM.
 import { createThreadModel } from '../ask-model.mjs';
+import { chatEngineOf, engineOfEntry } from '../ask-engine.mjs';
 
 /** The dock's current thread (never the Ask panel's `worca-cc.ask.thread`). */
 export const THREAD_KEY = 'worca-cc.composer.thread';
@@ -65,8 +66,20 @@ export function createComposerChatClient({ fetch: fetchFn, sendWs = () => {}, st
     // `awaiting` covers the gap between the 202 and the turn's first frame: a second Enter there would get a 409.
     busy: () => sending || Boolean(awaiting) || Boolean(model && model.live()),
     async open() { if (threadId && !model) await load(threadId); },
+    /** The engine the next message runs on (Ask's pickerEngine): the chat's lock once it has a reply, else the engine
+     *  of the model defaultPick() sends. null while the catalog cannot be read (the server still refuses). A stored chat
+     *  loads first, as in send(): the dock's expand() starts open() without waiting for it. */
+    async engine() {
+      if (threadId && !model) await load(threadId);
+      const pick = await defaultPick();
+      if (!pick) return null;
+      const t = model && model.thread() ? model.thread() : null;
+      const entry = catalog && Array.isArray(catalog.models) ? catalog.models.find((x) => x && x.id === pick.model) || null : null;
+      return chatEngineOf(model ? model.messages() : [], pick.model, catalog, t && t.engine) || engineOfEntry(entry);
+    },
     /** Every message carries the canvas (D11) — never "the first one only" (memory: ask-script-tools-traps). */
-    async send(text, { context = {}, composer = null } = {}) {
+    // `attachments`: the dock's pending files ({name, dataBase64, bytes, attKind, mime}); only name + base64 go up.
+    async send(text, { context = {}, composer = null, attachments = [] } = {}) {
       if (sending) return { ok: false, error: 'A message is already on its way.' };
       sending = true;
       onChange('sending');
@@ -90,13 +103,21 @@ export function createComposerChatClient({ fetch: fetchFn, sendWs = () => {}, st
         }
         const tid = threadId;
         const m = model;
-        const r = await post(`/api/ask/threads/${encodeURIComponent(tid)}/messages`, { text, model: pick.model, effort: pick.effort, context, composer });
+        const files = (Array.isArray(attachments) ? attachments : []).filter((f) => f && typeof f.name === 'string' && typeof f.dataBase64 === 'string');
+        // No attachments, no key: the body stays what it was before attachments existed.
+        const r = await post(`/api/ask/threads/${encodeURIComponent(tid)}/messages`, { text, model: pick.model, effort: pick.effort, context, composer,
+          ...(files.length ? { attachments: files.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}) });
         const body = await json(r);
         if (r.status !== 202) return { ok: false, error: body.error || `HTTP ${r.status}` };
         // New chat (or a 404 reload) while the POST was out: the message went to the thread it was sent to — never
         // write it into the one now showing (ask-panel.mjs guards the same race).
         if (threadId !== tid || model !== m) return { ok: true };
-        m.noteLocalUserMessage({ id: body.userMessageId, text, attachments: [] });
+        // The server's rows carry the store-minted ids an image thumbnail is served by (as ask-panel.mjs); the files
+        // sent are the fallback for a server without the field.
+        const echo = Array.isArray(body.attachments)
+          ? body.attachments.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
+          : files.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
+        m.noteLocalUserMessage({ id: body.userMessageId, text, attachments: echo });
         awaiting = body.assistantMessageId || null;
         sendWs({ type: 'subscribe', threadId: tid });
         return { ok: true };

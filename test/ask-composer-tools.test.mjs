@@ -6,6 +6,7 @@ import { defaultComposerDeps, composerPromptBlock } from '../src/core/ask/compos
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 import { COMPOSER_LIMITS } from '../src/core/ask/composer-payload.mjs';
 import { assertKeyAllowed } from '../src/core/script-store.mjs';
+import { COMPOSER_SYSTEM_RULES } from '../src/core/ask/prompt.mjs';
 
 const REGISTRY = {
   planner: { key: 'planner', displayName: 'Plan', description: 'Plans.', inputs: [{ id: 'task', type: 'md' }], outputs: [{ id: 'plan', type: 'md' }], origin: 'builtin' },
@@ -29,7 +30,7 @@ test('an Ask chat gets no composer tools; a composer chat gets ONLY the composer
   const ask = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, ...defaultComposerDeps({ threadId: 'x', io: io({ id: 'x' }) }) });
   assert.equal(ask.list().some((d) => d.name === 'edit_canvas'), false);
   const names = tools({ id: 'x', mode: 'composer', composer: CANVAS }).list().map((d) => d.name);
-  for (const n of ['get_canvas', 'edit_canvas', 'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow', 'list_projects', 'list_workflows']) assert.ok(names.includes(n), n);
+  for (const n of ['get_canvas', 'edit_canvas', 'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow', 'list_projects', 'list_workflows', 'read_attachment']) assert.ok(names.includes(n), n);
   for (const n of ['propose_run', 'propose_workflow', 'list_runs', 'remember', 'pause_schedule', 'git', 'save_script']) assert.equal(names.includes(n), false, n);
 });
 
@@ -259,4 +260,30 @@ test('get_canvas, get_workflow and get_agent redact what the model reads (B24): 
   }
   // The canvas the browser holds is untouched: only what the MODEL reads is masked.
   assert.ok(thread.composer.graph.nodes.at(-1).config.params.command.includes(TOKEN));
+});
+
+test('read_attachment works in a composer chat: text pages back, an image or PDF hands Read its path', async () => {
+  const atts = {
+    att_00000001: { name: 'spec.md', kind: 'text', mime: 'text/markdown', bytes: 13, text: '# Build this\n' },
+    att_00000002: { name: 'flow.png', kind: 'image', mime: 'image/png', bytes: 2048, path: '/h/.worca-cc/ask/ask_00000001/att/att_00000002.png' },
+  };
+  const t = createAskTools({ limits: ASK_LIMITS, redact: (s) => s,
+    ...defaultComposerDeps({ threadId: 'ask_00000001', io: io({ id: 'ask_00000001', mode: 'composer', composer: CANVAS }) }),
+    readAttachment: (id) => atts[id] || null });
+  assert.ok(t.list().some((d) => d.name === 'read_attachment'), 'listed');
+  const text = await call(t, 'read_attachment', { id: 'att_00000001' });
+  assert.equal(text.text, '# Build this\n');
+  assert.equal(text.truncated, false);
+  const img = await call(t, 'read_attachment', { id: 'att_00000002' });
+  assert.equal(img.path, atts.att_00000002.path);
+  assert.match(img.note, /pass `path` to your Read tool/);
+  await assert.rejects(() => call(t, 'read_attachment', { id: 'att_ffffffff' }), /read_attachment: attachment not found/);
+});
+
+test('rule 1 of the composer prompt names every worca tool the composer chat has (read_attachment included)', () => {
+  const names = tools({ id: 'x', mode: 'composer', composer: CANVAS }).list().map((d) => d.name)
+    .filter((n) => !/^(web_fetch|web_search|read_file|grep|glob)$/.test(n));     // the web and Codex file tools, named in their own words
+  const rule1 = COMPOSER_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
+  const listed = rule1.match(/worca tools: ([^—]+) —/)[1].split(',').map((s) => s.trim());
+  for (const n of names) assert.ok(listed.includes(n), `${n} is missing from rule 1`);
 });

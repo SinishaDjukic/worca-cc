@@ -1237,11 +1237,28 @@ test('the chat sends the OPEN canvas, and a canvas-edit card frame changes the c
   assert.ok(requests.some((r) => /\/cards\/card_0000aaaa$/.test(r.url) && JSON.parse(r.body).state === 'applied'));
 });
 
-test('the global Ask pill is hidden in the Workflows view; the dock has no attach control', async () => {
+test('the global Ask pill is hidden in the Workflows view; the dock attaches files, and a file dropped anywhere else on the view never opens in the tab', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows');
   assert.ok(w.document.body.classList.contains('view-workflows'));
-  assert.equal(w.document.querySelector('#wfc input[type="file"]'), null);
+  const file = w.document.querySelector('#wfc input[type="file"]');
+  assert.ok(file && file.multiple, 'the dock has its file picker');
+  assert.equal(w.document.querySelector('#wfc #wfc-attach').getAttribute('aria-label'), 'Attach files');
+  const fire = (el, type, dataTransfer) => {
+    const ev = new w.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer, configurable: true });
+    el.dispatchEvent(ev);
+    return ev;
+  };
+  const files = { types: ['Files'], files: [], dropEffect: '' };
+  const canvas = w.document.getElementById('wfv-canvas');
+  assert.equal(fire(canvas, 'dragover', files).defaultPrevented, true);
+  assert.equal(files.dropEffect, 'none', 'the cursor says the canvas takes no file');
+  assert.equal(fire(canvas, 'drop', files).defaultPrevented, true, 'Chrome would otherwise open the file in this tab and the unsaved canvas would be gone');
+  assert.equal(fire(w.document.getElementById('wfv-library'), 'drop', { types: ['Files'], files: [] }).defaultPrevented, true, 'the Library too');
+  const card = { types: ['application/x-worca', 'text/plain'], getData: () => '', dropEffect: '' };
+  fire(canvas, 'dragover', card);
+  assert.equal(card.dropEffect, 'copy', 'a Library card drag keeps its own drop');
 });
 
 test('the inline Undo follows the canvas: ⌘Z on the chat edit disables it at once', async () => {
@@ -1644,4 +1661,19 @@ test('review m3: a chat-saved draft is highlighted once its Library row exists (
     await tick(10);
     assert.deepEqual(seen, [['agent', 'notesWriter', true], ['script', 'lintAll', true]], 'each row existed when it was highlighted');
   } finally { globalThis.fetch = real; lib.highlight = orig; }
+});
+
+test('Workflows chat through app.js: a picked file rides the message as base64, its chip clears, and the sent message shows it', async () => {
+  const { window: w, requests } = await boot();
+  await go(w, 'workflows');
+  const fileInput = w.document.querySelector('#wfc input[type="file"]');
+  Object.defineProperty(fileInput, 'files', { value: [new w.File(['# Spec'], 'spec.md', { type: 'text/markdown' })], configurable: true });
+  fileInput.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await tick(8);
+  assert.deepEqual([...w.document.querySelectorAll('#wfc .wfc-file-name')].map((x) => x.textContent), ['spec.md']);
+  await chatSend(w, 'Build a workflow from this spec');
+  const msg = requests.find((r) => r.method === 'POST' && /\/api\/ask\/threads\/[^/]+\/messages$/.test(r.url.split('?')[0]));
+  assert.deepEqual(JSON.parse(msg.body).attachments, [{ name: 'spec.md', dataBase64: Buffer.from('# Spec').toString('base64') }]);
+  assert.equal(w.document.querySelectorAll('#wfc .wfc-file').length, 0, 'the chips clear after the 202');
+  assert.deepEqual([...w.document.querySelectorAll('#wfc .wfc-upill')].map((x) => x.textContent), ['spec.md']);
 });

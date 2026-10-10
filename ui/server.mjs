@@ -10766,7 +10766,8 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // stored on the thread before the turn, so the MCP child and the prompt read what the user sees now.
     let composerState = null;
     if (thread.mode === 'composer') {
-      if (body.attachments !== undefined) return badRequest(res, 'the Workflows chat takes no attachments');
+      // Attachments ride a composer message exactly as an Ask one: validated below (before any write), then stored,
+      // inlined and listed by startAskTurn, whose prompt path is the same for both modes.
       const pc = validateComposerPayload(body.composer);
       if (!pc.ok) return badRequest(res, pc.error);
       composerState = pc.value;

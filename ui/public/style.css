@@ -8321,5 +8321,28 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 :is(.wfc-ibtn,.wfc-scope,.wfc-sel,.wfc-link,.wfc-chip-btn):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .gv-world .node.wfc-enter{animation:wfcEnter .32s var(--ease, ease-out) both;}
 @keyframes wfcEnter{from{opacity:0;}to{opacity:1;}}
+/* Attachments (chat-dock.mjs: Ask's chips, drop overlay and pills in dock form). The chips and their note show only in
+   the open chat; collapsed, the paperclip carries their count. The file input is [hidden], so the house input rules
+   never reach it; every new button states its own focus ring. */
+.wfc-foot{display:flex;flex-direction:column;min-width:0;}
+.wfc-files{display:flex;flex-wrap:wrap;gap:6px;max-height:68px;overflow-y:auto;padding:8px 10px 0;}
+.wfc-file{display:inline-flex;align-items:center;gap:6px;flex:none;height:26px;max-width:220px;padding:0 3px 0 8px;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--field);color:var(--ink-2);font:500 11px/1 var(--mono);}
+.wfc-file-thumb{width:18px;height:18px;flex:none;object-fit:cover;border-radius:4px;}
+.wfc-file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wfc-file-x{width:20px;height:20px;flex:none;display:grid;place-items:center;padding:0;border:0;border-radius:5px;background:none;color:var(--ink-2);font:14px/1 var(--sans);cursor:pointer;}
+.wfc-file-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.wfc-file-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wfc-note{margin:0;padding:6px 12px 0;color:var(--red-ink);font-size:11.5px;line-height:1.4;}
+.wfc-shell:not([data-open="true"]) :is(.wfc-files,.wfc-note){display:none;}
+#wfc-attach{position:relative;}
+#wfc-attach[data-count]::after{content:attr(data-count);position:absolute;top:1px;right:0;min-width:14px;height:14px;padding:0 3px;box-sizing:border-box;border-radius:999px;background:var(--ink);color:var(--on-ink);font:600 9px/14px var(--sans);text-align:center;}
+.wfc-shell[data-open="true"] #wfc-attach::after{display:none;}
+.wfc-drop{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;pointer-events:none;border:2px dashed var(--ink-3);border-radius:inherit;background:color-mix(in srgb,var(--panel) 88%,transparent);}
+.wfc-drop-l{padding:4px 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font-weight:600;font-size:12px;line-height:1.4;white-space:nowrap;}
+.wfc-uatts{align-self:flex-end;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:flex-end;gap:6px;max-width:82%;margin-top:-4px;}
+.wfc-upill{max-width:220px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--field);color:var(--ink-2);font:500 11px/1.4 var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wfc-uthumb-link{display:inline-block;line-height:0;border-radius:8px;}
+.wfc-uthumb{display:block;max-width:160px;max-height:110px;border:1px solid var(--line);border-radius:8px;}
+.wfc-uthumb-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 @media (max-width:760px){.wfc-shell,.wfc-shell[data-open="true"]{--wfc-w:calc(100vw - 72px);}.wfc-title{display:none;}}
 @media (prefers-reduced-motion:reduce){.wfc-shell{transition:none;}.gv-world .node.wfc-enter{animation:none;}#wfc-send.is-ready:hover{transform:none;}}

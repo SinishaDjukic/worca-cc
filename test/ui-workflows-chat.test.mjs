@@ -620,14 +620,52 @@ async function bootDock(routes = [], opts = {}) {
   return { ...s, dock, f };
 }
 
-test('collapsed pill: sparkle, one-line input with a rotating example, scope "Auto", send — no attach', async () => {
+// Files in jsdom: a File, the picker's change, a drag and a paste. jsdom has no DataTransfer: the fakes carry what the
+// dock reads (types, files, dropEffect, getData).
+const mkFile = (s, name, body, type = 'text/plain') => new s.win.File([body], name, { type });
+const pngFile = (s, name = 'flow.png') => new s.win.File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: 'image/png' });
+function pickFiles(s, list) {
+  const input = s.g('wfc').querySelector('input[type="file"]');
+  Object.defineProperty(input, 'files', { value: list, configurable: true });
+  input.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+}
+function fireDrag(s, target, type, dataTransfer) {
+  const ev = new s.win.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer, configurable: true });
+  target.dispatchEvent(ev);
+  return ev;
+}
+function firePaste(s, target, clipboardData) {
+  const ev = new s.win.Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, 'clipboardData', { value: clipboardData, configurable: true });
+  target.dispatchEvent(ev);
+  return ev;
+}
+/** The engine lookup, the file reads and the repaint are a few promise hops: let them all land. */
+const settle = async (n = 8) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setTimeout(r, 0)); };
+const chipNames = (root) => [...root.querySelectorAll('.wfc-file-name')].map((x) => x.textContent);
+/** A fetch whose `first` routes win over the defaults (fakeFetch takes the first match), for createChatDock's `fetch`. */
+const fetchWith = (first) => fakeFetch([...first,
+  ['GET', /\/api\/ask\/models$/, () => [200, { default: { model: 'claude-opus-5-5', effort: 'high' } }]],
+  ['GET', /\/api\/projects$/, () => [200, { projects: [] }]],
+  ['POST', /\/api\/ask\/threads$/, () => [201, { thread: THREAD }]],
+  ['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa' }]]]);
+
+test('collapsed pill: sparkle, one-line input with a rotating example, attach, scope "Auto", send', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
   assert.ok(root.querySelector('.wfc-spark svg'));
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Add a security review after Implementation…');
   assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'Auto');
-  assert.equal(root.querySelector('[aria-label="Attach files"], input[type="file"]'), null);
+  assert.equal(root.querySelector('#wfc-attach').getAttribute('aria-label'), 'Attach files');
+  assert.deepEqual([...root.querySelector('.wfc-row').children].map((e) => e.id || e.className),
+    ['wfc-spark', 'wfc-input', 'wfc-attach', 'wfc-file-input', 'wfc-scope', 'wfc-stop', 'wfc-send']);
+  const file = root.querySelector('input[type="file"]');
+  assert.equal(file.multiple, true);
+  assert.equal(file.hidden, true);
+  assert.equal(file.accept, '.md,.markdown,.txt,.json,.csv,.log,.html,.htm,.png,.jpg,.jpeg,.gif,.webp,.pdf,text/*');
+  assert.equal(root.querySelector('.wfc-files').hidden, true, 'no chips until a file is picked');
   assert.equal(root.querySelector('#wfc-send').getAttribute('aria-disabled'), 'true');
 });
 
@@ -1069,4 +1107,462 @@ test('New chat losing its turn while focused, or the @ chip hiding while focused
   for (let i = 0; i < 3; i += 1) await new Promise((r) => setTimeout(r, 0));
   assert.equal(chip.hidden, true);
   assert.equal(s.doc.activeElement, min, 'the @ chip hid under the focus');
+});
+
+test('send() posts attachments only when there are some, and notes the user message with the 202\'s stored rows', async () => {
+  const { createComposerChatClient } = await imp('chat-client.mjs');
+  const f = fakeFetch([
+    ['GET', /\/api\/ask\/models$/, () => [200, { default: { model: 'claude-opus-5-5', effort: 'high' }, models: [] }]],
+    ['POST', /\/api\/ask\/threads$/, () => [201, { thread: THREAD }]],
+    ['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa', assistantMessageId: 'msg_0000bbbb',
+      attachments: [{ id: 'att_00000001', name: 'flow.png', bytes: 4, kind: 'image', mime: 'image/png' }] }]],
+  ]);
+  const c = createComposerChatClient({ fetch: f.fn, storage: memStore() });
+  const files = [{ name: 'flow.png', bytes: 4, dataBase64: 'iVBORw==', attKind: 'image', mime: 'image/png' }];
+  assert.equal((await c.send('Build from this', { composer: CANVAS, attachments: files })).ok, true);
+  const body = f.calls.find((x) => /\/messages$/.test(x.url)).body;
+  assert.deepEqual(body.attachments, [{ name: 'flow.png', dataBase64: 'iVBORw==' }], 'only the name and the bytes go up');
+  const user = c.model().messages().find((m) => m.role === 'user');
+  assert.deepEqual(user.blocks, [{ kind: 'attachment', id: 'att_00000001', name: 'flow.png', bytes: 4, attKind: 'image', mime: 'image/png' }],
+    'the store-minted id keys the thumbnail');
+  assert.deepEqual(c.model().attachments().map((a) => a.id), ['att_00000001'], 'the thread ledger learns it (read_attachment lines name it)');
+});
+
+test('engine(): the chat\'s lock once it has a reply, else the engine of the model the next message takes; null without a catalog', async () => {
+  const { createComposerChatClient, THREAD_KEY } = await imp('chat-client.mjs');
+  const cat = { default: { model: 'gpt-5.5', effort: 'low' }, defaults: { claude: { model: 'claude-opus-5-5', effort: 'high' } },
+    models: [{ id: 'claude-opus-5-5' }, { id: 'gpt-5.5', engine: 'codex' }] };
+  const fresh = createComposerChatClient({ fetch: fakeFetch([['GET', /\/api\/ask\/models$/, () => [200, cat]]]).fn, storage: memStore() });
+  assert.equal(await fresh.engine(), 'codex', 'a fresh chat takes the default (a Codex model here)');
+  const storage = memStore();
+  storage.setItem(THREAD_KEY, THREAD.id);
+  const snap = { thread: { ...THREAD, engine: 'claude' }, attachments: [], runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'hi', blocks: [] },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'assistant', text: 'hello', blocks: [], status: 'done', model: 'claude-opus-5-5' }] };
+  const locked = createComposerChatClient({ storage, fetch: fakeFetch([['GET', /\/api\/ask\/models$/, () => [200, cat]],
+    ['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]]).fn });
+  await locked.open();
+  assert.equal(await locked.engine(), 'claude', 'the chat\'s lock wins over the Codex default');
+  const offline = createComposerChatClient({ fetch: fakeFetch([]).fn, storage: memStore() });
+  assert.equal(await offline.engine(), null, 'no catalog: no early refusal (the server still refuses a Codex PDF)');
+});
+
+test('engine(): the lock wins even when the catalog has no default for the locked engine (the next message still takes Ask\'s)', async () => {
+  const { createComposerChatClient, THREAD_KEY } = await imp('chat-client.mjs');
+  // No `defaults`: defaultPick() returns the Codex default, so only the chat's own lock can say Claude.
+  const cat = { default: { model: 'gpt-5.5', effort: 'low' }, models: [{ id: 'claude-opus-5-5' }, { id: 'gpt-5.5', engine: 'codex' }] };
+  const storage = memStore();
+  storage.setItem(THREAD_KEY, THREAD.id);
+  const snap = { thread: { ...THREAD, engine: 'claude' }, attachments: [], runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'hi', blocks: [] },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'assistant', text: 'hello', blocks: [], status: 'done', model: 'claude-opus-5-5' }] };
+  const locked = createComposerChatClient({ storage, fetch: fakeFetch([['GET', /\/api\/ask\/models$/, () => [200, cat]],
+    ['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]]).fn });
+  await locked.open();
+  assert.equal(await locked.engine(), 'claude');
+});
+
+test('engine() reads a stored chat that is not loaded yet: a file dropped right after a page load meets its Codex lock', async () => {
+  const { createComposerChatClient, THREAD_KEY } = await imp('chat-client.mjs');
+  const cat = { default: { model: 'claude-opus-5-5', effort: 'high' }, models: [{ id: 'claude-opus-5-5' }, { id: 'gpt-5.5', engine: 'codex' }] };
+  const storage = memStore();
+  storage.setItem(THREAD_KEY, THREAD.id);
+  const snap = { thread: { ...THREAD, engine: 'codex' }, attachments: [], runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'hi', blocks: [] },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'assistant', text: 'hello', blocks: [], status: 'done', model: 'gpt-5.5' }] };
+  const c = createComposerChatClient({ storage, fetch: fakeFetch([['GET', /\/api\/ask\/models$/, () => [200, cat]],
+    ['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]]).fn });
+  // No open(): the dock's expand() starts it without waiting, so the drop's engine() may run first.
+  assert.equal(await c.engine(), 'codex', 'not Ask\'s Claude default');
+});
+
+test('the paperclip opens the picker and the chat; picked files become chips (an image gets a thumbnail); × keeps the focus in the dock', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const fileInput = root.querySelector('input[type="file"]');
+  let opened = 0;
+  fileInput.click = () => { opened += 1; };
+  root.querySelector('#wfc-attach').click();
+  assert.equal(opened, 1, 'the paperclip opens the file picker');
+  assert.equal(root.querySelector('.wfc-shell').dataset.open, 'true', 'and the chat, where the chips show');
+  // jsdom's `files` override leaves the element's own list empty, so `value` reads '' whatever the code does: spy the setter.
+  const valueSets = [];
+  const value = Object.getOwnPropertyDescriptor(s.win.HTMLInputElement.prototype, 'value');
+  Object.defineProperty(fileInput, 'value', { configurable: true, get() { return value.get.call(this); },
+    set(v) { valueSets.push(v); value.set.call(this, v); } });
+  pickFiles(s, [mkFile(s, 'spec.md', '# Spec', 'text/markdown'), pngFile(s), mkFile(s, 'notes.txt', 'n')]);
+  assert.deepEqual(valueSets, [''], 'the picker is reset, so the same file can be picked again');
+  await settle();
+  assert.deepEqual(chipNames(root), ['spec.md', 'flow.png', 'notes.txt']);
+  assert.equal(root.querySelector('.wfc-files').hidden, false);
+  assert.equal(root.querySelectorAll('.wfc-file-thumb').length, 1, 'only the image has a thumbnail');
+  assert.equal(root.querySelector('.wfc-file-thumb').getAttribute('src'), 'data:image/png;base64,iVBORw==');
+  assert.equal(root.querySelector('#wfc-attach').dataset.count, '3');
+  assert.equal(root.querySelector('.wfc-file-x').getAttribute('aria-label'), 'Remove spec.md');
+  // × removes one; the focus goes to the × now in its place, then the one before, then the input — never <body>,
+  // where the canvas owns Backspace and Delete.
+  const xs = () => [...root.querySelectorAll('.wfc-file-x')];
+  xs()[1].focus();
+  xs()[1].click();
+  assert.deepEqual(chipNames(root), ['spec.md', 'notes.txt']);
+  assert.equal(s.doc.activeElement, xs()[1], 'the × of the chip that took its place');
+  xs()[1].click();
+  assert.equal(s.doc.activeElement, xs()[0], 'the last chip gone: the × before it');
+  xs()[0].click();
+  assert.deepEqual(chipNames(root), []);
+  assert.equal(s.doc.activeElement, root.querySelector('#wfc-input'), 'no chip left: the input');
+  assert.equal(root.querySelector('.wfc-files').hidden, true);
+  assert.equal(root.querySelector('#wfc-attach').dataset.count, undefined);
+});
+
+test('the picker closing (a choice or Cancel) never leaves the focus on <body>', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const fileInput = root.querySelector('input[type="file"]');
+  if (s.doc.activeElement && s.doc.activeElement !== s.doc.body) s.doc.activeElement.blur();
+  assert.equal(root.contains(s.doc.activeElement), false, 'nothing in the dock holds the focus');
+  fileInput.dispatchEvent(new s.win.Event('cancel'));
+  assert.equal(s.doc.activeElement, root.querySelector('#wfc-attach'), 'Cancel: back on the paperclip');
+  root.querySelector('#wfc-attach').blur();
+  pickFiles(s, [mkFile(s, 'spec.md', '# Spec')]);
+  assert.equal(s.doc.activeElement, root.querySelector('#wfc-attach'), 'a choice: back on the paperclip');
+  await settle();
+});
+
+test('Enter sends the chips as base64 with the text; a refused send keeps them, a 202 clears them and the message shows its files', async () => {
+  let status = 413;
+  const f = fetchWith([['POST', /\/messages$/, () => (status === 202 ? [202, { userMessageId: 'msg_0000aaaa' }] : [413, { error: 'attachments over 50331648 bytes per message' }])]]);
+  const s = await bootDock([], { fetch: f.fn });
+  const root = s.g('wfc');
+  const input = root.querySelector('#wfc-input');
+  input.dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'spec.md', '# Spec', 'text/markdown'), pngFile(s)]);
+  await settle();
+  const enter = async (text) => {
+    input.value = text;
+    input.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+    input.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await settle();
+  };
+  await enter('Build a workflow from this spec');
+  const sent = () => f.calls.filter((c) => /\/messages$/.test(c.url));
+  assert.deepEqual(sent()[0].body.attachments, [
+    { name: 'spec.md', dataBase64: Buffer.from('# Spec').toString('base64') },
+    { name: 'flow.png', dataBase64: 'iVBORw==' },
+  ]);
+  assert.deepEqual(chipNames(root), ['spec.md', 'flow.png'], 'refused: the chips stay for the retry');
+  assert.equal(root.querySelector('.wfc-err').textContent, 'attachments over 50331648 bytes per message');
+  status = 202;
+  await enter('Build a workflow from this spec');
+  assert.equal(sent().length, 2);
+  assert.deepEqual(chipNames(root), [], 'sent: the chips clear');
+  assert.equal(input.value, '');
+  assert.deepEqual([...root.querySelectorAll('.wfc-uatts > *')].map((p) => [p.className, p.textContent]),
+    [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
+});
+
+test('Ask\'s early checks and messages in the dock: type, 512 KB text, 8 files; a Codex chat refuses PDFs', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const note = () => root.querySelector('.wfc-note');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
+  await settle();
+  assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
+  assert.equal(note().hidden, false);
+  assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(524_289))]);
+  await settle();
+  assert.equal(note().textContent, 'attachment over 524288 bytes: big.md');
+  pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
+  await settle();
+  assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
+  assert.equal(note().hidden, true, 'a new batch clears the last refusal');
+  pickFiles(s, Array.from({ length: 9 }, (_, i) => mkFile(s, `f${i}.md`, 'x')));
+  await settle();
+  assert.equal(chipNames(root).length, 8);
+  assert.equal(note().textContent, 'at most 8 attachments per message');
+
+  const f = fetchWith([['GET', /\/api\/ask\/models$/, () => [200, { default: { model: 'gpt-5.5', effort: 'low' }, models: [{ id: 'gpt-5.5', engine: 'codex' }] }]]]);
+  const c = await bootDock([], { fetch: f.fn });
+  const croot = c.g('wfc');
+  croot.querySelector('#wfc-input').dispatchEvent(new c.win.Event('focus'));
+  pickFiles(c, [mkFile(c, 'spec.pdf', '%PDF-1.7', 'application/pdf'), pngFile(c)]);
+  await settle();
+  assert.equal(croot.querySelector('.wfc-note').textContent, 'PDFs need a Claude chat: spec.pdf');
+  assert.deepEqual(chipNames(croot), ['flow.png'], 'an image still attaches on Codex');
+});
+
+test('files dropped on the dock attach (an overlay while they hover); a Library card drag over it is left alone', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const shell = root.querySelector('.wfc-shell');
+  const overlay = root.querySelector('.wfc-drop');
+  const input = root.querySelector('#wfc-input');
+  assert.equal(overlay.hidden, true);
+  const dt = { types: ['Files'], files: [mkFile(s, 'spec.md', '# Spec')], dropEffect: '' };
+  assert.equal(fireDrag(s, shell, 'dragenter', dt).defaultPrevented, true);
+  assert.equal(overlay.hidden, false);
+  assert.equal(overlay.textContent, 'Drop files to attach');
+  fireDrag(s, input, 'dragenter', dt);                    // entering a child lands before leaving its parent
+  fireDrag(s, shell, 'dragleave', dt);
+  assert.equal(overlay.hidden, false, 'still over the dock');
+  const over = fireDrag(s, input, 'dragover', dt);
+  assert.equal(over.defaultPrevented, true);
+  assert.equal(dt.dropEffect, 'copy');
+  if (s.doc.activeElement && s.doc.activeElement !== s.doc.body) s.doc.activeElement.blur();
+  assert.equal(root.contains(s.doc.activeElement), false, 'the focus is outside the dock before the drop');
+  const drop = fireDrag(s, input, 'drop', dt);
+  assert.equal(drop.defaultPrevented, true, 'the browser never opens the file');
+  assert.equal(overlay.hidden, true);
+  assert.equal(shell.dataset.open, 'true', 'the chat opens to show the chips');
+  assert.equal(s.doc.activeElement, input, 'the focus lands in the chat, never <body>');
+  await settle();
+  assert.deepEqual(chipNames(root), ['spec.md']);
+  const card = { types: ['application/x-worca', 'text/plain'], files: [], dropEffect: '', getData: () => '' };
+  for (const type of ['dragenter', 'dragover', 'drop']) assert.equal(fireDrag(s, shell, type, card).defaultPrevented, false, type);
+  assert.equal(overlay.hidden, true);
+  assert.deepEqual(chipNames(root), ['spec.md']);
+});
+
+test('a pasted screenshot attaches under a unique name; a copy carrying text plus its rendered image stays a text paste', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const input = root.querySelector('#wfc-input');
+  input.dispatchEvent(new s.win.Event('focus'));
+  assert.equal(firePaste(s, input, { types: ['Files'], files: [pngFile(s, 'image.png')], getData: () => '' }).defaultPrevented, true);
+  firePaste(s, input, { types: ['Files'], files: [pngFile(s, 'image.png')], getData: () => '' });
+  await settle();
+  const names = chipNames(root);
+  assert.equal(names.length, 2, 'two screenshots, two chips (no name clash)');
+  for (const n of names) assert.match(n, /^pasted-\d+\.png$/);
+  const excel = firePaste(s, input, { types: ['text/plain', 'Files'], files: [pngFile(s, 'image.png')], getData: (t) => (t === 'text/plain' ? 'A1\tB1' : '') });
+  assert.equal(excel.defaultPrevented, false, 'Excel/Word copies: the text is what was meant');
+  assert.equal(firePaste(s, input, { types: ['text/plain'], files: [], getData: () => 'hello' }).defaultPrevented, false);
+  await settle();
+  assert.equal(chipNames(root).length, 2);
+});
+
+test('a sent message shows its files: a name pill, an image thumbnail linking the download route; read_attachment names the file', async () => {
+  const storage = memStore();
+  storage.setItem('worca-cc.composer.thread', THREAD.id);
+  const atts = [{ id: 'att_00000001', name: 'spec.md', bytes: 6, kind: 'text', mime: 'text/markdown' },
+    { id: 'att_00000002', name: 'flow.png', bytes: 4, kind: 'image', mime: 'image/png' }];
+  const snap = { thread: THREAD, attachments: atts, runLinks: [], inFlight: null, messages: [
+    { id: 'msg_0000a001', threadId: THREAD.id, seq: 1, role: 'user', text: 'Build it from these', status: null,
+      blocks: atts.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })) },
+    { id: 'msg_0000a002', threadId: THREAD.id, seq: 2, role: 'assistant', text: 'Built it.', status: 'done',
+      blocks: [{ kind: 'tool', id: 'toolu_01', name: 'mcp__worca__read_attachment', input: { id: 'att_00000001' }, status: 'done' }] },
+  ] };
+  const s = await bootDock([['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, snap]]], { storage });
+  s.dock.focus();
+  await settle();
+  const root = s.g('wfc');
+  const bubble = root.querySelector('.wfc-u');
+  assert.equal(bubble.textContent, 'Build it from these', 'the bubble keeps its text only');
+  const row = root.querySelector('.wfc-uatts');
+  assert.equal(row.previousElementSibling, bubble, 'under the message they came with');
+  assert.equal(row.querySelector('.wfc-upill').textContent, 'spec.md');
+  const link = row.querySelector('a.wfc-uthumb-link');
+  assert.equal(link.getAttribute('href'), '/api/ask/threads/ask_0000abcd/attachments/att_00000002');
+  assert.equal(link.target, '_blank');
+  assert.equal(link.rel, 'noopener');
+  const img = link.querySelector('img.wfc-uthumb');
+  assert.equal(img.getAttribute('src'), link.getAttribute('href'));
+  assert.equal(img.alt, 'flow.png');
+  assert.equal(root.querySelector('.wfc-tool .mono').textContent, 'read attachment spec.md');
+  s.dock.repaint();
+  await settle();
+  assert.equal(root.querySelector('a.wfc-uthumb-link'), link, 'a repaint reuses the row: the thumbnail is not reloaded');
+});
+
+test('pending files survive collapsing (the paperclip shows their count) and clear on New chat', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  const input = root.querySelector('#wfc-input');
+  input.dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'spec.md', '# Spec')]);
+  await settle();
+  input.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
+  assert.deepEqual(chipNames(root), ['spec.md'], 'collapsing keeps them');
+  assert.equal(root.querySelector('#wfc-attach').dataset.count, '1');
+  assert.equal(root.querySelector('#wfc-attach').title, 'Attach files (1 attached)');
+  s.dock.focus();
+  root.querySelector('#wfc-new').click();
+  await settle();
+  assert.deepEqual(chipNames(root), []);
+  assert.equal(root.querySelector('.wfc-files').hidden, true);
+  assert.equal(root.querySelector('#wfc-attach').dataset.count, undefined);
+  assert.equal(s.doc.activeElement, input);
+});
+
+test('the chips make the open chat taller: the bars above it re-lift at once', async () => {
+  const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top });
+  const s = await bootDock([], (b) => {
+    const stage = b.g('wfv-stage');
+    const cluster = b.doc.createElement('div');
+    cluster.id = 'wfv-br';
+    stage.appendChild(cluster);
+    Object.defineProperty(stage, 'clientWidth', { configurable: true, value: 956 });
+    stage.getBoundingClientRect = () => rect(8, 8, 956, 884);
+    cluster.getBoundingClientRect = () => rect(752, 838, 200, 40);
+    // 34 px taller with a row of chips. jsdom has no layout and no ResizeObserver: only the dock's own place() re-lifts.
+    const chips = () => b.g('wfc').querySelector('.wfc-files');
+    b.g('wfc').getBoundingClientRect = () => (chips() && !chips().hidden ? rect(220, 466, 580, 411) : rect(220, 500, 580, 377));
+    return { stage, cluster, plus: b.g('wfv-add') };
+  });
+  const cluster = s.g('wfv-br');
+  s.g('wfc').querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  assert.equal(cluster.style.bottom, '404px', '892 - 500 + 12');
+  pickFiles(s, [mkFile(s, 'spec.md', '# Spec')]);
+  await settle();
+  assert.equal(cluster.style.bottom, '438px', 'above the chips: 892 - 466 + 12');
+  s.g('wfc').querySelector('.wfc-file-x').click();
+  assert.equal(cluster.style.bottom, '404px');
+});
+
+test('the attachment UI restates what the house rules would change (focus rings, the drop overlay, collapsed chips)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /\.wfc-drop\{[^}]*position:absolute;[^}]*pointer-events:none;/);
+  assert.match(css, /\.wfc-shell:not\(\[data-open="true"\]\) :is\(\.wfc-files,\.wfc-note\)\{display:none;\}/);
+  assert.match(css, /\.wfc-file-x:focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
+  assert.match(css, /\.wfc-file\{[^}]*flex:none;/);
+  assert.match(css, /\.wfc-uthumb-link:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
+  // A name pill beside a 110 px thumbnail: the flex default (stretch) draws it as a tall oval with its name cut.
+  assert.match(css, /\.wfc-uatts\{[^}]*align-items:flex-end;/);
+});
+
+// A read that waits for a gate: jsdom reads a real File within a few promise hops, so the races the dock guards (an Enter
+// while a screenshot is still being read, two batches at once, a × mid-read, a file added while the POST is out) only
+// show with a read held open.
+const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+const slowFile = (name, text, g) => ({ name, size: Buffer.byteLength(text), type: 'text/plain',
+  arrayBuffer: async () => { await g.p; return new Uint8Array(Buffer.from(text)).buffer; } });
+function typeEnter(s, text) {
+  const input = s.g('wfc').querySelector('#wfc-input');
+  input.value = text;
+  input.dispatchEvent(new s.win.Event('input', { bubbles: true }));
+  input.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+}
+const posts = (f) => f.calls.filter((c) => /\/messages$/.test(c.url));
+
+test('Enter while a file is still being read waits for it: the file rides THIS message, and a second Enter is ignored', async () => {
+  const g = gate();
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [slowFile('spec.md', '# S', g)]);
+  await settle(2);
+  typeEnter(s, 'Build it');
+  await settle(2);
+  assert.equal(posts(s.f).length, 0, 'nothing goes up while the file is read');
+  typeEnter(s, 'Build it');
+  await settle(2);
+  g.open();
+  await settle(16);
+  assert.equal(posts(s.f).length, 1, 'one message');
+  assert.deepEqual(posts(s.f)[0].body.attachments, [{ name: 'spec.md', dataBase64: Buffer.from('# S').toString('base64') }]);
+  assert.equal(root.querySelector('.wfc-err'), null, 'the second Enter never reached the client ("already on its way")');
+  assert.deepEqual(chipNames(root), [], 'sent: the chip clears');
+});
+
+test('Send clears the last refusal note', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'evil.exe', 'x')]);
+  await settle();
+  assert.equal(root.querySelector('.wfc-note').hidden, false);
+  typeEnter(s, 'Hello');
+  await settle();
+  assert.equal(posts(s.f).length, 1);
+  assert.equal(root.querySelector('.wfc-note').hidden, true);
+  assert.equal(root.querySelector('.wfc-note').textContent, '');
+});
+
+test('a × pressed while another file is read stays pressed', async () => {
+  const g = gate();
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'x.md', 'x')]);
+  await settle();
+  assert.deepEqual(chipNames(root), ['x.md']);
+  pickFiles(s, [slowFile('y.md', 'y', g)]);
+  await settle(4);
+  root.querySelector('.wfc-file-x').click();
+  assert.deepEqual(chipNames(root), []);
+  g.open();
+  await settle(16);
+  assert.deepEqual(chipNames(root), ['y.md'], 'x.md is not brought back by the read landing');
+});
+
+test('two batches at once never overshoot the 8-file cap: the second waits for the first', async () => {
+  const g = gate();
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [slowFile('slow.md', 'a', g)]);
+  pickFiles(s, Array.from({ length: 8 }, (_, i) => mkFile(s, `f${i}.md`, 'x')));
+  await settle(16);
+  assert.deepEqual(chipNames(root), [], 'the second batch is not read before the first one ends');
+  g.open();
+  await settle(24);
+  assert.deepEqual(chipNames(root), ['slow.md', 'f0.md', 'f1.md', 'f2.md', 'f3.md', 'f4.md', 'f5.md', 'f6.md']);
+  assert.equal(root.querySelector('.wfc-note').textContent, 'at most 8 attachments per message');
+});
+
+test('an unreadable file is noted; the rest of its batch still attaches', async () => {
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  const gone = { name: 'bad.md', size: 1, type: 'text/plain', arrayBuffer: async () => { throw new Error('gone'); } };
+  pickFiles(s, [gone, mkFile(s, 'good.md', 'g')]);
+  await settle();
+  assert.deepEqual(chipNames(root), ['good.md']);
+  assert.equal(root.querySelector('.wfc-note').textContent, 'could not read bad.md');
+});
+
+test('a file attached while the message is on its way stays for the next one; a focused × keeps the focus through the 202', async () => {
+  const g = gate();
+  const f = fetchWith([]);
+  const held = async (url, opts = {}) => { if (opts.method === 'POST' && /\/messages$/.test(url)) await g.p; return f.fn(url, opts); };
+  const s = await bootDock([], { fetch: held });
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'a.md', 'a')]);
+  await settle();
+  typeEnter(s, 'Go');
+  await settle();
+  pickFiles(s, [mkFile(s, 'b.md', 'b'), mkFile(s, 'c.md', 'c')]);
+  await settle();
+  assert.deepEqual(chipNames(root), ['a.md', 'b.md', 'c.md']);
+  root.querySelectorAll('.wfc-file-x')[1].focus();
+  g.open();
+  await settle(16);
+  assert.deepEqual(posts(f)[0].body.attachments.map((a) => a.name), ['a.md']);
+  assert.deepEqual(chipNames(root), ['b.md', 'c.md'], 'only the files sent clear');
+  assert.equal(s.doc.activeElement && s.doc.activeElement.getAttribute('aria-label'), 'Remove b.md',
+    'the chips were rebuilt under the focus: it stays on b.md\'s ×, never <body>');
+});
+
+test('a read landing rebuilds the chips under a focused ×: the focus stays on that ×, never <body>', async () => {
+  const g = gate();
+  const s = await bootDock();
+  const root = s.g('wfc');
+  root.querySelector('#wfc-input').dispatchEvent(new s.win.Event('focus'));
+  pickFiles(s, [mkFile(s, 'a.md', 'a'), mkFile(s, 'b.md', 'b')]);
+  await settle();
+  pickFiles(s, [slowFile('big.md', 'x', g)]);
+  await settle(4);
+  const first = root.querySelector('.wfc-file-x');
+  first.focus();
+  first.click();
+  assert.equal(s.doc.activeElement.getAttribute('aria-label'), 'Remove b.md', 'the × now in its place');
+  g.open();
+  await settle(16);
+  assert.deepEqual(chipNames(root), ['b.md', 'big.md']);
+  assert.equal(s.doc.activeElement && s.doc.activeElement.getAttribute('aria-label'), 'Remove b.md');
 });

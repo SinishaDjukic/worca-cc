@@ -359,7 +359,7 @@ export function createAskTools(deps) {
   // composer THREAD only. There, list() offers ONLY this allowlist and call() refuses everything else.
   const composerMode = deps.askMode === 'composer';
   const COMPOSER_ALLOW = new Set(['get_canvas', 'edit_canvas', 'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
-    'list_projects', 'list_workflows', 'list_scripts', 'get_script', 'test_script', 'list_models', 'web_fetch', 'web_search', 'read_file', 'grep', 'glob']);
+    'list_projects', 'list_workflows', 'list_scripts', 'get_script', 'test_script', 'list_models', 'read_attachment', 'web_fetch', 'web_search', 'read_file', 'grep', 'glob']);
   const composerOf = (tool) => {
     if (!deps.composer || typeof deps.composer !== 'object') throw new AskToolError(`${tool}: only the Workflows view's chat edits a canvas`);
     return deps.composer;

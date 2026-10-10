@@ -26,7 +26,8 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, attachRefusal } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
+import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 
 /**
@@ -573,23 +574,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return dock;
   }
 
-  // Mirrors src/core/ask/attachment-kind.mjs + limits.mjs (#398): text kinds are
-  // UTF-8 capped at 512 KB, binary kinds (images + PDF) at 32 MB, 48 MB per message; the server
-  // re-validates everything, these are just early clear messages.
-  const ASK_ATTACH_EXT = ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm'];
-  const ASK_ATTACH_BINARY = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
-  };
-  const ASK_MAX_TEXT_BYTES = 524_288;
-  const ASK_MAX_BINARY_BYTES = 32 * 1024 * 1024;
-  const ASK_MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
-
-  function bytesToBase64(bytes) {
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return win.btoa(bin);
-  }
+  // The type tables, caps and early checks (#398, D16) live in attach-files.mjs, shared with the Workflows chat
+  // dock. The server re-validates everything; these are just early clear messages. The run card's extras use this too.
+  function bytesToBase64(bytes) { return attachBase64(bytes, (s) => win.btoa(s)); }
 
   function setComposerMsg(text) {
     el.composerMsg.textContent = text || '';
@@ -625,33 +612,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   async function addFiles(fileList) {
     for (const f of [...(fileList || [])]) {
-      const name = String(f.name || '');
-      const dot = name.lastIndexOf('.');
-      const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-      const binMime = ASK_ATTACH_BINARY[ext];
-      if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
-      const refused = attachRefusal({ ext, engine: pickerEngine() });   // D16
-      if (refused) { setComposerMsg(`${refused}: ${name}`); continue; }
-      const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
-      if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
-      const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
-      if (others.length >= 8) { setComposerMsg('at most 8 attachments per message'); continue; }
-      const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-      if (pendingBytes + f.size > ASK_MAX_MESSAGE_BYTES) { setComposerMsg(`attachments over ${ASK_MAX_MESSAGE_BYTES} bytes per message`); continue; }
+      // Type, D16 (a Codex chat refuses PDFs), size, count, message total — in that order, with those messages.
+      const v = checkAttachment(f, { pending: st.pendingFiles, engine: pickerEngine() });
+      if (!v.ok) { setComposerMsg(v.error); continue; }
       let dataBase64 = '';
       try {
         dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
-      } catch { setComposerMsg(`could not read ${name}`); continue; }
-      const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
-      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64, attKind, mime: binMime || null }];
+      } catch { setComposerMsg(`could not read ${v.name}`); continue; }
+      st.pendingFiles = [...v.others, { name: v.name, bytes: f.size, dataBase64, attKind: v.attKind, mime: v.mime }];
     }
     renderChips();
   }
 
   // Drag-and-drop and paste feed the same addFiles() as the "+" button: no
-  // validation of their own. Only drags that carry files are touched, so text
-  // and element drags (widgets-input.mjs list reordering) keep their defaults.
-  const carriesFiles = (dt) => !!dt && Array.from(dt.types || []).includes('Files');
+  // validation of their own. Only drags that carry files are touched (carriesFiles,
+  // attach-files.mjs), so text and element drags (widgets-input.mjs list reordering) keep their defaults.
 
   /**
    * The whole sheet is the drop target. dragenter/dragleave fire on every child
@@ -694,35 +669,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return overlay;
   }
 
-  // A clipboard image is named "image.png" (or nothing) by the browser: every
-  // paste would then replace the last one through addFiles' name dedupe. Such
-  // files get a unique "pasted-<timestamp>.<ext>"; real copied files keep theirs.
-  // A nameless file of an unlisted non-text type gets no extension, so addFiles
-  // rejects it like the "+" button would.
-  let lastPasteStamp = 0;
-  function namePastedFiles(files) {
-    return [...files].map((f) => {
-      const name = String(f.name || '');
-      if (name && !/^image\.[a-z0-9]+$/i.test(name)) return f;
-      const dot = name.lastIndexOf('.');
-      const type = String(f.type || '');
-      const ext = dot >= 0 ? name.slice(dot).toLowerCase()
-        : (Object.keys(ASK_ATTACH_BINARY).find((k) => ASK_ATTACH_BINARY[k] === type)
-          || (type.startsWith('text/') ? '.txt' : ''));
-      lastPasteStamp = Math.max(Date.now(), lastPasteStamp + 1);
-      return new win.File([f], `pasted-${lastPasteStamp}${ext}`, { type: f.type });
-    });
-  }
+  // Pasted files (attach-files.mjs): a unique "pasted-<timestamp>.<ext>" for the browser's generic
+  // "image.png" (createPasteNamer), and a text paste carrying only a rendered image of that text stays text (pastedFiles).
+  const namePastedFiles = createPasteNamer((parts, name, opts) => new win.File(parts, name, opts));
 
   function onComposerPaste(e) {
-    const cd = e.clipboardData;
-    if (!cd || !cd.files || !cd.files.length) return; // a text paste goes ahead natively
-    // Excel/Word/browser copies carry the text plus a rendered image of it: the
-    // text is what was meant. Screenshots (no text) and real files still attach.
-    const text = typeof cd.getData === 'function' ? cd.getData('text/plain') : '';
-    if (text && [...cd.files].every((f) => String(f.type || '').startsWith('image/'))) return;
+    const files = pastedFiles(e.clipboardData);
+    if (!files) return;                               // a text paste goes ahead natively
     e.preventDefault();
-    addFiles(namePastedFiles(cd.files));
+    addFiles(namePastedFiles(files));
   }
 
   function updateSendStop() {
@@ -1083,7 +1038,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},${Object.keys(ASK_ATTACH_BINARY).join(',')},text/*`;
+    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);

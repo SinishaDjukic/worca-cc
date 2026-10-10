@@ -399,3 +399,28 @@ test('Fit graph to view shows a graph too wide for the 40% zoom floor (Presentat
   assert.ok(Math.abs(z() - 0.4) < 1e-9, `the user floor is 40% again (${z()})`);
   s.c.destroy();
 });
+
+test('a file dragged over the view never reaches the browser (it would open in the tab): refused unless a target took it', async () => {
+  const s = await bootShell();
+  const fire = (el, type, dataTransfer) => {
+    const ev = new s.win.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, 'dataTransfer', { value: dataTransfer, configurable: true });
+    el.dispatchEvent(ev);
+    return ev;
+  };
+  const canvas = s.g('wfv-canvas');
+  const dt = { types: ['Files'], files: [], dropEffect: '' };
+  assert.equal(fire(canvas, 'dragover', dt).defaultPrevented, true);
+  assert.equal(dt.dropEffect, 'none', 'the cursor says the canvas takes no file');
+  assert.equal(canvas.classList.contains('is-drop'), false, 'no Library drop hint for a file');
+  assert.equal(fire(canvas, 'drop', dt).defaultPrevented, true);
+  // A target that took the drag (the chat dock) keeps its own drop effect.
+  const took = { types: ['Files'], files: [], dropEffect: '' };
+  s.g('wfc').addEventListener('dragover', (ev) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'copy'; });
+  fire(s.g('wfc'), 'dragover', took);
+  assert.equal(took.dropEffect, 'copy');
+  assert.equal(fire(canvas, 'dragover', { types: ['text/plain'], dropEffect: '' }).defaultPrevented, false, 'a text drag is left alone');
+  s.shell.destroy();
+  assert.equal(fire(canvas, 'drop', { types: ['Files'], files: [] }).defaultPrevented, false, 'destroy() removes the guard');
+  s.c.destroy();
+});
