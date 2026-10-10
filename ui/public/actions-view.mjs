@@ -100,12 +100,11 @@ function renderLog(doc, instanceId, lines) {
 }
 function logLine(doc, l) { return h(doc, 'span', l.stream === 'out' ? null : l.stream, `${l.text}\n`); }
 
-/** Long branch names and paths keep both ends (the run id is at the end): "worca-cc/github-…-da7d143d". */
+/** Long branch names and paths keep their first `max - 1` characters and end with "…" (exactly `max` long). */
 export function middleClip(text, max = 56) {
   const s = String(text ?? '');
   if (s.length <= max) return s;
-  const head = Math.ceil((max - 1) * 0.55);
-  return `${s.slice(0, head)}…${s.slice(s.length - (max - 1 - head))}`;
+  return `${s.slice(0, max - 1)}…`;
 }
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** The stop square every Stop control draws (11px, filled with the current colour). */
