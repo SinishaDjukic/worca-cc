@@ -1991,6 +1991,22 @@ export function retainedWorkFor(row) {
   return { reason: members[0].code || 'unknown', members };
 }
 
+const BASE_RANK = { conflicts: 4, error: 3, 'no-branch': 2, clean: 1, 'up-to-date': 0 };
+/** History list summary of a stored base check (#620): no file list, the detail view has it. */
+export function baseCheckSummary(c) {
+  if (!c || typeof c !== 'object' || !c.status) return null;
+  return { status: c.status, base: c.base ?? null, behind: Number.isFinite(c.behind) ? c.behind : null,
+    fileCount: c.fileCount | 0, kind: c.kind ?? null, stale: !!c.stale, at: c.at ?? null };
+}
+/** The worst member's summary (a workspace row), else the run's own. */
+export function baseCheckSummaryFor(row) {
+  const branch = typeof row.branch === 'string' ? j(row.branch, null) : row.branch;
+  const wm = typeof row.workspace_meta === 'string' ? j(row.workspace_meta, null) : row.workspace_meta;
+  const recs = row.target === 'workspace' && wm?.branches ? Object.values(wm.branches).map((b) => b?.baseCheck) : [branch?.baseCheck];
+  return recs.map(baseCheckSummary).filter(Boolean)
+    .sort((a, b) => (BASE_RANK[b.status] ?? 0) - (BASE_RANK[a.status] ?? 0))[0] || null;
+}
+
 /** Checked-out members of a finished run (issue #529) — never an error, unlike retainedWorkFor. */
 export function checkoutRecordsFor(row) {
   if (!row || typeof row !== 'object') return null;
@@ -2051,6 +2067,7 @@ async function workspaceMemberFacts(row, results, opts = {}) {
       memberKey: m.memberKey, name: m.name, projectDir: m.projectDir,
       branch: m.feature, sourceBranch: m.source,
       survived: false, affected: false, added: 0, removed: 0, diffFrozen: false,
+      baseCheck: baseCheckSummary(wm.branches?.[m.memberKey]?.baseCheck),
     };
     if (m.projectDir && m.feature) out.survived = await branchExists(m.projectDir, m.feature);
     const sum = perProject && perProject[m.memberKey] ? perProject[m.memberKey].summary : null;
@@ -2175,6 +2192,7 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     runEngine: row.run_engine || 'claude',
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
+    baseCheck: baseCheckSummaryFor(row),
     survived,
     added,
     removed,

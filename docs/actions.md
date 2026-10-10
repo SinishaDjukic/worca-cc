@@ -201,6 +201,40 @@ Discard saves uncommitted changes first, as `checkout-discard-<projectKey>-<time
 the run's artifact folder (or `<worca home>/actions/patches/<runId>/`). If that save fails, Discard
 stops and asks before it throws the changes away.
 
+## Conflicts with the base branch
+
+When a run finishes (done, stopped or failed), Worca checks whether its branch still merges into its
+base. It fetches the base from the project's sync remote (`origin/dev`, say). If there is no remote, it
+uses the local base. If the fetch fails, it uses the last fetched copy and says "offline". The check
+runs `git merge-tree` against the branch refs, so no checkout or worktree changes.
+
+The History detail shows a short line under the title for each branch that needs something (one per
+repository in a workspace run). Hover the status for when it was checked. A branch that is up to date
+shows no line.
+
+- **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
+  the branch.
+- **Conflicts in N files**, with the file list: resolve them in one of two ways.
+  - **Resolve in a pipeline** starts a new run on the same branch, with the same workflow. Its task
+    tells the agent to merge the base and resolve the listed files.
+  - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
+    the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
+    commit the merge, then click **Re-check**.
+- **Could not check against dev**: the check failed (the reason follows). **Re-check** tries again.
+
+The History list notes "conflicts with dev" or "dev moved" on such runs. The check runs again when a
+resolve run ends, on **Re-check**, and when you open the run's details if the branch was never checked
+or was last checked more than 5 minutes ago. That automatic check reuses a fetch from the last minute
+and pushes nothing: a resolution done in a terminal is finished by **Re-check**. It does not run on a
+timer.
+
+After Update branch or a resolution, a branch that was already published (Publish branch, Ship it, a
+PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
+in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
+pull their work into the branch first, or that push is refused too. A resolution that still has conflict
+markers (`<<<<<<<`, `>>>>>>>`) in its files is not pushed; the line reads "Conflict markers left in
+N files".
+
 ## Workspace stacks
 
 A workspace's Actions tab defines **stacks**: one start for actions across members, in order.

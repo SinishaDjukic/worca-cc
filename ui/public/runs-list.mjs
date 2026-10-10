@@ -186,6 +186,7 @@ export function histRow(p, now = Date.now()) {
     title: String(p.title || p.id || '(untitled)'), status,
     groupKey: key, groupName: String(p.groupName || key || '(unknown project)'), by: String(p.by || ''),
     archived: !!(p && p.archived),
+    base: String(p.base || ''),                      // #620: "conflicts with dev" / "dev moved", else ''
     unread: false, needs: needsYou({ kind: 'hist', status }),
     activityMs: Number.isFinite(timeMs(p.mtime, now)) ? timeMs(p.mtime, now) : timeMs(p.startedAt, now),
   }, { at: p.startedAt || p.mtime }, now);
@@ -207,7 +208,7 @@ export function schedRow(t, now = Date.now()) {
 export function rowMatches(row, query) {
   const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return true;
-  const hay = [row.title, row.groupName, row.word, row.detail, STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
+  const hay = [row.title, row.groupName, row.word, row.detail, row.base || '', STATE_TERMS[row.icon] || '', row.needs ? 'needs you' : '']
     .join(' ').toLowerCase();
   return words.every((w) => hay.includes(w));
 }
@@ -216,13 +217,14 @@ export function rowMatches(row, query) {
  *  Grouped by date the section says when, so the project joins the line and the time stays only
  *  where the header does not already pin the day (Yesterday drops it) and the run is not live. */
 export function rowSub(row, { inNeeds = false, bucket = '' } = {}) {
+  const word = row.base ? `${row.word} · ${row.base}` : row.word;   // #620: the base-check note rides the word
   if (bucket) {
     // A live row is happening now: its start time would only push the line onto two.
     const time = bucket === 'yesterday' || row.kind === 'live' ? '' : (row.kind === 'hist' ? rowTime(row.activityMs, row.nowMs) : row.time);
-    return [row.word, row.detail, row.groupName, time].filter(Boolean).join(' · ');
+    return [word, row.detail, row.groupName, time].filter(Boolean).join(' · ');
   }
   const tail = inNeeds ? row.groupName : (row.detail || row.time);
-  return tail ? `${row.word} · ${tail}` : row.word;
+  return tail ? `${word} · ${tail}` : word;
 }
 
 /** The list's filter chips. Finished = the run ended (done, stopped, failed, and every History
