@@ -8265,9 +8265,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-thread{display:none;min-height:0;max-height:46vh;overflow:auto;padding:10px 12px;flex-direction:column;gap:8px;}
 .wfc-shell[data-open="true"] .wfc-thread{display:flex;}
 .wfc-row{display:flex;align-items:flex-end;gap:4px;min-height:38px;padding:4px 4px 4px 10px;box-sizing:border-box;}
-.wfc-spark{width:16px;height:30px;display:grid;place-items:center;color:var(--ink-2);flex:0 0 auto;}
-.wfc-shell[data-open="true"] .wfc-spark{color:var(--ink);}
-.wfc-spark svg{width:16px;height:16px;}
+.wfc-spark{width:20px;height:30px;display:grid;place-items:center;flex:0 0 auto;}
 .wfc-input{flex:1;min-width:0;height:30px;min-height:30px;max-height:104px;resize:none;border:0;background:transparent;color:var(--ink);font:13.5px/20px var(--sans);padding:5px 4px;outline:none;}
 .wfc-input:focus,.wfc-input:focus-visible{outline:none;background:transparent;}
 .wfc-shell:not([data-open="true"]) .wfc-input{height:30px;overflow:hidden;white-space:nowrap;cursor:text;}
@@ -8285,10 +8283,20 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-msg{font-size:12.5px;line-height:1.5;color:var(--ink);}
 .wfc-u{align-self:flex-end;max-width:82%;padding:6px 11px;border-radius:13px 13px 4px 13px;background:var(--field);border:1px solid var(--line);}
 .wfc-a{display:flex;flex-direction:column;gap:6px;}
+/* The worca orb (dot-orb.mjs) in the input row: drawn in the canvas's own colour, so it follows the theme. */
+.dot-orb{display:block;flex:none;color:var(--ink);}
 .wfc-text{color:var(--ink);}
 .wfc-tool{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-2);}
 .wfc-tool.is-error{color:var(--red-ink);}
-.wfc-live{font-size:11.5px;color:var(--ink-2);}
+/* The running reply's first line: what it is doing, in the Ask panel's shimmer. */
+.wfc-act{height:22px;display:flex;align-items:center;min-width:0;font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;}
+.wfc-act-l{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500;
+  background:linear-gradient(100deg,var(--ink-3) 0%,var(--ink-3) 34%,var(--ink) 50%,var(--ink-3) 66%,var(--ink-3) 100%);
+  background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:ask-shimmer 2.4s linear infinite;}
+@media (prefers-reduced-motion: reduce){
+  .wfc-act-l{animation:none;background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
+}
 .wfc-err{margin:0;color:var(--red-ink);font-size:11.5px;}
 .wfc-muted{color:var(--ink-2);font-size:11.5px;}
 .wfc-edit{display:flex;align-items:center;gap:6px;font-size:12px;}

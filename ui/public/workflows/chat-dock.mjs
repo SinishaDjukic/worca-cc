@@ -3,8 +3,11 @@
 // that grows UPWARD into a panel while you type. Scope pill ("Auto" or a registered project), New chat, and
 // attachments as in Ask (the paperclip, a drop on the dock, a paste; attach-files.mjs). It runs on Ask Worca as a
 // composer thread (chat-client.mjs); its cards change the open canvas (chat-cards.mjs). Everything inside carries
-// data-canvas-keys="off" (on #wfc), so typing never edits the graph.
+// data-canvas-keys="off" (on #wfc), so typing never edits the graph. The worca orb (dot-orb.mjs) leads the input row: still
+// while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and the running reply opens
+// with a shimmering line saying what it does.
 import { createComposerChatClient } from './chat-client.mjs';
+import { createDotOrbs } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
@@ -23,7 +26,6 @@ const TOOL_VERB = {
   read_attachment: 'read attachment',
 };
 const ICON = {
-  spark: '<path d="M9 3l1.6 4.4L15 9l-4.4 1.6L9 15l-1.6-4.4L3 9l4.4-1.6z"/><path d="M17.5 13l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z"/>',
   up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -32,6 +34,20 @@ const ICON = {
   chev: '<path d="M6 15l6-6 6 6"/>',
   clip: '<path d="M20.5 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
 };
+
+/** The live turn's orb phase: a tool or sub-agent still running = 'tool'; the answer streaming = 'write' (the server's
+ *  "Writing" label once a tool ran, or text before any tool); anything else = 'think'. */
+export function turnPhase(live, blocks = []) {
+  if (!live) return 'rest';
+  const acts = (Array.isArray(blocks) ? blocks : []).filter((b) => b && (b.kind === 'tool' || b.kind === 'agent'));
+  if (acts.some((b) => (b.status || 'running') === 'running')) return 'tool';
+  if (live.label === 'Writing' || (live.text && !acts.length)) return 'write';
+  return 'think';
+}
+/** "Reading the canvas…" from the server's label ("Thinking" when it has none yet). */
+export const activityLabel = (label) => { const l = String(label || 'Thinking'); return l.endsWith('…') ? l : `${l}…`; };
+/** The input's hint once the chat has a message: the rotating examples are for an empty chat. */
+export const REPLY_PLACEHOLDER = 'Reply';
 
 /**
  * @param {object} o
@@ -81,6 +97,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   let adding = Promise.resolve();   // the batch of files being read (addFiles): send() waits for it
 
   const client = createComposerChatClient({ fetch: fetchFn, sendWs, storage, onChange: (kind) => schedule(kind) });
+  const orbs = createDotOrbs({ doc, win });
   const blocks = () => {
     const m = client.model();
     const out = [];
@@ -113,8 +130,10 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   const sr = h('div', 'sr-only wfc-sr');
   sr.setAttribute('aria-live', 'polite');
   const row = h('div', 'wfc-row');
+  // The orb in the sparkle's old slot: still while idle, moving while a reply runs — the collapsed pill shows it too.
   const spark = h('span', 'wfc-spark');
-  spark.appendChild(svg('spark'));
+  const orb = orbs.create(20, 'wfc-orb');
+  spark.appendChild(orb);
   const input = h('textarea', 'wfc-input');
   input.id = 'wfc-input';
   input.rows = 1;
@@ -493,7 +512,15 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     return a ? a.name : '';
   }
   let liveAnswerEl = null;      // the streaming answer's element: a text-only frame rewrites just this node
-  let liveLabelEl = null;
+  let liveLabelEl = null;       // the live line's label: a label frame rewrites just this node
+  function activityLine(label) {
+    const line = h('div', 'wfc-act');
+    liveLabelEl = h('span', 'wfc-act-l', activityLabel(label));
+    line.appendChild(liveLabelEl);
+    return line;
+  }
+  /** The empty chat rotates its examples; once a message is in, the hint is "Reply". */
+  const replying = () => { const m = client.model(); return Boolean(m && m.messages().length); };
   function paintChrome(live) {
     const t = composer.template();
     ctx.textContent = t.name || 'Untitled pipeline';
@@ -513,6 +540,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     sendBtn.hidden = Boolean(live);
     newBtn.disabled = newOff;
     newBtn.title = newBtn.disabled ? 'New chat — after this reply' : 'New chat';
+    if (replying()) input.placeholder = REPLY_PLACEHOLDER;
+    else if (input.placeholder === REPLY_PLACEHOLDER) input.placeholder = PLACEHOLDERS[ph];
     paintScope();
     autosize();
   }
@@ -569,7 +598,9 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 24;
     if (textOnly) {
       if (d.answer.size) { if (renderMarkdown) renderMarkdown(live.text || '', liveAnswerEl); else liveAnswerEl.textContent = live.text || ''; }
-      if (liveLabelEl) liveLabelEl.textContent = live.label || 'Thinking…';
+      if (liveLabelEl) liveLabelEl.textContent = activityLabel(live.label);
+      const msg = m.messages().find((x) => x && x.id === live.messageId);
+      orbs.set(orb, turnPhase(live, msg && msg.blocks));
       if (atBottom) thread.scrollTop = thread.scrollHeight;          // a reader at the bottom follows the stream
       return;
     }
@@ -587,7 +618,9 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
         if (atts) kids.push(atts);
         continue;
       }
+      const isLive = Boolean(live && live.messageId === msg.id);
       const wrap = h('div', 'wfc-msg wfc-a');
+      if (isLive) wrap.appendChild(activityLine(live.label));
       for (const b of msg.blocks || []) {
         if (!b) continue;
         if (b.kind === 'tool') wrap.appendChild(toolLine(b));
@@ -602,7 +635,6 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
         }
         else if (b.kind === 'notice' && b.text) wrap.appendChild(h('p', 'wfc-muted', b.text));
       }
-      const isLive = Boolean(live && live.messageId === msg.id);
       const text = isLive ? live.text : msg.text;
       if (text || isLive) {
         const a = answer(text || '');
@@ -613,10 +645,14 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       if (msg.status === 'error') wrap.appendChild(h('p', 'wfc-err', msg.errorMessage || msg.reason || 'The reply failed.'));
       kids.push(wrap);
     }
-    if (live || pending) { liveLabelEl = h('div', 'wfc-live', (live && live.label) || 'Thinking…'); kids.push(liveLabelEl); }
+    // Sent, not started (the POST, then the wait for the first frame — a cold engine takes seconds): the reply's place
+    // shows already, thinking.
+    const waiting = !live && (pending || client.busy());
+    if (waiting) { const wrap = h('div', 'wfc-msg wfc-a is-wait'); wrap.appendChild(activityLine(null)); kids.push(wrap); }
     if (error) kids.push(h('p', 'wfc-err', error));
     if (!msgs.length && !pending && isOpen()) kids.push(suggestions());
     thread.replaceChildren(...kids);
+    orbs.set(orb, live ? turnPhase(live, (msgs.find((x) => x && x.id === live.messageId) || {}).blocks) : waiting ? 'think' : 'rest');
     if (focused && focused.isConnected) { if (doc.activeElement !== focused) focused.focus({ preventScroll: true }); }
     else if (focused) {
       // The card under the focus was rebuilt (its own Save, Undo, Decline changed its sig): keep the keyboard on that
@@ -644,7 +680,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   }
 
   const rot = win.setInterval(() => {
-    if (isOpen() || input.value) return;
+    if (isOpen() || input.value || replying()) return;
     ph = (ph + 1) % PLACEHOLDERS.length;
     input.placeholder = PLACEHOLDERS[ph];
   }, 4200);
@@ -660,6 +696,7 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     collapse,
     destroy() {
       win.clearInterval(rot);
+      orbs.destroy();
       cards.dispose();                       // a sweep waiting out a drag or a focused popover field never lands
       doc.removeEventListener('pointerdown', onDocDown, true);
       win.removeEventListener('resize', place);

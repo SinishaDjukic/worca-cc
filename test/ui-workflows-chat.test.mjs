@@ -651,11 +651,12 @@ const fetchWith = (first) => fakeFetch([...first,
   ['POST', /\/api\/ask\/threads$/, () => [201, { thread: THREAD }]],
   ['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa' }]]]);
 
-test('collapsed pill: sparkle, one-line input with a rotating example, attach, scope "Auto", send', async () => {
+test('collapsed pill: the still orb, one-line input with a rotating example, attach, scope "Auto", send', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
-  assert.ok(root.querySelector('.wfc-spark svg'));
+  assert.equal(root.querySelector('.wfc-spark canvas.wfc-orb').dataset.phase, 'rest');
+  assert.equal(root.querySelector('.wfc-spark svg'), null, 'the orb took the sparkle\'s slot');
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Add a security review after Implementation…');
   assert.equal(root.querySelector('#wfc-scope').textContent.trim(), 'Auto');
   assert.equal(root.querySelector('#wfc-attach').getAttribute('aria-label'), 'Attach files');
@@ -1565,4 +1566,101 @@ test('a read landing rebuilds the chips under a focused ×: the focus stays on t
   await settle(16);
   assert.deepEqual(chipNames(root), ['b.md', 'big.md']);
   assert.equal(s.doc.activeElement && s.doc.activeElement.getAttribute('aria-label'), 'Remove b.md');
+});
+
+test('turnPhase / activityLabel: what the orb and the live line say', async () => {
+  const { turnPhase, activityLabel } = await imp('chat-dock.mjs');
+  const tool = (status) => ({ kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', status });
+  assert.equal(turnPhase(null, []), 'rest', 'no live turn');
+  assert.equal(turnPhase({ label: 'Thinking', text: '' }, []), 'think');
+  assert.equal(turnPhase({ label: 'Reading the canvas', text: '' }, [tool('running')]), 'tool');
+  assert.equal(turnPhase({ label: 'Running 1 sub-agent', text: '' }, [{ kind: 'agent', id: 'toolu_02', status: 'running' }]), 'tool', 'a sub-agent counts');
+  assert.equal(turnPhase({ label: 'Reading the canvas', text: 'Let me look.' }, [tool('done')]), 'think', 'tool done: thinking again, whatever text came before');
+  assert.equal(turnPhase({ label: 'Writing', text: 'Added.' }, [tool('done')]), 'write');
+  assert.equal(turnPhase({ label: 'Thinking', text: 'Sure' }, []), 'write', 'no tool ran: streaming text is writing');
+  assert.equal(turnPhase({ label: 'Thinking', text: '' }, [{ kind: 'card', id: 'card_0000aaaa' }]), 'think', 'a card is not a tool');
+  assert.equal(activityLabel(null), 'Thinking…');
+  assert.equal(activityLabel('Reading the canvas'), 'Reading the canvas…');
+  assert.equal(activityLabel('Done…'), 'Done…', 'never two ellipses');
+});
+
+test('the input-row orb: thinking from the send, a tool sweeps it, writing spins it, done stills it — collapsed too; no timer', async () => {
+  const g = gate();
+  const f = fetchWith([['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa', assistantMessageId: 'msg_0000bbbb' }]]]);
+  const held = async (url, opts = {}) => { if (opts.method === 'POST' && /\/messages$/.test(url)) await g.p; return f.fn(url, opts); };
+  const s = await bootDock([], { fetch: held });
+  const root = s.g('wfc');
+  const orb = root.querySelector('.wfc-row .wfc-spark .wfc-orb');
+  const act = () => { const l = root.querySelector('.wfc-act-l'); return l ? l.textContent : null; };
+  assert.equal(orb.dataset.phase, 'rest', 'idle: still');
+  typeEnter(s, 'Add Plan');
+  await settle();
+  assert.ok(root.querySelector('.wfc-a.is-wait'), 'the POST is out: the reply\'s place shows already');
+  assert.deepEqual([orb.dataset.phase, act()], ['think', 'Thinking…']);
+  assert.equal(root.querySelector('.wfc-act').textContent, 'Thinking…', 'the line is the label alone: no timer');
+  g.open();
+  await settle();
+  assert.ok(root.querySelector('.wfc-a.is-wait'), '202 in, no frame yet: still waiting');
+  assert.equal(orb.dataset.phase, 'think');
+  const T = THREAD.id; const M = 'msg_0000bbbb';
+  s.dock.pushFrame({ type: 'ask-start', threadId: T, messageId: M, userMessageId: 'msg_0000aaaa', seq: 1 });
+  await settle(2);
+  assert.equal(root.querySelector('.wfc-a.is-wait'), null);
+  assert.equal(root.querySelector('.wfc-thread canvas'), null, 'the thread carries no orbs');
+  s.dock.pushFrame({ type: 'ask-label', threadId: T, messageId: M, seq: 2, label: 'Reading the canvas' });
+  s.dock.pushFrame({ type: 'ask-block', threadId: T, messageId: M, seq: 3, block: { kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'running' } });
+  await settle(2);
+  assert.deepEqual([orb.dataset.phase, act()], ['tool', 'Reading the canvas…']);
+  assert.equal(root.querySelector('.wfc-a').firstElementChild.className, 'wfc-act', 'the live line leads the reply');
+  s.dock.pushFrame({ type: 'ask-block', threadId: T, messageId: M, seq: 4, block: { kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'done' } });
+  await settle(2);
+  assert.equal(orb.dataset.phase, 'think', 'the tool is back: thinking again');
+  s.dock.pushFrame({ type: 'ask-label', threadId: T, messageId: M, seq: 5, label: 'Writing' });
+  s.dock.pushFrame({ type: 'ask-delta', threadId: T, messageId: M, seq: 6, text: 'Added.' });
+  await settle(2);
+  assert.deepEqual([orb.dataset.phase, act()], ['write', 'Writing…']);
+  s.dock.collapse();
+  await settle(2);
+  assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
+  assert.equal(root.querySelector('.wfc-row .wfc-orb'), orb, 'collapsed, the same orb stays in the pill');
+  assert.equal(orb.dataset.phase, 'write', 'and keeps moving');
+  s.dock.pushFrame({ type: 'ask-done', threadId: T, messageId: M, seq: 7, text: 'Added.', blocks: [{ kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'done' }] });
+  await settle(2);
+  assert.deepEqual([orb.dataset.phase, act()], ['rest', null], 'done: still, and no live line');
+});
+
+test('once the chat has a message the hint says "Reply" and stops rotating; New chat brings the examples back', async () => {
+  const { PLACEHOLDERS } = await imp('chat-dock.mjs');
+  let rotate = null;                                               // the dock's 4.2 s placeholder tick, run by hand
+  const s = await bootDock([], (b) => { const real = b.win.setInterval.bind(b.win); b.win.setInterval = (fn, ms) => { if (ms === 4200) rotate = fn; return real(() => {}, 1e9); }; return {}; });
+  const root = s.g('wfc');
+  const input = root.querySelector('#wfc-input');
+  assert.equal(input.placeholder, PLACEHOLDERS[0]);
+  rotate();
+  assert.equal(input.placeholder, PLACEHOLDERS[1], 'an empty chat rotates its examples');
+  typeEnter(s, 'Add Plan');
+  await settle();
+  assert.equal(input.placeholder, 'Reply');
+  s.dock.collapse();
+  rotate();
+  assert.equal(input.placeholder, 'Reply', 'the rotation leaves a chat with messages alone');
+  s.dock.focus();
+  root.querySelector('#wfc-new').click();
+  await settle(2);
+  assert.equal(input.placeholder, PLACEHOLDERS[1], 'an example again');
+});
+
+test('a reopened thread: the hint is "Reply", the orb is still, no live line', async () => {
+  const storage = memStore();
+  storage.setItem('worca-cc.composer.thread', THREAD.id);
+  const s = await bootDock([['GET', /\/api\/ask\/threads\/ask_0000abcd$/, () => [200, { thread: THREAD, messages: [
+    { id: 'msg_0000aaaa', role: 'user', status: 'done', text: 'Add Plan', blocks: [] },
+    { id: 'msg_0000bbbb', role: 'assistant', status: 'done', text: 'Added.', blocks: [] },
+  ], attachments: [], runLinks: [], inFlight: null }]]], { storage });
+  s.dock.focus();
+  await settle();
+  const root = s.g('wfc');
+  assert.equal(root.querySelector('.wfc-row .wfc-orb').dataset.phase, 'rest');
+  assert.equal(root.querySelector('.wfc-act'), null);
+  assert.equal(root.querySelector('#wfc-input').placeholder, 'Reply');
 });
