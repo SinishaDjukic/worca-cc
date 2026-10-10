@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getDb, tx } from './db.mjs';
-import { capBytes } from './git-info.mjs';
+import { tailBytes } from './git-info.mjs';
 import { PR_FIX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 
 export const MAX_FIX_RUNS = 3;
@@ -109,8 +109,9 @@ export function countsAsRequest(item = {}, authorLogin = null) {
   return item.author?.login === authorLogin || item.authorLogin === authorLogin || TRUSTED.has(item.authorAssociation);
 }
 
+// A failure is its check's name at the PR head: a CI re-run gets new job ids, never a new key.
 const keyFor = (c) => c.type === 'status' || c.__typename === 'StatusContext'
-  ? `status:${c.context}@${c.headSha}` : `check:${c.databaseId}`;
+  ? `status:${c.context}@${c.headSha}` : `check:${c.name}@${c.headSha}`;
 const completed = (c) => c.type === 'status' || c.__typename === 'StatusContext'
   ? !['PENDING', 'EXPECTED'].includes(c.state) : c.status === 'COMPLETED';
 const passing = (c) => c.type === 'status' || c.__typename === 'StatusContext'
@@ -131,7 +132,10 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false 
   const hasRequired = contexts.some((c) => c.isRequired === true);
   const scoped = hasRequired ? contexts.filter((c) => c.isRequired === true) : contexts;
   const settled = scoped.every(completed);
-  const failures = settled ? scoped.filter((c) => completed(c) && !passing(c) && !seen.has(keyFor({ ...c, headSha: pr.headSha }))) : [];
+  // A check that also fails on the base branch's head is the base's problem, not this PR's.
+  const inherited = new Set(pr.baseFailing || []);
+  const failures = settled ? scoped.filter((c) => completed(c) && !passing(c) && !inherited.has(c.name || c.context)
+    && !seen.has(keyFor({ ...c, headSha: pr.headSha }))) : [];
   const threads = [];
   for (const thread of pr.threads || []) {
     if (thread.resolved || thread.isResolved) continue;
@@ -163,7 +167,7 @@ export function buildFixTask({ pr, triggers, logs = [] }) {
   let budget = PR_WATCH_BATCH_LOG_BYTES;
   for (const f of triggers.failures || []) {
     const log = logs.find((x) => x.databaseId === f.databaseId)?.text;
-    const text = log ? capBytes(log, Math.max(0, budget)) : (f.detailsUrl || f.targetUrl || '');
+    const text = log ? tailBytes(log, Math.max(0, budget)) : (f.detailsUrl || f.targetUrl || '');
     if (log) budget -= Buffer.byteLength(text);
     out.push(`\nFailed check: ${f.name || f.context}\n${quote(text)}`);
   }

@@ -189,16 +189,41 @@ test('failures are classified as rate-limit, auth, or failed', async () => {
   assert.equal((await ghPrComment({ projectDir: '/p', prUrl: PR, body: 'x' })).class, 'rate-limit');
 });
 
-test('failed job log: explicit repo, job prefixes stripped, secrets redacted, capped at 12 KB', async () => {
-  const line = (msg) => `build\tRun tests\t2026-10-08T10:00:00.0000000Z ${msg}`;
-  const calls = runner(async () => ({ ok: true, stdout: [line('boom'), line('token wbt_abcdefghijklmnopqrstuvwxyz0123456789'), line('x'.repeat(20000))].join('\n'), stderr: '', code: 0 }));
+test('failed job log: explicit repo, job prefixes stripped, secrets redacted, the last 12 KB without runner setup or cleanup', async () => {
+  const line = (msg) => `build\tUNKNOWN STEP\t2026-10-08T10:00:00.0000000Z ${msg}`;
+  const out = ['\uFEFF2026-10-08T10:00:00.0000000Z Current runner version: 2', 'Runner Image Provisioner', 'Complete job name: build', 'npm test',
+    'x'.repeat(20000), 'token wbt_abcdefghijklmnopqrstuvwxyz0123456789', 'FAIL (6) the assertion', '##[error]Process completed with exit code 1.',
+    'Post job cleanup.', '[command]/usr/bin/git version'];
+  const calls = runner(async () => ({ ok: true, stdout: out.map(line).join('\n'), stderr: '', code: 0 }));
   const r = await ghFailedJobLog({ projectDir: '/p', prUrl: PR, databaseId: 99 });
   assert.equal(r.ok, true);
   assert.deepEqual(calls[0].args, ['run', 'view', '--job', '99', '--log-failed', '--repo', 'acme/app']);
-  assert.ok(r.text.startsWith('boom'), r.text.slice(0, 80));
-  assert.doesNotMatch(r.text, /build\tRun tests/);
+  assert.ok(r.text.endsWith('FAIL (6) the assertion\n##[error]Process completed with exit code 1.'), r.text.slice(-120));
+  assert.doesNotMatch(r.text, /build\tUNKNOWN STEP|runner version|Provisioner|Post job cleanup|usr\/bin\/git/);
   assert.doesNotMatch(r.text, /wbt_abcdefghijklmnopqrstuvwxyz0123456789/);
   assert.ok(Buffer.byteLength(r.text) <= 12 * 1024);
+  // A step-mapped log (no setup or cleanup lines) is kept as it is when short.
+  runner(async () => ({ ok: true, stdout: [line('boom'), line('done')].join('\n'), stderr: '', code: 0 }));
+  assert.equal((await ghFailedJobLog({ projectDir: '/p', prUrl: PR, databaseId: 1 })).text, 'boom\ndone');
+});
+
+test('the snapshot names the checks failing on the base branch head, on the first page only', async () => {
+  const seen = [];
+  runner(async (cmd, args) => {
+    const { vars } = graphqlArgs(args); seen.push(vars.withBase);
+    const node = prNode({ contexts: vars.contextsCursor ? page([check(2)]) : page([check(1)], 'c1') });
+    if (vars.withBase === 'true') node.data.repository.pullRequest.baseRef = { target: { statusCheckRollup: { contexts: { nodes: [
+      { __typename: 'CheckRun', name: 'ui proofs', status: 'COMPLETED', conclusion: 'FAILURE' },
+      { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      { __typename: 'CheckRun', name: 'slow', status: 'IN_PROGRESS', conclusion: null },
+      { __typename: 'StatusContext', context: 'ci/legacy', state: 'ERROR' },
+    ] } } } };
+    return ok(node);
+  });
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  assert.deepEqual(seen, ['true', 'false']);
+  assert.deepEqual(snap.pr.baseFailing, ['ui proofs', 'ci/legacy']);
 });
 
 test('commitSubjects lists subjects between two SHAs', async () => {
@@ -211,8 +236,8 @@ test('GraphQL variables are typed explicitly: strings raw (-f), booleans and the
   const calls = runner(async () => ok(prNode()));
   assert.equal((await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR })).ok, true);
   const { query, vars, flags } = graphqlArgs(calls[0].args);
-  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', withContexts: '-F', withThreads: '-F', withReviews: '-F' });
-  assert.deepEqual([vars.number, vars.withContexts, vars.withThreads, vars.withReviews], ['7', 'true', 'true', 'true']);
+  assert.deepEqual(flags, { owner: '-f', repo: '-f', number: '-F', withContexts: '-F', withThreads: '-F', withReviews: '-F', withBase: '-F' });
+  assert.deepEqual([vars.number, vars.withContexts, vars.withThreads, vars.withReviews, vars.withBase], ['7', 'true', 'true', 'true', 'true']);
   // Required-check detection asks GitHub per pull request, on both check kinds.
   assert.match(query, /CheckRun\{[^}]*isRequired\(pullRequestNumber:\$number\)/);
   assert.match(query, /StatusContext\{[^}]*isRequired\(pullRequestNumber:\$number\)/);

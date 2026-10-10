@@ -97,18 +97,29 @@ test('review requests fire even while checks are pending and trust is enforced',
   assert.equal(countsAsRequest({ body: 'x', author: { login: 'me' }, authorAssociation: 'NONE' }, 'me'), true);
 });
 
-test('required contexts scope the check set; unknown conclusions fail; statuses dedupe per head', () => {
+test('required contexts scope the check set; unknown conclusions fail; checks and statuses dedupe per name and head', () => {
   const pr = { headSha: 'h1', contexts: [
     failing(1, { isRequired: false }),
     failing(2, { isRequired: true, conclusion: 'STALE' }),
     { type: 'status', context: 'ci/x', state: 'FAILURE', isRequired: true },
     failing(3, { isRequired: true, conclusion: 'NEUTRAL' }),
   ] };
-  assert.deepEqual(collectTriggers(pr, []).handledKeys, ['check:2', 'status:ci/x@h1']);
-  assert.deepEqual(collectTriggers(pr, ['check:2', 'status:ci/x@h1']).handledKeys, []);
-  assert.deepEqual(collectTriggers({ ...pr, headSha: 'h2' }, ['check:2', 'status:ci/x@h1']).handledKeys, ['status:ci/x@h2']);
+  assert.deepEqual(collectTriggers(pr, []).handledKeys, ['check:c2@h1', 'status:ci/x@h1']);
+  assert.deepEqual(collectTriggers(pr, ['check:c2@h1', 'status:ci/x@h1']).handledKeys, []);
+  // A CI re-run on the same head has new job ids but is the same failure.
+  const rerun = { ...pr, contexts: pr.contexts.map((c) => (c.databaseId ? { ...c, databaseId: c.databaseId + 100 } : c)) };
+  assert.deepEqual(collectTriggers(rerun, ['check:c2@h1', 'status:ci/x@h1']).handledKeys, []);
+  assert.deepEqual(collectTriggers({ ...pr, headSha: 'h2' }, ['check:c2@h1', 'status:ci/x@h1']).handledKeys, ['check:c2@h2', 'status:ci/x@h2']);
   // No required context anywhere: every context counts.
-  assert.deepEqual(collectTriggers({ headSha: 'h', contexts: [failing(7)] }, []).handledKeys, ['check:7']);
+  assert.deepEqual(collectTriggers({ headSha: 'h', contexts: [failing(7)] }, []).handledKeys, ['check:c7@h']);
+});
+
+test('a check that also fails on the base branch head starts no fix', () => {
+  const pr = { headSha: 'h', contexts: [failing(1), failing(2), { type: 'status', context: 'ci/x', state: 'FAILURE', isRequired: false }],
+    baseFailing: ['c1', 'ci/x'] };
+  const t = collectTriggers(pr, []);
+  assert.deepEqual([t.handledKeys, t.failures.map((f) => f.name)], [['check:c2@h'], ['c2']]);
+  assert.equal(collectTriggers({ ...pr, contexts: [failing(1)] }, []).fire, false);
 });
 
 test('reservation is compare-and-swap and increments the cap once', () => {
@@ -180,7 +191,7 @@ test('one fix run batches failures, review threads and change requests, then pub
   assert.deepEqual(opts, { startedBy: 'pr-watch', runId: opts.prWatchRunId, prWatchRunId: opts.prWatchRunId });
   let w = getWatch(URL);
   assert.equal(w.status, 'fixing'); assert.equal(w.fixRuns, 1);
-  assert.deepEqual(w.handled.sort(), ['check:11', 'check:12', 'comment:21', 'comment:22', 'review:31']);
+  assert.deepEqual(w.handled.sort(), ['check:c11@R1', 'check:c12@R1', 'comment:21', 'comment:22', 'review:31']);
 
   await watcher.tick();                                    // still running: waits
   assert.equal(getWatch(URL).status, 'fixing');
@@ -580,7 +591,7 @@ test('a merge conflict goes alone, once per PR head and base pair', () => {
   assert.deepEqual([t.fire, t.handledKeys, t.failures, t.threads, t.conflict],
     [true, ['conflict:R1@B1'], [], [], { base: 'main', baseSha: 'B1' }]);
   // Handled: the rest is looked at again; a moved base or head conflicts anew.
-  assert.deepEqual(collectTriggers(pr, ['conflict:R1@B1']).handledKeys, ['check:1', 'comment:2']);
+  assert.deepEqual(collectTriggers(pr, ['conflict:R1@B1']).handledKeys, ['check:c1@R1', 'comment:2']);
   assert.deepEqual(collectTriggers({ ...pr, baseSha: 'B2' }, ['conflict:R1@B1']).handledKeys, ['conflict:R1@B2']);
   // GitHub still computing (UNKNOWN) is no conflict.
   assert.equal(collectTriggers({ ...pr, mergeable: 'UNKNOWN' }, []).conflict, null);

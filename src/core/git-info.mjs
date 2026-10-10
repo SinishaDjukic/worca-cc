@@ -801,8 +801,19 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
   return { ok: true, data: body.data };
 }
 
-const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
+const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number)} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){target{... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}`;
 const COMMENTS_QUERY = `query PrWatchComments($threadId:ID!,$commentsCursor:String){node(id:$threadId){... on PullRequestReviewThread{comments(first:100,after:$commentsCursor){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}}}}`;
+
+/** Names of the checks that failed on the base branch's head commit: a PR failing the same check
+ *  inherited it. Only completed, non-passing ones; the first 100 contexts (best effort). */
+function baseFailingNames(baseRef) {
+  const nodes = baseRef?.target?.statusCheckRollup?.contexts?.nodes;
+  if (!Array.isArray(nodes)) return [];
+  const failed = (c) => (c.__typename === 'StatusContext'
+    ? ['FAILURE', 'ERROR'].includes(c.state)
+    : c.status === 'COMPLETED' && !['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(c.conclusion));
+  return [...new Set(nodes.filter((c) => c && failed(c)).map((c) => c.name || c.context).filter(Boolean))];
+}
 
 export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
   const p = parseGithubPrUrl(prUrl);
@@ -816,12 +827,13 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
   for (let pages = 0; pages < 100; pages++) {
     const q = await watchGraphql(WATCH_QUERY, { owner: p.owner, repo: p.repo, number: p.number,
       contextsCursor: cursor.contexts, threadsCursor: cursor.threads, reviewsCursor: cursor.reviews,
-      withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews }, { projectDir, repo });
+      withContexts: open.contexts, withThreads: open.threads, withReviews: open.reviews, withBase: pages === 0 }, { projectDir, repo });
     if (!q.ok) return q;
     const pr = q.data?.repository?.pullRequest;
     if (!pr || typeof pr.state !== 'string' || typeof pr.headRefName !== 'string' || typeof pr.headRefOid !== 'string') return { ok: false, class: 'failed', error: 'malformed GitHub snapshot' };
     facts ||= { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null,
-      base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable) };
+      base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable),
+      baseFailing: baseFailingNames(pr.baseRef) };
     const done = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     const cc = !open.contexts || pr.statusCheckRollup === null ? done : pr.statusCheckRollup?.contexts;
     const tt = open.threads ? pr.reviewThreads : done; const rr = open.reviews ? pr.reviews : done;
@@ -865,15 +877,25 @@ export async function ghFailedJobLog({ projectDir, prUrl, databaseId } = {}) {
   const r = await _run('gh', ['run', 'view', '--job', String(databaseId), '--log-failed', '--repo', repo], { cwd: projectDir, env: cred.env });
   if (!r.ok) return { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
   // `--log-failed` prefixes every line with "<job>\t<step>\t<timestamp> ": keep only the message.
-  const text = redactSecrets(String(r.stdout || '').replace(/^[^\t\n]*\t[^\t\n]*\t(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?/gm, ''));
-  return { ok: true, text: capBytes(text, PR_WATCH_LOG_BYTES) };
+  const text = redactSecrets(String(r.stdout || '').replace(/^[^\t\n]*\t[^\t\n]*\t\uFEFF?(?:\d{4}-\d\d-\d\dT[\d:.]+Z ?)?/gm, ''));
+  return { ok: true, text: failedLogTail(text) };
 }
 
 export const PR_WATCH_LOG_BYTES = 12 * 1024;
-/** The longest prefix of `text` that fits in `max` UTF-8 bytes. */
-export function capBytes(text, max) {
+/** The longest suffix of `text` that fits in `max` UTF-8 bytes: a log's failure is at its end. */
+export function tailBytes(text, max) {
   const buf = Buffer.from(String(text || ''));
-  return buf.length <= max ? buf.toString() : buf.subarray(0, max).toString().replace(/�$/, '');
+  return buf.length <= max ? buf.toString() : buf.subarray(buf.length - max).toString().replace(/^\ufffd+/, '');
+}
+/** What explains a failed job: without the runner's setup (through "Complete job name:") and the
+ *  post-job cleanup, which gh prints whole when it cannot map steps; then the last `max` bytes. */
+export function failedLogTail(text, max = PR_WATCH_LOG_BYTES) {
+  let lines = String(text || '').split(/\r?\n/);
+  const start = lines.findIndex((l) => l.startsWith('Complete job name: '));
+  if (start >= 0) lines = lines.slice(start + 1);
+  const post = lines.findIndex((l) => l === 'Post job cleanup.');
+  if (post >= 0) lines = lines.slice(0, post);
+  return tailBytes(lines.join('\n').trim(), max);
 }
 
 async function watchMutation({ projectDir, prUrl, query, vars }) {
