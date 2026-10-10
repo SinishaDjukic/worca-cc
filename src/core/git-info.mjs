@@ -827,7 +827,7 @@ async function watchGraphql(query, vars, { projectDir, repo, role = 'read' }) {
 
 // The base branch head's checks: shared by the watch snapshot and the PR card's checks line (ghPrChecks),
 // so both tell the PR's own failures from the base's with the same fields.
-const BASE_TARGET = 'target{... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}';
+const BASE_TARGET = 'target{oid ... on Commit{statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}';
 // `compare` against refs/pull/<n>/head (it lives in the base repository, fork or not): behindBy is how
 // many base commits the PR lacks.
 const WATCH_QUERY = `query PrWatch($owner:String!,$repo:String!,$number:Int!,$headRef:String!,$contextsCursor:String,$threadsCursor:String,$reviewsCursor:String,$withContexts:Boolean!,$withThreads:Boolean!,$withReviews:Boolean!,$withBase:Boolean!){repository(owner:$owner,name:$repo){pullRequest(number:$number){url state headRefName headRefOid baseRefName baseRefOid mergeable author{login} statusCheckRollup{contexts(first:100,after:$contextsCursor) @include(if:$withContexts){nodes{__typename ... on CheckRun{databaseId name status conclusion detailsUrl isRequired(pullRequestNumber:$number) checkSuite{workflowRun{databaseId}}} ... on StatusContext{context state targetUrl isRequired(pullRequestNumber:$number)}} pageInfo{hasNextPage endCursor}}} reviewThreads(first:100,after:$threadsCursor) @include(if:$withThreads){nodes{id isResolved comments(first:100){nodes{databaseId body author{login} authorAssociation} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}} reviews(first:100,after:$reviewsCursor) @include(if:$withReviews){nodes{databaseId body state author{login} authorAssociation} pageInfo{hasNextPage endCursor}} baseRef @include(if:$withBase){compare(headRef:$headRef){behindBy} ${BASE_TARGET}}}}}`;
@@ -872,7 +872,9 @@ export async function ghPrWatchSnapshot({ projectDir, prUrl } = {}) {
     if (!facts) {
       const base = baseChecks(pr.baseRef);
       facts = { url: pr.url || p.url, state: pr.state, branch: pr.headRefName, headSha: pr.headRefOid, author: pr.author || null,
-        base: pr.baseRefName || null, baseSha: pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable),
+        // The base ref's live tip: `baseRefOid` is the base as GitHub last synced the PR, and lags a base
+        // that moved since (seen live: a stale oid is already in the PR head, so the merge guard proved nothing).
+        base: pr.baseRefName || null, baseSha: pr.baseRef?.target?.oid || pr.baseRefOid || null, mergeable: normalizeMergeable(pr.mergeable),
         behindBy: Number(pr.baseRef?.compare?.behindBy) || 0,
         baseFailing: base.failing, basePassing: base.passing, basePending: base.pending, baseSettled: base.settled };
     }

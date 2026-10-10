@@ -212,7 +212,8 @@ test('the snapshot names the checks failing on the base branch head, on the firs
   runner(async (cmd, args) => {
     const { vars } = graphqlArgs(args); seen.push(vars.withBase);
     const node = prNode({ contexts: vars.contextsCursor ? page([check(2)]) : page([check(1)], 'c1') });
-    if (vars.withBase === 'true') node.data.repository.pullRequest.baseRef = { compare: { behindBy: 3 }, target: { statusCheckRollup: { contexts: { nodes: [
+    if (vars.withBase === 'true') Object.assign(node.data.repository.pullRequest, { baseRefOid: 'stale' });
+    if (vars.withBase === 'true') node.data.repository.pullRequest.baseRef = { compare: { behindBy: 3 }, target: { oid: 'tip', statusCheckRollup: { contexts: { nodes: [
       { __typename: 'CheckRun', name: 'ui proofs', status: 'COMPLETED', conclusion: 'FAILURE' },
       { __typename: 'CheckRun', name: 'unit', status: 'COMPLETED', conclusion: 'SUCCESS' },
       { __typename: 'CheckRun', name: 'slow', status: 'IN_PROGRESS', conclusion: null },
@@ -225,6 +226,8 @@ test('the snapshot names the checks failing on the base branch head, on the firs
   assert.deepEqual(seen, ['true', 'false']);
   assert.deepEqual(snap.pr.baseFailing, ['ui proofs', 'ci/legacy']);
   assert.deepEqual([snap.pr.basePassing, snap.pr.basePending, snap.pr.baseSettled, snap.pr.behindBy], [['unit'], ['slow'], false, 3]);
+  // The base's live tip, not the PR's lagging baseRefOid: the merge guard and the conflict key use it.
+  assert.equal(snap.pr.baseSha, 'tip');
 });
 
 test('the snapshot asks how far the PR is behind its base and which workflow run each check belongs to', async () => {

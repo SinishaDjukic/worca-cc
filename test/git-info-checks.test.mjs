@@ -120,7 +120,7 @@ test('ghPrChecks reads the base head\'s failing checks with the watch snapshot\'
   const r = await ghPrChecks({ projectDir: '/p', prUrl: PR });
   assert.deepEqual([r.base, r.checks.failed, r.checks.inherited, r.status.label], ['dev', 1, 1, '1 of 3 checks failed · 1 also failing on dev']);
   const q = calls.find((c) => c.args[0] === 'api').args.join(' ');
-  assert.match(q, /baseRefName baseRef\{target\{\.\.\. on Commit\{statusCheckRollup/);
+  assert.match(q, /baseRefName baseRef\{target\{oid \.\.\. on Commit\{statusCheckRollup/);
 
   // The base read failing only drops the split: every failure counts as the PR's.
   gitInfo.setRunner(async (cmd, args) => (args[0] === 'api' ? { ok: false, code: 1, stdout: '', stderr: 'boom' }
