@@ -95,7 +95,7 @@ test('pill, sidebar rows, history badges', () => {
   assert.doesNotMatch(rows.textContent, /Running actions/, 'no header row');
   assert.deepEqual(historyActionBadges({ id: 'ab12cd34', checkout: { members: [{ policy: 'on-success' }, { policy: 'on-success' }] } }, [run]).map((b) => b.text),
     ['Running :4417', '2 checked out', 'Kept · on success']);
-  assert.equal(formatUptime(3_723_000), '1h 2m');
+  assert.equal(formatUptime(3_723_000), '1:02:03');
   assert.equal(renderOverviewStrip(undefined, { doc }), null);
   assert.deepEqual(historyActionBadges({ id: 'x', checkout: { members: [{ policy: 'on-demand' }] } }, []).map((b) => b.text), ['Checked out']);
   assert.deepEqual(historyActionBadges({ id: 'x', checkout: { members: [{ policy: 'until-pr' }] } }, []).map((b) => b.text), ['Checked out', 'Kept · until PR']);
@@ -157,7 +157,7 @@ test('running action rows: null when nothing runs; one row per running service w
   const row = rows.querySelector('.act-srow');
   assert.equal(row.dataset.instanceId, 'i');
   assert.deepEqual([...row.children].map((c) => c.className), ['pdot', 'act-srow-name', 'act-stop']);
-  assert.equal(row.title, 'ab12cd34 · Run :4417 · up 5s');
+  assert.equal(row.title, 'ab12cd34 · Run :4417 · up 0:05');
   const stop = row.querySelector('button.act-stop');
   assert.equal(stop.getAttribute('aria-label'), 'Stop Run and free its port');
   assert.equal(stop.title, 'Stop Run and free its port');
@@ -165,8 +165,8 @@ test('running action rows: null when nothing runs; one row per running service w
   stop.click();
   row.querySelector('button.act-srow-name').click();
   assert.deepEqual(got, [['stop', 'i'], ['open', 'ab12cd34']]);
-  assert.equal(formatUptime(5000), '5s');
-  assert.equal(formatUptime(65000), '1m 5s');
+  assert.equal(formatUptime(5000), '0:05');
+  assert.equal(formatUptime(65000), '1:05');
 });
 
 test('running action rows: a run with no saved row is plain text; menu:true marks the buttons as menu items for the rail flyout', () => {
