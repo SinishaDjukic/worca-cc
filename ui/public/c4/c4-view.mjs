@@ -479,10 +479,14 @@ function layoutSheet(view, dagre) {
         sized.forEach(({ c, s }, i) => { pos[c.id] = { x: off + i * (cw + SHEET.GAP), y: 0 }; s.w = cw; });
         w = innerW; h = SHEET.CARD_H;
       } else {
-        let x = 0; let y = 0; let rowH = 0;
-        for (const { c, s } of sized) { if (x && x + s.w > innerW) { x = 0; y += rowH + SHEET.GAP; rowH = 0; } pos[c.id] = { x, y }; x += s.w + SHEET.RGAP; rowH = Math.max(rowH, s.h); w = Math.max(w, x - SHEET.RGAP); }
+        let x = 0; let y = 0; let rowH = 0; const rows = [[]];
+        for (const { c, s } of sized) { if (x && x + s.w > innerW) { x = 0; y += rowH + SHEET.GAP; rowH = 0; rows.push([]); } pos[c.id] = { x, y }; rows[rows.length - 1].push({ id: c.id, w: s.w }); x += s.w + SHEET.RGAP; rowH = Math.max(rowH, s.h); w = Math.max(w, x - SHEET.RGAP); }
         h = y + rowH;
-        if (depth === 0) w = Math.max(w, innerW);
+        if (depth === 0) {
+          w = Math.max(w, innerW);
+          // a band's rows are centred on the sheet, like its cards
+          for (const row of rows) { const rw = row.reduce((t, r) => t + r.w, 0) + SHEET.RGAP * (row.length - 1); for (const r of row) pos[r.id].x += (innerW - rw) / 2; }
+        }
       }
     }
     return { w, h, pos, sized };
@@ -508,7 +512,7 @@ function layoutSheet(view, dagre) {
       const bx = 0; const by = y + 22; const bh = lay.h + 2 * SHEET.PAD + 14;
       boxes[band.id] = { x: bx, y: by, w: SHEET.W, h: bh };
       frames.push({ node: band, depth: 0, boundary: true, x: bx, y: by, w: SHEET.W, h: bh });
-      for (const { c, s } of lay.sized) { const p = lay.pos[c.id]; place(c, bx + SHEET.PAD + p.x, by + SHEET.PAD + 14 + p.y, 1, s); }
+      for (const { c, s } of lay.sized) { const p = lay.pos[c.id]; place(c, bx + Math.max(SHEET.PAD, p.x), by + SHEET.PAD + 14 + p.y, 1, s); }   // rows are centred on the sheet already
       bands[bands.length - 1].boundary = true; y = by + bh + SHEET.BAND_GAP;
     } else {
       for (const { c, s } of lay.sized) { const p = lay.pos[c.id]; place(c, p.x, y + SHEET.LABEL + p.y, 1, s); }
@@ -540,19 +544,29 @@ function layoutGraph(view, dagre) {
   const size = (n) => { const lines = wrap(n.description, 11, 196, 3).length; return { w: 220, h: 40 + (n.technology ? 16 : 0) + (lines ? lines * 15 + 10 : 0) + 8 }; };
   const boxes = {}; const frames = []; let W = 0; let H = 0; let edges = [];
   const dir = view.type === 'dynamic' ? 'LR' : (view.autoLayout || 'TopBottom').replace('TopBottom', 'TB').replace('LeftRight', 'LR').replace('BottomTop', 'BT').replace('RightLeft', 'RL');
+  // dagre cannot lay out an edge whose end is a compound node (a frame): it throws mid-rank. Those
+  // edges are left out of the layout and routed between the boxes afterwards.
+  const isLeaf = (id) => byId[id] && !byId[id].children.length;
+  let g = null;
   if (dagre) {
-    const g = new dagre.graphlib.Graph({ compound: true, multigraph: true }); g.setGraph({ rankdir: dir, nodesep: 28, ranksep: 70, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
-    for (const n of leaves) { const sz = size(n); g.setNode(n.id, { width: sz.w, height: sz.h }); }
-    for (const n of view.nodes) if (n.children.length) g.setNode(n.id, { label: n.title, clusterLabelPos: 'top' });
-    for (const n of view.nodes) if (n.parent && byId[n.parent]) g.setParent(n.id, n.parent);
-    for (const e of view.edges) if (e.source !== e.target) g.setEdge(e.source, e.target, { width: Math.min(160, (e.labels[0] || '').length * 6.2), height: e.labels.length ? 16 : 0, labelpos: 'c' }, e.id);
-    dagre.layout(g);
+    try {
+      g = new dagre.graphlib.Graph({ compound: true, multigraph: true }); g.setGraph({ rankdir: dir, nodesep: 28, ranksep: 70, marginx: 10, marginy: 10 }); g.setDefaultEdgeLabel(() => ({}));
+      for (const n of leaves) { const sz = size(n); g.setNode(n.id, { width: sz.w, height: sz.h }); }
+      for (const n of view.nodes) if (n.children.length) g.setNode(n.id, { label: n.title, clusterLabelPos: 'top' });
+      for (const n of view.nodes) if (n.parent && byId[n.parent]) g.setParent(n.id, n.parent);
+      for (const e of view.edges) if (e.source !== e.target && isLeaf(e.source) && isLeaf(e.target)) g.setEdge(e.source, e.target, { width: Math.min(160, (e.labels[0] || '').length * 6.2), height: e.labels.length ? 16 : 0, labelpos: 'c' }, e.id);
+      dagre.layout(g);
+    } catch { g = null; }   // a layout dagre cannot do falls back to rows rather than failing the view
+  }
+  if (g) {
     for (const n of leaves) { const d = g.node(n.id); boxes[n.id] = { x: d.x - d.width / 2, y: d.y - d.height / 2, w: d.width, h: d.height }; }
     for (const n of view.nodes) if (n.children.length) { const d = g.node(n.id); if (!d || !d.width) continue; const b = { x: d.x - d.width / 2 - 12, y: d.y - d.height / 2 - 30, w: d.width + 24, h: d.height + 42 }; boxes[n.id] = b; frames.push({ node: n, ...b }); }
     W = g.graph().width + 20; H = g.graph().height + 20;
-    edges = view.edges.map((e) => { const ge = g.edge(e.source, e.target, e.id); if (!ge) return null; const pts = ge.points; let d = `M${pts[0].x} ${pts[0].y}`; for (let i = 1; i < pts.length - 1; i += 1) { const a = pts[i]; const b = pts[i + 1]; const last = i === pts.length - 2; d += ` Q${a.x} ${a.y} ${last ? b.x : (a.x + b.x) / 2} ${last ? b.y : (a.y + b.y) / 2}`; } if (pts.length === 2) d += ` L${pts[1].x} ${pts[1].y}`; return { ...e, d, lx: ge.x, ly: ge.y }; }).filter(Boolean);
+    edges = view.edges.map((e) => { const ge = g.edge(e.source, e.target, e.id); if (!ge) return frameEdge(e); const pts = ge.points; let d = `M${pts[0].x} ${pts[0].y}`; for (let i = 1; i < pts.length - 1; i += 1) { const a = pts[i]; const b = pts[i + 1]; const last = i === pts.length - 2; d += ` Q${a.x} ${a.y} ${last ? b.x : (a.x + b.x) / 2} ${last ? b.y : (a.y + b.y) / 2}`; } if (pts.length === 2) d += ` L${pts[1].x} ${pts[1].y}`; return { ...e, d, lx: ge.x, ly: ge.y }; }).filter(Boolean);
     // frames: grow to contain children (dagre's cluster box can be tight)
     for (const f of frames) { for (const id of byId[f.node.id].children) { const b = boxes[id]; if (!b) continue; f.x = Math.min(f.x, b.x - 12); f.y = Math.min(f.y, b.y - 30); f.w = Math.max(f.w, b.x + b.w + 12 - f.x); f.h = Math.max(f.h, b.y + b.h + 12 - f.y); } boxes[f.node.id] = { x: f.x, y: f.y, w: f.w, h: f.h }; }
+    // edges at a frame were deferred until the frames had their final boxes
+    edges = edges.map((e) => (e.deferred ? routeBetween(e, boxes) : e)).filter(Boolean);
     // deepest frames drawn last so they sit on top of their parents
     frames.sort((a, b) => depthOf(byId, a.node) - depthOf(byId, b.node));
   } else {
@@ -563,6 +577,23 @@ function layoutGraph(view, dagre) {
     edges = view.edges.map((e) => { const s = boxes[e.source]; const t = boxes[e.target]; if (!s || !t) return null; return { ...e, d: `M${cx(s)} ${s.y + s.h} L${cx(t)} ${t.y}`, lx: (cx(s) + cx(t)) / 2, ly: (s.y + s.h + t.y) / 2 }; }).filter(Boolean);
   }
   return { kind: 'graph', w: W, h: H, boxes, frames, tiles: leaves.map((n) => ({ node: n, ...boxes[n.id] })), edges };
+}
+/** An edge dagre did not lay out (one end is a frame): marked, routed once the boxes are final. */
+const frameEdge = (e) => ({ ...e, deferred: true });
+/** A curve from the side of one box that faces the other to the facing side of the other. */
+function routeBetween(e, boxes) {
+  const s = boxes[e.source]; const t = boxes[e.target]; if (!s || !t) return null;
+  const sc = { x: s.x + s.w / 2, y: s.y + s.h / 2 }; const tc = { x: t.x + t.w / 2, y: t.y + t.h / 2 };
+  const vertical = Math.abs(tc.y - sc.y) * (s.w + t.w) >= Math.abs(tc.x - sc.x) * (s.h + t.h);
+  let a; let b;
+  if (vertical) { a = { x: sc.x, y: tc.y > sc.y ? s.y + s.h : s.y }; b = { x: tc.x, y: tc.y > sc.y ? t.y : t.y + t.h }; }
+  else { a = { x: tc.x > sc.x ? s.x + s.w : s.x, y: sc.y }; b = { x: tc.x > sc.x ? t.x : t.x + t.w, y: tc.y }; }
+  const r = (v) => Math.round(v * 10) / 10;
+  const d = vertical
+    ? `M${r(a.x)} ${r(a.y)} C${r(a.x)} ${r((a.y + b.y) / 2)} ${r(b.x)} ${r((a.y + b.y) / 2)} ${r(b.x)} ${r(b.y)}`
+    : `M${r(a.x)} ${r(a.y)} C${r((a.x + b.x) / 2)} ${r(a.y)} ${r((a.x + b.x) / 2)} ${r(b.y)} ${r(b.x)} ${r(b.y)}`;
+  const { deferred, ...rest } = e; void deferred;
+  return { ...rest, d, lx: (a.x + b.x) / 2, ly: (a.y + b.y) / 2 };
 }
 const depthOf = (byId, n) => (n.parent && byId[n.parent] ? 1 + depthOf(byId, byId[n.parent]) : 0);
 

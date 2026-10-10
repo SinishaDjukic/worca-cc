@@ -53,7 +53,7 @@ export function setupFormData(payload, roots) {
   return {
     summary, files, defaultTarget: files.length ? 'Update a found file' : 'Create a new file',
     defaultFile: files.length ? files[0].id : '',
-    projects: roots.map((r) => ({ id: r.key })), defaultProject: roots[0].key,
+    projects: roots.map((r) => ({ id: r.key, name: r.name })), defaultProject: roots[0].key,
   };
 }
 

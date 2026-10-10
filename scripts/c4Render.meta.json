@@ -2,7 +2,7 @@
   "key": "c4Render",
   "metaVersion": 2,
   "displayName": "C4: render",
-  "description": "Renders every view of a checked C4 file to SVG, and to JPEG or PNG with a headless Chrome or Edge when one is installed, beside the file and into the run's artifacts with a copy of the .c4 itself. The same renderer the viewer uses, so the images match the screen. No model call.",
+  "description": "Renders every view of a checked C4 file to SVG, and to JPEG or PNG with a headless Chrome or Edge when one is installed, beside the file and into the run's artifacts with a copy of the .c4 itself. The same renderer the viewer uses, so the images match the screen. No model call; runs with worca's privileges.",
   "domain": "architecture",
   "color": "teal",
   "icon": "<rect x=\"3.5\" y=\"5\" width=\"17\" height=\"14\" rx=\"2.5\"/><path d=\"M7 15l3.5-4 2.5 3 2-2.2L17 15\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",

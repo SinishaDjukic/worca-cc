@@ -103,6 +103,10 @@
                   "id": {
                     "type": "string",
                     "maxLength": 120
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
                   }
                 }
               }
@@ -256,6 +260,11 @@
             "help": "Where the new file goes. On a workspace run, pick the member that should own the model.",
             "when": {
               "target": "Create a new file"
+            },
+            "options": {
+              "from": "data.projects",
+              "value": "id",
+              "label": "name"
             }
           },
           {
@@ -345,7 +354,8 @@
           "defaultTarget": "Update a found file",
           "projects": [
             {
-              "id": "worca-cc"
+              "id": "worca-cc",
+              "name": "worca-cc"
             }
           ],
           "defaultProject": "worca-cc",

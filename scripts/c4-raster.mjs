@@ -151,7 +151,7 @@ export async function openRaster({ timeoutMs = 20000 } = {}) {
         // the fonts are data: URLs, so this resolves as soon as they are decoded
         await cdp.send('Runtime.evaluate', { expression: 'document.fonts.ready.then(() => true)', awaitPromise: true }, sessionId);
         const shot = await cdp.send('Page.captureScreenshot', {
-          format, ...(format === 'jpeg' ? { quality: 92 } : {}),
+          format, ...(format === 'jpeg' ? { quality: 85 } : {}),
           clip: { x: 0, y: 0, width: w, height: h, scale: 1 }, captureBeyondViewport: true,
         }, sessionId);
         return Buffer.from(shot.data, 'base64');
