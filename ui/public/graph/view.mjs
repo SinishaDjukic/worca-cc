@@ -17,27 +17,30 @@
 // graphBounds/fitBounds are imported HERE even though only Task 3 calls them:
 // this is the file's one geometry import and Task 3 appends code, not imports.
 import {
-  ZOOM_MIN, ZOOM_MAX, ZOOM_K,
+  ZOOM_MIN, ZOOM_MAX, ZOOM_K, LABEL_H,
   injectGeometry, nodeSize, portAnchor, graphBounds, fitBounds,
 } from '../../../src/shared/graph/geometry.mjs';
-import { flowLayout, flowAnchors, routeFlow, FLOW_DEFAULT_WIDTH, FLOW_RADIUS } from '../../../src/shared/graph/flow-layout.mjs';
-import { routeAll, routeWire, routePathD, routeMid } from '../../../src/shared/graph/route.mjs';
-import { portsOf, resolveOrOutType } from '../../../src/shared/graph/ports.mjs';
+import { flowLayout, FLOW_DEFAULT_WIDTH } from '../../../src/shared/graph/flow-layout.mjs';
+import { wireCurve, ghostCurve } from '../../../src/shared/graph/curves.mjs';
+import { portsOf, resolveOrOutType, findPort } from '../../../src/shared/graph/ports.mjs';
+import { CANVAS_WARNING_CODES } from '../../../src/shared/graph/validate.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { thumbnailSvg } from '../../../src/shared/graph/thumbnail.mjs';
 import { sanitizeIcon } from '../../../src/shared/graph/manifest.mjs';
-import { KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
+import { KEYED_KINDS, DEFAULT_MAX_CYCLES } from '../../../src/shared/graph/constants.mjs';
 import { AWAY_GLYPH } from '../away-glyph.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/** Legend copy is NORMATIVE (spec §7.1); the agents card header row renders it. */
-export const LEGEND_TEXT = 'grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out';
 export const FANOUT_GLYPH = '⤫';
 /** px a press must travel before it becomes a PAN rather than a click. The run
  *  canvas delegates row/gate/result clicks off the same stage, so the threshold
  *  is what keeps a shaky click from stealing them. */
 export const DRAG_PX = 4;
+
+/** ms after the last transform write / card move before the stage loses `gv-moving` (style.css drops the
+ *  cards' backdrop blur while it is set: without a GPU the blur was 70–85% of every pan/zoom frame). */
+export const MOVING_SETTLE_MS = 160;
 
 /** Per-mode zoom clamps (§7.6). `edit` uses the geometry defaults. */
 export const MODE_ZOOM = {
@@ -46,7 +49,7 @@ export const MODE_ZOOM = {
   static: { min: 0.3, max: 1 },
 };
 
-/** The 24px caption row each captioned kind closes with. */
+/** The caption footer (CAP_H, paintFoot) each captioned kind closes with. */
 const CAPTIONS = { task: 'prompt + attached files', end: 'pipeline result', or: 'forwards freshest input' };
 
 /** Flow cards are engine builtins — no sidecar — so their glyphs live here. */
@@ -99,6 +102,9 @@ export function createGraphView(host, {
   layout = 'auto',       // 'auto' = the template's x/y (today) · 'flow' = rows in dispatch order (flow-layout.mjs)
   band = null,           // (node) => {model, effort, flags:[{text, cls?, title?}]} | null — the chip band under agent heads
   order = null,          // flow only: agent ids in dispatch order (a host may pass the proposal's `order[]`)
+  describe = mode === 'edit', // the agent/script description footer (edit hosts; run cards keep their run footer)
+  modelLabel = null,          // (modelId) => display label for the label row's meta ('' hides it)
+  onTransform = null,         // called after EVERY transform write (the composer re-tiles its dot grid off it)
 } = {}) {
   const win = doc.defaultView || globalThis;
   const clamps = MODE_ZOOM[mode] || MODE_ZOOM.edit;
@@ -130,11 +136,11 @@ export function createGraphView(host, {
   wiresEl.appendChild(ghost);          // ALWAYS last: committed wires insert BEFORE it
   world.appendChild(wiresEl);
   stage.appendChild(world);
-  // Never replaceChildren(host): `.gv-chip` and `.gv-ins-rail` are the stage's
-  // SIBLINGS inside the same canvas host and must survive a (re)mount.
+  // Never replaceChildren(host): `.gv-chip` (the refusal chip) is the stage's
+  // SIBLING inside the same canvas host and must survive a (re)mount.
   host.prepend(stage);
   injectGeometry(stage, S);
-  const geo = { band: hasBand, scale: S };
+  const geo = { band: hasBand, scale: S, describe };
 
   const nodeEls = new Map();      // nodeId  -> card element
   const wireEls = new Map();      // wireId  -> path element
@@ -146,8 +152,7 @@ export function createGraphView(host, {
   let T = { x: 0, y: 0, z: 1 };
   let current = null;             // last rendered template
   let ctx = null;                 // last render context (ports, loops, wired inputs)
-  let routesBag = { raw: new Map(), routes: new Map() };
-  const lastRect = new Map();     // nodeId -> the card rect as of the last reroute()
+  let curves = new Map();         // wireId -> {d, pts, mid, swoop} (curves.mjs)
   const stats = { wireDUpdates: 0, ghostUpdates: 0, rectReads: 0 };
 
   const h = (tag, cls, text) => {
@@ -164,60 +169,70 @@ export function createGraphView(host, {
   const portsAt = (node) => portsOf(portsFn, node) || { inputs: [], outputs: [] };
   const sizeOf = (node) => nodeSize(node, portsAt(node), { footerRows: footers.get(node.id) || 0, ...geo });
 
-  // ------------------------------------------------------------ wire routing
-  // Cards are the router's OBSTACLES, so every repaint derives the wire shapes
-  // from the same model x/y the cards are placed by — still zero measurement.
+  // ------------------------------------------------------------ wire curves
+  // Every repaint derives the wire shapes from the same model x/y the cards are
+  // placed by (still zero measurement). A wire may pass behind cards; only a
+  // same-row backward wire swoops under them (curves.mjs).
   const isNodeObj = (n) => Boolean(n) && typeof n === 'object' && !Array.isArray(n);
   const rectOf = (node) => ({ x: Number(node.x) || 0, y: Number(node.y) || 0, ...sizeOf(node) });
-  const obstacleRects = () => (current ? current.nodes.filter(isNodeObj).map(rectOf) : []);
-  const unionRect = (a, b) => {
-    if (!a) return b;
-    const x = Math.min(a.x, b.x); const y = Math.min(a.y, b.y);
-    return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
-  };
 
-  /** Re-route the template's wires. `dirty` (world rect) is the drag fast path:
-   *  wires far from the change reuse their cached raw route. `dirty = null` is
-   *  the canonical full pass (D15). Also refreshes lastRect for every node. */
-  function reroute(dirty = null) {
-    if (!ctx || !current) return;
-    if (isFlow) {
-      // The flow router only needs the laid-out rows — no obstacles, no A*. Raw portsFn (A27).
-      routesBag = routeFlow(flowAnchors(current, portsFn, flowLay), flowLay);
-      for (const n of current.nodes) if (isNodeObj(n)) lastRect.set(n.id, rectOf(n));
-      return;
-    }
-    const list = [];
-    for (const w of current.wires) {
-      if (!w || !w.from || !w.to) continue;
-      const a = anchorOf(w.from, 'out');
-      const b = anchorOf(w.to, 'in');
-      if (a && b) list.push({ id: w.id, a, b });
-    }
-    routesBag = routeAll(list, obstacleRects(), { prev: routesBag.raw, dirty });
-    for (const n of current.nodes) if (isNodeObj(n)) lastRect.set(n.id, rectOf(n));
+  /** The SOURCE port's type tints the wire (an OR forwards its resolved type). */
+  function typeOf(w) {
+    const node = ctx.byId.get(w.from.node);
+    if (!node) return 'any';
+    const t = node.kind === 'or'
+      ? resolveOrOutType(current, portsFn, node.id, new Set())
+      : (findPort(portsAt(node), w.from.port, 'out') || {}).type;
+    return t === 'md' || t === 'json' || t === 'void' ? t : 'any';
   }
 
-  /** D15: canonical full re-route + repaint (drag cancel, footer line change). */
+  /** Recompute every wire's curve (cheap: no search). paintWire writes only the d strings that changed. */
+  function reroute() {
+    if (!ctx || !current) return;
+    const nodes = current.nodes.filter(isNodeObj);
+    // The pill and the swoop floor keep off each card's LABEL ROW too (mockup rectOf: y − LABEL_H … bottom);
+    // from/to stay the bare boxes (crossRows reads their bottoms only).
+    const rects = nodes.map((n) => { const r = rectOf(n); return { ...r, y: r.y - LABEL_H * S, h: r.h + LABEL_H * S }; });
+    const next = new Map();
+    for (const w of current.wires) {
+      if (!w || !w.from || !w.to) continue;
+      const fromN = ctx.byId.get(w.from.node);
+      const toN = ctx.byId.get(w.to.node);
+      const a = anchorOf(w.from, 'out');
+      const b = anchorOf(w.to, 'in');
+      if (!fromN || !toN || !a || !b) continue;
+      // A flow host clips at its left edge (overflow:hidden): a row-wrap S must not leave it (xMin).
+      next.set(w.id, wireCurve(a, b, { from: rectOf(fromN), to: rectOf(toN), rects, self: fromN === toN, scale: S, xMin: isFlow ? 1 : -Infinity }));
+    }
+    curves = next;
+  }
+
+  /** D15: canonical full re-curve + repaint (drag cancel, footer line change). */
   function rerouteAll() {
-    reroute(null);
+    reroute();
     for (const id of wireEls.keys()) paintWire(id);
   }
 
-  function headerOf(node) {
+  /** The label row ABOVE the card: family tile + title + quiet meta (agent: its model; script: its runtime). */
+  function labelOf(node) {
     if (KEYED_KINDS.includes(node.kind)) {
       const meta = agents[node.key] || null;                // the MERGED key -> meta index (agents + scripts)
       const script = node.kind === 'script';
+      const model = !script && !hasBand && node.config && node.config.model
+        ? String((modelLabel && modelLabel(node.config.model)) || node.config.model) : '';
       return {
-        cls: `h-${(meta && meta.color) || (script ? 'amber' : 'blue')}`,
+        fam: (meta && meta.color) || (script ? 'amber' : 'blue'),
         title: (meta && meta.displayName) || node.key || node.id,
         icon: safeAgentIcon(meta) || (script ? SCRIPT_GLYPH : ''),
         viewBox: AGENT_VIEWBOX,
-        chip: script ? ((meta && meta.runtime) || 'script') : '',
+        meta: script ? ((meta && meta.runtime) || 'script') : model,
+        mono: script,
+        desc: meta ? String(meta.description || '') : String(node.key || ''),
+        descMono: !meta,
       };
     }
     const flow = FLOW_META[node.kind] || { title: node.kind, icon: '' };
-    return { cls: 'h-flow', title: flow.title, icon: flow.icon, viewBox: FLOW_VIEWBOX, chip: '' };
+    return { fam: 'flow', title: flow.title, icon: flow.icon, viewBox: FLOW_VIEWBOX, meta: '', mono: false, desc: '', descMono: false };
   }
 
   function portRow(port, dir, resolvedType) {
@@ -267,15 +282,13 @@ export function createGraphView(host, {
     body.dataset.sig = sig;
     const metaIns = p.inputs.filter((x) => !x.synthetic);
     const gate = p.inputs.find((x) => x.synthetic) || null;
-    const caption = CAPTIONS[node.kind] || '';
     const kids = [];
     // Zones top->bottom, each emitted only when non-empty, a 9px separator only
     // BETWEEN emitted zones — this is exactly what nodeSize counts.
     const zone = (rows) => { if (kids.length) kids.push(h('div', 'psep')); kids.push(...rows); };
-    if (metaIns.length) zone(metaIns.map((q) => portRow(q, 'in')));
+    // The await gate is the LAST input row; the caption is a footer now (paintFoot), never a row.
+    if (metaIns.length || gate) zone([...metaIns.map((q) => portRow(q, 'in')), ...(gate ? [gateRow(awaitWired)] : [])]);
     if (p.outputs.length) zone(p.outputs.map((q) => portRow(q, 'out', node.kind === 'or' ? (orType || 'any') : null)));
-    if (gate) zone([gateRow(awaitWired)]);
-    if (caption) zone([(() => { const c = h('div', 'prow cap'); c.appendChild(h('span', 'pt', caption)); return c; })()]);
     body.replaceChildren(...kids);
   }
 
@@ -426,7 +439,7 @@ export function createGraphView(host, {
   // Separated: an unseparated join lets {model:'Opus', effort:'5'} and {model:'Opus5', effort:''}
   // share a signature, and paintBand early-returns on an equal one — stale chips after setBands.
   const bandSig = (b) => (b ? [b.model || '', b.effort || '', b.pick ? 'pick' : '', ...(b.flags || []).map((f) => `${f.text}|${f.cls || ''}`)].join('\u0001') : '');
-  /** The chip band: model · effort · flags, one BAND_H×s row between .nhead and .nbody (agents only).
+  /** The chip band: model · effort · flags, one BAND_H×s row between .nlabel and .nbody (agents only).
    *  `pick` (the chat card's proposed state, P3) makes the model/effort chips real buttons the host's delegated
    *  click opens a picker for; flags stay inert. Listeners never live here: replaceChildren would drop them. */
   function paintBand(el, node) {
@@ -450,12 +463,56 @@ export function createGraphView(host, {
     nb.replaceChildren(...kids);
   }
 
+  function paintLabel(el, node) {
+    const lab = el.querySelector(':scope > .nlabel');
+    const l = labelOf(node);
+    const sig = `${l.fam}|${l.title}|${l.icon}|${l.meta}`;
+    if (lab.dataset.sig === sig) return;
+    lab.dataset.sig = sig;
+    const tile = h('span', `ltile h-${l.fam}`);
+    const icon = svgEl('svg');
+    icon.setAttribute('viewBox', l.viewBox);
+    icon.setAttribute('fill', 'none');
+    icon.setAttribute('stroke', 'currentColor');
+    icon.innerHTML = l.icon;
+    tile.appendChild(icon);
+    const tt = h('span', 'tt', l.title);
+    tt.title = l.title;                                   // an ellipsised name keeps its tooltip
+    const kids = [tile, tt];
+    if (l.meta) kids.push(h('span', l.mono ? 'lm mono' : 'lm', l.meta));
+    const run = lab.querySelector(':scope > .nrun');      // a run's dur · cost (setNodeChrome) survives a repaint
+    lab.replaceChildren(...kids, ...(run ? [run] : []));
+  }
+
+  /** The footer under the port rows: the description (describe hosts, agent/script) or the caption. */
+  function paintFoot(el, node) {
+    const l = labelOf(node);
+    const desc = describe && KEYED_KINDS.includes(node.kind);
+    const text = desc ? l.desc : (CAPTIONS[node.kind] || '');
+    let f = el.querySelector(':scope > .ncap');
+    if (!desc && !text) { if (f) f.remove(); return; }
+    const cls = desc ? `ncap desc${l.descMono ? ' mono' : ''}` : 'ncap';
+    if (!f) { f = h('div', cls); el.insertBefore(f, el.querySelector(':scope > .xfoot')); }
+    if (f.className !== cls) { f.className = cls; f.replaceChildren(); }
+    // A description clamps to two lines INSIDE a span (mockup .cv-foot>span): clamped on the padded box, a third line showed cut.
+    const t = desc ? (f.firstElementChild || f.appendChild(h('span'))) : f;
+    if (t.textContent !== text) { t.textContent = text; f.title = text; }
+  }
+
+  /** A badge is FILLED once its port is wired (a class toggle; rows are never rebuilt for it). */
+  function paintWired(el, node) {
+    for (const row of el.querySelectorAll(':scope > .nbody > .prow[data-port]')) {
+      const key = `${node.id}.${row.dataset.port}`;
+      const on = row.dataset.dir === 'in' ? ctx.wiredInputs.has(key) : ctx.wiredOutputs.has(key);
+      if (row.classList.contains('wired') !== on) row.classList.toggle('wired', on);
+    }
+  }
+
   function paintCard(el, node) {
     const p = portsAt(node);
     const orType = node.kind === 'or' ? resolveOrOutType(current, portsFn, node.id, new Set()) : null;
     const awaitWired = ctx.wiredInputs.has(`${node.id}.await`);
-    // Never rewrite className wholesale: `sel`, `is-*` and `bad` are owned by the
-    // fast paths and must survive a repaint.
+    // Never rewrite className wholesale: `sel`, `is-*` and `bad` are owned by the fast paths.
     if (el.dataset.kind !== node.kind) {
       for (const c of [...el.classList]) if (c.startsWith('node-')) el.classList.remove(c);
       el.classList.add('node', `node-${node.kind}`);
@@ -464,25 +521,11 @@ export function createGraphView(host, {
     const box = sizeOf(node);
     el.style.width = `${box.w}px`;                 // inline width beats the CSS var (a scaled host)
     el.style.height = `${box.h}px`;
-    const head = el.querySelector(':scope > .nhead');
-    const hd = headerOf(node);
-    const sig = `${hd.cls}|${hd.title}|${hd.icon}|${hd.chip}`;
-    if (head.dataset.sig !== sig) {
-      head.dataset.sig = sig;
-      head.className = `nhead ${hd.cls}`;
-      const icon = svgEl('svg');
-      icon.setAttribute('viewBox', hd.viewBox);
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('stroke', 'currentColor');
-      icon.innerHTML = hd.icon;
-      const tt = h('span', 'tt', hd.title);
-      tt.title = hd.title;                          // A35: an ellipsised name keeps its tooltip
-      const kids = [icon, tt];
-      if (hd.chip) kids.push(h('span', 'chip rt', hd.chip));
-      head.replaceChildren(...kids);
-    }
+    paintLabel(el, node);
     paintBand(el, node);
     paintBody(el, node, p, orType, awaitWired);
+    paintFoot(el, node);
+    paintWired(el, node);
     placeCard(node);
   }
 
@@ -491,7 +534,7 @@ export function createGraphView(host, {
     el.dataset.nodeId = node.id;
     el.setAttribute('tabindex', '0');
     el.setAttribute('aria-label', `${node.kind} ${node.key || node.id}`);
-    el.append(h('div', 'nhead'), h('div', 'nbody'));
+    el.append(h('div', 'nlabel'), h('div', 'nbody'));
     return el;
   }
 
@@ -504,19 +547,17 @@ export function createGraphView(host, {
   function paintWire(wireId) {
     const path = wireEls.get(wireId);
     if (!path) return;
-    const pts = routesBag.routes.get(wireId);
-    if (!pts) return;                           // dangling endpoint paints nothing, never NaN
-    const d = routePathD(pts, isFlow ? FLOW_RADIUS : undefined);
-    if (dCache.get(wireId) !== d) {
-      dCache.set(wireId, d);
-      path.setAttribute('d', d);
+    const c = curves.get(wireId);
+    if (!c) return;                             // dangling endpoint paints nothing, never NaN
+    if (dCache.get(wireId) !== c.d) {
+      dCache.set(wireId, c.d);
+      path.setAttribute('d', c.d);
       stats.wireDUpdates += 1;
     }
     const badge = badgeEls.get(wireId);
     if (badge) {
-      const mid = (isFlow && routesBag.badges && routesBag.badges.get(wireId)) || routeMid(pts);
-      badge.style.left = `${mid.x}px`;
-      badge.style.top = `${mid.y}px`;
+      badge.style.left = `${c.mid.x}px`;
+      badge.style.top = `${c.mid.y}px`;
     }
   }
 
@@ -554,13 +595,24 @@ export function createGraphView(host, {
         wiresEl.insertBefore(path, ghost);      // committed wires go BEFORE the ghost
       }
       const loop = ctx.loopWireIds.has(w.id);
-      path.setAttribute('class', `wire${loop ? ' loop' : ''}`);
-      const budget = w.config && w.config.maxCycles;
-      if (Number.isInteger(budget)) {
+      path.setAttribute('class', `wire w-${typeOf(w)}${loop ? ' loop' : ''}`);
+      const explicit = Number.isInteger(w.config && w.config.maxCycles);
+      if (loop || explicit) {
+        // EVERY loop wire carries its "≤N" pill (default N = 3), on every host (D4). A wire with an explicit
+        // budget keeps its pill too, as before (run fixtures hang the N× delivery count on such a wire).
         seenB.add(w.id);
+        const budget = explicit ? w.config.maxCycles : DEFAULT_MAX_CYCLES;
         let badge = badgeEls.get(w.id);
-        if (!badge) { badge = h('div', 'wbadge'); badge.dataset.wireId = w.id; badgeEls.set(w.id, badge); world.appendChild(badge); }
-        badge.textContent = isFlow ? `${budget}×` : `≤${budget}`;
+        if (!badge) {
+          badge = h('div', 'wbadge');
+          badge.dataset.wireId = w.id;
+          badge.appendChild(h('span', 'wmax'));
+          badgeEls.set(w.id, badge);
+          world.appendChild(badge);
+        }
+        const max = badge.querySelector(':scope > .wmax');
+        if (max.textContent !== `≤${budget}`) max.textContent = `≤${budget}`;
+        badge.setAttribute('aria-label', `Loop wire, at most ${budget} cycles`);
       }
       dCache.delete(w.id);                      // geometry may have moved: force one write
       paintWire(w.id);
@@ -569,20 +621,32 @@ export function createGraphView(host, {
     for (const [id, el] of [...badgeEls]) if (!seenB.has(id)) { el.remove(); badgeEls.delete(id); }
   }
 
-  /** Validation pips + `bad` wires. One pip per node, title = the first message. */
+  function setPip(el, id, cls, msg) {
+    let pip = el.querySelector(`:scope > .${cls}`);
+    if (!msg) { if (pip) pip.remove(); return; }
+    if (!pip) { pip = h('div', cls); pip.dataset.nodeId = id; el.appendChild(pip); }
+    pip.title = msg;
+  }
+  /** Validation pips: red for the node's first error, amber for its first surfaced warning (D15, only
+   *  where there is no error); `bad` on wires an error names. */
   function applyReport(report) {
-    const byNode = new Map();
+    const errBy = new Map();
+    const warnBy = new Map();
     const badWires = new Set();
     for (const e of (report && report.errors) || []) {
-      if (e.nodeId && !byNode.has(e.nodeId)) byNode.set(e.nodeId, e.message || e.code);
+      if (e.nodeId && !errBy.has(e.nodeId)) errBy.set(e.nodeId, e.message || e.code);
       if (e.wireId) badWires.add(e.wireId);
     }
+    for (const w of (report && report.warnings) || []) {
+      if (!CANVAS_WARNING_CODES.includes(w.code)) continue;
+      // V19 names only a wire ({wireId}): its pip goes on the wire's TARGET card (D15).
+      const wire = !w.nodeId && w.wireId ? current.wires.find((x) => x && x.id === w.wireId) : null;
+      const id = w.nodeId || (wire && wire.to ? wire.to.node : null);
+      if (id && !warnBy.has(id)) warnBy.set(id, w.message || w.code);
+    }
     for (const [id, el] of nodeEls) {
-      const msg = byNode.get(id);
-      let pip = el.querySelector(':scope > .npip');
-      if (!msg) { if (pip) pip.remove(); continue; }
-      if (!pip) { pip = h('div', 'npip'); pip.dataset.nodeId = id; el.appendChild(pip); }
-      pip.title = msg;
+      setPip(el, id, 'npip', errBy.get(id));
+      setPip(el, id, 'nwarn', errBy.has(id) ? null : warnBy.get(id));
     }
     for (const [id, el] of wireEls) el.classList.toggle('bad', badWires.has(id));
   }
@@ -602,6 +666,7 @@ export function createGraphView(host, {
       byId: new Map(current.nodes.map((n) => [n.id, n])),
       wireById: new Map(current.wires.map((w) => [w.id, w])),
       wiredInputs: new Set(current.wires.filter((w) => w && w.to).map((w) => `${w.to.node}.${w.to.port}`)),
+      wiredOutputs: new Set(current.wires.filter((w) => w && w.from).map((w) => `${w.from.node}.${w.from.port}`)),
       loopWireIds: classifyLoops(current, portsFn).loopWireIds,
     };
     renderNodes();
@@ -613,9 +678,19 @@ export function createGraphView(host, {
     return view;
   }
 
+  /** The canvas is moving: the frosted cards render unblurred until MOVING_SETTLE_MS after the last write. */
+  let movingTimer = null;
+  function markMoving() {
+    stage.classList.add('gv-moving');
+    if (movingTimer) win.clearTimeout(movingTimer);
+    movingTimer = win.setTimeout(() => { movingTimer = null; stage.classList.remove('gv-moving'); }, MOVING_SETTLE_MS);
+  }
+
   function setTransform(next) {
     T = { x: Number(next && next.x) || 0, y: Number(next && next.y) || 0, z: Number(next && next.z) || T.z || 1 };
+    markMoving();
     world.style.transform = `translate(${T.x}px, ${T.y}px) scale(${T.z})`;
+    if (onTransform) { try { onTransform({ ...T }); } catch { /* a host repaint never breaks a pan */ } }
     return { ...T };
   }
 
@@ -636,8 +711,9 @@ export function createGraphView(host, {
     const base = graphBounds(current, portsAt, { pad: 0, footerRowsOf: (n) => footers.get(n.id) || 0, ...geo });
     if (!base) return null;
     let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
-    for (const pts of routesBag.routes.values()) {
-      for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+    for (const c of curves.values()) {
+      for (const p of c.pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+      y1 = Math.max(y1, c.mid.y + 12);                 // a swoop's pill hangs below its lowest point
     }
     return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   }
@@ -699,6 +775,7 @@ export function createGraphView(host, {
     setSelection(sel) {
       for (const [id, el] of nodeEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'node' && sel.id === id));
       for (const [id, el] of wireEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
+      for (const [id, el] of badgeEls) el.classList.toggle('sel', Boolean(sel && sel.kind === 'wire' && sel.id === id));
     },
     // (no applyDecor on the view: run-decor.mjs's applyDecor(view, decor) — P6 — owns the decor pass)
     /** Statuses the monitor sets; every one is a class toggle, never a rebuild. */
@@ -738,7 +815,7 @@ export function createGraphView(host, {
         if (foot) foot.remove();
         footers.delete(nodeId);
         el.style.height = `${sizeOf(node).h}px`;
-        if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();   // a changed obstacle box re-routes (D16)
+        if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();   // a changed card height re-curves (D16: a swoop floor, a pill)
         return;
       }
       if (!foot) {
@@ -776,7 +853,7 @@ export function createGraphView(host, {
       for (const gone of have.values()) gone.remove();
       footers.set(nodeId, list.reduce((a, band) => a + bandUnits(band), 0));
       el.style.height = `${sizeOf(node).h}px`;
-      if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();     // a changed obstacle box re-routes (D16)
+      if ((footers.get(nodeId) || 0) !== prevLines) rerouteAll();     // a changed card height re-curves (D16: a swoop floor, a pill)
     },
     /** Per-card ornaments: agent colour, gate pip, header duration · cost (and the
      *  Away mode chip when `totals.away.text` is set — the share is inside `cost`). */
@@ -794,9 +871,10 @@ export function createGraphView(host, {
         pip.title = gate.title || '';
         el.appendChild(pip);
       }
-      let run = el.querySelector(':scope > .nrun');
+      const lab = el.querySelector(':scope > .nlabel');
+      let run = lab.querySelector(':scope > .nrun');
       if (!totals) { if (run) run.remove(); return; }
-      if (!run) { run = h('div', 'nrun'); run.append(h('span', 'dur'), h('span', 'cost')); el.appendChild(run); }
+      if (!run) { run = h('span', 'nrun'); run.append(h('span', 'dur'), h('span', 'cost')); lab.appendChild(run); }
       run.querySelector('.dur').textContent = totals.dur || '';
       run.querySelector('.cost').textContent = totals.cost || '';
       const awayText = (totals.away && totals.away.text) || '';
@@ -844,28 +922,23 @@ export function createGraphView(host, {
         }
       }
     },
-    /** One transform write per dragged node, then a dirty-filtered re-route: a
-     *  card is an OBSTACLE, so moving it changes the wires it starts and stops
-     *  blocking, not just its own (D7). The dCache gate keeps the DOM writes to
-     *  the wires whose route actually moved. */
+    /** One transform write per dragged node, then a full re-curve (O(wires), no search): a card
+     *  can set a swoop's floor, so moving it may change wires it is not wired to. The dCache gate
+     *  keeps the DOM writes to the wires whose curve actually moved. */
     moveNode(nodeId) {
       const node = ctx && ctx.byId.get(nodeId);
       if (!node) return;
-      const before = lastRect.get(nodeId) || null;
-      placeCard(node);
-      reroute(unionRect(before, rectOf(node)));
-      for (const id of wireEls.keys()) paintWire(id);
+      markMoving();
+      placeCard(node); rerouteAll();
     },
-    /** D15: the canonical `dirty = null` pass every gesture must END in. */
+    /** D15: the canonical full pass every gesture must END in. */
     rerouteAll,
-    /** The EXACT painted polyline for a wire (null while dangling) — the hit test
-     *  and the tests consume this, so paint and hit can never diverge. */
-    wireRoute(wireId) { return routesBag.routes.get(wireId) || null; },
-    /** Routed ghost `d` for the composer's wiring drag. looseEnd: the cursor may
-     *  sit inside a card while hovering its port. */
-    routeGhost(anchor, end, { mirror = false } = {}) {
-      return routePathD(routeWire(anchor, end, obstacleRects(), { mirror, looseEnd: true }));
-    },
+    /** The EXACT painted polyline for a wire (null while dangling): the curve's samples. The hit
+     *  test and the tests consume this, so paint and hit can never diverge. */
+    wireRoute(wireId) { const c = curves.get(wireId); return c ? c.pts : null; },
+    curveOf: (wireId) => curves.get(wireId) || null,
+    /** The ghost `d` of the composer's wiring drag (curves.mjs; `mirror`: the drag started on an input). */
+    routeGhost(anchor, end, { mirror = false } = {}) { return ghostCurve(anchor, end, { mirror, scale: S }); },
     paintWire,
     /** `d = null` hides the ghost. Identical `d` never re-writes the attribute. */
     setGhost(d, cls = '') {
@@ -888,14 +961,15 @@ export function createGraphView(host, {
     readRect, toWorld, toScreen, rect: () => ({ ...R }),
     bounds,
     zoomAbout,
-    /** Auto-fit from MODEL bounds into the band left of the floating inspector.
-     *  Fit NEVER magnifies past 1x; the user zoom range stays zoomMin..zoomMax.
-     *  Runs on view entry/re-entry and template load only — never after an edit. */
-    fit({ insetRight = 0, pad = 60 } = {}) {
+    /** Auto-fit from MODEL bounds into the band left of the floating inspector and above `insetBottom` px of
+     *  floating chrome at the bottom (the Workflows chat dock: fitBounds centres inside (0, 0, w, h), so the
+     *  graph lands in the band ABOVE it). Fit NEVER magnifies past 1x; the user zoom range stays zoomMin..zoomMax.
+     *  Runs on view entry/re-entry and template load — and when a chat edit lands out of sight (chat-cards reveal). */
+    fit({ insetRight = 0, insetBottom = 0, pad = 60 } = {}) {
       const r = view.readRect();
       const b = bounds(pad);
       if (!b) return;
-      applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, r.height || 0), 1);   // never past 1×
+      applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, (r.height || 0) - insetBottom), 1);   // never past 1×
     },
     /** Static hosts: fit the graph into a card of width `w` (ResizeObserver-driven). */
     fitToWidth(w) {
@@ -1023,15 +1097,15 @@ export function createGraphView(host, {
     setAgents(next) {
       agents = next || {};
       for (const el of nodeEls.values()) {
-        const head = el.querySelector(':scope > .nhead');
-        if (head) delete head.dataset.sig;
+        const lab = el.querySelector(':scope > .nlabel'); if (lab) delete lab.dataset.sig;
       }
       if (current) render(source || current, {});
     },
     destroy() {
       for (const n of navs.splice(0)) n.destroy();
+      if (movingTimer) { win.clearTimeout(movingTimer); movingTimer = null; }
       stage.remove();
-      nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear();
+      nodeEls.clear(); wireEls.clear(); badgeEls.clear(); incident.clear(); dCache.clear(); footers.clear(); curves.clear();
       current = null; ctx = null;
       source = null; flowLay = null; bandOverride = null;
     },

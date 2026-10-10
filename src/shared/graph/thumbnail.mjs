@@ -3,10 +3,11 @@
 // deterministic, and the markup carries NUMBERS ONLY (no ids, no names, no
 // author text), so the result is safe to hand to innerHTML without escaping.
 // The whole scene is drawn in WORLD space inside one <g transform>, which is
-// what lets it reuse the real router instead of a second wire geometry.
+// what lets it reuse the real curves instead of a second wire geometry.
 import { graphBounds, fitBounds, nodeSize, portAnchor } from './geometry.mjs';
-import { routeAll, routePathD } from './route.mjs';
+import { wireCurve } from './curves.mjs';
 import { portsOf, findPort } from './ports.mjs';
+import { classifyLoops } from './loops.mjs';
 
 const DEFAULTS = { width: 120, height: 64, pad: 8, radius: 3 };
 const round = (v) => Math.round(v * 100) / 100;
@@ -23,10 +24,10 @@ export function thumbnailSvg(tpl, portsFn, opts = {}) {
   if (!nodes.length) return `${open}</svg>`;
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  // The cards are the router's obstacles, so the tile shows the same shapes the
-  // live canvas does — one wire, one <path>, no arrow markers, no split legs.
-  const obstacles = nodes.map((n) => ({ x: Number(n.x) || 0, y: Number(n.y) || 0, ...nodeSize(n, portsOf(portsFn, n)) }));
-  const wireList = [];
+  const rectOf = (n) => ({ x: Number(n.x) || 0, y: Number(n.y) || 0, ...nodeSize(n, portsOf(portsFn, n)) });
+  const boxes = nodes.map(rectOf);          // NOT `rects`: the kept tail below declares `const rects` (the <rect> markup)
+  const loops = classifyLoops({ ...tpl, nodes }, portsFn).loopWireIds;
+  const drawn = [];
   for (const w of (Array.isArray(tpl?.wires) ? tpl.wires : [])) {
     const from = byId.get(w?.from?.node);
     const to = byId.get(w?.to?.node);
@@ -36,25 +37,19 @@ export function thumbnailSvg(tpl, portsFn, opts = {}) {
     if (!findPort(fromPorts, w.from.port, 'out') || !findPort(toPorts, w.to.port, 'in')) continue;
     const a = portAnchor(from, fromPorts, w.from.port, 'out');
     const b = portAnchor(to, toPorts, w.to.port, 'in');
-    if (a && b) wireList.push({ id: String(w.id), a, b });          // ids stay INTERNAL: route keys only
+    if (a && b) drawn.push({ c: wireCurve(a, b, { from: rectOf(from), to: rectOf(to), rects: boxes, self: from === to }), loop: loops.has(w.id) });
   }
-  const { routes } = routeAll(wireList, obstacles);
-
-  // Measured over the DRAWN set, never the raw one: a junk entry the loop above
-  // skips must not stretch the fit that positions the cards it does draw. The
-  // routed vertices join the union so a detour is never clipped out of the tile.
   const base = graphBounds({ ...tpl, nodes }, portsFn, { pad: 0 });
   let x0 = base.x; let y0 = base.y; let x1 = base.x + base.w; let y1 = base.y + base.h;
-  for (const pts of routes.values()) {
-    for (const p of pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
+  for (const { c } of drawn) {
+    for (const p of c.pts) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }
   }
   const bounds = { x: x0 - pad, y: y0 - pad, w: x1 - x0 + 2 * pad, h: y1 - y0 + 2 * pad };
   const { z, tx, ty } = fitBounds(bounds, { width, height }, { zoomMin: 0, zoomMax: 1 });
   const stroke = round(1 / (z || 1));
-
-  // Wires first so the cards sit on top, exactly like the live canvas.
-  const paths = [...routes.values()].map((pts) =>
-    `<path d="${routePathD(pts)}" fill="none" stroke="#B7B7BC" stroke-width="${stroke}" stroke-linejoin="round"/>`).join('');
+  // Wires first so the cards sit on top, exactly like the live canvas; loop wires amber (#E6962A = --amber).
+  const paths = drawn.map(({ c, loop }) =>
+    `<path d="${c.d}" fill="none" stroke="${loop ? '#E6962A' : '#B7B7BC'}" stroke-width="${stroke}" stroke-linecap="round"/>`).join('');
 
   const rects = nodes.map((node) => {
     const size = nodeSize(node, portsOf(portsFn, node));

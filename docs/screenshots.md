@@ -95,14 +95,14 @@ is held in memory and never written anywhere.
 | `clarify.png` | A live run waiting on its two clarify questions | Simple | live mock run, questions rewritten in place |
 | `run-detail.png` | A finished run's Diff tab (`src/routes/contacts.js`) | Advanced | mock run with a real change on its branch |
 | `history.png` | Runs with finished runs, one run's summary open | Simple | 24 mock runs, restaged |
-| `composer.png` | Workflow Composer, the Default workflow | Advanced | built-in workflow |
+| `composer.png` | Workflows (`#workflows`), the Default workflow on the canvas beside the Library | Advanced | built-in workflow, opened from the Library's Workflows tab |
 | `stats.png` | Statistics, "This week" | Advanced | restaged costs, time and Ask spend |
 | `ask-worca.png` | The Ask Worca sheet with a run card | Simple | stored conversation |
 | `schedules.png` | Schedules, Repeating tab | Advanced | three series and a ticket via `POST /api/run` |
 | `team-metrics.png` | Team metrics for `nimbus-crm`, "Last month" | Expert | records on the `worca-metrics` branch |
 | `workspace-map.png` | The `Nimbus` workspace's Map tab | Advanced | stored scan result |
 | `actions.png` | A finished run's Actions tab after a Test run | Advanced | project actions, checkout, real `npm test` |
-| `scripts.png` | Scripts, the built-in cards | Expert | built-in scripts |
+| `scripts.png` | Workflows (`#workflows/scripts`), the Library's Scripts tab with the built-in script rows | Expert | built-in scripts |
 
 Statistics uses "This week" from Wednesday on, "This month" early in a week from the 8th, and
 "All time" otherwise, so the charts always have several days of data.

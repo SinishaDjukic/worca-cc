@@ -2029,12 +2029,12 @@ test('Escape in a sidebar popup on a run\'s Details closes only the popup: the p
   const doc = ctx.window.document;
   const before = ctx.window.location.hash;
   assert.match(before, /details\/overview$/);
-  const nodes = doc.querySelector('.nav .nav-group[data-nav-group="nodes"]');
-  nodes.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
-  assert.equal(doc.getElementById('nav-nodes-fly').hidden, false);
+  const acct = doc.getElementById('side-acct');
+  acct.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true, detail: 0 }));
+  assert.equal(doc.getElementById('acct-menu').hidden, false);
   doc.activeElement.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   await settle(ctx.window, 2);
-  assert.equal(doc.getElementById('nav-nodes-fly').hidden, true);
+  assert.equal(doc.getElementById('acct-menu').hidden, true);
   assert.equal(ctx.window.location.hash, before, 'still on Details');
 });
 

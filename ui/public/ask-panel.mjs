@@ -3169,7 +3169,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       saved.after(line);
     } else if (matched) {
-      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the composer.');
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the Workflows view.');
       handle.parts.match.after(hint);
     }
     rootEl.appendChild(handle.el);
@@ -3189,7 +3189,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         .then((out) => { if (out) st.cardOptions = null; }));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
     } else {
-      const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
+      const open = btn('ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
       open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
       open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
       // No "Run with this": the save already fired the event turn, which proposes the run

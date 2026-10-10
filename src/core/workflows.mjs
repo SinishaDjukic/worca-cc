@@ -427,7 +427,7 @@ function assertValidGraph(tpl, registry, scripts) {
   if (ok) return;
   throw Object.assign(
     new Error(`workflow "${tpl.id}" no longer matches the agents it uses: `
-      + `${errors.map(formatIssue).join('; ')} — open it in the Composer and re-wire it`),
+      + `${errors.map(formatIssue).join('; ')} — open it in the Workflows view and re-wire it`),
     { code: 'INVALID_GRAPH', issues: errors },
   );
 }
@@ -461,7 +461,7 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
   const archived = await readWorkflow(wanted, { includeArchived: true });
   if (archived) {
     throw Object.assign(new Error(`workflow "${wanted}" was archived by the v2 upgrade `
-      + '(v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Composer'), { code: 'ARCHIVED' });
+      + '(v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Workflows view'), { code: 'ARCHIVED' });
   }
   throw Object.assign(new Error(`unknown workflowId "${wanted}"`), { code: 'NOT_FOUND' });
 }
@@ -484,10 +484,10 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
  */
 export async function setWorkflowNodeDefaults(id, map) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) {
-    throw new Error('the built-in Default workflow cannot store defaults — save a copy in Composer first');
+    throw new Error('the built-in Default workflow cannot store defaults — save a copy in the Workflows view first');
   }
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) {
-    throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in Composer first');
+    throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in the Workflows view first');
   }
   const tpl = readRaw(id);
   if (!tpl) throw new Error(`workflow not found: ${id}`);

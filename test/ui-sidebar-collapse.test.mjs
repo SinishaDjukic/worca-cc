@@ -192,7 +192,7 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
   for (const [nav, title] of rows()) assert.ok(title, `collapsed ${nav} must carry a tooltip`);
   assert.match(doc.getElementById('side-acct').title, /^Profile: spend, away mode, interface mode and settings · \$20\.00 of \$50\.00 spent /,
     'the rail shows the avatar alone: its tooltip says who, what it opens and the spend against the limit');
-  assert.equal(doc.querySelector('.nav button[data-nav="composer"]').title, 'Workflow Composer',
+  assert.equal(doc.querySelector('.nav button[data-nav="workflows"]').title, 'Workflows',
     'the tooltip is the label span verbatim — index.html:55');
   assert.equal(doc.querySelector('.nav button[data-nav="stats"]').title, 'Statistics',
     'the tooltip is the SIDEBAR label, Statistics (index.html)');
@@ -200,7 +200,7 @@ test('every collapsed nav button gains a tooltip, and loses it on expand', async
     'Runs keeps the count tooltip updateNavCounts owns (set at boot by '
     + 'refreshAllCounts, app.js:14034)');
   click('#side-toggle');
-  assert.equal(doc.querySelector('.nav button[data-nav="composer"]').hasAttribute('title'), false);
+  assert.equal(doc.querySelector('.nav button[data-nav="workflows"]').hasAttribute('title'), false);
 });
 
 // ---- The band hairlines (style.css .under-top / .under-bottom, app.js#paintSideEdges) ----

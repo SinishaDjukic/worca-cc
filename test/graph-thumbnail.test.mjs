@@ -63,7 +63,11 @@ test('a card astride the corridor detours in the tile, and no vertex is clipped 
   const svg = thumbnailSvg(detour, portsFn, { width, height });
   assert.equal((svg.match(/<path /g) || []).length, 1, 'exactly ONE path element per wire');
   const d = svg.match(/<path d="([^"]+)"/)[1];
-  assert.match(d, / Q /, 'the detour rounds at least one corner');
+  for (const [, pd] of svg.matchAll(/<path d="([^"]+)"/g)) {
+    assert.match(pd, /^M /, 'every wire starts with a move');
+    assert.ok(pd.includes(' C '), 'every wire is a bezier');
+  }
+  assert.match(svg, /<path [^>]*stroke="#B7B7BC"/, 'a plain wire is grey');
   assert.equal(d.includes('NaN'), false);
   // Every vertex, through the tile's own <g transform>, lands inside the viewport:
   // the fit bounds unioned the route, so a detour is never clipped away.
@@ -74,4 +78,21 @@ test('a card astride the corridor detours in the tile, and no vertex is clipped 
     assert.ok(sx >= -0.5 && sx <= width + 0.5, `x ${sx} inside the tile`);
     assert.ok(sy >= -0.5 && sy <= height + 0.5, `y ${sy} inside the tile`);
   }
+});
+
+test('a loop wire paints amber in the tile, every other wire grey', () => {
+  const pf = portsFnFor({
+    implementer: { key: 'implementer', inputs: [{ id: 'plan', type: 'md', required: true }, { id: 'fix', type: 'md', loop: true }],
+      outputs: [{ id: 'done', type: 'void', when: 'always' }] },
+    reviewer: { key: 'reviewer', verdict: { filename: 'r-cycle{cycle}.json' }, inputs: [{ id: 'done', type: 'void', required: true }],
+      outputs: [{ id: 'fix', type: 'md', when: 'blocking' }, { id: 'ok', type: 'void', when: 'clean' }] },
+  });
+  const tpl = { version: 2,
+    nodes: [{ id: 'n_i', kind: 'agent', key: 'implementer', x: 0, y: 0, config: {} },
+      { id: 'n_r', kind: 'agent', key: 'reviewer', x: 400, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_i', port: 'done' }, to: { node: 'n_r', port: 'done' } },
+      { id: 'w2', from: { node: 'n_r', port: 'fix' }, to: { node: 'n_i', port: 'fix' }, config: { maxCycles: 2 } }] };
+  const svg = thumbnailSvg(tpl, pf, { width: 120, height: 64 });
+  assert.equal((svg.match(/<path /g) || []).length, 2);
+  assert.equal((svg.match(/<path [^>]*stroke="#E6962A"/g) || []).length, 1);
 });

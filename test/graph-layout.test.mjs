@@ -4,6 +4,7 @@ import { rankNodes, autoLayout } from '../src/shared/graph/layout.mjs';
 import { classifyLoops } from '../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { LABEL_H, nodeSize } from '../src/shared/graph/geometry.mjs';
 
 const REG = {
   planner: { key: 'planner', inputs: [{ id: 'task', type: 'md', required: true }],
@@ -70,4 +71,21 @@ test('autoLayout/rankNodes never throw: malformed entries ignored, empty and wir
       assert.deepEqual(solo, { x: { x: 60, y: 55 } });
     } },
   ]);
+});
+
+test('autoLayout {describe}: a stacked edit-host card clears the label row of the card below it', () => {
+  const A = { key: 'a', displayName: 'A', inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'x', type: 'md' }] };
+  const pf = portsFnFor({ a: A }, {});
+  const tpl = { id: '', name: '', version: 2, domain: '',
+    nodes: [{ id: 'n_t', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_1', kind: 'agent', key: 'a', x: 0, y: 0, config: {} }, { id: 'n_2', kind: 'agent', key: 'a', x: 0, y: 0, config: {} }],
+    wires: [{ id: 'w_1', from: { node: 'n_t', port: 'task' }, to: { node: 'n_1', port: 'task' } },
+      { id: 'w_2', from: { node: 'n_t', port: 'task' }, to: { node: 'n_2', port: 'task' } }] };
+  const lift = (pos) => [pos.n_1, pos.n_2].sort((p, q) => p.y - q.y);
+  const h = nodeSize(tpl.nodes[1], pf(tpl.nodes[1]), { describe: true }).h;
+  const [top, low] = lift(autoLayout(tpl, pf, { describe: true }));
+  assert.equal(top.x, low.x, 'one column');
+  assert.ok(low.y - LABEL_H >= top.y + h, `the lower card's label row (${low.y - LABEL_H}) clears the upper card's bottom (${top.y + h})`);
+  const [t2, l2] = lift(autoLayout(tpl, pf));
+  assert.ok(l2.y - LABEL_H < t2.y + h, 'without describe the same stack would overlap — the option is what makes room');
 });

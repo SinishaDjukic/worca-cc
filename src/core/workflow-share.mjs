@@ -100,7 +100,7 @@ export async function exportGraphJson(id) {
   if (!tpl) throw err(`workflow not found: ${id}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
   if (tpl.version !== 2) {
-    throw err(`workflow ${id} is a v1 template — open and save it in the composer first`, 'UNSUPPORTED');
+    throw err(`workflow ${id} is a v1 template — open and save it in the Workflows view first`, 'UNSUPPORTED');
   }
   const out = {
     version: 2,

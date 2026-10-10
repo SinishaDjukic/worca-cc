@@ -6,7 +6,7 @@ from the sidebar pill under *New pipeline* or from Settings) holding the
 checklist, and **spotlight guides** that ring the real control for each step. Every
 tick is derived from product state, never stored. A guide is an ordered walk of
 real controls: most hops advance when the user performs the real action; a hop
-that only explains something (the Composer canvas, its side panel), or whose
+that only explains something (the Workflows canvas, its chat), or whose
 state is already right, carries a **Next** button instead. Every start is a fresh
 walk from the first hop, so a replayed guide explains every stop again.
 
@@ -19,7 +19,7 @@ walk from the first hop, so a replayed guide explains every stop again.
 | 3 | Watch a run end to end | any pipeline reached `done` | (no project: the Add project walk of 2, then on) → sidebar › **New pipeline** → project select → prompt → **Mock mode** → **Start run** → sidebar › **Running** (skipped when the app already routed there) → the run's **card** (Done) |
 | 4 | Ask Worca about a run | one Ask thread exists | the **Ask Worca** dock pill (skipped while the sheet is open) → the input box (suggests a question) → **Send** → the transcript, where the answer lands (Done) |
 | 5 | Run a real pipeline | any pipeline with spend above zero | as 3, but after the project: the **Workflow** picker ("choose a built-in workflow"; Auto is the one state it asks to change), then prompt → Mock (only ringed when it is on) → **Start run** → Running → the run's card (Done) |
-| 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflow Composer** → the **Default** row in Saved pipelines (opens it on the canvas) → the **canvas** (explains the loop, the cards and the wires; Next) → the side panel's **expand** toggle when it is collapsed → the **side panel** (Agents to drag onto the canvas, Info for the selection; Next) → sidebar › **New pipeline** → the project select (the pick is saved per project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
+| 6 | Explore the built-in workflows | a project has a persisted picker choice (`project_config.active_workflow_id`, Auto included) | sidebar › **Workflows** → the **Library** toggle (only when the Library is closed) → its **Workflows** tab → the **Default** row (opens it on the canvas) → the **canvas** (the cards and the wires; Next) → the **chat** (what it can change; Next) → **Back** (leaves the editor) → the top bar's **New run** → the project select (the pick is saved per project) → the **Workflow** picker (the user's own pick, a `change`, never the value a project loads) → prompt → **Start run** (Mock is mentioned, not rung) → Running → the run's card (Done) |
 | 7 | Group projects into a workspace | one workspace exists | (fewer than two projects: the Add project walk) → sidebar › **Workspaces** → **Create workspace** → in the wizard: **name** → two to 40 **projects** (a note warns past 10, a stronger one past 20) → (the **Models** column: scan agent and project agents, default Sonnet · medium) → **Scan interconnections** — the scan runs as a pipeline you can follow under **Running**; the workspace appears when it finishes, its relations on the **Map** tab |
 | 8 | Turn on team metrics | any project or workspace records (`listScopes().anyEnabled`) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team metrics…** → the dialog's **Create branch and enable** (a project with no origin remote gets its Team metrics block ringed with the reason and Done instead; one already on gets its block explained, with Done) |
 | 9 | Set a team policy | any project or workspace resolves a policy (`listPolicyScopes().anyEnabled`: its own home, or one it follows) | (no project: the Add project walk) → sidebar › **Projects** → a project row → its **Team** tab → **Set up team policy…** → the dialog's **Create branch and enable** → the new home's Team policy page, on **Edit policy** (Done). A project pointed at another home stays on its page: its Team policy block is ringed with what happened (Done). No origin remote, or already on: the block ringed with the reason (Done) |
@@ -92,11 +92,13 @@ it → know the workflows → real work → scale.
   control that is repainted under the ring is re-acquired for about a second
   before the guide gives up; a control that never appears ends the guide quietly.
   The elevation forces `position:relative` only on a static control; an
-  absolutely positioned target (the Composer's floating side panel) keeps its
+  absolutely positioned target (a Workflows floating bar's control) keeps its
   own position. The elevation is a z-index, so it cannot escape a stacking
   context: the Projects and Workspaces slide screens rest on `transform:none`
   (a resting `translateX(0)` would trap every control on them under the scrim),
-  and a target inside the project page's sticky tab bar names it in `lift`.
+  a target inside the project page's sticky tab bar names it in `lift`, and the
+  Workflows hops name the stage (`.wfv-stage`), its floating bars (`.wfv-float`)
+  and the Library (`.wfl`, an overlay at ≤ 760 px) the same way.
 - **Interface mode** (docs/ui-levels.md): a step whose controls live above the
   current mode asks once, before the tour moves anywhere (*Switch to Advanced?*);
   confirming switches and starts the tour. Should the mode drop while a tour
@@ -125,7 +127,7 @@ for targets inside an open dialog.
 - The client refetches on `pipelines-changed`, `projects-changed`,
   `workspaces-changed`, `team-metrics-changed`, `team-policy-changed`,
   `onboarding-changed`, on a run
-  finishing, on an Ask turn ending and on a Composer save (coalesced, 250 ms).
+  finishing, on an Ask turn ending and on a Workflows save (coalesced, 250 ms).
 
 ## Tests
 

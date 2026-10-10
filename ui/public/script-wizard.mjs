@@ -333,7 +333,7 @@ function advancedPanel(doc, meta, { readOnly, advOpen, verdictFile }) {
   const body = h(doc, 'div', 'wz-adv-body');
   body.hidden = !advOpen;
   body.append(number(doc, 'wz-f', 'meta:timeoutSec', 'Timeout (s)', timeoutSec, 1), text(doc, 'wz-f', 'meta:domain', 'Domain', meta.domain || ''),
-    number(doc, 'wz-f', 'meta:order', 'Order in the palette', order, 0));
+    number(doc, 'wz-f', 'meta:order', 'Order in the Library', order, 0));
   const vf = h(doc, 'div', 'ins-f wz-f');
   vf.append(h(doc, 'span', 'ins-label', 'Verdict file'), h(doc, 'code', 'wz-verdict-file mono', verdictFile || '—'));
   body.appendChild(vf);

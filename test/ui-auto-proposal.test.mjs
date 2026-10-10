@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { renderAutoProposal, proposalLoops, proposalBands, fingerprintLine, AUTO_PROPOSAL_ORDER_QPANEL } from '../ui/public/auto-proposal.mjs';
 import { proposalFor, WEB_TASK } from './helpers/auto-proposal-fixture.mjs';
-import { FLOW_PAD_Y } from '../src/shared/graph/flow-layout.mjs';
+import { FLOW_PAD_Y, FLOW_SCALE, flowPerRow } from '../src/shared/graph/flow-layout.mjs';
+import { NODE_W } from '../src/shared/graph/geometry.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -16,12 +17,15 @@ test('proposal body: card order, real graph rows agree with p.order, 4-per-row a
       const h = renderAutoProposal(p, { doc, width: 702 });
       assert.deepEqual([...h.el.children].map((c) => c.className.split(' ')[0]), ['ask-wfcard-namewrap', 'ask-wfcard-reason', 'ask-wfcard-signals', 'ask-wfcard-fp', 'ask-wfcard-graph', 'ask-wfcard-loops', 'ask-wfcard-match', 'ask-wfcard-meta']);
       const stage = h.parts.graph.querySelector('.gv-stage.gv-static.gv-flow');
-      assert.ok(stage); assert.equal(stage.style.getPropertyValue('--gv-scale'), '0.65'); assert.equal(stage.style.getPropertyValue('--gv-node-w'), '143px');
+      assert.ok(stage); assert.equal(stage.style.getPropertyValue('--gv-scale'), '0.65'); assert.equal(stage.style.getPropertyValue('--gv-node-w'), `${NODE_W * FLOW_SCALE}px`);
       const lay = h.graph.flowLayout();
-      assert.equal(lay.perRow, 4);
-      const firstRow = lay.order.slice(0, 4).map((id) => xy(h.graph.nodeEl(id)));
-      assert.deepEqual(firstRow.map((q) => q.y), [FLOW_PAD_Y, FLOW_PAD_Y, FLOW_PAD_Y, FLOW_PAD_Y]);
-      assert.deepEqual(firstRow.map((q) => q.x), [20, 189, 358, 527]);
+      const per = flowPerRow(702);
+      assert.equal(lay.perRow, per);
+      const firstRow = lay.order.slice(0, per).map((id) => xy(h.graph.nodeEl(id)));
+      assert.ok(lay.rows[0].top > FLOW_PAD_Y, 'the first row sits under its label row');
+      assert.deepEqual(firstRow.map((q) => q.y), Array(per).fill(lay.rows[0].top));
+      assert.deepEqual(firstRow.map((q) => q.x), lay.order.slice(0, per).map((id) => lay.positions[id].x));
+      assert.deepEqual(firstRow.map((q) => q.x), Array.from({ length: per }, (_, i) => 20 + i * (NODE_W + 40) * FLOW_SCALE));
       assert.equal(lay.order[0], p.manifest.graph.nodes.find((n) => n.kind === 'task').id, 'Task first');
       assert.deepEqual(lay.order.slice(1, 1 + p.order.length), p.order, 'agents in dispatch order');
       assert.deepEqual(lay.order.filter((id) => p.nodes[id]), p.order, 'the graph rows and the tunables table (p.order) agree — A5 rank-first must reproduce the proposal order');
@@ -29,7 +33,7 @@ test('proposal body: card order, real graph rows agree with p.order, 4-per-row a
       assert.equal(h.parts.graph.style.height, `${lay.height}px`);
       assert.equal(h.parts.graph.querySelectorAll('.nband').length, p.order.length, 'one band per agent');
       assert.ok([...h.parts.graph.querySelectorAll('.bchip.model')].some((c) => c.textContent === 'Sonnet 5'));
-      assert.ok([...h.parts.graph.querySelectorAll('.wbadge')].every((b) => /^\d+×$/.test(b.textContent)));
+      assert.ok([...h.parts.graph.querySelectorAll('.wbadge .wmax')].every((b) => /^≤\d+$/.test(b.textContent)));
       const aria = h.parts.graph.getAttribute('aria-label');
       assert.match(aria, /^Workflow graph: Task → /);
       assert.ok(aria.includes(' → OR → End'), 'every card in placement order, the valve included');
@@ -49,7 +53,7 @@ test('proposal body: card order, real graph rows agree with p.order, 4-per-row a
       h.relayout();
       assert.equal(h.graph.flowLayout().perRow, 1, 'still one card per row');
       h.relayout(702);
-      assert.equal(h.graph.flowLayout().perRow, 4, 'an explicit width still wins');
+      assert.equal(h.graph.flowLayout().perRow, flowPerRow(702), 'an explicit width still wins');
       h.destroy();
     } },
   ]);

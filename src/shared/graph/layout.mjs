@@ -58,7 +58,7 @@ export function rankNodes(tpl, loops) {
 }
 
 /** @returns {{[nodeId:string]: {x:number, y:number}}} — the caller applies them. */
-export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP } = {}) {
+export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP, describe = false } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const loops = classifyLoops(tpl, portsFn);
   const rank = rankNodes(tpl, loops);
@@ -100,7 +100,7 @@ export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK
     for (const id of columns.get(r)) {
       const node = byId.get(id);
       const ports = (typeof portsFn === 'function' ? portsFn(node) : null) || { inputs: [], outputs: [] };
-      const { h } = nodeSize(node, ports);
+      const { h } = nodeSize(node, ports, { describe });   // edit hosts bill the description footer
       const y = snap(cursor);
       positions[id] = { x: x0 + r * dx, y };
       cursor = y + h + gap;                 // stack from the SNAPPED row: idempotent
