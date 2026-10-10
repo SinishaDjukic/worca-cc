@@ -444,6 +444,42 @@ async function ghPrMergeable({ projectDir, head, repo = null, headOwner = null, 
   return normalizeMergeable(r.stdout.trim());
 }
 
+const CHECK_FAILED = new Set(['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'ERROR']);
+
+/**
+ * Fold gh's `statusCheckRollup` (CheckRun and StatusContext items) into one PR-level answer:
+ * `failing` when any check failed, else `pending` while any still runs, else `passing`;
+ * `none` when the PR has no checks. Neutral, skipped and stale checks count as passed.
+ */
+export function rollupChecks(items) {
+  const out = { state: 'none', total: 0, failed: 0, pending: 0 };
+  for (const c of Array.isArray(items) ? items : []) {
+    const status = c?.__typename === 'StatusContext'
+      ? String(c.state || '').toUpperCase()                     // SUCCESS | PENDING | EXPECTED | FAILURE | ERROR
+      : String(c?.status || '').toUpperCase() === 'COMPLETED' ? String(c.conclusion || '').toUpperCase() : 'PENDING';
+    out.total += 1;
+    if (CHECK_FAILED.has(status)) out.failed += 1;
+    else if (status === 'PENDING' || status === 'EXPECTED') out.pending += 1;
+  }
+  if (out.failed) out.state = 'failing';
+  else if (out.pending) out.state = 'pending';
+  else if (out.total) out.state = 'passing';
+  return out;
+}
+
+/** A github.com PR's checks rollup and mergeability in one gh call; null on any failure. Never throws. */
+export async function ghPrChecks({ projectDir, prUrl }) {
+  const repo = ownerRepoOfPrUrl(prUrl);
+  if (!repo || !(await ghUsable())) return null;
+  try {
+    const r = await _run('gh', ['pr', 'view', prUrl, '--json', 'mergeable,statusCheckRollup'],
+      { cwd: projectDir, env: (await githubEnv('read', { repo })).env });
+    if (!r.ok) return null;
+    const v = JSON.parse(r.stdout);
+    return { checks: rollupChecks(v.statusCheckRollup), mergeable: normalizeMergeable(v.mergeable) };
+  } catch { return null; }
+}
+
 const normalizePr = (pr) => ({
   state: String(pr?.state || '').toUpperCase(),
   url: String(pr?.url || ''),

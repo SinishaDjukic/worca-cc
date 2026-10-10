@@ -273,7 +273,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  ghPrWatchSnapshot, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects } from '../src/core/git-info.mjs';
+  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghReplyToThread, ghPrComment, commitSubjects } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -6978,6 +6978,14 @@ async function prWatchTarget(src, res) {
 app.get('/api/pr/watch', async (req, res) => {
   try { const t = await prWatchTarget(req.query, res); if (t) res.json(watchView(getWatch(t.pr.url))); }
   catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending }, mergeable }
+// for a run's open github.com PR (the run page's status pill); checks null when gh cannot answer.
+app.get('/api/pr/checks', async (req, res) => {
+  try {
+    const t = await prWatchTarget(req.query, res); if (!t) return;
+    res.json((await ghPrChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 app.post('/api/pr/watch', async (req, res) => {
   try {

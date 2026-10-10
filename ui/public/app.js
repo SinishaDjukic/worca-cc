@@ -1248,6 +1248,7 @@ function handleServerMessage(msg) {
   }
 
   if (msg.type === 'pr-watch-changed') {
+    if (!msg.memberKey) refreshRdPrStatus(msg.projectKey, msg.pipelineId);
     // Exact identity only: the open detail's project and run, then the matching member row.
     const { record, screen } = histDetailState;
     if (record && screen && record.id === msg.pipelineId && record.projectKey === msg.projectKey) {
@@ -21256,7 +21257,10 @@ function paintHdGlance(screen, record, data) {
   const createBtn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
   const slot = glance.querySelector('.rd-pr-slot');
-  if (shown(link) && !link.hidden) {
+  const linked = shown(link) && !link.hidden;
+  paintRdPrStatus(glance.querySelector('.rd-pr-status'),
+    linked && pr === 'OPEN' && record.target !== 'workspace' ? { id: record.id, projectKey: record.projectKey } : null);
+  if (linked) {
     paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
   } else if (shown(createBtn) && !createBtn.hidden) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
@@ -29211,6 +29215,104 @@ function rdFilesChanged(r) {
   return s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null;
 }
 
+// The open PR's own state under its button (.rd-pr-status): its checks (passed, running,
+// failed), a merge conflict, and the Watch PR toggle, whose words show only while a watch is
+// doing something (fixing, or waiting for a person). GitHub PRs only (GET /api/pr/checks).
+// One answer per run is cached so the glance's frequent repaints never refetch; a cached answer
+// older than PR_STATUS_STALE_MS is re-read on the next paint, and running checks poll.
+const PR_STATUS_STALE_MS = 15000;
+const PR_STATUS_POLL_MS = 20000;
+const prStatusCache = new Map();
+const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}`;
+function paintRdPrStatus(host, scope) {
+  if (!host) return;
+  if (!scope) { host.hidden = true; host.dataset.key = ''; clearTimeout(host._prTimer); return; }
+  const key = prStatusKey(scope);
+  const cached = prStatusCache.get(key);
+  if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
+  if (cached) renderRdPrStatus(host, scope, cached);
+  if (!host._prLoading && (!cached || Date.now() - cached.at > PR_STATUS_STALE_MS)) void loadRdPrStatus(host, scope);
+}
+async function loadRdPrStatus(host, scope) {
+  const key = prStatusKey(scope);
+  const q = new URLSearchParams({ id: scope.id, projectKey: scope.projectKey || '' });
+  const read = (url) => fetch(url).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null);
+  clearTimeout(host._prTimer);
+  host._prLoading = true;
+  let c; let w;
+  try { [c, w] = await Promise.all([read(`/api/pr/checks?${q}`), read(`/api/pr/watch?${q}`)]); }
+  finally { host._prLoading = false; }
+  const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
+    watch: w && typeof w.watching === 'boolean' ? w : null };
+  prStatusCache.set(key, next);
+  if (host.dataset.key !== key) return;            // the slot moved to another run meanwhile
+  renderRdPrStatus(host, scope, next);
+  if (next.checks?.state === 'pending') {
+    host._prTimer = setTimeout(() => {
+      if (host.dataset.key === key && host.isConnected && host.offsetParent) void loadRdPrStatus(host, scope);
+    }, PR_STATUS_POLL_MS);
+  }
+}
+function renderRdPrStatus(host, scope, s) {
+  const sig = JSON.stringify([s.checks, s.mergeable, s.watch]);
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  const pill = (cls, text, title = '') => {
+    const el = document.createElement('span');
+    el.className = `rd-prs-pill ${cls}`;
+    el.textContent = text;
+    if (title) el.title = title;
+    return el;
+  };
+  const parts = [];
+  const c = s.checks;
+  if (c && c.state === 'failing') parts.push(pill('is-bad', `${c.failed} of ${c.total} check${c.total === 1 ? '' : 's'} failed`));
+  else if (c && c.state === 'pending') parts.push(pill('is-run', `Checks running · ${c.total - c.pending} of ${c.total} done`));
+  else if (c && c.state === 'passing') parts.push(pill('is-ok', c.total === 1 ? 'Check passed' : `All ${c.total} checks passed`));
+  if (s.mergeable === 'CONFLICTING') parts.push(pill('is-bad', 'Conflicts', 'The pull request cannot merge until its conflicts are resolved'));
+  const wst = s.watch;
+  if (wst) {
+    const doing = !wst.watching ? (HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Disabled — finishing' : '')
+      : HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Fixing' : wst.status === 'needs-person' ? 'Needs a person' : '';
+    if (doing) parts.push(pill(wst.status === 'needs-person' ? 'is-bad' : 'is-run', doing));
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost btn-mini rd-prs-watch';
+    btn.dataset.minLevel = 'advanced';
+    btn.textContent = wst.watching ? 'Stop watching' : 'Watch PR';
+    btn.title = wst.watching ? 'Worca follows this PR and starts a fix run when checks fail or reviewers ask for changes'
+      : 'Follow this PR: start a fix run when checks fail or reviewers ask for changes';
+    btn.setAttribute('aria-pressed', String(!!wst.watching));
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: scope.id, projectKey: scope.projectKey, watch: !wst.watching }) });
+        const nextWatch = await safeJson(r);
+        if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
+        const cur = prStatusCache.get(prStatusKey(scope)) || s;
+        const next = { ...cur, watch: nextWatch };
+        prStatusCache.set(prStatusKey(scope), next);
+        if (host.dataset.key === prStatusKey(scope)) renderRdPrStatus(host, scope, next);
+      } catch (err) {
+        btn.disabled = false;
+        btn.title = `Could not change Watch PR: ${err.message}`;
+      }
+    });
+    parts.push(btn);
+  }
+  host.replaceChildren(...parts);
+  host.hidden = !parts.length;
+}
+/** pr-watch-changed: re-read every status line showing that run (a watch toggled elsewhere, a fix run). */
+function refreshRdPrStatus(projectKey, id) {
+  const key = prStatusKey({ projectKey, id });
+  prStatusCache.delete(key);
+  for (const host of document.querySelectorAll('.rd-pr-status')) {
+    if (host.dataset.key === key && !host._prLoading) void loadRdPrStatus(host, { projectKey, id });
+  }
+}
+
 // The pull request button under the result, in its slot (paintPrCta). Same tri-state as
 // paintHdPr: an open or merged PR links, `null` (resolved, none) offers Create when
 // eligible, `undefined` (the lookup runs) and a History row not loaded yet hold the
@@ -29221,15 +29323,20 @@ function rdFilesChanged(r) {
 function paintRdPrCta(screen, r) {
   const slot = screen.querySelector('.rd-pr-slot');
   if (!slot) return;
+  const status = screen.querySelector('.rd-pr-status');
   const key = r.status === 'done' ? historyKeyForRun(r) : '';
-  if (!key) { paintPrCta(slot, { state: 'none' }); return; }
+  if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
   const record = rdHistoryRecord(r);
-  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); return; }
+  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-  } else if (histPrEligible(record) && record.pr !== undefined) {
+    paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
+    return;
+  }
+  paintRdPrStatus(status, null);
+  if (histPrEligible(record) && record.pr !== undefined) {
     paintPrCta(slot, {
       state: 'create', cls: 'rd-create-pr',
       onClick: () => {

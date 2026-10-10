@@ -4783,6 +4783,13 @@ button.rd-srow:hover{background:var(--hover-on-field);}
    the placeholder fades out and the slot then folds away (the one height change, at the end). */
 .rd-pr-slot{position:relative;border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
+.rd-pr-status{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin-top:10px;}
+.rd-pr-status[hidden]{display:none;}
+.rd-prs-pill{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap;}
+.rd-prs-pill.is-ok{background:var(--green-bg);color:var(--green-ink);}
+.rd-prs-pill.is-run{background:var(--amber-bg);color:var(--amber-ink);}
+.rd-prs-pill.is-bad{background:var(--red-bg);color:var(--red-ink);}
+.rd-prs-watch{padding:4px 10px;font-size:12px;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > .rd-cta{position:relative;}   /* above the colour layer */
 .rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:9px;box-sizing:border-box;width:100%;padding:13px;
