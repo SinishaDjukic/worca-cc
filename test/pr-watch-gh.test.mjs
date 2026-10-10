@@ -47,6 +47,27 @@ const prNode = ({ contexts, threads = page([]), reviews = page([]), rollup } = {
   statusCheckRollup: rollup !== undefined ? rollup : { contexts: contexts || page([]) }, reviewThreads: threads, reviews,
 } } } });
 
+/** Brace depth at the first `needle` (the runner stub never parses the query, GitHub does). */
+const depthAt = (q, needle) => { let d = 0; const end = q.indexOf(needle); for (let i = 0; i < end; i++) d += q[i] === '{' ? 1 : q[i] === '}' ? -1 : 0; return d; };
+
+test('every snapshot query is balanced and asks reviewThreads and reviews on the pull request, beside statusCheckRollup', async () => {
+  const queries = [];
+  runner(async (cmd, args) => {
+    const { query } = graphqlArgs(args);
+    queries.push(query);
+    return ok(prNode({ contexts: page([check(1)]) }));
+  });
+  const snap = await ghPrWatchSnapshot({ projectDir: '/p', prUrl: PR });
+  assert.equal(snap.ok, true, snap.error);
+  assert.ok(queries.length >= 1);
+  for (const q of queries) {
+    assert.equal((q.match(/{/g) || []).length, (q.match(/}/g) || []).length, 'balanced braces');
+    const field = depthAt(q, 'statusCheckRollup{');
+    assert.equal(depthAt(q, 'reviewThreads('), field, 'reviewThreads is a pullRequest field');
+    assert.equal(depthAt(q, 'reviews('), field, 'reviews is a pullRequest field');
+  }
+});
+
 test('parseGithubPrUrl accepts only canonical github.com PR URLs', () => {
   assert.deepEqual(parseGithubPrUrl(PR), { owner: 'acme', repo: 'app', number: 7, url: PR });
   for (const bad of [`${PR}/files`, `${PR}?x=1`, `${PR}#c`, 'https://u:p@github.com/acme/app/pull/7',
