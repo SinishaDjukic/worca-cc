@@ -156,10 +156,11 @@ listeners.push((m) => {
   if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errors.push((m.params.args || []).map((a) => a.value || a.description).join(' '));
 });
 await cdp('Page.enable'); await cdp('Runtime.enable'); await cdp('Log.enable');
-// Pin the viewport: --window-size does not fix the CSS viewport across platforms (macOS gives
-// 1280×813, the Linux CI runner less), and the top bar moved the run page down far enough that
-// the monitor's nav cluster (bottom ≈809px) fell below a short fold — a CDP click there hits
-// nothing, so check (6)'s zoom and fit presses silently did nothing on CI only.
+// Pin the CSS viewport to the 1280×900 the window asks for. --window-size does not
+// set it the same way everywhere: macOS headless gives 1280×813, the Linux CI runner
+// less. The run detail pane scrolls, and since the top bar (#653) moved it 48px down
+// the monitor's nav cluster (bottom ≈809px) sat below a short fold — a CDP click
+// there lands on nothing, so check (6)'s zoom and fit presses did nothing on CI only.
 await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 async function ev(expr) {
