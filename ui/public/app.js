@@ -29277,6 +29277,20 @@ function renderRdPrStatus(host, scope, s) {
     const doing = !wst.watching ? (HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Disabled, finishing a fix' : '')
       : HD_PR_WATCH_ACTIVE.has(wst.status) ? 'Fixing' : wst.status === 'needs-person' ? 'Needs a person' : '';
     if (doing) notes.push(span(wst.status === 'needs-person' ? 'is-bad' : 'is-run', doing));
+    // The fix run the watch started: its live page while it runs here, else its saved run.
+    if (HD_PR_WATCH_ACTIVE.has(wst.status) && wst.activePipelineId) {
+      const pid = wst.activePipelineId;
+      const a = document.createElement('a');
+      a.className = 'rd-prs-link';
+      a.href = `#history/${scope.projectKey}/${pid}`;
+      a.textContent = 'View fix run';
+      a.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        const live = [...runs.values()].find((x) => x.pipelineId === pid && !RD_TERMINAL.includes(x.status));
+        if (live) { e.preventDefault(); location.hash = `running/${live.runId}`; }
+      });
+      notes.push(a);
+    }
   }
   const parts = [];
   if (tone) {
