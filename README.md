@@ -275,7 +275,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   and it draws in Worca's viewer, with a view picker, an info rail, hover and
   selection highlighting, a JPEG button and **Full screen**. The render card
   writes SVG, JPEG or PNG of every view with the same renderer (JPEG and PNG
-  need Chrome, Chromium or Edge). Worca's own model is
+  need Chrome, Chromium or Edge; in a container, the `-full` image). Worca's own model is
   [`docs/architecture/architecture.c4`](docs/architecture/architecture.c4);
   the design is [`docs/architecture-c4.md`](docs/architecture-c4.md).
 

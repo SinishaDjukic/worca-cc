@@ -46,9 +46,16 @@ RUN echo "apt refresh: ${APT_REFRESH:-none}" \
  && rm -rf /var/lib/apt/lists/*
 
 # -full: python, native build tools and the OS libraries Playwright's Chromium
-# needs (the manual web-UI-testing agent). The browser itself is fetched on
-# first use by the Playwright MCP into the claude-config volume.
-# hadolint ignore=DL3008
+# needs (the manual web-UI-testing agent; Playwright fetches its own browser on
+# first use into the claude-config volume). Plus Debian's chromium for the cards
+# that drive a browser themselves: the C4 render's JPEG/PNG export, the deck PDF
+# and the deck audit. They find it on PATH as `chromium`.
+# Chrome's sandbox needs user namespaces, which Docker's default seccomp profile
+# refuses to an unprivileged user ("No usable sandbox!"), and /dev/shm is 64 MB in
+# a container. Debian's /usr/bin/chromium wrapper sources /etc/chromium.d/*, so
+# one file there gives every caller --no-sandbox and --disable-dev-shm-usage —
+# the container is the isolation boundary, as Playwright's own Docker image assumes.
+# hadolint ignore=DL3008,SC2016
 RUN if [ "${VARIANT}" = "full" ]; then \
       apt-get update \
    && apt-get install -y --no-install-recommends \
@@ -56,6 +63,9 @@ RUN if [ "${VARIANT}" = "full" ]; then \
         libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
         libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
         libcairo2 libatspi2.0-0 libx11-xcb1 libxcursor1 libgtk-3-0 fonts-liberation \
+        chromium \
+   && printf '%s\n' 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage"' \
+        > /etc/chromium.d/worca-container \
    && rm -rf /var/lib/apt/lists/*; \
     fi
 

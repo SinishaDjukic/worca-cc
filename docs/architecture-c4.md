@@ -146,7 +146,7 @@ The viewer uses Worca's tokens and nothing else: `--panel` cards with `--line-2`
 
 ## 9. Security and limits
 
-- The architect runs with the same tools as the implementer and writes only inside the checkout. The cards read the checkout and write beside the file and into the run's folder; `c4Render` launches a browser — headless, a throwaway profile, no network page — only to screenshot HTML it generated itself from the SVG.
+- The architect runs with the same tools as the implementer and writes only inside the checkout. The cards read the checkout and write beside the file and into the run's folder; `c4Render` launches a browser — headless, a throwaway profile, no network page — only to screenshot HTML it generated itself from the SVG. In the container, the `-full` image ships Debian's Chromium and runs it with `--no-sandbox` (Docker's default seccomp profile refuses the sandbox to a non-root user); the slim image has no browser, so a run there writes SVG only.
 - The parser runs on untrusted text in the browser. It builds no HTML from the file; every string goes through one escaper into SVG text nodes and attributes. `link` URLs are shown as text in the rail, not followed.
 - Sizes: the sheet is 1120 px wide; a band wider than that wraps. Element views are capped by dagre, not by us; a view with hundreds of elements is slow and should be split in the file.
 - Export in the viewer is client-side canvas; a very large sheet at `scale: 3` can exceed a browser's canvas limit and comes back empty. The render card captures through CDP and has no such limit (scale is capped at 4).

@@ -39,6 +39,15 @@ test('Dockerfile and .dockerignore: non-root, pinned CLI, tini, healthcheck, tar
       assert.match(d, /chmod 0777 \/worca \/projects \/home\/worca \/home\/worca\/\.claude/, 'volume mount points are writable for any uid (Linux Engine WORCA_UID)');
       assert.match(d, /HOME=\/home\/worca/, 'HOME is pinned for uids with no passwd entry');
     } },
+    { name: 'Dockerfile -full: Chromium for the browser-driving cards, unsandboxed through the wrapper', run: () => {
+      const d = read('docker/Dockerfile');
+      const full = d.slice(d.indexOf('if [ "${VARIANT}" = "full" ]'), d.indexOf('\n    fi', d.indexOf('if [ "${VARIANT}" = "full" ]')));
+      assert.match(full, /^\s+chromium \\$/m, 'the -full variant installs Debian chromium (C4 JPEG/PNG, deck PDF, deck audit)');
+      // Docker's default seccomp refuses the sandbox's user namespaces to a non-root user, and
+      // /dev/shm is 64 MB: Debian's /usr/bin/chromium wrapper sources /etc/chromium.d/*.
+      assert.match(full, /CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage/);
+      assert.match(full, /> \/etc\/chromium\.d\/worca-container/);
+    } },
     { name: '.dockerignore keeps the build context to docker/ and the packed tarball', run: () => {
       const lines = read('.dockerignore').split('\n').filter((l) => l && !l.startsWith('#'));
       assert.deepEqual(lines, ['*', '!docker/', 'docker/.pack/*', '!docker/.pack/worca-app-*.tgz']);
