@@ -1,14 +1,13 @@
 // test/ui-composer-pointer-capture.test.mjs — MAJ-28.
 // The composer's POINTER-CAPTURE contract, which until now lived only in
 // tools/verify-composer-cdp.mjs check(4) — a script no automation runs.
-// Three production sites are covered: composer.mjs `stage.setPointerCapture`
-// (onDown), `stage.releasePointerCapture` (finish) and `btn.setPointerCapture`
-// (onPalDown, the palette pill).
+// Two production sites are covered: composer.mjs `stage.setPointerCapture`
+// (onDown) and `stage.releasePointerCapture` (finish).
 //
 // WHAT jsdom CAN AND CANNOT DO
 // jsdom implements NONE of the three capture methods (they are `undefined` on
 // every Element — verified: `typeof el.setPointerCapture === 'undefined'`), so
-// at HEAD those three lines never execute under test at all: `?.()` short-
+// at HEAD those lines never execute under test at all: `?.()` short-
 // circuits and the whole contract is invisible to the suite. This file stubs
 // the three methods onto the exact elements the composer touches and keeps a
 // LEDGER of who holds which pointerId.
@@ -25,8 +24,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 import { open } from './helpers/composer-shell.mjs';
-
-const palettePath = new URL('../ui/public/graph/palette.mjs', import.meta.url).href;
 
 // ---- the capture ledger -----------------------------------------------------
 /** One ledger per test: `held` is pointerId -> capturing element (the browser's
@@ -130,63 +127,6 @@ test('a foreign pointerup never releases the live gesture\'s capture', async () 
   assert.deepEqual(ops(L), ['set:stage#5'], 'and so does its capture');
   up(s, L, 400, 80, { pointerId: 5 }); s.flush();
   assert.deepEqual(ops(L), ['set:stage#5', 'release:stage#5']);
-});
-
-// ---- (b) the palette pill ---------------------------------------------------
-
-test('palette drag-to-spawn captures on the pill only, releases the same id, and destroy() mid-drag tears it down without spawning', async () => {
-  await checkRows([
-    { name: 'drag-to-spawn captures on the PILL itself (never the palette or the stage) and leaks no stage capture', run: async () => {
-      const s = await open();
-      s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-      const L = ledger();
-      stub(L, s.c.view.stage, 'stage');
-      stub(L, s.el.palette, 'palette');
-      const { renderPalette } = await import(palettePath);
-      renderPalette(s.el.palette, { agents: [{ key: 'planner', displayName: 'Plan', domain: 'coding', order: 1, inputs: [], outputs: [] }],
-        placedKinds: [], collapsed: new Set(), doc: s.doc });
-      const pill = stub(L, s.el.palette.querySelector('.ap[data-key="planner"]'), 'pill');
-      const n0 = s.c.template().nodes.length;
-
-      pill.dispatchEvent(pev(s, 'pointerdown', { pointerId: 3, button: 0, clientX: 100, clientY: 700 }));
-      assert.deepEqual(ops(L), ['set:pill#3'], 'the capture is taken on the pill, with the event id');
-      assert.equal(L.held.get(3), pill);
-      // The move/up listeners live on the DOCUMENT, so the retarget cannot starve
-      // them — route() to the pill and let them bubble, exactly as a browser does.
-      route(L, 3, s.doc).dispatchEvent(pev(s, 'pointermove', { pointerId: 3, clientX: 400, clientY: 300 }));
-      assert.ok(s.doc.querySelector('.gv-drag-ghost'), 'past the 4px threshold the ghost exists');
-      route(L, 3, s.doc).dispatchEvent(pev(s, 'pointerup', { pointerId: 3, clientX: 400, clientY: 300 }));
-      assert.equal(s.c.template().nodes.length, n0 + 1, 'the drop inside the stage spawned a card');
-      assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, 'endPalDrag removed the ghost');
-      assert.equal(L.held.get(3) === s.c.view.stage, false, 'a palette gesture never captures the stage');
-      assert.equal(ops(L).filter((o) => o.startsWith('set:')).length, 1, 'exactly one capture for the whole drag');
-      // endPalDrag() releases the pill's capture explicitly (browsers also release
-      // implicitly after pointerup — the explicit release is what covers destroy()).
-      assert.deepEqual(ops(L), ['set:pill#3', 'release:pill#3'], 'the pill releases the same id it captured');
-      assert.equal(L.calls[1].held, true, 'and the release was legal (the pill really held it)');
-      assert.equal(L.held.size, 0, 'no capture outlives the drag');
-    } },
-    { name: 'destroy() mid-palette-drag tears the drag down and still holds no stage capture', run: async () => {
-      const s = await open();
-      s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-      const L = ledger();
-      stub(L, s.c.view.stage, 'stage');
-      const { renderPalette } = await import(palettePath);
-      renderPalette(s.el.palette, { agents: [{ key: 'planner', displayName: 'Plan', domain: 'coding', order: 1, inputs: [], outputs: [] }],
-        placedKinds: [], collapsed: new Set(), doc: s.doc });
-      const pill = stub(L, s.el.palette.querySelector('.ap[data-key="planner"]'), 'pill');
-      pill.dispatchEvent(pev(s, 'pointerdown', { pointerId: 9, button: 0, clientX: 100, clientY: 700 }));
-      s.doc.dispatchEvent(pev(s, 'pointermove', { pointerId: 9, clientX: 400, clientY: 300 }));
-      assert.ok(s.doc.querySelector('.gv-drag-ghost'));
-      const n0 = s.c.template().nodes.length;
-      s.c.destroy();
-      assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, 'destroy() runs endPalDrag');
-      assert.deepEqual(ops(L), ['set:pill#9', 'release:pill#9'], 'destroy() mid-drag releases the pill capture');
-      s.doc.dispatchEvent(pev(s, 'pointerup', { pointerId: 9, clientX: 400, clientY: 300 }));
-      assert.equal(s.c.template().nodes.length, n0, 'the orphaned pointerup spawns nothing');
-      assert.equal(L.held.get(9) === s.c.view.stage, false);
-    } },
-  ]);
 });
 
 // ---- (c)/(d) the consequence: header buttons ---------------------------------

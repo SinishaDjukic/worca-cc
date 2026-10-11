@@ -63,21 +63,22 @@ test('launcher: the button is named, keeps its label text and carries no shortcu
 
 test('launcher: tooltip — role, link, text, platform shortcut, show/hide', async () => {
   await checkRows([
-    { name: 'launcher: tooltip is role=tooltip, linked by aria-describedby, with the label and the chip (Ctrl K off Mac)', run: async () => {
+    { name: 'launcher: tooltip is role=tooltip and only names the button — no shortcut chip, no aria-describedby (off Mac)', run: async () => {
       const { doc } = makePanel();
       const pill = doc.querySelector('.ask-pill');
       const tip = doc.querySelector('[role="tooltip"]');
       assert.ok(tip);
       assert.ok(tip.id);
-      assert.equal(pill.getAttribute('aria-describedby'), tip.id);
+      assert.equal(pill.getAttribute('aria-describedby'), null, 'aria-label already names it');
       assert.ok(!pill.contains(tip), 'a sibling of the button, not inside its face');
-      assert.match(tip.textContent, /Ask Worca/);
-      assert.equal(tip.querySelector('.ask-kbd').textContent, 'Ctrl K');
+      assert.equal(tip.textContent, 'Ask Worca');
+      assert.equal(tip.querySelector('.ask-kbd'), null);
       assert.equal(shown(tip), false, 'hidden at rest');
     } },
-    { name: 'launcher: the chip reads ⌘K for a Mac platform', run: async () => {
+    { name: 'launcher: no shortcut in the tooltip on a Mac either', run: async () => {
       const { doc } = makePanel({ platform: 'MacIntel' });
-      assert.equal(doc.querySelector('[role="tooltip"] .ask-kbd').textContent, '⌘K');
+      assert.equal(doc.querySelector('[role="tooltip"]').textContent, 'Ask Worca');
+      assert.doesNotMatch(doc.querySelector('.ask-dock').textContent, /⌘|Ctrl/);
     } },
     { name: 'launcher: focus shows the tooltip at once; Escape hides it', run: async () => {
       const { doc, window } = makePanel();
@@ -126,14 +127,12 @@ test('launcher: tooltip — role, link, text, platform shortcut, show/hide', asy
       assert.equal(shown(tip), false);
       assert.equal(panel.isOpen(), true);
     } },
-    { name: 'launcher: ⌘K and Ctrl K still open the sheet', run: async () => {
+    { name: 'launcher: ⌘K and Ctrl K no longer open the sheet', run: async () => {
       const { panel, window } = makePanel();
       key(window, null, 'k', { metaKey: true });
-      assert.equal(panel.isOpen(), true);
-      key(window, null, 'k', { ctrlKey: true });
       assert.equal(panel.isOpen(), false);
       key(window, null, 'k', { ctrlKey: true });
-      assert.equal(panel.isOpen(), true);
+      assert.equal(panel.isOpen(), false);
     } },
   ]);
 });
@@ -164,10 +163,10 @@ test('launcher: unread dot — set by a turn that ends while closed, cleared on 
       assert.equal(ctx.pill.classList.contains('has-unread'), false);
       assert.equal(ctx.pill.getAttribute('aria-label'), 'Ask Worca');
     } },
-    { name: 'launcher: ⌘K open clears it too (openSheet is the one place)', run: async () => {
+    { name: 'launcher: panel.open() clears it too (openSheet is the one place)', run: async () => {
       const ctx = await collapsedOnThread();
       push(ctx, turn(done));
-      key(ctx.window, null, 'k', { metaKey: true });
+      ctx.panel.open();
       assert.equal(ctx.pill.classList.contains('has-unread'), false);
     } },
   ]);

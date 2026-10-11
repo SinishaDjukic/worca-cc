@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listModels, CODEX_BUILTIN_MODELS, PREDEFINED_MODELS, engineOfModel, catalogHasModel, resolveModelEnv } from '../src/core/config.mjs';
+import { listModels, CODEX_BUILTIN_MODELS, PREDEFINED_MODELS, engineOfModel, enginesOfModel, catalogHasModel, resolveModelEnv } from '../src/core/config.mjs';
 import { findBridgedEntry } from '../src/core/bridge/registry.mjs';
 import { addGlobalModel, updateGlobalModel, listGlobalModels, setHideBuiltinModels } from '../src/core/settings.mjs';
 import { CODEX_EFFORTS } from '../src/core/model-env.mjs';
@@ -39,6 +39,7 @@ test('every catalog row names its engine; the Codex built-ins follow the Claude 
   assert.deepEqual(codex.map((m) => m.id), CODEX_BUILTIN_MODELS.map((m) => m.id));
   assert.deepEqual(codex.find((m) => m.id === 'gpt-5.6-sol'), {
     id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', efforts: CODEX_EFFORTS, engine: 'codex', builtin: true, custom: false, hasEnv: false, routed: false,
+    connection: { kind: 'signin', engine: 'codex' }, harnesses: ['codex'],
   });
 });
 
@@ -92,7 +93,7 @@ test('a Codex custom model takes Codex efforts and refuses env, a non-Responses 
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'anthropic', api: 'anthropic', model: 'x' } }), /OpenAI-compatible endpoint only/);
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'x', openrouter: { models: ['a/b'] } } }), /openrouter is not available on a codex model/);
   await assert.rejects(() => addGlobalModel({ id: 'claude-opus-5-5', engine: 'codex' }), /is a Claude model id/);
-  await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is a Codex built-in/);
+  await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is the id of Codex's built-in gpt-5.5 \(ChatGPT sign-in\) — give this entry its own id, such as "my-gpt-5.5"/);
   await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| cursor/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { engine: 'claude' }), /engine cannot change/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { env: { X: '1' } }), /a codex model takes no env/);
@@ -107,9 +108,13 @@ test('a Codex model takes an OpenAI-compatible Responses endpoint as its upstrea
   assert.equal(row.engine, 'codex');
   assert.equal(row.bridged, 'openai', 'the row names its provider, like a bridged one');
   assert.equal(row.upstreamModel, 'qwen3-coder');
-  assert.equal(findBridgedEntry('cx-local'), null, 'never handed to the bridge');
-  assert.equal(resolveModelEnv('cx-local'), undefined, 'no claude routing env');
-  assert.equal(engineOfModel('cx-local'), 'codex');
+  // Its connection reaches both harnesses (src/shared/connections.mjs): Codex directly, Claude Code through the bridge.
+  assert.equal(findBridgedEntry('cx-local')?.id, 'cx-local', 'a Claude run hands it to the bridge');
+  process.env.CX_KEY = 'k-test';
+  try { assert.equal(resolveModelEnv('cx-local').ANTHROPIC_MODEL, 'cx-local', 'claude reaches it through the bridge'); } finally { delete process.env.CX_KEY; }
+  assert.equal(engineOfModel('cx-local'), 'codex', 'its own engine is its preferred harness');
+  assert.deepEqual(enginesOfModel('cx-local'), ['codex', 'claude']);
+  assert.deepEqual(row.harnesses, ['codex', 'claude']);
   assert.equal((await updateGlobalModel('cx-local', { upstream: null })).upstream, undefined, 'the endpoint can be dropped again');
 });
 

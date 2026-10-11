@@ -2,7 +2,7 @@
 
 Worca has its own MCP registry: servers installed **for worca only** — never written into your Claude
 Code config (`~/.claude.json`, `.mcp.json`) — that pipeline agents and Ask Worca can call. It lives
-in **Settings › Sets** (an Advanced tab with the **Sets**, **Servers** and **Skills** views) and in four files
+on the **Connectors** page (Advanced; its **Sets**, **Servers** and **Skills** views) and in four files
 under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well as servers: see
 [skills.md](skills.md).
 
@@ -30,8 +30,8 @@ under `~/.worca-cc/mcp/` ([storage.md](storage.md)). A set holds skills as well 
 
 ## Bundled servers
 
-The built-in marketplace ships these servers as plugins. Install one in **Settings › Plugins**
-(**Available**), then add its server to a set (**Sets › Add server**) and fill in its fields.
+The built-in marketplace ships these servers as plugins. Install one on the **Marketplace** page
+(**Available**), then add its server to a set (**Connectors › Sets › Add server**) and fill in its fields.
 Worca runs no OAuth flow, so each server takes a token or uses a CLI you are logged in to. Each
 plugin's `README.md` says where to get its credentials.
 
@@ -90,8 +90,8 @@ and its state: `18 tools · tested 3d ago`, `stale` (something changed since the
   new token with Replace. After 30 days its age turns amber.
 - **Test** starts the server exactly as a run would, lists its tools (2 minutes at most — a first
   `npx` download fits, and warms the cache for runs) and stops it and
-  everything it started. Saving a complete membership, applying a plugin update in Settings ›
-  Plugins and editing a manual definition run Test in the background for the memberships that are
+  everything it started. Saving a complete membership, applying a plugin update on the
+  Marketplace page and editing a manual definition run Test in the background for the memberships that are
   on (a switched-off one starts nothing), and so does a Team Install / Turn on / Update. An http/sse
   Test does not go through `HTTPS_PROXY` unless worca runs with
   `NODE_USE_ENV_PROXY=1` (on a Node release that has it).
@@ -153,8 +153,8 @@ taken too it is skipped). In a pipeline, a deny rule on `mcp__linear__…` reach
   measured for five slow servers). A change of servers between messages costs one prompt-cache miss.
   In a pipeline agent the limit also covers your own Claude Code servers, which load in the same
   spawn. Through Cloudflare ([remote-access.md](remote-access.md)), which ends a request after
-  100 s, a longer Test shows `HTTP 524`; worca still finishes it, and reopening **Settings ›
-  Sets** shows the result.
+  100 s, a longer Test shows `HTTP 524`; worca still finishes it, and reopening the **Connectors**
+  page shows the result.
 
 ## What can still read a secret
 

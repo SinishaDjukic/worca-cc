@@ -180,7 +180,7 @@ test('a Claude model routed to a custom endpoint is dropped on codex like any Cl
     await addGlobalModel({ id: 'gate-onprem', env: { ANTHROPIC_BASE_URL: 'https://p' } });
     const o = withNodes(orch({ engine: 'codex' }), { n1: { key: 'planner', tools: [], model: 'gate-onprem' } });
     const lines = o._engineGate();
-    assert.ok(lines.some((l) => /model "gate-onprem" is a Claude model — the nodes that name it run on codex's default model/.test(l)), lines.join('\n'));
+    assert.ok(lines.some((l) => /model "gate-onprem" runs on Claude — the nodes that name it run on codex's default model/.test(l)), lines.join('\n'));
     assert.equal(o._engineModel('gate-onprem'), undefined);
   } finally {
     process.env.HOME = prev.HOME;
@@ -256,7 +256,7 @@ test('a Claude model runs on codex\'s default model: dropped from the spawn, nam
     n2: { key: 'implementer', tools: [], model: 'gpt-5.6-sol' },
     n3: { key: 'reviewer', tools: [], model: 'sonnet' },
   });
-  const dropped = o._engineGate().filter((l) => / is a Claude model /.test(l));
+  const dropped = o._engineGate().filter((l) => / runs on Claude /.test(l));
   assert.deepEqual(dropped.map((l) => l.match(/model "([^"]+)"/)[1]), ['claude-opus-5-5', 'claude-sonnet-5', 'sonnet']);
   assert.equal(o._engineModel('claude-sonnet-5'), undefined);
   assert.equal(o._engineModel('sonnet'), undefined);
@@ -655,7 +655,7 @@ test('a codex catalog id is not a Claude model: kept on codex, dropped on Claude
   assert.equal(orch()._engineModel('gpt-5.6-sol'), undefined, 'Claude never gets a codex id');
   assert.equal(orch({ model: 'gpt-5.6-sol' })._claudeCallModel(), null);
   const lines = withNodes(orch({ engine: 'codex', model: 'gpt-5.6-sol' }), { n1: { key: 'planner', tools: [], model: 'gpt-5.5' } })._engineGate();
-  assert.equal(lines.filter((l) => / is a Claude model /.test(l)).length, 0, 'codex ids are not named as Claude models');
+  assert.equal(lines.filter((l) => / runs on Claude /.test(l)).length, 0, 'codex ids are not named as Claude models');
 });
 
 test('a node keeps its model only on the engine that owns it; a dropped model takes its effort along', () => {

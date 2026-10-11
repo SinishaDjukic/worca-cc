@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { flowPerRow } from '../src/shared/graph/flow-layout.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -72,7 +73,7 @@ async function boot({ url = 'http://localhost:4317/', runResponse = null } = {})
       runBodies.push(JSON.parse(opts.body));
       return Promise.resolve(runResponse || { ok: true, status: 200, json: async () => ({ runId: 'run-uuid-1' }) });
     }
-    // The saved card's "Open in composer" reads the row it minted — an EMPTY graph on purpose.
+    // The saved card's "Open in Workflows" reads the row it minted — an EMPTY graph on purpose.
     if (/\/api\/workflows\/wf_rename-fix$/.test(path)) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 'wf_rename-fix', name: 'Rename fix', version: 2, domain: 'coding', origin: 'auto', nodes: [], wires: [] }) });
     }
@@ -163,7 +164,7 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   assert.ok(el);
   const p = proposalFor();
   assert.equal(el.querySelectorAll('.ask-wfcard-graph .node').length, p.manifest.graph.nodes.length, 'the real manifest is mounted');
-  assert.equal(el.__wf.handle.graph.flowLayout().perRow, 4, '702 default width in jsdom (clientWidth 0)');
+  assert.equal(el.__wf.handle.graph.flowLayout().perRow, flowPerRow(702), '702 default width in jsdom (clientWidth 0)');
   assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'BUTTON', 'chips are pickable on a NEW-row card');
   assert.equal(el.querySelector('[data-ask-wf-save]').textContent.trim(), 'Save & propose run');
   assert.ok(el.querySelector('[data-ask-wf-decline]'));
@@ -214,9 +215,9 @@ test('chip picker: the model chip opens a menu in the sheet; picking a model rep
   assert.deepEqual(ctx.cardPosts.at(-1).nodes, { [nodeId]: { model: 'claude-opus-5-5', effort: 'high' } });
 });
 
-test('saved workflow card: graph stays with inert chips, footer is Open in composer alone (no paid-turn verb, also after ask-done), Open reads the row; declined/failed are stubs', async () => {
+test('saved workflow card: graph stays with inert chips, footer is Open in Workflows alone (no paid-turn verb, also after ask-done), Open reads the row; declined/failed are stubs', async () => {
   await checkRows([
-    { name: 'saved: head "Saved workflow" + Auto tag + the check line; Open in composer navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
+    { name: 'saved: head "Saved workflow" + Auto tag + the check line; Open in Workflows navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
       const ctx = await boot();
       await openBuilding(ctx);
       flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -234,7 +235,7 @@ test('saved workflow card: graph stays with inert chips, footer is Open in compo
       assert.equal(el.querySelector('[data-ask-wf-run]'), null, 'no "Run with this": the save already fired the event turn, which proposes (thenRun) or offers (chat) the run');
       el.querySelector('[data-ask-wf-open]').click();
       await settle(ctx.window, 8);
-      assert.equal(ctx.window.location.hash, '#composer', 'showView("composer") sets the hash itself');
+      assert.equal(ctx.window.location.hash, '#workflows', '#workflows/<id> opens the row and normalises the hash');
       assert.ok(ctx.calls.some((c) => /\/api\/workflows\/wf_rename-fix$/.test(c.url.split('?')[0])), 'the row is read for openTemplate');
       flip(ctx, 5, { state: 'declined', card: wfCard({ name: 'Nope' }) });
       await settle(ctx.window, 4);
@@ -243,7 +244,7 @@ test('saved workflow card: graph stays with inert chips, footer is Open in compo
       await settle(ctx.window, 4);
       assert.equal(ctx.window.document.querySelector('.ask-card-stub.ask-card-failed').textContent, 'Proposal failed: classifier returned an unknown agent "e2e-tester"');
     } },
-    { name: 'saved card footer is "Open in composer" alone, while the turn streams and after ask-done — no card verb starts a paid turn, the event turn proposes or offers the run', run: async () => {
+    { name: 'saved card footer is "Open in Workflows" alone, while the turn streams and after ask-done — no card verb starts a paid turn, the event turn proposes or offers the run', run: async () => {
       const ctx = await boot();
       await openBuilding(ctx);
       flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -252,12 +253,12 @@ test('saved workflow card: graph stays with inert chips, footer is Open in compo
       flip(ctx, 4, savedBlock);
       await settle(ctx.window, 6);
       const footer = () => [...ctx.window.document.querySelector('[data-ask-wfcard="saved"] .ask-wfcard-actions').children].map((c) => `${c.tagName}:${c.textContent}`);
-      assert.deepEqual(footer(), ['BUTTON:Open in composer'], 'one button, no spacer, no "Run with this"');
+      assert.deepEqual(footer(), ['BUTTON:Open in Workflows'], 'one button, no spacer, no "Run with this"');
       // ask-done replaces the row's blocks wholesale, so the terminal frame carries the card.
       ctx.recv({ ...DONE, blocks: [savedBlock], threadId: TID, messageId: MID, seq: 5 });
       await settle(ctx.window, 4);
       assert.equal(ctx.window.document.querySelector('[data-ask-wf-run]'), null, 'nothing comes back once the turn ends');
-      assert.deepEqual(footer(), ['BUTTON:Open in composer']);
+      assert.deepEqual(footer(), ['BUTTON:Open in Workflows']);
       assert.equal(ctx.cardPosts.length, 0, 'no card verb was posted');
     } },
   ]);

@@ -145,7 +145,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true }, channels: {}, scriptTools: true });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);
@@ -208,6 +208,22 @@ test('away hours: notifyAway sends one info message; notify.away=false keeps it 
   sent.length = 0;
   state.prefs = { notify: { away: false }, channels: {} };
   notifier.notifyAway('Away hours ended. worca answered 3 questions while you were away; 1 to check.');
+  await settle();
+  assert.equal(sent.length, 0);
+});
+
+test('Watch PR: notifyPrWatch renders started/published as info and needs-person as a warning; notify.prWatch=false mutes it', async () => {
+  const { sent, settle, notifier, state } = fixture();
+  notifier.notifyPrWatch({ kind: 'started', title: 'https://github.com/o/r/pull/1', message: 'Fix run 1 of 3 started.' });
+  notifier.notifyPrWatch({ kind: 'needs-person', title: 'https://github.com/o/r/pull/1', message: 'cap' });
+  await settle();
+  assert.equal(sent.length, 4);
+  assert.match(sent[0].message.body[0].value, /PR watch — https:\/\/github\.com\/o\/r\/pull\/1:\*\* Fix run 1 of 3 started\./);
+  assert.equal(sent[0].message.severity, 'info');
+  assert.equal(sent[2].message.severity, 'warning');
+  sent.length = 0;
+  state.prefs = { notify: { prWatch: false }, channels: {} };
+  notifier.notifyPrWatch({ kind: 'published', title: 'x', message: 'Pushed.' });
   await settle();
   assert.equal(sent.length, 0);
 });

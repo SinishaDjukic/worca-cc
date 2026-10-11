@@ -18,12 +18,16 @@ import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
-import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { lockEngineOptions } from './engine-locks.mjs';
+import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, attachRefusal } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
+import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 
 /**
@@ -197,15 +201,6 @@ export function scriptToolLine(short, block = {}) {
   }
   const noun = short.split('_').slice(1).join(' ');
   return { target: [noun, key, bits.length ? `→ ${bits.join(', ')}` : ''].filter(Boolean).join(' ') };
-}
-
-/** The launcher's shortcut hint: the keydown handler accepts BOTH Meta+K and
- *  Ctrl+K, but the glyph shown must match the viewer's OS — '⌘K' is meaningless
- *  on Windows/Linux, where the working chord is Ctrl+K. */
-export function shortcutLabel(win) {
-  const nav = win?.navigator;
-  const platform = String(nav?.userAgentData?.platform || nav?.platform || '');
-  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
 }
 
 /**
@@ -499,13 +494,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pill.addEventListener('click', openSheet);
 
     // The tooltip is a sibling of the button (a button's face holds no other widget); style.css .ask-tip
-    // places it to the left. aria-describedby gives assistive tech the shortcut the face no longer shows.
+    // places it to the left. It only names the round button, which aria-label already does for assistive
+    // tech, so nothing points at it. ⌘K / Ctrl K belongs to the top bar's search.
     const tip = make('div', 'ask-tip');
     tip.id = 'ask-pill-tip';
     tip.setAttribute('role', 'tooltip');
     tip.appendChild(make('span', null, 'Ask Worca'));
-    tip.appendChild(make('span', 'ask-kbd', shortcutLabel(win)));
-    pill.setAttribute('aria-describedby', tip.id);
     pill.addEventListener('pointerenter', () => {
       clearTipTimer();
       st.tipTimer = setTimeout(showTip, PILL_TIP_DELAY_MS);
@@ -580,23 +574,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return dock;
   }
 
-  // Mirrors src/core/ask/attachment-kind.mjs + limits.mjs (#398): text kinds are
-  // UTF-8 capped at 512 KB, binary kinds (images + PDF) at 32 MB, 48 MB per message; the server
-  // re-validates everything, these are just early clear messages.
-  const ASK_ATTACH_EXT = ['.md', '.markdown', '.txt', '.json', '.csv', '.log', '.html', '.htm'];
-  const ASK_ATTACH_BINARY = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
-  };
-  const ASK_MAX_TEXT_BYTES = 524_288;
-  const ASK_MAX_BINARY_BYTES = 32 * 1024 * 1024;
-  const ASK_MAX_MESSAGE_BYTES = 48 * 1024 * 1024;
-
-  function bytesToBase64(bytes) {
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return win.btoa(bin);
-  }
+  // The type tables, caps and early checks (#398, D16) live in attach-files.mjs, shared with the Workflows chat
+  // dock. The server re-validates everything; these are just early clear messages. The run card's extras use this too.
+  function bytesToBase64(bytes) { return attachBase64(bytes, (s) => win.btoa(s)); }
 
   function setComposerMsg(text) {
     el.composerMsg.textContent = text || '';
@@ -632,33 +612,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   async function addFiles(fileList) {
     for (const f of [...(fileList || [])]) {
-      const name = String(f.name || '');
-      const dot = name.lastIndexOf('.');
-      const ext = dot >= 0 ? name.slice(dot).toLowerCase() : '';
-      const binMime = ASK_ATTACH_BINARY[ext];
-      if (!ASK_ATTACH_EXT.includes(ext) && !binMime) { setComposerMsg(`attachment type not allowed: ${name}`); continue; }
-      const refused = attachRefusal({ ext, engine: pickerEngine() });   // D16
-      if (refused) { setComposerMsg(`${refused}: ${name}`); continue; }
-      const cap = binMime ? ASK_MAX_BINARY_BYTES : ASK_MAX_TEXT_BYTES;
-      if (f.size > cap) { setComposerMsg(`attachment over ${cap} bytes: ${name}`); continue; }
-      const others = st.pendingFiles.filter((p) => p.name !== name); // dedupe by name, newest wins
-      if (others.length >= 8) { setComposerMsg('at most 8 attachments per message'); continue; }
-      const pendingBytes = others.reduce((n, p) => n + p.bytes, 0);
-      if (pendingBytes + f.size > ASK_MAX_MESSAGE_BYTES) { setComposerMsg(`attachments over ${ASK_MAX_MESSAGE_BYTES} bytes per message`); continue; }
+      // Type, D16 (a Codex chat refuses PDFs), size, count, message total — in that order, with those messages.
+      const v = checkAttachment(f, { pending: st.pendingFiles, engine: pickerEngine() });
+      if (!v.ok) { setComposerMsg(v.error); continue; }
       let dataBase64 = '';
       try {
         dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
-      } catch { setComposerMsg(`could not read ${name}`); continue; }
-      const attKind = binMime ? (binMime.startsWith('image/') ? 'image' : 'binary') : 'text';
-      st.pendingFiles = [...others, { name, bytes: f.size, dataBase64, attKind, mime: binMime || null }];
+      } catch { setComposerMsg(`could not read ${v.name}`); continue; }
+      st.pendingFiles = [...v.others, { name: v.name, bytes: f.size, dataBase64, attKind: v.attKind, mime: v.mime }];
     }
     renderChips();
   }
 
   // Drag-and-drop and paste feed the same addFiles() as the "+" button: no
-  // validation of their own. Only drags that carry files are touched, so text
-  // and element drags (widgets-input.mjs list reordering) keep their defaults.
-  const carriesFiles = (dt) => !!dt && Array.from(dt.types || []).includes('Files');
+  // validation of their own. Only drags that carry files are touched (carriesFiles,
+  // attach-files.mjs), so text and element drags (widgets-input.mjs list reordering) keep their defaults.
 
   /**
    * The whole sheet is the drop target. dragenter/dragleave fire on every child
@@ -701,35 +669,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return overlay;
   }
 
-  // A clipboard image is named "image.png" (or nothing) by the browser: every
-  // paste would then replace the last one through addFiles' name dedupe. Such
-  // files get a unique "pasted-<timestamp>.<ext>"; real copied files keep theirs.
-  // A nameless file of an unlisted non-text type gets no extension, so addFiles
-  // rejects it like the "+" button would.
-  let lastPasteStamp = 0;
-  function namePastedFiles(files) {
-    return [...files].map((f) => {
-      const name = String(f.name || '');
-      if (name && !/^image\.[a-z0-9]+$/i.test(name)) return f;
-      const dot = name.lastIndexOf('.');
-      const type = String(f.type || '');
-      const ext = dot >= 0 ? name.slice(dot).toLowerCase()
-        : (Object.keys(ASK_ATTACH_BINARY).find((k) => ASK_ATTACH_BINARY[k] === type)
-          || (type.startsWith('text/') ? '.txt' : ''));
-      lastPasteStamp = Math.max(Date.now(), lastPasteStamp + 1);
-      return new win.File([f], `pasted-${lastPasteStamp}${ext}`, { type: f.type });
-    });
-  }
+  // Pasted files (attach-files.mjs): a unique "pasted-<timestamp>.<ext>" for the browser's generic
+  // "image.png" (createPasteNamer), and a text paste carrying only a rendered image of that text stays text (pastedFiles).
+  const namePastedFiles = createPasteNamer((parts, name, opts) => new win.File(parts, name, opts));
 
   function onComposerPaste(e) {
-    const cd = e.clipboardData;
-    if (!cd || !cd.files || !cd.files.length) return; // a text paste goes ahead natively
-    // Excel/Word/browser copies carry the text plus a rendered image of it: the
-    // text is what was meant. Screenshots (no text) and real files still attach.
-    const text = typeof cd.getData === 'function' ? cd.getData('text/plain') : '';
-    if (text && [...cd.files].every((f) => String(f.type || '').startsWith('image/'))) return;
+    const files = pastedFiles(e.clipboardData);
+    if (!files) return;                               // a text paste goes ahead natively
     e.preventDefault();
-    addFiles(namePastedFiles(cd.files));
+    addFiles(namePastedFiles(files));
   }
 
   function updateSendStop() {
@@ -1090,7 +1038,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.fileInput = doc.createElement('input');
     el.fileInput.type = 'file';
     el.fileInput.multiple = true;
-    el.fileInput.accept = `${ASK_ATTACH_EXT.join(',')},${Object.keys(ASK_ATTACH_BINARY).join(',')},text/*`;
+    el.fileInput.accept = ATTACH_ACCEPT;
     el.fileInput.hidden = true;
     el.fileInput.addEventListener('change', () => { addFiles(el.fileInput.files); el.fileInput.value = ''; });
     row.appendChild(el.fileInput);
@@ -1474,22 +1422,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       && (containsNode(root, e.target) || containsNode(root, doc.activeElement));
   }
 
-  function isToggleCombo(e) {
-    return (e.metaKey || e.ctrlKey) && !e.altKey && typeof e.key === 'string' && e.key.toLowerCase() === 'k';
-  }
-
   function onDocKeydown(e) {
     if (st.destroyed) return;
     if (e.key === 'Escape' && el.tip && el.tip.classList.contains('is-shown')) hideTip();   // the tooltip yields, the key carries on
     if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
-    if (isToggleCombo(e)) {
-      // The terminal pane (#573) owns its keys: Ctrl+K is the shell's kill-line there.
-      if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane')) return;
-      if (e.repeat || e.isComposing) return;
-      e.preventDefault();
-      toggleSheet();
-      return;
-    }
     if (e.key === 'Escape' && ownsKey(e) && st.popover) closePopover({ focusTrigger: true });
     // Escape with nothing open is an owned no-op — app.js's handlers already
     // returned via ownsKey(); the sheet itself never closes on Escape (§10.4).
@@ -1508,7 +1444,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // `.hd-cmt-card` joins the allowlist: its "Ask Worca" button appends to the
     // composer, and pointerdown lands BEFORE the click that would open the sheet.
     // `.term-pane` too: Ask's terminal is shared, so the user clicks and types there while the chat stays open.
-    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane')) return;
+    // `.tsearch` (the top bar search) too: its listbox opens over the sheet, and a close here would move focus
+    // out of its input mid-press, closing it before the pressed row gets its click.
+    if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane, .tsearch')) return;
     closeSheet();
   }
 
@@ -1932,13 +1870,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Settings › Models › Providers.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
       }
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
       if (m.id === st.picker.model) item.appendChild(make('span', 'ask-model-check', '✓'));
       return item;
+    };
+    // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
+    // only when the section holds more than one connection.
+    const appendByConnection = (models, engine) => {
+      const groups = modelGroups(models, { engine });
+      for (const c of groups) {
+        if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
+        for (const m of c.models) panel.appendChild(modelItem(m));
+      }
     };
     let shownPane = 'main';
     const renderPane = (pane) => {
@@ -1963,7 +1910,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         back.appendChild(make('span', null, '‹ Models'));
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
-        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) for (const m of splitCatalog(g.models).rest) panel.appendChild(modelItem(m));
+        for (const g of pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })) appendByConnection(splitCatalog(g.models).rest, g.engine);
       } else {
         // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
         const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
@@ -1971,7 +1918,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         for (const g of sections) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
           const split = splitCatalog(g.models);
-          for (const m of split.primary) panel.appendChild(modelItem(m));
+          appendByConnection(split.primary, g.engine);
           rest.push(...split.rest);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
@@ -2196,7 +2143,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           for (const m of skills) pickerMember(panel, set, setOff, m);
         }
         panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(mcpManageItem(`Manage ${set.name} in Settings › Sets`, `#settings/mcp/sets/${encodeURIComponent(set.id)}`));
+        panel.appendChild(mcpManageItem(`Manage in Connectors › ${set.name}`, `#connectors/sets/${encodeURIComponent(set.id)}`));
       } else {
         pane = null;
         // Level 1: one row per set in play, in the resolver's picker order (General, user sets by rank, Team).
@@ -2223,7 +2170,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
         if (p.codexServers > 0) panel.appendChild(make('div', 'ask-pop-empty', 'MCP servers from sets are available in Claude chats'));
         panel.appendChild(make('div', 'ask-pop-divider'));
-        panel.appendChild(mcpManageItem('Manage in Settings › Sets', '#settings/mcp'));
+        panel.appendChild(mcpManageItem('Manage on the Connectors page', '#connectors'));
       }
       if (first || keep !== null) {
         const items = menuItems(panel);
@@ -2822,20 +2769,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     try { const r = await fetch(url); return r && r.ok ? await r.json() : null; } catch { return null; }
   }
   /** The lane's three sources (spec D5): workflow template, registry, per-project config. null = unusable. */
-  async function loadLane(workflowId, projectDir) {
+  async function loadLane(workflowId, projectDir, picked = '') {
     const qs = projectDir ? `?projectDir=${encodeURIComponent(projectDir)}` : '';
     const [wf, agents, cfg, defaults] = await Promise.all([
       fetchJsonOk(`/api/workflows/${encodeURIComponent(workflowId)}`), fetchJsonOk('/api/agents'), fetchJsonOk(`/api/config${qs}`),
       fetchJsonOk(`/api/run-defaults${qs}`),
     ]);
     // §6: the card's agent models follow the engine the proposed run will start on (the same default /api/run resolves).
-    const engine = defaults && defaults.engine && ENGINE_NAMES.includes(defaults.engine.value) ? defaults.engine.value : 'claude';
+    const defaultEngine = defaults && defaults.engine && ENGINE_NAMES.includes(defaults.engine.value) ? defaults.engine.value : 'claude';
+    const engine = ENGINE_NAMES.includes(picked) ? picked : defaultEngine;
     const registry = agents && Array.isArray(agents.agents) ? Object.fromEntries(agents.agents.map((a) => [a.key, a])) : {};
     if (!wf || !(Array.isArray(wf.nodes) || Array.isArray(wf.steps)) || !Object.keys(registry).length || !cfg) return null;
     const config = (cfg.config && typeof cfg.config === 'object') ? cfg.config : { steps: {}, customModels: [] };
     const runConfig = (config.workflows && config.workflows[workflowId]) || { nodes: {}, feedbacks: {} };
     const allModels = Array.isArray(cfg.models) ? cfg.models : [];
-    const models = allModels.filter((m) => ((m && m.engine) || 'claude') === engine);
+    const models = allModels.filter((m) => m && runsOn(m, engine));
     // `models` + `engine`: the rows are built exactly as New pipeline builds them (app.js buildNodeConfigRows) — a pick
     // of the other engine shows as inherit (D10: it is skipped at run time) and rides the row as `enginePair`, so a
     // save that leaves it untouched re-sends it (pruneNodeSelection) instead of erasing it. `slotDefaults`: the
@@ -2843,7 +2791,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const slotDefaults = defaults && defaults.steps && defaults.steps[engine] ? defaults.steps[engine] : null;
     const rows = buildNodeConfigRows(wf, registry, runConfig, { ...(workflowId === 'wf_default' ? { legacySteps: config.steps || {} } : {}),
       models: allModels, engine, ...(slotDefaults ? { slotDefaults } : {}) });
-    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine,
+    return { wf, registry, runConfig, rows, edits: {}, editable: !!projectDir, engine, defaultEngine,
       models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
@@ -2971,7 +2919,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // model
       const sel = rpSelect('ask-rp-model', `Model for ${row.label}`);
       sel.appendChild(opt('', 'inherit (workflow default)'));
-      for (const m of lane.models) if ((!m.hidden && !m.needsSignIn) || m.id === c.model) sel.appendChild(opt(m.id, (m.label || m.id) + (m.needsSignIn ? ' (needs sign-in)' : '')));
+      appendModelGroups(sel, lane.models.filter((m) => (!m.hidden && !m.needsSignIn) || m.id === c.model), {
+        engine: lane.engine, text: (m) => modelOptionText(m) + (m.needsSignIn ? ' (needs sign-in)' : '') });
       sel.value = c.model || '';
       // Settings › Memory pins a defragment run's pair (node-tunables.mjs `pinned`): shown, locked.
       sel.disabled = !lane.editable || !!row.pinned;
@@ -3175,7 +3124,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       handle.parts.name.replaceWith(saved);
       saved.after(line);
     } else if (matched) {
-      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the composer.');
+      const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow — edit them in the Workflows view.');
       handle.parts.match.after(hint);
     }
     rootEl.appendChild(handle.el);
@@ -3195,7 +3144,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         .then((out) => { if (out) st.cardOptions = null; }));
       actions.append(make('span', 'ask-card-actions-spacer'), decline, save);
     } else {
-      const open = btn('ask-card-open-np', 'Open in composer', 'data-ask-wf-open');
+      const open = btn('ask-card-open-np', 'Open in Workflows', 'data-ask-wf-open');
       open.disabled = !(typeof openComposer === 'function' && block.workflowId);   // v7: an inert button beats a dead click
       open.addEventListener('click', () => { if (typeof openComposer === 'function' && block.workflowId) openComposer(block.workflowId); });
       // No "Run with this": the save already fired the event turn, which proposes the run
@@ -3480,8 +3429,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
     else if (block.state === 'applied' && result && result.detail) body.appendChild(make('div', 'ask-mcard-detail', result.detail));
     if (block.state !== 'proposed') {
-      const open = make('a', 'ask-card-sched-link', 'Settings › Models');
-      open.href = '#settings/models';
+      const open = make('a', 'ask-card-sched-link', 'Models');
+      open.href = '#models';
       body.appendChild(open);
     }
     rootEl.appendChild(body);
@@ -3930,12 +3879,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const targetHost = make('div', 'ask-card-target');
     targetSec.appendChild(targetHost);
 
-    const wfRow = make('div', 'ask-rp-grid two');
+    const wfRow = make('div', 'ask-rp-grid wf-row');
     const workflowSel = rpSelect('ask-card-workflow', 'Workflow');
     const wfDesc = make('span', 'ask-rp-wfdesc', '');
     wfDesc.setAttribute('data-for', 'workflow');
     const wfField = rpField('Workflow', workflowSel);
     wfField.appendChild(wfDesc);
+    // Engine: "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the
+    // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
+    const engineSel = rpSelect('ask-card-engine', 'Engine');
+    fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
+    // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
+    if (lockEngineOptions(engineSel)) engineSel.value = '';
+    const engineField = rpField('Engine', engineSel);
+    local.engine = () => engineSel.value;
     const guardSel = rpSelect('ask-card-guardrails', 'Guardrails');
     const guardDesc = make('span', 'ask-rp-wfdesc', 'Applies to every agent in this run');
     guardDesc.setAttribute('data-for', 'guardrails');
@@ -3946,9 +3903,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const lvTag = (node, min, keep) => { node.dataset.minLevel = min; if (keep) node.dataset.levelKeep = '1'; return node; };
     lvTag(guardField, 'advanced', !!card.guardrailsId && card.guardrailsId !== 'permissive');
     lvTag(seg, 'advanced', card.target === 'workspace');
-    wfRow.append(wfField, guardField);
+    lvTag(engineField, 'advanced', !!card.engine && card.engine !== 'claude');
+    wfRow.append(wfField, engineField, guardField);
     targetSec.appendChild(wfRow);
     rootEl.appendChild(targetSec);
+    engineSel.addEventListener('change', () => reloadLane());   // the agent rows offer the engine's models
     workflowSel.addEventListener('change', () => {
       if (local.workflowUnavailable) { local.workflowUnavailable = false; err.textContent = ''; startBtn.disabled = false; }
       reloadLane();
@@ -4044,7 +4003,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     // footer
     const foot = make('footer', 'ask-rp-foot');
-    const openNp = make('button', 'ask-card-open-np', '↗ Open in New Pipeline');
+    const openNp = make('button', 'ask-card-open-np', '↗ Open in New run');
     openNp.type = 'button';
     openNp.setAttribute('data-ask-card-open-np', '');
     openNp.dataset.minLevel = 'advanced';
@@ -4225,9 +4184,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return;
       }
       renderLane(laneSec, null, laneCtx, 'Loading agent settings…');
-      loadLane(workflowId, projectDir).then((lane) => {
+      loadLane(workflowId, projectDir, local.engine()).then((lane) => {
         if (st.destroyed || seq !== laneSeq) return;            // a later reload won
         local.lane = lane;
+        if (lane) {
+          engineSel.options[0].textContent = `${engineLabel(lane.defaultEngine)} (default)`;
+          for (const o of engineSel.options) o.hidden = o.value !== '' && o.value === lane.defaultEngine && engineSel.value !== o.value;   // listed once
+        }
         wfDesc.textContent = lane ? workflowDesc(lane.wf, lane.registry, lane.runConfig) : '';
         renderLane(laneSec, lane, laneCtx);
       });
@@ -4274,6 +4237,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Agent memory (§7.3 / B17): the card's scope rides along only while its workflow is still the
     // defragment one — a user who switched the picker to another workflow gets a legacy body.
     if (card.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = card.memoryScope;
+    const engine = (rootEl.querySelector('.ask-card-engine') || {}).value;
+    if (engine) body.engine = engine;                       // none: /api/run's default engine
     // A tracker task: the reference, never a prompt (POST /api/run takes source OR prompt).
     if (card.source) {
       delete body.prompt;
@@ -4307,7 +4272,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  repoints the lane (reloadLane nulls local.lane) while saveLaneEdits still holds the old
    *  one, so the config written and the body posted would describe different runs. */
   function freezeTargetInputs(rootEl, on) {
-    for (const sel of ['.ask-card-workflow', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
+    for (const sel of ['.ask-card-workflow', '.ask-card-engine', '.ask-card-project-select', '.ask-card-workspace-select', '[data-ask-card-seg]']) {
       for (const node of rootEl.querySelectorAll(sel)) node.disabled = on;
     }
   }
@@ -4407,6 +4372,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // The picker has no way to re-derive this: a `project` proposal opened in New Pipeline would
       // otherwise start with the row's default `global` and restructure the wrong scope (B17).
       memoryScope: card.memoryScope || null,
+      engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;

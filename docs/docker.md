@@ -70,7 +70,7 @@ signature:
 | --- | --- |
 | `latest`, `1`, `1.3`, `1.3.0` | the newest stable @worca/app, Node 22, git, `gh`, a pinned Claude Code |
 | `rc`, `1.3.0-rc.1` | the newest release candidate |
-| `…-full` | the above plus Python 3, build tools and Chromium's OS libraries (the manual web-UI-testing agent, Python projects, native npm modules) |
+| `…-full` | the above plus Python 3, build tools and Chromium (the manual web-UI-testing agent, Python projects, native npm modules, the Architecture (C4) JPEG/PNG export and the Presentation PDF and audit) |
 | `1.3.0-20260921` | a weekly rebuild of that version with the newest Debian packages |
 
 ```bash
@@ -82,6 +82,7 @@ cosign verify ghcr.io/sinishadjukic/worca:1.3.0 \
 The pinned Claude Code version is a label: `docker inspect --format '{{index .Config.Labels "dev.worca.claude-code.version"}}' <image>`.
 The CLI's own updater is off inside the image; a newer CLI is a newer image tag.
 The slim image has no compiler, so node-pty (the terminal's PTY) is skipped and terminals run over pipes; the -full image builds it.
+The slim image has no browser either: an Architecture (C4) run there writes SVG only and its report says why, and a Presentation run's PDF step reports that it found no browser unless you deselect the PDF. The -full image runs Chromium headless without its own sandbox (Docker's default seccomp profile refuses it to a non-root user); the container is the boundary.
 
 **Your project needs a toolchain the image lacks?** Pull `-full`, or extend:
 

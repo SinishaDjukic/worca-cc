@@ -1220,7 +1220,7 @@ test('workflow card: building at START, proposed at RESULT (cost booked); a tool
       assert.deepEqual(Object.keys(building.card).sort(), BUILDING_KEYS);
       assert.equal(building.card.type, 'workflow'); assert.equal(building.card.mode, 'task'); assert.equal(building.card.projectKey, 'demo-00000001', 'the pinned project is the default target');
       assert.equal(building.card.note, 'A note'); assert.equal(building.card.trace.step, 1); assert.equal(building.card.thenRun, true);
-      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/' });
+      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/', engine: 'claude' });
       const final = getMessage(s.asst.id);
       const card = final.blocks.find((b) => b.kind === 'card');
       assert.equal(card.id, building.id, 'same block, flipped in place');
@@ -1800,4 +1800,62 @@ test('run_command result mints one command card; an error result mints nothing',
   assert.equal(cards[0].state, 'command');
   assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null });
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'command'));
+});
+
+const CE_TOOL = 'mcp__worca__edit_canvas';
+const ceStart = (onEvent, id) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: CE_TOOL, input: { summary: 'Add Plan', ops: [] } }] } });
+
+test('composer: an edit_canvas RESULT persists one proposed canvas-edit card stamped with the session and emits ask-card; an isError result adds none; no Task', async () => {
+  const s = seed();
+  let spawned = null;
+  const { turn, frames } = makeTurn(s, { composer: { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34' } }, {
+    runClaudeImpl: async (opts) => {
+      spawned = { tools: opts.tools, allowedTools: opts.allowedTools };
+      ceStart(opts.onEvent, 'toolu_ce');
+      wfResult(opts.onEvent, 'toolu_ce', JSON.stringify({ ok: true, summary: 'Add Plan', ops: [{ op: 'layout', positions: {} }], added: [], removed: [], todo: 0, warnings: [] }));
+      ceStart(opts.onEvent, 'toolu_bad');
+      wfResult(opts.onEvent, 'toolu_bad', 'error: edit_canvas: op 1 (connect): unknown port', true);
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].state, 'proposed');
+  assert.deepEqual([cards[0].card.type, cards[0].card.sessionId, cards[0].card.docToken, cards[0].card.summary], ['canvas-edit', 'cs_ab12cd34', 'd_ab12cd34', 'Add Plan']);
+  assert.equal(frames.filter((f) => f.type === 'ask-card').length, 1);
+  // Only main-stream results become cards: a Task sub-agent's edit_canvas would change the canvas behind the user's back.
+  assert.deepEqual(spawned, { tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] }, 'a composer turn has no Task');
+});
+
+test('composer: Ask\'s run, workflow, track and away hooks stand down — a hallucinated propose_run adds no "Proposal rejected" notice', async () => {
+  const s = seed();
+  const calls = { validate: 0, track: 0, away: 0 };
+  const use = (onEvent, id, name, input) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${id}`, content: [{ type: 'tool_use', id, name, input }] } });
+  const { turn } = makeTurn(s, { composer: { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34' } }, {
+    validateProposal: async () => { calls.validate += 1; return { ok: false, errors: ['unknown projectKey "x"'] }; },
+    trackRun: async () => { calls.track += 1; return { ok: true, card: { type: 'progress' } }; },
+    awaySwitch: async () => { calls.away += 1; return { ok: true, line: 'Right now you count as away.' }; },
+    runClaudeImpl: async (opts) => {
+      // The composer child lists none of these tools, so the CLI answers each with an is_error result…
+      use(opts.onEvent, 'toolu_pr', 'mcp__worca__propose_run', { projectKey: 'x', prompt: 'p' });
+      wfResult(opts.onEvent, 'toolu_pr', 'Error: No such tool available: mcp__worca__propose_run', true);
+      use(opts.onEvent, 'toolu_pw', 'mcp__worca__propose_workflow', { task: 'build it' });
+      wfResult(opts.onEvent, 'toolu_pw', 'Error: No such tool available: mcp__worca__propose_workflow', true);
+      // …and even an ok result (a stale child) never tracks a run or flips Away mode from the Workflows chat.
+      use(opts.onEvent, 'toolu_tr', 'mcp__worca__track_run', { id: 'abcd1234' });
+      wfResult(opts.onEvent, 'toolu_tr', '{"ok":true}');
+      use(opts.onEvent, 'toolu_aw', 'mcp__worca__set_away_now', { mode: 'away' });
+      wfResult(opts.onEvent, 'toolu_aw', JSON.stringify({ ok: true, requested: { kind: 'global', toggle: 'g' } }));
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const blocks = getMessage(s.asst.id).blocks;
+  assert.deepEqual(blocks.filter((b) => b.kind !== 'tool').map((b) => [b.kind, b.text || (b.card && b.card.type) || '']), [], 'no card, no notice');
+  assert.deepEqual(calls, { validate: 0, track: 0, away: 0 });
 });

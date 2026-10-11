@@ -1,6 +1,6 @@
 ---
 name: creating-worca-cc-plugins
-description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/scripts/skills/workflow templates, the `worca plugin` CLI, or the Plugins view.
+description: Use when creating, scaffolding, debugging, reviewing, or extending a Worca CC plugin — anything involving worca-cc-plugin.json, a task-source connector, plugin-shipped agents/scripts/skills/workflow templates, the `worca plugin` CLI, or the Marketplace page.
 ---
 
 # Creating Worca CC Plugins
@@ -52,7 +52,7 @@ a fresh child. **Pipeline templates are the exception** — they are DB rows, im
 (and at `install`/`update`), so after editing `workflows/*.json` run `worca plugin reimport <name>`.
 Reimport upserts: a template file you DELETE keeps its row until the plugin is removed.
 
-`plugin list`, `plugin doctor` and the Plugins card name every contribution worca **ignored** —
+`plugin list`, `plugin doctor` and its Marketplace card name every contribution worca **ignored** —
 an agent key that collides with an existing agent, a sidecar that fails the meta v2 gate, a template
 that fails graph validation. If your agent or flow is missing, that line says why.
 
@@ -203,8 +203,8 @@ Your manifest must **negotiate** API 4 or later (`">=5 <6"` honours forms too) o
 ```
 
 A plugin declaring `">=3 <4"` keeps working: its agents load, its ports are intact, and it asks with
-generic questions. The ignored block is named in `worca plugin list`, `worca plugin doctor` and the
-Plugins card, the same way an ignored sidecar is.
+generic questions. The ignored block is named in `worca plugin list`, `worca plugin doctor` and its
+Marketplace card, the same way an ignored sidecar is.
 
 ### The declaration
 
@@ -428,7 +428,7 @@ needs.
 A plugin's `skills/<name>/SKILL.md` folders reach agents two ways:
 
 - **Required by an agent** (`requiresSkills` on its sidecar): copied into the run's checkout.
-- **Through sets** (`docs/skills.md`): installing adds every skill to the catalog (Settings › Sets › Skills);
+- **Through sets** (`docs/skills.md`): installing adds every skill to the catalog (Connectors › Skills);
   a user adds one to a set, and every run and Ask Worca turn of that set's projects gets it as
   `/<set>:<name>` — one generated plugin per set, through `--plugin-dir`. A team policy can require one
   (`skills.required: [{ "plugin": "acme", "skill": "deploy-checklist" }]`); each developer turns it on.
@@ -451,8 +451,8 @@ For a skill that works from a set:
 ## MCP servers (API 5)
 
 A plugin can ship **MCP server definitions** for worca's own registry — never written into anyone's
-Claude Code config. Installing starts nothing: a user adds a server to one or more **sets** in
-Settings › Sets, fills in that set's values and secrets, and assigns sets to projects; pipeline
+Claude Code config. Installing starts nothing: a user adds a server to one or more **sets** on
+the Connectors page, fills in that set's values and secrets, and assigns sets to projects; pipeline
 agents and Ask Worca then get one copy per (set, server). The consent card lists each server with its
 command or URL.
 
@@ -632,11 +632,11 @@ device names (`con`, `nul`, `com1`, …).
 | Self-managed storage not keyed by `ctx.profile` | Two profiles share one cache/cookie jar/CLI config dir → one instance silently answers with the other's data. Hang every path you own off the profile id |
 | `getTask().body` not markdown | It becomes the pipeline prompt verbatim |
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
-| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a Plugins-view note — port it to `metaVersion: 2` |
-| A v1 `steps` workflow template | Ignored at load with a Plugins-view note — rewrite it as a graph (`version: 2`) |
+| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a note on its Marketplace card — port it to `metaVersion: 2` |
+| A v1 `steps` workflow template | Ignored at load with a note on its Marketplace card — rewrite it as a graph (`version: 2`) |
 | `agentFile` pointing outside `agents/` (`../`, absolute) | Install-blocking validation error; the loader also refuses to read it |
 | A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
-| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/the Plugins card name it under "contributions ignored" |
+| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/its Marketplace card name it under "contributions ignored" |
 | Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
 | A shipped case with `"cwd": {"kind": "project"}` | Install-blocking validation error — a shipped case runs in a scratch folder |
 | `<key>.tests.json` with no `<key>.meta.json` beside it | Validation error — nothing would ever read it |
@@ -644,10 +644,10 @@ device names (`con`, `nul`, `com1`, …).
 | A node/python script that writes no value for a declared output | Execution error `output "<port>" was not written` |
 | A script key a built-in script or agent already holds (`shell`, `planner`, …) | Yours is dropped at load; `worca plugin new-script` refuses the key up front |
 | `process.stdout.write` in a `node` script | Corrupts the result frame. `console.*` is safe — it is routed to the run log |
-| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/the Plugins card say so. Declare `">=4 <5"` |
+| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=4 <5"` |
 | A form with no `example` | Validation error — `example` is what proves the declaration and what the Agents view previews |
 | A `type:'file'` with a wide `accept` | Every reviewer sees it on the consent card. Narrow it to what the form actually shows |
-| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/the Plugins card say so. Declare `">=5 <6"` |
+| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=5 <6"` |
 | A secret field referenced from `args` | Validation error — argv is readable by every local user. Pass it through `env` |
 
 ## The example worth reading
@@ -695,7 +695,7 @@ worca plugin validate ./my-plugin --strict && worca plugin doctor my-plugin
 
 Both clean, plus at least one real (non-mock) `exec` per op.
 Then push and let users register the repo as a marketplace:
-`worca marketplace add <repo-url>` (or Plugins → Add marketplace in the UI) →
+`worca marketplace add <repo-url>` (or Marketplace › Add marketplace in the UI) →
 install from the Available list or `worca plugin install <name>`.
 Removing a marketplace never removes installed plugins.
 Installs are SHA-pinned; users see a consent inventory listing every agent's tools, every ask form it

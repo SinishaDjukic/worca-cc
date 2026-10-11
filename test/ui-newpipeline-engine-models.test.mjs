@@ -95,8 +95,8 @@ async function openWf(window) {
   await waitFor(() => doc.querySelector('.step-model[data-node-id="n1"]'));
 }
 const ids = (doc, node) => [...doc.querySelectorAll(`.step-model[data-node-id="${node}"] option`)].map((o) => o.value);
-const pick = (doc, engine) => doc.querySelector(`#engine-seg button[data-engine="${engine}"]`).click();
-const CLAUDE_IDS = ['', 'claude-haiku-4-5', 'claude-opus-4-8', '__add__'];
+const pick = (doc, engine) => { const s = doc.getElementById('engineSelect'); s.value = engine; s.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true })); };
+const CLAUDE_IDS = ['', 'claude-opus-4-8', 'claude-haiku-4-5', '__add__'];   // catalog order inside the Claude sign-in group
 
 test('the agent rows offer the run engine\'s models and re-filter on an engine switch', async () => {
   const { window } = await boot(apiFetch());
@@ -141,4 +141,16 @@ test('a row healed for the run says which pick of the other engine it keeps (rev
   pick(doc, 'codex');
   await waitFor(() => kept());
   assert.equal(kept().textContent, 'Your Claude pick Haiku 4.5 is kept for Claude runs — choose a model here to replace it.');
+});
+
+test('"+ Add model…" in an agent row opens the Models page with the model editor', async () => {
+  const { window } = await boot(apiFetch());
+  await openWf(window);
+  const doc = window.document;
+  const sel = doc.querySelector('.step-model[data-node-id="n1"]');
+  sel.value = '__add__';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await waitFor(() => !doc.getElementById('model-editor-modal').classList.contains('hidden'));
+  assert.equal(window.location.hash, '#models');
+  assert.equal(doc.querySelector('.view[data-view="models"]').classList.contains('hidden'), false);
 });

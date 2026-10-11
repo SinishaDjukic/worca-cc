@@ -17,7 +17,7 @@ export const SKILL_HOOKS_TEXT = "declares hooks — they run shell commands outs
 const WHY = {
   'missing-skill': 'the skill is no longer installed',
   'plugin-disabled': 'plugin disabled',
-  'invalid-skill': 'the skill is invalid — check it in Settings › Sets › Skills',
+  'invalid-skill': 'the skill is invalid — check it in Connectors › Skills',
   'needs-consent': 'turn it on in the team checklist',
   off: 'off',
   'opted-out': 'opted out for this run',
