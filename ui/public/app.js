@@ -77,7 +77,7 @@ const state = {
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
-import { createAlerts, mountAlertsCard } from './alerts.mjs';
+import { createAlerts, mountAlertsCard, pauseTitle } from './alerts.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
@@ -671,10 +671,15 @@ const alerts = createAlerts({
   nav: navigator,
   storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
   win: window,
-  onOpen: (target) => { location.hash = target.schedule ? 'schedules' : rdHash(target.runId); },
+  onOpen: (target) => {
+    if (target.askThread) { askPanel?.openThread(target.askThread); return; }
+    location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
+  },
 });
 /** The run as alerts.mjs names it: makeRun's '(untitled)' placeholder is no title (the id stands in). */
 const alertRun = (r) => ({ runId: r.runId, title: r.title === '(untitled)' ? '' : r.title });
+/** Paused on a usage limit, an error or a cost cap: it waits on a person like a question does. */
+const pausedOnYou = (r) => r.status === 'paused' && !!pauseTitle(r.pauseReason);
 
 // ---------------------------------------------------------------------------
 // Sidebar collapse (icon rail) + the responsive nav tiers. `sidebarCollapsed` is
@@ -1225,6 +1230,7 @@ function handleServerMessage(msg) {
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
@@ -1585,6 +1591,8 @@ function onHello(msg) {
     if (r0.pendingQuestion) alerts.onQuestion(alertRun(rr), r0.pendingQuestion, { backfill: firstHello });
     // Answered while the socket was down: the upsert cleared it without a question-resolved frame.
     else if (prevQuestion && prevQuestion.id != null) alerts.onResolved(alertRun(rr), { id: prevQuestion.id });
+    // A pause is a wait too, under the same backfill rule.
+    if (r0.status === 'paused' && !r0.pendingQuestion) alerts.onPaused(alertRun(rr), r0.pauseReason, { backfill: firstHello });
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
@@ -6052,7 +6060,11 @@ function onDone(r, msg) {
   // A paused run already finished once, as paused. Its stop (or a settle from elsewhere) sends a
   // terminal done on the same runId: finish it again, for real. Never on an `error` frame: onError
   // stays guarded, so a stray error after the pause cannot turn the parked run red.
-  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) r._finished = false;
+  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) {
+    r._finished = false;
+    alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
+  }
+  if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   finishRun(r, msg.status || 'done');
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
@@ -17606,6 +17618,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     await seedResumedLog(data.runId, prevLines, null);  // in-memory pre-pause log → continuous
     // Old paused run is superseded by the resumed live run — drop it so Running
     // shows only the new card (same pipelineId would otherwise render twice).
+    alerts.onResolved(alertRun(r));
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
@@ -21891,7 +21904,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         || (typeof p.branch === 'string' ? p.branch : null);
       if (feat) nr.branchFeature = feat;
     }
-    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
     location.hash = `running/${data.runId}`;   // land on the continuous live card
@@ -29738,7 +29751,7 @@ function runsNeedsCount() {
 function updateNavCounts() {
   const live = liveRuns().length;
   let waiting = 0;
-  for (const r of runs.values()) if (r.pendingQuestion != null) waiting += 1;
+  for (const r of runs.values()) if (r.pendingQuestion != null || pausedOnYou(r)) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
   const needs = runsNeedsCount();
   // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
