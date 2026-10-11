@@ -21,6 +21,7 @@ import { runsOn } from '../src/shared/connections.mjs';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
+import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
@@ -12700,6 +12701,33 @@ app.put('/api/mcp/projects/:key', async (req, res) => {
   if (!PROJECT_KEY_RE.test(req.params.key)) return badRequest(res, 'invalid project key');
   const { sets, includeGeneral } = req.body || {};   // P1 setProjectAssignment checks both
   try { await setProjectAssignment(req.params.key, { sets, includeGeneral }); res.json({ ok: true }); } catch (err) { sendMcpError(res, err); }
+});
+
+// The project's committed `.mcp.json` servers and whether a Codex, Copilot or Cursor run attaches them
+// (src/core/mcpjson-approval.mjs). Approve names them in the project's untracked .claude/settings.local.json.
+async function mcpjsonProject(req, res) {
+  if (!PROJECT_KEY_RE.test(req.params.key)) { badRequest(res, 'invalid project key'); return null; }
+  const p = (await listProjects()).find((x) => x.key === req.params.key);
+  if (!p) { res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' }); return null; }
+  return p;
+}
+app.get('/api/mcp/projects/:key/mcpjson', async (req, res) => {
+  const p = await mcpjsonProject(req, res);
+  if (!p) return;
+  try { res.json(await committedMcpStatus(p.path)); } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/mcp/projects/:key/mcpjson/approve', async (req, res) => {
+  const p = await mcpjsonProject(req, res);
+  if (!p) return;
+  const names = req.body?.names;
+  if (!Array.isArray(names) || !names.length || !names.every((n) => typeof n === 'string')) return badRequest(res, 'names must be a non-empty list of server names');
+  try {
+    await approveCommittedMcp(p.path, names);
+    res.json(await committedMcpStatus(p.path));
+  } catch (err) {
+    const status = { UNKNOWN_SERVER: 400, LOCAL_TRACKED: 409, LOCAL_INVALID: 409 }[err?.code] || 500;
+    res.status(status).json({ error: err?.message || String(err), code: err?.code });
+  }
 });
 
 // MCP Team set (MCP registry spec §11.3, §12): consent routes. The definition, values and hash are read

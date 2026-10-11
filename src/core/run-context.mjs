@@ -34,6 +34,7 @@
 // reporting success. Every reader takes an optional `onError` sink (see fsWarner).
 
 import { readFile, writeFile, readdir, stat, mkdir, rm, cp, symlink } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, resolve, dirname, basename, isAbsolute, sep } from 'node:path';
 
@@ -602,7 +603,7 @@ function normalizeServerName(raw) {
  * for both instead of treating "unreadable" as "absent" (§5.5, §8.16).
  * @returns {Promise<{servers:object|null, parseError:string|null, readError:string|null}>}
  */
-async function readMcpFile(file) {
+export async function readMcpFile(file) {
   let readError = null;
   const text = await readTextMaybe(file, (_p, err) => { readError = err?.code || err?.message || 'read failed'; });
   if (text === null) return { servers: null, parseError: null, readError };
@@ -936,13 +937,23 @@ function trackedInGit(file) {
   }
 }
 
+/** The entry Claude Code keeps for `projectDir` in its `~/.claude.json` (`projects`, keyed by absolute path), or null. */
+function claudeJsonProject(doc, projectDir) {
+  const projects = doc?.projects;
+  if (!projects || typeof projects !== 'object') return null;
+  let entry = projects[resolve(projectDir)];
+  if (!entry) { try { entry = projects[realpathSync(projectDir)]; } catch { /* gone: no entry */ } }
+  return entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : null;
+}
+
 /**
  * Whether Claude Code runs a `.mcp.json` server of `projectDir` without asking, by its approval keys
  * (`enabledMcpjsonServers`, `enableAllProjectMcpServers`, `disabledMcpjsonServers`) in the settings it reads.
  * Claude Code does not let a repository approve its own servers in a folder the user has not trusted, and worca cannot
  * know that trust, so an approval counts only where a repository cannot put one: the user's
- * `<homeDir>/.claude/settings.json`, the project's `.claude/settings.local.json` when git does not track it, and the
- * managed settings (with their drop-ins), in that order. The committed `.claude/settings.json` (and a tracked
+ * `<homeDir>/.claude/settings.json`, Claude Code's own answers for the project in `<homeDir>/.claude.json`
+ * (`projects[<projectDir>]`, where its approval prompt keeps them), the project's `.claude/settings.local.json` when
+ * git does not track it, and the managed settings (with their drop-ins), in that order. The committed `.claude/settings.json` (and a tracked
  * settings.local.json) can only restrict: its `disabledMcpjsonServers` and an `enableAllProjectMcpServers: false`
  * still count. The lists add up, the last layer that sets `enableAllProjectMcpServers` decides it, and a disabled
  * server is never approved. `managed` is the managed settings files (test seam). Exported for testing.
@@ -952,6 +963,7 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
   const local = projectDir && join(projectDir, '.claude', 'settings.local.json');
   const layers = [
     homeDir && { file: join(homeDir, '.claude', 'settings.json'), approves: true },
+    homeDir && projectDir && { file: join(homeDir, '.claude.json'), approves: true, pick: (doc) => claudeJsonProject(doc, projectDir) },
     projectDir && { file: join(projectDir, '.claude', 'settings.json'), approves: false },
     local && { file: local, approves: null },
     ...managed.map((file) => ({ file, approves: true })),
@@ -960,7 +972,8 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
   const disabled = new Set();
   let all = false;
   for (const layer of layers) {
-    const doc = await readSettingsObject(layer.file, onError);
+    const read = await readSettingsObject(layer.file, onError);
+    const doc = read && layer.pick ? layer.pick(read) : read;
     if (!doc) continue;
     const approves = layer.approves ?? !trackedInGit(layer.file);
     if (approves) for (const n of Array.isArray(doc.enabledMcpjsonServers) ? doc.enabledMcpjsonServers : []) if (typeof n === 'string') enabled.add(n);
@@ -999,7 +1012,7 @@ async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, war
   if (unapproved.length) {
     warnings.push(
       `engine ${engine}: MCP servers of the committed .mcp.json that Claude Code has not approved are not attached: ${unapproved.join(', ')}. ` +
-      'Approve them in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in ~/.claude/settings.json or the project\'s untracked .claude/settings.local.json; an approval in the committed .claude/settings.json does not count.',
+      'Approve them on the project\'s Sets tab or in Claude Code, or name them in `enabledMcpjsonServers` (or set `enableAllProjectMcpServers`) in ~/.claude/settings.json or the project\'s untracked .claude/settings.local.json; an approval in the committed .claude/settings.json does not count.',
     );
   }
 }

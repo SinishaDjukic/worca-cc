@@ -1163,9 +1163,47 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   card.append(sw, h(doc, 'small', 'hint', 'Ask Worca always includes General; a workspace run includes it when any member does'));
   if (a.none) card.appendChild(h(doc, 'p', 'hint err', 'No MCP servers in runs on this project'));
   card.appendChild(h(doc, 'small', 'hint err mcp-proj-msg'));
+  const committed = h(doc, 'div');
   const servers = h(doc, 'div');
-  sec.replaceChildren(card, servers);
+  sec.replaceChildren(card, committed, servers);
+  await paintCommittedMcp(committed, { key, api, doc });
   await paintMcpResolution(servers, { target: { projectKey: key }, title: `Servers in runs on ${name}`, skillsTitle: `Skills in runs on ${name}`, api, doc });
+}
+
+// ── the repository's own .mcp.json (src/core/mcpjson-approval.mjs): Claude Code asks for these itself; a Codex,
+// Copilot or Cursor run attaches only the approved ones, so an unapproved one gets an Approve button ──
+const COMMITTED_STATUS = { approved: 'approved', unapproved: 'not approved: Codex, Copilot and Cursor runs leave it out', disabled: 'turned off in Claude Code settings' };
+export async function paintCommittedMcp(sec, { key, api, doc = globalThis.document }) {
+  const r = await api('GET', `/api/mcp/projects/${enc(key)}/mcpjson`);
+  if (!r.ok) { sec.replaceChildren(h(doc, 'small', 'hint err', r.data?.error || `HTTP ${r.status}`)); return; }
+  const { servers = [], canApprove, error } = r.data || {};
+  if (!servers.length && !error) { sec.replaceChildren(); return; }
+  const card = h(doc, 'section', 'card mcp-resolution mcp-committed');
+  card.appendChild(h(doc, 'h2', '', 'Servers in the repository’s .mcp.json'));
+  if (error) card.appendChild(h(doc, 'p', 'hint err', `.mcp.json could not be read: ${error}`));
+  const msg = h(doc, 'small', 'hint err mcp-committed-msg');
+  const approve = async (names) => {
+    const w = await api('POST', `/api/mcp/projects/${enc(key)}/mcpjson/approve`, { names });
+    if (w.ok) await paintCommittedMcp(sec, { key, api, doc });
+    else msg.textContent = w.data?.error || `HTTP ${w.status}`;
+  };
+  for (const s of servers) {
+    const row = h(doc, 'div', 'mcp-res-row');
+    row.append(h(doc, 'span', 'mono', s.name), h(doc, 'span', `hint${s.status === 'approved' ? '' : ' mcp-res-skip'}`, COMMITTED_STATUS[s.status] || s.status));
+    const cell = h(doc, 'span');
+    if (s.status === 'unapproved' && canApprove) {
+      const b = button(doc, 'btn btn-ghost btn-mini', 'Approve', { approve: s.name });
+      b.addEventListener('click', () => approve([s.name]));
+      cell.appendChild(b);
+    }
+    row.appendChild(cell);
+    card.appendChild(row);
+  }
+  card.appendChild(h(doc, 'small', 'hint', canApprove || !servers.some((s) => s.status === 'unapproved')
+    ? 'Claude runs ask in Claude Code. Approve writes the server into this project’s .claude/settings.local.json, which git does not track.'
+    : 'This repository tracks .claude/settings.local.json, so an approval there does not count. Approve the servers in ~/.claude/settings.json.'));
+  card.appendChild(msg);
+  sec.replaceChildren(card);
 }
 
 /** Settings › Ask Worca: the General set in one line — its servers and its skills — with a link to edit it (spec §9.5;
