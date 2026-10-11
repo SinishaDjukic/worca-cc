@@ -5060,6 +5060,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     storeThread(id);
     return loadThread(id);
   }
+  /** Open the sheet on chat `id` (an Alerts notification click). A first open loads the stored chat itself. */
+  function openThread(id) {
+    if (st.destroyed) return;
+    const firstOpenLoads = !st.firstOpenDone && !st.threadId;
+    if (id) storeThread(id);
+    openSheet();
+    if (id && !firstOpenLoads && st.threadId !== id) switchThread(id);
+  }
   // ---- live streaming (spec §10.8) -----------------------------------------
   function rowOf(id) {
     if (!st.model) return null;
@@ -5351,6 +5359,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   return Object.freeze({
     root,
     open: openSheet,
+    openThread,
     close: closeSheet,
     toggle: toggleSheet,
     isOpen: () => st.open,

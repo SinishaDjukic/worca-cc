@@ -70,10 +70,12 @@ async function boot({ alertsOn = true, unread = 0, storage = null } = {}) {
 const HELLO = (runs) => ({ type: 'hello', runs });
 
 test('hello backfill sets the badge but does not notify; a live question notifies, its resolution closes it and clears the badge', async () => {
-  const { window, N, tick, recv } = await boot();
+  const { window, N, look, tick, recv } = await boot();
+  look.visible = true;                                                        // the page someone opened
   recv(HELLO([{ runId: 'r1', title: 'Backfilled run', status: 'paused', pendingQuestion: { id: 'q1', kind: 'gate' } }]));
   recv({ type: 'question', runId: 'r1', id: 'q1', kind: 'gate', seq: 1 });   // the subscribe replay
   await tick();
+  look.visible = false;
   assert.equal(N.shown.length, 0, 'D7: nothing that was already pending notifies');
   assert.equal(window.document.title, '(1) Worca CC');
 
@@ -93,8 +95,10 @@ test('hello backfill sets the badge but does not notify; a live question notifie
 });
 
 test('a reconnect hello notifies a wait raised while the socket was down, once; one already seen does not notify again', async () => {
-  const { N, tick, recv } = await boot();
+  const { N, look, tick, recv } = await boot();
+  look.visible = true;
   recv(HELLO([{ runId: 'r1', title: 'Old wait', status: 'paused', pendingQuestion: { id: 'q1', kind: 'gate' } }]));
+  look.visible = false;
   recv({ type: 'run-created', runId: 'r2', title: 'Live run', status: 'running' });
   recv({ type: 'question', runId: 'r2', id: 'q2', kind: 'gate', seq: 1 });
   await tick();
@@ -123,6 +127,84 @@ test('a reconnect hello that no longer lists a pending question closes its notif
   recv(HELLO([{ runId: 'r7', title: 'Answered elsewhere', status: 'running', pendingQuestion: null }]));
   await tick();
   assert.equal(N.shown[0].closed, true);
+});
+
+test('a run paused on a usage limit notifies and joins the badge; stopping it closes the notification', async () => {
+  const { window, N, tick, recv } = await boot();
+  recv(HELLO([]));
+  recv({ type: 'run-created', runId: 'r1', title: 'Limited run', status: 'running' });
+  recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: "You've hit your session limit", limitEngine: 'claude' });
+  await tick();
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].title, 'Worca: Usage limit reached');
+  assert.equal(N.shown[0].body, 'Limited run', 'the body names the run, never the limit detail');
+  assert.equal(window.document.title, '(1) Worca CC');
+  recv({ type: 'done', runId: 'r1', status: 'stopped' });
+  await tick();
+  assert.equal(N.shown[0].closed, true);
+  assert.equal(window.document.title, 'Worca CC');
+});
+
+test('a page that loads hidden notifies what is already waiting; one that loads looked at holds a live wait until the person looks away', async () => {
+  const a = await boot();
+  a.recv(HELLO([{ runId: 'r1', title: 'Waiting in a background tab', status: 'paused', pendingQuestion: { id: 'q1', kind: 'workflow' } }]));
+  await a.tick();
+  assert.deepEqual(a.N.shown.map((n) => n.title), ['Worca: Workflow proposal to review'], 'a background reload does not swallow it');
+
+  const b = await boot();
+  b.look.visible = true;
+  b.recv(HELLO([]));
+  b.recv({ type: 'run-created', runId: 'r2', title: 'Live run', status: 'running' });
+  b.recv({ type: 'question', runId: 'r2', id: 'q2', kind: 'workflow', seq: 1 });
+  await b.tick();
+  assert.equal(b.N.shown.length, 0, 'nothing while the person is looking');
+  b.look.visible = false;
+  b.window.document.dispatchEvent(new b.window.Event('visibilitychange'));
+  assert.deepEqual(b.N.shown.map((n) => n.tag), ['worca:r2:q2'], 'it notifies when they switch away');
+});
+
+test('an Ask Worca card waiting for an OK notifies; a click opens that chat; applying it closes the notification', async () => {
+  const { window, N, tick, recv } = await boot();
+  recv(HELLO([]));
+  recv({ type: 'ask-card', threadId: 't1', messageId: 'm1', seq: 3, block: { kind: 'card', id: 'c1', state: 'proposed', card: { workflowId: 'wf_default', brief: 'SECRET brief' } } });
+  await tick();
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].title, 'Worca: Ask Worca: run to approve');
+  assert.equal(N.shown[0].body, 'Open the chat to review it.');
+  N.shown[0].onclick({ preventDefault() {} });
+  await tick();
+  assert.equal(window.document.querySelector('[data-ask-sheet]').hidden, false, 'the click opens the Ask sheet');
+  assert.equal(window.localStorage.getItem('worca-cc.ask.thread'), 't1', 'on that chat');
+  recv({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c2', state: 'proposed', card: { type: 'web' } } });
+  recv({ type: 'ask-message', threadId: 't1', message: { id: 'm1', blocks: [{ kind: 'card', id: 'c2', state: 'applied', card: { type: 'web' } }] } });
+  await tick();
+  assert.equal(N.shown[1].closed, true);
+});
+
+test('a paused run on page load counts on the badge without notifying; a manual pause neither notifies nor counts', async () => {
+  const { window, N, look, tick, recv } = await boot();
+  look.visible = true;
+  recv(HELLO([
+    { runId: 'r1', title: 'Already limited', status: 'paused', pauseReason: 'usage_limit' },
+    { runId: 'r2', title: 'Paused by hand', status: 'paused', pauseReason: null },
+  ]));
+  await tick();
+  look.visible = false;
+  assert.equal(N.shown.length, 0);
+  assert.equal(window.document.title, '(1) Worca CC');
+  recv({ type: 'run-created', runId: 'r3', title: 'Paused again', status: 'running' });
+  recv({ type: 'done', runId: 'r3', status: 'paused', reason: null });
+  await tick();
+  assert.equal(N.shown.length, 0);
+});
+
+test('a reconnect hello notifies a pause that happened while the socket was down', async () => {
+  const { N, tick, recv } = await boot();
+  recv(HELLO([{ runId: 'r1', title: 'Running', status: 'running' }]));
+  recv(HELLO([{ runId: 'r1', title: 'Running', status: 'paused', pauseReason: 'cost_total' }]));
+  await tick();
+  assert.equal(N.shown.length, 1);
+  assert.equal(N.shown[0].title, 'Worca: Cost cap reached');
 });
 
 test('no notification while the tab is visible and focused; the badge still counts', async () => {
