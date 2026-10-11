@@ -5875,6 +5875,18 @@ function liveRunOnBranch({ projectDir, branch }) {
   return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
     .all().some(holds);
 }
+/** A Resolve in a terminal (#620) still open on exactly this project + branch: the run member is marked
+ *  (br.baseResolve via terminal) and the shell it opened is running. A closed terminal no longer holds the
+ *  branch, so a mark left behind never blocks the watcher for good. */
+function terminalResolveOnBranch({ projectDir, branch }) {
+  const dir = canon(projectDir);
+  return terminals.live().some(({ snap }) => {
+    if (!snap.runId || snap.branch !== branch) return false;
+    const row = findPipelineRowById(snap.runId);
+    return !!row && membersOfRow(row).some((m) => m.projectKey === snap.member && m.projectDir && canon(m.projectDir) === dir
+      && m.br?.feature === branch && m.br?.baseResolve?.via === 'terminal');
+  });
+}
 /** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
  *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
 function prWatchOrigin(w) {
@@ -5906,7 +5918,8 @@ const prWatcher = createPrWatcher({
     subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
     checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
   },
-  liveOnBranch: liveRunOnBranch,
+  // A person resolving in a terminal holds the branch like a live run: the watcher waits for them.
+  liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
   freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
     busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
   startRun: (body, opts) => invokeStartRun(body, null, opts),
@@ -14047,6 +14060,6 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

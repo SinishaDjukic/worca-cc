@@ -280,6 +280,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
  *   liveOnBranch({ projectDir, branch }) → true while a live, paused or finishing run uses that exact branch
+ *                                     (or a person resolves its conflicts in a terminal)
  *   freeCheckout({ projectDir, branch })   → releases a verified idle Worca checkout, throws coded errors
  *   startRun(body, { startedBy, runId, prWatchRunId }) → { status, body }
  *   liveRun({ runId, pipelineId }) → { status, finishing } | null  (by pipeline once one exists: a resume

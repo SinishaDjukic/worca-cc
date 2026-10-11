@@ -16,7 +16,7 @@ import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat } from './
 
 const ENV_KEYS = ['WORCA_HOME', 'HOME', 'USERPROFILE', 'WORCA_TERMINAL_PTY', 'SHELL', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'WORCA_RUN_ROOT'];
 const prev = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-let root, srv, port, base, id, key;
+let root, srv, port, base, id, key, mod, projectDir;
 
 /** fetch() drops a caller-set Host and Origin; this sends them as given. */
 function req(method, p, body, headers = { host: `127.0.0.1:${port}` }) {
@@ -45,7 +45,8 @@ before(async () => {
   ({ id, key } = await seedPipeline(w.a, { title: 'My feature', status: 'done',
     branch: { source: 'dev', feature: 'feat', branchKept: true } }));
   writeStoreMeta(key, 'project', { key, name: 'a', path: w.a });
-  const mod = await import('../ui/server.mjs');
+  projectDir = w.a;
+  mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   port = srv.address().port;
@@ -90,4 +91,14 @@ test('POST resolve-terminal checks out, starts the merge, opens a run shell and 
   const br = JSON.parse(findPipelineRowById(id).branch);
   assert.equal(br.baseResolve.via, 'terminal');
   assert.deepEqual(br.baseResolve.files, ['f.txt']);
+});
+
+test('an open terminal resolution holds the branch for Watch PR; closing the shell releases it', async () => {
+  const held = () => mod._testing.terminalResolveOnBranch({ projectDir, branch: 'feat' });
+  const live = mod._testing.terminals.live().filter(({ snap }) => snap.runId === id);
+  assert.ok(live.length, 'the previous test left its shells open');
+  assert.equal(held(), true);
+  assert.equal(mod._testing.terminalResolveOnBranch({ projectDir, branch: 'other' }), false);
+  for (const { snap } of live) await mod._testing.terminals.close(snap.id);
+  assert.equal(held(), false);
 });

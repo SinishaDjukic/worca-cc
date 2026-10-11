@@ -243,6 +243,8 @@ When the branch has an open pull request, the pull request owns its conflicts:
 - **Update branch** and **Resolve in a terminal** stay: Watch PR has neither.
 - While a Watch PR fix run is working on the branch, Update branch, Resolve in a terminal and Re-check
   are refused until it finishes, so nothing moves the branch under it.
+- The other way round, while a Resolve in a terminal is open on the branch, Watch PR starts no fix run
+  on it. Closing that terminal lets the watch go on.
 
 ## Workspace stacks
 
