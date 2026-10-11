@@ -520,6 +520,10 @@ async function auditCurrent(stateId) {
   // The Runs list is aria-busy while /api/history is in flight — sampling through a reload
   // made the snapshot bistable (measured: 4 cells flipping between runs).
   await until(`!document.querySelector('#runs-list[aria-busy="true"]')`, 'the history refresh to settle');
+  // The run sheet's PR button morphs in from its spinner on a timer (PR_CTA_MORPH_MS): mid-morph
+  // the button is transparent over a sibling fill the walker cannot see as its background, so a
+  // sample there read white on white (history-list, intermittently). Wait the morph out.
+  await until(`!document.querySelector('.rd-pr-slot:is(.is-morph,.is-out)')`, 'the PR button morph to finish');
   for (const theme of THEMES) {
     await setTheme(theme);
     const { samples, styles, capped } = await ev(WALKER(null, theme[0] === 'light'), 90000);   // identity rows only for the light pass
