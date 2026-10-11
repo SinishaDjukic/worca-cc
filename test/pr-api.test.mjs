@@ -22,6 +22,7 @@ import * as azurePr from '../src/core/pr/azure.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
+import { getWatch } from '../src/core/pr-watch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -860,4 +861,16 @@ test('POST /api/pr on an Azure origin: draft reaches the REST create as isDraft;
   assert.equal(create.body.isDraft, true);
   assert.doesNotMatch(create.body.description, /Closes/);
   assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for an Azure base');
+}));
+
+test('POST /api/pr on an Azure origin with watch:true watches the new Azure DevOps PR', () => withEnv(WITH_ADO, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const id = await seedIssueRun({ feature: 'worca-cc/azure-watch-run' });
+  stubAzureRepo([]);
+  stubAdo([]);
+  const r = await post({ projectKey: betaKey, id, watch: true });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.watching, true);
+  assert.equal(getWatch(j.url).pipelineId, id);
 }));

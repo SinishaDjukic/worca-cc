@@ -20,6 +20,8 @@ at a time; agents never get it, in any guardrail set.
 - **The Azure Boards task source** (the `azure-boards-source` plugin): pick work items as tasks,
   and close them when a run completes if you turn that on. A pull request Worca opens in the same
   organisation links the work item.
+- **Watch PR**, Resolve and the pull request row on the run page and the Overview tab, as on
+  GitHub ([below](#watch-pr)).
 
 ## What does not work (yet)
 
@@ -54,6 +56,7 @@ worca runs*.
    | --- | --- |
    | push, pull requests (`WORCA_ADO_TOKEN`, or the write token) | **Code (Read & Write)** |
    | clone, fetch, metrics only (the read token) | **Code (Read)** |
+   | Watch PR: build logs and the base branch's builds | **Build (Read)**, on the read token |
    | the Boards task source (its own token, below) | **Work Items (Read & Write)** and **Project and Team (Read)** |
 
 2. Set it where Worca runs, and restart Worca:
@@ -107,6 +110,38 @@ WORCA_CLONE_ALLOW=dev.azure.com/acme/My%20Project/*     # names may be percent-e
 `dev.azure.com,.visualstudio.com,vssps.dev.azure.com` to `WORCA_EGRESS_ALLOW`. The default list is
 not widened for an opt-in host. `ssh.dev.azure.com` is not needed, since Worca's own git calls are
 https.
+
+## Watch PR
+
+Watch PR works the same on an Azure pull request as on GitHub (see [UI levels](ui-levels.md)).
+These are the Azure DevOps sources it reads:
+
+| GitHub | Azure DevOps |
+| --- | --- |
+| A check run or commit status on the PR head | A **policy evaluation** of the PR. Azure Repos builds a PR only through a *build validation* policy, so each build policy is a check, named by the policy's display name. A *status check* policy makes an external service's PR status a check. Statuses no policy covers count only when nothing is required. |
+| Required (branch protection) | The policy is **Required** (blocking) |
+| Re-run the failed jobs once (`gh run rerun --failed`) | **Re-queue** the build policy once (a new build) |
+| The failed job's log | The build's failed tasks: name, error issues and the last 200 lines of each task log, then the last 12 KB |
+| The base head's checks | The newest build of the same pipeline on the base branch at its live tip, and that commit's statuses |
+| Behind the base (`compare`) | The commit diff between the base tip and the PR head (`behindCount`) |
+| Merge conflicts | Azure's merge check reports conflicts |
+| A review thread | A comment in an *Active* or *Pending* thread. Anyone who can comment on an Azure PR is a member of its project, so every commenter counts. |
+| A "changes requested" review | A reviewer's *Rejected* or *Waiting for author* vote, not a group's. A vote fires once, and again only when the reviewer changes it. |
+| Reply on the thread | Reply in the thread, which stays active for the reviewer to resolve. A vote gets a PR comment in a new thread created *Closed*, so it never blocks a comment-resolution policy. |
+
+The pull request row's verdict is GitHub's merge box in Azure terms:
+- **Changes requested** is a rejecting vote.
+- **Review required** is a required reviewer policy (minimum number of reviewers, or required
+  reviewers) that is not yet met.
+- **Blocked by branch rules** is any other required policy not yet approved, such as linked
+  work items or comment resolution.
+- **Ready to merge** is every required policy approved and a clean merge check.
+- Azure never requires an up-to-date branch, so the row never shows *Out of date*.
+
+**Token scopes.** Reading the checks, threads and the base head needs *Code (Read)*. Reading
+build logs and the base branch's builds also needs *Build (Read)*. Replies need *Code (Read &
+Write)*, and so does re-queueing a build policy. Without *Build (Read)* the fix task names the
+failed build and links to it, but has no log, and every failure counts as the PR's own.
 
 ## Azure Boards
 
@@ -176,3 +211,10 @@ and token shapes are matched leniently. Record each result here once it has been
 | `workitemsbatch` with `errorPolicy: 'Omit'` and a deleted id | a `null` slot | not yet checked |
 | Pull request list order | `pullRequestId` descending (newest first) | not yet checked |
 | New PAT format | 84 characters, `AZDO` marker | not yet checked |
+| Policy evaluations (`_apis/policy/evaluations`, `7.1-preview.1`) with a Code (Read) PAT | 200, `context.buildId` and `settings.buildDefinitionId` on a build policy | not yet checked |
+| Re-queue an evaluation (`PATCH _apis/policy/evaluations/{id}`) with a Code (Read & Write) PAT | a new build is queued | not yet checked |
+| Build timeline and task log (`_apis/build/builds/{id}/logs/{logId}`, `Accept: text/plain`) | plain text with a timestamp per line | not yet checked |
+| Commit diff (`diffs/commits`, base and target as commits) | `behindCount` is the base commits the PR head lacks | not yet checked |
+| Thread reply (`parentCommentId: 1`, `commentType: 1`) and a new thread with `status: 4` | 200; the new thread shows *Closed* | not yet checked |
+| Reviewer policy evaluation while unmet | not `approved` | not yet checked |
+| An HTML comment (`<!-- worca:pr-watch -->`) in a PR comment | kept in `content`, hidden when rendered | not yet checked |

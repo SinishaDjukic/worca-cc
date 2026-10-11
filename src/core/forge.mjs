@@ -16,6 +16,11 @@ export function parseGithubPrUrl(value) {
   return { owner, repo, number, url: `https://github.com/${owner}/${repo}/pull/${number}` };
 }
 
+/** A PR Watch PR can follow (#619): a canonical github.com PR, or an Azure DevOps one. */
+export function watchablePrUrl(value) {
+  return !!(parseGithubPrUrl(value) || parseAzurePrUrl(value));
+}
+
 /**
  * Parse a git remote URL into { host, owner, repo } or null when it is not a
  * hosted owner/repo URL (local paths, file://, bare hosts). Accepts

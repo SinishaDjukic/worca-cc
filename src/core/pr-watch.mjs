@@ -256,8 +256,8 @@ export function createPrWatchRunner({ tick, intervalMs = 60_000, env = process.e
   return { start, kick, stop };
 }
 
-// One process-global pause: a GitHub rate limit on any watched PR stops every GitHub call.
-let githubPauseUntil = 0;
+// One process-global pause: a rate limit on any watched PR (GitHub or Azure DevOps) stops every host call.
+let hostPauseUntil = 0;
 const START_TIMEOUT_MS = 10 * 60_000;
 /** How long a failure waits for the base head's result on the same check before it counts as the PR's. */
 export const BASE_WAIT_MS = 30 * 60_000;
@@ -268,7 +268,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
 /**
  * The Watch PR state machine. Every side effect is injected so the server owns the IO:
  *   originOf(w)                       → { pipelineId, projectKey, projectDir, branch, sourceBranch, baseRemote, guardrailsId, engine, mock } | null
- *   gh.{snapshot, jobLog, reply, comment, rerun}
+ *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub or Azure DevOps)
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
  *   liveOnBranch({ projectDir, branch }) → true while a live, paused or finishing run uses that exact branch
@@ -303,7 +303,7 @@ export function createPrWatcher(deps = {}) {
     return !at || Date.parse(at) <= now();
   };
   const retry = (w, phase, failure = {}) => {
-    if (failure.class === 'rate-limit') githubPauseUntil = Math.max(githubPauseUntil, now() + 60_000);
+    if (failure.class === 'rate-limit') hostPauseUntil = Math.max(hostPauseUntil, now() + 60_000);
     const state = { ...(w.retryState || {}) };
     const count = (state[phase]?.count || 0) + 1;
     state[phase] = { count, class: failure.class || 'failed', retryAt: new Date(now() + Math.min(15 * 60_000, 1000 * 2 ** count)).toISOString() };
@@ -314,7 +314,7 @@ export function createPrWatcher(deps = {}) {
     const state = { ...w.retryState }; delete state[phase];
     return transition(w, { retryState: state });
   };
-  const paused = () => now() < githubPauseUntil;
+  const paused = () => now() < hostPauseUntil;
   const remoteOf = (w) => w.pushRemote || 'origin';
 
   /** Fetch, then bring the local branch to the PR head without ever losing a commit. */
@@ -347,7 +347,7 @@ export function createPrWatcher(deps = {}) {
     let pre = await preflight(w, origin, pr);
     if (pre.moved) {
       // The branch moved between the snapshot and the fetch: one fresh look, then one more try.
-      const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+      const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
       if (!snap?.ok) return retry(w, 'read', snap);
       w = resetRetry(w, 'read');
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
@@ -371,7 +371,7 @@ export function createPrWatcher(deps = {}) {
     const logs = [];
     for (const f of triggers.failures) {
       if (f.type !== 'check' || !f.databaseId) continue;
-      const log = await deps.gh.jobLog({ projectDir: origin.projectDir, prUrl: w.prUrl, databaseId: f.databaseId });
+      const log = await deps.host.jobLog({ projectDir: origin.projectDir, prUrl: w.prUrl, databaseId: f.databaseId });
       if (log?.ok) logs.push({ databaseId: f.databaseId, text: log.text });
       else if (log?.class === 'rate-limit') return retry(w, 'read', log);
     }
@@ -460,7 +460,7 @@ export function createPrWatcher(deps = {}) {
     }
     if (!p.pushedSha) {
       // A PR merged or closed while the fix ran gets no push and no replies.
-      const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+      const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
       if (!snap?.ok) return retry(w, 'publish', snap || {});
       if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state, { activeRunId: null, activePipelineId: null, pending: null });
       const where = { projectDir: origin.projectDir, branch: origin.branch, remote: remoteOf(w) };
@@ -482,12 +482,12 @@ export function createPrWatcher(deps = {}) {
     }
     const body = replyBody({ summary: p.summary || fixSummary(p.pushedSha) });
     for (const t of [...(p.threads || [])]) {
-      const r = await deps.gh.reply({ projectDir: origin.projectDir, prUrl: w.prUrl, threadId: t.nodeId, body });
+      const r = await deps.host.reply({ projectDir: origin.projectDir, prUrl: w.prUrl, threadId: t.nodeId, body });
       if (!r?.ok) return retry(w, 'publish', r || {});
       p = { ...p, threads: p.threads.filter((x) => x.nodeId !== t.nodeId) }; w = transition(w, { pending: p });
     }
     if (p.reviewComment) {
-      const r = await deps.gh.comment({ projectDir: origin.projectDir, prUrl: w.prUrl, body });
+      const r = await deps.host.comment({ projectDir: origin.projectDir, prUrl: w.prUrl, body });
       if (!r?.ok) return retry(w, 'publish', r || {});
       p = { ...p, reviewComment: false }; w = transition(w, { pending: p });
     }
@@ -513,7 +513,7 @@ export function createPrWatcher(deps = {}) {
   async function rerunChecks(w, origin, reruns) {
     w = transition(w, { handled: [...w.handled, ...reruns.flatMap((r) => r.keys)] });
     for (const [i, r] of reruns.entries()) {
-      const res = await deps.gh.rerun({ projectDir: origin.projectDir, prUrl: w.prUrl, runId: r.runId });
+      const res = await deps.host.rerun({ projectDir: origin.projectDir, prUrl: w.prUrl, runId: r.runId });
       if (res?.class === 'rate-limit') {
         const undo = new Set(reruns.slice(i).flatMap((x) => x.keys));
         return retry(transition(w, { handled: w.handled.filter((k) => !undo.has(k)) }), 'read', res);
@@ -531,7 +531,7 @@ export function createPrWatcher(deps = {}) {
     if (w.status === 'publishing') return publishFix(w, origin);
     if (!w.enabled || w.status !== 'watching' || paused()) return w;
     if (!due(w, 'read') || !due(w, 'preflight') || !due(w, 'rerun')) return w;
-    const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+    const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
     if (!snap?.ok) return retry(w, 'read', snap || {});
     w = resetRetry(w, 'read');
     if (snap.pr.state !== 'OPEN') return endWatch(w, snap.pr.state);
@@ -552,7 +552,7 @@ export function createPrWatcher(deps = {}) {
     if (paused()) return { ok: false, code: 'RATE_LIMITED', watch: w };
     const origin = await deps.originOf?.(w);
     if (!origin) return { ok: false, code: 'ORIGIN_GONE', watch: w };
-    const snap = await deps.gh.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
+    const snap = await deps.host.snapshot({ projectDir: origin.projectDir, prUrl: w.prUrl });
     if (!snap?.ok) return { ok: false, code: 'READ_FAILED', error: snap?.error, watch: w };
     if (snap.pr.state !== 'OPEN') return { ok: false, code: 'PR_CLOSED', watch: w };
     const triggers = collectTriggers(snap.pr, w.handled, { conflictOnly: true });
@@ -572,4 +572,4 @@ export function createPrWatcher(deps = {}) {
   return { tick, tickOne, resolveOnce, runner: createPrWatchRunner({ tick, intervalMs: deps.intervalMs, env: deps.env }) };
 }
 
-export const _testing = { resetRateLimitPause() { githubPauseUntil = 0; }, rateLimitPause() { return githubPauseUntil; } };
+export const _testing = { resetRateLimitPause() { hostPauseUntil = 0; }, rateLimitPause() { return hostPauseUntil; } };

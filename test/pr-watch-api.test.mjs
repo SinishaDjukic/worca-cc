@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { app, runs, _testing as server } from '../ui/server.mjs';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
+import * as azurePr from '../src/core/pr/azure.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, persistMemberPrState } from '../src/core/artifacts.mjs';
@@ -101,8 +102,57 @@ test('POST validates watch, turns it on and off, and the stored watch keeps its 
   updateWatch(GH, { pending: null });
 });
 
-test('a non-github or closed PR, a scope mismatch and an archived origin are refused', async () => {
-  persistPrState(seeded.id, { url: 'https://dev.azure.com/a/b/_git/c/pullrequest/3', number: 3, state: 'OPEN' });
+const AZ = 'https://dev.azure.com/a/b/_git/c/pullrequest/3';
+/** An Azure DevOps PR as the REST API answers it: open, conflicting, one failed blocking build and a rejecting vote. */
+function fakeAzure() {
+  const res = (body) => ({ status: 200, ok: true, json: async () => body, text: async () => JSON.stringify(body) });
+  azurePr._testing.setFetch(async (url) => {
+    const u = String(url);
+    if (/\/pullRequests\/3\?/.test(u)) return res({ pullRequestId: 3, status: 'active', mergeStatus: 'conflicts', isDraft: false,
+      sourceRefName: 'refs/heads/worca-cc/watch-me', targetRefName: 'refs/heads/main', lastMergeSourceCommit: { commitId: 'h1' },
+      lastMergeTargetCommit: { commitId: 'b0' }, createdBy: { uniqueName: 'me@a.com' }, repository: { project: { id: 'pid' } },
+      reviewers: [{ id: 'r1', uniqueName: 'rev@a.com', displayName: 'Rev', vote: -10 }] });
+    if (/\/policy\/evaluations\?/.test(u)) return res({ value: [{ evaluationId: '11111111-2222-3333-4444-555555555555', status: 'rejected',
+      context: { buildId: 9 }, configuration: { isEnabled: true, isBlocking: true, type: { id: '0609b952-1397-4640-95ec-e00a01b2c241' },
+        settings: { displayName: 'PR build', buildDefinitionId: 4 } } }] });
+    if (/\/refs\?/.test(u)) return res({ value: [{ name: 'refs/heads/main', objectId: 'b1' }] });
+    if (/\/diffs\/commits\?/.test(u)) return res({ behindCount: 2, aheadCount: 1 });
+    return res({ value: [] });
+  });
+}
+
+test('an open Azure DevOps PR is watchable, reads its checks line, and Resolve names Azure DevOps', async () => {
+  const prev = process.env.WORCA_ADO_TOKEN; process.env.WORCA_ADO_TOKEN = 'pat';
+  try {
+    fakeAzure();
+    persistPrState(seeded.id, { url: AZ, number: 3, state: 'OPEN' });
+    let r = await get(scope());
+    assert.equal(r.status, 200);
+    r = await post('/api/pr/watch', { ...scope(), watch: true });
+    assert.equal((await r.json()).watching, true);
+    assert.equal(getWatch(AZ).pipelineId, seeded.id);
+    r = await fetch(`${base}/api/pr/checks?${new URLSearchParams(scope())}`);
+    const checks = await r.json();
+    assert.equal(r.status, 200, JSON.stringify(checks));
+    assert.deepEqual([checks.mergeable, checks.base, checks.checks.failed, checks.status.label, checks.watch.watching],
+      ['CONFLICTING', 'main', 1, 'Merge conflicts', true]);
+    await (await post('/api/pr/watch', { ...scope(), watch: false })).json();
+    // No conflict now: the refusal names the PR's host.
+    azurePr._testing.setFetch(async (url) => ({ status: 200, ok: true, json: async () => (/\/pullRequests\/3\?/.test(String(url))
+      ? { pullRequestId: 3, status: 'active', mergeStatus: 'succeeded', sourceRefName: 'refs/heads/worca-cc/watch-me', targetRefName: 'refs/heads/main',
+        lastMergeSourceCommit: { commitId: 'h1' }, repository: { project: { id: 'pid' } } } : { value: [] }) }));
+    r = await post('/api/pr/resolve', scope());
+    const out = await r.json();
+    assert.deepEqual([r.status, out.code], [409, 'NO_CONFLICT']);
+    assert.match(out.error, /^Azure DevOps reports no merge conflicts/);
+  } finally {
+    azurePr._testing.reset();
+    if (prev === undefined) delete process.env.WORCA_ADO_TOKEN; else process.env.WORCA_ADO_TOKEN = prev;
+  }
+});
+
+test('another host or a closed PR, a scope mismatch and an archived origin are refused', async () => {
+  persistPrState(seeded.id, { url: 'https://gitlab.com/me/repo/-/merge_requests/7', number: 7, state: 'OPEN' });
   let r = await get(scope());
   assert.equal(r.status, 400); await r.json();
   persistPrState(seeded.id, { url: 'https://ghe.corp/me/repo/pull/7', number: 7, state: 'OPEN' });

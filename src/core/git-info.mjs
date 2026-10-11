@@ -969,6 +969,36 @@ export async function ghPrComment({ projectDir, prUrl, body } = {}) {
   const r = await _run('gh', ['pr', 'comment', String(p.number), '--repo', repo, '--body', String(body || '')], { cwd: projectDir, env: cred.env });
   return r.ok ? { ok: true } : { ok: false, class: ghWatchFailure(r), error: (r.stderr || '').trim() || `gh exited ${r.code}` };
 }
+// The Watch PR adapter by the PR URL's forge: Azure DevOps goes to pr/azure.mjs, github.com to gh above.
+const azureWatch = (prUrl) => forgeOfPrUrl(prUrl) === 'azure';
+export function prWatchSnapshot(opts = {}) {
+  return azureWatch(opts.prUrl) ? azurePr.prWatchSnapshot(opts) : ghPrWatchSnapshot(opts);
+}
+export async function prWatchJobLog(opts = {}) {
+  if (!azureWatch(opts.prUrl)) return ghFailedJobLog(opts);
+  const r = await azurePr.failedBuildLog(opts);
+  return r.ok ? { ok: true, text: tailBytes(redactSecrets(r.text), PR_WATCH_LOG_BYTES) } : r;
+}
+/** One more try of a failed check: a workflow run's failed jobs on GitHub, a build policy's re-queue on Azure DevOps. */
+export function prWatchRerun(opts = {}) {
+  return azureWatch(opts.prUrl) ? azurePr.requeueEvaluation(opts) : ghRerunFailedJobs(opts);
+}
+export function prWatchReply(opts = {}) {
+  return azureWatch(opts.prUrl) ? azurePr.replyToThread(opts) : ghReplyToThread(opts);
+}
+export function prWatchComment(opts = {}) {
+  return azureWatch(opts.prUrl) ? azurePr.prComment(opts) : ghPrComment(opts);
+}
+/** The PR card's checks rollup, mergeability and merge verdict, by forge (see ghPrChecks). null on any failure. */
+export async function prChecks({ projectDir, prUrl } = {}) {
+  if (!azureWatch(prUrl)) return ghPrChecks({ projectDir, prUrl });
+  const f = await azurePr.prCheckFacts({ prUrl });
+  if (!f) return null;
+  const checks = rollupChecks(f.items, { baseFailing: f.baseFailing });
+  return { checks, mergeable: f.mergeable, base: f.base,
+    status: prMergeStatus({ checks, mergeable: f.mergeable, mergeState: f.mergeState, reviewDecision: f.reviewDecision, draft: f.draft, base: f.base }) };
+}
+
 export async function commitSubjects(projectDir, from, to) {
   if (!projectDir || !from || !to) return { ok: false, subjects: [], error: 'projectDir, from and to are required' };
   const r = await _run('git', ['log', '--format=%s', `${from}..${to}`], { cwd: projectDir });

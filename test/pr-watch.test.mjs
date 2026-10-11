@@ -41,7 +41,7 @@ function harness({ pr = openPr(), clock = { t: Date.now() } } = {}) {
     newId: () => `run-${++seq}`,
     originOf: (w) => ({ pipelineId: w.pipelineId, projectKey: 'k', projectDir: '/repo', branch: 'feat/x', sourceBranch: 'main',
       guardrailsId: 'g1', engine: 'codex', mock: true }),
-    gh: {
+    host: {
       snapshot: async () => { calls.snapshot++; return io.snapshotResult ? io.snapshotResult() : { ok: true, pr: io.pr }; },
       jobLog: async ({ databaseId }) => ({ ok: true, text: `log ${databaseId}` }),
       reply: async (a) => { calls.reply.push(a.threadId); return io.replyFails.has(a.threadId) ? { ok: false, class: 'failed' } : { ok: true }; },

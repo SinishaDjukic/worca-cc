@@ -195,19 +195,20 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 
-An open github.com pull request shows its state as GitHub's merge box would
+An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
 required, Out of date, Blocked, Ready to merge) in two places: the footer of the
 run page's pull request button, and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level; the Watch switch in them is advanced.
 
-Watch PR is opt-in, also in Ship It. It supports github.com only and batches
+Watch PR is opt-in, also in Ship It. It supports github.com and Azure DevOps
+([how Azure maps](azure-devops.md#watch-pr)) and batches
 failed checks, merge conflicts and trusted author, owner, member or collaborator
 feedback into at most three automatic fix runs. Checks that also fail on the base
 branch are skipped, counted apart on the checks line ("· 2 also failing on dev")
 and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
-re-run once per PR commit before any fix; a failure the base head has no result for
+re-run (an Azure build policy re-queued) once per PR commit before any fix; a failure the base head has no result for
 yet waits up to 30 minutes for it; and when the PR is behind its base and the base
 head passes the failing check, the first fix run only merges the base in. Review
 text is untrusted code feedback. Each fix run is an unattended

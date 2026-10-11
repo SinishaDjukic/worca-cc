@@ -273,8 +273,8 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghRerunFailedJobs, ghReplyToThread, ghPrComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
-import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
@@ -5890,7 +5890,7 @@ function prWatchFrame(pipelineId, memberKey) {
 }
 const prWatcher = createPrWatcher({
   originOf: prWatchOrigin,
-  gh: { snapshot: ghPrWatchSnapshot, jobLog: ghFailedJobLog, rerun: ghRerunFailedJobs, reply: ghReplyToThread, comment: ghPrComment },
+  host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
   git: {
     fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
     status: ({ projectDir, branch, remote }) => syncStatus(projectDir, { base: branch, remote }),
@@ -6949,7 +6949,7 @@ app.post('/api/pr', async (req, res) => {
   let watching;
   if (body.watch === true) {
     watching = false;
-    if (provider.forge === 'github' && parseGithubPrUrl(pr.url)) {
+    if (watchablePrUrl(pr.url)) {
       try {
         const w = setWatch({ prUrl: pr.url, pipelineId: pipelineIdForPr, memberKey: memberKey || '', pushRemote, enabled: true, enabledBy: actorOf(req) });
         watching = !!w.enabled;
@@ -6977,7 +6977,7 @@ async function prWatchTarget(src, res) {
   const pr = target.memberKey
     ? readMemberPrStates(state.id || id)[target.memberKey]
     : readPrState(state.id || id);
-  if (!pr?.url || pr.state !== 'OPEN' || !parseGithubPrUrl(pr.url)) { badRequest(res, 'an open github.com pull request is required'); return null; }
+  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub or Azure DevOps pull request is required'); return null; }
   return { state, id: state.id || id, target, pr };
 }
 app.get('/api/pr/watch', async (req, res) => {
@@ -6990,7 +6990,7 @@ app.get('/api/pr/watch', async (req, res) => {
 app.get('/api/pr/checks', async (req, res) => {
   try {
     const t = await prWatchTarget(req.query, res); if (!t) return;
-    const read = (await ghPrChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' };
+    const read = (await prChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' };
     res.json({ ...read, watch: watchView(getWatch(t.pr.url)) });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
@@ -7010,16 +7010,17 @@ app.post('/api/pr/watch', async (req, res) => {
 });
 // POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
 // conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
-const RESOLVE_REFUSALS = {
+/** Resolve's refusals, naming the PR's host (GitHub or Azure DevOps). */
+const resolveRefusals = (host) => ({
   BUSY: [409, 'A fix run is already working on this pull request.'],
-  RATE_LIMITED: [429, 'GitHub is rate limiting Worca; try again in a minute.'],
+  RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
   ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
-  READ_FAILED: [502, 'Could not read the pull request from GitHub.'],
+  READ_FAILED: [502, `Could not read the pull request from ${host}.`],
   PR_CLOSED: [409, 'The pull request is no longer open.'],
-  NO_CONFLICT: [409, 'GitHub reports no merge conflicts on this pull request now.'],
+  NO_CONFLICT: [409, `${host} reports no merge conflicts on this pull request now.`],
   NEEDS_PERSON: [409, 'The branch cannot be fixed unattended right now.'],
   NOT_STARTED: [409, 'The fix run could not start now (the branch is busy, or git did not answer). Try again.'],
-};
+});
 app.post('/api/pr/resolve', async (req, res) => {
   try {
     const body = req.body || {};
@@ -7032,7 +7033,7 @@ app.post('/api/pr/resolve', async (req, res) => {
     const r = await prWatcher.resolveOnce(w);
     broadcast(prWatchFrame(t.id, t.target.memberKey));
     if (r.ok) return res.json(watchView(r.watch));
-    const [status, error] = RESOLVE_REFUSALS[r.code] || [500, 'Could not start the conflict fix.'];
+    const [status, error] = resolveRefusals(FORGE_LABEL[forgeOfPrUrl(t.pr.url)] || 'GitHub')[r.code] || [500, 'Could not start the conflict fix.'];
     const why = r.code === 'NEEDS_PERSON' ? r.watch?.reason : null;
     res.status(status).json({ error: why ? `${error} (${why})` : error, code: r.code, watch: watchView(r.watch) });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
