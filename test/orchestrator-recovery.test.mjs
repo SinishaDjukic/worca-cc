@@ -11,6 +11,7 @@ import { readPipelineForResume, reconcileStaleRunning } from '../src/core/artifa
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { limitResetAt } from '../src/core/recoverable-error.mjs';
 
 useTempHome(after);
 process.env.WORCA_RECOVERY_BACKOFF_MS = '0'; // no real waiting in tests
@@ -363,6 +364,125 @@ test('auto: session-limit pauses the run (not error) and is resumable', async ()
   assert.equal(res.reason, 'usage_limit', 'a machine-readable reason code');
   assert.match(res.detail || '', /session limit/i, 'the cause rides the detail');
   assert.equal(calls, 1, 'a usage cap is NOT retried — it pauses on the first hit');
+});
+
+// A point saved by a usage-limit pause on the first call; `calls` counts producer entries.
+async function limitPausedPoint(dir, err = LIMIT_ERR) {
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: { producer: async () => { throw err(); }, verifier: okVerifier },
+  });
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  return { orch, res };
+}
+
+test('auto: a session-limit pause carries the parsed reset time (done payload + resume point)', async () => {
+  const dir = gitDir();
+  const expected = new Date(limitResetAt(LIMIT_ERR())).toISOString();
+  const { orch, res } = await limitPausedPoint(dir);
+  assert.equal(res.reason, 'usage_limit');
+  assert.equal(res.limitResetAt, expected);
+  assert.equal(orch.getState().limitResetAt, expected);
+  assert.equal(readPipelineForResume(orch.state.id).resumePoint.limitResetAt, expected);
+});
+
+test('auto: a limit message naming no time pauses with limitResetAt null and logs it', async () => {
+  const dir = gitDir();
+  const logs = [];
+  const orch = createOrchestrator({
+    projectDir: dir, prompt: 'demo', auto: true, claude: { mock: true },
+    runners: {
+      producer: async () => { throw new Error("claude exited with code 1: You've hit your session limit."); },
+      verifier: okVerifier,
+    },
+  });
+  orch.on('log', (l) => logs.push(l));
+  const res = await orch.run();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'usage_limit');
+  assert.equal(res.limitResetAt, null);
+  assert.ok(logs.some((l) => l.level === 'info' && /usage-limit reset time not recognised/.test(l.text)), JSON.stringify(logs.map((l) => l.text)));
+  assert.equal('limitResetAt' in readPipelineForResume(orch.state.id).resumePoint, false);
+});
+
+test('resume clears limitResetAt from the live state', async () => {
+  const dir = gitDir();
+  const { orch: orch1 } = await limitPausedPoint(dir);
+  const saved = readPipelineForResume(orch1.state.id);
+  assert.ok(saved.resumePoint.limitResetAt);
+  const orch2 = createOrchestrator({
+    projectDir: dir, auto: true, claude: { mock: true },
+    runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier },
+    resume: saved,
+  });
+  const r2 = await orch2.resume();
+  assert.equal(r2.status, 'done', JSON.stringify(r2));
+  assert.equal(orch2.getState().limitResetAt, null);
+});
+
+test('auto-limit-resume counter: streak continues only on an automatic resume that hits the limit again', async () => {
+  const dir = gitDir();
+  const { orch: orch1 } = await limitPausedPoint(dir);
+  const again = async (autoLimitResume) => {
+    const saved = readPipelineForResume(orch1.state.id);
+    saved.resumePoint.autoLimitResumes = 1;
+    const orch = createOrchestrator({
+      projectDir: dir, auto: true, claude: { mock: true },
+      runners: { producer: async () => { throw LIMIT_ERR(); }, verifier: okVerifier },
+      resume: saved, ...(autoLimitResume ? { autoLimitResume: true } : {}),
+    });
+    const res = await orch.resume();
+    assert.equal(res.status, 'paused', JSON.stringify(res));
+    assert.equal(res.reason, 'usage_limit');
+    return readPipelineForResume(orch1.state.id).resumePoint;
+  };
+  assert.equal((await again(true)).autoLimitResumes, 2);
+  assert.equal('autoLimitResumes' in await again(false), false, 'a manual resume restarts the streak');
+});
+
+test('auto-limit-resume counter: a first-run limit pause has no counter; a finished step ends a streak', async () => {
+  const dir = gitDir();
+  const { orch: orch1 } = await limitPausedPoint(dir);
+  assert.equal('autoLimitResumes' in readPipelineForResume(orch1.state.id).resumePoint, false);
+
+  // step 1 completes, then the next call hits the limit again — on an automatic resume
+  const saved = readPipelineForResume(orch1.state.id);
+  saved.resumePoint.autoLimitResumes = 1;
+  let calls = 0;
+  const orch2 = createOrchestrator({
+    projectDir: dir, auto: true, claude: { mock: true },
+    runners: {
+      producer: async () => { if (++calls === 1) return { status: 'ok', summary: 'done' }; throw LIMIT_ERR(); },
+      verifier: okVerifier,
+    },
+    resume: saved, autoLimitResume: true,
+  });
+  const res = await orch2.resume();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'usage_limit');
+  assert.ok(calls >= 2, 'a step finished before the limit hit');
+  assert.equal('autoLimitResumes' in readPipelineForResume(orch1.state.id).resumePoint, false);
+});
+
+test('auto-limit-resume: a non-limit pause drops both autoLimitResumes and limitResetAt', async () => {
+  const dir = gitDir();
+  const { orch: orch1 } = await limitPausedPoint(dir);
+  const saved = readPipelineForResume(orch1.state.id);
+  saved.resumePoint.autoLimitResumes = 1;
+  let orch2;
+  orch2 = createOrchestrator({
+    projectDir: dir, auto: false, claude: { mock: true },
+    runners: { producer: authOnceProducer(), verifier: okVerifier },
+    resume: saved, autoLimitResume: true,
+  });
+  orch2.on('question', answerWith(() => orch2, 'pause'));
+  const res = await orch2.resume();
+  assert.equal(res.status, 'paused', JSON.stringify(res));
+  assert.equal(res.reason, 'error');
+  const rp = readPipelineForResume(orch1.state.id).resumePoint;
+  assert.equal('autoLimitResumes' in rp, false);
+  assert.equal('limitResetAt' in rp, false);
 });
 
 test('interactive: session-limit pauses WITHOUT opening a recovery prompt', async () => {

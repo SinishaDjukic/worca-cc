@@ -1,0 +1,54 @@
+// test/schedules-view.test.mjs — the view's ticket accessors: every model ticket (upcoming() drops
+// the ones more than a window out), an optimistic upsert by id, and a forget.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+
+const { window } = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/#schedules' });
+for (const k of ['document', 'location', 'DOMParser']) Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true });
+const realFetch = globalThis.fetch;
+after(() => { globalThis.fetch = realFetch; });
+const { createSchedulesView } = await import('../ui/public/schedules-view.mjs');
+
+const summary = { target: 'project', workflowId: 'wf_default', prompt: 'p', source: null, sourceBranch: null, mock: false };
+const ticketAt = (id, ms, extra = {}) => ({ id, kind: 'once', scheduleId: null, title: id, runAt: new Date(Date.now() + ms).toISOString(),
+  scheduledFor: new Date(Date.now() + ms).toISOString(), status: 'scheduled', ifMissed: 'run', graceMin: 360, summary, ...extra });
+const SOON = ticketAt('t_soon', 3600_000);
+const WEEK = ticketAt('t_week', 3 * 86400_000, { resumePipelineId: 'p_1' });
+
+async function mount() {
+  globalThis.fetch = async (url) => {
+    const key = String(url).split('?')[0];
+    const body = key === '/api/schedules' ? { schedules: [], tickets: [SOON, WEEK], counts: {} } : { notifications: [], unread: 0 };
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const host = () => document.createElement('div');
+  const hosts = { feedHost: host(), onceHost: host(), repeatingHost: host() };
+  document.body.replaceChildren(hosts.feedHost, hosts.onceHost, hosts.repeatingHost);
+  const view = createSchedulesView({ ...hosts, msgEl: document.createElement('p'), deps: { confirmModal: async () => true, targetLabel: () => '', workflowLabel: () => '' } });
+  await view.load();
+  return view;
+}
+
+test('tickets() lists every model ticket, including ones upcoming() leaves out', async () => {
+  const view = await mount();
+  try {
+    assert.deepEqual(view.tickets().map((t) => t.id), ['t_soon', 't_week']);
+    assert.deepEqual(view.upcoming(86400_000).map((t) => t.id), ['t_soon'], 'upcoming() drops a ticket more than 24h out');
+  } finally { view.destroy(); }
+});
+
+test('noteTicket() upserts by id; forgetTicket() removes one', async () => {
+  const view = await mount();
+  try {
+    view.noteTicket({ ...WEEK, status: 'firing' });
+    assert.equal(view.tickets().length, 2, 'same id: replaced, not appended');
+    assert.equal(view.tickets().find((t) => t.id === 't_week').status, 'firing');
+    view.noteTicket(ticketAt('t_new', 7200_000, { resumePipelineId: 'p_2' }));
+    assert.deepEqual(view.tickets().map((t) => t.id), ['t_soon', 't_week', 't_new']);
+    view.forgetTicket('t_week');
+    assert.deepEqual(view.tickets().map((t) => t.id), ['t_soon', 't_new']);
+    view.forgetTicket('nope');
+    assert.equal(view.tickets().length, 2, 'an unknown id is a no-op');
+  } finally { view.destroy(); }
+});
