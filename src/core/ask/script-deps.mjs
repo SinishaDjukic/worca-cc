@@ -301,7 +301,7 @@ export function defaultScriptDeps({ threadId, signal = null, io = REAL_IO } = {}
        *  An EXECUTION failure is a RESULT ('error' | 'timeout' | 'stopped') — that is what the
        *  model must read; only a refused request (unknown key, bad input, the bench cap) comes
        *  back as errors. */
-      async test({ key, caseId = null, params = null, ports = null, inputs = null, cwd = { kind: 'scratch' }, timeoutMs = null, pinnedProjectKey = null } = {}) {
+      async test({ key, caseId = null, params = null, ports = null, inputs = null, cwd = { kind: 'scratch' }, timeoutMs = null, pinnedProjectKey = null, draft = null } = {}) {
         if (typeof key !== 'string' || !key.trim()) return { ok: false, errors: [SCRIPT_ERRORS.keyRequired] };
         if (signal && signal.aborted) return { ok: false, errors: [SCRIPT_ERRORS.turnEnded] };
         // The bench refuses `{ text: 123 }` but leaves a bare string UNBOUND (probed: the program then
@@ -341,7 +341,7 @@ export function defaultScriptDeps({ threadId, signal = null, io = REAL_IO } = {}
         if (signal) signal.addEventListener('abort', onAbort, { once: true });
         let result;
         try {
-          result = await io.runBenchOnce({ key, caseId, params, ports, inputs, cwd, timeoutMs }, {
+          result = await io.runBenchOnce({ key, caseId, params, ports, inputs, cwd, timeoutMs, ...(draft ? { draft } : {}) }, {
             onLine: (l) => { lines.push(l.text); },
             onBench: (b) => { live = b; },
           });

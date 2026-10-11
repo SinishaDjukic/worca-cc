@@ -13,7 +13,7 @@
 import { readPluginConfig } from '../plugin-config.mjs';
 import { parseIdList } from './allowlist.mjs';
 import { createRateLimiter } from './rate-limiter.mjs';
-import { renderAway, renderDone, renderError, renderQuestion, renderSchedule } from './renderers.mjs';
+import { renderAway, renderDone, renderError, renderQuestion, renderSchedule, renderPrWatch } from './renderers.mjs';
 import { pauseConsequences } from '../failure-policy.mjs';
 
 /**
@@ -131,6 +131,14 @@ export function createNotifier({ channelHost, getPrefs, chatContext, logger = ()
         let prefs; try { prefs = getPrefs(); } catch { prefs = { notify: {} }; }
         if (prefs.notify?.away === false) return;
         deliver(renderAway(text));
+      } catch (err) { logger('error', `chat notifier: ${err?.message || err}`); }
+    },
+
+    notifyPrWatch(event) {
+      try {
+        let prefs; try { prefs = getPrefs(); } catch { prefs = { notify: {} }; }
+        if (prefs.notify?.prWatch === false) return;
+        deliver(renderPrWatch(event));
       } catch (err) { logger('error', `chat notifier: ${err?.message || err}`); }
     },
 

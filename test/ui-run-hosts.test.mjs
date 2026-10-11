@@ -10,6 +10,7 @@ import { JSDOM } from 'jsdom';
 import { createGraphView } from '../ui/public/graph/view.mjs';
 import { manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { NODE_W } from '../src/shared/graph/geometry.mjs';
 
 const MANIFEST = {
   version: 2, template: { id: 'wf_t', name: 'T' },
@@ -103,8 +104,8 @@ test('setNodeChrome paints --c, the gate pip and header totals, setWireBadge wri
       view.setNodeChrome('n_a', { color: 'violet', gate: { wireId: 'w1', title: 'waiting on a loop gate' }, totals: { dur: '2m 10s', cost: '$0.42' } });
       assert.equal(card.style.getPropertyValue('--c'), 'var(--violet)');
       assert.equal(card.querySelector('.ngate').dataset.wireId, 'w1');
-      assert.equal(card.querySelector('.nrun .dur').textContent, '2m 10s');
-      assert.equal(card.querySelector('.nrun .cost').textContent, '$0.42');
+      assert.equal(card.querySelector('.nlabel > .nrun .dur').textContent, '2m 10s');
+      assert.equal(card.querySelector('.nlabel > .nrun .cost').textContent, '$0.42');
       assert.equal(card.classList.contains('run-node'), true, 'the 1s tick hook selects .run-node[data-id] .dur');
       assert.equal(card.dataset.id, 'n_a');
       view.setNodeChrome('n_a', { color: '', gate: null, totals: null });
@@ -148,7 +149,7 @@ test('applyDecor paints statuses, the collapsed strip, ants and badges; expandin
   assert.equal(card.querySelector('.xsum').textContent, '2 runs · $0.12');
   assert.equal(card.querySelectorAll('.xrow').length, 0, 'collapsed by default');
   assert.equal(card.querySelector('.ngate').dataset.wireId, 'w1');
-  assert.equal(card.querySelector('.nrun .dur').textContent, '1m 7s');
+  assert.equal(card.querySelector('.nlabel > .nrun .dur').textContent, '1m 7s');
   assert.equal(host.querySelector('.wbadge[data-wire-id="w1"] .wfired').textContent, '2×');
   assert.equal(host.querySelector('path[data-wire-id="w1"]').classList.contains('wire-live'), true);
 
@@ -258,7 +259,7 @@ const xform = (world) => {
 };
 const zoomOf = (world) => (xform(world) || { z: NaN }).z;
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} ≠ ${b}`);
-// A graph 2652px wide (nodes at x 0 and 2400 + NODE_W 220 + 2×16 pad) in an 800px card.
+// A graph 2400 + NODE_W + 2×16 pad wide (nodes at x 0 and 2400) in an 800px card.
 const WIDE = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 2400 }], wires: MANIFEST.graph.wires } };
 // A vertically stacked graph: the HEIGHT (not the width) decides the fit.
 const TALL = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 0, y: 500 }], wires: MANIFEST.graph.wires } };
@@ -271,18 +272,19 @@ test('the static host fit: centres a graph that fits at ≤1×, left-aligns and 
       m.update('run1', MANIFEST, decorFromState(RUN()));
       const world = host.querySelector('.gv-world');
       assert.ok(world, 'the world is rendered');
-      // bounds(16) = 652×175.5 into 768×268 → z = min(1.178, 1.527) clamped to 1; centred, then inset by 16.
+      // bounds(16) into 768×268 → z clamped to 1; centred, then inset by 16.
       const t = xform(world);
+      const b = m.view.bounds(16);
       assert.equal(t.z, 1, 'fit never magnifies past 1×');
-      near(t.x, 90, 'x = 16 + (768 − 652)/2 + 16');
-      near(t.y, 78.25, 'y = 16 + (268 − 175.5)/2 + 16');
+      near(t.x, 16 + (768 - b.w) / 2 - b.x, 'x = 16 + (768 − b.w)/2 − b.x');
+      near(t.y, 16 + (268 - b.h) / 2 - b.y, 'y = 16 + (268 − b.h)/2 − b.y');
       assert.equal(host.style.width, '', 'a graph that fits leaves the host at the wrap width');
       assert.equal(host.classList.contains('gv-host'), true, 'the host drops the v1 flex box (style.css .run-flow.gv-host)');
       assert.deepEqual([...wrap.classList], ['run-flow-wrap', 'gv-wrap', 'gv-wrap-static']);
       assert.equal(wrap.querySelector('.rg-hint'), null, 'no hint chip on a static host');
       // Headers come from the MANIFEST (History renders with the registry absent).
-      const head = host.querySelector('[data-node-id="n_a"] .nhead');
-      assert.equal(head.className, 'nhead h-violet');
+      const head = host.querySelector('[data-node-id="n_a"] .nlabel');
+      assert.ok(head.querySelector('.ltile').classList.contains('h-violet'), 'the tile carries the manifest colour');
       assert.equal(head.querySelector('.tt').textContent, 'Planner');
       const before = world.style.transform;
       host.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 10, clientY: 10, bubbles: true }));
@@ -295,7 +297,7 @@ test('the static host fit: centres a graph that fits at ≤1×, left-aligns and 
       const t = xform(host.querySelector('.gv-world'));
       near(t.z, 0.3, 'the floor');
       // sw = 2652 × 0.3 = 795.6 > 768 → host width = ceil(795.6 + 32); x = 16 − b.x·z = 16 + 16×0.3.
-      assert.equal(host.style.width, '828px');
+      assert.equal(host.style.width, `${Math.ceil((2400 + NODE_W + 32) * 0.3 + 32)}px`);
       near(t.x, 20.8, 'left-aligned at the 16px inset, not centred');
     } },
     { name: 'the static fit is capped by STATIC_HOST_H, not just by the width', run: async () => {
@@ -371,7 +373,7 @@ test('nodeClicks: a card that has run opens its running (else latest) execution;
   assert.equal(card.tabIndex, 0);
   assert.equal(card.getAttribute('aria-label'), 'Show the live log of Planner');
   assert.equal(end.getAttribute('role'), null, 'a card that never ran has no log to open');
-  click(card.querySelector('.nhead .tt'));
+  click(card.querySelector('.nlabel .tt'));
   assert.deepEqual(calls, [['row', 'x:n_a:2', 'n_a']], 'the RUNNING execution, not the first');
   click(end);
   click(card.querySelector('.xtoggle'));
@@ -428,7 +430,7 @@ test('destroy() unbinds everything, gives the host back untouched, and re-arms b
       calls = [];
       const { m, host, wrap, window } = mountHost('static');
       m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
-      assert.equal(host.style.width, '828px');
+      assert.equal(host.style.width, `${Math.ceil((2400 + NODE_W + 32) * 0.3 + 32)}px`);
       m.destroy();
       assert.equal(host.querySelector('.gv-world'), null, 'the view is torn down');
       assert.equal(host.style.width, '', 'the inline width is cleared');
@@ -480,7 +482,7 @@ test('the static fit is idempotent: it clears its own inline width BEFORE measur
   const { m, host } = mountLiveWidthHost();
   m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
   const w1 = host.style.width;
-  assert.equal(w1, '828px', 'the wide fixture overflows the card, so the host is widened inline');
+  assert.equal(w1, `${Math.ceil((2400 + NODE_W + 32) * 0.3 + 32)}px`, 'the wide fixture overflows the card, so the host is widened inline');
   const t1 = xform(host.querySelector('.gv-world'));
   m.fit();
   assert.equal(host.style.width, w1, 'a second fit measures the CARD, not the width it just wrote');
@@ -523,7 +525,7 @@ test('a hidden host (0×0) is never fitted — on EITHER host — and the first 
   assert.equal(stat.host.style.width, '', 'and writes no inline width off a 0-width measurement');
   stat.box.width = 800;
   stat.m.update('run1', WIDE, decorFromState(RUN({ stepper: WIDE })));
-  assert.equal(stat.host.style.width, '828px', 'the reveal fits the card');
+  assert.equal(stat.host.style.width, `${Math.ceil((2400 + NODE_W + 32) * 0.3 + 32)}px`, 'the reveal fits the card');
 });
 
 // ── app.js: version arms ────────────────────────────────────────────────────
@@ -1077,11 +1079,11 @@ test('view.bounds(pad, ids) measures only the named nodes', () => {
   const all = m.view.bounds(0);
   const one = m.view.bounds(0, ['n_c']);
   assert.equal(one.x, 600);
-  assert.equal(one.w, 220, 'one card wide');
-  assert.equal(all.w, 1120, 'no filter keeps the whole graph');
+  assert.equal(one.w, NODE_W, 'one card wide');
+  assert.equal(all.w, 900 + NODE_W, 'no filter keeps the whole graph');
   const two = m.view.bounds(10, ['n_b', 'n_d']);
   assert.equal(two.x, 290);
-  assert.equal(two.w, 900 + 220 - 300 + 20);
+  assert.equal(two.w, 900 + NODE_W - 300 + 20);
   assert.equal(m.view.bounds(0, ['nope']), null, 'no named node on the canvas → nothing to measure');
 });
 

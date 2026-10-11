@@ -259,10 +259,10 @@ test('New run opens #new from any page, a started run\'s page included, and is n
   } })));
 });
 
-test('the sidebar has no New run row: 14 pages, Runs first; New run is the top bar\'s button', () => {
+test('the sidebar has no New run row: 12 pages, Runs first; New run is the top bar\'s button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.querySelector('.nav [data-nav="new"]'), null);
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14);
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'runs');
 });
 
@@ -325,7 +325,7 @@ test('the pages carry no title of their own: the top bar\'s h1 is the page name;
   for (const bar of doc.querySelectorAll('.topbar')) {
     assert.ok(bar.textContent.trim() || bar.querySelector('button, a, select'), `an empty .topbar is left in ${bar.closest('[data-view]')?.dataset.view}`);
   }
-  assert.equal(doc.querySelector('[data-view="composer"] .topbar'), null, 'the Composer\'s title-only bar is gone');
+  assert.equal(doc.querySelector('[data-view="workflows"] .topbar'), null, 'the Workflows view has no title-only bar');
   assert.ok(doc.querySelector('[data-view="new"] .topbar .sub'), 'the sub lines stay');
   assert.equal(ruleBody('.topbar h1'), null);
   assert.equal(ruleBody('.runs-head h1'), null);
@@ -341,7 +341,7 @@ test('#topnav-title names the open page on every route', async () => {
   await checkRows([
     ['stats', 'Statistics'], ['runs', 'Runs'], ['running/r1', 'Runs'], ['history/proj-00000001/p1', 'Runs'],
     ['settings', 'Settings'], ['settings/memory', 'Settings'], ['getting-started', 'Getting started'],
-    ['workspace-create', 'New workspace'], ['agent-create', 'New agent'], ['agents', 'Agents'],
+    ['workspace-create', 'New workspace'], ['workflows', 'Workflows'],
     ['marketplace', 'Marketplace'], ['projects', 'Projects'], ['new', 'New run'],
   ].map(([hash, title]) => ({ name: `#${hash} → ${title}`, run: async () => {
     await go(hash);

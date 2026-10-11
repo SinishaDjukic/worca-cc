@@ -1366,6 +1366,7 @@ export class RunHarness extends EventEmitter {
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
         startedBy: this.opts.startedBy || null,
+        prWatchRunId: this.opts.prWatchRunId || null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -4004,11 +4005,13 @@ export class RunHarness extends EventEmitter {
    * commit, and it does not survive teardown.
    *
    * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
-   * offline); no worktree was created; or the graphify binary is not on PATH.
-   * On build failure/timeout the run proceeds with no graph instruction.
+   * offline); the workflow opts out (codeGraph: false); no worktree was created; or
+   * the graphify binary is not on PATH. On build failure/timeout the run proceeds
+   * with no graph instruction.
    */
   async _buildWorktreeGraph() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    if (this._skipCodeGraph()) { this.toolInstruction = ''; return; }
     if (this.workDir === this.projectDir) {
       this._log('graph', 'debug', 'No worktree (workDir===projectDir); skipping in-worktree graph build.');
       return; // building "in the worktree" would write into main
@@ -4040,6 +4043,14 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** The run's workflow opted out of the code graph (`codeGraph: false` on the template, frozen
+   *  into the manifest, so a resume decides the same). Logs once per build site. */
+  _skipCodeGraph() {
+    if (this.state.stepper?.codeGraph !== false) return false;
+    this._log('graph', 'info', 'The workflow does not use a code graph; skipping the graphify build.');
+    return true;
+  }
+
   /**
    * Workspace graph builds (D4): build a graphify graph inside EACH member worktree
    * in parallel (cap 4), storing this.toolInstructions[projectKey]. Fail-safe per
@@ -4050,6 +4061,7 @@ export class RunHarness extends EventEmitter {
    */
   async _buildWorktreeGraphAll() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    if (this._skipCodeGraph()) { for (const m of this.members) this.toolInstructions.set(m.projectKey, ''); return; }
     const dirs = this.members.map((m) => resolve(m.projectDir));
     const toolsByDir = await detectToolsPerProject(dirs); // never throws
     await mapWithCap(this.members, 4, async (m) => {

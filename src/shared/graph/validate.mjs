@@ -567,3 +567,6 @@ export const RULES = [
     }
   } },
 ];
+
+/** The warnings the editor surfaces on a card (D15). V15 (unreachable) is left to the "ports to wire" chip. */
+export const CANVAS_WARNING_CODES = Object.freeze(['V16', 'V17', 'V18', 'V19']);

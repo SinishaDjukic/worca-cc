@@ -1,6 +1,7 @@
 // src/shared/graph/layout.mjs
 // Auto-layout for the composer's header button: longest-path ranks with LOOP
-// WIRES EXCLUDED, columns at x = 60 + rank*320, barycenter ordering inside each
+// WIRES EXCLUDED (a card fed only by loop wires goes one column after the cards
+// it collects from), columns at x = 60 + rank*320, barycenter ordering inside each
 // column, y stacked so no two cards touch and snapped to the 11px grid.
 // Deterministic by construction — same template in, same positions out, and
 // re-running over an already laid-out template reproduces it exactly.
@@ -58,12 +59,24 @@ export function rankNodes(tpl, loops) {
 }
 
 /** @returns {{[nodeId:string]: {x:number, y:number}}} — the caller applies them. */
-export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP } = {}) {
+export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK_Y0, gap = ROW_GAP, describe = false } = {}) {
   const nodes = (Array.isArray(tpl?.nodes) ? tpl.nodes : []).filter(isNode);
   const loops = classifyLoops(tpl, portsFn);
   const rank = rankNodes(tpl, loops);
   const ids = new Set(nodes.map((n) => n.id));
   const edges = nonLoopEdges(tpl, loops, ids);
+  const loopFrom = loopOnlyCards(tpl, loops, ids, edges);
+  // A card fed ONLY by loop wires (the OR that collects every reviewer's findings) ranked 0 above: its
+  // wires were cut. Rank it after the cards it collects from, so they reach it as short forward wires and
+  // ONE wire returns. Bounded passes: a loop-only card fed by another settles, a cycle of them cannot hang.
+  for (let pass = 0; pass < loopFrom.size; pass += 1) {
+    let moved = false;
+    for (const [id, srcs] of loopFrom) {
+      const r = Math.max(...srcs.map((src) => rank[src])) + 1;
+      if (r > rank[id]) { rank[id] = r; moved = true; }
+    }
+    if (!moved) break;
+  }
 
   const columns = new Map();
   for (const n of nodes) {
@@ -75,7 +88,7 @@ export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK
   // Barycenter: sweep left to right, ordering each column by the mean row index
   // of its predecessors. A node with no ranked predecessor keeps its index, so
   // the pass is stable.
-  const preds = new Map();
+  const preds = new Map(loopFrom);           // a loop-only card sits by the cards it collects from
   for (const e of edges) {
     if (!preds.has(e.to)) preds.set(e.to, []);
     preds.get(e.to).push(e.from);
@@ -87,26 +100,47 @@ export function autoLayout(tpl, portsFn, { x0 = RANK_X0, dx = RANK_DX, y0 = RANK
         if (prevRank >= r) break;
         columns.get(prevRank).forEach((id, i) => rowOf.set(id, i));
       }
-      const keyed = columns.get(r).map((id, i) => ({ id, i, bary: barycenter(preds.get(id), rowOf, i) }));
-      keyed.sort((a, b) => a.bary - b.bary || a.i - b.i);
+      const keyed = columns.get(r).map((id, i) => ({ id, i, late: loopFrom.has(id) ? 1 : 0, bary: barycenter(preds.get(id), rowOf, i) }));
+      keyed.sort((a, b) => a.bary - b.bary || a.late - b.late || a.i - b.i);   // on a tie it stacks UNDER the main row
       columns.set(r, keyed.map((k) => k.id));
     }
   }
 
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const heightOf = (node) => {
+    const ports = (typeof portsFn === 'function' ? portsFn(node) : null) || { inputs: [], outputs: [] };
+    return nodeSize(node, ports, { describe }).h;   // edit hosts bill the description footer
+  };
   const positions = {};
   for (const r of ranksAscending) {
     let cursor = y0;
     for (const id of columns.get(r)) {
       const node = byId.get(id);
-      const ports = (typeof portsFn === 'function' ? portsFn(node) : null) || { inputs: [], outputs: [] };
-      const { h } = nodeSize(node, ports);
+      const h = heightOf(node);
+      // A loop-only card clears the bottoms of the cards it collects from: its loops come DOWN to it.
+      for (const src of loopFrom.get(id) || []) {
+        if (positions[src]) cursor = Math.max(cursor, positions[src].y + heightOf(byId.get(src)) + gap);
+      }
       const y = snap(cursor);
       positions[id] = { x: x0 + r * dx, y };
       cursor = y + h + gap;                 // stack from the SNAPPED row: idempotent
     }
   }
   return positions;
+}
+
+/** card id -> the sources of its loop wires, for every card that NO other wire feeds (sorted: deterministic). */
+function loopOnlyCards(tpl, loops, ids, edges) {
+  const loopWireIds = loops?.loopWireIds instanceof Set ? loops.loopWireIds : new Set();
+  const fed = new Set(edges.map((e) => e.to));
+  const out = new Map();
+  for (const w of Array.isArray(tpl?.wires) ? tpl.wires : []) {
+    if (!loopWireIds.has(w?.id) || !ids.has(w?.from?.node) || !ids.has(w?.to?.node)) continue;
+    if (w.from.node === w.to.node || fed.has(w.to.node)) continue;
+    if (!out.has(w.to.node)) out.set(w.to.node, []);
+    out.get(w.to.node).push(w.from.node);
+  }
+  return new Map([...out].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([id, srcs]) => [id, [...new Set(srcs)].sort()]));
 }
 
 function nonLoopEdges(tpl, loops, ids) {

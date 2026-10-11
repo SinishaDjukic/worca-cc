@@ -16,10 +16,10 @@ test('every string that names the page reads "New run"', () => {
     ['ui/public/app.js', "emptyText: 'No runs yet. Start one from New run.'"],
     ['ui/public/engine-settings-view.mjs', "hint: 'New run starts on this engine. You can still switch per run.'"],
     ['ui/public/memory-view.mjs', ' — pick another project on the New run page.`'],
-    ['ui/public/models-view.mjs', "'Drops the built-ins from every model picker — New run, the composer, Ask Worca, title generation."],
+    ['ui/public/models-view.mjs', "'Drops the built-ins from every model picker — New run, the Workflows view, Ask Worca, title generation."],
     ['ui/public/schedules-view.mjs', "', then describe the task — or use Schedule… next to Start run on New run.'"],
     ['ui/public/stats-view.mjs', "'No pipelines yet — run one from New run.'"],
-    ['ui/public/ui-level.mjs', "adds: 'Shows: New run, Runs, Projects, budget limits and Ask Worca.'"],
+    ['ui/public/ui-level.mjs', "adds: 'Shows: New run, Runs, Projects, Workflows (agents and scripts included), budget limits and Ask Worca.'"],
     ['src/core/ask/prompt.mjs', "The team\\'s default guardrail set only preselects the New run picker."],
     ['src/core/policy/registry.mjs', "help: 'What the New run picker starts on."],
   ]) assert.ok(read(file).includes(text), `${file}: ${text}`);

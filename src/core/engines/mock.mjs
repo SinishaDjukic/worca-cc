@@ -11,6 +11,7 @@ import { normalizeShape } from '../../shared/graph/assemble.mjs';
 import { extractText, extractResultCost } from './claude.mjs';
 import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspace-scan-mock.mjs';
 import { safeEmit } from './spawn.mjs';
+import { writeMockC4 } from '../c4-mock.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -52,6 +53,22 @@ function tryParseMockJson(raw) {
   }
 }
 
+/** The MOCK_ASK_FORM body, or null. MOCK_ASK_FORM_DATA (`<file>#<key>`) replaces its `data` with
+ *  a JSON file an earlier card wrote into the pipeline dir (beside `askPath`), so a mock form shows
+ *  what THIS run found; a missing file or key keeps the marker's own data. */
+async function mockFormBody(m, askPath) {
+  const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+  if (formBody && m.MOCK_ASK_FORM_DATA && askPath) {
+    const [file, key] = String(m.MOCK_ASK_FORM_DATA).split('#');
+    const src = /^[A-Za-z0-9_.-]+$/.test(file || '')
+      ? tryParseMockJson(await readFile(join(dirname(askPath), file), 'utf8').catch(() => ''))
+      : null;
+    const data = src && (key ? src[key] : src);
+    if (data && typeof data === 'object') formBody.data = data;
+  }
+  return formBody;
+}
+
 async function ensureDir(filePath) {
   await mkdir(dirname(filePath), { recursive: true });
 }
@@ -85,7 +102,7 @@ export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review',
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
   'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
-  'workspace-usage', 'workspace-synth',
+  'workspace-usage', 'workspace-synth', 'c4-architect',
 ]);
 
 /** Named so the executor's mock-role chain and the switch cannot drift apart. */
@@ -102,7 +119,7 @@ export const MOCK_ROLE_MEMORY_DEFRAG = 'memory-defrag';
  */
 const MOCK_FANOUT_ROLES = new Set([
   'planner-plan', 'refiner', 'implementer', 'plan-review',
-  'workspace-reviewer', 'workspace-scan', 'workspace-usage',
+  'workspace-reviewer', 'workspace-scan', 'workspace-usage', 'c4-architect',
 ]);
 
 /**
@@ -170,6 +187,8 @@ function emitRaw(onEvent, raw) {
 }
 
 const ASK_CONTEXT_BLOCK_RE = /\[worca context\][\s\S]*?\[\/worca context\]\s*/;
+// The Workflows chat's open canvas (canvas-summary.mjs; forged markers inside are rewritten, so the first end is its own).
+const COMPOSER_CANVAS_BLOCK_RE = /\[composer canvas\][\s\S]*?\[\/composer canvas\]\s*/;
 
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
@@ -191,7 +210,7 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '');
+  const userText = String(prompt ?? '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '');
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
@@ -451,7 +470,7 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written
     // verbatim. Unparseable => the canned questions body, so a typo degrades to
     // today's behaviour instead of writing garbage the gate then refuses.
-    const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+    const formBody = await mockFormBody(m, m.MOCK_ASK);
     const body = formBody || {
       questions: [{ id: 'q1', question: `Mock question from ${role}?`, options: ['Option A', 'Option B'], allowFreeText: true }],
     };
@@ -526,6 +545,9 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     case 'deck-export':
       text = await mockDeckExport(m, cycle, onEvent);
       break;
+    case 'c4-architect':
+      text = await mockC4Architect(m, cwd, onEvent);
+      break;
     default:
       await emitLog(onEvent, `[mock] no side effects for unknown role`);
       break;
@@ -569,7 +591,7 @@ async function mockClarify(m, cycle, onEvent) {
   // MOCK_ASK_FORM (ask-forms §4): a one-line {"form","data"} payload, written VERBATIM
   // to the answers port instead of the canned questions — the clarifier's half of the
   // marker (the producer's half is the MOCK_ASK arm in runMock). Unparseable => canned.
-  const formBody = m.MOCK_ASK_FORM ? tryParseMockJson(m.MOCK_ASK_FORM) : null;
+  const formBody = out ? await mockFormBody(m, out) : null;
   const payload = formBody || (hasPrior
     ? { questions: [] }
     : {
@@ -697,6 +719,16 @@ const MOCK_PDF = Buffer.from(
 
 /** Writes deck-manifest.md (MOCK_OUT) plus deck/{deck,proof}.html and stub kit
  *  copies beside it — the subfolder tree the sidecar's extraFiles index. */
+/** The Architecture (C4) architect: a small real LikeC4 file that honours the setup answers, and
+ *  the `model` envelope the check and render cards read (src/core/c4-mock.mjs). */
+async function mockC4Architect(m, cwd, onEvent) {
+  if (!m.MOCK_OUT) return '[mock] c4-architect: no MOCK_OUT given';
+  const env = writeMockC4({ modelPath: m.MOCK_OUT, cwd });
+  await emitLog(onEvent, `[mock] c4 architect ${env.created ? 'created' : 'updated'} ${env.path}`);
+  safeEmit(onEvent, { type: 'tool_use', text: `wrote ${env.path}`, raw: { mock: true, file: m.MOCK_OUT } });
+  return `[mock] C4 model ${env.created ? 'written' : 'updated'}: ${env.path}`;
+}
+
 async function mockDeckBuilder(m, onEvent) {
   const out = m.MOCK_OUT;
   if (!out) return '[mock] deck-builder: no MOCK_OUT given';

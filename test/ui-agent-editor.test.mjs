@@ -72,8 +72,8 @@ async function boot({ fetchHandler } = {}) {
   return { window, ws: () => WSStub.last }; // ws accessor: Task 7's wizard tests destructure it
 }
 const click = (window, node) => node.dispatchEvent(new window.Event('click', { bubbles: true }));
-const goAgents = async (window) => {
-  window.location.hash = 'agents';
+const goAgents = async (window, key) => {
+  window.location.hash = `workflows/agents/${key}`;
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
@@ -94,7 +94,7 @@ test('Edit opens the pane, fills fields via .value (markup inert), and PUTs the 
       return null;
     },
   });
-  await goAgents(window);
+  await goAgents(window, 'docsWriter');
   const doc = window.document;
   const card = doc.querySelector('.agent-card[data-agent-key="docsWriter"]');
   click(window, card.querySelector('.agent-edit'));
@@ -134,7 +134,7 @@ test('a derived description is shown as a placeholder, never pre-filled, and nev
       return null;
     },
   });
-  await goAgents(window);
+  await goAgents(window, 'derivedDesc');
   const card = window.document.querySelector('.agent-card[data-agent-key="derivedDesc"]');
   click(window, card.querySelector('.agent-edit'));
   await new Promise((r) => setTimeout(r, 0));
@@ -152,8 +152,8 @@ test('a 400 on save keeps the pane open and surfaces the store rule VERBATIM', a
   const { window } = await boot({ fetchHandler: (u, opts) => (u.includes('/api/agents/docsWriter') && opts && opts.method === 'PUT'
     ? Promise.resolve({ ok: false, status: 400, json: async () => ({ error: rule }) })
     : null) });
-  await goAgents(window);
-  const card = window.document.querySelectorAll('.agent-card')[1];
+  await goAgents(window, 'docsWriter');
+  const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
   click(window, card.querySelector('.agent-edit'));
   await new Promise((r) => setTimeout(r, 0));
   const pane = card.querySelector('.agent-edit-pane');
@@ -185,7 +185,7 @@ test('a PUT result\'s warnings make a warn toast; updatedVariants make an ok toa
     }
     return null;
   } });
-  await goAgents(window);
+  await goAgents(window, 'docsWriter');
   const editAndSave = async () => {
     const card = window.document.querySelector('.agent-card[data-agent-key="docsWriter"]');
     click(window, card.querySelector('.agent-edit'));
