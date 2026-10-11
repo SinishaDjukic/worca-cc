@@ -257,3 +257,22 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.equal(after.baseResolve.runId, runId);
   updateBranchRecords(conflict.id, [conflict.key], (b) => { delete b.baseResolve; });
 });
+
+test('Watch PR merge-first without an agent: a clean base becomes a merge commit on the exact head; conflicts do not', async () => {
+  const merge = mod._testing.prWatchMergeBase;
+  const wl = makeWorld(root); commitOnFeat(wl, 'f.txt', 'feature\n'); teammatePush(wl, 'g.txt', 'u\n');
+  const head = g(wl.a, 'rev-parse', 'feat');
+  assert.deepEqual(await merge({ projectDir: wl.a, branch: 'feat', base: 'dev', remote: 'origin', headSha: 'f'.repeat(40) }),
+    { ok: true, merged: false, status: 'clean' }, 'a head other than the preflight one is left alone');
+  const r = await merge({ projectDir: wl.a, branch: 'feat', base: 'dev', remote: 'origin', headSha: head });
+  assert.equal(r.merged, true);
+  assert.equal(g(wl.a, 'rev-parse', 'feat'), r.to);
+  assert.equal(g(wl.a, 'rev-parse', `${r.to}^1`), head);
+  assert.equal(g(wl.a, 'rev-parse', `${r.to}^2`), r.baseSha);
+  const wc = makeWorld(root); commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n');
+  const before = g(wc.a, 'rev-parse', 'feat');
+  assert.deepEqual(await merge({ projectDir: wc.a, branch: 'feat', base: 'dev', remote: 'origin', headSha: before }),
+    { ok: true, merged: false, status: 'conflicts' });
+  assert.equal(g(wc.a, 'rev-parse', 'feat'), before);
+});
+

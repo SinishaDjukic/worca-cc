@@ -269,7 +269,7 @@ import {
 } from '../src/core/worktree.mjs';
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
-  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, startConflictMerge, branchCheckouts,
+  INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
 } from '../src/core/git-sync.mjs';
 import {
   projectSyncBlock, workspaceSyncBlocks, effectiveSyncSettings, projectSyncEvents, startProjectSyncBackground,
@@ -5888,6 +5888,13 @@ function terminalResolveOnBranch({ projectDir, branch }) {
       && m.br?.feature === branch && m.br?.baseResolve?.via === 'terminal');
   });
 }
+/** Merge-first with no agent (#620's Update branch merge): only a clean merge onto the exact preflight head. */
+async function prWatchMergeBase({ projectDir, branch, base, remote, headSha }) {
+  const c = await checkBaseMerge(projectDir, { base, feature: branch, remote, maxAgeMs: INTERACTIVE_TTL_MS });
+  if (c.status !== 'clean' || c.headSha !== headSha) return { ok: true, merged: false, status: c.status };
+  const r = await mergeBaseInto(projectDir, { feature: branch, baseSha: c.baseSha, headSha, baseRef: c.baseRef, tree: c.tree, remote: c.remote });
+  return r.ok ? { ok: true, merged: true, to: r.to, baseSha: c.baseSha } : { ok: false, kind: r.kind, error: r.error };
+}
 /** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
  *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
 function prWatchOrigin(w) {
@@ -5918,6 +5925,7 @@ const prWatcher = createPrWatcher({
     push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
     subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
     checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
+    mergeBase: prWatchMergeBase,
   },
   // A person resolving in a terminal holds the branch like a live run: the watcher waits for them.
   liveOnBranch: (where) => liveRunOnBranch(where) || terminalResolveOnBranch(where),
@@ -5941,6 +5949,7 @@ const prWatcher = createPrWatcher({
     if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
   },
   notify: (event) => chatNotifier.notifyPrWatch(event),
+  audit: (pipelineId, text) => appendAuditById(pipelineId, text, { actor: 'pr-watch' }),
   onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
   log: (m) => console.warn(`[worca-ui] ${m}`),
 });
@@ -14069,6 +14078,6 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

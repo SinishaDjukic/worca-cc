@@ -279,6 +279,8 @@ const LIVE = new Set(['starting', 'running', 'paused']);
  *   host.{snapshot, jobLog, reply, comment, rerun}  (by the PR URL's forge: GitHub or Azure DevOps)
  *   git.{fetch, status, fastForward, push}   ({ projectDir, branch, remote }); git.subjects({ projectDir, from, to }) → { ok, subjects }
  *                                     git.checkMerge({ projectDir, baseSha, from, to }) → { ok, merged, markers }
+ *                                     git.mergeBase({ projectDir, branch, base, remote, headSha }) → { ok, merged, to?, baseSha? }:
+ *                                     a merge commit with no agent when the base merges cleanly (merged false otherwise)
  *   liveOnBranch({ projectDir, branch }) → true while a live, paused or finishing run uses that exact branch
  *                                     (or a person resolves its conflicts in a terminal)
  *   freeCheckout({ projectDir, branch })   → releases a verified idle Worca checkout, throws coded errors
@@ -287,7 +289,7 @@ const LIVE = new Set(['starting', 'running', 'paused']);
  *                             runs under a new run id; by the reserved run id only before that)
  *   pipelineStatus(id)      → durable pipeline status | null
  *   attachPr(pipelineId, pr) → persist the PR facts on the fix row (throws when not persisted)
- *   notify({ kind, title, message }), onChange(watch)
+ *   notify({ kind, title, message }), onChange(watch), audit?(pipelineId, text)
  */
 export function createPrWatcher(deps = {}) {
   const now = deps.now || Date.now;
@@ -375,6 +377,12 @@ export function createPrWatcher(deps = {}) {
         if (!f?.ok) return retry(w, 'preflight', f || {});
       }
       triggers = { ...triggers, conflict: { ...triggers.conflict, remote } };
+      if (triggers.conflict.why === 'behind' && deps.git.mergeBase) {
+        const m = await deps.git.mergeBase({ projectDir: origin.projectDir, branch: origin.branch, base: triggers.conflict.base,
+          remote, headSha: pre.startSha });
+        if (m?.ok && m.merged) return pushCleanMerge(w, origin, triggers, pre, m);
+        // Conflicts, or git could not merge here: the agent's merge-first run below.
+      }
     }
 
     const logs = [];
@@ -418,6 +426,23 @@ export function createPrWatcher(deps = {}) {
     }
     notify('started', cur || reserved, once ? 'Conflict fix started.' : `Fix run ${reserved.fixRuns} of ${MAX_FIX_RUNS} started.`);
     return cur;
+  }
+
+  /** Merge-first when the base merges cleanly: the merge commit is already on the local branch, with no
+   *  agent and no fix run. The fix run's merge guards, then a plain push; a refused push needs a person. */
+  async function pushCleanMerge(w, origin, triggers, pre, m) {
+    const where = { projectDir: origin.projectDir, branch: origin.branch, remote: remoteOf(w) };
+    const { base } = triggers.conflict;
+    const c = await deps.git.checkMerge({ projectDir: origin.projectDir, baseSha: m.baseSha, from: pre.startSha, to: m.to });
+    if (!c?.ok || !c.merged || c.markers.length) return needsPerson(w, c?.ok && c.merged ? 'conflict-markers' : 'base-not-merged');
+    const pushed = await deps.git.push(where);
+    if (!pushed?.ok) return needsPerson(w, 'push-refused');
+    w = transition(w, { handled: [...w.handled, ...triggers.handledKeys] });
+    const short = String(m.to).slice(0, 7);
+    try { deps.audit?.(origin.pipelineId, `Watch PR merged \`${base}\` into \`${origin.branch}\` (${short}, no fix run) and pushed it to \`${where.remote}\`.`); }
+    catch { /* the audit line is best effort */ }
+    notify('published', w, `Merged ${base} in and pushed ${short}.`);
+    return w;
   }
 
   function endWatch(w, state, patch = {}) {

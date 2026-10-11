@@ -836,3 +836,46 @@ test('the watcher merges the base in first when the PR is behind and the base he
   w = getWatch(URL);
   assert.deepEqual([w.status, w.fixRuns], ['watching', 1]);
 });
+
+test('merge-first with a clean base: a merge commit with no agent, the merge guards, a push, no fix run', async () => {
+  const origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  const { io, deps, watcher } = harness({ pr: openPr({ base: 'main', baseSha: 'B1', behindBy: 4, contexts: [named('unit')], basePassing: ['unit'], baseSettled: true }) });
+  const audits = [];
+  deps.audit = (pid, text) => audits.push([pid, text]);
+  deps.git.mergeBase = async (a) => { io.calls.mergeBase = a; io.repo.headSha = 'M1'; io.repo.ahead = 1; return { ok: true, merged: true, to: 'M1', baseSha: 'B2' }; };
+  await watcher.tick();
+  assert.deepEqual(io.calls.mergeBase, { projectDir: '/repo', branch: 'feat/x', base: 'main', remote: 'origin', headSha: 'R1' });
+  assert.equal(io.calls.start.length, 0, 'no agent run');
+  assert.deepEqual(io.calls.checkMerge, { projectDir: '/repo', baseSha: 'B2', from: 'R1', to: 'M1' });
+  assert.deepEqual(io.calls.push, ['M1']);
+  const w = getWatch(URL);
+  assert.deepEqual([w.status, w.fixRuns, w.handled], ['watching', 0, ['behind:unit']]);
+  assert.match(audits[0][1], /merged `main` into `feat\/x` \(M1, no fix run\)/);
+  assert.ok(io.calls.notify.includes('published'));
+});
+
+test('merge-first: conflicts fall back to the agent run; leftover markers or a refused push need a person', async () => {
+  const pr = () => openPr({ base: 'main', baseSha: 'B1', behindBy: 4, contexts: [named('unit')], basePassing: ['unit'], baseSettled: true });
+  let origin = seedOrigin();
+  setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+  let h = harness({ pr: pr() });
+  h.deps.git.mergeBase = async () => ({ ok: true, merged: false, status: 'conflicts' });
+  await h.watcher.tick();
+  assert.equal(h.io.calls.start[0].body.title, 'Merge main into PR #1');
+
+  for (const [setup, reason] of [[(io) => { io.merge = { ok: true, merged: true, markers: ['f.txt:3'] }; }, 'conflict-markers'],
+    [(io, deps) => { deps.git.push = async () => ({ ok: false, error: 'rejected' }); }, 'push-refused']]) {
+    getDb().exec('DELETE FROM pr_watch_runs; DELETE FROM pr_watches');
+    origin = seedOrigin();
+    setWatch({ prUrl: URL, pipelineId: origin, enabled: true });
+    h = harness({ pr: pr() });
+    h.deps.git.mergeBase = async () => ({ ok: true, merged: true, to: 'M1', baseSha: 'B1' });
+    setup(h.io, h.deps);
+    await h.watcher.tick();
+    const w = getWatch(URL);
+    assert.deepEqual([w.status, w.reason, w.fixRuns], ['needs-person', reason, 0], reason);
+    assert.equal(h.io.calls.start.length, 0);
+  }
+});
+
