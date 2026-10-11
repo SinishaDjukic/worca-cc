@@ -284,14 +284,14 @@ test('MAJ-16: after a registry reload the OPEN canvas is re-validated against th
   assert.equal(doc.getElementById('wfv-save').disabled, true, 'Save is disabled instead of 422ing later');
 });
 
-test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open at Home with three folders', async () => {
+test('#workflows mounts once: Task + End on the canvas, body.view-workflows, Library open on Agents with its three-way selector', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows');
   const doc = w.document;
   assert.ok(doc.body.classList.contains('view-workflows'));
   assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, 2);
-  assert.equal(doc.getElementById('wfv-library').dataset.tab, 'home');
-  assert.deepEqual([...doc.querySelectorAll('#wfv-library .wfl-folder')].map((t) => t.dataset.tab), ['agents', 'scripts', 'workflows']);
+  assert.equal(doc.getElementById('wfv-library').dataset.tab, 'agents');
+  assert.deepEqual([...doc.querySelectorAll('#wfv-library .wfl-seg .wfl-tab')].map((t) => t.dataset.tab), ['agents', 'scripts', 'workflows']);
   assert.equal(typeof w.__gv, 'function');
 });
 
@@ -1685,7 +1685,7 @@ test('Workflows chat through app.js: a picked file rides the message as base64, 
   assert.deepEqual([...w.document.querySelectorAll('#wfc .wfc-upill')].map((x) => x.textContent), ['spec.md']);
 });
 
-test('closing a sheet to its tab address (#workflows/agents) keeps the Library in its folder and the focus on the opener', async () => {
+test('closing a sheet to its tab address (#workflows/agents) keeps the Library\'s folder open and the focus on the opener', async () => {
   const { window: w } = await boot();
   await go(w, 'workflows/agents');
   const doc = w.document;
@@ -1698,7 +1698,7 @@ test('closing a sheet to its tab address (#workflows/agents) keeps the Library i
   assert.equal(doc.getElementById('wfv-sheet').hidden, false, 'precondition: the agent sheet is open');
   await go(w, 'workflows/agents');                          // routeWorkflows('agents'): close the sheet, then open('agents')
   assert.equal(doc.getElementById('wfv-sheet').hidden, true);
-  assert.equal(doc.getElementById('wfv-library').dataset.path, 'agents/coding', 'still in the coding folder');
+  assert.equal(doc.querySelector('#wfv-library .wfl-folder[data-folder="agents/coding"]').getAttribute('aria-expanded'), 'true', 'the coding folder is still open');
   assert.equal(doc.activeElement.dataset.focusKey, 'agent:planner:View', 'focus back on the opener, never the fallback or <body>');
 });
 
@@ -1730,7 +1730,7 @@ test('the open Library overlay is kept clear of a fit only while a useful band s
   assert.ok(left >= 0 && right <= 744 - 396 + 0.5, `it fits the band beside the overlay: ${left}..${right}`);
 });
 
-test('the Workflows tour survives a Library filter query: the filter button (at Home), the Library crumb (in a folder), Default itself when the query shows it', async () => {
+test('the Workflows tour survives a Library search query: ✕ on the open search, Default itself when the query shows it', async () => {
   const STEPS = ['claude', 'project', 'run', 'ask', 'realRun', 'workflows', 'workspace', 'teamMetrics', 'teamPolicy'];
   const onboarding = { steps: Object.fromEntries(STEPS.map((id) => [id, id === 'claude'])), done: 1, total: 9, claude: { bin: 'claude', hint: null }, hidden: false, welcomeSeen: true };
   const MINE = { ...V2_ROW, id: 'wf_mine', name: 'Mine', domain: 'general' };
@@ -1749,25 +1749,22 @@ test('the Workflows tour survives a Library filter query: the filter button (at 
   await tick(4);
   doc.querySelector('.nav button[data-nav="workflows"]').click();
   await go(w, 'workflows');
-  assert.equal(await until(() => target() === '#wfv-library [data-tab="workflows"]'), true, `the tour opens the Workflows folder: ${target()}`);
+  assert.equal(await until(() => target() === '#wfv-library #wfl-tab-workflows'), true, `the tour switches the Library to Workflows: ${target()}`);
   try {
-    // At Home a query hides the three folders, and Home has no Library crumb: the filter button is what is left.
+    // A query in Agents rides along to Workflows (the selector keeps it): it hides the folder rows there, so ✕ on the
+    // open search is what is left.
     doc.getElementById('wfl-filter-btn').click();
     query('zzz');
-    assert.equal(await until(() => target() === '#wfv-library #wfl-filter-btn'), true, `Home + a query: ${target()}`);
-    assert.equal(text(), 'Close the filter: the folders are under it.');
+    doc.getElementById('wfl-tab-workflows').click();
+    assert.equal(await until(() => target() === '#wfv-library .wfl-head.is-searching #wfl-close'), true, `Workflows + a query: ${target()}`);
+    assert.equal(text(), 'Close the search: the folders are under it.');
     await tick(20);
-    assert.equal(target(), '#wfv-library #wfl-filter-btn', 'the tour stays up (it never gives up on a hidden target)');
-    doc.getElementById('wfl-filter-btn').click();          // closes the filter and clears the query
-    assert.equal(await until(() => target() === '#wfv-library [data-tab="workflows"]'), true, `the folders are back: ${target()}`);
-    doc.querySelector('#wfv-library .wfl-folder[data-tab="workflows"]').click();
+    assert.equal(target(), '#wfv-library .wfl-head.is-searching #wfl-close', 'the tour stays up (it never gives up on a hidden target)');
+    doc.getElementById('wfl-close').click();                 // closes the search and clears the query
+    assert.equal(doc.getElementById('wfv-library').dataset.open, 'true', 'the Library stays open');
     assert.equal(await until(() => target() === '#wfv-library .wfl-folder[data-folder="workflows/coding"]'), true, `then Default's folder: ${target()}`);
-    // Inside Workflows a query hides the folder rows and the back row: the Library crumb goes up and clears it.
+    // A query that lists Default: the folder hop is done, the tour rings Default in the flat list.
     doc.getElementById('wfl-filter-btn').click();
-    query('zzz');
-    assert.equal(await until(() => target() === '#wfv-library #wfl-crumb-home'), true, `Workflows + a query: ${target()}`);
-    assert.equal(text(), 'Go back up to the Library: the filter hides the folders here.');
-    // A query that lists Default: both folder hops are done, the tour rings Default in the flat list.
     query('def');
     assert.equal(await until(() => target() === '#wfv-library .wfl-wf[data-id="wf_default"]'), true, `Workflows + "def": ${target()}`);
   } finally {

@@ -1,5 +1,6 @@
-// test/ui-workflows-library.test.mjs — the Library card over plain data (no app.js): Home and its folders, the
-// breadcrumb and the back row, the chips, the flat filter, rows and their actions, highlight, focus.
+// test/ui-workflows-library.test.mjs — the Library card over plain data (no app.js): the Agents / Scripts / Workflows
+// selector, folders that expand in place, the chips, the header search and its flat results, rows and their actions,
+// highlight, focus.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -26,6 +27,7 @@ const WORKFLOWS = [
   { id: 'wf_mine', name: 'Mine', version: 2, domain: 'general', origin: null, nodes: [], wires: [] },
 ];
 const ARCH = [{ id: 'wf_gone', name: 'Gone flow', version: 2, domain: 'coding' }];
+const FLOW_ROWS = ['flow:task', 'flow:end', 'flow:and', 'flow:or', 'flow:combine'];
 
 async function boot(data = {}) {
   const dom = new JSDOM('<!doctype html><body><aside id="lib"></aside></body>', { url: 'http://localhost:4317/' });
@@ -41,11 +43,14 @@ async function boot(data = {}) {
 }
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
 const rowsOf = (host) => [...host.querySelectorAll('.wfl-item')].map((r) => r.dataset.item);
-/** The folder rows on screen as [data-folder, name, count]. */
-const foldersOf = (host) => [...host.querySelectorAll('.wfl-folder')].map((f) => [f.dataset.folder, f.querySelector('.wfl-fname').textContent, f.querySelector('.wfl-fn').textContent]);
+/** The selector's tabs as [data-tab, label, count, aria-selected]. */
+const tabsOf = (host) => [...host.querySelectorAll('.wfl-seg .wfl-tab')].map((t) => [t.dataset.tab, t.querySelector('.wfl-tname').textContent, t.querySelector('.wfl-n').textContent, t.getAttribute('aria-selected')]);
+/** The folder rows on screen as [data-folder, name, count, aria-expanded]. */
+const foldersOf = (host) => [...host.querySelectorAll('.wfl-folder')].map((f) => [f.dataset.folder, f.querySelector('.wfl-fname').textContent, f.querySelector('.wfl-fn').textContent, f.getAttribute('aria-expanded')]);
 const folder = (host, key) => [...host.querySelectorAll('.wfl-folder')].find((f) => f.dataset.folder === key);
-const crumbsOf = (host) => [...host.querySelectorAll('.wfl-crumbs .wfl-crumb')].map((c) => c.textContent);
 const tagsOf = (host) => [...host.querySelectorAll('.wfl-item')].map((r) => (r.querySelector('.wfl-where') || { textContent: '' }).textContent);
+const footOf = (host) => host.querySelector('.wfl-foot').textContent;
+const searching = (host) => host.querySelector('.wfl-head').classList.contains('is-searching');
 const type = (s, value) => {
   const f = s.doc.getElementById('wfl-filter');
   f.value = value;
@@ -53,27 +58,32 @@ const type = (s, value) => {
   return f;
 };
 
-test('Home lists the Agents / Scripts / Workflows folders with their registry counts; Agents splits by domain (shared folded in), Flow pinned last', async () => {
+test('the selector switches Agents / Scripts / Workflows (registry counts); Agents splits by domain (shared folded in), Flow pinned last; a folder expands in place', async () => {
   const s = await boot();
-  assert.equal(s.host.dataset.tab, 'home');
-  assert.deepEqual(foldersOf(s.host), [['agents', 'Agents', '4'], ['scripts', 'Scripts', '2'], ['workflows', 'Workflows', '3']]);
-  assert.deepEqual([...s.host.querySelectorAll('.wfl-folder')].map((f) => f.dataset.tab), ['agents', 'scripts', 'workflows']);
-  assert.equal(s.host.querySelector('[role="tab"]'), null, 'the segmented tabs are gone');
-  assert.deepEqual(crumbsOf(s.host), ['Library']);
-  assert.equal(s.doc.getElementById('wfl-up'), null, 'Home has no back row');
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '9 items');
-  click(folder(s.host, 'agents'));
-  assert.equal(s.host.dataset.tab, 'agents');
-  assert.deepEqual(foldersOf(s.host), [['agents/coding', 'coding', '3'], ['agents/general', 'general', '2'], [`agents/${FLOW}`, 'Flow', '5']]);
-  assert.deepEqual(rowsOf(s.host), [], 'two domains: folders only');
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '4 agents');
+  assert.equal(s.host.dataset.tab, 'agents', 'first open: Agents');
+  assert.deepEqual(tabsOf(s.host), [['agents', 'Agents', '4', 'true'], ['scripts', 'Scripts', '2', 'false'], ['workflows', 'Workflows', '3', 'false']]);
+  assert.equal(s.host.querySelector('.wfl-crumbs, .wfl-crumb, #wfl-up, #wfl-crumb-home'), null, 'no breadcrumb, no back row');
+  assert.deepEqual(foldersOf(s.host), [['agents/coding', 'coding', '3', 'false'], ['agents/general', 'general', '2', 'false'], [`agents/${FLOW}`, 'Flow', '5', 'false']]);
+  assert.deepEqual(rowsOf(s.host), [], 'folders start folded');
+  assert.equal(footOf(s.host), '4 agents');
   click(folder(s.host, 'agents/coding'));
-  assert.equal(s.host.dataset.path, 'agents/coding');
+  assert.equal(s.host.dataset.tab, 'agents', 'a folder opens in place');
+  assert.equal(folder(s.host, 'agents/coding').getAttribute('aria-expanded'), 'true');
   assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner']);
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '3 agents');
-  s.lib.openFolder(['agents', FLOW]);
-  assert.deepEqual(rowsOf(s.host), ['flow:task', 'flow:end', 'flow:and', 'flow:or', 'flow:combine']);
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '5 flow cards');
+  const fold = s.host.querySelector('.wfl-fold[data-fold="agents/coding"]');
+  assert.equal(fold.previousElementSibling, folder(s.host, 'agents/coding'), 'its rows follow its row');
+  assert.equal(fold.querySelectorAll('.wfl-item').length, 3);
+  assert.deepEqual(foldersOf(s.host).map(([k]) => k), ['agents/coding', 'agents/general', `agents/${FLOW}`], 'the other folders stay');
+  click(folder(s.host, `agents/${FLOW}`));
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner', ...FLOW_ROWS], 'several folders open at once');
+  assert.equal(footOf(s.host), '4 agents', 'the count is the section, never the flow cards');
+  click(folder(s.host, 'agents/coding'));
+  assert.deepEqual(rowsOf(s.host), FLOW_ROWS, 'a second click folds it');
+  click(s.doc.getElementById('wfl-tab-scripts'));
+  assert.equal(s.host.dataset.tab, 'scripts');
+  assert.deepEqual(tabsOf(s.host).map((t) => t[3]), ['false', 'true', 'false']);
+  click(s.doc.getElementById('wfl-tab-agents'));
+  assert.deepEqual(rowsOf(s.host), FLOW_ROWS, 'an open folder stays open across a section switch');
 });
 
 test('one group lists its rows directly: Scripts here, and a one-domain Workflows (Archived still pinned last)', async () => {
@@ -81,72 +91,112 @@ test('one group lists its rows directly: Scripts here, and a one-domain Workflow
   s.lib.open('scripts');
   assert.deepEqual(foldersOf(s.host), []);
   assert.deepEqual(rowsOf(s.host), ['script:gitDiff', 'script:runTests']);
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '2 scripts');
+  assert.equal(footOf(s.host), '2 scripts');
   s.lib.open('workflows');
   assert.deepEqual(rowsOf(s.host), ['workflow:wf_default', 'workflow:wf_quick']);
-  assert.deepEqual(foldersOf(s.host), [[`workflows/${ARCHIVED}`, 'Archived', '1']]);
+  assert.deepEqual(foldersOf(s.host), [[`workflows/${ARCHIVED}`, 'Archived', '1', 'false']]);
   assert.equal(s.host.querySelector('.wfl-list').lastElementChild.dataset.folder, `workflows/${ARCHIVED}`, 'pinned last');
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '2 workflows');
+  assert.equal(footOf(s.host), '2 workflows');
 });
 
 test('Workflows: domain folders replace the domain chips; Archived (N) holds the archived rows, each deleted from its own button', async () => {
   const s = await boot({ archived: ARCH });
   s.lib.open('workflows');
   assert.equal(s.host.querySelector('[data-chip]'), null, 'no chips in Workflows');
-  assert.deepEqual(foldersOf(s.host), [['workflows/coding', 'coding', '2'], ['workflows/general', 'general', '1'], [`workflows/${ARCHIVED}`, 'Archived', '1']]);
+  assert.deepEqual(foldersOf(s.host).map((f) => f.slice(0, 3)), [['workflows/coding', 'coding', '2'], ['workflows/general', 'general', '1'], [`workflows/${ARCHIVED}`, 'Archived', '1']]);
   click(folder(s.host, `workflows/${ARCHIVED}`));
   assert.deepEqual(rowsOf(s.host), ['archived:wf_gone']);
   assert.equal(s.host.querySelector('.wfl-wf'), null, 'an archived row is no workflow row (the tour\'s fallback target)');
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '1 archived');
+  assert.equal(footOf(s.host), '3 workflows');
   click(s.host.querySelector('.wfl-item[data-item="archived:wf_gone"] .wfl-del'));
   assert.deepEqual(s.calls.at(-1), ['deleteArchived', ARCH[0]]);
   assert.deepEqual(workflowDomains([{ domain: 'shared' }, {}, { domain: 'zeta' }, { domain: 'alpha' }, { domain: 'general' }]),
     ['alpha', 'zeta', 'general', 'shared'], 'the old domain chips\' order');
 });
 
-test('All / Built-in / Yours narrow Agents and Scripts (a folder with nothing to show hides); the filter narrows to matches', async () => {
+test('All / Built-in / Yours narrow Agents and Scripts (a folder with nothing to show hides); the search narrows to matches', async () => {
   const s = await boot();
-  assert.equal(s.host.querySelector('[data-chip]'), null, 'no chips at Home');
-  s.lib.open('agents');
   click(s.host.querySelector('[data-chip="yours"]'));
-  assert.deepEqual(foldersOf(s.host), [['agents/general', 'general', '1']], 'coding and Flow have nothing of yours');
+  assert.deepEqual(foldersOf(s.host), [['agents/general', 'general', '1', 'false']], 'coding and Flow have nothing of yours');
   click(folder(s.host, 'agents/general'));
   assert.deepEqual(rowsOf(s.host), ['agent:docsWriter']);
-  assert.equal(s.host.querySelector('[data-chip="yours"]').getAttribute('aria-pressed'), 'true', 'the chip holds inside the folder');
   click(s.host.querySelector('[data-chip="all"]'));
-  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:docsWriter']);
-  click(s.host.querySelector('.wfl-crumb[data-crumb="1"]'));
-  click(s.host.querySelector('.wfl-filter-btn'));
-  assert.equal(s.doc.getElementById('wfl-filter').placeholder, 'Filter agents…');
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:docsWriter'], 'the open folder stays open');
+  assert.equal(foldersOf(s.host).length, 3);
+  click(s.doc.getElementById('wfl-filter-btn'));
+  assert.equal(s.doc.getElementById('wfl-filter').placeholder, 'Search agents…');
   type(s, 'docs');
   assert.deepEqual(rowsOf(s.host), ['agent:docsWriter']);
   type(s, 'zzz');
   assert.equal(s.host.querySelector('.wfl-empty').textContent, 'No agents match “zzz”');
+  s.lib.open('workflows');
+  assert.equal(s.host.querySelector('[data-chip]'), null, 'no chips in Workflows');
 });
 
-test('a filter query lists every match under the open folder flat, each tagged with its folder; at Home it covers all three', async () => {
+test('a search lists every match in the selected section flat, each tagged with its subfolder; a section switch keeps the query', async () => {
   const s = await boot({ archived: ARCH });
-  click(s.host.querySelector('.wfl-filter-btn'));
-  assert.equal(s.doc.getElementById('wfl-filter').placeholder, 'Filter the Library…');
+  click(s.doc.getElementById('wfl-filter-btn'));
   type(s, 'plan');
   assert.deepEqual(rowsOf(s.host), ['agent:planner', 'agent:docsWriter']);
-  assert.deepEqual(tagsOf(s.host), ['Agents › coding', 'Agents › general']);
+  assert.deepEqual(tagsOf(s.host), ['coding', 'general']);
   assert.deepEqual(foldersOf(s.host), [], 'one flat list: no folder rows');
-  assert.equal(s.doc.getElementById('wfl-up'), null);
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '2 items');
+  assert.equal(footOf(s.host), '2 agents');
+  click(s.doc.getElementById('wfl-tab-scripts'));
+  assert.equal(s.doc.getElementById('wfl-filter').value, 'plan', 'the query stays and searches Scripts now');
+  assert.equal(s.doc.getElementById('wfl-filter').placeholder, 'Search scripts…');
+  assert.equal(s.host.querySelector('.wfl-empty').textContent, 'No scripts match “plan”');
   type(s, 'git');
-  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['script:gitDiff'], ['Scripts']]);
+  assert.deepEqual(rowsOf(s.host), ['script:gitDiff']);
+  assert.equal(s.host.querySelector('.wfl-where'), null, 'a row sitting in the section itself carries no tag');
+  click(s.doc.getElementById('wfl-tab-workflows'));
   type(s, 'mine');
-  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['workflow:wf_mine'], ['Workflows › general']]);
+  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['workflow:wf_mine'], ['general']]);
   type(s, 'gone');
-  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['archived:wf_gone'], ['Workflows › Archived']]);
-  s.lib.openFolder(['agents']);
+  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['archived:wf_gone'], ['Archived']]);
+  click(s.doc.getElementById('wfl-tab-agents'));
   type(s, 'clarify');
-  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['agent:clarify'], ['Agents › coding']], 'a shared agent shows once, at the first folder listing it');
+  assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['agent:clarify'], ['coding']], 'a shared agent shows once, at the first folder listing it');
   s.lib.openFolder(['agents', 'coding']);
-  assert.equal(s.doc.getElementById('wfl-filter').value, '', 'a move clears the query');
-  type(s, 'plan');
-  assert.deepEqual(rowsOf(s.host), ['agent:planner'], 'the open folder bounds the search');
+  assert.equal(s.doc.getElementById('wfl-filter').value, '', 'openFolder clears the query: the folder shows');
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner']);
+});
+
+test('the search button grows a field over the title; an empty field folds back on it; ✕ closes an open search, else the Library', async () => {
+  const s = await boot();
+  const head = s.host.querySelector('.wfl-head');
+  const btn = s.doc.getElementById('wfl-filter-btn');
+  const x = s.doc.getElementById('wfl-close');
+  const f = s.doc.getElementById('wfl-filter');
+  assert.ok(head.contains(btn) && head.contains(f) && head.contains(x), 'the field lives on the header line');
+  assert.equal(searching(s.host), false);
+  assert.equal(btn.getAttribute('aria-expanded'), 'false');
+  assert.ok(f.hasAttribute('inert'), 'the folded field takes no focus');
+  assert.equal(x.getAttribute('aria-label'), 'Close library');
+  click(btn);
+  assert.equal(searching(s.host), true);
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  assert.equal(f.hasAttribute('inert'), false);
+  assert.equal(s.doc.activeElement, f, 'opening focuses the field');
+  assert.equal(x.getAttribute('aria-label'), 'Close search');
+  click(btn);
+  assert.equal(searching(s.host), false, 'the search button folds an empty field');
+  assert.equal(s.doc.activeElement, btn);
+  click(btn);
+  type(s, 'docs');
+  click(btn);
+  assert.equal(searching(s.host), true, 'a field with text stays open');
+  assert.equal(s.doc.activeElement, f, '… and takes the focus');
+  assert.deepEqual(rowsOf(s.host), ['agent:docsWriter']);
+  click(x);
+  assert.equal(searching(s.host), false, '✕ closes the open search');
+  assert.equal(f.value, '', '… and clears it');
+  assert.equal(foldersOf(s.host).length, 3, 'the folders are back');
+  assert.equal(s.calls.some((c) => c[0] === 'closeLibrary'), false, 'the Library stays open');
+  click(x);
+  assert.deepEqual(s.calls.at(-1), ['closeLibrary'], 'a second ✕ closes the Library');
+  s.lib.setData({ placedKinds: ['task'] });
+  assert.equal(s.host.querySelector('.wfl-head'), head, 'the header survives a repaint, so its animation runs');
+  assert.equal(s.host.firstElementChild, head);
 });
 
 test('a row drags {kind,key} as application/x-worca; "+" adds at the centre; not-placeable rows do neither', async () => {
@@ -183,12 +233,11 @@ test('detail actions by origin: built-in View · Duplicate; user Edit · Delete'
   assert.deepEqual(s.calls.at(-1), ['editAgent', 'docsWriter']);
 });
 
-test('the "+" sits at the breadcrumb\'s right in Agents (New agent) and Scripts (New script) only; Scripts rows keep their chips and actions', async () => {
+test('the "+" sits at the selector\'s right in Agents (New agent) and Scripts (New script); Workflows keeps an empty slot; Scripts rows keep their chips and actions', async () => {
   const s = await boot();
-  assert.equal(s.doc.getElementById('wfl-new-agent'), null, 'no "+" at Home');
-  s.lib.openFolder(['agents', 'coding']);
   const na = s.doc.getElementById('wfl-new-agent');
-  assert.ok(na.closest('.wfl-crumbs'), 'in the breadcrumb bar');
+  assert.ok(na.closest('.wfl-bar'), 'in the selector bar');
+  assert.equal(na.previousElementSibling.className, 'wfl-seg');
   assert.equal(na.getAttribute('aria-label'), 'New agent');
   click(na);
   assert.deepEqual(s.calls.at(-1), ['newAgent']);
@@ -203,7 +252,8 @@ test('the "+" sits at the breadcrumb\'s right in Agents (New agent) and Scripts 
   click([...d.querySelectorAll('.wfl-actions button')].find((b) => b.textContent === 'Open'));
   assert.deepEqual(s.calls.at(-1), ['openScript', 'gitDiff']);
   s.lib.open('workflows');
-  assert.equal(s.host.querySelector('.wfl-new'), null, 'Workflows has no "+"');
+  assert.equal(s.host.querySelector('button.wfl-new'), null, 'Workflows has no "+"');
+  assert.ok(s.host.querySelector('.wfl-bar > span.wfl-new.is-slot[aria-hidden="true"]'), '… only its slot, so the selector keeps its width');
 });
 
 test('Workflows rows: a row click opens it; built-ins have no trash; NEW and Open chips; Export…', async () => {
@@ -223,30 +273,31 @@ test('Workflows rows: a row click opens it; built-ins have no trash; NEW and Ope
   assert.equal(s.calls.at(-1)[0], 'exportWorkflow');
 });
 
-test('highlight opens the folder AND the domain subfolder holding the row, clears the filter and the chip, opens and flashes the row', async () => {
+test('highlight selects the section AND opens the folder holding the row, closes the search, resets the chip, opens and flashes the row', async () => {
   const s = await boot();
-  s.lib.open('agents');
   click(s.host.querySelector('[data-chip="yours"]'));
-  click(s.host.querySelector('.wfl-filter-btn'));
+  click(s.doc.getElementById('wfl-filter-btn'));
   type(s, 'zzz');
   s.lib.highlight('agent', 'planner');
-  assert.equal(s.host.dataset.path, 'agents/coding');
-  assert.equal(s.host.querySelector('.wfl-search').hidden, true, 'the filter closed');
+  assert.equal(s.host.dataset.tab, 'agents');
+  assert.equal(folder(s.host, 'agents/coding').getAttribute('aria-expanded'), 'true');
+  assert.equal(searching(s.host), false, 'the search closed');
   assert.equal(s.doc.getElementById('wfl-filter').value, '');
   assert.equal(s.host.querySelector('[data-chip="all"]').getAttribute('aria-pressed'), 'true');
   const planner = s.host.querySelector('.wfl-item[data-item="agent:planner"]');
   assert.ok(planner.classList.contains('is-flash') && planner.querySelector('.wfl-detail'));
   s.lib.highlight('script', 'runTests');
-  assert.equal(s.host.dataset.path, 'scripts', 'one group: the top folder');
+  assert.equal(s.host.dataset.tab, 'scripts', 'one group: the section itself');
   const item = s.host.querySelector('.wfl-item[data-item="script:runTests"]');
   assert.ok(item.classList.contains('is-flash'));
   assert.ok(item.querySelector('.wfl-detail'));
   s.lib.highlight('workflow', 'wf_mine');
-  assert.equal(s.host.dataset.path, 'workflows/general');
+  assert.equal(s.host.dataset.tab, 'workflows');
+  assert.equal(folder(s.host, 'workflows/general').getAttribute('aria-expanded'), 'true');
   assert.ok(s.host.querySelector('.wfl-wf[data-id="wf_mine"]').classList.contains('is-flash'));
 });
 
-test('focus survives a row toggle and a folder move and is never looked up through a selector built from a key', async () => {
+test('focus survives a row toggle and a folder toggle and is never looked up through a selector built from a key', async () => {
   const s = await boot();
   // Chrome throws on `#agent:planner` (an unknown pseudo-class); jsdom does not — emulate Chrome.
   const real = s.win.Element.prototype.querySelector;
@@ -254,40 +305,40 @@ test('focus survives a row toggle and a folder move and is never looked up throu
     if (/#[^\s\]]*:/.test(sel)) throw new s.win.DOMException(`'${sel}' is not a valid selector`, 'SyntaxError');
     return real.call(this, sel);
   };
-  click(folder(s.host, 'agents'));
   click(folder(s.host, 'agents/coding'));
   const main = real.call(s.host, '.wfl-item[data-item="agent:planner"] .wfl-main');
   main.focus();
   click(main);
   assert.equal(s.doc.activeElement.dataset.focusKey, 'agent:planner');
-  click(s.doc.getElementById('wfl-up'));
-  assert.equal(s.doc.activeElement.dataset.focusKey, 'folder:agents/coding');
-});
-
-test('folders, the back row and the crumbs are real buttons: entering a folder focuses its back row, going up focuses the folder it left', async () => {
-  const s = await boot();
-  const agents = folder(s.host, 'agents');
-  assert.deepEqual([agents.tagName, agents.type], ['BUTTON', 'button']);
-  agents.focus();
-  click(agents);
-  const back = s.doc.activeElement;
-  assert.deepEqual([back.id, back.tagName, back.textContent, back.getAttribute('aria-label')], ['wfl-up', 'BUTTON', 'Library', 'Back to Library']);
+  folder(s.host, 'agents/coding').focus();
   click(folder(s.host, 'agents/coding'));
-  assert.equal(s.doc.activeElement.getAttribute('aria-label'), 'Back to Agents');
-  assert.deepEqual(crumbsOf(s.host), ['Library', 'Agents', 'coding']);
-  assert.deepEqual([...s.host.querySelectorAll('.wfl-crumbs button.wfl-crumb')].map((b) => b.textContent), ['Library', 'Agents'],
-    'every crumb but the last is a button');
-  assert.equal(s.host.querySelector('.wfl-crumb.is-current').getAttribute('aria-current'), 'location');
-  click(s.doc.getElementById('wfl-up'));
-  assert.equal(s.host.dataset.path, 'agents');
-  assert.equal(s.doc.activeElement.dataset.folder, 'agents/coding', 'up: the folder row it came out of');
-  click(folder(s.host, 'agents/general'));
-  click(s.doc.getElementById('wfl-crumb-home'));
-  assert.equal(s.host.dataset.path, 'home');
-  assert.equal(s.doc.activeElement.dataset.folder, 'agents', 'the Library crumb: the top folder it left');
+  assert.equal(s.doc.activeElement.dataset.focusKey, 'folder:agents/coding');
+  assert.equal(s.doc.activeElement.getAttribute('aria-expanded'), 'false');
 });
 
-test('a double-click on a folder row, the back row or a crumb moves once: its second click never reaches the repainted list', async () => {
+test('folders and the selector\'s tabs are real buttons: a folder keeps the focus as it opens and folds; arrows walk the tabs', async () => {
+  const s = await boot();
+  const coding = folder(s.host, 'agents/coding');
+  assert.deepEqual([coding.tagName, coding.type], ['BUTTON', 'button']);
+  coding.focus();
+  click(coding);
+  assert.equal(s.doc.activeElement.dataset.folder, 'agents/coding', 'focus stays on the folder that opened');
+  assert.equal(s.doc.activeElement.getAttribute('aria-expanded'), 'true');
+  const seg = s.host.querySelector('.wfl-seg');
+  assert.equal(seg.getAttribute('role'), 'tablist');
+  const agents = s.doc.getElementById('wfl-tab-agents');
+  assert.deepEqual([agents.tagName, agents.type, agents.getAttribute('role'), agents.tabIndex], ['BUTTON', 'button', 'tab', 0]);
+  assert.equal(s.doc.getElementById('wfl-tab-scripts').tabIndex, -1, 'one tab stop: the selected tab');
+  const key = (k) => s.doc.activeElement.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+  agents.focus();
+  key('ArrowRight');
+  assert.deepEqual([s.host.dataset.tab, s.doc.activeElement.id], ['scripts', 'wfl-tab-scripts']);
+  key('ArrowLeft');
+  key('ArrowLeft');
+  assert.deepEqual([s.host.dataset.tab, s.doc.activeElement.id], ['workflows', 'wfl-tab-workflows'], 'wraps around');
+});
+
+test('a double-click on a folder row opens it once: its second press never reaches the repainted list', async () => {
   const s = await boot();
   // A real double-click: mousedown + click with detail 1, then again with detail 2 on whatever now sits under the pointer.
   const press = (el, detail) => {
@@ -297,36 +348,24 @@ test('a double-click on a folder row, the back row or a crumb moves once: its se
     return down;
   };
   const opened = () => s.calls.filter((c) => c[0] === 'openWorkflow').length;
-  press(folder(s.host, 'workflows'), 1);
-  assert.equal(s.doc.activeElement.id, 'wfl-up', 'entering a folder focuses its back row, with focus on <body> before the click');
+  press(folder(s.host, 'agents/coding'), 1);
+  assert.equal(press(folder(s.host, 'agents/coding'), 2).defaultPrevented, true, 'its mousedown moves no focus');
+  assert.equal(folder(s.host, 'agents/coding').getAttribute('aria-expanded'), 'true', 'the second press never folds it back');
+  s.lib.open('workflows');
   press(folder(s.host, 'workflows/coding'), 1);
-  assert.equal(s.host.dataset.path, 'workflows/coding');
   const down = press(s.host.querySelector('.wfl-wf[data-id="wf_default"] .wfl-main'), 2);
   assert.equal(opened(), 0, 'the second click never opens the workflow now under the pointer');
-  assert.equal(down.defaultPrevented, true, 'its mousedown moves no focus');
-  assert.equal(s.host.dataset.path, 'workflows/coding');
-  assert.equal(s.doc.activeElement.id, 'wfl-up');
-  press(s.doc.getElementById('wfl-up'), 1);
-  assert.equal(s.host.dataset.path, 'workflows');
-  press(s.host.querySelector('.wfl-list').firstElementChild, 2);
-  assert.equal(s.host.dataset.path, 'workflows', 'the back row goes up one level, not two');
-  press(s.doc.getElementById('wfl-crumb-home'), 1);
-  assert.equal(s.host.dataset.path, 'home');
-  assert.equal(press(s.host.querySelector('.wfl-crumb.is-current'), 2).defaultPrevented, true);
-  assert.equal(s.doc.activeElement.dataset.folder, 'workflows', 'focus stays on the folder the crumb went up to');
-  press(folder(s.host, 'agents'), 1);
-  assert.equal(press(s.host.querySelector('.wfl-tools'), 2).defaultPrevented, true, 'the chip row under the pointer takes no focus');
-  assert.equal(s.doc.activeElement.id, 'wfl-up');
-  click(folder(s.host, 'agents/coding'));
-  assert.equal(s.host.dataset.path, 'agents/coding', 'a keyboard activation (detail 0) right after a move still moves');
+  assert.equal(down.defaultPrevented, true);
+  click(folder(s.host, 'workflows/coding'));
+  assert.equal(folder(s.host, 'workflows/coding').getAttribute('aria-expanded'), 'false', 'a keyboard activation (detail 0) right after a toggle still toggles');
   click(s.doc.getElementById('wfl-filter-btn'));
-  press(s.doc.getElementById('wfl-up'), 1);
-  assert.equal(press(s.doc.getElementById('wfl-filter'), 2).defaultPrevented, false, 'a double-click in the filter still selects a word');
+  press(folder(s.host, 'workflows/general'), 1);
+  assert.equal(press(s.doc.getElementById('wfl-filter'), 2).defaultPrevented, false, 'a double-click in the search field still selects a word');
   s.lib.openFolder(['workflows', 'coding']);
   const now = Date.now;
   Date.now = () => now() + 1000;
   try { press(s.host.querySelector('.wfl-wf[data-id="wf_default"] .wfl-main'), 2); } finally { Date.now = now; }
-  assert.equal(opened(), 1, 'a double-click well after the move acts as before');
+  assert.equal(opened(), 1, 'a double-click well after the toggle acts as before');
 });
 
 test('a workspace-only agent is listed but never placeable; plugin rows and scripts carry their chips', async () => {
@@ -343,23 +382,21 @@ test('a workspace-only agent is listed but never placeable; plugin rows and scri
   for (const chip of ['plugin:demo', '2 cases', 'python not found']) assert.match(lint.textContent, new RegExp(chip));
 });
 
-test('a chip click keeps focus on that chip (never <body>, where the canvas takes Delete); the chips sit under the breadcrumb, in Agents and Scripts only', async () => {
+test('a chip click keeps focus on that chip (never <body>, where the canvas takes Delete); the chips sit under the selector, in Agents and Scripts only', async () => {
   const s = await boot();
-  s.lib.open('agents');
   const chip = s.host.querySelector('[data-chip="yours"]');
   chip.focus();
   click(chip);
   assert.equal(s.doc.activeElement.dataset.chip, 'yours');
   s.lib.open('scripts');
-  assert.deepEqual([...s.host.children].map((n) => n.className), ['wfl-head', 'wfl-crumbs', 'wfl-search', 'wfl-tools', 'wfl-list', 'wfl-foot']);
+  assert.deepEqual([...s.host.children].map((n) => n.className), ['wfl-head', 'wfl-bar', 'wfl-tools', 'wfl-list', 'wfl-foot']);
   s.lib.open('workflows');
-  assert.deepEqual([...s.host.children].map((n) => n.className), ['wfl-head', 'wfl-crumbs', 'wfl-search', 'wfl-list', 'wfl-foot']);
+  assert.deepEqual([...s.host.children].map((n) => n.className), ['wfl-head', 'wfl-bar', 'wfl-list', 'wfl-foot']);
 });
 
-test('typing in the filter keeps the input and its caret; highlight leaves the open folder for the one holding the row', async () => {
+test('typing in the search keeps the input and its caret, through a data refresh too; highlight moves to the folder holding the row', async () => {
   const s = await boot();
-  s.lib.open('agents');
-  click(s.host.querySelector('.wfl-filter-btn'));
+  click(s.doc.getElementById('wfl-filter-btn'));
   const f = s.doc.getElementById('wfl-filter');
   f.value = 'docs';
   f.setSelectionRange(2, 2);
@@ -368,92 +405,80 @@ test('typing in the filter keeps the input and its caret; highlight leaves the o
   assert.equal(s.doc.activeElement, f);
   assert.equal(f.selectionStart, 2);
   assert.deepEqual(rowsOf(s.host), ['agent:docsWriter']);
-  assert.equal(s.host.querySelector('.wfl-foot').textContent, '1 agents');
-  f.value = '';
-  f.dispatchEvent(new s.win.Event('input', { bubbles: true }));
-  s.lib.openFolder(['agents', 'coding']);
+  assert.equal(footOf(s.host), '1 agents');
+  s.lib.setData({ placedKinds: ['task'] });
+  assert.deepEqual([s.doc.getElementById('wfl-filter'), s.doc.activeElement, f.selectionStart], [f, f, 2], 'a refresh keeps the field, its focus and its caret');
   s.lib.highlight('agent', 'docsWriter');
-  assert.equal(s.host.dataset.path, 'agents/general');
+  assert.equal(folder(s.host, 'agents/general').getAttribute('aria-expanded'), 'true');
   assert.ok(s.host.querySelector('.wfl-item[data-item="agent:docsWriter"].is-flash'));
+  assert.equal(s.doc.activeElement, s.doc.getElementById('wfl-filter-btn'), 'the closed field hands its focus to the search button, never <body>');
 });
 
-test('Escape in the filter clears it, then closes it, and never reaches the document; leaving the folder resets the filter', async () => {
+test('Escape in the search clears it, then closes it, and never reaches the document', async () => {
   const s = await boot();
-  s.lib.open('agents');
-  click(s.host.querySelector('.wfl-filter-btn'));
+  click(s.doc.getElementById('wfl-filter-btn'));
   const f = s.doc.getElementById('wfl-filter');
-  f.focus();
   f.value = 'docs';
   f.dispatchEvent(new s.win.Event('input', { bubbles: true }));
   let reached = 0;
   s.doc.addEventListener('keydown', () => { reached += 1; });
   const esc = () => s.doc.activeElement.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   esc();
-  assert.equal(s.doc.getElementById('wfl-filter').value, '', 'the first Escape clears');
-  assert.equal(s.host.querySelector('.wfl-search').hidden, false, '… and keeps the box open');
-  assert.ok(foldersOf(s.host).some(([k]) => k === 'agents/coding'), '… and the folder listing is back');
+  assert.equal(f.value, '', 'the first Escape clears');
+  assert.equal(searching(s.host), true, '… and keeps the search open');
+  assert.ok(foldersOf(s.host).some(([k]) => k === 'agents/coding'), '… and the folders are back');
   esc();
-  assert.equal(s.host.querySelector('.wfl-search').hidden, true, 'the second Escape closes it');
+  assert.equal(searching(s.host), false, 'the second Escape closes it');
   assert.equal(s.doc.activeElement.id, 'wfl-filter-btn');
   assert.equal(reached, 0, 'the canvas keyboard (a document listener) never sees either Escape');
-  click(s.host.querySelector('.wfl-filter-btn'));
-  type(s, 'zzz');
-  s.lib.open('scripts');
-  assert.equal(s.doc.getElementById('wfl-filter').value, '');
-  assert.deepEqual(rowsOf(s.host).sort(), ['script:gitDiff', 'script:runTests']);
-  s.lib.open('agents');
-  click(folder(s.host, 'agents/coding'));
-  type(s, 'zzz');
-  click(s.host.querySelector('.wfl-crumb[data-crumb="1"]'));
-  assert.equal(s.doc.getElementById('wfl-filter').value, '', 'a crumb clears it too');
-  assert.equal(s.host.querySelector('.wfl-search').hidden, false, '… and keeps the box open');
 });
 
-test('a data refresh keeps the list where it was scrolled; a folder move starts at the top', async () => {
+test('a data refresh and a folder toggle keep the list where it was scrolled; a section switch starts at the top', async () => {
   const s = await boot();
-  s.lib.open('agents');
   s.host.querySelector('.wfl-list').scrollTop = 40;
   s.lib.setData({ placedKinds: ['task'] });
   assert.equal(s.host.querySelector('.wfl-list').scrollTop, 40);
   click(folder(s.host, 'agents/coding'));
+  assert.equal(s.host.querySelector('.wfl-list').scrollTop, 40);
+  click(s.doc.getElementById('wfl-tab-scripts'));
   assert.equal(s.host.querySelector('.wfl-list').scrollTop, 0);
 });
 
-test('open(tab) stays in a subfolder of that tab and moves to another tab\'s top; folderOf names where a row lives; a refresh that empties a folder shows its parent', async () => {
+test('open(tab) and openFolder pick a section (an unknown one moves nothing); folderOf names where a row lives; a refresh that empties a folder keeps focus off <body>', async () => {
   const s = await boot();
-  assert.equal(s.lib.tab(), 'home');
+  assert.equal(s.lib.tab(), 'agents');
   s.lib.openFolder(['agents', 'coding']);
   s.lib.open('agents');
-  assert.equal(s.host.dataset.path, 'agents/coding', 'a sheet closing to #workflows/agents keeps the folder');
-  assert.deepEqual([s.lib.tab(), s.lib.path()], ['agents', ['agents', 'coding']]);
+  assert.equal(folder(s.host, 'agents/coding').getAttribute('aria-expanded'), 'true', 'a sheet closing to #workflows/agents keeps the open folder');
   s.lib.open('scripts');
-  assert.equal(s.host.dataset.path, 'scripts');
+  assert.equal(s.lib.tab(), 'scripts');
   s.lib.open('nope');
-  assert.equal(s.host.dataset.path, 'scripts', 'an unknown tab moves nothing');
+  s.lib.openFolder(['nope', 'x']);
+  s.lib.openFolder([]);
+  assert.equal(s.host.dataset.tab, 'scripts', 'an unknown section moves nothing');
   assert.deepEqual(s.lib.folderOf('agent', 'docsWriter'), ['agents', 'general']);
   assert.deepEqual(s.lib.folderOf('agent', 'clarify'), ['agents', 'coding'], 'a shared agent: the first domain folder listing it');
-  assert.deepEqual(s.lib.folderOf('script', 'gitDiff'), ['scripts'], 'one group: the top folder');
+  assert.deepEqual(s.lib.folderOf('script', 'gitDiff'), ['scripts'], 'one group: the section itself');
   assert.deepEqual(s.lib.folderOf('workflow', 'wf_default'), ['workflows', 'coding']);
-  assert.deepEqual(s.lib.folderOf('agent', 'nobody'), ['agents'], 'not listed (yet): its top folder');
+  assert.deepEqual(s.lib.folderOf('agent', 'nobody'), ['agents'], 'not listed (yet): its section');
   s.lib.openFolder(['workflows', 'general']);
-  s.doc.getElementById('wfl-up').focus();
+  folder(s.host, 'workflows/general').focus();
   s.lib.setData({ workflows: [WORKFLOWS[0], WORKFLOWS[1]] });       // wf_mine went: one domain is left
-  assert.equal(s.host.dataset.path, 'workflows');
+  assert.deepEqual(foldersOf(s.host), []);
   assert.deepEqual(rowsOf(s.host), ['workflow:wf_default', 'workflow:wf_quick']);
-  assert.equal(s.doc.activeElement.id, 'wfl-up', 'focus stays on the back row, never <body>');
+  assert.equal(s.doc.activeElement.id, 'wfl-tab-workflows', 'focus falls to the selected tab, never <body>');
 });
 
-test('a registry load error shows at Home too, with Retry, above the folders', async () => {
+test('a registry load error shows with Retry, above the folders', async () => {
   let retried = 0;
   const s = await boot({ loadError: 'Couldn’t load agents — ', retry: () => { retried += 1; } });
-  assert.equal(s.host.dataset.tab, 'home');
   assert.match(s.host.querySelector('.wfl-list').textContent, /Couldn’t load agents/);
   click([...s.host.querySelectorAll('.wfl-list button')].find((b) => b.textContent === 'Retry'));
   assert.equal(retried, 1);
   assert.equal(foldersOf(s.host).length, 3, 'the folders still list');
 });
 
-test('a placed Task / End: the focus its gone "+" or Add to canvas held goes to its row, else the back row — never <body>', async () => {
+test('a placed Task / End: the focus its gone "+" or Add to canvas held goes to its row, else the selected tab — never <body>', async () => {
   const s = await boot({ placedKinds: ['task'] });
   s.lib.openFolder(['agents', FLOW]);
   const add = s.host.querySelector('.wfl-item[data-item="flow:end"] .wfl-add');
@@ -470,7 +495,7 @@ test('a placed Task / End: the focus its gone "+" or Add to canvas held goes to 
   s.lib.setData({ placedKinds: ['task', 'end'] });
   assert.equal(s.doc.activeElement.dataset.focusKey, 'flow:end', 'the detail\'s Add to canvas falls back to its row');
   s.lib.render('agent:nobody:View');                       // an opener whose row is gone
-  assert.equal(s.doc.activeElement.id, 'wfl-up', 'the back row');
+  assert.equal(s.doc.activeElement.id, 'wfl-tab-agents', 'the selected tab');
 });
 
 test('the Library card is 380px wide, a min(380px, 100% − 16px) overlay at <= 760px, and app.js keeps the canvas fit clear of it while a 200px band stays', async () => {
@@ -491,19 +516,23 @@ test('roomy rows: 14px names, 12px second lines, 26px tiles, 14.5px folder rows 
   assert.match(rule('.wfl-l2'), /font-size:12px;/);
   assert.match(rule('.wfl-ic'), /width:26px;height:26px;/);
   assert.match(rule('.wfl-main'), /padding:9px /);
-  assert.match(rule('.wfl-folder,.wfl-up'), /min-height:44px;padding:10px;.*font:500 14\.5px/);
-  assert.match(rule('.wfl-folder svg,.wfl-up svg'), /width:20px;height:20px;/);
+  assert.match(rule('.wfl-folder'), /min-height:44px;.*font:500 14\.5px/);
+  assert.match(rule('.wfl-folder svg'), /width:20px;height:20px;/);
   assert.match(rule('.wfl-detail'), /font-size:13px;/);
   assert.match(rule('.wfl-pchip'), /font:500 11\.5px/);
   assert.match(rule('.wfl-actions .wfv-btn'), /height:28px;.*font-size:12\.5px;/);
 });
 
-test('folder rows, the back row, the crumbs and the chips show the house focus ring; the tab, group-head and archived-chip rules are gone', async () => {
+test('the search box slides over the title (reduced motion: at once); folders and tabs show the house focus ring; the breadcrumb and back-row rules are gone', async () => {
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /:is\(\.wfl-folder,\.wfl-up,\.wfl-crumb\):focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
+  assert.match(css, /\n\.wfl-sbox\{position:absolute;[^}]*transition:left \.24s /);
+  assert.match(css, /\n\.wfl-head\.is-searching \.wfl-sbox\{left:7px;\}/);
+  assert.match(css, /\n\.wfl-head\.is-searching \.wfl-title\{opacity:0;visibility:hidden;\}/);
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.wfl-sbox,\.wfl-title,\.wfl-filter-input\{transition:none;\}\}/);
+  assert.match(css, /:is\(\.wfl-folder,\.wfl-tab\):focus-visible\{outline:2px solid var\(--ink\);outline-offset:-2px;\}/);
   assert.match(css, /\.wfl-chip:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px;\}/);
-  assert.doesNotMatch(css, /\.wfl-(seg|tab|gh|gn|group|archived)\b/);
+  assert.doesNotMatch(css, /\.wfl-(crumbs?|trail|csep|up|search|gh|gn|group|archived)\b/);
   const src = readFileSync(new URL('../ui/public/workflows/library.mjs', import.meta.url), 'utf8');
-  assert.doesNotMatch(src, /wfl-(seg|tab|gh|gn|group|archived)\b/);
+  assert.doesNotMatch(src, /wfl-(crumbs?|crumb-home|trail|csep|up|search|gh|gn|group|archived)\b/);
 });

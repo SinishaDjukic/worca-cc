@@ -189,20 +189,24 @@ const clickIn = (sel) => ev(`(()=>{const n=document.querySelector('${VIEW} ${sel
 const setTheme = async (attr) => { await ev(`document.documentElement.dataset.theme=${JSON.stringify(attr)};0`); await settle(`theme ${attr}`); };
 
 try {
-  // ---- (1) the Library's Scripts folder lists the built-ins by domain; no sheet is open ----------
+  // ---- (1) the Library's Scripts section lists the built-ins by domain folder; no sheet is open ----------
   await go('workflows/scripts', { first: true });
   await until(`document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]')`, 'the Library\'s Scripts folders painted');
   {
-    const into = (folder) => ev(`(()=>{const f=[...document.querySelectorAll('#wfv-library .wfl-folder')].find((e)=>e.dataset.folder==='scripts/${folder}');if(!f)return [];f.click();
-      return [...document.querySelectorAll('#wfv-library .wfl-item[data-item^="script:"]')].map((c)=>c.dataset.item.slice(7));})()`);
-    const folders = await ev(`[...document.querySelectorAll('#wfv-library .wfl-folder')].map((f)=>f.dataset.folder)`);
-    const general = await into('general');
-    await ev(`(()=>{document.getElementById('wfl-up').click();return 1;})()`);
-    const coding = await into('coding');
-    const list = { folders, general, coding, sheetHidden: await ev(`document.getElementById('wfv-sheet').hidden`) };
-    check('1', 'the Library\'s Scripts folder holds a folder per domain; general lists the shell and js rows, coding the gitDiff row; the sheet is hidden',
-      list.sheetHidden === true && ['scripts/coding', 'scripts/general'].every((f) => list.folders.includes(f))
-      && ['shell', 'js'].every((k) => list.general.includes(k)) && list.coding.includes('gitDiff'), list);
+    // Folders expand in place (a click toggles one): expand a domain, read the rows in its fold, then fold it back.
+    const sel = (folder) => `'#wfv-library .wfl-folder[data-folder="scripts/${folder}"]'`;
+    const fold = (folder) => ev(`(()=>{const q=()=>document.querySelector(${sel(folder)});const f=q();if(!f)return null;if(f.getAttribute('aria-expanded')!=='true')f.click();
+      const rows=[...document.querySelectorAll('#wfv-library .wfl-fold[data-fold="scripts/${folder}"] .wfl-item[data-item^="script:"]')].map((c)=>c.dataset.item.slice(7));
+      const open=q().getAttribute('aria-expanded');q().click();return {rows,open,closed:q().getAttribute('aria-expanded')==='false'};})()`);
+    const folders = await ev(`[...document.querySelectorAll('#wfv-library .wfl-folder')].map((f)=>[f.dataset.folder,f.getAttribute('aria-expanded')])`);
+    const tab = await ev(`document.getElementById('wfv-library').dataset.tab`);
+    const general = await fold('general');
+    const coding = await fold('coding');
+    const list = { tab, folders, general, coding, sheetHidden: await ev(`document.getElementById('wfv-sheet').hidden`) };
+    check('1', 'the Library\'s Scripts section holds a collapsed folder per domain; expanded in place, general lists the shell and js rows, coding the gitDiff row, and a second click folds each back; the sheet is hidden',
+      list.sheetHidden === true && list.tab === 'scripts' && ['scripts/coding', 'scripts/general'].every((f) => list.folders.some(([k]) => k === f))
+      && list.folders.every(([, x]) => x === 'false') && !!list.general && !!list.coding && list.general.open === 'true' && list.coding.open === 'true'
+      && ['shell', 'js'].every((k) => list.general.rows.includes(k)) && list.coding.rows.includes('gitDiff') && list.general.closed && list.coding.closed, list);
   }
 
   // ---- (2) the no-prose rule, in the LIVE app -------------------------------

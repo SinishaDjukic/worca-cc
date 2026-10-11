@@ -16,7 +16,8 @@
 //               cannot reproduce it)
 //     (6)       stage-box stability across the wheel sequence
 //     (7)       measured post-fit containment of every node box
-//     (10)      the 380px Library card right of the stage, open, at Home: three folders
+//     (10)      the 380px Library card right of the stage, open on Agents: the selector's
+//               three tabs, the section's folders collapsed
 //     (11)      the top bar's rendered controls; the app chrome computes display:none
 //     (12)      frosted cards: a backdrop blur and a 0.4–0.6 alpha in both themes
 //     (13)      the PAINTED wires are orthogonal lane routes; a loop's pill sits under its cards
@@ -28,7 +29,7 @@
 //               inside the pill and grows (≤ 104px) with typed lines
 //     (17)      the More popover stays inside the stage, clear of the dock
 //     (18)      the stage keeps its room beside the 380px Library at 1440 and 1024 px
-//     (19)      the Workflows tour walks the Library's folders at 1440, 760 and 390 px:
+//     (19)      the Workflows tour walks the Library's selector and folders at 1440, 760 and 390 px:
 //               every ringed control takes the real click (never the scrim)
 //     (console) the no-page-error gate
 //   NOW ALSO IN test/ (green with no browser at all)
@@ -397,16 +398,21 @@ try {
     return {l:b.left,t:b.top,r:b.right,b:b.bottom,w:b.width,h:b.height};})()`);
   const lib = await ev(`(()=>{const q=(s)=>document.querySelector(s);const lib=q('#wfv-library'),stage=q('#wfv-stage');
     const r=(e)=>{const b=e.getBoundingClientRect();return {l:b.left,r:b.right,w:b.width};};
-    const rows=[...lib.querySelectorAll('.wfl-list > .wfl-folder')];
-    return {open:lib.dataset.open,tab:lib.dataset.tab,lib:r(lib),stage:r(stage),
-      crumb:(lib.querySelector('.wfl-crumbs .wfl-crumb.is-current')||{}).textContent||'',
-      folders:rows.map((f)=>[f.dataset.tab,f.querySelector('.wfl-fname').textContent,f.querySelector('.wfl-fn').textContent]),
-      folderPx:rows[0]?parseFloat(getComputedStyle(rows[0]).fontSize):0,
-      glyph:rows[0]?rows[0].querySelector('svg').getBoundingClientRect().width:0};})()`);
-  check(10, 'the Library card is 380px wide, open, right of the stage, at Home under a "Library" crumb: the Agents / Scripts / Workflows folders with counts, 14.5px with a 20px glyph',
-    lib.open === 'true' && Math.abs(lib.lib.w - 380) < 0.6 && lib.lib.l >= lib.stage.r - 0.6 && lib.tab === 'home' && lib.crumb === 'Library'
-    && JSON.stringify(lib.folders.map(([t, n]) => [t, n])) === JSON.stringify([['agents', 'Agents'], ['scripts', 'Scripts'], ['workflows', 'Workflows']])
-    && lib.folders.every(([, , n]) => /^\d+$/.test(n)) && lib.folderPx === 14.5 && Math.abs(lib.glyph - 20) < 0.6, lib);
+    const tabs=[...lib.querySelectorAll('.wfl-bar > .wfl-seg[role="tablist"] > button.wfl-tab')];
+    const seg=lib.querySelector('.wfl-bar > .wfl-seg'),plus=lib.querySelector('.wfl-bar #wfl-new-agent');
+    return {open:lib.dataset.open,tab:lib.dataset.tab,path:lib.hasAttribute('data-path'),lib:r(lib),stage:r(stage),
+      tabs:tabs.map((t)=>[t.id,t.dataset.tab,t.getAttribute('aria-selected'),t.textContent.trim()]),
+      plusRight:!!plus&&!!seg&&r(plus).l>=r(seg).r-0.6,
+      gone:[...lib.querySelectorAll('#wfl-up, .wfl-crumbs, .wfl-crumb, #wfl-crumb-home, .wfl-search')].length,
+      folders:[...lib.querySelectorAll('.wfl-folder')].map((f)=>[f.dataset.folder||'',f.getAttribute('aria-expanded'),f.textContent.trim()]),
+      folds:lib.querySelectorAll('.wfl-fold').length};})()`);
+  // No Home any more: the card opens on Agents, with Flow pinned among its folders, every folder collapsed.
+  check(10, 'the Library card is 380px wide, open, right of the stage, on Agents: the selector\'s Agents / Scripts / Workflows tabs with their counts (Agents selected), the "+" right of them, the Agents folders (Flow among them) collapsed; no breadcrumb, back row or Home',
+    lib.open === 'true' && Math.abs(lib.lib.w - 380) < 0.6 && lib.lib.l >= lib.stage.r - 0.6 && lib.tab === 'agents' && !lib.path && lib.gone === 0
+    && JSON.stringify(lib.tabs.map(([id, t, sel]) => [id, t, sel])) === JSON.stringify([['wfl-tab-agents', 'agents', 'true'], ['wfl-tab-scripts', 'scripts', 'false'], ['wfl-tab-workflows', 'workflows', 'false']])
+    && lib.tabs.every(([, t, , s]) => s.toLowerCase().startsWith(t) && /\d/.test(s)) && lib.plusRight
+    && lib.folders.length > 0 && lib.folders.every(([f, x]) => f.startsWith('agents/') && x === 'false')
+    && lib.folders.some(([f, , s]) => f === 'agents/_flow' && s.startsWith('Flow')) && lib.folds === 0, lib);
   const bar = await ev(`(()=>{const q=(s)=>document.querySelector(s);
     const shown=(e)=>!!e&&!e.closest('[hidden]')&&getComputedStyle(e).display!=='none'&&e.getClientRects().length>0;
     const ctl=[...document.querySelectorAll('#wfv-stage .wfv-tl button, #wfv-stage .wfv-tl input, #wfv-stage .wfv-tr button, #wfv-stage .wfv-tr input')]
@@ -469,9 +475,9 @@ try {
 
   // ---- (15) a script placed from the Library, its Params popover, both themes ----
   await ev(`location.hash='#workflows/scripts';1`);
-  // The Scripts folder splits by domain: open the subfolder the Library itself says holds the shell script.
+  // The Scripts section splits by domain: expand the folder the Library itself says holds the shell script (a click folds an open one).
   for (let i = 0; i < 100; i += 1) { if (await ev(`!!document.querySelector('#wfv-library [data-folder^="scripts/"], #wfv-library .wfl-item[data-item="script:shell"]')`)) break; await sleep(100); }
-  await ev(`(()=>{const p=window.__wfv.library().folderOf('script','shell');const e=p.length>1&&[...document.querySelectorAll('#wfv-library .wfl-folder')].find((f)=>f.dataset.folder===p.join('/'));if(e)e.click();return 1;})()`);
+  await ev(`(()=>{const p=window.__wfv.library().folderOf('script','shell');const e=p.length>1&&[...document.querySelectorAll('#wfv-library .wfl-folder')].find((f)=>f.dataset.folder===p.join('/'));if(e&&e.getAttribute('aria-expanded')!=='true')e.click();return 1;})()`);
   for (let i = 0; i < 100; i += 1) { if (await ev(`!!document.querySelector('#wfv-library .wfl-item[data-item="script:shell"] .wfl-add')`)) break; await sleep(100); }
   await ev(`(()=>{const e=document.querySelector('#wfv-library .wfl-item[data-item="script:shell"] .wfl-add');if(e)e.scrollIntoView({block:'center'});return 1;})()`); await settle('shell-into-view');
   const add15 = await rect('#wfv-library .wfl-item[data-item="script:shell"] .wfl-add');
@@ -504,7 +510,7 @@ try {
       light.cards === 1 && light.rt === 'shell' && light.selected && !!pb && hasTa && typed.command === 'npm test'
       && light.lmColor !== light.stageBg && dark.lmColor !== dark.stageBg && dark.theme === 'dark', s15);
   } else {
-    check(15, 'the Library\'s Scripts folders list the built-in shell script with its "+"', false, s15);
+    check(15, 'the Library\'s Scripts section lists the built-in shell script with its "+"', false, s15);
   }
 
   // ---- (16) the chat never covers the bottom-right bars ---------------------------
@@ -561,7 +567,7 @@ try {
     for (const width of [1440, 1024]) {
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
       await load();
-      // Open Default from the Library (its domain folder first); answer a discard confirm if one shows.
+      // Open Default from the Library (openFolder selects Workflows and expands Default's domain folder); answer a discard confirm if one shows.
       for (let i = 0; i < 60; i += 1) {
         if (await ev(`(()=>{const L=window.__wfv.library();L.openFolder(L.folderOf('workflow','wf_default'));
           const e=document.querySelector('#wfv-library .wfl-wf[data-id="wf_default"] .wfl-main');if(e)e.click();return !!e;})()`)) break;
@@ -582,7 +588,7 @@ try {
       && room[0].stage.w >= 1030 && room[1].stage.w >= 610, room);
   }
 
-  // ---- (19) the Workflows tour walks the Library's folders at 1440, 760 and 390 px ------------
+  // ---- (19) the Workflows tour walks the Library's selector and folders at 1440, 760 and 390 px ------------
   // Real clicks at each ringed control's centre. Under the <= 760px overlay (a stacking context) a hop that does not lift
   // `.wfl` hands the click to the scrim and the tour sticks — a narrow-only failure jsdom cannot see.
   {
@@ -615,8 +621,8 @@ try {
       tours.push({ width, hops, name: await ev(`document.getElementById('wfv-name').value`), graph });
     }
     await cdp('Emulation.clearDeviceMetricsOverride');
-    check(19, 'the Workflows tour walks the Library at 1440, 760 and 390 px: every ringed control takes the real click (never the scrim), through Home\'s Workflows folder to Default on the canvas, fitted readable (≥ 150px wide, never a dot under the 390px overlay); at <= 760px it opens the Library first',
-      tours.length === 3 && tours.every((r) => r.hops.every((x) => x.hit && !x.scrim) && r.hops.some((x) => x.tab === 'workflows')
+    check(19, 'the Workflows tour walks the Library at 1440, 760 and 390 px: every ringed control takes the real click (never the scrim), through the selector\'s Workflows tab (and Default\'s folder, expanded in place) to Default on the canvas, fitted readable (≥ 150px wide, never a dot under the 390px overlay); at <= 760px it opens the Library first',
+      tours.length === 3 && tours.every((r) => r.hops.every((x) => x.hit && !x.scrim) && r.hops.some((x) => x.id === 'wfl-tab-workflows' && x.tab === 'workflows')
         && r.hops.some((x) => x.wf === 'wf_default') && r.name === 'Default' && r.graph >= 150)
       && tours.filter((r) => r.width <= 760).every((r) => r.hops.length > 0 && r.hops[0].id === 'wfv-lib-toggle'), tours);
   }

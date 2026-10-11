@@ -1,30 +1,30 @@
 // ui/public/workflows/library.mjs
-// The Workflows view's Library card (composer-mockup.html library.js), browsed as folders. Home lists Agents ·
-// Scripts · Workflows with their registry counts. Agents and Scripts split into their domainGroups() (one group
-// lists its rows straight away; `shared` rows sit in every domain) and Agents ends with the pinned Flow folder;
-// Workflows splits by domain and ends with Archived. A breadcrumb walks back up and every folder below Home opens
-// with a "↰ <parent>" row. All / Built-in / Yours narrow Agents and Scripts; a filter query lists every match under
-// the open folder as one flat list. Rows drag onto the canvas (HTML5 DnD, application/x-worca — BRIEF.md) and open an
-// inline detail with every action the old Agents and Scripts pages had. Pure DOM over the data app.js hands in
+// The Workflows view's Library card (composer-mockup.html library.js). A segmented selector switches Agents · Scripts ·
+// Workflows (with their registry counts). Agents and Scripts split into their domainGroups() folders (one group lists
+// its rows straight away; `shared` rows sit in every domain) and Agents ends with the pinned Flow folder; Workflows
+// splits by domain and ends with Archived. A folder row opens in place (several can be open). All / Built-in / Yours
+// narrow Agents and Scripts; the header's search button grows a field over the title, and a query lists every match in
+// the selected section as one flat list. Rows drag onto the canvas (HTML5 DnD, application/x-worca — BRIEF.md) and open
+// an inline detail with every action the old Agents and Scripts pages had. Pure DOM over the data app.js hands in
 // (setData); every action is a callback. Every string from user data goes through textContent.
 import { safeAgentIcon, SCRIPT_GLYPH, thumbnailFor } from '../graph/view.mjs';
 import { classifyLoops } from '../../../src/shared/graph/loops.mjs';
 import { DND_TYPE, FLOW_CARDS } from './shell.mjs';
 
-/** The top folders, in Home's order. */
+/** The sections, in the selector's order. */
 export const TOPS = Object.freeze(['agents', 'scripts', 'workflows']);
 /** The pinned subfolders: Agents › Flow, Workflows › Archived. A domain matches `^[a-z][a-z0-9-]{0,31}$` (agent-meta,
  *  script-meta and workflows.mjs DOMAIN_RE), so a leading `_` never names one. */
 export const FLOW = '_flow';
 export const ARCHIVED = '_archived';
-const ROOT_LABEL = 'Library';
 const TOP_LABEL = { agents: 'Agents', scripts: 'Scripts', workflows: 'Workflows' };
 const NOUN = { agents: 'agents', scripts: 'scripts', workflows: 'workflows' };
 const KIND_TOP = { agent: 'agents', script: 'scripts', workflow: 'workflows' };
 const PINNED_KINDS = new Set(['flow', 'archived']);
 const FOLDER_GLYPH = '<path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4.6l2 2.5H19a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>';
-const UP_GLYPH = '<path d="M9 14L4 9l5-5"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>';
-const SEP_GLYPH = '<path d="M9 6l6 6-6 6"/>';
+const CHEVRON_GLYPH = '<path d="M9 6l6 6-6 6"/>';
+const SEARCH_GLYPH = '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>';
+const CLOSE_GLYPH = '<path d="M6 6l12 12M18 6L6 18"/>';
 const PLUS_GLYPH = '<path d="M12 6v12M6 12h12"/>';
 const TRASH_GLYPH = '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>';
 const FLOW_DESC = {
@@ -92,10 +92,10 @@ export function createLibrary({ doc, host, actions }) {
     s.innerHTML = body;                                 // repo-shipped glyphs or safeAgentIcon output only
     return s;
   };
-  // `path`: [] Home, [top], [top, domain | FLOW | ARCHIVED] — always resolved by where() before a paint.
+  // `top`: the selected section. `folders`: the open folders ("agents/coding"), kept across section switches.
   const st = {
-    path: [], query: '', filterOpen: false, chip: 'all', open: false,
-    expanded: new Set(), flash: '',
+    top: 'agents', query: '', searchOpen: false, chip: 'all', open: false,
+    folders: new Set(), expanded: new Set(), flash: '',
     data: { agents: [], scripts: [], workflows: [], archived: [], placedKinds: [], openId: '', newIds: new Set(), runtimes: null, loadError: '', retry: null },
   };
 
@@ -103,8 +103,9 @@ export function createLibrary({ doc, host, actions }) {
   const q = () => st.query.trim().toLowerCase();
   const matches = (...fields) => { const s = q(); return !s || fields.some((f) => String(f || '').toLowerCase().includes(s)); };
   const origin = (x) => (x.origin === 'user' ? 'yours' : 'builtin');
-  // All / Built-in / Yours narrow Agents and Scripts only: Home and Workflows show no chips.
-  const chipOk = (x) => !(st.path[0] === 'agents' || st.path[0] === 'scripts') || st.chip === 'all' || origin(x) === st.chip;
+  // All / Built-in / Yours narrow Agents and Scripts only: Workflows shows no chips.
+  const hasChips = () => st.top === 'agents' || st.top === 'scripts';
+  const chipOk = (x) => !hasChips() || st.chip === 'all' || origin(x) === st.chip;
   const HIT = {
     agent: (a) => matches(a.displayName, a.key, portLineOf(a)),
     script: (s) => matches(s.displayName, s.key, s.runtime, s.origin, portLineOf(s)),
@@ -141,20 +142,12 @@ export function createLibrary({ doc, host, actions }) {
     if (top === 'agents') out.push({ at: [top, FLOW], kind: 'flow', items: !chipped || chipOk({ origin: 'builtin' }) ? FLOW_CARDS : [] });
     return out;
   }
-  /** The folder on screen: st.path cut back to one that exists (a domain whose last row went, an emptied Archived). */
-  function where() {
-    const [top, sub] = st.path;
-    if (!TOPS.includes(top)) return [];
-    return sub != null && groupsOf(top, false).some((g) => g.at[1] === sub) ? [top, sub] : [top];
-  }
-  /** Every row under a folder (Home: all three), in folder order, with the folder listing it. A row two folders list
-   *  (a `shared` agent sits in every domain) comes once, at the first. */
-  function rowsUnder(path, chipped = true) {
-    const [top, sub] = path;
+  /** Every row in a section, in folder order, with the folder listing it. A row two folders list (a `shared` agent
+   *  sits in every domain) comes once, at the first. */
+  function rowsUnder(top, chipped = true) {
     const out = [];
     const seen = new Set();
-    for (const g of (top ? [top] : TOPS).flatMap((t) => groupsOf(t, chipped))) {
-      if (sub != null && g.at[1] !== sub) continue;
+    for (const g of groupsOf(top, chipped)) {
       for (const x of g.items) {
         const id = rowId(g.kind, x);
         if (!seen.has(id)) { seen.add(id); out.push({ kind: g.kind, x, at: g.at }); }
@@ -166,29 +159,31 @@ export function createLibrary({ doc, host, actions }) {
   function folderOf(kind, key) {
     const top = KIND_TOP[kind];
     if (!top) return [];
-    const hit = rowsUnder([top], false).find((r) => r.kind === kind && (kind === 'workflow' ? r.x.id : r.x.key) === key);
+    const hit = rowsUnder(top, false).find((r) => r.kind === kind && (kind === 'workflow' ? r.x.id : r.x.key) === key);
     return hit ? [...hit.at] : [top];
   }
-  const folderLabel = (path) => (!path.length ? ROOT_LABEL : path.length === 1 ? TOP_LABEL[path[0]]
-    : path[1] === FLOW ? 'Flow' : path[1] === ARCHIVED ? 'Archived' : path[1]);
-  /** "Agents › coding": the folder a filter result lives in. */
-  const whereLabel = (path) => path.map((_, i) => folderLabel(path.slice(0, i + 1))).join(' › ');
-  const nounOf = (path) => (!path.length ? 'items' : path[1] === FLOW ? 'flow cards' : path[1] === ARCHIVED ? 'archived' : NOUN[path[0]]);
+  const folderLabel = (path) => (path.length === 1 ? TOP_LABEL[path[0]] : path[1] === FLOW ? 'Flow' : path[1] === ARCHIVED ? 'Archived' : path[1]);
+  /** A search result's tag: the subfolder holding it ("coding", "Flow"); none for a row sitting in the section itself. */
+  const whereTag = (txt, at) => { if (at && at.length > 1) txt.appendChild(h('span', 'wfl-where', folderLabel(at))); };
 
   // ── navigation ─────────────────────────────────────────────────────────────
   let navAt = -Infinity;
-  /** Show a folder. Leaving a top folder resets its chip; every move clears the query (the filter box stays open). */
-  function go(path, focusKey = null) {
-    const next = path.slice(0, 2);
-    if (next[0] !== st.path[0]) st.chip = 'all';
-    st.path = next;
-    st.query = '';
+  /** Select a section. A new one starts on All; an open search and its query stay — they search this section now. */
+  function select(top, focusKey = null) {
+    if (!TOPS.includes(top)) return;
+    if (top !== st.top) { st.top = top; st.chip = 'all'; }
     navAt = Date.now();
     render(focusKey);
   }
-  /** A folder row, the back row and a crumb move on one click and repaint the card, so a double-click's second press
-   *  lands on whatever row now sits under the pointer (it would open a workflow, go up twice, or move focus to <body>,
-   *  where the canvas takes Delete). Swallow it; keyboard activation (detail 0) and the filter's word select stay. */
+  /** A folder row opens in place and folds back on its next click; focus stays on it. */
+  function toggleFolder(key) {
+    if (st.folders.has(key)) st.folders.delete(key); else st.folders.add(key);
+    navAt = Date.now();
+    render(`folder:${key}`);
+  }
+  /** A folder row and a tab repaint the list on one click, so a double-click's second press lands on whatever row now
+   *  sits under the pointer (it would fold the folder straight back, open a workflow, or move focus to <body>, where the
+   *  canvas takes Delete). Swallow it; keyboard activation (detail 0) and the search field's word select stay. */
   const swallowSecondPress = (ev) => {
     if (!(ev.detail > 1) || Date.now() - navAt > 500) return;
     if (ev.target && ev.target.closest && ev.target.closest('input')) return;
@@ -197,60 +192,96 @@ export function createLibrary({ doc, host, actions }) {
   };
   host.addEventListener('mousedown', swallowSecondPress, true);
   host.addEventListener('click', swallowSecondPress, true);
-  /** Up to `depth` (0 = Home): focus lands on the folder row this move came out of. */
-  function up(depth) {
-    const from = where();
-    go(from.slice(0, depth), `folder:${from.slice(0, depth + 1).join('/')}`);
-  }
 
-  // ── chrome ─────────────────────────────────────────────────────────────────
-  function header() {
-    const head = h('div', 'wfl-head');
-    head.appendChild(h('h2', 'wfl-title', 'Library'));
-    const filterBtn = h('button', 'wfv-icon-btn wfl-filter-btn');
-    filterBtn.type = 'button';
-    filterBtn.id = 'wfl-filter-btn';
-    filterBtn.title = 'Filter';
-    filterBtn.setAttribute('aria-label', 'Filter');
-    filterBtn.setAttribute('aria-pressed', st.filterOpen ? 'true' : 'false');
-    filterBtn.appendChild(svg('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>'));
-    filterBtn.addEventListener('click', () => { st.filterOpen = !st.filterOpen; if (!st.filterOpen) st.query = ''; render(st.filterOpen ? 'wfl-filter' : 'wfl-filter-btn'); });
-    const close = h('button', 'wfv-icon-btn wfl-close');
-    close.type = 'button';
-    close.id = 'wfl-close';
-    close.title = 'Close';
-    close.setAttribute('aria-label', 'Close library');
-    close.appendChild(svg('<path d="M6 6l12 12M18 6L6 18"/>'));
-    close.addEventListener('click', () => act('closeLibrary'));
-    head.append(filterBtn, close);
-    return head;
+  // ── header ─────────────────────────────────────────────────────────────────
+  // Built once and kept across repaints, so the search box's slide (CSS, .is-searching) runs and typing never loses
+  // the field. Folded: "Library  🔍 ✕". Open: "🔍 Search agents…  ✕" — the box's left edge slides over the title.
+  const head = h('div', 'wfl-head');
+  const title = h('h2', 'wfl-title', 'Library');
+  const sbox = h('div', 'wfl-sbox');
+  const searchBtn = h('button', 'wfv-icon-btn wfl-filter-btn');
+  searchBtn.type = 'button';
+  searchBtn.id = 'wfl-filter-btn';
+  searchBtn.title = 'Search';
+  searchBtn.setAttribute('aria-label', 'Search');
+  searchBtn.setAttribute('aria-controls', 'wfl-filter');
+  searchBtn.appendChild(svg(SEARCH_GLYPH));
+  const input = h('input', 'wfl-filter-input');
+  input.id = 'wfl-filter';
+  input.type = 'search';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  sbox.append(searchBtn, input);
+  const closeBtn = h('button', 'wfv-icon-btn wfl-close');
+  closeBtn.type = 'button';
+  closeBtn.id = 'wfl-close';
+  closeBtn.appendChild(svg(CLOSE_GLYPH));
+  head.append(title, sbox, closeBtn);
+  function syncHead() {
+    head.classList.toggle('is-searching', st.searchOpen);
+    searchBtn.setAttribute('aria-expanded', st.searchOpen ? 'true' : 'false');
+    input.toggleAttribute('inert', !st.searchOpen);          // the folded field takes no focus and no Tab stop
+    const what = NOUN[st.top];
+    input.placeholder = `Search ${what}…`;
+    input.setAttribute('aria-label', `Search ${what}`);
+    if (input.value !== st.query) input.value = st.query;
+    closeBtn.title = st.searchOpen ? 'Close search' : 'Close';
+    closeBtn.setAttribute('aria-label', st.searchOpen ? 'Close search' : 'Close library');
   }
-  /** Library › Agents › coding: every crumb but the last walks up; the right side holds the top folder's "+". */
-  function crumbs(path) {
-    const bar = h('nav', 'wfl-crumbs');
-    bar.setAttribute('aria-label', 'Library folders');
-    const trail = h('div', 'wfl-trail');
-    for (let depth = 0; depth <= path.length; depth += 1) {
-      const label = folderLabel(path.slice(0, depth));
-      if (depth) { const sep = svg(SEP_GLYPH); sep.classList.add('wfl-csep'); trail.appendChild(sep); }
-      if (depth === path.length) {
-        const cur = h('span', 'wfl-crumb is-current', label);
-        cur.setAttribute('aria-current', 'location');
-        trail.appendChild(cur);
-        break;
-      }
-      const b = h('button', 'wfl-crumb', label);
+  /** Fold the search and drop its query; `focusEl` takes the focus (the field goes inert — never leave it on <body>). */
+  function closeSearch(focusEl) {
+    const had = Boolean(st.query);
+    st.query = '';
+    st.searchOpen = false;
+    syncHead();
+    if (had) repaintRows();
+    if (focusEl) focusEl.focus();
+  }
+  searchBtn.addEventListener('click', () => {
+    if (!st.searchOpen) { st.searchOpen = true; syncHead(); input.focus(); return; }
+    if (st.query) { input.focus(); return; }                 // a field with text stays open
+    closeSearch(searchBtn);
+  });
+  // ✕ closes an open search first; on a folded one it closes the Library.
+  closeBtn.addEventListener('click', () => { if (st.searchOpen) closeSearch(closeBtn); else act('closeLibrary'); });
+  // Typing repaints the rows only: the input stays, so the caret and an IME composition survive.
+  input.addEventListener('input', () => { st.query = input.value; repaintRows(); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (st.query) { st.query = ''; input.value = ''; repaintRows(); } else closeSearch(searchBtn);
+  });
+
+  // ── selector, chips ────────────────────────────────────────────────────────
+  /** Agents · Scripts · Workflows (registry counts) and, at the right, the section's "+" — Workflows keeps its slot. */
+  function bar() {
+    const row = h('div', 'wfl-bar');
+    const seg = h('div', 'wfl-seg');
+    seg.setAttribute('role', 'tablist');
+    seg.setAttribute('aria-label', 'Library sections');
+    for (const t of TOPS) {
+      const b = h('button', 'wfl-tab');
       b.type = 'button';
-      b.dataset.crumb = String(depth);
-      b.dataset.focusKey = `crumb:${depth}`;
-      if (!depth) b.id = 'wfl-crumb-home';           // the tour rings it from inside a folder (Home's rows are gone)
-      b.addEventListener('click', () => up(depth));
-      trail.appendChild(b);
+      b.id = `wfl-tab-${t}`;
+      b.dataset.tab = t;                                  // the tour and the proofs find a section by it
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', st.top === t ? 'true' : 'false');
+      b.tabIndex = st.top === t ? 0 : -1;
+      b.append(h('span', 'wfl-tname', TOP_LABEL[t]), h('span', 'wfl-n mono', String(dataOf(t).length)));
+      b.addEventListener('click', () => select(t, b.id));
+      b.addEventListener('keydown', (ev) => {
+        const step = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        ev.preventDefault();
+        const next = TOPS[(TOPS.indexOf(st.top) + step + TOPS.length) % TOPS.length];
+        select(next, `wfl-tab-${next}`);
+      });
+      seg.appendChild(b);
     }
-    bar.appendChild(trail);
-    const top = path[0];
-    if (top === 'agents' || top === 'scripts') {
-      const agents = top === 'agents';
+    row.appendChild(seg);
+    if (hasChips()) {
+      const agents = st.top === 'agents';
       const nb = h('button', 'wfv-icon-btn wfl-new');
       nb.type = 'button';
       nb.id = agents ? 'wfl-new-agent' : 'wfl-new-script';
@@ -258,30 +289,13 @@ export function createLibrary({ doc, host, actions }) {
       nb.setAttribute('aria-label', nb.title);
       nb.appendChild(svg(PLUS_GLYPH));
       nb.addEventListener('click', () => act(agents ? 'newAgent' : 'newScript'));
-      bar.appendChild(nb);
+      row.appendChild(nb);
+    } else {
+      const slot = h('span', 'wfl-new is-slot');
+      slot.setAttribute('aria-hidden', 'true');
+      row.appendChild(slot);
     }
-    return bar;
-  }
-  function filterBox(path) {
-    const box = h('div', 'wfl-search');
-    box.hidden = !st.filterOpen;
-    const input = h('input', 'wfl-filter-input');
-    input.id = 'wfl-filter';
-    input.type = 'search';
-    const what = path.length ? nounOf(path) : 'the Library';
-    input.placeholder = `Filter ${what}…`;
-    input.setAttribute('aria-label', `Filter ${what}`);
-    input.value = st.query;
-    // Typing repaints the rows only: the input stays, so the caret and an IME composition survive.
-    input.addEventListener('input', () => { st.query = input.value; repaintRows(); });
-    input.addEventListener('keydown', (ev) => {
-      if (ev.key !== 'Escape') return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (st.query) { st.query = ''; render('wfl-filter'); } else { st.filterOpen = false; render('wfl-filter-btn'); }
-    });
-    box.appendChild(input);
-    return box;
+    return row;
   }
   function chipRow() {
     const row = h('div', 'wfl-tools');
@@ -297,29 +311,22 @@ export function createLibrary({ doc, host, actions }) {
     return row;
   }
 
-  // ── rows ───────────────────────────────────────────────────────────────────
+  // ── folders ────────────────────────────────────────────────────────────────
   function folderRow(path, count) {
     const key = path.join('/');
     const row = h('button', 'wfl-folder');
     row.type = 'button';
     row.dataset.folder = key;
     row.dataset.focusKey = `folder:${key}`;
-    row.append(svg(FOLDER_GLYPH), h('span', 'wfl-fname', folderLabel(path)), h('span', 'wfl-fn mono', String(count)));
-    row.addEventListener('click', () => go(path, 'wfl-up'));     // entering a folder focuses its back row
+    row.setAttribute('aria-expanded', st.folders.has(key) ? 'true' : 'false');
+    const chev = svg(CHEVRON_GLYPH);
+    chev.classList.add('wfl-chev');
+    row.append(chev, svg(FOLDER_GLYPH), h('span', 'wfl-fname', folderLabel(path)), h('span', 'wfl-fn mono', String(count)));
+    row.addEventListener('click', () => toggleFolder(key));
     return row;
   }
-  /** "↰ <parent>": the first row of every folder below Home. */
-  function upRow(path) {
-    const parent = path.slice(0, -1);
-    const label = folderLabel(parent);
-    const b = h('button', 'wfl-up');
-    b.type = 'button';
-    b.id = 'wfl-up';
-    b.setAttribute('aria-label', `Back to ${label}`);
-    b.append(svg(UP_GLYPH), h('span', 'wfl-fname', label));
-    b.addEventListener('click', () => up(parent.length));
-    return b;
-  }
+
+  // ── rows ───────────────────────────────────────────────────────────────────
   function tile(fam, glyph, viewBox) {
     const t = h('span', `wfl-ic h-${fam}`);
     t.appendChild(svg(glyph, viewBox));
@@ -354,7 +361,7 @@ export function createLibrary({ doc, host, actions }) {
     });
     return row;
   }
-  /** `at`: the folder path a filter result lives in (tagged under its port line); null in a folder listing. */
+  /** `at`: the folder path a search result lives in (tagged under its port line); null in a folder listing. */
   function itemRow({ id, kind, key, name, sub, chips = [], fam, glyph, viewBox, draggable, detail, at = null }) {
     const item = h('div', `wfl-item${st.flash === id ? ' is-flash' : ''}`);
     item.dataset.item = id;
@@ -381,7 +388,7 @@ export function createLibrary({ doc, host, actions }) {
     l1.appendChild(h('span', 'wfl-name', name));
     for (const c of chips) l1.appendChild(h('span', `wfl-qchip${c.mono ? ' mono' : ''}`, c.text));
     txt.append(l1, h('span', 'wfl-l2 mono', sub));
-    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
+    whereTag(txt, at);
     main.append(tile(fam, glyph, viewBox), txt);
     const toggle = () => { if (st.expanded.has(id)) st.expanded.delete(id); else st.expanded.add(id); render(id); };
     main.addEventListener('click', toggle);
@@ -510,7 +517,7 @@ export function createLibrary({ doc, host, actions }) {
     if (st.data.newIds && st.data.newIds.has(w.id)) l3.appendChild(h('span', 'wfl-qchip is-new', 'NEW'));
     if (st.data.openId === w.id) l3.appendChild(h('span', 'wfl-qchip is-open', 'Open'));
     if (l3.childNodes.length) txt.appendChild(l3);
-    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
+    whereTag(txt, at);
     main.append(thumb, txt);
     if (v2) {
       main.addEventListener('click', () => act('openWorkflow', w.id));
@@ -549,7 +556,7 @@ export function createLibrary({ doc, host, actions }) {
     const l1 = h('span', 'wfl-l1');
     l1.appendChild(h('span', 'wfl-name', w.name || w.id));
     txt.append(l1, h('span', 'wfl-l2 mono', w.id));
-    if (at) txt.appendChild(h('span', 'wfl-where', whereLabel(at)));
+    whereTag(txt, at);
     main.appendChild(txt);
     item.appendChild(main);
     const tail = h('span', 'wfl-wf-actions');
@@ -574,8 +581,7 @@ export function createLibrary({ doc, host, actions }) {
 
   // ── render ─────────────────────────────────────────────────────────────────
   function listBody() {
-    const path = where();
-    const [top, sub] = path;
+    const top = st.top;
     const list = h('div', 'wfl-list');
     if (st.data.loadError) {
       const err = h('p', 'wfl-empty', st.data.loadError);
@@ -588,56 +594,55 @@ export function createLibrary({ doc, host, actions }) {
       list.appendChild(err);
     }
     if (q()) {
-      // A query lists every match under this folder as one flat list, each row tagged with the folder holding it.
-      const hits = rowsUnder(path).filter((r) => HIT[r.kind](r.x));
+      // A query lists every match in the section as one flat list, each row tagged with the subfolder holding it.
+      const hits = rowsUnder(top).filter((r) => HIT[r.kind](r.x));
       for (const r of hits) list.appendChild(rowEl(r.kind, r.x, r.at));
-      if (!hits.length) list.appendChild(h('p', 'wfl-empty', `No ${nounOf(path)} match “${st.query.trim()}”`));
+      if (!hits.length) list.appendChild(h('p', 'wfl-empty', `No ${NOUN[top]} match “${st.query.trim()}”`));
       return { list, count: hits.length };
     }
-    if (!top) {
-      for (const t of TOPS) {
-        const row = folderRow([t], dataOf(t).length);    // the registry's count, as the tabs had
-        row.dataset.tab = t;                             // the tour and the proofs find a top folder by it
-        list.appendChild(row);
-      }
-    } else {
-      list.appendChild(upRow(path));
-      for (const g of groupsOf(top)) {
-        if (sub != null && g.at[1] !== sub) continue;
-        if (sub == null && g.at.length === 2) { if (g.items.length) list.appendChild(folderRow(g.at, g.items.length)); }
-        else for (const x of g.items) list.appendChild(rowEl(g.kind, x));
-      }
-      if (!list.querySelector('.wfl-item, .wfl-folder')) list.appendChild(h('p', 'wfl-empty', `No ${nounOf(path)}`));
+    for (const g of groupsOf(top)) {
+      if (g.at.length === 1) { for (const x of g.items) list.appendChild(rowEl(g.kind, x)); continue; }
+      if (!g.items.length) continue;                     // a chip left it nothing to show
+      const key = g.at.join('/');
+      list.appendChild(folderRow(g.at, g.items.length));
+      if (!st.folders.has(key)) continue;
+      const fold = h('div', 'wfl-fold');
+      fold.dataset.fold = key;
+      fold.setAttribute('role', 'group');
+      fold.setAttribute('aria-label', folderLabel(g.at));
+      for (const x of g.items) fold.appendChild(rowEl(g.kind, x));
+      list.appendChild(fold);
     }
-    const rows = rowsUnder(path);
-    const pinned = sub === FLOW || sub === ARCHIVED;
-    return { list, count: pinned ? rows.length : rows.filter((r) => !PINNED_KINDS.has(r.kind)).length };
+    if (!list.querySelector('.wfl-item, .wfl-folder')) list.appendChild(h('p', 'wfl-empty', `No ${NOUN[top]}`));
+    // The section's own rows: never the pinned flow cards or the archived workflows.
+    return { list, count: rowsUnder(top).filter((r) => !PINNED_KINDS.has(r.kind)).length };
   }
 
   function repaintRows() {
     const oldList = host.querySelector('.wfl-list');
     const oldFoot = host.querySelector('.wfl-foot');
-    if (!oldList || !oldFoot) { render('wfl-filter'); return; }
+    if (!oldList || !oldFoot) { render(); return; }
     const { list, count } = listBody();
     oldList.replaceWith(list);
-    oldFoot.textContent = `${count} ${nounOf(where())}`;
+    oldFoot.textContent = `${count} ${NOUN[st.top]}`;
   }
 
-  /** Full repaint; focus returns to the element that had it (by id or data-focus-key). */
+  /** Full repaint below the header; focus returns to the element that had it (by id or data-focus-key). */
   function render(focusKey = null) {
     const active = doc.activeElement && host.contains(doc.activeElement) ? doc.activeElement : null;
-    const want = focusKey || (active && (active.id || active.dataset.focusKey)) || null;
-    st.path = where();                                   // a folder a refresh emptied gives way to its parent
-    const at = st.path.join('/') || 'home';
+    let want = focusKey || (active && (active.id || active.dataset.focusKey)) || null;
+    if (want === 'wfl-filter' && !st.searchOpen) want = 'wfl-filter-btn';   // a closed (inert) field hands focus to its button
     const prevList = host.querySelector('.wfl-list');
-    const keepTop = prevList && host.dataset.path === at ? prevList.scrollTop : 0;   // a data refresh never scrolls the list away
-    host.dataset.tab = st.path[0] || 'home';
-    host.dataset.path = at;
+    const keepTop = prevList && host.dataset.tab === st.top ? prevList.scrollTop : 0;   // a refresh or a fold never scrolls the list away
+    host.dataset.tab = st.top;
     host.dataset.open = st.open ? 'true' : 'false';
+    syncHead();
     const { list, count } = listBody();
-    const foot = h('div', 'wfl-foot', `${count} ${nounOf(st.path)}`);
-    const chips = st.path[0] === 'agents' || st.path[0] === 'scripts' ? [chipRow()] : [];
-    host.replaceChildren(header(), crumbs(st.path), filterBox(st.path), ...chips, list, foot);
+    const foot = h('div', 'wfl-foot', `${count} ${NOUN[st.top]}`);
+    const chips = hasChips() ? [chipRow()] : [];
+    if (host.firstChild !== head) host.replaceChildren(head);
+    while (head.nextSibling) head.nextSibling.remove();
+    host.append(bar(), ...chips, list, foot);
     if (keepTop) list.scrollTop = keepTop;
     if (want) {
       // Never build a selector from a key: `#agent:planner` is an INVALID selector (Chrome throws a SyntaxError
@@ -645,20 +650,19 @@ export function createLibrary({ doc, host, actions }) {
       const own = (id) => { const n = doc.getElementById(id); return n && host.contains(n) ? n : null; };
       const keyed = (k) => [...host.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === k);
       let el = own(want) || keyed(want);
-      // The control is gone (a placed Task / End loses its "+" and its Add to canvas, an opener's row was deleted or is
-      // in another folder now): its row (the key up to its last ':'), else the back row, else Home's first folder, else
-      // the filter button — never <body>.
+      // The control is gone (a placed Task / End loses its "+" and its Add to canvas, an opener's row was deleted or its
+      // folder went): its row (the key up to its last ':'), else the selected tab — never <body>.
       for (let k = want; !el && k.lastIndexOf(':') > 0;) { k = k.slice(0, k.lastIndexOf(':')); el = keyed(k); }
-      if (!el) el = own('wfl-up') || host.querySelector('.wfl-folder') || own('wfl-filter-btn');
-      if (el && el.focus) el.focus();
+      if (!el) el = own(`wfl-tab-${st.top}`);
+      if (el && el.focus && doc.activeElement !== el) el.focus();
     }
   }
 
-  /** A top folder (the shell menu's Open… / Agent… / Script…, #workflows/agents|scripts). Already inside it — in one of
-   *  its subfolders too — stays put: a sheet closing back to its tab address must not repaint the opener's row away
-   *  (focus would fall to <body>, where the canvas takes Delete). */
+  /** A section (the shell menu's Open… / Agent… / Script…, #workflows/agents|scripts). The selected one stays put, open
+   *  folders and all: a sheet closing back to its tab address must not repaint the opener's row away (focus would fall
+   *  to <body>, where the canvas takes Delete). */
   function open(tab, focusKey = null) {
-    if (TOPS.includes(tab) && st.path[0] !== tab) { st.path = [tab]; st.query = ''; st.chip = 'all'; }
+    if (TOPS.includes(tab) && st.top !== tab) { st.top = tab; st.chip = 'all'; }
     render(focusKey);
   }
 
@@ -666,24 +670,28 @@ export function createLibrary({ doc, host, actions }) {
   return {
     render,
     open,
-    /** Any folder: [] Home, [top], [top, domain | FLOW | ARCHIVED]; one that does not exist shows its parent. */
+    /** [top] or [top, domain | FLOW | ARCHIVED]: selects the section and opens the folder; the query clears so it shows. */
     openFolder(path, focusKey = null) {
-      const p = (Array.isArray(path) ? path : []).filter((s) => typeof s === 'string').slice(0, 2);
-      if (p.length && !TOPS.includes(p[0])) return;
-      go(p, focusKey);
+      const [top, sub] = (Array.isArray(path) ? path : []).filter((s) => typeof s === 'string');
+      if (!TOPS.includes(top)) return;
+      if (top !== st.top) { st.top = top; st.chip = 'all'; }
+      if (sub) st.folders.add(`${top}/${sub}`);
+      st.query = '';
+      render(focusKey);
     },
     folderOf,
     setData(patch) { st.data = { ...st.data, ...patch }; render(); },
     setOpen(v) { st.open = Boolean(v); host.dataset.open = st.open ? 'true' : 'false'; host.hidden = false; },
     isOpen: () => st.open,
-    /** The top folder on screen ('home' at Home). */
-    tab: () => where()[0] || 'home',
-    path: () => where(),
-    /** After a save / duplicate / import: show the row (its folder AND domain subfolder, no filter, no chip, expanded)
+    /** The selected section. */
+    tab: () => st.top,
+    /** After a save / duplicate / import: show the row (its section, its folder open, no search, no chip, expanded)
      *  and wash it for 1.6 s. */
     highlight(kind, key) {
-      st.chip = 'all'; st.query = ''; st.filterOpen = false;
-      st.path = folderOf(kind, key);
+      st.chip = 'all'; st.query = ''; st.searchOpen = false;
+      const at = folderOf(kind, key);
+      if (at.length) st.top = at[0];
+      if (at.length > 1) st.folders.add(at.join('/'));
       const id = `${kind}:${key}`;
       if (kind !== 'workflow') st.expanded.add(id);
       st.flash = id;

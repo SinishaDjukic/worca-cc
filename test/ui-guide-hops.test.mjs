@@ -27,11 +27,9 @@ const RUNTIME = new Map([
   ['#projects-list .pl-item', ['app.js', /function buildProjectRow\(p\) \{\s*const item = document\.createElement\('div'\);\s*item\.className = 'pl-item';/]],
   ['#projects-list .pl-row', ['app.js', /function buildProjectRow\(p\) \{[\s\S]{0,300}row\.className = 'pl-row';/]],
   ['#wfv-library .wfl-wf', ['workflows/library.mjs', /wfl-wf/]],                                // the Library's Workflows rows
-  ['#wfv-library [data-tab="workflows"]', ['workflows/library.mjs', 'row.dataset.tab = t']],   // Home's three top folders
-  ['#wfv-library #wfl-crumb-home', ['workflows/library.mjs', "b.id = 'wfl-crumb-home'"]],     // the breadcrumb's Library crumb
+  ['#wfv-library #wfl-tab-workflows', ['workflows/library.mjs', 'b.id = `wfl-tab-${t}`']],   // the selector's Workflows tab
   ['#wfv-library .wfl-folder[data-folder]', ['workflows/library.mjs', 'row.dataset.folder = key']],   // a folder row (the one holding Default)
-  ['#wfv-library #wfl-up', ['workflows/library.mjs', "b.id = 'wfl-up'"]],                     // a folder's "↰ <parent>" row
-  ['#wfv-library #wfl-filter-btn', ['workflows/library.mjs', "filterBtn.id = 'wfl-filter-btn'"]],   // the header's filter button
+  ['#wfv-library .wfl-head.is-searching #wfl-close', ['workflows/library.mjs', /closeBtn\.id = 'wfl-close';[\s\S]*head\.classList\.toggle\('is-searching'/]],   // ✕ on an open search
   ['.ask-pill', ['ask-panel.mjs', "make('button', 'ask-pill')"]],
   ['.ask-input', ['ask-panel.mjs', "el.input.className = 'ask-input'"]],
   ['.ask-send', ['ask-panel.mjs', "make('button', 'ask-send')"]],
@@ -131,9 +129,9 @@ test('a hop ringing a control inside the Workflows stage lifts every stacking co
 });
 
 // At <= 760 px the Library is an overlay (Task C1: `@media (max-width:760px){.wfl{position:absolute;…z-index:35…}}`):
-// a stacking context under the guide's scrim (z 44). A hop ringing a control inside it (Home's Workflows folder, the
-// Library crumb, Default's folder, a back row, a saved workflow's row) must lift `.wfl` too, or Chrome sends the click
-// to the scrim and the tour sticks on "Open the Workflows folder" — on a narrow window only (wider, the Library is a
+// a stacking context under the guide's scrim (z 44). A hop ringing a control inside it (the selector's Workflows tab,
+// Default's folder, ✕ on an open search, a saved workflow's row) must lift `.wfl` too, or Chrome sends the click to the
+// scrim and the tour sticks on "Switch the Library to Workflows" — on a narrow window only (wider, the Library is a
 // plain flex column). Its rows are painted at runtime: resolve them by their `#id` scope.
 test('a hop ringing a control inside the Library lifts the Library (its narrow-screen overlay is a stacking context)', () => {
   const rows = [];
@@ -150,21 +148,20 @@ test('a hop ringing a control inside the Library lifts the Library (its narrow-s
       rows.push({ at: `app.js:${lineOf(m.index)} ${sel}`, ok: lift.some((l) => lib.matches(l)) });
     }
   }
-  assert.ok(rows.length >= 6, `found ${rows.length} hop targets inside the Library (the Workflows folder, the Library crumb, Default's folder, the back row and the two Open Default targets at least)`);
+  assert.ok(rows.length >= 5, `found ${rows.length} hop targets inside the Library (the Workflows tab, Default's folder, ✕ on an open search and the two Open Default targets at least)`);
   assert.deepEqual(rows.filter((r) => !r.ok).map((r) => r.at), []);
 });
 
-// The Library browses folders (Library › Workflows › <domain>): the Workflows tour opens Home's Workflows folder (the
-// Library crumb first from inside another folder), then the folder holding Default (the back row first from a sibling
-// folder), then Default itself. The folder comes from the Library (`folderOf`), never a hard-coded domain. A filter
-// query lists flat (no folder row, no back row, no Library crumb at Home), so both folder hops end on the filter button,
-// which is always in the header: anything listed after it would never be reached.
-test('the Workflows tour reaches Default through the Library\'s folders', () => {
+// The Library's selector switches sections and its folders open in place: the Workflows tour picks the Workflows tab,
+// opens the folder holding Default, then Default itself. The folder comes from the Library (`folderOf`), never a
+// hard-coded domain. A search query lists flat (no folder rows), so the folder hop falls back to ✕ on the open search,
+// which closes it and clears it.
+test('the Workflows tour reaches Default through the Library\'s selector and folders', () => {
   const at = section.indexOf("case 'workflows': {");
   assert.ok(at > 0, 'the Workflows tour is in the guides section');
   const tour = section.slice(at, section.indexOf("\n    case '", at + 1));
   assert.deepEqual([...tour.matchAll(/\{ id: '([\w-]+)'/g)].map((m) => m[1]).slice(0, 4), ['library', 'tab', 'folder', 'open']);
-  assert.match(tour, /id: 'tab', target: \['#wfv-library \[data-tab="workflows"\]', '#wfv-library #wfl-crumb-home', '#wfv-library #wfl-filter-btn'\]/);
-  assert.match(tour, /id: 'folder', target: \[`#wfv-library \.wfl-folder\[data-folder="\$\{defFolder\}"\]`, '#wfv-library #wfl-up', '#wfv-library #wfl-crumb-home', '#wfv-library #wfl-filter-btn'\]/);
+  assert.match(tour, /id: 'tab', target: '#wfv-library #wfl-tab-workflows'/);
+  assert.match(tour, /id: 'folder', target: \[`#wfv-library \.wfl-folder\[data-folder="\$\{defFolder\}"\]`, '#wfv-library \.wfl-head\.is-searching #wfl-close'\]/);
   assert.match(tour, /const defFolder = \(wfvLibrary \? wfvLibrary\.folderOf\('workflow', 'wf_default'\) : \['workflows'\]\)\.join\('\/'\);/);
 });
