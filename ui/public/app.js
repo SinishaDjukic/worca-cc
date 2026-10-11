@@ -97,6 +97,8 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningAct
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+// worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
+import { registerChatActionCards } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
@@ -20585,12 +20587,61 @@ function setShipItGenerating(modal, on) {
   field.setAttribute('aria-busy', String(on));
 }
 
-function openShipItModal(record, data) {
+/**
+ * worca Chat P2 (CONTRACT §4, R9, lead ruling): the Ship it dialog for a run the chat names by ids alone — the
+ * pull-request card (with its ask link, so POST /api/pr flips the card to applied) or a run card / the run panel (no
+ * link). Finds the History row (loading the list once when this tab has not), reads the saved detail and opens the
+ * SAME dialog the History page opens, over the current page — once History knows the run's pull requests (it looks them
+ * up after the list loads; until then "no PR" is a guess, and a merged run would get a second one). Settles when the
+ * dialog closes.
+ * @param {{pipelineId?:string, id?:string, projectKey?:string, workspaceId?:string}} ref
+ * @param {{askThreadId:string, askCardId:string}|null} [link]
+ * @returns {Promise<{opened:boolean, url?:string, error?:string}>} opened = a PR was created or linked
+ */
+async function openShipItFor(ref = {}, link = null) {
+  const id = ref && (ref.pipelineId || ref.id);
+  const projectKey = ref && ref.workspaceId ? `workspaces/${ref.workspaceId}` : ref && ref.projectKey;
+  if (!id || !projectKey) return { opened: false, error: 'This run has no project to open a pull request in.' };
+  const rowOf = () => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null;
+  // Off the Runs views no History refresh runs (pipelines-changed and finishRun reload only there), so a row loaded while
+  // the run ran stays stale on the Chat page — a workspace row's members read affected:false until the run ends. Reload
+  // unless the row is already finished and shippable.
+  const r0 = rowOf();
+  if (!r0 || !RD_TERMINAL.includes(String(r0.status || '').toLowerCase()) || !histCanShip(r0)) await loadHistoryView({ force: true });
+  // `pr` (a workspace row's members' too) is undefined until History's PR lookup lands (history-pr frames, or "none"
+  // once HISTORY_PR_TIMEOUT_MS passes): wait for it, as History's own Create PR control does (paintHdPr).
+  const pending = (r) => r.pr === undefined || (hasWsMembers(r) && wsPrPending(r));
+  let record = rowOf();
+  for (const t0 = Date.now(); record && pending(record) && Date.now() - t0 < HISTORY_PR_TIMEOUT_MS + 1000;) {
+    await new Promise((r) => setTimeout(r, 100));
+    record = rowOf();                                      // loadHistoryView replaces state.historyAll
+  }
+  if (!record) {
+    // A History list that failed to load says so (the Runs list's own words), not that the run is missing.
+    const failed = state.historyError && !(state.historyAll || []).length;
+    return { opened: false, error: failed ? `Could not load finished runs: ${state.historyError}` : 'This run is not in History yet.' };
+  }
+  if (pending(record)) return { opened: false, error: "Still checking this run's pull requests — try again in a moment." };
+  let data;
+  try {
+    const res = await fetch(historyDetailUrl(record.projectDir || null, id, record));
+    data = await safeJson(res);
+    if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
+  if (!histCanShip(record)) return { opened: false, error: record.pr ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
+  return new Promise((resolve) => {
+    const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
+    if (!shown) resolve({ opened: false, error: 'The Ship it dialog is already open.' });
+  });
+}
+
+function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
-  if (!modal) return;
-  if (!modal.classList.contains('hidden')) return;  // double-open guard: a second open
-                                                    // would stack a second onOk -> two POSTs
-  if (record.target === 'workspace') { openShipItWsModal(record, data); return; }
+  if (!modal) return false;
+  if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
+                                                          // would stack a second onOk -> two POSTs
+  if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
   q('.shipit-sub').textContent =
@@ -20634,6 +20685,7 @@ function openShipItModal(record, data) {
   // The in-flight Generate with AI request (null when idle). Stop and done() abort
   // it; its handler acts only while it is still THIS open's current request.
   let genCtl = null;
+  let shipped = null;                                // worca Chat P2: {opened:true, url?} once a PR opened
   const done = () => {
     if (closed) return;                              // idempotent: only the first call acts
     closed = true;
@@ -20645,6 +20697,8 @@ function openShipItModal(record, data) {
     modal.removeEventListener('click', onBackdrop);
     document.removeEventListener('keydown', onKey);
     descBox.removeEventListener('click', onDescClick);
+    // worca Chat P2: the opener waits for this close (openShipItFor).
+    if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* a caller's bug never keeps the dialog open */ } }
   };
   shipItClose = done;
   const onCancel = () => done();
@@ -20718,6 +20772,8 @@ function openShipItModal(record, data) {
     setShipItRemotesDisabled(modal, true);
     cardAlert(card, null);
     const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id };
+    // worca Chat P2: the chat's pull-request card this dialog was opened from (POST /api/pr applies it). Absent → no keys.
+    if (link) { payload.askThreadId = link.askThreadId; payload.askCardId = link.askCardId; }
     if (!q('.shipit-remotes').hidden) {
       payload.pushRemote = q('.shipit-push-remote').value;
       payload.baseRemote = q('.shipit-base-remote').value;
@@ -20737,6 +20793,7 @@ function openShipItModal(record, data) {
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
       const pr = { state: 'OPEN', url: dd.url || '#', number: null };
       record.pr = pr;
+      shipped = { opened: true, ...(dd.url ? { url: dd.url } : {}) };
       done();
       // Keep the model row in step — list<->detail hops deliberately do NOT reload, so
       // without this a later reopen would offer "Create PR" again for a run that already
@@ -20744,7 +20801,8 @@ function openShipItModal(record, data) {
       // Runs row then reads "In review") and — through hdSyncPr — repaints the detail
       // control too; the explicit detail paint below stays.
       patchHistoryPr({ projectKey: record.projectKey, id: record.id, pr });
-      const screen = histDetailState && histDetailState.screen;
+      // Only THIS run's open detail (worca Chat P2: the dialog now also opens from the chat, over any page).
+      const screen = hdShowsRun(record) ? histDetailState.screen : null;
       if (screen) {
         paintHdPr(screen, record, histDetailState.data);
         paintHdAfter(screen, record, histDetailState.data);
@@ -20776,6 +20834,7 @@ function openShipItModal(record, data) {
   descBox.addEventListener('click', onDescClick);
   loadShipItRemotes(modal, record, gen, () => closed);
   paintShipItTry(modal, record, gen, () => closed);
+  return true;
 }
 
 // A finished run on the Running page reads its PR from History's rows, and gets no live
@@ -20904,8 +20963,9 @@ function setShipItRowDisabled(row, on) {
 
 const shipItRowBase = (row) => (row.branchWrap.hidden ? (row.member.sourceBranch || '') : row.branchSel.value);
 
-function shipItRowPayload(record, row) {
+function shipItRowPayload(record, row, link = null) {
   const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id, memberKey: row.member.memberKey };
+  if (link) { payload.askThreadId = link.askThreadId; payload.askCardId = link.askCardId; }   // worca Chat P2 (each member)
   if (!row.remotesBox.hidden) { payload.pushRemote = row.pushSel.value; payload.baseRemote = row.baseSel.value; }
   if (!row.branchWrap.hidden) payload.baseBranch = row.branchSel.value;
   return payload;
@@ -20994,9 +21054,9 @@ function paintWsMergePills(record, rows) {
 
 // The workspace Ship-it dialog. Its shell mirrors openShipItModal: the double-open
 // guard, shipItClose, the `closed` flag, backdrop/Escape.
-function openShipItWsModal(record, data) {
+function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
-  if (!modal || !modal.classList.contains('hidden')) return;
+  if (!modal || !modal.classList.contains('hidden')) return false;
   const q = (sel) => modal.querySelector(sel);
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
@@ -21026,6 +21086,7 @@ function openShipItWsModal(record, data) {
   cardAlert(card, null);
   const okBtn = q('.shipit-ok');
   let openedHere = false;
+  let shipped = null;                                // worca Chat P2: {opened:true, url?} once any member PR opened
   const picked = () => rows.filter((r) => r.pick && r.pick.checked && !r.done);
   const paintOk = () => {
     const sel = picked();
@@ -21054,6 +21115,7 @@ function openShipItWsModal(record, data) {
     q('.shipit-cancel').removeEventListener('click', onCancel);
     modal.removeEventListener('click', onBackdrop);
     document.removeEventListener('keydown', onKey);
+    if (typeof onClose === 'function') { try { onClose(shipped || { opened: false }); } catch { /* never keeps the dialog open */ } }
   };
   shipItClose = done;
   const onCancel = () => done();
@@ -21077,7 +21139,7 @@ function openShipItWsModal(record, data) {
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(shipItRowPayload(record, r)),
+          body: JSON.stringify(shipItRowPayload(record, r, link)),
         });
         const dd = await safeJson(res);
         if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -21088,6 +21150,7 @@ function openShipItWsModal(record, data) {
         r.mergeable = dd.mergeable || null;
         r.pick.checked = false;
         opened.push(r);
+        if (!shipped) shipped = { opened: true, ...(dd.url ? { url: dd.url } : {}) };
         if (!closed) setShipItRowOpened(r, pr);
       } catch (e2) {
         r.failed = true;
@@ -21118,6 +21181,7 @@ function openShipItWsModal(record, data) {
   modal.addEventListener('click', onBackdrop);
   document.addEventListener('keydown', onKey);
   for (const r of rows) if (r.pick) loadShipItRowRemotes(record, r, gen, () => closed);
+  return true;
 }
 
 // ── Workspace PRs: one PR per AFFECTED member repo ───────────────────────────
@@ -31623,6 +31687,12 @@ connectWS();
 // the workspace options + re-points the config panel; 'project' is the default.
 const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'workspace' : 'project';
 if (bootTarget === 'workspace') setRunTarget('workspace');
+// worca Chat P2 (CONTRACT §2/§4): the chat's action cards, registered before the chat mounts, and the ONE Ship it opener
+// — the pull-request card's button (P1's card ctx calls chatDeps.openShipIt with the card's ask link), run cards and the
+// run panel (no link). chatDeps is P1's top-level const; openShipItFor is a hoisted function declaration.
+registerChatActionCards();
+chatDeps.openShipIt = openShipItFor;
+
 // The Chat page (worca Chat P1): createAskPanel builds div.chat-page and it lives in <section data-view="chat">.
 // Mounted HERE, above the boot route, so a boot on Chat (the default) opens it at once. Extension registrations
 // (registerChatCard / registerComposerAddon, worca Chat CONTRACT §2) must run above this line. The panel fetches

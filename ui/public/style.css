@@ -8318,3 +8318,30 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
   .chat-history{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min(300px,86vw);box-shadow:var(--shadow-sheet);}
   .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:var(--scrim-soft);}
 }
+
+/* ===== Chat P2: Action cards ===== */
+/* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
+   card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
+.ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
+.ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
+.ask-rcard-change .ask-mcard-after{color:var(--ink);overflow-wrap:anywhere;}
+.ask-rcard-text{font-size:13px;line-height:1.5;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-rcard-note{font-size:12px;color:var(--ink-2);}
+.ask-rcard-note:empty{display:none;}
+.ask-rcard.is-reverted .ask-rcard-change .ask-mcard-after{color:var(--ink-2);font-weight:400;}
+:is(.ask-rcard,.ask-prcard) .ask-mcard-arrow{color:var(--ink-2);}
+.ask-actcard-stub{color:var(--ink-2);overflow-wrap:anywhere;}
+:is(.ask-rcard,.ask-stopcard,.ask-prcard) .ask-card-not-now:disabled{opacity:.55;cursor:default;background:transparent;color:var(--ink-2);}
+.ask-stopcard-ident{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ask-stopcard-title{font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
+.ask-stopcard-branch,.ask-prcard-branch code{font-family:var(--mono);font-size:11.5px;color:var(--ink-2);overflow-wrap:anywhere;}
+.ask-stopcard-copy{padding:8px 10px;border-radius:8px;background:var(--red-bg);color:var(--ink);font-size:12.5px;}
+.ask-stopcard-done{font-weight:600;color:var(--ink-2);}
+.ask-stopcard .ask-card-start.is-danger:hover{box-shadow:var(--shadow-hover);}
+.ask-prcard-branch{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;}
+.ask-prcard-stat{font-size:12px;color:var(--ink-2);}
+.ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
+.ask-prcard-link{color:var(--blue-ink-strong);}
+.ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}

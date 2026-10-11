@@ -238,6 +238,11 @@ import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
 import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
 import { createAwaySwitch, applyAwayChange } from '../src/core/ask/away-deps.mjs';
+import { createChatActionHost } from '../src/core/ask/action-deps.mjs';
+import { askActorFor, chatActionSummary, prCardLinkRefusal, prCardResult } from '../src/core/ask/receipt.mjs';
+import { describeAwayMode } from '../src/shared/away-mode/describe.mjs';
+import { createSettingsRegistry, createWriteQueue } from '../src/core/ask/settings-registry.mjs';
+import { defaultSettingsRegistryDeps } from '../src/core/ask/chat-action-deps.mjs';
 import { awayEventPrompt, awayNoticeText } from '../src/core/ask/away-proposal.mjs';
 import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
@@ -5199,15 +5204,20 @@ app.get('/api/projects/:key/settings', async (req, res) => {
 });
 app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
-  try {
-    const roles = agentSteps().map(({ key }) => key);
-    const items = assertProjectSettingsPatch(req.body, { roles });
-    await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
-    writeProjectSettings({ projectDir: project.path }, req.body, { roles });
-    emitChanged('settings-changed');
-    res.json(projectSettingsState(project.path));
-  } catch (error) { badRequest(res, error?.message || String(error)); }
+  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { badRequest(res, error?.message || String(error)); }
 });
+
+/** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
+ *  transaction, broadcast, return the new projectSettingsState. Shared with Ask's change_setting and its Revert.
+ *  @throws {Error} a refused patch (status 400) */
+async function applyProjectSettingsPatch(project, patch) {
+  const roles = agentSteps().map(({ key }) => key);
+  const items = assertProjectSettingsPatch(patch, { roles });
+  await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
+  writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  emitChanged('settings-changed');
+  return projectSettingsState(project.path);
+}
 
 app.get('/api/sync/projects', syncRoute(async (_req, res) => {
   const ps = (await listProjects()).filter((p) => p.exists);
@@ -6775,6 +6785,20 @@ app.post('/api/pr', async (req, res) => {
     return badRequest(res, 'draft must be a boolean');
   }
   const draft = body.draft === true;
+  // worca Chat P2 (R9): the chat's pull-request card this Ship it dialog was opened from — both or neither, checked
+  // BEFORE anything is pushed; applied below only when the PR is really open (on failure it stays proposed).
+  const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
+  const hasAskCard = body.askCardId !== undefined && body.askCardId !== null;
+  let askPrLink = null;
+  if (hasAskThread || hasAskCard) {
+    if (!hasAskThread || !hasAskCard) return badRequest(res, 'askThreadId and askCardId must be provided together');
+    if (typeof body.askThreadId !== 'string' || !ASK_ID_RE.test(body.askThreadId)
+      || typeof body.askCardId !== 'string' || !ASK_ID_RE.test(body.askCardId)) return badRequest(res, 'invalid askThreadId or askCardId');
+    // Another person's thread on a shared sign-in reads as unknown, as /api/ask/threads/:id answers it (askThreadVisible).
+    const askThread = askGetThread(body.askThreadId);
+    if (!askThread || !askThreadVisible(askThread, req)) return badRequest(res, 'unknown askThreadId');
+    askPrLink = { threadId: body.askThreadId, cardId: body.askCardId };   // the card itself is checked once the target is known
+  }
   if (!(await anyPrHost())) {
     return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
   }
@@ -6785,6 +6809,13 @@ app.post('/api/pr', async (req, res) => {
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
   const { repoDir, feature, source, memberKey } = target;
+  if (askPrLink) {
+    // The card rule reads the RESOLVED member (prTargetFor drops a memberKey a project run does not have), so a project
+    // card already applied is never opened again by naming a member. Still before anything is pushed.
+    const found = askFindCard(askPrLink.threadId, askPrLink.cardId);
+    const refusal = found ? prCardLinkRefusal(found.block, { id, memberKey: memberKey || null }) : { status: 400, error: 'unknown askCardId' };
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+  }
   if (!repoDir || !feature || !source) {
     return badRequest(res, 'pipeline has no branch info to open a PR');
   }
@@ -6860,6 +6891,14 @@ app.post('/api/pr', async (req, res) => {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
   }
 
+  if (askPrLink) {
+    // Re-read: a workspace's earlier member PR may have applied the card a moment ago (prCardResult adds to its members).
+    const cur = askFindCard(askPrLink.threadId, askPrLink.cardId);
+    if (cur) {
+      try { flipCard(askPrLink.threadId, askPrLink.cardId, { state: 'applied', card: { result: prCardResult(cur.block, { url: pr.url, draft: newDraft, existed: !!pr.existed, memberKey }) } }); }
+      catch (err) { console.error(`[worca-ui] pull-request card flip failed: ${err && err.message ? err.message : err}`); }   // the PR stands
+    }
+  }
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null, baseRemote: baseR });
   // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
   res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft, ...(memberKey ? { memberKey } : {}) });
@@ -8253,6 +8292,90 @@ const askAwaySwitchFor = (person) => (awayPerPerson() && person && person !== 'l
   })
   : askAwaySwitch;
 
+// worca Chat P2 (U1, U4, R6–R10): the settings the chat may change, and the parent's half of its act-then-undo
+// tools — the same in-process functions the HTTP routes call (applySettingsPatch, applyProjectSettingsPatch,
+// pauseRun, resumeRun, stopRun, stopPausedPipeline, postDirection, scheduleVerb, the Away switch). Never a loopback.
+const askSettingsQueue = createWriteQueue();
+const askChatSettings = createSettingsRegistry({
+  ...defaultSettingsRegistryDeps(),
+  serial: askSettingsQueue,
+  applyUser: (body) => applySettingsPatch(body),
+  applyProject: (project, patch) => applyProjectSettingsPatch(project, patch),
+});
+const askChatActions = createChatActionHost({
+  settings: askChatSettings,
+  liveRun: (id) => liveRunEntry(id),
+  findRow: (id) => findPipelineRowById(id),
+  pauseRun: async (runId, by) => pauseRun(runId, by),
+  // POST /api/resume's wording for an engine refusal (the run's own text names a CLI flag).
+  resumeRun: async (pipelineId, opts) => {
+    try { return await resumeRun(pipelineId, opts); } catch (err) {
+      if (err && err.body && err.body.code === 'engine-refused') err.body = { ...err.body, error: engineRefusalFor(err.body.error, 'ui') };
+      throw err;
+    }
+  },
+  stopRun: (runId, by) => stopRun(runId, by),
+  stopPausedPipeline: (pipelineId, by) => stopPausedPipeline(pipelineId, by),
+  postDirection: (pipelineId, text, source) => postDirection(pipelineId, text, source),
+  scheduleVerb: (verb, id, body, o) => scheduleVerb(verb, id, body, o),
+  getSchedule: (id) => { const f = findScheduleItem(id); return f && f.kind === 'recurring' ? f.item : null; },
+  awaySwitchFor: (person) => askAwaySwitchFor(person),
+  awayStatusFor: (person) => askAwayStatusFor(person),
+  prState: (id) => readPrState(id),
+  prCardFacts: (row) => askPrCardFacts(row),
+  serial: askSettingsQueue,
+});
+
+/** One turn's chat-action deps (startAskTurn): set_away_now / set_run_away_mode — the parent applies what the MCP child
+ *  validated and hands back a revertible receipt when the status changed, on the asking person's own switch — and
+ *  change_setting, pause_run, resume_run, propose_stop_run, send_direction, propose_pull_request plus the receipts of
+ *  pause_schedule / resume_schedule, recorded as "<person> via worca chat". Named so a test pins the actor and person. */
+function askChatTurnDeps(turnReader) {
+  return {
+    awaySwitch: (req) => askChatActions.awaySwitch(req, { actor: turnReader || 'local', person: turnReader }),
+    chatAction: (req) => askChatActions.apply(req, { actor: askActorFor(turnReader) }),
+  };
+}
+
+/** The Away status a receipt shows for this person: the stored switch, or 'here' while an "I'm back" still counts.
+ *  'here' is an input, not a stored status: "I'm back" = auto with hereSince set (settings.mjs setNightModeToggle), and
+ *  hereSince stays stored after its away stretch ends — it counts only inside the stretch it was said in (describe.mjs
+ *  'here-now'), so a stale one reads as 'auto'. */
+function askAwayStatusFor(person) {
+  const toggle = nightModeToggleFor(person);
+  if (toggle !== 'auto') return toggle;
+  const hereSince = nightModeHereSinceFor(person);
+  if (hereSince == null) return 'auto';
+  const { config } = resolveNightConfig({ user: nightModeSettings() || {} });
+  return describeAwayMode({ config, toggle: 'auto', hereSince, now: Date.now() }).status === 'here-now' ? 'here' : 'auto';
+}
+
+/** The pull-request card's facts (CONTRACT §4) for a finished run's row: the branches, and the results summary's
+ *  file and line counts when the run saved one (the numbers the Ship it dialog shows). path.join: Windows-safe. */
+async function askPrCardFacts(row) {
+  const isWs = row.target === 'workspace';
+  const parse = (v) => { try { const o = JSON.parse(v || 'null'); return o && typeof o === 'object' ? o : null; } catch { return null; } };
+  const branch = isWs
+    ? Object.values((parse(row.workspace_meta) || {}).branches || {}).find((b) => b && b.feature) || {}
+    : parse(row.branch) || {};
+  let summary = null;
+  try {
+    const dir = await runDirForRow(row);
+    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
+  } catch { summary = null; }
+  return {
+    pipelineId: row.id,
+    projectKey: isWs ? `workspaces/${row.workspace_key}` : row.project_key,
+    ...(isWs && row.workspace_key ? { workspaceId: row.workspace_key } : {}),
+    title: row.title || row.id,
+    branch: branch.feature || null,
+    ...(!isWs && branch.source ? { base: branch.source } : {}),
+    ...(summary ? { filesChanged: (Number(summary.filesNew) || 0) + (Number(summary.filesChanged) || 0),
+      additions: Number(summary.linesAdded) || 0, deletions: Number(summary.linesRemoved) || 0 } : {}),
+  };
+}
+
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
 function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
@@ -8499,6 +8622,34 @@ function refuseNonClaudeUtilityModel(key, value) {
 app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
+  if (has('actions') && agentMayBeCaller(req)) return refuseAgentCaller(res);
+  // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
+  // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
+  if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
+    has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
+  try {
+    const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
+      ...(actionsWarnings ? { actionsWarnings } : {}) });
+  } catch (err) {
+    // 400 with the user's words and, when known, the body path of the bad field (#555).
+    const { error, field } = settingsErrorReply(err, err && err.settingsCtx);
+    return res.status(400).json({ error, ...(field ? { field } : {}) });
+  }
+});
+
+/**
+ * POST /api/settings' body without the request: validate every present key before any write, write them (root
+ * first), then the broadcasts. Shared with Ask's change_setting and its Revert (worca Chat P2), which send ONE known
+ * key — never an empty body: a body naming no known key clears root (the legacy contract below).
+ * @param {object} body  the partial settings patch
+ * @param {{person?: string|null}} [o]  B4: whose own Away switch nightModeToggle writes (null = the instance switch)
+ * @returns {Promise<{actionsWarnings: object|null}>}
+ * @throws {Error} the first refused value (err.settingsCtx names the field)
+ */
+async function applySettingsPatch(body, { person = null } = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
@@ -8524,12 +8675,6 @@ app.post('/api/settings', async (req, res) => {
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
   const hasActionsKey = has('actions');
-  // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
-  if (hasActionsKey && agentMayBeCaller(req)) return refuseAgentCaller(res);
-  // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
-  // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
-  if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
-    has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -8552,7 +8697,7 @@ app.post('/api/settings', async (req, res) => {
   const ask = {};
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
-  try {
+  {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
     for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
@@ -8649,7 +8794,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
-    if (has('nightModeToggle') && !(await setPersonNightModeToggle(awayPersonOf(req), body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
+    if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
     // Live runs re-evaluate their open question against the new night settings.
     if (hasNightKey) for (const e of runs.values()) e.orch?.nightConfigChanged?.();
@@ -8657,18 +8802,13 @@ app.post('/api/settings', async (req, res) => {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
-      ...(actionsWarnings ? { actionsWarnings } : {}) });
-  } catch (err) {
-    // 400 with the user's words and, when known, the body path of the bad field (#555).
-    const { error, field } = settingsErrorReply(err, err && err.settingsCtx);
-    return res.status(400).json({ error, ...(field ? { field } : {}) });
+    return { actionsWarnings };
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Per-project model/effort config + custom-model registry. Validation lives in
@@ -10442,6 +10582,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
           continue;
         }
+        // worca Chat P2: a receipt, a stop warning or a pull-request offer in one line — the next turn sees a revert.
+        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request')) {
+          cards.push({ id: b.id, type: b.card.type, state: b.state, summary: chatActionSummary(b.card) });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -10695,8 +10840,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
-        // set_away_now / set_run_away_mode: the parent applies what the MCP child validated.
-        awaySwitch: (req) => askAwaySwitchFor(turnReader)(req, { actor: turnReader || 'local' }),
+        // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
+        ...askChatTurnDeps(turnReader),
         resolveMentions: resolveAskMentions,
         // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
         onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
@@ -11100,6 +11245,63 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const next = composerCardPatch(found.block.card, found.block.state, body);
       if (!next.ok) return res.status(next.status).json({ error: next.error });
       const block = flipCard(id, cardId, next.patch);
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'receipt') {
+      // worca Chat P2 (R6): a receipt is applied already — its one verb is Revert, through the path the change took
+      // (askChatActions.revert re-reads first). No event turn: a system notice says it, at no cost.
+      if (body.state !== 'reverted') return badRequest(res, 'state must be "reverted"');
+      if (found.block.state === 'reverted') return res.status(409).json({ error: 'Already reverted', code: 'ALREADY_REVERTED' });
+      if (found.block.state !== 'applied') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (found.block.card.revertible !== true) return res.status(409).json({ error: 'This change cannot be reverted', code: 'NOT_REVERTIBLE' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      let r;
+      try { r = await askChatActions.revert(found.block.card, { actor: actorOf(req), viewer: askViewer(req) }); }
+      catch (err) { r = { ok: false, code: 'REVERT_FAILED', error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r || !r.ok) {
+        const code = (r && r.code) || 'REVERT_FAILED';
+        // Changed since: the card keeps Revert disabled with that note, across reloads too.
+        if (code === 'CHANGED_SINCE') flipCard(id, cardId, { card: { result: { code, error: r.error } } });
+        return res.status(409).json({ error: (r && r.error) || 'not reverted', code });
+      }
+      const block = flipCard(id, cardId, { state: 'reverted', card: { result: { revertedAt: new Date().toISOString() } } });
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      postAskSystemNotice(id, r.notice);
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'run-stop') {
+      // worca Chat P2 (R7): the card IS the stop warning — "Stop pipeline" stops in-process (askChatActions.stop makes
+      // POST /api/stop's split); an interrupted run is refused. No event turn: like a run card, the run's own frames
+      // and the card say what happened.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        return res.json({ block });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let r;
+        try { r = await askChatActions.stop(found.block.card, { actor: actorOf(req) }); }
+        catch (err) { r = { ok: false, code: 'ERROR', error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, r.ok ? { state: 'applied', card: { result: { ok: true } } }
+          : { state: 'failed', error: r.error, card: { result: { ok: false, code: r.code, error: r.error } } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'pull-request') {
+      // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
+      // the card to applied through its ask link.
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined" — a pull request is opened from the Ship it dialog');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
     }
@@ -13686,5 +13888,6 @@ export const _testing = {
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals,
+  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

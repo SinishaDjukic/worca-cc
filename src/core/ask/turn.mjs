@@ -64,6 +64,9 @@ import { setPendingCardComments } from '../diff-comments.mjs';
 export function createAskTurn(opts) { return new AskTurn(opts); }
 
 const TERMINAL = new Set(['done', 'stopped', 'error']);
+// worca Chat P2 (review P2-1): what a sub-agent's chat-action call asked for, in the "Not applied: …" notice.
+const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run',
+  propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'open a pull request' });
 
 // The classified notice's raw-detail cap — the runner's own reject is already
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
@@ -222,6 +225,8 @@ class AskTurn extends EventEmitter {
       lookupTask: deps.lookupTask === undefined ? lookupTask : deps.lookupTask,
       trackRun: deps.trackRun ?? null,
       awaySwitch: deps.awaySwitch ?? null,
+      // worca Chat P2: (req, {threadId}) => {ok, block?:{state, card}, notice?} — ui/server.mjs askChatActions.apply. null = none.
+      chatAction: deps.chatAction ?? null,
       // Conversation chips: (refs) → resolved chip entries (ui/server.mjs resolveAskMentions). null = none.
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
@@ -393,7 +398,40 @@ class AskTurn extends EventEmitter {
     // One closing mark, never two: the paused line already ends "(Marked runs wait too.)".
     const line = String(r?.line ?? '').trim();
     this.reducer.addBlock({ kind: 'notice', text: r?.ok ? `Done — ${/[.!?)]$/.test(line) ? line : `${line}.`}` : `Could not change Away mode${req.kind === 'run' ? ' on this run' : ''}: ${r?.error || 'unknown error'}` });
+    // worca Chat P2 (U1): the switch changed something — a receipt with Revert follows the line.
+    if (r?.ok && r.receipt && typeof r.receipt === 'object') this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'applied', card: r.receipt });
     this._persistBlocks();
+  }
+
+  /** worca Chat P2 (U1, R6–R10): a chat-action RESULT. The child validated (or, for pause_schedule / resume_schedule,
+   *  already acted); deps.chatAction (ui/server.mjs → action-deps.mjs) applies it and hands back the receipt or the
+   *  card — or a notice saying why not. A child refusal or an isError result already reached the model as text.
+   *  `sub` (review P2-1): a sub-agent's call — never applied; the reply says so, so nobody believes it happened. Its
+   *  pause_schedule / resume_schedule already acted in the child, so those still get their receipt. */
+  async _onChatAction(name, text, isError, sub = false) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const scheduleVerb = name === 'pause_schedule' || name === 'resume_schedule';
+    if (sub && !scheduleVerb) {
+      const notice = this.reducer.addBlock({ kind: 'notice', text: `Not applied: a sub-agent asked to ${SUB_ACTION_WORDS[name] || 'act'} — ask again in this chat` });
+      if (notice) this._persistBlocks();
+      return;
+    }
+    if (typeof this.deps.chatAction !== 'function') return;
+    let req = null;
+    if (scheduleVerb) {
+      if (out.schedule && typeof out.schedule === 'object') req = { kind: name === 'pause_schedule' ? 'schedule-pause' : 'schedule-resume', schedule: out.schedule };
+    } else if (out.requested && typeof out.requested === 'object') req = out.requested;
+    if (!req) return;
+    let r;
+    try { r = await this.deps.chatAction(req, { threadId: this.threadId }); }
+    catch (err) { r = { ok: false, notice: `Could not do that: ${err?.message || err}` }; }
+    const block = r && r.ok && r.block && r.block.card
+      ? this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: r.block.state || 'applied', card: r.block.card })
+      : this.reducer.addBlock({ kind: 'notice', text: (r && r.notice) || 'Could not do that: unknown error' });
+    if (block) this._persistBlocks();                          // null after finish() — too late for this reply
   }
 
   /**
@@ -746,6 +784,7 @@ class AskTurn extends EventEmitter {
       onTrackRun: this.composer ? null : ({ input, isError }) => this._onTrackRun(input, isError),
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
+      onChatAction: this.composer ? null : ({ name, text, isError, sub }) => this._onChatAction(name, text, isError, sub === true),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
       onAwayProposal: ({ input, text, isError }) => this._onAwayProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
