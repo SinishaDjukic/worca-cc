@@ -5,18 +5,19 @@
 // its own ports source (panelPortsFn, which can fall back to the Composer index).
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
+import { runsOn } from '../../src/shared/connections.mjs';
 
-function catalogEngineOf(catalog, id) {
+function catalogEntryOf(catalog, id) {
   if (!id || !catalog) return null;
   const lc = String(id).toLowerCase();
-  const hit = catalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc);
-  return hit ? (hit.engine || 'claude') : null;
+  return catalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc) || null;
 }
 
 export function healForEngine(t, { models, engine } = {}) {
   const catalog = Array.isArray(models) && models.length ? models : null;
   if (!engine || !catalog) return { t, enginePair: null };
-  const foreign = (id) => { const e = catalogEngineOf(catalog, id); return !!e && e !== engine; };
+  // A pick the run's harness cannot run (its connection reaches other harnesses only) — src/shared/connections.mjs.
+  const foreign = (id) => { const hit = catalogEntryOf(catalog, id); return !!hit && !runsOn(hit, engine); };
   const def = foreign(t.def.model) ? { ...t.def, model: '', effort: '' } : t.def;
   if (!foreign(t.model)) return { t: { ...t, def }, enginePair: null };
   const stored = t.override.model !== undefined && foreign(t.override.model)

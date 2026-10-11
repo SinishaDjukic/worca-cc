@@ -31,7 +31,9 @@ export function classifyError(err) {
   // OpenRouter's daily allowance of `:free` requests is spent: only its daily reset clears
   // it, so it pauses like the session limit below instead of retrying as a 429.
   if (FREE_DAILY_RE.test(msg)) return 'usage_limit';
-  if (/\b401\b|invalid authentication|authentication_error|please run .*login|not logged in/i.test(msg)) return 'auth';
+  // "Failed to authenticate. API Error: 403 …" is how the CLI reports an endpoint's 403 (it drops
+  // authentication_error from the text); a 401 is retried by the CLI and arrives as the 401 wording.
+  if (/\b401\b|invalid authentication|authentication_error|failed to authenticate|please run .*login|not logged in/i.test(msg)) return 'auth';
   // The model id itself is the problem — refused by the endpoint it was sent to,
   // or named by a catalog-miss error. The remedy is a different model id, never
   // a retry. The stderr notice `[claude-code:unrecognized_model]` is deliberately

@@ -301,7 +301,7 @@ test('History graph: a v2 card (.node[data-node-id]) is a labelled link whose cl
   card.className = 'node node-agent run-node';
   card.dataset.nodeId = 'n_a';
   card.dataset.id = 'n_a';
-  card.innerHTML = '<div class="nhead"><span class="tt">Planner</span></div>';
+  card.innerHTML = '<div class="nlabel"><span class="tt">Planner</span></div>';
   graph.appendChild(card);
   release();
   await settle(6);

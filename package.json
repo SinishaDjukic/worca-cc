@@ -74,7 +74,8 @@
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
-    "test:timings": "node tools/test.mjs --write-timings"
+    "test:timings": "node tools/test.mjs --write-timings",
+    "test:live": "node --disable-warning=ExperimentalWarning test/live/run.mjs"
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "11.12.0",

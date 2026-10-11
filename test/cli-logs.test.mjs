@@ -161,6 +161,12 @@ const collect = (child) => new Promise((res) => {
   child.stderr.on('data', (b) => (text += b.toString()));
   child.on('exit', (code) => res({ code: code ?? 0, text }));
 });
+/** Resolve once the child has printed a line matching `re` (a fixed sleep races a slow CI runner's startup). */
+const printed = (child, re) => new Promise((res) => {
+  let text = '';
+  const on = (b) => { text += b.toString(); if (re.test(text)) res(); };
+  child.stdout.on('data', on); child.stderr.on('data', on);
+});
 
 test('follow appends new lines as they land; Ctrl-C detaches with exit 0, the run untouched', { timeout: 15000 }, async () => {
   const id = '33330001';
@@ -219,7 +225,8 @@ test('follow on a run with no log file yet waits for it instead of crashing', { 
   insertPipeline({ id, projectKey: 'proj-a', title: 'not started', status: 'running' });
   const child = spawnFollow(['logs', id, '-f', '--json']);
   const done = collect(child);
-  await new Promise((r) => setTimeout(r, 400));
+  // The file must appear only after the CLI said it is waiting for it.
+  await printed(child, /No log yet for run 33330004 — waiting/);
   const dir = join(projectStorePath('proj-a'), 'pipelines', `run-${id}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, RUN_LOG_FILE), line('orchestrator', 'info', 'first ever line') + '\n');

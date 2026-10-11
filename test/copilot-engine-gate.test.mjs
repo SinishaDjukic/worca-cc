@@ -48,8 +48,8 @@ test('copilot names its models its own way: a catalog model of another engine is
   assert.equal(o._engineModel('opus'), undefined);
   assert.equal(o._engineModel('gpt-5.6-sol'), undefined);
   const lines = withNodes(orch({ engine: 'copilot' }), { a: { key: 'planner', model: 'opus' }, b: { key: 'implementer', model: 'gpt-5.6-sol' }, c: { key: 'reviewer', model: 'claude-sonnet-4.6' } })._engineGate();
-  assert.ok(lines.includes('engine copilot: model "opus" is a Claude model — the nodes that name it run on copilot\'s default model, so their cost stays unknown'), lines.join('\n'));
-  assert.ok(lines.includes('engine copilot: model "gpt-5.6-sol" is a Codex model — the nodes that name it run on copilot\'s default model'), lines.join('\n'));
+  assert.ok(lines.includes('engine copilot: model "opus" runs on Claude — the nodes that name it run on copilot\'s default model, so their cost stays unknown'), lines.join('\n'));
+  assert.ok(lines.includes('engine copilot: model "gpt-5.6-sol" runs on Codex — the nodes that name it run on copilot\'s default model'), lines.join('\n'));
   assert.ok(!lines.some((l) => l.includes('claude-sonnet-4.6')));
 });
 

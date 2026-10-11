@@ -24,7 +24,7 @@ test('renderHealthCard: badge, reasons, counters, and the Defragment control in 
   const btn = ok.querySelector('.mem-defrag');
   assert.equal(btn.disabled, false); assert.equal(btn.textContent, 'Defragment');
   assert.equal(btn.dataset.runId, undefined, 'no run to open');
-  assert.equal(ok.querySelector('.mem-host-hint').textContent, 'Runs on alpha — pick another project on the New pipeline page.');
+  assert.equal(ok.querySelector('.mem-host-hint').textContent, 'Runs on alpha — pick another project on the New run page.');
   const due = renderHealthCard({ ...REPORT, health: { ...HEALTH, level: 'due', reasons: ['12 memory writes since the last defragment (due at 10)', '1 file over the 8192-byte soft cap: big.md'] } }, { doc, host: HOST });
   assert.deepEqual([...due.querySelectorAll('.mem-reasons li')].map((li) => li.textContent), ['12 memory writes since the last defragment (due at 10)', '1 file over the 8192-byte soft cap: big.md']);
   // A live defragment: ONE control (spec §10) — still enabled, it opens the run.

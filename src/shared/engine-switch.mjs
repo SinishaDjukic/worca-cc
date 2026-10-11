@@ -81,7 +81,7 @@ export function usageLimitSwitches({ reason = null, limitEngine = null } = {}, r
 
 /** What switching a paused run to `engine` does, in one line. */
 export function engineSwitchNote(engine) {
-  return `Starts the paused step fresh; the model falls back to ${engineLabel(engine)}'s default.`;
+  return `Starts the paused step fresh; a model ${engineLabel(engine)} cannot run falls back to its default.`;
 }
 
 /** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("pass
@@ -90,7 +90,7 @@ export function engineSwitchNote(engine) {
 export function engineRefusalFor(text, surface) {
   const s = String(text ?? '');
   if (surface === 'ui') return s.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
-  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it from the worca-cc UI with Allow unguarded');
+  if (surface === 'chat') return s.replace(/pass --allow-unguarded-engine/g, 'resume it in the Worca UI with Allow unguarded');
   return s;
 }
 

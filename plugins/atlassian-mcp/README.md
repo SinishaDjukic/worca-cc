@@ -19,7 +19,7 @@ API 5): `https://mcp.atlassian.com/v2/mcp`, authenticated with an API token as
 3. Encode `email:token` as one line of base64:
    - macOS / Linux: `printf '%s' 'you@example.com:YOUR_TOKEN' | base64 | tr -d '\n'`
    - Windows (PowerShell): `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('you@example.com:YOUR_TOKEN'))`
-4. Settings → Plugins → Available → `atlassian-mcp` → **Install…**; then Settings → Sets → a set →
+4. Marketplace → Available → `atlassian-mcp` → **Install…**; then Connectors → a set →
    Add server → `atlassian` → paste the base64 text into **Base64 of email:API token** →
    Save and test.
 

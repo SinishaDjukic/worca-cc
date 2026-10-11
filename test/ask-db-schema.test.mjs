@@ -28,7 +28,7 @@ test('fresh DB: user_version = SCHEMA_VERSION, the five ask tables, indexes, the
   for (const t of [...ASK_TABLES, 'ask_worktrees']) assert.ok(tableNames(db).includes(t), `${t} exists`);
   assert.ok(indexNames(db).includes('idx_ask_messages_thread'));
   assert.deepEqual(cols(db, 'ask_threads'),
-    ['id', 'title', 'created_at', 'updated_at', 'model', 'effort', 'session_id', 'context', 'totals', 'created_by', 'mcp_off', 'contexts', 'agent_mode', 'engine']);   // v37 owner, v45 MCP picker choices, v46 context chips, v51 agent mode, v53 engine appended
+    ['id', 'title', 'created_at', 'updated_at', 'model', 'effort', 'session_id', 'context', 'totals', 'created_by', 'mcp_off', 'contexts', 'agent_mode', 'engine', 'mode', 'composer']);   // v37 owner, v45 MCP picker choices, v46 context chips, v51 agent mode, v53 engine appended, v54 composer mode + canvas
   assert.deepEqual(cols(db, 'ask_messages'),
     ['id', 'thread_id', 'seq', 'role', 'text', 'blocks', 'status', 'reason', 'model', 'effort', 'usage', 'cost_usd', 'duration_ms', 'created_at']);
   // ALTER TABLE ADD COLUMN appends, so the v27 columns (#398) are LAST.

@@ -80,14 +80,15 @@ export function summarizeTools(tools) {
  * flags) + the agent .md's frontmatter (role, tools, model) — never its body.
  * Placeable, ported, project-scope; registry order. `domain` (optional) keeps
  * agents of that domain plus 'shared'/'general' (the fail-safe default a sidecar
- * gets when it names none); an explicit OTHER domain is not offered.
+ * gets when it names none); an explicit OTHER domain is not offered. `limit` caps the list
+ * (default VOCAB_LIMITS.maxAgents; the Workflows chat passes Infinity).
  */
-export function agentVocabulary(registry, { domain = null } = {}) {
+export function agentVocabulary(registry, { domain = null, limit = VOCAB_LIMITS.maxAgents } = {}) {
   const domainOk = (m) => !domain || m.domain === domain || m.domain === 'shared' || m.domain === 'general';
   return Object.values(registry || {})
     .filter((m) => m && m.key && m.placeable !== false && m.scope !== 'workspace-only' && Array.isArray(m.inputs) && Array.isArray(m.outputs) && domainOk(m))
     .sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || byCodeUnit(a.key, b.key))
-    .slice(0, VOCAB_LIMITS.maxAgents)
+    .slice(0, limit)
     .map((m) => {
       const fm = m.frontmatter && typeof m.frontmatter === 'object' ? m.frontmatter : null;
       const purpose = clip(m.description, VOCAB_LIMITS.purpose);

@@ -1,0 +1,54 @@
+{
+  "key": "architect",
+  "metaVersion": 2,
+  "mockRole": "c4-architect",
+  "humanEffort": {
+    "hours": 6
+  },
+  "wantsRequest": true,
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "setup",
+      "type": "json"
+    },
+    {
+      "id": "found",
+      "type": "json",
+      "required": false
+    },
+    {
+      "id": "fix",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "The check below found blocking problems in the C4 file you wrote. Fix every critical and major finding in place, re-run the check command, and rewrite the model envelope."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "model",
+      "type": "json",
+      "filename": "c4-model.json"
+    },
+    {
+      "id": "report",
+      "type": "md",
+      "filename": "{base}-architecture-report.md",
+      "store": "project"
+    }
+  ],
+  "domain": "architecture",
+  "displayName": "C4: architect",
+  "description": "Reads the code and writes or updates a LikeC4 file: elements with the files they stand for, relationships from imports and call sites, element views, and a deployment sheet whose bands the person defined and whose placement follows each band's prose criteria.",
+  "color": "indigo",
+  "icon": "<path d=\"M12 3.5l7.5 4.2v8.6L12 20.5l-7.5-4.2V7.7z\"/><path d=\"M4.5 7.7L12 12l7.5-4.3M12 12v8.5\"/>",
+  "agentFile": "worca-cc-architect.md",
+  "runnerType": "producer",
+  "fanOut": true,
+  "order": 64
+}

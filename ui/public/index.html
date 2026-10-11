@@ -11,19 +11,6 @@
   </head>
   <body>
     <div class="app">
-      <!-- ===================== Phone bar (<=760px) ===================== -->
-      <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
-           <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
-           the spend card and "Signed in as" come along. app.js#setMobileNavOpen owns
-           aria-expanded, the scrim and the inert page; paintMobileBar writes the title. -->
-      <header class="mbar" id="mbar">
-        <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
-          <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
-        </button>
-        <span class="mbar-mark" role="img" aria-label="Worca"></span>
-        <span class="mbar-title" id="mbar-title">New pipeline</span>
-      </header>
       <div class="nav-scrim" id="nav-scrim" hidden></div>
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar" id="side-rail">
@@ -32,120 +19,221 @@
           <span class="logo-mark" role="img" aria-label="Worca"></span>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
-          <!-- Collapse/expand (desktop only). Expanded: a bare "<" at the row's end. On the
-               rail the button carries the round mark too, so mark + ">" is one target. -->
-          <button type="button" class="side-toggle" id="side-toggle"
-                  aria-expanded="true" aria-controls="side-rail"
-                  title="Collapse menu" aria-label="Collapse menu">
-            <span class="logo-mark side-toggle-mark" aria-hidden="true"></span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path class="chev" d="M15 6l-6 6 6 6"></path></svg>
-          </button>
           <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
           </button>
         </div>
 
-        <nav class="nav" aria-label="Primary">
-          <button type="button" class="active nav-cta" data-nav="new" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-            <span>New pipeline</span>
-          </button>
-
-          <div class="nav-sect">Activity</div>
-          <button type="button" data-nav="runs" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
-            <span>Runs</span>
-            <!-- One badge (D11): the amber Needs-you count while anything needs you, else the
-                 live count. The live count starts grey: zero running IS the resting state, and
-                 app.js (updateNavCounts) swaps in n-run as soon as anything is live. -->
-            <span class="nav-count n-amber" id="nav-needs-count" hidden>0</span>
-            <span class="nav-count n-grey" id="nav-running-count">0</span>
-          </button>
-          <button type="button" data-nav="schedules" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
-            <span>Schedules</span>
-            <!-- Waiting runs + active repeating schedules (grey: waiting is the resting state);
-                 the amber twin counts UNREAD PROBLEMS in the activity feed. -->
-            <span class="nav-count n-grey" id="nav-schedules-count">0</span>
-            <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
-          </button>
-          <button type="button" data-nav="stats" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
-            <span>Statistics</span>
-          </button>
-          <button type="button" data-nav="team-metrics" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
-            <span>Team metrics</span>
-          </button>
-
-          <div class="nav-sect" data-min-level="advanced">Build</div>
-          <button type="button" data-nav="composer" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
-            <span>Workflow Composer</span>
-          </button>
-          <!-- Nodes: the two composer node types. A disclosure, not a route — it carries no
-               data-nav, so the router never marks it active; app.js#setNodesCollapsed owns
-               aria-expanded + the box's .collapsed and remembers a fold. The children keep their
-               own data-nav: the `.nav button[data-nav]` snapshot reaches nested buttons. -->
-          <button type="button" class="nav-group" data-nav-group="nodes" data-min-level="expert" aria-expanded="true" aria-controls="nav-nodes-children">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"></circle><circle cx="18" cy="6" r="2.4"></circle><circle cx="12" cy="18" r="2.4"></circle><path d="M8.4 6h7.2M7.2 8.1l3.6 7.6M16.8 8.1l-3.6 7.6"></path></svg>
-            <span>Nodes</span>
-            <svg class="nav-group-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
-          </button>
-          <div class="nav-children nav-group-children" id="nav-nodes-children" data-min-level="expert">
-            <button type="button" class="nav-child" data-nav="agents" data-min-level="expert">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6S13.9 16 14.5 19"></path><circle cx="17.5" cy="9.5" r="2.4"></circle><path d="M15.5 14.6c2.7 0 4.4 1.4 5 4.4"></path></svg>
-              <span>Agents</span>
+        <!-- The one scrolling band: the logo row above and .side-foot below stay put. -->
+        <div class="side-scroll" id="side-scroll">
+          <nav class="nav" aria-label="Primary">
+            <button type="button" data-nav="runs" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
+              <span>Runs</span>
+              <!-- One badge (D11): the amber Needs-you pill while anything needs you, else the live
+                   count as a plain grey number. A zero is hidden (app.js#updateNavCounts). -->
+              <span class="nav-count n-amber" id="nav-needs-count" hidden>0</span>
+              <span class="nav-count n-grey" id="nav-running-count" hidden>0</span>
             </button>
-            <button type="button" class="nav-child" data-nav="scripts" data-min-level="expert">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-5-6-5"></path><path d="M12 19h8"></path></svg>
-              <span>Scripts</span>
+            <button type="button" data-nav="schedules" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"></rect><path d="M3.5 10h17M8 3v4M16 3v4"></path><path d="M12 13.2v2.6l1.8 1.1"></path></svg>
+              <span>Schedules</span>
+              <!-- Waiting runs + active repeating schedules (a grey number: waiting is the resting
+                   state); the amber pill counts UNREAD PROBLEMS in the activity feed. A zero is hidden. -->
+              <span class="nav-count n-grey" id="nav-schedules-count" hidden>0</span>
+              <span class="nav-count n-amber" id="nav-schedules-unread" hidden title="Scheduled runs that need a look">0</span>
+            </button>
+            <button type="button" data-nav="stats" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V4M19 20v-11"></path></svg>
+              <span>Statistics</span>
+            </button>
+            <button type="button" data-nav="team-metrics" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"></path><path d="M6 15l4-5 4 3 4-6"></path><circle cx="6" cy="15" r="1.2"></circle><circle cx="10" cy="10" r="1.2"></circle><circle cx="14" cy="13" r="1.2"></circle><circle cx="18" cy="7" r="1.2"></circle></svg>
+              <span>Team metrics</span>
+            </button>
+
+            <div class="nav-sect" data-min-level="simple">Build</div>
+            <button type="button" data-nav="workflows" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+              <span>Workflows</span>
+            </button>
+
+            <!-- Add-ons: four Settings tabs that became pages of their own (Plugins → Marketplace,
+                 Sets → Connectors, Models, Providers). Old #settings/<tab> addresses land here
+                 (app.js MOVED_ROUTES). -->
+            <div class="nav-sect" data-min-level="advanced">Add-ons</div>
+            <button type="button" data-nav="marketplace" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.2 12H6.2L5 8z"></path><path d="M9 10V6.5a3 3 0 0 1 6 0V10"></path></svg>
+              <span>Marketplace</span>
+            </button>
+            <button type="button" data-nav="connectors" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5"></path><path d="M6 8h12v3a6 6 0 0 1-12 0V8z"></path><path d="M12 17v4"></path></svg>
+              <span>Connectors</span>
+            </button>
+            <button type="button" data-nav="models" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M4 7.5l8 4.5 8-4.5M12 12v9"></path></svg>
+              <span>Models</span>
+            </button>
+            <button type="button" data-nav="providers" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="6.5" rx="2"></rect><rect x="3.5" y="13.5" width="17" height="6.5" rx="2"></rect><path d="M7.5 7.25h.01M7.5 16.75h.01"></path></svg>
+              <span>Providers</span>
+            </button>
+
+            <div class="nav-sect">Manage</div>
+            <button type="button" data-nav="projects" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+              <span>Projects</span>
+            </button>
+            <button type="button" data-nav="workspaces" data-min-level="advanced">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
+              <span>Workspaces</span>
+            </button>
+            <button type="button" data-nav="team-policy" data-min-level="expert">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+              <span>Team policy</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="side-foot" id="side-foot">
+          <!-- Running actions (issue #529): its own mount, just above the account corner.
+               Not level-gated: it shows only while a service runs, and it must stay stoppable. The column
+               shows the rows (app.js#paintRunningActions); the rail shows one tile (a green dot and the
+               count) that opens the same rows, Stop included, in a side flyout. -->
+          <div id="side-actions" class="side-actions" role="group" hidden aria-label="Running actions">
+            <div class="side-actions-rows" id="side-actions-rows"></div>
+            <button type="button" class="act-tile" id="side-actions-tile" aria-haspopup="menu" aria-expanded="false" aria-controls="side-actions-fly"><span class="pdot" aria-hidden="true"></span><span class="act-tile-n">0</span></button>
+            <div class="nav-fly act-fly" id="side-actions-fly" role="menu" aria-label="Running actions" hidden>
+              <div class="nav-fly-k" aria-hidden="true">Running actions</div>
+              <div class="act-fly-rows" id="side-actions-fly-rows"></div>
+            </div>
+          </div>
+          <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
+               (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
+               away mode and appearance. -->
+          <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
+                  aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
+            <span class="acct-ring-wrap">
+              <svg class="acct-ring" viewBox="0 0 38 38" aria-hidden="true"><circle class="trk" cx="19" cy="19" r="17.5"></circle><circle class="arc" cx="19" cy="19" r="17.5" stroke-dasharray="0.00 109.96"></circle></svg>
+              <span class="acct-ava" aria-hidden="true">P</span>
+              <i class="acct-dot" aria-hidden="true"></i>
+            </span>
+            <span class="acct-name">Profile</span>
+            <svg class="acct-updown" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4"></path></svg>
+          </button>
+        </div>
+        <!-- The account menu (opens upward from the corner) and its Interface mode side menu:
+             position:fixed popups that side-flyout.mjs places and closes. The spend card and the
+             identity card are painted by app.js; the side menu by ui-level.mjs. -->
+        <div class="nav-fly acct-menu" id="acct-menu" role="menu" aria-label="Account" data-min-level="simple" hidden>
+          <div class="acct-spend" id="acct-spend" hidden></div>
+          <div class="mcard id-card" id="acct-id" role="group" aria-labelledby="acct-id-k" hidden>
+            <span class="mc-k" id="acct-id-k">Signed in as</span>
+            <b class="id-name"></b>
+            <small class="id-via"></small>
+          </div>
+          <div class="msect" role="group">
+            <button type="button" class="mi" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
+              <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
+              <svg class="mi-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </button>
+            <button type="button" class="mi" id="acct-settings" role="menuitem" data-nav="settings" data-min-level="simple"><span class="mi-lbl">Settings</span></button>
+          </div>
+          <div class="msect" role="group">
+            <button type="button" class="mi away-item" id="acct-away" role="menuitem" data-state="here" data-min-level="simple">
+              <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"></svg>
+              <span class="mi-lbl">Step away</span>
+              <span class="mi-hint"></span>
             </button>
           </div>
-
-          <div class="nav-sect">Manage</div>
-          <button type="button" data-nav="projects" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
-            <span>Projects</span>
-          </button>
-          <button type="button" data-nav="workspaces" data-min-level="advanced">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.6"></rect><rect x="14" y="3" width="7" height="7" rx="1.6"></rect><rect x="3" y="14" width="7" height="7" rx="1.6"></rect><path d="M14 17.5h7M17.5 14v7"></path></svg>
-            <span>Workspaces</span>
-          </button>
-          <button type="button" data-nav="team-policy" data-min-level="expert">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6l8-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
-            <span>Team policy</span>
-          </button>
-
-          <div class="nav-sep" aria-hidden="true"></div>
-          <!-- Interface mode (docs/ui-levels.md): an ACTION, not a view, so it carries no data-nav
-               and never takes the dark "active" fill. The icon is the state readout: ui-level.mjs
-               repaints it, and on the collapsed rail it is all that shows. -->
-          <button type="button" class="nav-mode" id="nav-mode" data-mode-open="full" data-min-level="simple" aria-haspopup="dialog">
-            <i class="lv-icon-slot"><svg class="lv-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 8l9 5 9-5-9-5z"></path><path d="M3 12.5l9 5 9-5"></path><path d="M3 17l9 5 9-5"></path></svg></i>
-            <span class="lv-name">Expert</span>
-          </button>
-          <button type="button" data-nav="settings" data-min-level="simple">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path></svg>
-            <span>Settings</span>
-          </button>
-        </nav>
-
-        <div class="side-foot">
-          <!-- Who this browser is signed in as (GET /api/whoami). Filled only behind an
-               identity proxy or an operator-set name; a local install never shows it. -->
-          <div class="side-who" id="side-who" hidden><span class="side-who-label">Signed in as</span> <span class="side-who-name"></span></div>
-          <!-- "I'm here | I'm away" (app.js#paintSideAway): the lit side is what applies right now, the
-               away hours included (wording §3.8). Pause stays in Settings › Away mode. -->
-          <div id="side-away"></div>
-          <!-- Running actions (issue #529): its own mount, since paintBudget replaces #side-spend's children.
-               Not level-gated: it shows only while a service runs, and it must stay stoppable. -->
-          <div id="side-actions" class="side-actions" hidden aria-label="Running actions"></div>
-          <div id="side-spend"></div>
+          <!-- Appearance, icons only: the same three modes as Settings › General (app.js#paintTheme
+               paints both). A pick applies and saves; the menu stays open. -->
+          <div class="msect theme-sect" role="group" aria-label="Appearance">
+            <div class="theme-seg" id="acct-theme">
+              <button type="button" class="theme-ic on" role="menuitemradio" aria-checked="true" data-theme-mode="system" data-min-level="simple" aria-label="System" title="System">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"></path><path d="M8.5 19.5h7M12 15.5v4"></path></svg>
+              </button>
+              <button type="button" class="theme-ic" role="menuitemradio" aria-checked="false" data-theme-mode="light" data-min-level="simple" aria-label="Light" title="Light">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"></path></svg>
+              </button>
+              <button type="button" class="theme-ic" role="menuitemradio" aria-checked="false" data-theme-mode="dark" data-min-level="simple" aria-label="Dark" title="Dark">
+                <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"></path></svg>
+              </button>
+            </div>
+          </div>
         </div>
+        <div class="nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>
       </aside>
 
-      <!-- ===================== Main ===================== -->
+      <!-- ===================== Main column: the top bar over the pages ===================== -->
+      <!-- .main-col stacks the top bar (#topnav) over <main>. The bar never scrolls: .main stays
+           the one scroll container, so the run pages' sticky .rd-bar/.hd-bar still pin to its
+           top. Left: the page name (app.js#paintTopnavTitle, topnav.mjs#pageTitle). Centre:
+           search. Right: actions. -->
+      <div class="main-col">
+        <header class="topnav" id="topnav">
+          <div class="topnav-l">
+            <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
+                 <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
+                 Running actions and the account corner come along. app.js#setMobileNavOpen owns
+                 aria-expanded, the scrim and the inert page behind (this bar included). -->
+            <button type="button" class="mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+              <span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>
+            </button>
+            <!-- Collapse/expand the sidebar (desktop only: style.css hides it from 1080px down,
+                 where the tablet rail is forced and phones use the hamburger). A static
+                 panel icon: a rounded frame with an inset bar, a thin line while the menu is open
+                 and a filled block while it is a rail — style.css swaps them off aria-expanded,
+                 which app.js#applySidebarCollapsed keeps (with the label). -->
+            <button type="button" class="side-toggle" id="side-toggle"
+                    aria-expanded="true" aria-controls="side-rail"
+                    title="Collapse menu" aria-label="Collapse menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
+            </button>
+            <h1 class="topnav-title" id="topnav-title"></h1>
+          </div>
+          <div class="topnav-c">
+            <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
+                 input and opens the listbox under it; its last row hands what was typed to Ask Worca.
+                 Phones fold the pill into #tsearch-open, which shows the input as a full-width row
+                 with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
+            <div class="tsearch">
+              <button type="button" class="tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              </button>
+              <div class="tsearch-field">
+                <svg class="tsearch-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                <input type="search" class="tsearch-input" id="tsearch-input" role="combobox" placeholder="Search or ask"
+                       aria-label="Search or ask" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop"
+                       aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false">
+                <kbd class="tsearch-kbd" aria-hidden="true"></kbd>
+                <button type="button" class="tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+              </div>
+              <div class="tsearch-pop" id="tsearch-pop" role="listbox" aria-label="Search or ask" tabindex="-1" hidden></div>
+            </div>
+          </div>
+          <div class="topnav-r">
+            <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
+                 a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
+                 number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
+            <button type="button" class="topnav-act" id="topnav-activity" data-min-level="simple" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-pop" aria-label="Activity">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+              <span class="topnav-act-label">Activity</span>
+              <span class="topnav-badge" id="topnav-activity-n" hidden></span>
+            </button>
+            <div class="activity-pop" id="activity-pop" role="dialog" aria-label="Activity" hidden></div>
+            <!-- New run: the way to the #new page, at every interface mode and every width (the
+                 sidebar has no row for it). app.js routes it like a nav row; it is never lit as
+                 the open page (no data-nav). -->
+            <button type="button" class="topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z"></path></svg>
+              <span class="topnav-new-label">New run</span>
+            </button>
+          </div>
+        </header>
       <main class="main">
 
         <!-- Shown when the open page sits above the interface mode (a deep link, a guide, or a
@@ -160,7 +248,6 @@
         <section class="view" data-view="new">
           <div class="topbar">
             <div>
-              <h1>New pipeline</h1>
               <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>
             </div>
           </div>
@@ -239,32 +326,42 @@
                   <small class="hint">Leave empty and Worca will propose one.</small>
                 </div>
 
-                <!-- Workflow picker (Default + saved). app.js populates from GET
-                     /api/workflows. Choosing a workflow is a run decision, so it
-                     stays here; tuning its agents is not, and lives in Advanced.
-                     Own full-width line ABOVE the task source: the workflow frames
-                     what the run does, the source only says how the task arrives. -->
-                <div class="field field-compact">
-                  <label for="workflowSelect">Workflow</label>
-                  <div class="select-wrap">
-                    <select id="workflowSelect" class="select" aria-label="Workflow">
-                      <option value="wf_default">Default</option>
-                    </select>
+                <!-- Workflow picker (Default + saved) and the engine that runs it, on one row: the
+                     workflow takes 60%, the engine 40%. app.js populates the workflows from GET
+                     /api/workflows. Choosing a workflow is a run decision, so it stays here; tuning its
+                     agents is not, and lives in Advanced. Own line ABOVE the task source: the workflow
+                     frames what the run does, the source only says how the task arrives. -->
+                <div class="wf-engine-row">
+                  <div class="field field-compact">
+                    <label for="workflowSelect">Workflow</label>
+                    <div class="select-wrap">
+                      <select id="workflowSelect" class="select" aria-label="Workflow">
+                        <option value="wf_default">Default</option>
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
-                     the default and adds nothing to the run body; on Codex the run's titles, classifier, overview and PR description run on Codex too. Per run, never remembered. -->
-                <div class="field field-compact" id="engine-row">
-                  <label>Engine</label>
-                  <div class="seg" id="engine-seg" role="group" aria-label="Engine">
-                    <button type="button" data-engine="claude" class="on" aria-pressed="true">Claude</button>
-                    <button type="button" data-engine="codex" aria-pressed="false">Codex</button>
-                    <button type="button" data-engine="copilot" aria-pressed="false">Copilot</button>
-                    <button type="button" data-engine="cursor" aria-pressed="false">Cursor</button>
+                  <!-- Engine (harness bridge §10.4): who runs the pipeline's agent nodes. Claude is
+                       the default and adds nothing to the run body; on Codex the run's titles, classifier,
+                       overview and PR description run on Codex too. Per run, never remembered. Advanced and up;
+                       Simple still shows it while the run is on another engine (a default, an Ask handoff). -->
+                  <div class="field field-compact" id="engine-row" data-min-level="advanced">
+                    <label for="engineSelect">Engine</label>
+                    <div class="select-wrap">
+                      <select id="engineSelect" class="select" aria-label="Engine">
+                        <option value="claude" selected>Claude</option>
+                        <option value="codex">Codex</option>
+                        <option value="copilot">Copilot</option>
+                        <option value="cursor">Cursor</option>
+                      </select>
+                    </div>
                   </div>
-                  <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex</small>
-                  <small class="hint" id="engine-default-hint" hidden></small>
+
+                  <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
+                  <div class="wf-engine-hints">
+                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
+                    <small class="hint" id="engine-default-hint" hidden></small>
+                  </div>
                 </div>
 
                 <!-- Memory defragment only (agent memory §7.3 / B11): the scope the run restructures. -->
@@ -508,13 +605,12 @@
         <!-- /view new -->
 
         <!-- ===== VIEW: GETTING STARTED (docs/getting-started.md) ===== -->
-        <!-- Its own page: the sidebar pill (mounted by app.js under New pipeline) and
+        <!-- Its own page: the sidebar pill (mounted by app.js at the top of the nav) and
              Settings › General › Getting started route here. The tile shelf is painted
              into the host by getting-started.mjs on every entry. -->
         <section class="view hidden" data-view="getting-started">
           <div class="topbar">
             <div>
-              <h1>Getting started</h1>
               <div class="sub">Nine things to do with Worca, in order &middot; each tile opens a guided tour of the real controls</div>
             </div>
           </div>
@@ -526,7 +622,6 @@
           <div class="runs-shell" id="runs-shell" data-layout="split">
             <div class="runs-list-pane" id="runs-list-pane">
               <div class="runs-head">
-                <h1>Runs</h1>
                 <span class="runs-head-tools">
                   <!-- "Group by" (runs-list.mjs RUNS_GROUPINGS): app.js keeps aria-checked and the menu. -->
                   <span class="runs-group-wrap">
@@ -632,6 +727,7 @@
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="rd-resume-at"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
@@ -689,7 +785,11 @@
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- The Live view panel. The clip lets the narrow layout open its height while the
                      graph host keeps its final size (no fit chasing a growing box). It is `inert`:
@@ -783,15 +883,10 @@
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
+                      <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
                       <button type="button" role="menuitem" class="hd-resume-at-item"><b>Resume at…</b><small>Schedule the resume</small></button>
                     </div>
                   </div>
-                  <!-- A usage limit the engine hit: continue now on the other engine. Every interface level
-                       (the split's caret is Advanced only); paintHdLive shows it and names the engine. -->
-                  <button type="button" class="hd-resume-switch" hidden>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5l12 7-12 7z"></path></svg>
-                    <span class="hd-btn-label">Resume on another engine</span>
-                  </button>
                   <!-- Pause and Stop act on the pipeline's live run, while this tab knows one (paintHdLive). -->
                   <button type="button" class="hd-pause" hidden>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"></rect><rect x="14" y="5" width="4" height="14" rx="1.5"></rect></svg>
@@ -837,7 +932,11 @@
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
                        the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
                 <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
@@ -931,7 +1030,6 @@
         <section class="view hidden" data-view="schedules">
           <div class="topbar">
             <div>
-              <h1>Schedules</h1>
               <div class="sub" id="schedules-sub">Runs that start later — once, or on a repeat</div>
             </div>
             <a class="btn-go" href="#new/schedule" id="schedules-new" style="padding:11px 20px;text-decoration:none">
@@ -957,7 +1055,6 @@
         <section class="view hidden" data-view="stats">
           <div class="topbar">
             <div>
-              <h1>Statistics</h1>
               <div class="sub">Spend, time worked, and outcomes across all pipelines · costs are Claude Code estimates, not billing</div>
             </div>
           </div>
@@ -979,7 +1076,6 @@
         <section class="view hidden" data-view="team-metrics">
           <div class="topbar">
             <div>
-              <h1>Team metrics</h1>
               <div class="sub">Shared across the team from the <code>worca-metrics</code> branch · costs are Claude Code estimates, not billing</div>
             </div>
             <div class="sync-chip" id="tm-sync" hidden></div>
@@ -1013,7 +1109,6 @@
         <section class="view hidden" data-view="team-policy">
           <div class="topbar">
             <div>
-              <h1>Team policy</h1>
               <div class="sub">Shared from the <code>worca-policy</code> branch · soft: you can go past a cap, and the team sees it</div>
             </div>
             <div class="sync-chip" id="tp-sync" hidden></div>
@@ -1033,7 +1128,6 @@
             <div class="ws-screen ws-screen-list">
               <div class="topbar">
                 <div>
-                  <h1>Workspaces</h1>
                   <div class="sub">Named sets of 2+ projects with an AI-generated interconnection description. Open one for its projects, description and team setup.</div>
                 </div>
                 <button type="button" id="ws-create-btn" class="btn btn-primary btn-mini">
@@ -1062,7 +1156,7 @@
                   <span class="ws-stale badge red" hidden>missing projects</span>
                 </div>
                 <!-- One row under the title: the summary on the left, the actions on the right. This
-                     page configures and tracks a workspace; runs start from New pipeline. -->
+                     page configures and tracks a workspace; runs start from New run. -->
                 <div class="wd-row2">
                 <div class="pd-meta"><small class="ws-projects"></small></div>
                 <div class="pd-actions">
@@ -1093,7 +1187,6 @@
         <section class="view hidden" data-view="workspace-create">
           <div class="topbar">
             <div>
-              <h1 id="wiz-title">Create workspace</h1>
               <div class="sub">Pick 2+ projects and scan how they connect</div>
             </div>
             <button type="button" id="wiz-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
@@ -1152,71 +1245,6 @@
         </section>
         <!-- /view workspace-create -->
 
-        <!-- ===== VIEW: AGENTS ===== -->
-        <section class="view hidden" data-view="agents">
-          <div class="topbar">
-            <div>
-              <h1>Agents</h1>
-              <div class="sub">Built-in and custom agents — the typed ports each one reads and writes drive the Composer</div>
-            </div>
-            <button type="button" id="agent-create-btn" class="btn btn-primary btn-mini">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-              Create agent
-            </button>
-          </div>
-          <p id="agents-msg" class="form-msg" aria-live="polite"></p>
-          <div class="run-list" id="agents-list"></div>
-
-          <template id="agent-card-tpl">
-            <section class="card agent-card">
-              <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
-                <div class="agent-h-meta">
-                  <b class="agent-name"></b>
-                  <span class="agent-origin badge"></span>
-                  <span class="agent-not-placeable badge" hidden>not placeable</span>
-                  <small class="agent-sub"></small>
-                  <div class="agent-io">
-                    <div class="agent-io-row agent-io-in">
-                      <span class="agent-io-label">Input</span>
-                      <div class="agent-chips agent-chips-in"></div>
-                    </div>
-                    <div class="agent-io-row agent-io-out">
-                      <span class="agent-io-label">Output</span>
-                      <div class="agent-chips agent-chips-out"></div>
-                    </div>
-                  </div>
-                </div>
-                <div class="agent-actions">
-                  <button type="button" class="agent-edit btn btn-ghost btn-mini" title="Edit this agent">Edit</button>
-                  <button type="button" class="agent-duplicate btn btn-ghost btn-mini" title="Duplicate as a user agent">Duplicate</button>
-                  <button type="button" class="agent-delete btn btn-danger btn-mini" title="Delete this agent">Delete</button>
-                </div>
-                <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-              </div>
-              <div class="agent-detail" hidden>
-                <pre class="agent-md-view viewer"></pre>
-                <div class="agent-forms-view" hidden></div>
-                <div class="agent-edit-pane" hidden>
-                  <div class="agent-form"></div>
-                  <p class="agent-edit-msg form-msg" aria-live="polite"></p>
-                  <div class="actions" style="justify-content:flex-end">
-                    <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
-                    <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </template>
-        </section>
-        <!-- /view agents -->
-
-        <!-- ===== VIEW: SCRIPTS ===== -->
-        <section class="view hidden" data-view="scripts">
-          <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
-          <div id="scripts-host" class="scripts-host"></div>
-        </section>
-        <!-- /view scripts -->
-
         <!-- ===== VIEW: PROJECTS ===== -->
         <section class="view hidden" data-view="projects">
           <!-- Two-screen slide track, twin of History's #hist-shell: the list and the project
@@ -1225,7 +1253,6 @@
             <div class="proj-screen proj-screen-list">
               <div class="topbar">
                 <div>
-                  <h1>Projects</h1>
                   <div class="sub">Registered projects. Open one for its details and memory; add a folder or remove one from the list — files on disk and run history are never touched.</div>
                 </div>
                 <div class="topbar-actions"><button type="button" id="project-add-btn" class="btn btn-primary btn-mini">
@@ -1260,7 +1287,7 @@
                 <div class="pd-actions">
                   <button type="button" class="pd-new btn-ghost">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                    New pipeline
+                    New run
                   </button>
                   <button type="button" class="pd-history btn-ghost">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -1285,166 +1312,189 @@
         </section>
         <!-- /view projects -->
 
-        <!-- ===== VIEW: AGENT CREATE (wizard) ===== -->
-        <section class="view hidden" data-view="agent-create">
-          <div class="topbar">
-            <div>
-              <h1>Create agent</h1>
-              <div class="sub">Describe the agent, let the builder draft it, then review and save</div>
-            </div>
-            <button type="button" id="agw-close" class="btn-ghost" style="padding:11px 20px">Cancel</button>
-          </div>
-
-          <section class="card" style="max-width:820px">
-            <!-- Step 1: brief -->
-            <div class="wiz-step" id="agw-step-1">
-              <div class="field"><label for="agw-name">Agent name</label>
-                <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
-              <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
-                <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
-              <div class="field"><label for="agw-details">Detailed description</label>
-                <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
-              <div class="row-2">
-                <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
-                  <div id="agw-before" class="chip-select"></div></div>
-                <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
-                  <div id="agw-after" class="chip-select"></div></div>
+        <!-- ===== VIEW: WORKFLOWS (full screen: canvas + Library + composer chat) ===== -->
+        <!-- The editor of record for workflows, agents and scripts (replaced #composer, #agents,
+             #scripts, #agent-create; app.js MOVED_ROUTES keeps their addresses). Visible at every
+             interface level. Everything that is not the canvas carries data-canvas-keys="off", so
+             the composer's document keydown never edits the graph from there. -->
+        <section class="view hidden" data-view="workflows">
+          <div class="wfv" id="wfv">
+            <div class="wfv-stage" id="wfv-stage">
+              <div class="wfv-canvas gv-canvas" id="wfv-canvas">
+                <div class="gv-chip" id="wfv-chip" hidden></div>
               </div>
-              <div class="switch-row" style="margin-top:14px">
-                <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
-                <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
-              </div>
-              <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
-                <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
-              </div>
-              <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="agw-start" class="btn-go" disabled>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
-                  Generate agent
-                </button>
-              </div>
-            </div>
-
-            <!-- Step 2: live generation -->
-            <div class="wiz-step hidden" id="agw-step-2">
-              <div class="ws-loader" role="status" aria-live="polite">
-                <div class="spinner" aria-hidden="true"></div>
-                <div class="status-label" id="agw-status">Starting&hellip;</div>
-              </div>
-              <div class="actions" style="justify-content:flex-end">
-                <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
-              </div>
-            </div>
-
-            <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
-            <div class="wiz-step hidden" id="agw-step-3">
-              <div class="agent-form"></div>
-              <p id="agw-msg" class="form-msg" aria-live="polite"></p>
-              <div class="actions" style="justify-content:space-between">
-                <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
-                <button type="button" id="agw-save" class="btn-go">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Save agent
-                </button>
-              </div>
-            </div>
-          </section>
-        </section>
-        <!-- /view agent-create -->
-
-        <!-- ===== VIEW: WORKFLOW COMPOSER (v2 node graph) ===== -->
-        <section class="view hidden" data-view="composer">
-          <div class="topbar">
-            <div>
-              <h1>Workflow Composer</h1>
-            </div>
-          </div>
-
-          <section class="card gv-editor">
-            <div class="gv-head" id="gv-head">
-              <input id="gv-name" class="gv-name" type="text" spellcheck="false" placeholder="Untitled pipeline" aria-label="Pipeline name">
-              <button type="button" class="gv-errchip" id="gv-errors" hidden></button>
-              <span class="sp"></span>
-              <button type="button" class="btn-ghost" id="gv-new">New canvas</button>
-              <button type="button" class="btn-ghost" id="gv-autolayout">Auto-layout</button>
-              <button type="button" class="btn-go" id="gv-save">Save</button>
-            </div>
-            <!-- The stage is created INSIDE #gv-canvas by createGraphView. The chip
-                 and the inspector rail are its SIBLINGS: a pointerdown on them can
-                 never reach the stage, so capture can never retarget their click.
-                 The rail carries BOTH panes — the agent palette and the inspector —
-                 switched by `data-tab`; `data-open` still collapses the whole rail. -->
-            <div class="gv-canvas" id="gv-canvas">
-              <div class="gv-chip" id="gv-chip" hidden></div>
-              <div class="gv-ins-rail" id="gv-ins-rail" data-open="open" data-tab="agents">
-                <div class="gv-ins-bar">
-                  <button type="button" class="gv-ins-toggle" id="gv-ins-toggle" aria-expanded="true" aria-label="Collapse inspector"><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg></button>
-                  <div class="gv-tabs" id="gv-ins-tabs" role="tablist" aria-label="Rail panes">
-                    <button type="button" class="gv-tab" role="tab" data-tab="agents" aria-selected="true">Agents</button>
-                    <button type="button" class="gv-tab" role="tab" data-tab="info" aria-selected="false" tabindex="-1">Info</button>
-                  </div>
+              <div class="wfv-float wfv-tl" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-icon-btn" id="wfv-back" aria-label="Back" title="Back">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <button type="button" class="wfv-btn wfv-menu-btn" id="wfv-wf-menu" aria-haspopup="menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
+                    <span>Workflows</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+                  </button>
+                  <span class="wfv-sep" aria-hidden="true"></span>
+                  <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
+                  <button type="button" class="wfv-errchip" id="wfv-errors" hidden></button>
+                  <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
                 </div>
-                <div class="gv-ins-pane gv-agents-pane" id="gv-agents-pane">
-                  <div class="gv-pal-head">
-                    <input id="gv-agent-filter" class="pal-filter" type="search" placeholder="Filter agents…" aria-label="Filter agents by name or ports">
-                  </div>
-                  <div class="gv-palette" id="gv-palette"></div>
-                  <!-- The advanced door to the agent wizard (the Agents page is expert, docs/ui-levels.md). -->
-                  <button type="button" class="pal-create" id="gv-create-agent" data-min-level="advanced">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
-                    Create agent&hellip;
+              </div>
+              <div class="wfv-float wfv-tr" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-icon-btn" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
+                  </button>
+                  <span class="wfv-savewrap" id="wfv-savewrap"><button type="button" class="wfv-btn wfv-btn-primary" id="wfv-save">Save</button></span>
+                </div>
+              </div>
+              <div class="wfv-float wfv-dock" id="wfv-dock" data-canvas-keys="off">
+                <button type="button" class="wfv-plus" id="wfv-add" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+                </button>
+                <div class="wfc" id="wfc" data-canvas-keys="off"></div>
+              </div>
+              <div class="wfv-float wfv-br" id="wfv-br" data-canvas-keys="off">
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-btn" id="wfv-autolayout">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" transform="rotate(45 10 14.5)" d="M9.4 7.1h1.2a1.3 1.3 0 0 1 1.3 1.3v12.2a1.3 1.3 0 0 1-1.3 1.3h-1.2a1.3 1.3 0 0 1-1.3-1.3V8.4a1.3 1.3 0 0 1 1.3-1.3zM9.1 8.4v2.4h1.8V8.4z"></path><path d="M9 2.9Q9.79 5.71 12.6 6.5Q9.79 7.29 9 10.1Q8.21 7.29 5.4 6.5Q8.21 5.71 9 2.9ZM17.6 2.6Q18.26 4.94 20.6 5.6Q18.26 6.26 17.6 8.6Q16.94 6.26 14.6 5.6Q16.94 4.94 17.6 2.6ZM18.2 11.4Q18.68 13.12 20.4 13.6Q18.68 14.08 18.2 15.8Q17.72 14.08 16 13.6Q17.72 13.12 18.2 11.4Z"></path></svg>
+                    <span>Auto-layout</span>
                   </button>
                 </div>
-                <div class="gv-ins-pane gv-ins-body" id="gv-ins-body"></div>
+                <div class="wfv-bar">
+                  <button type="button" class="wfv-btn wfv-zoom" id="wfv-zoom" aria-haspopup="menu" aria-expanded="false" aria-label="Zoom">
+                    <span id="wfv-zoom-label">100%</span>
+                    <svg class="wfv-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"></path></svg>
+                  </button>
+                </div>
               </div>
-              <!-- The canvas nav cluster: the ONLY on-canvas controls (the
-                   rebuild spec's "gestures only" line was reversed by the user
-                   on 2026-09-10). A SIBLING of the stage, like the chip and the
-                   rail, so a pointerdown on a button can never reach the stage's
-                   gesture pipeline. It must come AFTER #gv-ins-rail: the
-                   collapsed-rail offset in style.css is a `~` sibling selector,
-                   which only looks forward. -->
-              <div class="gv-nav" id="gv-nav">
-                <button type="button" class="gv-nav-btn" id="gv-zoom-in" aria-label="Zoom in" title="Zoom in"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke-linecap="round"></path></svg></button>
-                <button type="button" class="gv-nav-btn" id="gv-zoom-out" aria-label="Zoom out" title="Zoom out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M5 12h14" stroke-linecap="round"></path></svg></button>
-                <button type="button" class="gv-nav-btn" id="gv-center" aria-label="Fit graph to view" title="Fit graph to view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.5"></rect><circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"></circle></svg></button>
-              </div>
+              <div class="wfv-overlay" id="wfv-overlay" data-canvas-keys="off"></div>
             </div>
-            <!-- The key belongs to the whole editor, canvas AND rail — not to a
-                 palette card that no longer exists. -->
-            <div class="gv-foot">
-              <span class="gv-legend" id="gv-legend" data-min-level="expert">grey = data · amber = loop · ◆ = conditional · ○ = gate · ⤫N = fan-out</span>
-            </div>
-          </section>
+            <aside class="wfl" id="wfv-library" aria-label="Library" data-open="true" data-canvas-keys="off"></aside>
+            <div class="wfv-sheet" id="wfv-sheet" role="dialog" aria-modal="true" aria-labelledby="wfv-sheet-title" data-canvas-keys="off" hidden>
+              <div class="wfv-sheet-card">
+                <div class="wfv-sheet-head">
+                  <h2 class="wfv-sheet-title" id="wfv-sheet-title"></h2>
+                  <button type="button" class="wfv-icon-btn" id="wfv-sheet-close" aria-label="Close" title="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                  </button>
+                </div>
+                <div class="wfv-sheet-body">
+                  <div class="wfv-pane" data-pane="agent" hidden>
+                    <p id="agents-msg" class="form-msg" aria-live="polite"></p>
+                    <div class="run-list" id="agents-list"></div>
+                    <template id="agent-card-tpl">
+                      <section class="card agent-card">
+                        <div class="agent-head" role="button" tabindex="0" aria-expanded="false">
+                          <div class="agent-h-meta">
+                            <b class="agent-name"></b>
+                            <span class="agent-origin badge"></span>
+                            <span class="agent-not-placeable badge" hidden>not placeable</span>
+                            <small class="agent-sub"></small>
+                            <div class="agent-io">
+                              <div class="agent-io-row agent-io-in">
+                                <span class="agent-io-label">Input</span>
+                                <div class="agent-chips agent-chips-in"></div>
+                              </div>
+                              <div class="agent-io-row agent-io-out">
+                                <span class="agent-io-label">Output</span>
+                                <div class="agent-chips agent-chips-out"></div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="agent-actions">
+                            <button type="button" class="agent-edit btn btn-ghost btn-mini" title="Edit this agent">Edit</button>
+                            <button type="button" class="agent-duplicate btn btn-ghost btn-mini" title="Duplicate as a user agent">Duplicate</button>
+                            <button type="button" class="agent-delete btn btn-danger btn-mini" title="Delete this agent">Delete</button>
+                          </div>
+                          <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                        </div>
+                        <div class="agent-detail" hidden>
+                          <pre class="agent-md-view viewer"></pre>
+                          <div class="agent-forms-view" hidden></div>
+                          <div class="agent-edit-pane" hidden>
+                            <div class="agent-form"></div>
+                            <p class="agent-edit-msg form-msg" aria-live="polite"></p>
+                            <div class="actions" style="justify-content:flex-end">
+                              <button type="button" class="agent-edit-cancel btn btn-ghost btn-mini">Cancel</button>
+                              <button type="button" class="agent-edit-save btn btn-primary btn-mini">Save</button>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    </template>
+                  </div>
+                  <div class="wfv-pane" data-pane="agent-new" hidden>
+                    <!-- Step 1: brief -->
+                    <div class="wiz-step" id="agw-step-1">
+                      <div class="field"><label for="agw-name">Agent name</label>
+                        <input id="agw-name" class="input" type="text" placeholder="e.g. Docs Writer" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-purpose">Purpose <span class="opt">(one line)</span></label>
+                        <input id="agw-purpose" class="input" type="text" placeholder="What is this agent for?" spellcheck="false" /></div>
+                      <div class="field"><label for="agw-details">Detailed description</label>
+                        <textarea id="agw-details" class="textarea" rows="6" placeholder="Inputs, method, output contract, constraints&hellip;"></textarea></div>
+                      <div class="row-2">
+                        <div class="field"><label>Runs after <span class="opt">(predecessors)</span></label>
+                          <div id="agw-before" class="chip-select"></div></div>
+                        <div class="field"><label>Runs before <span class="opt">(successors)</span></label>
+                          <div id="agw-after" class="chip-select"></div></div>
+                      </div>
+                      <div class="switch-row" style="margin-top:14px">
+                        <div class="switch" id="agw-own-md-toggle" role="switch" aria-checked="false" tabindex="0"></div>
+                        <span class="txt">I'll provide the markdown myself — the builder only infers the metadata</span>
+                      </div>
+                      <div id="agw-own-md-pane" class="hidden" style="margin-top:11px">
+                        <textarea id="agw-own-md" class="textarea" rows="12" spellcheck="false" placeholder="Paste your agent system prompt markdown&hellip;"></textarea>
+                      </div>
+                      <small class="hint" id="agw-step1-hint">Name + purpose are required (or paste your own markdown).</small>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-close" class="btn btn-ghost btn-mini">Cancel</button>
+                        <button type="button" id="agw-start" class="btn-go" disabled>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+                          Generate agent
+                        </button>
+                      </div>
+                    </div>
 
-          <section class="card gv-saved">
-            <div class="saved-head">
-              <div><b>Saved pipelines</b><span class="cnt" id="gv-saved-count"></span></div>
-              <!-- Import a workflow another Worca user shared as JSON (#421): the
-                   file goes through POST /api/workflows/import-json — the same validator
-                   the composer's Save uses; a taken name gets a " (2)" suffix. -->
-              <div class="saved-head-actions">
-                <button type="button" id="gv-import-btn" class="btn btn-ghost btn-mini" title="Import a pipeline shared as a JSON file">Import…</button>
-                <input id="gv-import-file" type="file" accept=".json,application/json" hidden />
+                    <!-- Step 2: live generation -->
+                    <div class="wiz-step hidden" id="agw-step-2">
+                      <div class="ws-loader" role="status" aria-live="polite">
+                        <div class="spinner" aria-hidden="true"></div>
+                        <div class="status-label" id="agw-status">Starting&hellip;</div>
+                      </div>
+                      <div class="actions" style="justify-content:flex-end">
+                        <button type="button" id="agw-abort" class="btn btn-ghost btn-mini">Abort</button>
+                      </div>
+                    </div>
+
+                    <!-- Step 3: review/edit draft (shared agent-f-* form classes) -->
+                    <div class="wiz-step hidden" id="agw-step-3">
+                      <div class="agent-form"></div>
+                      <p id="agw-msg" class="form-msg" aria-live="polite"></p>
+                      <div class="actions" style="justify-content:space-between">
+                        <button type="button" id="agw-regen" class="btn btn-ghost btn-mini">Regenerate</button>
+                        <button type="button" id="agw-save" class="btn-go">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                          Save agent
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="wfv-pane" data-pane="script" hidden>
+                    <div id="scripts-msg" class="form-msg" aria-live="polite"></div>
+                    <div id="scripts-host" class="scripts-host"></div>
+                  </div>
+                </div>
               </div>
             </div>
-            <!-- One tab per domain; the row itself no longer repeats the domain.
-                 Rendered by gvRenderSaved(); hidden while the library is empty. -->
-            <div class="gv-saved-tabs" id="gv-saved-tabs" role="tablist" aria-label="Pipeline domains" hidden></div>
-            <div class="saved-list" id="gv-saved-list"></div>
-            <div class="gv-archived" id="gv-archived" data-min-level="expert" hidden></div>
-            <!-- A refused DELETE (the built-in, a 404, a 500) has to land
-                 SOMEWHERE: same .form-msg line every other list view uses. -->
-            <p id="gv-saved-msg" class="form-msg" aria-live="polite"></p>
-          </section>
-          <div id="gv-dialog-host"></div>
+            <div id="wfv-dialog-host"></div>
+          </div>
         </section>
-        <!-- /view composer -->
+        <!-- /view workflows -->
 
         <!-- ===== VIEW: SETTINGS (tabbed) =====
-             Guardrails / Models / Plugins used to be top-level views; they are
-             now panes here. A pane deliberately carries NEITHER class="view" nor
+             Guardrails used to be a top-level view; it is a pane here now (the
+             Add-ons pages below went the other way). A pane deliberately carries NEITHER class="view" nor
              the routing attribute: showView()'s views.forEach() would force
              .hidden back on it at every navigation. The tab rides in the hash
              param (#settings/<tab>, #settings/guardrails/<id>) — parseHash splits
@@ -1454,23 +1504,18 @@
         <section class="view hidden" data-view="settings">
           <div class="seg settings-tabs" id="settings-tabs" role="group" aria-label="Settings section">
             <!-- Ordered by mode (Simple, Advanced, Expert) so each mode sees a gap-free prefix of the
-                 strip; Models sits next to Providers. -->
+                 strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
             <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
             <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
-            <button type="button" data-tab="plugins" data-min-level="advanced" aria-pressed="false">Plugins</button>
-            <button type="button" data-tab="mcp" data-min-level="advanced" aria-pressed="false">Sets</button>
-            <button type="button" data-tab="models" data-min-level="expert" aria-pressed="false">Models</button>
-            <button type="button" data-tab="providers" data-min-level="expert" aria-pressed="false">Providers</button>
           </div>
           <p id="settingsLoadMsg" class="form-msg err settings-load-msg" role="alert" hidden></p>
 
           <section class="settings-pane" data-tab="general">
             <div class="topbar">
               <div>
-                <h1>Settings</h1>
                 <div class="sub">Machine-wide Worca CC preferences</div>
               </div>
             </div>
@@ -1529,7 +1574,7 @@
               <div id="credentialsHost"></div>
             </section>
 
-            <!-- Interface mode (docs/ui-levels.md): the same setting as the sidebar item, same dialog. -->
+            <!-- Interface mode (docs/ui-levels.md): the same setting as the account menu's Interface mode row. -->
             <section class="card settings-card" id="mode-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
@@ -1620,7 +1665,7 @@
                 <h2>Getting started</h2>
               </div>
               <div class="gs-settings-row">
-                <p class="gs-settings-text">The checklist on New pipeline walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
+                <p class="gs-settings-text">The Getting started checklist walks through the first nine things to do with Worca. Hidden it, or want the guided tour back?</p>
                 <button type="button" id="gsShowAgain" class="btn btn-ghost btn-mini">Show again</button>
               </div>
               <small class="hint" id="gsSettingsMsg"></small>
@@ -1669,7 +1714,6 @@
           <section class="settings-pane hidden" data-tab="runs">
             <div class="topbar">
               <div>
-                <h1>Runs</h1>
                 <div class="sub">Cost limits and defaults for your pipeline runs</div>
               </div>
             </div>
@@ -1952,7 +1996,6 @@
           <section class="settings-pane hidden" data-tab="ask">
             <div class="topbar">
               <div>
-                <h1>Ask Worca</h1>
                 <div class="sub">The assistant chat: how far one turn may go, which tools and websites it may use, and its saved history</div>
               </div>
             </div>
@@ -1962,8 +2005,8 @@
             <section class="card settings-card" id="ask-engine-card" data-min-level="simple">
               <div class="card-head"><div class="label-row"><h2>Engine &amp; models</h2></div></div>
               <div id="ask-engine-root"></div>
-              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
-              <small class="hint" id="askEngineMsg"></small>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="askEngineMsg"></small><button type="button" id="askEngineSave" class="btn btn-primary btn-mini">Save</button></div>
             </section>
             <!-- Ask Worca (ask-worca-design §6.9): per-turn guards for the
                  assistant chat. Read fresh on every turn (D12); a stored null
@@ -2005,7 +2048,7 @@
                    card's Save button, and only when one of its fields was touched. -->
               <div class="field" id="ask-web-host"></div>
               <!-- Sets (docs/mcp-servers.md, docs/skills.md): the General set's servers and skills in one line, painted by
-                   mcp-view.mjs; the Edit General set link opens Settings › Sets under the level banner. -->
+                   mcp-view.mjs; the Edit General set link opens the Connectors page under the level banner. -->
               <div class="field" id="ask-mcp-host"></div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="askLimitsReset" class="btn btn-ghost btn-mini">Use defaults</button>
@@ -2032,7 +2075,6 @@
           <section class="settings-pane hidden" data-tab="guardrails">
             <div class="topbar">
               <div>
-                <h1>Guardrails</h1>
                 <div class="sub">Named guardrail policies — built-ins plus your own sets, selected per pipeline run</div>
               </div>
               <button type="button" id="guardrail-create-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
@@ -2049,44 +2091,22 @@
           <section class="settings-pane hidden" data-tab="memory">
             <div class="topbar">
               <div>
-                <h1>Memory</h1>
                 <div class="sub">What worca remembers across runs and chats — the global rules and preferences every agent sees. A project's own memory lives on its project page (Projects → open a project → Memory).</div>
               </div>
             </div>
-            <!-- Settings › Memory: the model + effort EVERY Memory defragment run uses (memory-defrag-model.mjs).
-                 Expert, like the health card's Defragment. No ⓘ and empty hints, as in the Settings view
-                 (no longer tested; keep both out by hand). A plain .card like the health card, NOT a
-                 .settings-card: the Settings card set (About last) stays the General cards only. -->
-            <section class="card mem-model-card" id="mem-defrag-model-card" data-min-level="expert">
-              <div class="label-row"><h2>Defragment model</h2></div>
-              <p class="mem-model-text">The model every Memory defragment run uses — from the Defragment button, New pipeline, an Ask Worca card or the CLI. A model named when the run starts (<code>worca --model</code>) still wins.</p>
-              <div class="mem-model-row">
-                <div class="field">
-                  <div class="label-row"><label for="memDefragModel">Model</label></div>
-                  <select id="memDefragModel" class="select" data-setting="memoryDefrag.model" aria-label="Defragment model"></select>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="memDefragEffort">Effort</label></div>
-                  <select id="memDefragEffort" class="select" data-setting="memoryDefrag.effort" aria-label="Defragment effort"></select>
-                </div>
-              </div>
-              <small class="hint" id="memDefragModelNote"></small>
-              <div class="add-project-actions" style="margin-top:14px">
-                <button type="button" id="memDefragModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                <button type="button" id="memDefragModelSave" class="btn btn-primary btn-mini">Save</button>
-              </div>
-              <small class="hint" id="memDefragModelMsg"></small>
-            </section>
+            <!-- The Memory defragment model is Claude's "Memory defragment" helper job (the Models page › Engines). -->
+            <p class="hint mem-model-link" data-min-level="expert">The model every Memory defragment run uses is a helper job: <a href="#models">Models › Engines › Helper jobs</a>.</p>
             <p id="memory-msg" class="form-msg" aria-live="polite"></p>
             <div id="memory-host" class="mem-host"></div>
           </section>
           <!-- /pane memory -->
+        </section>
+        <!-- /view settings -->
 
-          <!-- ===== TAB: PLUGINS (was the top-level Plugins view) ===== -->
-          <section class="settings-pane hidden" data-tab="plugins">
+        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons; the Plugins view, then a Settings tab, before that) ===== -->
+        <section class="view hidden" data-view="marketplace">
             <div class="topbar">
               <div>
-                <h1>Plugins</h1>
                 <div class="sub">Task sources, agents, skills and workflow packs from your plugin marketplaces</div>
               </div>
               <button type="button" id="plugin-add-btn" class="btn-go" data-min-level="expert" style="padding:11px 20px">
@@ -2109,19 +2129,19 @@
             <div class="run-list" id="plugins-available"></div>
             <h3 class="pl-sec-title" data-min-level="expert">Marketplaces</h3>
             <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
-          </section>
-          <!-- /pane plugins -->
+        </section>
+        <!-- /view marketplace -->
 
-          <!-- ===== TAB: SETS (key mcp; docs/mcp-servers.md, docs/skills.md) — painted whole by mcp-view.mjs ===== -->
-          <section class="settings-pane hidden" data-tab="mcp"></section>
-          <!-- /pane mcp -->
+        <!-- ===== VIEW: CONNECTORS (sidebar › Add-ons; docs/mcp-servers.md, docs/skills.md) — painted whole by
+             mcp-view.mjs: its Sets, Servers and Skills views ride behind #connectors/ ===== -->
+        <section class="view hidden" data-view="connectors"></section>
+        <!-- /view connectors -->
 
-          <!-- ===== TAB: MODELS (was the top-level Models view) ===== -->
-          <section class="settings-pane hidden" data-tab="models">
+        <!-- ===== VIEW: MODELS (sidebar › Add-ons; a Settings tab before that) ===== -->
+        <section class="view hidden" data-view="models">
             <div class="topbar">
               <div>
-                <h1>Models</h1>
-                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers tab.</div>
+                <div class="sub">The global model catalog — available in every project; entries can override built-ins, route through a provider, or carry per-model routing env. The cards on top pick the models Worca's own titles, Auto classifier and PR descriptions use. Sign-ins and endpoints live on the Providers page.</div>
               </div>
               <div style="display:flex;gap:8px;flex:0 0 auto">
                 <button type="button" id="model-share-btn" class="btn-ghost" style="padding:11px 20px;white-space:nowrap">Share as plugin…</button>
@@ -2135,120 +2155,29 @@
             <section class="card settings-card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root"></div>
-              <div class="add-project-actions" style="margin-top:14px"><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
-              <small class="hint" id="engineSettingsMsg"></small>
+              <!-- One Save per card, bottom right; the line beside it counts the unsaved changes (or says Saved.). -->
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="engineSettingsMsg"></small><button type="button" id="engineSettingsSave" class="btn btn-primary btn-mini">Save</button></div>
             </section>
-            <!-- The models Worca's own helper calls use (titles, the Auto classifier, PR descriptions). Two
-                 columns on a wide screen so the catalog below is not pushed a screen down. -->
-            <div class="models-helpers" data-min-level="expert">
-              <!-- Title generation (#422): which model writes run/chat titles.
-                   Empty = the model of the run or chat itself (title.mjs
-                   resolveTitleModel), so a first-party-free install needs no setup.
-                   The select is built from the project-less catalog; a stored id
-                   that left the catalog paints disabled + "not installed". -->
-              <section class="card settings-card" id="title-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>Title generation</h2>
-                    <button type="button" class="info-tip" aria-label="About title generation">i<span class="tip-content hidden">
-                      Every run and chat gets a short LLM-written title. By default it is written by the
-                      model the run or chat itself uses, so an install without a first-party Anthropic
-                      account needs no setup here. Pick a model to write every title with it instead;
-                      the change applies to the next title, no restart. A non-empty
-                      <code>WORCA_TITLE_MODEL</code> in the environment overrides this setting.
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row">
-                    <label for="titleModel">Model</label>
-                  </div>
-                  <select id="titleModel" class="select" data-setting="titleModel" aria-label="Title model"></select>
-                </div>
-                <small class="hint" id="titleModelEnvNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="titleModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="titleModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="titleModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="titleModelMsg"></small>
-              </section>
-
-              <!-- Auto workflow model (spec D14 / §7.7): which model classifies a task into a workflow.
-                   Empty = the Sonnet-class default; WORCA_AUTO_MODEL in the environment wins. -->
-              <section class="card settings-card" id="auto-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>Auto workflow model</h2>
-                    <button type="button" class="info-tip" aria-label="About the Auto workflow model">i<span class="tip-content hidden">
-                      When a run starts on <b>Auto</b>, one short model call reads the task and picks the workflow.
-                      Pick the model that makes that call; empty means the Sonnet-class default. A non-empty
-                      <code>WORCA_AUTO_MODEL</code> in the environment overrides this setting. Each call is billed to the
-                      run as a sub-agent row named "Auto workflow (round n)".
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="autoModel">Model</label></div>
-                  <select id="autoModel" class="select" data-setting="autoWorkflowModel" aria-label="Auto workflow model"></select>
-                </div>
-                <small class="hint" id="autoModelEnvNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="autoModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="autoModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="autoModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="autoModelMsg"></small>
-              </section>
-              <!-- PR description model: which model drafts the "Ship it?" modal's Generate with AI
-                   description (POST /api/pr/describe). Empty = the Sonnet-class default. -->
-              <section class="card settings-card" id="pr-description-model-settings-card" data-min-level="expert">
-                <div class="card-head">
-                  <div class="label-row">
-                    <h2>PR description model</h2>
-                    <button type="button" class="info-tip" aria-label="About the PR description model">i<span class="tip-content hidden">
-                      <b>Generate with AI</b> in the Create PR dialog makes one model call that reads the run's diff,
-                      results and review, and drafts a description you edit before opening the PR. Pick the model
-                      that makes that call; empty means the Sonnet-class default. Each call is billed to the run as a
-                      sub-agent row named "pr description".
-                    </span></button>
-                  </div>
-                </div>
-                <div class="field">
-                  <div class="label-row"><label for="prDescModel">Model</label></div>
-                  <select id="prDescModel" class="select" data-setting="prDescriptionModel" aria-label="PR description model"></select>
-                </div>
-                <small class="hint" id="prDescModelNote"></small>
-                <div class="add-project-actions" style="margin-top:14px">
-                  <button type="button" id="prDescModelTest" class="btn btn-ghost btn-mini" title="Send one tiny prompt to the selected model">Test</button>
-                  <button type="button" id="prDescModelReset" class="btn btn-ghost btn-mini">Use default</button>
-                  <button type="button" id="prDescModelSave" class="btn btn-primary btn-mini">Save</button>
-                </div>
-                <small class="hint" id="prDescModelMsg"></small>
-              </section>
-            </div>
             <p id="models-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="models-list"></div>
-          </section>
-          <!-- /pane models -->
+        </section>
+        <!-- /view models -->
 
-          <!-- ===== TAB: PROVIDERS (model-bridge-design.md §8.1) =====
-               Split out of Models: the card is account-level setup you touch rarely, and at
-               1000+px it buried the catalog it unlocks. Expert only, like Models. -->
-          <section class="settings-pane hidden" data-tab="providers">
+        <!-- ===== VIEW: PROVIDERS (model-bridge-design.md §8.1; sidebar › Add-ons) =====
+             Split out of Models: the card is account-level setup you touch rarely, and at
+             1000+px it buried the catalog it unlocks. Expert only, like Models. -->
+        <section class="view hidden" data-view="providers">
             <div class="topbar">
               <div>
-                <h1>Providers</h1>
-                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models tab.</div>
+                <div class="sub">Sign-ins, endpoints and keys for the models Worca bridges — GitHub Copilot, any OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM), an Anthropic-compatible gateway. The models themselves live on the Models page.</div>
               </div>
             </div>
             <p id="providers-msg" class="form-msg" aria-live="polite"></p>
             <div class="run-list" id="providers-list"></div>
-          </section>
-          <!-- /pane providers -->
         </section>
-        <!-- /view settings -->
+        <!-- /view providers -->
       </main>
+      </div><!-- /.main-col -->
     </div>
 
     <!-- ===== Model editor (configurable-models-design.md §4.10) =====
@@ -2260,8 +2189,8 @@
 
     <!-- ===== Import models (model-bridge-design.md §8.4) =====
          One dialog for both sources: GitHub Copilot's catalog and any OpenAI-compatible server
-         you run. It lives with the CATALOG (Settings › Models), because what it produces is
-         catalog rows; the Providers tab only links into it with its endpoint filled in. -->
+         you run. It lives with the CATALOG (the Models page), because what it produces is
+         catalog rows; the Providers page only links into it with its endpoint filled in. -->
     <div id="model-import-modal" class="viewer-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mimp-title">
       <div class="card mimp">
         <h3 id="mimp-title" class="mv-editor-title">Import models</h3>
@@ -2296,7 +2225,10 @@
       <div class="card">
         <div class="card-head">
           <h2 id="viewer-title">Saved pipeline</h2>
-          <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+          <span class="viewer-actions">
+            <button type="button" id="viewer-full" class="btn btn-mini" aria-pressed="false" hidden>Full screen</button>
+            <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+          </span>
         </div>
         <pre id="viewer" class="viewer"></pre>
       </div>
@@ -2329,7 +2261,7 @@
     </div>
 
     <!-- ===== Interface mode (docs/ui-levels.md) ===== -->
-    <!-- Opened by every [data-mode-open]: the sidebar item (also in the phone drawer), Settings › General.
+    <!-- Opened by [data-mode-open] (Settings › General's "Change…") and by a guide whose switch failed.
          Choosing a card applies at once, so the app re-lays out behind the dialog as the preview.
          ui-level.mjs owns the cards, focus and keys. -->
     <div id="mode-modal" class="viewer-modal mode-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mode-title" aria-describedby="mode-sub">
@@ -2590,6 +2522,7 @@
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="check-row" for="shipit-draft-input"><input id="shipit-draft-input" class="shipit-draft-input" type="checkbox" /> Open as draft</label>
+          <label class="check-row" for="shipit-watch-input"><input id="shipit-watch-input" class="shipit-watch-input" type="checkbox" /> Watch PR</label>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>

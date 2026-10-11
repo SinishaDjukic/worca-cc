@@ -49,7 +49,7 @@ test('the MCP resolution table (copy · set link · status, skip reasons) for a 
         ['sentry_billing · name provisional', 'Billing', 'stale'],
         ['sentry_team-platfor', 'Team · acme/platform', 'off — turn it on in the team checklist'],
       ]);
-      assert.equal(card.querySelector('.mcp-res-row a').getAttribute('href'), '#settings/mcp/sets/billing');
+      assert.equal(card.querySelector('.mcp-res-row a').getAttribute('href'), '#connectors/sets/billing');
       assert.match(card.textContent, /renamed with _w when the run starts/);
       const gone = renderResolution(doc, 'x', { copies: [PREVIEW.copies[1]], skipped: [{ copy: null, setId: 'billing', setName: 'Billing',
         serverId: 'manual:gone', reason: 'missing-server', why: 'the server is no longer installed' }] }, SETS);
@@ -92,7 +92,7 @@ test('project MCP tab: chips with ×, read-only Team chip, Add set, Include Gene
       const chips = [...sec.querySelectorAll('.mcp-proj-sets .mcp-chip')];
       assert.deepEqual(chips.map((c) => c.textContent), ['Billing×', 'Team · acme/platform']);
       assert.equal(chips[1].querySelector('button'), null, 'the Team chip is read-only');
-      assert.equal(chips[1].getAttribute('href'), '#settings/mcp/sets/team-acme-platform-9333');
+      assert.equal(chips[1].getAttribute('href'), '#connectors/sets/team-acme-platform-9333');
       assert.match(sec.textContent, /Include General in runs/);
       assert.match(sec.textContent, /Ask Worca always includes General; a workspace run includes it when any member does/);
       assert.deepEqual(calls.find(([, p]) => p === '/api/mcp/preview')[2], { target: { projectKey: 'billing-1a2b3c4d' } });

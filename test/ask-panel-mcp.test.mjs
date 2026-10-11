@@ -71,12 +71,14 @@ test('MCP picker levels: set rows (switch + drill), membership rows, skipped/dis
       assert.deepEqual(rows.map((r) => { const n = r.children[1].querySelector('.ask-model-name'); return [n.firstChild.textContent, n.querySelector('small').textContent]; }),
         [['General', '2 servers'], ['Billing', '3 servers · pinned'], ['Shop', '2 servers · open worktree'], ['Team · acme/platform', '3 servers']]);   // skills registry §6.8
       assert.deepEqual(rows.map((r) => r.children[1].querySelector('.ask-pop-row-value').textContent), ['2/2', '2/3', '2/2', '1/3']);
-      assert.match(pop(ctx).textContent, /Manage in Settings › Sets/);
+      assert.match(pop(ctx).textContent, /Manage on the Connectors page/);
       // the keyboard walks the switches too (menuItems() is widened to menuitemcheckbox)
       assert.equal(ctx.doc.activeElement, rows[0].children[0], 'the first switch takes focus on open');
       rows[0].children[1].focus();
       key(ctx.window, rows[0].children[1], 'ArrowDown');
       assert.equal(ctx.doc.activeElement, rows[1].children[0], 'a drill button → the next row\'s switch');
+      pop(ctx).querySelector('[data-mcp-key="manage"]').click();
+      assert.equal(ctx.window.location.hash, '#connectors', 'Manage opens the Connectors page');
       ctx.panel.destroy();
     } },
     { name: 'level 2: ‹ back row, one row per membership (copy + switch; "name provisional" §4.4, withheld tools §5.6); a skipped membership is a disabled row with its reason, problems apart from choices (§5.7); footer names the set', run: async () => {
@@ -104,9 +106,12 @@ test('MCP picker levels: set rows (switch + drill), membership rows, skipped/dis
         ['linear_billingoff', true, false],                                     // a choice (§5.7): muted
         ['manual:gonethe server is no longer installed', true, true],           // no copy name: its id stands in
       ]);
-      assert.match(p.textContent, /Manage Billing in Settings › Sets/);
+      assert.match(p.textContent, /Manage in Connectors › Billing/);
       p.querySelector('[data-ask-pane-back]').click();
       assert.equal(pop(ctx).querySelectorAll('.ask-mcp-row').length, 4, 'back to level 1');
+      pop(ctx).querySelectorAll('.ask-mcp-row')[1].children[1].click();          // Billing again
+      pop(ctx).querySelector('[data-mcp-key="manage"]').click();
+      assert.equal(ctx.window.location.hash, '#connectors/sets/billing', 'a set\'s Manage opens that set');
       ctx.panel.destroy();
     } },
     { name: 'level 2: a member this chat switched off (skipped chat-off) stays a live switch and turns back on', run: async () => {

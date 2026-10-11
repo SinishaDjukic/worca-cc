@@ -30,7 +30,7 @@ test('get_away_mode: Settings-card summary lines, "I\'m here" inside the hours, 
       const T23 = Date.parse('2026-09-28T23:30:00Z');
       const out = await reader({ now: () => T23, hereSince: () => T23 - 30 * 60_000 })({});
       assert.equal(out.status, 'here-now');
-      assert.match(out.summary[0], /You count as here because you said "I'm here"/);
+      assert.match(out.summary[0], /You count as here because you said "I'm back"/);
     } },
     { name: 'a project key reads that project\'s layers and names it', run: async () => {
       const out = await reader()({ projectKey: 'shop-1' });

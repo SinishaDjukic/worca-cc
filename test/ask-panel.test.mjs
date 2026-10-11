@@ -18,7 +18,7 @@ const threadsHandler = (url) => (url.startsWith('/api/ask/threads')
   ? { ok: true, status: 200, json: async () => THREADS }
   : { ok: true, status: 200, json: async () => ({}) });
 
-test('ask-panel: shell — root structure, pill/⌘K/Ctrl+K open-close with focus restore, the ownsKey truth table', async () => {
+test('ask-panel: shell — root structure, pill open-close with focus restore, ⌘K/Ctrl+K left to the search, the ownsKey truth table', async () => {
   await checkRows([
     { name: 'ask-panel: root structure — dock, pill, hidden sheet, dialog semantics, no data-view/data-nav', run: async () => {
       const { panel, doc } = makePanel();
@@ -52,20 +52,18 @@ test('ask-panel: shell — root structure, pill/⌘K/Ctrl+K open-close with focu
       assert.equal(panel.isOpen(), false);
       assert.equal(doc.activeElement, outside, 'previous focus restored when still connected');
     } },
-    { name: 'ask-panel: ⌘K and Ctrl+K toggle with preventDefault; repeat and composing are ignored', run: async () => {
+    { name: 'ask-panel: ⌘K and Ctrl+K neither open nor close the sheet, nor claim the key (the top bar search owns them)', run: async () => {
       const { panel, window } = makePanel();
       const e1 = key(window, null, 'k', { metaKey: true });
-      assert.equal(e1.defaultPrevented, true);
-      assert.equal(panel.isOpen(), true);
-      const e2 = key(window, null, 'k', { ctrlKey: true });
+      assert.equal(e1.defaultPrevented, false);
       assert.equal(panel.isOpen(), false);
-      assert.equal(e2.defaultPrevented, true);
-      key(window, null, 'k', { metaKey: true, repeat: true });
-      assert.equal(panel.isOpen(), false, 'e.repeat ignored');
-      key(window, null, 'k', { metaKey: true, isComposing: true });
-      assert.equal(panel.isOpen(), false, 'e.isComposing ignored');
-      key(window, null, 'k', {});
-      assert.equal(panel.isOpen(), false, 'bare k does nothing');
+      const e2 = key(window, null, 'k', { ctrlKey: true });
+      assert.equal(e2.defaultPrevented, false);
+      assert.equal(panel.isOpen(), false);
+      panel.open();
+      const e3 = key(window, null, 'k', { metaKey: true });
+      assert.equal(e3.defaultPrevented, false);
+      assert.equal(panel.isOpen(), true, 'an open sheet stays open');
     } },
     { name: 'ask-panel: ownsKey truth table', run: async () => {
       const { panel, window, doc } = makePanel();
@@ -128,6 +126,20 @@ test('ask-panel: dismissal — Escape with no popover is an owned no-op, pointer
       pointerdown(window, doc.body);
       assert.equal(panel.isOpen(), false, 'outside closes');
     } },
+    { name: 'ask-panel: a press in the top bar search (.tsearch) leaves the sheet open, so focus stays put and the pressed row gets its click', run: async () => {
+      const { panel, window, doc } = makePanel();
+      const search = doc.createElement('div');
+      search.className = 'tsearch';
+      const row = doc.createElement('div');
+      row.setAttribute('role', 'option');
+      search.appendChild(row);
+      doc.body.appendChild(search);
+      panel.open();
+      pointerdown(window, row);
+      assert.equal(panel.isOpen(), true);
+      pointerdown(window, doc.body);
+      assert.equal(panel.isOpen(), false, 'elsewhere still closes it');
+    } },
     { name: 'ask-panel: click-away inside the sheet closes the popover, not the sheet; reopening is a toggle', run: async () => {
       const { panel, window, doc, tick } = makePanel({ fetchHandler: threadsHandler });
       panel.open();
@@ -173,11 +185,13 @@ test('ask-panel: popover menu keyboard — roving focus, wrap, Home/End, Enter, 
 });
 
 test('ask-panel: destroy removes the root and unbinds the document listeners', () => {
-  const { panel, window, doc } = makePanel();
+  const { panel, doc } = makePanel();
+  const removed = [];
+  const off = doc.removeEventListener.bind(doc);
+  doc.removeEventListener = (type, fn, opts) => { removed.push(`${type}:${opts === true}`); return off(type, fn, opts); };
   panel.destroy();
   assert.equal(doc.querySelector('.ask-dock'), null);
-  const e = key(window, null, 'k', { metaKey: true });
-  assert.equal(e.defaultPrevented, false, 'no listener left behind');
+  assert.ok(removed.includes('keydown:true') && removed.includes('pointerdown:true'), 'no capture listener left behind');
 });
 
 // Review of PR #376: loadThread() had no request-generation guard, so whichever
@@ -481,16 +495,4 @@ test('ask-panel: resize — a dock resize re-clamps the open sheet, but never du
       assert.deepEqual(JSON.parse(store.getItem(SIZE_KEY)), { w: 1100, h: 700 });
     } },
   ]);
-});
-
-test('ask-panel: Ctrl+K inside the terminal pane belongs to the shell (#573)', () => {
-  const { panel, window, doc } = makePanel();
-  const pane = doc.createElement('aside');
-  pane.className = 'term-pane';
-  const inner = doc.createElement('textarea');                 // xterm's hidden input is a textarea
-  pane.appendChild(inner);
-  doc.body.appendChild(pane);
-  const e = key(window, inner, 'k', { ctrlKey: true });
-  assert.equal(panel.isOpen(), false);
-  assert.equal(e.defaultPrevented, false);
 });

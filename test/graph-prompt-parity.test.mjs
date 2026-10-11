@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 14 shipped builtins this
+// THE prompt snapshot pin, in two layers. For each of the 16 non-presentation builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -47,7 +47,9 @@ useTempHome(after);
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 /** Builtin layer only — the pin is about the 14 coding/workspace files that ship
- *  in agents/. The seven presentation-domain builtins (wf_presentation) embed the
+ *  in agents/, plus the two architecture builtins (architectSetup, architect), which
+ *  have no v1 prompt but take the same generic builder and so get the same
+ *  marker + whole-prompt pins. The eight presentation-domain builtins (wf_presentation) embed the
  *  designing-presentations criteria and their own directions block; they are not
  *  part of this byte-for-byte coding-prompt pin, so they are excluded here. */
 const RAW_REGISTRY = loadAgentRegistry(AGENTS_DIR, { userAgentsDir: null, includePlugins: false });
@@ -270,6 +272,9 @@ const MOCK_ROLES = {
   workspaceReviewer: 'workspace-reviewer', manualTestsChecklist: 'manual-tests-checklist',
   manualWebUiTesting: 'manual-web-ui-testing', workspaceScanner: 'workspace-scan',
   memoryDefragmenter: 'memory-defrag', workspaceUsageMapper: 'workspace-usage', workspaceSynthesizer: 'workspace-synth',
+  // The architecture pair is post-v1: the setup form rides the clarify writer, the
+  // architect has its own c4-architect writer.
+  architectSetup: 'clarify', architect: 'c4-architect',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {

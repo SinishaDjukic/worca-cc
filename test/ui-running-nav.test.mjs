@@ -54,7 +54,7 @@ async function startRun(window) {
   await tick();
 }
 
-test('starting a run opens its own page with the hash synced, and the New pipeline nav then reopens the New view (not a dead click)', async () => {
+test('starting a run opens its own page with the hash synced, and New run in the top bar then reopens the New view (not a dead click)', async () => {
   const window = await boot();
   const doc = window.document;
   await startRun(window);
@@ -64,15 +64,15 @@ test('starting a run opens its own page with the hash synced, and the New pipeli
       // Straight onto the new run's glance (#running/<id>), not the list.
       assert.match(window.location.hash, /^#running\/[^/]+$/, 'hash follows the view (invariant restored)');
     } },
-    { name: 'after starting a run, clicking "New pipeline" reopens the New view (not a dead click)', run: async () => {
+    { name: 'after starting a run, clicking "New run" reopens the New view (not a dead click)', run: async () => {
       assert.equal(hidden(doc, 'runs'), false, 'precondition: on Runs');
 
-      // The reported gesture: click the sidebar "New pipeline" link.
-      doc.querySelector('.nav button[data-nav="new"]')
+      // The reported gesture: click "New run" in the top bar.
+      doc.getElementById('topnav-new')
          .dispatchEvent(new window.Event('click', { bubbles: true, cancelable: true }));
       await tick();
 
-      assert.equal(hidden(doc, 'new'), false, 'New view shown after clicking New pipeline');
+      assert.equal(hidden(doc, 'new'), false, 'New view shown after clicking New run');
       assert.equal(hidden(doc, 'runs'), true, 'Runs view hidden');
       assert.equal(window.location.hash, '#new', 'hash now matches the New view');
     } },

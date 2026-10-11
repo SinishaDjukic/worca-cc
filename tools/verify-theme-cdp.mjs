@@ -13,7 +13,7 @@
 //   … --out DIR             where the per-theme JSON reports go
 //   … --states a,b          run only these state ids (debugging). Most states build on
 //                           the screen the previous one left (new-error←new, running-list-
-//                           compact←running-list, composer-*←composer, ask-*-picker←ask-sheet,
+//                           compact←running-list, ask-*-picker←ask-sheet,
 //                           modal-*←modal-confirm): pick a CONTIGUOUS run. The identity
 //                           compare is skipped under --states (a skipped state would read
 //                           as "every row vanished").
@@ -335,9 +335,10 @@ const WALKER = (rootSel, withStyles = false) => `(() => {
 // FORCED through the CSS domain, element by element, in every theme.
 // A selector with no element on the current screen is skipped (nodeId 0). At 5a22ca47 `.icon-btn` and `.field-clear`
 // have hover RULES but no live element (the buttons are `.ask-icon-btn`; `.field-clear` lives only in a mockup) — kept
-// so a future element is sampled; `.sidebar.collapsed .nav button.nav-cta` matches only in the rail-collapsed state.
+// so a future element is sampled. `.topnav-new` is New run in the top bar (an ink pill: its hover is a wash).
 const HOVER_SELECTORS = ['.icon-btn', '.ask-icon-btn', '.btn', '.btn-ghost', '.btn-primary', '.runs-row', '.runs-group-head', '.wiz-proj', '.sp-row', '.grv-source-row',
-  '.gr-rm', '.field-clear', '.agent-row-head', '.sidebar.collapsed .nav button.nav-cta', '.nav button', '.spend-ind', '.hd-tree-file', '.ap'];
+  '.gr-rm', '.field-clear', '.agent-row-head', '.topnav-new', '.nav button', '.acct', '.mi', '.hd-tree-file', '.ap',
+  '.act-srow', '.act-stop'];
 async function hoverSamples() {
   // CDP node ids die on every Page.reload (every go()): fetch the document per call, and let a
   // querySelector error THROW — a swallowed "Could not find node" would silently drop hover coverage.
@@ -408,25 +409,19 @@ const states = [
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
-  // The fresh canvas holds a Task and an End node only (no <select> in their inspectors); the
-  // seeded default pipeline (.pl-item[data-id=wf_default], click loads it) carries agent nodes.
-  // Node selection lives in the stage's pointerdown hit-test (graph/composer.mjs onDown → hitNodeAt →
-  // select), so a synthetic click never opens the inspector: press and release a real pointer.
-  ['composer', async () => { await go('composer'); await until(`document.querySelector('[data-view="composer"] .gv-world .node')`, 'composer nodes');
-    await until(`document.querySelector('.pl-item[data-id="wf_default"] .pl-row')`, 'the saved-pipeline list (rendered after listWorkflows)');
-    await clickSel('.pl-item[data-id="wf_default"] .pl-row');
-    await until(`document.querySelector('[data-view="composer"] .gv-world .node.node-agent .nhead')`, 'an agent node of the default pipeline');
-    const c = await ev(`(()=>{const b=document.querySelector('[data-view="composer"] .gv-world .node.node-agent .nhead').getBoundingClientRect();return {x:Math.round(b.left+b.width/2),y:Math.round(b.top+b.height/2)};})()`);
-    await cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: c.x, y: c.y, button: 'left', buttons: 1, clickCount: 1 });
-    await cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: c.x, y: c.y, button: 'left', buttons: 0, clickCount: 1 });
-    await until(`document.querySelector('.ins-panel.ins-agent .ins-select')`, 'the agent inspector'); await freeze('composer'); }],
-  ['composer-palette-filtered', async () => { await ev(`(()=>{const f=document.querySelector('.pal-filter');f.value='rev';f.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`); await freeze('filter'); }, async () => { await ev(`(()=>{const f=document.querySelector('.pal-filter');f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));return 1;})()`); }],
-  // #gv-save is disabled on the default canvas: render the dialog through the
-  // module's own exports instead (the same markup the button would open).
-  ['composer-save-dialog', async () => { await ev(`(async()=>{const m=await import('/graph/save-dialog.mjs');const d=m.renderSaveDialog({name:'Theme proof',domain:'',domains:[],title:'Save pipeline',note:'',doc:document});d.id='theme-proof-dialog';document.body.appendChild(d);m.openDialog(d);return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
-    async () => { await ev(`(()=>{const d=document.getElementById('theme-proof-dialog');if(d){try{d.close();}catch{}d.remove();}return 1;})()`); }],
-  ['agents', async () => { await go('agents'); }],
-  ['agent-create', async () => { await go('agent-create'); }],
+  // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts section with general expanded,
+  // the save dialog the engine opens itself, the agent sheet and the open chat.
+  ['workflows', async () => { await go('workflows'); await until(`document.querySelector('[data-view="workflows"] .gv-world .node')`, 'workflow nodes'); await freeze('workflows'); }],
+  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]')`, 'the Library script folders');
+    // Folders expand in place and a click on an open one folds it: click only a collapsed general.
+    await ev(`(()=>{const f=document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]');if(f.getAttribute('aria-expanded')!=='true')f.click();return 1;})()`);
+    await until(`document.querySelector('#wfv-library .wfl-fold[data-fold="scripts/general"] .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
+  ['workflows-save-dialog', async () => { await go('workflows'); await until(`window.__gv && window.__gv()`, 'the canvas engine');
+    await ev(`(()=>{window.__gv().c.openSaveDialog();return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
+    async () => { await ev(`(()=>{const d=document.querySelector('.save-dialog[open]');if(d){try{d.close();}catch{}}return 1;})()`); }],
+  ['workflows-agent-sheet', async () => { await go('workflows/agents/new'); await until(`document.querySelector('#wfv-sheet:not([hidden]) .wfv-pane[data-pane="agent-new"]:not([hidden])')`, 'the agent sheet'); await freeze('sheet'); }],
+  ['workflows-chat-open', async () => { await go('workflows'); await until(`document.getElementById('wfc-input')`, 'the chat dock');
+    await ev(`(()=>{document.getElementById('wfc-input').focus();return 1;})()`); await until(`document.querySelector('.wfc-shell[data-open="true"]')`, 'the open chat'); await freeze('chat'); }],
   ['projects', async () => { await go('projects'); }],
   // The project page: register a folder through the API first (the proof's home has none), then
   // open it — Overview + header. The Memory tab is the Settings grid already audited above.
@@ -454,14 +449,14 @@ const states = [
   ['settings-runs', async () => { await go('settings/runs'); await until(`document.querySelector('.settings-pane[data-tab="runs"]:not(.hidden) #budget-settings-card')`, 'runs pane'); }],
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
-  ['settings-models', async () => { await go('settings/models'); }],
+  ['settings-models', async () => { await go('models'); }],
   // The catalog's two dialogs (§4.10, §8.4). They render their own content, so the audit would
   // never see the editor's fields or the import table from 'settings-models' alone — the same gap
   // that let a chip's contrast regress unnoticed.
-  ['settings-model-editor', async () => { await go('settings/models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
-  ['settings-model-import', async () => { await go('settings/models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
-  ['settings-providers', async () => { await go('settings/providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
-  ['settings-plugins', async () => { await go('settings/plugins'); }],
+  ['settings-model-editor', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
+  ['settings-model-import', async () => { await go('models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
+  ['settings-providers', async () => { await go('providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
+  ['settings-plugins', async () => { await go('marketplace'); }],
   // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
   // row, the editor, its status line and a History row — an empty scope would paint the fresh badge
   // and nothing else. The contrast baseline is NEVER regenerated for this: a new failing pair means
@@ -528,6 +523,10 @@ async function auditCurrent(stateId) {
   // The Runs list is aria-busy while /api/history is in flight — sampling through a reload
   // made the snapshot bistable (measured: 4 cells flipping between runs).
   await until(`!document.querySelector('#runs-list[aria-busy="true"]')`, 'the history refresh to settle');
+  // The run sheet's PR button morphs in from its spinner on a timer (PR_CTA_MORPH_MS): mid-morph
+  // the button is transparent over a sibling fill the walker cannot see as its background, so a
+  // sample there read white on white (history-list, intermittently). Wait the morph out.
+  await until(`!document.querySelector('.rd-pr-slot:is(.is-morph,.is-out)')`, 'the PR button morph to finish');
   for (const theme of THEMES) {
     await setTheme(theme);
     const { samples, styles, capped } = await ev(WALKER(null, theme[0] === 'light'), 90000);   // identity rows only for the light pass

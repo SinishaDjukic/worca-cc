@@ -36,6 +36,10 @@ function visible(el) {
   const b = el.getBoundingClientRect();
   return b.width > 0 || b.height > 0;
 }
+/** The control still answers to the selector it was found by (a state class can flip off it in place). */
+function stillMatches(el, sel) {
+  try { return el.matches(sel); } catch { return true; }
+}
 
 /**
  * @param {object} o
@@ -260,10 +264,11 @@ export function createGuideSpot({
     let last = '';
     const track = () => {
       if (!alive) return;
-      if (!doc.contains(el) || !visible(el)) {
+      if (!doc.contains(el) || !visible(el) || !stillMatches(el, targets[which])) {
         // The control went away — usually a list repainting its rows (the same
-        // selector matches the replacement a frame later). Detach and re-acquire
-        // for a short grace period; only a control that stays gone ends the guide.
+        // selector matches the replacement a frame later) — or no longer matches its
+        // selector (a state class flipped off: ✕ on a search that closed). Detach and
+        // re-acquire for a short grace period; only a control that stays gone ends the guide.
         cleanup();
         cleanup = () => {};
         attempts = Math.max(0, tries - REACQUIRE_FRAMES);

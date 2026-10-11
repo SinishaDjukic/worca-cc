@@ -208,15 +208,20 @@ export function buildInstruction(tool, kind) {
 }
 
 /**
- * Instruction for agents when a fresh AST graph has been built INSIDE the
- * current worktree at ./graphify-out/. Paths are cwd-relative (agents run with
- * cwd=worktree); the AST-only nature is called out so agents calibrate.
+ * Instruction for agents when an AST graph has been built INSIDE the current
+ * worktree at ./graphify-out/. Paths are cwd-relative (agents run with
+ * cwd=worktree); the AST-only nature is called out so agents calibrate. The
+ * graph is built once, at run start, and every later step gets this same text,
+ * so it says when the graph was built instead of calling it fresh, and how to
+ * refresh it (GRAPH_REPORT.md's own header asks for `graphify update .` too).
  */
 export function worktreeGraphInstruction() {
   return (
-    'A code knowledge-graph CLI named "graphify" is available, and a fresh graph ' +
-    'for THIS worktree has been built at graphify-out/ (relative to your working ' +
-    'directory). It is an AST-only structural graph (symbols, files, and their ' +
+    'A code knowledge-graph CLI named "graphify" is available, and a graph of this ' +
+    'worktree, built at the start of this run, is at graphify-out/ (relative to your ' +
+    'working directory). It does not show changes made since; run ' +
+    '`graphify update .` first if you need them. ' +
+    'It is an AST-only structural graph (symbols, files, and their ' +
     'structural relationships) with NO semantic/inferred edges. BEFORE analyzing ' +
     'or planning, ground yourself in the real code: first read ' +
     'graphify-out/GRAPH_REPORT.md for the overview, then query the graph via Bash. ' +

@@ -55,7 +55,7 @@ test('a model of the other engine, or an effort the engine lacks, is refused nam
   const wrong = await post('/api/settings', { stepModels: { codex: { reviewer: { model: 'claude-opus-5-5' } } } });
   assert.equal(wrong.status, 400);
   // #555: the error names the visible label; `field` keeps the slot.
-  assert.equal(wrong.body.error, '“Step models”: "claude-opus-5-5" is a Claude model — this slot picks a Codex model.');
+  assert.equal(wrong.body.error, '“Step models”: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run.');
   assert.equal(wrong.body.field, 'stepModels.codex.reviewer');
   const effort = await post('/api/settings', { stepModels: { codex: { reviewer: { effort: 'max' } } } });
   assert.equal(effort.status, 400);
@@ -75,7 +75,7 @@ test('POST /api/settings utilityModels: Codex helper slots; Claude ones are toda
   assert.equal(claude.body.error, 'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.');
   assert.equal(claude.body.field, 'utilityModels.claude');
   const wrong = await post('/api/settings', { utilityModels: { codex: { overview: { model: 'claude-opus-5-5' } } } });
-  assert.equal(wrong.body.error, '“Helper models”: "claude-opus-5-5" is a Claude model — this slot picks a Codex model.');
+  assert.equal(wrong.body.error, '“Helper models”: "claude-opus-5-5" runs on Claude — this slot picks a model Codex can run.');
   assert.equal(wrong.body.field, 'utilityModels.codex.overview');
   const job = await post('/api/settings', { utilityModels: { codex: { summary: { model: 'gpt-5.5' } } } });
   assert.equal(job.status, 400);

@@ -13,6 +13,6 @@ public Notion API.
    secret (`ntn_…`; older integrations show `secret_…`).
 2. In Notion, connect the pages and databases agents may use to the integration (page `⋯` →
    Connections).
-3. Settings → Plugins → Available → `notion-mcp` → **Install…**; then Settings → Sets → a set →
+3. Marketplace → Available → `notion-mcp` → **Install…**; then Connectors → a set →
    Add server → `notion` → paste the secret into **Notion integration secret** → Save and
    test.

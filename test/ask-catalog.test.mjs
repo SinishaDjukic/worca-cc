@@ -110,3 +110,26 @@ test('placeable agents: sorted, flags, selfLoop rule; non-placeable/port-less sk
     } },
   ]);
 });
+
+test('shapeAgents({ all: true }): every placeable agent of every domain, uncapped; workspace-only, non-placeable and port-less skipped', () => {
+  const reg = Object.fromEntries(Array.from({ length: 40 }, (_, i) => {
+    const key = `a${String(i).padStart(2, '0')}`;
+    return [key, { key, displayName: key.toUpperCase(), description: 'd', domain: i % 2 ? 'presentation' : 'research',
+      inputs: [{ id: 'in', type: 'md' }], outputs: [{ id: 'out', type: 'md' }] }];
+  }));
+  reg.ws = { key: 'ws', displayName: 'WS', domain: 'coding', scope: 'workspace-only', inputs: [], outputs: [] };
+  reg.np = { key: 'np', displayName: 'NP', domain: 'coding', placeable: false, inputs: [], outputs: [] };
+  reg.nil = { key: 'nil', displayName: 'Nil', domain: 'coding' };
+  const all = shapeAgents(reg, { all: true });
+  assert.equal(all.length, 40, 'no domain filter, no 32 cap');
+  assert.deepEqual(all.map((a) => a.key), Object.keys(reg).filter((k) => /^a\d\d$/.test(k)).sort());
+  assert.deepEqual(shapeAgents(reg), [], 'the default (Auto\'s vocabulary) still keeps to coding / shared / general');
+});
+
+test('buildCatalog carries allAgents beside agents: the Workflows chat\'s placeable set (presentation agents included)', async () => {
+  const cat = await createCatalog({ listProjects: async () => [], listWorkspaces: async () => [], listWorkflows: async () => [] }).buildCatalog();
+  const keys = cat.allAgents.map((a) => a.key);
+  assert.ok(keys.includes('deckBuilder') && keys.includes('planner'));
+  assert.ok(cat.agents.every((a) => keys.includes(a.key)), 'agents is a subset');
+  assert.equal(cat.agents.some((a) => a.key === 'deckBuilder'), false, 'agents stays Auto\'s coding vocabulary');
+});

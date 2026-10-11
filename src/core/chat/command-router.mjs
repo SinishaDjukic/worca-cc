@@ -44,7 +44,7 @@ export function parseDuration(str) {
 }
 
 const HELP_TEXT = [
-  '**worca-cc chat commands**',
+  '**Worca chat commands**',
   '`/runs` — live runs · `/last` — latest finished pipeline',
   '`/status [*ref]` — run detail · `/cost [*ref]` — run cost',
   `\`/pause [*ref]\` · \`/stop [*ref]\` · \`/resume [*ref] [${SWITCH_ENGINES.join('|')}]\` (an engine continues the run on it)`,
@@ -169,7 +169,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     lastHintAt.set(key, t);
     return reply([
       `This chat gets worca notifications but is not allowed to send commands, so \`/${command}\` was ignored.`,
-      `To control runs from here, add \`${chatId}\` to **Allowed chat IDs** in worca → Plugins → ${plugin} → Settings.`,
+      `To control runs from here, add \`${chatId}\` to **Allowed chat IDs** in worca → Marketplace → ${plugin} → Settings.`,
     ].join('\n'), 'warning');
   }
 

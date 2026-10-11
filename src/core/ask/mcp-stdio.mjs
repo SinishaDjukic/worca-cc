@@ -41,6 +41,7 @@ import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
 import { defaultBranchDeps } from './branch-deps.mjs';
+import { defaultComposerDeps } from './composer-deps.mjs';
 
 // The JSON-RPC server itself lives in rpc-server.mjs (re-exported: tests and the Codex file tools use it).
 export { createRpcServer } from './rpc-server.mjs';
@@ -92,6 +93,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),
+      // Composer chats (Workflows view, D10): present only on a composer thread (composer-deps.mjs).
+      ...defaultComposerDeps({ threadId }),
       // Readers only the host process can supply (relay mode: ui/server.mjs passes
       // readLiveDiff, which needs the live runs). Absent in the classic child.
       ...extraDeps,
