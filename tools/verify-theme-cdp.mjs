@@ -409,10 +409,13 @@ const states = [
   ['history-detail', async () => { await go(`history/${projectKey}/${pipelineId}`); await until(`document.querySelector('.hd-glance:not([hidden]) .hd-result .rd-sgroup')`, 'the history glance'); }],
   ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
-  // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts tab,
+  // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts section with general expanded,
   // the save dialog the engine opens itself, the agent sheet and the open chat.
   ['workflows', async () => { await go('workflows'); await until(`document.querySelector('[data-view="workflows"] .gv-world .node')`, 'workflow nodes'); await freeze('workflows'); }],
-  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
+  ['workflows-library-scripts', async () => { await go('workflows/scripts'); await until(`document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]')`, 'the Library script folders');
+    // Folders expand in place and a click on an open one folds it: click only a collapsed general.
+    await ev(`(()=>{const f=document.querySelector('#wfv-library .wfl-folder[data-folder="scripts/general"]');if(f.getAttribute('aria-expanded')!=='true')f.click();return 1;})()`);
+    await until(`document.querySelector('#wfv-library .wfl-fold[data-fold="scripts/general"] .wfl-item[data-item^="script:"]')`, 'the Library script rows'); await freeze('library'); }],
   ['workflows-save-dialog', async () => { await go('workflows'); await until(`window.__gv && window.__gv()`, 'the canvas engine');
     await ev(`(()=>{window.__gv().c.openSaveDialog();return 1;})()`); await until(`document.querySelector('.save-dialog[open]')`, 'save dialog'); await freeze('dialog'); },
     async () => { await ev(`(()=>{const d=document.querySelector('.save-dialog[open]');if(d){try{d.close();}catch{}}return 1;})()`); }],
@@ -520,6 +523,10 @@ async function auditCurrent(stateId) {
   // The Runs list is aria-busy while /api/history is in flight — sampling through a reload
   // made the snapshot bistable (measured: 4 cells flipping between runs).
   await until(`!document.querySelector('#runs-list[aria-busy="true"]')`, 'the history refresh to settle');
+  // The run sheet's PR button morphs in from its spinner on a timer (PR_CTA_MORPH_MS): mid-morph
+  // the button is transparent over a sibling fill the walker cannot see as its background, so a
+  // sample there read white on white (history-list, intermittently). Wait the morph out.
+  await until(`!document.querySelector('.rd-pr-slot:is(.is-morph,.is-out)')`, 'the PR button morph to finish');
   for (const theme of THEMES) {
     await setTheme(theme);
     const { samples, styles, capped } = await ev(WALKER(null, theme[0] === 'light'), 90000);   // identity rows only for the light pass

@@ -26,6 +26,8 @@ import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
   from './graph/presentation-workflow.mjs';
+import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
+  from './graph/architecture-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -58,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 55;
+export const SCHEMA_VERSION = 56;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -1513,8 +1515,17 @@ function applySchemaV40(db) {
  *  OR IGNORE: a user's own live row with the id wins; an archived row keeps the
  *  id and the seed is skipped, exactly like V24's SEED_TEMPLATES pass. */
 function applySchemaV41(db) {
+  seedShippedWorkflow(db, GRAPH_PRESENTATION_WORKFLOW);
+}
+
+/** v55: seed the shipped Architecture (C4) workflow — V41's shape for a second shipped graph. */
+function applySchemaV55(db) {
+  seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
+}
+
+/** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
+function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
-  const t = GRAPH_PRESENTATION_WORKFLOW;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
   const now = new Date().toISOString();
   db.prepare(`INSERT OR IGNORE INTO workflows
@@ -1544,8 +1555,16 @@ function presentationSeedable(db) {
  *  user removed on purpose. No row = nothing to refresh, which is exactly right
  *  for that user. */
 function refreshPresentationSeed(db) {
+  refreshShippedSeed(db, GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS);
+}
+
+/** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
+function refreshArchitectureSeed(db) {
+  refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+function refreshShippedSeed(db, t, fingerprint, shipped) {
   if (!presentationSeedable(db)) return;
-  const t = GRAPH_PRESENTATION_WORKFLOW;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
   const now = new Date().toISOString();
 
@@ -1567,9 +1586,9 @@ function refreshPresentationSeed(db) {
   if (!row || !row.graph) return;
   let stored = null;
   try { stored = JSON.parse(row.graph); } catch { return; }   // unparseable: leave it alone
-  const fp = presentationGraphFingerprint(stored);
-  if (fp === presentationGraphFingerprint({ nodes: t.nodes, wires: t.wires })) return;  // already current
-  if (!PRESENTATION_SHIPPED_FINGERPRINTS.includes(fp)) return;                          // user-edited
+  const fp = fingerprint(stored);
+  if (fp === fingerprint({ nodes: t.nodes, wires: t.wires })) return;  // already current
+  if (!shipped.includes(fp)) return;                                   // user-edited
   // Rewire WITHOUT discarding settings. The fingerprint is node ids + wire ids, so
   // it cannot see a config edit — setWorkflowNodeDefaults writes a model pin
   // straight into graph.nodes[].config without touching ids, `origin` or
@@ -2113,7 +2132,11 @@ export function migrate(db) {
     if (current < 52) applySchemaV52(db);            // workspace PRs: pipeline_member_prs + gated backfill
     // v53 (#635): ask_threads.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     // v54 (Workflows view): ask_threads.mode + composer — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    if (current < 55) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
+    // The shipped Architecture (C4) workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves, above).
+    if (current < 55) applySchemaV55(db);
+    if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
+    if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

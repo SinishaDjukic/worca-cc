@@ -1,0 +1,80 @@
+{
+  "key": "c4Render",
+  "metaVersion": 2,
+  "displayName": "C4: render",
+  "description": "Renders every view of a checked C4 file to SVG, and to JPEG or PNG with a headless Chrome or Edge when one is installed, beside the file and into the run's artifacts with a copy of the .c4 itself. The same renderer the viewer uses, so the images match the screen. No model call; runs with worca's privileges.",
+  "domain": "architecture",
+  "color": "teal",
+  "icon": "<rect x=\"3.5\" y=\"5\" width=\"17\" height=\"14\" rx=\"2.5\"/><path d=\"M7 15l3.5-4 2.5 3 2-2.2L17 15\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "order": 62,
+  "runtime": "node",
+  "file": "c4-render.mjs",
+  "inputs": [
+    {
+      "id": "checked",
+      "type": "json"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "renders",
+      "type": "md",
+      "when": "always",
+      "filename": "c4-renders.md",
+      "artifactKind": "c4-renders",
+      "extraFiles": [
+        {
+          "kind": "c4",
+          "glob": "c4/*.c4"
+        },
+        {
+          "kind": "c4",
+          "glob": "c4/*.likec4"
+        },
+        {
+          "kind": "c4-image",
+          "glob": "c4/*"
+        }
+      ]
+    }
+  ],
+  "params": [
+    {
+      "id": "formats",
+      "type": "string",
+      "label": "Formats (svg, jpeg, png; comma separated; blank = the setup answer, else svg,jpeg)",
+      "default": ""
+    },
+    {
+      "id": "views",
+      "type": "string",
+      "label": "Views to render (ids, comma separated; blank = the setup answer, else all)",
+      "default": ""
+    },
+    {
+      "id": "scale",
+      "type": "number",
+      "label": "Raster scale (1-4)",
+      "default": 2
+    },
+    {
+      "id": "theme",
+      "type": "string",
+      "label": "Theme (light or dark)",
+      "default": "light"
+    },
+    {
+      "id": "commit",
+      "type": "string",
+      "label": "Save images in the checkout (true, false; blank = the setup answer)",
+      "default": ""
+    },
+    {
+      "id": "outDir",
+      "type": "string",
+      "label": "Output folder (relative to the C4 file; blank = <name>.renders)",
+      "default": ""
+    }
+  ],
+  "timeoutMs": 600000
+}

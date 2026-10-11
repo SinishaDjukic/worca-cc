@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Worca C4 viewer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<script src="dagre.min.js"></script>
+<style>
+  /* Worca's tokens (ui/public/style.css), the ones the viewer reads. On the Worca site these come from the site stylesheet. */
+  :root{
+    color-scheme:light dark;
+    --bg:light-dark(#F1F1EF,#161614); --canvas-2:light-dark(#FBFBF9,#1B1B19); --panel:light-dark(#FFFFFF,#222220);
+    --field:light-dark(#F6F6F4,#2C2C29); --ink:light-dark(#19191B,#ECECE8); --ink-2:light-dark(#5C5C63,#B4B4AE);
+    --ink-3:light-dark(#9A9AA1,#9E9E98); --on-ink:light-dark(#FFFFFF,#161614); --line:light-dark(#ECECEA,#30302D);
+    --line-2:light-dark(#E3E3E0,#494944); --hover:light-dark(#EBEBE8,#353531); --seq:light-dark(#B7B7BC,#8E8E92);
+    --green-bg:light-dark(#E2F3DF,#1C2F1D); --green-ink:light-dark(#2F7A38,#8FD48F);
+    --peach-bg:light-dark(#FCEEDA,#33261A); --peach-ink:light-dark(#B5751A,#F2B96A); --peach-line:light-dark(#F1DCBD,#504029);
+    --red-bg:light-dark(#FBE3E0,#34201D); --red-ink:light-dark(#C5483A,#F08C7E);
+    --blue-bg:light-dark(#DEEFF7,#1A2A33); --h-blue-ink:light-dark(#2E6E8E,#9FD3EE);
+    --violet-bg:light-dark(#EAE6F8,#262336); --violet-ink:light-dark(#6353B8,#B3A8EE);
+    --amber:#E6962A; --amber-bg:light-dark(#FCE8C8,#332715); --amber-ink:light-dark(#A66510,#F0B45A);
+    --amber-wash:light-dark(#FEF7EC,#322816); --amber-line:light-dark(#F5D9A8,#6A5228);
+    --teal-bg:light-dark(#DDF2EF,#1A2E2B); --teal-ink:light-dark(#2A8A80,#86D3CA);
+    --pink-bg:light-dark(#FBE4EE,#33202A); --pink-ink:light-dark(#B84A7C,#F0A2C3);
+    --indigo:#6A7FD8; --indigo-bg:light-dark(#E3E7F9,#232739); --indigo-ink:light-dark(#4457B5,#A3B0EE);
+    --lime-bg:light-dark(#EEF4D5,#262E15); --lime-ink:light-dark(#6E8A14,#C7DB6E);
+    --cocoa-bg:light-dark(#F1E7DB,#2F2620); --cocoa-ink:light-dark(#7E5D33,#D2B08A);
+    --slate-bg:light-dark(#E8ECF0,#262A2E); --slate-ink:light-dark(#58646F,#B3BEC8);
+    --sans:'Poppins',system-ui,-apple-system,sans-serif; --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
+  }
+  :root[data-theme="light"]{color-scheme:light} :root[data-theme="dark"]{color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  header h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em}
+  header .hint{color:var(--ink-3);font-size:12.5px}
+  header .sp{flex:1}
+  .btn{border:1.5px solid var(--line-2);background:var(--panel);color:var(--ink);font:600 12.5px var(--sans);padding:7px 14px;border-radius:999px;cursor:pointer}
+  .btn:hover{border-color:var(--ink-3)}
+  .btn.go{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+  main{flex:1;min-height:0;padding:16px 20px 20px;display:flex}
+  worca-c4{flex:1;min-height:0}
+  body.drop main{outline:2px dashed var(--amber);outline-offset:-10px}
+  .theme{display:inline-flex;border:1px solid var(--line-2);border-radius:9px;overflow:hidden}
+  .theme button{border:0;background:var(--panel);color:var(--ink-2);font:600 12px var(--sans);padding:6px 10px;cursor:pointer}
+  .theme button[aria-pressed="true"]{background:var(--ink);color:var(--on-ink)}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>Worca C4 viewer</h1>
+  <span class="hint" id="hint">Drop a .c4 file (or a LikeC4 JSON export) anywhere on the page.</span>
+  <span class="sp"></span>
+  <span class="theme" role="group" aria-label="Theme"><button type="button" data-theme="" aria-pressed="true">System</button><button type="button" data-theme="light" aria-pressed="false">Light</button><button type="button" data-theme="dark" aria-pressed="false">Dark</button></span>
+  <label class="btn">Open file… <input type="file" id="file" accept=".c4,.likec4,.json"></label>
+  <button type="button" class="btn" id="svg">Download SVG</button>
+  <button type="button" class="btn go" id="jpg">Download JPEG</button>
+</header>
+<main><worca-c4 id="c4" info toolbar></worca-c4></main>
+<script type="module">
+  import './c4-view.mjs';
+  const c4 = document.getElementById('c4');
+  const hint = document.getElementById('hint');
+  c4.addEventListener('c4-ready', (e) => { hint.textContent = `${e.detail.views.length} views` + (e.detail.problems.length ? ` · ${e.detail.problems.length} unresolved references` : ''); });
+  c4.addEventListener('c4-error', (e) => { hint.textContent = e.detail.message; });
+  const readFile = (f) => f.text().then((t) => { c4.load(t); document.title = `${f.name} · Worca C4 viewer`; });
+  document.getElementById('file').addEventListener('change', (e) => { if (e.target.files[0]) readFile(e.target.files[0]); });
+  document.body.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('drop'); });
+  document.body.addEventListener('dragleave', () => document.body.classList.remove('drop'));
+  document.body.addEventListener('drop', (e) => { e.preventDefault(); document.body.classList.remove('drop'); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+  document.getElementById('jpg').addEventListener('click', async () => { const blob = await c4.export({ format: 'jpeg', scale: 2 }); save(blob, `${c4.view}.jpg`); });
+  document.getElementById('svg').addEventListener('click', () => { save(new Blob([c4.toSVG()], { type: 'image/svg+xml' }), `${c4.view}.svg`); });
+  function save(blob, name) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+  document.querySelectorAll('.theme button').forEach((b) => b.addEventListener('click', () => { document.querySelectorAll('.theme button').forEach((x) => x.setAttribute('aria-pressed', x === b)); if (b.dataset.theme) document.documentElement.setAttribute('data-theme', b.dataset.theme); else document.documentElement.removeAttribute('data-theme'); }));
+  // ?src=path loads a file next to the page; the sample is Worca's own model
+  const src = new URLSearchParams(location.search).get('src') || 'architecture.c4';
+  const view = location.hash.slice(1); if (view) c4.setAttribute('view', view);
+  fetch(src).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${r.status}`)))).then((t) => { c4.load(t); document.title = `${src} · Worca C4 viewer`; }).catch(() => { hint.textContent = 'Drop a .c4 file (or a LikeC4 JSON export) anywhere on the page.'; });
+</script>
+</body>
+</html>

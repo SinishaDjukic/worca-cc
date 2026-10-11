@@ -1,0 +1,42 @@
+{
+  "key": "c4Check",
+  "metaVersion": 2,
+  "displayName": "C4: check",
+  "description": "Parses the C4 file the architect wrote with the viewer's own parser, resolves every view, and blocks with a precise report when the file does not parse, references an unknown element, declares no view, or leaves a band empty; a band a view leaves out and unplaced elements pass as notes. Deterministic: no model call; runs with worca's privileges.",
+  "domain": "architecture",
+  "color": "teal",
+  "icon": "<path d=\"M5 12.5l4.5 4.5L19 7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+  "order": 61,
+  "runtime": "node",
+  "file": "c4-check.mjs",
+  "inputs": [
+    {
+      "id": "model",
+      "type": "json"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "review",
+      "type": "md",
+      "when": "blocking",
+      "filename": "c4-check-cycle{cycle}.md",
+      "artifactKind": "c4-check"
+    },
+    {
+      "id": "pass",
+      "type": "void",
+      "when": "clean"
+    },
+    {
+      "id": "checked",
+      "type": "json",
+      "when": "clean",
+      "filename": "c4-checked.json",
+      "artifactKind": "c4-check"
+    }
+  ],
+  "verdict": {
+    "filename": "c4-check-cycle{cycle}.json"
+  }
+}

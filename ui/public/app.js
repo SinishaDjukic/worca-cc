@@ -173,9 +173,10 @@ import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { BINARY_KINDS, isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
-// dispatch to the byte kinds, so upstream's module stays byte-identical.
+// dispatch to the byte kinds, so upstream's module stays byte-identical;
+// artifact-view-c4.mjs re-exports THAT and adds the `c4` kind (the <worca-c4> viewer).
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
-  renderMarkdown as renderArtifactMarkdown } from './artifact-view-media.mjs';
+  renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
@@ -425,6 +426,7 @@ const el = {
 
   viewerCard: $('#viewer-card'),
   viewerTitle: $('#viewer-title'),
+  viewerFull: $('#viewer-full'),
   viewer: $('#viewer'),
   viewerClose: $('#viewer-close'),
 
@@ -2633,7 +2635,13 @@ async function initWorkflows() {
     highlight: scriptHighlight,   // a script card's command/code params get the real editor
     notify: (o) => notify(o),
     allLevels: true,              // every setting at every interface level (D5)
-    insetRight: () => (window.innerWidth <= 760 && wfvLibrary && wfvLibrary.isOpen() ? 316 : 0),
+    // The 380px Library overlay + its 8px edge + 8px air, while a useful 200px band stays beside it. On a phone the
+    // overlay covers the stage, and a fit into the 1px left over shrank the graph to a dot: fit the whole stage then.
+    insetRight: () => {
+      if (!(window.innerWidth <= 760 && wfvLibrary && wfvLibrary.isOpen())) return 0;
+      const stageW = gvComposer ? gvComposer.view.stage.getBoundingClientRect().width : 0;
+      return stageW - 396 >= 200 ? 396 : 0;
+    },
   });
   gvComposer.mount();
   gvComposer.hooks.onSaved = () => { void wfvRefreshWorkflows(); };
@@ -26151,6 +26159,8 @@ el.reportDownload.addEventListener('click', () => {
 
 // The shared viewer with a plain string: errors, notices, anything that is text.
 function showViewer(title, text) {
+  setViewerFull(false);
+  el.viewerFull.hidden = true;
   el.viewerTitle.textContent = title || 'Saved pipeline';
   // Only hideViewer cleared this, so an artifact fetch that failed rendered its
   // error string — and any saved pipeline opened next without closing the modal —
@@ -26169,6 +26179,7 @@ function showViewer(title, text) {
  *  `title` is the FULL heading text, as it is for showViewer: callers pass
  *  their own "Saved: "/"Artifact: " prefix. */
 function showViewerHost(title) {
+  el.viewerFull.hidden = false;
   el.viewerTitle.textContent = title || 'Saved pipeline';
   const host = document.createElement('div');
   host.className = 'artifact-view';
@@ -26182,7 +26193,30 @@ function showViewerHost(title) {
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   return host;
 }
+// Full screen for a typed artifact (a C4 diagram, a deck, a PDF, an image): the browser's own full
+// screen on the modal's card where the Fullscreen API is available, else the card fills the window.
+// Either way `.is-full` is the one class the CSS keys on, so the two paths look the same.
+function setViewerFull(on) {
+  const card = el.viewerCard.querySelector('.card');
+  const fsEl = document.fullscreenElement;
+  if (on) {
+    el.viewerCard.classList.add('is-full');
+    if (card && typeof card.requestFullscreen === 'function' && !fsEl) card.requestFullscreen().catch(() => {});
+  } else {
+    el.viewerCard.classList.remove('is-full');
+    if (fsEl && fsEl === card && typeof document.exitFullscreen === 'function') document.exitFullscreen().catch(() => {});
+  }
+  el.viewerFull.textContent = on ? 'Exit full screen' : 'Full screen';
+  el.viewerFull.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+el.viewerFull.addEventListener('click', () => setViewerFull(!el.viewerCard.classList.contains('is-full')));
+// Esc in browser full screen leaves it without a keydown reaching the page: follow the browser.
+document.addEventListener('fullscreenchange', () => {
+  const card = el.viewerCard.querySelector('.card');
+  if (!document.fullscreenElement && el.viewerCard.classList.contains('is-full') && card && card.requestFullscreen) setViewerFull(false);
+});
 function hideViewer() {
+  setViewerFull(false);
   el.viewerCard.classList.add('hidden');
   el.viewer.classList.remove('holds-artifact');
   // `.hidden{display:none}` does NOT unload an iframe: a framed deck keeps its
@@ -30478,13 +30512,23 @@ function gsHops(step, g) {
       // Workflows: open the Library, open Default, read the canvas and the chat — then leave the editor
       // and start a run from New run (the pick persists the workflow: that is the derived tick).
       const lib = document.getElementById('wfv-library');
+      // The Library's selector picks Workflows; Default sits in its domain's folder (opened in place) whenever Workflows
+      // holds more than one domain. Once its row shows — there, or in a search's flat list — both hops are done.
+      // gsHops is re-derived on every reconsider, so `defFolder` follows the list as it loads.
+      const defFolder = (wfvLibrary ? wfvLibrary.folderOf('workflow', 'wf_default') : ['workflows']).join('/');
+      const defShown = () => !!lib && !!lib.querySelector('.wfl-wf[data-id="wf_default"]');
       const run = Object.fromEntries(gsRunHops(g, false).filter(Boolean).map((h) => [h.id.replace('nav:', ''), h]));
       return [
         NAV('workflows', 'Workflows are the agent chains Worca runs. The built-in ones live here.'),
         { id: 'library', target: '#wfv-lib-toggle', lift: ['.wfv-float', '.wfv-stage'], met: () => !!lib && lib.dataset.open === 'true', skipWhenMet: true,
           text: 'Open the Library: your agents, scripts and saved workflows.' },
-        { id: 'tab', target: '#wfv-library [data-tab="workflows"]', lift: ['.wfl'], met: () => !!lib && lib.dataset.tab === 'workflows', skipWhenMet: true,
-          text: 'Switch to Workflows.' },
+        // A search query lists its matches flat, with no folder rows: ✕ (while the search is open) closes it and clears it.
+        { id: 'tab', target: '#wfv-library #wfl-tab-workflows', lift: ['.wfl'],
+          met: () => !!lib && (lib.dataset.tab === 'workflows' || defShown()), skipWhenMet: true,
+          text: 'Switch the Library to Workflows.' },
+        { id: 'folder', target: [`#wfv-library .wfl-folder[data-folder="${defFolder}"]`, '#wfv-library .wfl-head.is-searching #wfl-close'], lift: ['.wfl'],
+          met: () => !defFolder.includes('/') || defShown(), skipWhenMet: true,
+          text: [`Open “${defFolder.split('/').pop()}”: the built-in Default workflow lives in this folder.`, 'Close the search: the folders are under it.'] },
         { id: 'open', target: ['#wfv-library .wfl-wf[data-id="wf_default"]', '#wfv-library .wfl-wf'], lift: ['.wfl'],
           met: () => !!(document.getElementById('wfv-name')?.value || '').trim(),
           text: 'Open Default: the built-in Plan → Refine → Implement → Review loop.',

@@ -166,5 +166,22 @@ test('target resolution: the first fallback selector that shows wins; hidden cou
       assert.equal(spot.layer.dataset.target, '#go');
       spot.destroy();
     } },
+    { name: 'a target whose state class flips off in place (it stays in the page) is re-acquired: the ring moves to the selector that matches now', run: async () => {
+      const { window, doc } = page();
+      const other = doc.getElementById('other');
+      other.classList.add('is-on');
+      const spot = createGuideSpot({
+        doc, win: window, target: ['#go.is-ready', '#other.is-on'], text: ['ready', 'on'], onDismiss() {}, onTargetClick() {},
+      });
+      await frames(window);
+      assert.equal(spot.layer.dataset.target, '#other.is-on', 'precondition: the fallback');
+      doc.getElementById('go').classList.add('is-ready');
+      other.classList.remove('is-on');
+      await frames(window, 4);
+      assert.equal(spot.layer.dataset.target, '#go.is-ready');
+      assert.equal(doc.querySelector('.guide-text').textContent, 'ready');
+      assert.equal(other.classList.contains('guide-target'), false, 'the ring left the control that no longer matches');
+      spot.destroy();
+    } },
   ]);
 });
