@@ -61,22 +61,23 @@ const type = (s, value) => {
 test('the selector switches Agents / Scripts / Workflows (registry counts); Agents splits by domain (shared folded in), Flow pinned last; a folder expands in place', async () => {
   const s = await boot();
   assert.equal(s.host.dataset.tab, 'agents', 'first open: Agents');
-  assert.deepEqual(tabsOf(s.host), [['agents', 'Agents', '4', 'true'], ['scripts', 'Scripts', '2', 'false'], ['workflows', 'Workflows', '3', 'false']]);
+  assert.deepEqual(tabsOf(s.host), [['agents', 'Agents', '3', 'true'], ['scripts', 'Scripts', '2', 'false'], ['workflows', 'Workflows', '3', 'false']],
+    'the counts leave out what the canvas cannot take (the built-in Scanner)');
   assert.equal(s.host.querySelector('.wfl-crumbs, .wfl-crumb, #wfl-up, #wfl-crumb-home'), null, 'no breadcrumb, no back row');
-  assert.deepEqual(foldersOf(s.host), [['agents/coding', 'coding', '3', 'false'], ['agents/general', 'general', '2', 'false'], [`agents/${FLOW}`, 'Flow', '5', 'false']]);
+  assert.deepEqual(foldersOf(s.host), [['agents/coding', 'coding', '2', 'false'], ['agents/general', 'general', '2', 'false'], [`agents/${FLOW}`, 'Flow', '5', 'false']]);
   assert.deepEqual(rowsOf(s.host), [], 'folders start folded');
-  assert.equal(footOf(s.host), '4 agents');
+  assert.equal(footOf(s.host), '3 agents');
   click(folder(s.host, 'agents/coding'));
   assert.equal(s.host.dataset.tab, 'agents', 'a folder opens in place');
   assert.equal(folder(s.host, 'agents/coding').getAttribute('aria-expanded'), 'true');
-  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner']);
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner']);
   const fold = s.host.querySelector('.wfl-fold[data-fold="agents/coding"]');
   assert.equal(fold.previousElementSibling, folder(s.host, 'agents/coding'), 'its rows follow its row');
-  assert.equal(fold.querySelectorAll('.wfl-item').length, 3);
+  assert.equal(fold.querySelectorAll('.wfl-item').length, 2);
   assert.deepEqual(foldersOf(s.host).map(([k]) => k), ['agents/coding', 'agents/general', `agents/${FLOW}`], 'the other folders stay');
   click(folder(s.host, `agents/${FLOW}`));
-  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner', ...FLOW_ROWS], 'several folders open at once');
-  assert.equal(footOf(s.host), '4 agents', 'the count is the section, never the flow cards');
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', ...FLOW_ROWS], 'several folders open at once');
+  assert.equal(footOf(s.host), '3 agents', 'the count is the section, never the flow cards');
   click(folder(s.host, 'agents/coding'));
   assert.deepEqual(rowsOf(s.host), FLOW_ROWS, 'a second click folds it');
   click(s.doc.getElementById('wfl-tab-scripts'));
@@ -158,7 +159,7 @@ test('a search lists every match in the selected section flat, each tagged with 
   assert.deepEqual([rowsOf(s.host), tagsOf(s.host)], [['agent:clarify'], ['coding']], 'a shared agent shows once, at the first folder listing it');
   s.lib.openFolder(['agents', 'coding']);
   assert.equal(s.doc.getElementById('wfl-filter').value, '', 'openFolder clears the query: the folder shows');
-  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:workspaceScanner']);
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner']);
 });
 
 test('the search button grows a field over the title; an empty field folds back on it; ✕ closes an open search, else the Library', async () => {
@@ -199,7 +200,7 @@ test('the search button grows a field over the title; an empty field folds back 
   assert.equal(s.host.firstElementChild, head);
 });
 
-test('a row drags {kind,key} as application/x-worca; "+" adds at the centre; not-placeable rows do neither', async () => {
+test('a row drags {kind,key} as application/x-worca; "+" adds at the centre', async () => {
   const s = await boot();
   s.lib.openFolder(['agents', 'coding']);
   const row = s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-row');
@@ -212,10 +213,6 @@ test('a row drags {kind,key} as application/x-worca; "+" adds at the centre; not
   assert.equal(set['text/plain'], 'Plan');
   click(s.host.querySelector('.wfl-item[data-item="agent:planner"] .wfl-add'));
   assert.deepEqual(s.calls.at(-1), ['addToCanvas', { kind: 'agent', key: 'planner' }]);
-  const scanner = s.host.querySelector('.wfl-item[data-item="agent:workspaceScanner"]');
-  assert.equal(scanner.querySelector('.wfl-row').getAttribute('draggable'), 'false');
-  assert.equal(scanner.querySelector('.wfl-add'), null);
-  assert.match(scanner.textContent, /not placeable/);
 });
 
 test('detail actions by origin: built-in View · Duplicate; user Edit · Delete', async () => {
@@ -368,16 +365,29 @@ test('a double-click on a folder row opens it once: its second press never reach
   assert.equal(opened(), 1, 'a double-click well after the toggle acts as before');
 });
 
-test('a workspace-only agent is listed but never placeable; plugin rows and scripts carry their chips', async () => {
+test('built-in and plugin agents and scripts the canvas cannot take are not listed — folders, counts, search; the user\'s own stay, marked and never placeable', async () => {
   const WS = { key: 'workspaceReviewer', displayName: 'Workspace Reviewer', origin: 'builtin', domain: 'coding', scope: 'workspace-only', inputs: [], outputs: [] };
+  const PLUG_AGENT = { key: 'mapper', displayName: 'Mapper', origin: 'plugin:demo', domain: 'mapping', placeable: false, inputs: [], outputs: [] };
+  const MINE = { key: 'offline', displayName: 'Offline Reviewer', origin: 'user', domain: 'general', placeable: false, inputs: [], outputs: [] };
   const PLUG = { key: 'lint', displayName: 'Lint', runtime: 'python', origin: 'plugin:demo', caseCount: 2, inputs: [], outputs: [] };
-  const s = await boot({ agents: [...AGENTS, WS], scripts: [...SCRIPTS, PLUG], runtimes: { python: { ok: false } } });
+  const HIDDEN_SCRIPT = { key: 'mapJoin', displayName: 'Map join', runtime: 'node', origin: 'builtin', domain: 'mapping', placeable: false, inputs: [], outputs: [] };
+  const s = await boot({ agents: [...AGENTS, WS, PLUG_AGENT, MINE], scripts: [...SCRIPTS, PLUG, HIDDEN_SCRIPT], runtimes: { python: { ok: false } } });
+  assert.deepEqual(tabsOf(s.host).map((t) => t[2]), ['4', '3', '3'], 'Agents: Plan, Clarify, Docs Writer and the user\'s Offline Reviewer; Scripts: no Map join');
+  assert.deepEqual(foldersOf(s.host).map(([k]) => k), ['agents/coding', 'agents/general', `agents/${FLOW}`], 'a domain only unplaceable agents fill never shows');
   s.lib.openFolder(['agents', 'coding']);
-  const row = s.host.querySelector('.wfl-item[data-item="agent:workspaceReviewer"]');
-  assert.equal(row.querySelector('.wfl-row').getAttribute('draggable'), 'false');
-  assert.equal(row.querySelector('.wfl-add'), null);
-  assert.match(row.textContent, /workspace only/);
+  s.lib.openFolder(['agents', 'general']);
+  assert.deepEqual(rowsOf(s.host), ['agent:clarify', 'agent:planner', 'agent:clarify', 'agent:docsWriter', 'agent:offline'], 'no Workspace Reviewer; the shared Clarify sits in both');
+  const mine = s.host.querySelector('.wfl-item[data-item="agent:offline"]');
+  assert.equal(mine.querySelector('.wfl-row').getAttribute('draggable'), 'false', 'the user\'s own unplaceable agent: listed so its sheet can switch it back on');
+  assert.equal(mine.querySelector('.wfl-add'), null);
+  assert.match(mine.textContent, /not placeable/);
+  click(s.doc.getElementById('wfl-filter-btn'));
+  type(s, 'workspace');
+  assert.equal(s.host.querySelector('.wfl-empty').textContent, 'No agents match “workspace”', 'the search never finds a hidden one');
+  type(s, '');
   s.lib.open('scripts');
+  assert.deepEqual(foldersOf(s.host), [], 'Map join\'s domain never makes Scripts split');
+  assert.deepEqual(rowsOf(s.host), ['script:gitDiff', 'script:lint', 'script:runTests']);
   const lint = s.host.querySelector('.wfl-item[data-item="script:lint"]');
   for (const chip of ['plugin:demo', '2 cases', 'python not found']) assert.match(lint.textContent, new RegExp(chip));
 });

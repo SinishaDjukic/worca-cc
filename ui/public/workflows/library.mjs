@@ -114,7 +114,11 @@ export function createLibrary({ doc, host, actions }) {
     archived: (w) => matches(w.name, w.id, w.domain),
   };
   const rowId = (kind, x) => (kind === 'flow' ? `flow:${x.kind}` : kind === 'workflow' || kind === 'archived' ? `${kind}:${x.id}` : `${kind}:${x.key}`);
-  const dataOf = (name) => (Array.isArray(st.data[name]) ? st.data[name] : []).filter(Boolean);
+  // A built-in or plugin agent / script the canvas cannot take (placeable:false, a workspace-only agent) is not listed —
+  // not in a folder, a count or a search: it could only be looked at. The user's own stay: their sheet is where
+  // "Placeable on a canvas" is switched back on.
+  const listed = (x) => x.origin === 'user' || (x.placeable !== false && x.scope !== 'workspace-only');
+  const dataOf = (name) => (Array.isArray(st.data[name]) ? st.data[name] : []).filter((x) => x && (name === 'agents' || name === 'scripts' ? listed(x) : true));
 
   /** A top folder's domain subfolders, read from the whole registry (a chip never reshapes the tree); [] when it holds
    *  one group or none — its rows then sit in the top folder itself. */
@@ -412,7 +416,7 @@ export function createLibrary({ doc, host, actions }) {
   const pluginOf = (x) => (typeof x.origin === 'string' && x.origin.startsWith('plugin:') ? x.origin : '');
   function agentItem(a, at = null) {
     // Workspace-only agents run only inside a workspace scan: the palette never offered them and the run
-    // assembler refuses them (WORKSPACE_ONLY_AGENT) — listed, never placed.
+    // assembler refuses them (WORKSPACE_ONLY_AGENT). Only the user's own get here (dataOf) — listed, never placed.
     const wsOnly = a.scope === 'workspace-only';
     const placeable = a.placeable !== false && !wsOnly;
     const user = a.origin === 'user';
