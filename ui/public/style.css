@@ -5307,23 +5307,11 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 }
 
 /* ---------- Ask Worca (spec §10.3-§10.6; tokens only, no hex) ---------- */
-/* Fixed full-height dock over the content column; children restore pointer
-   events. z-40 sits above sticky tab lists (5) and below .viewer-modal (50)
-   and #confirm-modal (60) so page modals dim the sheet and confirmModal stays
-   reusable. Left offsets track the rail: 254px expanded, 60px collapsed
-   (.sidebar / .sidebar.collapsed own those widths). */
-.ask-dock{position:fixed;top:0;bottom:0;right:0;left:254px;z-index:40;pointer-events:none;
-  display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
-  padding:0 28px 26px;transition:left .2s cubic-bezier(.65,.02,.28,1);}
-body.rail-collapsed .ask-dock{left:60px;}
-/* On phones the sidebar is an off-canvas drawer (Responsive nav tiers) while
-   .collapsed may still be present — restate the higher-specificity selector or left:60px wins. */
-@media (max-width:760px){
-  .ask-dock,body.rail-collapsed .ask-dock{left:0;}
-}
+/* The chat lives in the Chat page (worca Chat P1 section at the end of this file); these rules style what is
+   inside it — the transcript, the composer, the cards and the popovers. */
 
-/* ── Terminal pane (GitHub issue 573): the right side of every page. Opening it shifts the page, the Ask
-   dock and the toasts left of it; --term-w is set by the pane's resize handle (default 460px). ── */
+/* ── Terminal pane (GitHub issue 573): the right side of every page. Opening it shifts the page and the toasts
+   left of it; --term-w is set by the pane's resize handle (default 460px). ── */
 .term-pane{position:fixed;top:0;right:0;bottom:0;width:var(--term-w,460px);z-index:39;display:flex;flex-direction:column;
   background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-sheet);
   /* xterm's 16 ANSI colours (terminal-pane.mjs reads them through probes). Each theme takes its own tone of a
@@ -5339,7 +5327,6 @@ body.rail-collapsed .ask-dock{left:60px;}
   --term-ansi-white:var(--ink-2);                               --term-ansi-bright-white:var(--ink);}
 .term-pane[hidden]{display:none;}
 body.term-open .app{margin-right:var(--term-w,460px);}
-body.term-open .ask-dock{right:var(--term-w,460px);}
 body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* The opener: an icon button in the run bar and the project page's title row, at their controls' height. */
 .term-opener{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:0;box-sizing:border-box;color:var(--ink-2);}
@@ -5385,101 +5372,11 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .term-host{flex:1;min-height:0;min-width:0;padding:0;border:0;}
 .term-sel-probe{display:none;background:var(--blue-bg);}
 .term-ansi-probe{display:none;}
-@media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .ask-dock{right:0;} body.term-open .toasts{right:12px;}
-  /* The dock (z-40) sits over the full-width pane (z-39): its pill would cover the terminal's input row. */
-  body.term-open .ask-dock>.ask-pill{display:none;}
+@media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
  }
 
-/* The launcher: a 48px round icon button in the dock's bottom-right corner, taken out of the dock's flex flow
-   so the sheet's centring and size do not change. Coming back from a closed sheet (display:none -> flex) replays
-   the pop-in; hiding stays instant. The label is kept for screen readers, the shortcut lives in the tooltip. */
-.ask-pill{pointer-events:auto;position:absolute;right:24px;bottom:calc(24px + env(safe-area-inset-bottom,0px));
-  display:flex;align-items:center;justify-content:center;width:48px;height:48px;padding:0;box-sizing:border-box;
-  border:1.5px solid var(--line-2);border-radius:50%;background:var(--panel);color:var(--ink);cursor:pointer;
-  box-shadow:var(--shadow-pop);animation:ask-pill-pop .22s cubic-bezier(.34,1.56,.64,1);
-  transition:transform .16s ease-out,border-color .16s ease-out,box-shadow .16s ease-out;}
-.ask-pill:hover{border-color:var(--hover-outline);transform:translateY(-2px) scale(1.04);box-shadow:var(--shadow-sheet);}
-.ask-pill:active{transform:scale(.94);}
-.ask-pill:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.ask-pill[hidden]{display:none;}
-@keyframes ask-pill-pop{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
-.ask-pill-label{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
-  clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;}
-/* "Thinking" on the collapsed button: a thin violet conic ring turns round it while the mark morphs into the orb
-   (below). Toggled with the .is-live class by ask-panel.mjs updateSendStop(). It fades in on the morph's .52s and
-   out on its .8s; a transition reads its timing from the AFTER-change style, so the live rule carries the first. */
-.ask-pill::before{content:"";position:absolute;inset:-3.5px;border-radius:50%;pointer-events:none;opacity:0;
-  background:conic-gradient(from 0deg,transparent 0%,var(--violet) 100%);
-  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 2px),var(--ink) calc(100% - 1.5px));
-  mask:radial-gradient(farthest-side,transparent calc(100% - 2px),var(--ink) calc(100% - 1.5px));
-  transition:opacity .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill.is-live::before{opacity:1;transition-duration:.52s;animation:ask-ring 1.6s linear infinite;}
-@keyframes ask-ring{to{transform:rotate(360deg)}}
-/* The unread dot: a turn ended while the sheet was closed (.has-unread, ask-panel.mjs). Scales in once. */
-.ask-pill.has-unread::after{content:"";position:absolute;top:1px;right:1px;width:10px;height:10px;border-radius:50%;
-  background:var(--violet);box-shadow:0 0 0 2px var(--panel);animation:ask-dot-in .24s cubic-bezier(.34,1.56,.64,1);}
-@keyframes ask-dot-in{from{transform:scale(0)}to{transform:scale(1)}}
-/* The tooltip: left of the button, vertically centred on it (8px gap). Shown by ask-panel.mjs (.is-shown): after a
-   400ms hover, at once on keyboard focus. Touch devices never show it. */
-.ask-tip{position:absolute;right:calc(24px + 48px + 8px);bottom:calc(24px + 24px + env(safe-area-inset-bottom,0px));
-  display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r-ctrl);
-  background:var(--ink);color:var(--panel);font:500 12.5px/1.2 var(--sans);white-space:nowrap;
-  opacity:0;pointer-events:none;transform:translate(4px,50%);
-  transition:opacity .12s ease-out,transform .12s ease-out;}
-.ask-tip.is-shown{opacity:1;transform:translate(0,50%);}
-@media (hover:none){.ask-tip{display:none;}}
-@media (max-width:760px){
-  .ask-pill{right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));}
-  .ask-tip{right:calc(16px + 48px + 8px);bottom:calc(16px + 24px + env(safe-area-inset-bottom,0px));}
-}
-.ask-pill-logo{width:26px;height:26px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
-  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
-/* The mark slot: the masked logo and the pill's own thinking orb stacked in one
-   26px host. A CSS mask clips children, so the orb is a SIBLING of the masked
-   span, absolutely stacked on it; the host is what the button's flex centring
-   sizes, so nothing moves. The morph between them is these
-   transitions, keyed off .is-live: lighting shrinks and fades the mark while
-   the orb fades in (.52s — the canvas grows its dots out of the centre on the
-   same clock, thinking-orb morphTo, so no CSS scale on the orb: a scaled
-   canvas would blur them); resting is the slow, eased-out way back (.8s, over
-   the wave's .45s fade). A transition reads its timing from the AFTER-change
-   style, so the live rules carry the morph-in duration and the rest rules the
-   morph-back one. Under prefers-reduced-motion the `*{transition:none}`
-   blanket makes this an instant swap and the orb snaps its tween too; no rule
-   of its own is needed. */
-.ask-pill-mark{position:relative;width:26px;height:26px;flex:0 0 auto;display:inline-block;line-height:0;}
-.ask-pill-mark>.ask-pill-logo{position:absolute;inset:0;
-  transition:opacity .8s cubic-bezier(.22,1,.36,1),transform .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill-mark>.ask-orb{position:absolute;inset:0;opacity:0;transition:opacity .8s cubic-bezier(.22,1,.36,1);}
-.ask-pill.is-live .ask-pill-mark>.ask-pill-logo{opacity:0;transform:scale(.35);
-  transition-duration:.52s;transition-timing-function:cubic-bezier(.4,0,.7,.2);}
-.ask-pill.is-live .ask-pill-mark>.ask-orb{opacity:1;transition-duration:.52s;transition-timing-function:cubic-bezier(.2,.7,.3,1);}
-
-/* Content cap. The sheet grows to the full dock, what is INSIDE it does not: the
-   transcript column and the composer box share --ask-col-max and centre under it,
-   so at the default 821px sheet nothing moves and a wide sheet reads as a column.
-   --ask-col-inset is the box's distance from the sheet edge (the band padding until
-   the cap bites, then the centring remainder) — the composer popovers stay children
-   of the sheet (their max-height:70% means the sheet's height) and anchor to it.
-   --ask-box-top is the sheet bottom → box top distance with an empty one-line
-   composer: 14px band padding + box (1 border + 8 padding + ~36 textarea + 4 gap +
-   31 row + 8 padding + 1 border); the jump pill and the popovers float above it. */
-.ask-sheet{pointer-events:auto;position:relative;display:flex;flex-direction:column;overflow:hidden;
-  width:min(821px,100%);height:min(669px,calc(100% - 20px));max-width:100%;max-height:calc(100% - 20px);
-  --ask-col-max:880px;--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;
-  background:var(--panel);
-  border:1px solid var(--line-2);border-radius:var(--r-card);
-  box-shadow:var(--shadow-sheet);
-  animation:wr-rise .26s cubic-bezier(.2,.7,.3,1) both;}
-.ask-sheet[hidden]{display:none;}
-
-.ask-header{display:flex;align-items:center;gap:10px;padding:13px 14px 13px 16px;border-bottom:1px solid var(--line);}
-.ask-header-logo{width:20px;height:20px;border-radius:50%;display:inline-block;flex:0 0 auto;background:var(--ink);
-  -webkit-mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;-webkit-mask-mode:luminance;
-  mask:url(/assets/worca-mark-mask.png) center/contain no-repeat;mask-mode:luminance;}
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ask-header-spacer,.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
+.ask-composer-spacer,.ask-activity-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
 .ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;height:30px;flex:none;padding:0 9px;
   border:1px solid var(--line);border-radius:999px;background:none;color:var(--ink-3);
   font:inherit;font-size:11.5px;cursor:pointer;}
@@ -5546,14 +5443,10 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
   animation:ask-shimmer 2.4s linear infinite;}
 .ask-thinking-meter{font-family:var(--mono);font-size:11px;color:var(--seq);white-space:nowrap;}
 @keyframes ask-shimmer{from{background-position:180% 0;}to{background-position:-60% 0;}}
-/* The `.ask-dock *` blanket at the end of this file already kills the sweep;
+/* The `.chat-page *` blanket at the end of this file already kills the sweep;
    this only restores a legible fill under the clipped background. */
 @media (prefers-reduced-motion: reduce){
   .ask-thinking-label{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--ink-2);}
-  /* Pseudo-elements do not inherit the dock blanket's `animation:none`, so the ring and the dot are named: the
-     states still show, as a static violet ring and a dot, without movement. */
-  .ask-pill.is-live::before{animation:none;transition:none;background:var(--violet);}
-  .ask-pill.has-unread::after{animation:none;}
 }
 .ask-tool-row{display:flex;align-items:center;gap:9px;min-width:0;}
 .ask-tool-op{width:38px;flex:0 0 38px;font-family:var(--mono);font-size:10px;letter-spacing:.06em;
@@ -5982,7 +5875,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 
 .ask-pop{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line-2);
   padding:6px;box-shadow:var(--shadow-menu);border-radius:var(--r-card);}
-.ask-pop-threads{top:46px;right:76px;width:326px;}
 /* The composer popovers hug the box (--ask-col-inset, see .ask-sheet) and float
    just above it (--ask-box-top). */
 .ask-pop-scope{left:var(--ask-col-inset);bottom:calc(var(--ask-box-top) + 6px);width:300px;max-height:min(420px,70%);overflow-y:auto;}
@@ -6079,13 +5971,8 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-model-tag.is-key{flex:0 0 auto;max-width:none;background:var(--green-bg);color:var(--green-ink);}
 .ask-model-item .ask-model-name{flex:0 1 auto;min-width:4.5ch;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;}
-/* The threads list is the only scrollport in a popover: /api/ask/threads returns up
-   to 50 rows and .ask-sheet clips (overflow:hidden), so without a cap the tail is
-   unreachable. 360px caps it on a tall window; the vh term keeps it inside the sheet
-   on a short one -- the popover starts 46px down and the sheet is 100vh - 46px at most.
-   The radius clips the rows so they do not bleed over the panel's own corners. */
-.ask-threads-list{max-height:min(360px,calc(100vh - 200px));overflow-y:auto;overscroll-behavior:contain;
-  border-radius:10px;}
+/* A History group's rows (worca Chat P1): the column's body is the scrollport, so a group never scrolls on its own. */
+.ask-threads-list{display:flex;flex-direction:column;gap:1px;}
 .ask-thread-row{display:flex;align-items:center;border-radius:10px;}
 .ask-thread-row:hover{background:var(--hover);}
 .ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:10px;}
@@ -6125,41 +6012,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-runinfo-elapsed{flex:none;margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--seq);white-space:nowrap;}
 .ask-wt-row .ask-runinfo-sub.ask-wt-path{cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;}
 .ask-wt-row .ask-thread-trash{flex:none;}
-
-/* Resize grips (spec §10.3 addendum). Invisible edge zones INSIDE the sheet —
-   overflow:hidden would clip anything outside it — that only change the cursor;
-   a 2px inset line appears on hover and stays while dragging (.is-active). No
-   bottom grip: the sheet is bottom-anchored. ask-panel.mjs applies the user's
-   size as inline width/height and clamps it to the dock; the max-* pair on
-   .ask-sheet above is the backstop that keeps a stale inline size inside the
-   dock (the rail collapsing changes the dock width without a window resize).
-   The floor (JS-only, the stylesheet default 821×669: the sheet grows, never
-   shrinks) is not a CSS min-* on purpose — that would overflow narrow viewports
-   that width:min(821px,100%) handles today.
-   Corners: the sheet clips at its rounded corner (inner radius = --r-card minus
-   the 1px border), so a square corner grip's straight inset lines fall almost
-   entirely outside the clip and only a ~3px sliver ever shows. Each corner is
-   therefore exactly one radius wide and carries the same outer radius, so its
-   inset shadow bends along the arc, flush with the border like the straight
-   edges; the straight grips start where the arc ends (--ask-corner). */
-.ask-resize{position:absolute;z-index:5;background:transparent;touch-action:none;--ask-grip:transparent;
-  --ask-corner:calc(var(--r-card) - 1px);transition:box-shadow .15s;}
-.ask-resize:hover{--ask-grip:var(--ink-3);}
-.ask-resize.is-active{--ask-grip:var(--ink);}
-.ask-resize-n{top:0;left:var(--ask-corner);right:var(--ask-corner);height:6px;cursor:ns-resize;box-shadow:inset 0 2px 0 var(--ask-grip);}
-.ask-resize-e{top:var(--ask-corner);right:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset -2px 0 0 var(--ask-grip);}
-.ask-resize-w{top:var(--ask-corner);left:0;bottom:var(--ask-corner);width:6px;cursor:ew-resize;box-shadow:inset 2px 0 0 var(--ask-grip);}
-.ask-resize-ne{top:0;right:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nesw-resize;
-  border-top-right-radius:var(--ask-corner);box-shadow:inset -2px 2px 0 var(--ask-grip);}
-.ask-resize-nw{top:0;left:0;width:var(--ask-corner);height:var(--ask-corner);cursor:nwse-resize;
-  border-top-left-radius:var(--ask-corner);box-shadow:inset 2px 2px 0 var(--ask-grip);}
-.ask-sheet.is-resizing{user-select:none;}
-/* The ne corner grip (one radius square, z-index:5) overlaps the top-right
-   corner of the header's last icon button (30×30 at padding 13px/14px): the
-   buttons sit above the grips so a click there still closes/opens instead of
-   starting a resize, and a hurried double-click never resets the size. The
-   grip's visible band hugs the border, well outside the button box. */
-.ask-header .ask-icon-btn{position:relative;z-index:6;}
 
 /* ---------- run progress card (ui/public/ask-run-card.mjs; the live view of a pipeline run in the transcript) ----------
    Stateless: every value is repainted from the app's run store or GET /api/ask/runs/:id. Tokens only.
@@ -6226,12 +6078,6 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 .ask-cmd-warning[hidden]{display:none;}
 .ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11.5px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-out[hidden]{display:none;}
-/* The composer's Agent switch: the shared .switch, scaled to the 30px pill. */
-.ask-agent-btn[hidden]{display:none;}
-.ask-agent-btn .switch{width:26px;height:16px;flex:none;cursor:inherit;}
-.ask-agent-btn .switch::after{top:2px;left:2px;width:12px;height:12px;}
-.ask-agent-btn .switch.on::after{left:12px;}
-.ask-agent-btn[aria-pressed="true"]{color:var(--ink);}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:12px;cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -6960,9 +6806,9 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
      Tasks 3/6/7/8 and silently rot the day one of them is renamed. The run-graph's
      own reduced-motion block (:1253-1258) is unaffected — it substitutes
      box-shadows, and only its redundant `animation:none` is overridden. */
-  /* Ask Worca: every element inside the dock, same blanket rationale as the
+  /* Ask Worca: every element inside the Chat page, same blanket rationale as the
      .run-shell one below. */
-  .ask-dock *{animation:none !important;}
+  .chat-page *{animation:none !important;}
   .run-shell *{animation:none !important;}
   .proj-shell *{animation:none !important;}
 }
@@ -8103,7 +7949,7 @@ button.act-srow-name{cursor:pointer}
 /* (composer-mockup.html base + canvas CSS). Prefix wfv- (chrome), wfl-        */
 /* (Library), wfc- (chat).                                                     */
 /* ========================================================================== */
-body.view-workflows .sidebar,body.view-workflows #topnav,body.view-workflows > .ask-dock{display:none !important;}
+body.view-workflows .sidebar,body.view-workflows #topnav{display:none !important;}
 body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:column;}
 .view[data-view="workflows"]{flex:1 1 auto;min-height:0;position:relative;}
 .wfv{position:absolute;inset:0;display:flex;gap:8px;padding:8px;background:var(--bg);font-size:12.5px;}
@@ -8391,3 +8237,84 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfc-uthumb-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 @media (max-width:760px){.wfc-shell,.wfc-shell[data-open="true"]{--wfc-w:calc(100vw - 72px);}.wfc-title{display:none;}}
 @media (prefers-reduced-motion:reduce){.wfc-shell{transition:none;}.gv-world .node.wfc-enter{animation:none;}#wfc-send.is-ready:hover{transform:none;}}
+
+/* ===== Chat P1: shell ===== */
+/* worca Chat P1 (ask-panel.mjs): the composer's add-on lead row (worca Chat CONTRACT §2) — chips other plans mount;
+   empty, it takes no room. */
+.chat-composer-lead{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:2px 4px 0;}
+.chat-composer-lead:empty{display:none;}
+/* The page (worca Chat P1): it fills the content column — .main stops scrolling and gives up its gutter, the section
+   takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
+body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+.view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--bg);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page[data-history="closed"] .chat-history{display:none;}
+/* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
+.chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;}
+.chat-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-head .ask-title{font-size:13.5px;}
+.chat-head-spacer{flex:1 1 auto;}
+.chat-head-btn{flex:none;}
+.chat-head-btn[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
+.chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
+.chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,16vh,160px) 16px 32px;}
+.chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
+.chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
+.chat-page[data-view="thread"] .chat-home{display:none;}
+.chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
+/* The jump pill rides the dock's top edge (ask-panel.mjs puts it in the dock): it never covers a draft that grew. */
+.chat-dock{flex:none;position:relative;}
+.chat-dock > .ask-jump{bottom:calc(100% - 1px);}
+/* Cards may be wider than the 760px text column: up to 1040px, centred on it (the transcript's container width). */
+.chat-convo .ask-transcript{container-type:inline-size;}
+.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
+   home, and never sized against the composer's own height. */
+.chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
+.chat-page .ask-composer > .ask-pop{max-height:min(420px,calc(100vh - 240px));}
+.chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(84vh - 230px));}
+.chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
+.chat-panel[hidden]{display:none;}
+/* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
+.nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--violet);}
+.sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
+.brand a.logo:focus-visible,.brand a.logo-mark:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px;}
+/* Toasts clear the docked composer (the shared --ask-dock-clearance is 96px; the dock's box starts ~103-120px up). */
+body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
+/* The composer row never pushes Send out of the box: a pinned scope's long name gives way first (its label
+   ellipsizes), the buttons keep their size, the model label stays on one line. Phones also drop the least needed parts. */
+.chat-page .ask-composer-row > .ask-scope-btn{flex:0 1 auto;min-width:0;}
+.chat-page .ask-scope-btn > svg{flex:none;}
+.chat-page .ask-composer-row > :is(.ask-icon-btn,.ask-meter,.ask-model-btn,.ask-voice){flex:none;}
+.chat-page .ask-model-btn{white-space:nowrap;}
+@media (max-width:480px){
+  .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
+}
+@media (max-width:360px){
+  .chat-page .ask-composer-row{gap:4px;}
+  .chat-page .ask-composer-row > .ask-meter{display:none;}
+}
+/* History (ask-panel.mjs buildHistory): a 264px push column; below 1100px an overlay over the page with a scrim. Rows
+   reuse the .ask-thread-* rules; the trash shows on hover and focus (always on touch). */
+.chat-history{flex:0 0 264px;width:264px;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;border-right:1px solid var(--line);background:var(--panel);}
+.chat-history:focus{outline:none;}
+/* A row is a list item, not a menu item: keyboard focus draws a ring (inside: the column body is a scroller), not the hover wash. */
+.chat-history .ask-thread-pick:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-history-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-history-title{font-weight:600;font-size:13px;color:var(--ink);}
+.chat-history-meter{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
+.chat-history-group + .chat-history-group{margin-top:6px;}
+.chat-history-group-label{padding:8px 10px 4px;font-weight:600;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}
+.chat-history-empty{padding:12px 10px;font-size:12px;color:var(--ink-3);}
+.ask-thread-row.is-current{background:var(--field);}
+.ask-thread-dot.ask-dot-wait{display:block;background:var(--amber);}
+.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-wait{margin-left:-6px;}
+.chat-history .ask-thread-trash{opacity:0;}
+.chat-history .ask-thread-row:hover .ask-thread-trash,.chat-history .ask-thread-trash:focus{opacity:1;}
+@media (hover:none){.chat-history .ask-thread-trash{opacity:1;}}
+.chat-scrim{display:none;}
+@media (max-width:1099px){
+  .chat-history{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min(300px,86vw);box-shadow:var(--shadow-sheet);}
+  .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:var(--scrim-soft);}
+}

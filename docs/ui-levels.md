@@ -134,7 +134,7 @@ be skipped by forgetting it.
 | New pipeline, Getting started, Runs, Projects | S |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
-| Ask Worca button | S |
+| Chat (the first sidebar row; the app's home) | S |
 | The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |

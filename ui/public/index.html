@@ -15,8 +15,10 @@
       <!-- ===================== Sidebar ===================== -->
       <aside class="sidebar" id="side-rail">
         <div class="brand">
-          <span class="logo" role="img" aria-label="Worca"></span>
-          <span class="logo-mark" role="img" aria-label="Worca"></span>
+          <!-- The wordmark (and the rail's mark) go to Chat's home — a new chat (worca Chat U5); app.js swaps
+               #chat/new for #chat. -->
+          <a class="logo" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
+          <a class="logo-mark" href="#chat/new" aria-label="worca — Chat" title="Chat"></a>
           <!-- The server's mock mode (WS hello serverMock, app.js#applyServerMock): every run is a mock. -->
           <span class="badge amber side-mock-pill" id="side-mock-pill" title="Server started with WORCA_MOCK=1 — all runs are mock." hidden>MOCK</span>
           <button type="button" class="side-close" id="side-close" aria-label="Close menu" title="Close menu">
@@ -27,6 +29,14 @@
         <!-- The one scrolling band: the logo row above and .side-foot below stay put. -->
         <div class="side-scroll" id="side-scroll">
           <nav class="nav" aria-label="Primary">
+            <!-- Chat (worca Chat): the app's home, Ask Worca as a page. The dot (a .nav-count, so the rail parks it in
+                 the square's corner): a reply in the chat you left finished while you were on another page
+                 (app.js#paintChatUnread). -->
+            <button type="button" data-nav="chat" data-min-level="simple">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5a8 8 0 0 1-11.7 7.1L4 20l1.4-4A8 8 0 1 1 20 11.5z"></path><path d="M12 7.8l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"></path></svg>
+              <span>Chat</span>
+              <span class="nav-count nav-dot" id="nav-chat-unread" aria-hidden="true" hidden></span>
+            </button>
             <button type="button" data-nav="runs" data-min-level="simple">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7"></path><path d="M3 4v4h4"></path><path d="M12 8v4l3 2"></path></svg>
               <span>Runs</span>
@@ -244,8 +254,11 @@
           <button type="button" class="btn btn-ghost btn-mini" id="level-banner-switch" data-mode-set=""></button>
         </div>
 
+        <!-- ===== VIEW: CHAT (worca Chat): ask-panel.mjs builds div.chat-page into this section ===== -->
+        <section class="view hidden" data-view="chat" aria-label="Chat"></section>
+
         <!-- ===== VIEW: NEW PIPELINE ===== -->
-        <section class="view" data-view="new">
+        <section class="view hidden" data-view="new">
           <div class="topbar">
             <div>
               <div class="sub">Pick a project, describe the task, and run &middot; agents come tuned &mdash; open one only to change it</div>

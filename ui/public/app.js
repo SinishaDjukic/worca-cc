@@ -264,6 +264,15 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+// worca Chat (CONTRACT §3): the run panel's hooks P4 assigns, and the ONE mutable deps object the Chat page's cards read
+// at call time (P4 swaps openRunPanel, P5 openArtifact, P2 adds openShipIt). Up here, above every caller (TDZ).
+let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
+let chatPanelContext = null;   // () => ({ runId?, pipelineId?, projectDir?, projectKey?, workspaceId?, runPage?, diffPath? })
+let chatEntryPending = false;  // openChat() is routing to a bare #chat: enterChatView reopens the LAST chat, not an unread one
+const chatDeps = {
+  openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
+  openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
+};
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -835,8 +844,8 @@ if (topnavSearchRoot) createTopnavSearch({
   doc: document, win: window, root: topnavSearchRoot,
   getSources: topnavSources,
   loadLazy: loadTopnavLazy,
-  // The Ask Worca row: what was typed goes to the composer; nothing typed just opens the chat.
-  onAsk: (query) => { if (query) askPanel?.appendToComposer(query); else askPanel?.open(); },
+  // The Ask Worca row: Chat opens with what was typed in the composer, unsent (worca Chat R3).
+  onAsk: (query) => { openChat({ text: query }); },
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
 });
@@ -875,7 +884,7 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#topnav'), $('body > .ask-dock'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane')]) {
     if (n) n.toggleAttribute('inert', next);
   }
   if (next) $('#side-close')?.focus();
@@ -1637,7 +1646,7 @@ function parseHash() {
 }
 function currentView() {
   const [view] = parseHash();
-  return VIEW_NAMES.includes(view) ? view : 'new';
+  return VIEW_NAMES.includes(view) ? view : 'chat';
 }
 
 // ---------------------------------------------------------------------------
@@ -2491,7 +2500,7 @@ let gvPortsFn = portsFnFor({});
 let gvAgentsDirty = false;
 let wfvShell = null;
 let wfvLibrary = null;
-let wfvReturn = 'new';      // Back: the address the user came from (showView records it)
+let wfvReturn = 'chat';     // Back: the address the user came from (showView records it); Chat is the home (worca Chat U5)
 let wfvSheet = '';          // '' | 'agent' | 'agent-new' | 'script'
 let wfvRuntimes = null;     // the script runtime probe (GET /api/scripts/runtimes), read once: the Library's "python not found" chip
 let wfvChat = null;         // the composer chat dock (workflows/chat-dock.mjs), mounted with the view
@@ -2703,7 +2712,7 @@ function wfvSetLibraryOpen(open) {
 
 function wfvShellActions() {
   return {
-    back: () => { location.hash = wfvReturn || 'new'; },
+    back: () => { location.hash = wfvReturn || 'chat'; },
     newCanvas: () => { void gvComposer.newCanvas().then((t) => { if (t) gvComposer.fit(); }); },
     openLibrary: (tab) => { wfvSetLibraryOpen(true); wfvLibrary?.open(tab); },
     toggleLibrary: () => wfvSetLibraryOpen(!wfvLibrary.isOpen()),
@@ -23782,7 +23791,7 @@ function buildHdDiff(sec, record, data) {
       } catch { /* as above */ }
       await reload();
     },
-    toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment)); },
+    toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment), record.id); },
   };
 
   // A comment can name a path the patch does not contain (or the patch may be gone
@@ -29954,7 +29963,8 @@ document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
 // ── Welcome (one-time) ──────────────────────────────────────────────────────
 function maybeWelcome() {
   const s = gs.status;
-  if (!s || s.welcomeSeen || gs.welcomeShown || currentShownView !== 'new') return;
+  // The welcome greets the home page: Chat since worca Chat (U5), New run before it.
+  if (!s || s.welcomeSeen || gs.welcomeShown || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
   // Nothing left to teach: an install that has done everything skips the welcome.
   if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
   const modal = document.getElementById('welcome-modal');
@@ -29964,7 +29974,12 @@ function maybeWelcome() {
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
     onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
-    onSkip: () => { close(); setOnboardingPrefs({ welcomeSeen: true }); },
+    // On Chat the composer is the page's control: Skip (Escape, the backdrop) hands it the focus the dialog held.
+    onSkip: () => {
+      close();
+      setOnboardingPrefs({ welcomeSeen: true });
+      if (currentShownView === 'chat') document.querySelector('[data-chat-page] textarea.ask-input')?.focus({ preventScroll: true });
+    },
   });
   // Restart the hero's entrance each time the dialog opens (the SVG is static markup).
   const hero = modal.querySelector('.ob-hero');
@@ -30237,18 +30252,17 @@ function gsHops(step, g) {
     case 'realRun':
       return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, false)];
     case 'ask': {
-      // The pill hides while the sheet is open (ask-panel.mjs), so it doubles as the "sheet open" signal.
-      const pill = document.querySelector('.ask-pill');
+      // worca Chat: Ask Worca is the Chat page — its sidebar row first (a nav hop: the user's own click routes, so the
+      // composer is never ringed on a page where it is not on screen), then the composer.
       const input = document.querySelector('.ask-input');
       return [
-        { id: 'pill', target: '.ask-pill', lift: ['.ask-dock'], met: () => !!(pill && pill.hidden), skipWhenMet: true,
-          text: 'Ask Worca answers questions about any run in plain language. It\'s the round button in the corner, on every view.' },
-        { id: 'question', target: '.ask-input', lift: ['.ask-dock'], met: () => !!(input && input.value.trim()),
+        NAV('chat', 'Chat: ask about any run, agent or project in plain language.'),
+        { id: 'question', target: '.ask-input', met: () => !!(input && input.value.trim()),
           text: 'Try “What did my last run change?” — or anything about a run, an agent or a project.',
           already: 'A question is already typed here. Anything about a run, an agent or a project works.' },
-        { id: 'send', target: '.ask-send', lift: ['.ask-dock'], click: 'asked', met: () => !!g.asked,
+        { id: 'send', target: '.ask-send', click: 'asked', met: () => !!g.asked,
           text: 'Send it. Worca reads the run itself before answering.' },
-        { id: 'answer', info: true, nextLabel: 'Done', target: '.ask-transcript', lift: ['.ask-dock'],
+        { id: 'answer', info: true, nextLabel: 'Done', target: '.ask-transcript',
           text: 'The answer lands here, with what it read to get there. Ask a follow-up any time — the thread keeps its context.' },
       ];
     }
@@ -30543,7 +30557,7 @@ function onboardingViewChanged(name) {
     const mine = gs.guide.seq;
     setTimeout(() => gsReconsider(mine), 0);
   }
-  if (name === 'new') { maybeWelcome(); if (gs.status === null) loadOnboarding(); }
+  if (name === 'new' || name === 'chat') { maybeWelcome(); if (gs.status === null) loadOnboarding(); }
   if (name === 'getting-started') { if (gs.status) paintShelf({ entering: true }); else loadOnboarding(); }
   document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
 }
@@ -30558,7 +30572,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers'];
 // One Runs page, three route names: the bare list (#runs) and the two detail routes every
 // deep link already uses (#running/<id>…, #history/<projectKey>/<id>…). All three render
 // the `data-view="runs"` section and light the one Runs nav button.
@@ -30592,7 +30606,7 @@ const VIEW_MIN_LEVEL = Object.freeze({
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced' });
 const VIEW_TITLES = Object.freeze({
-  stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
+  chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Ask Worca',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
@@ -30746,6 +30760,8 @@ function showView(name, param = '') {
   // Same guard for the composer: unbind its keyboard and cancel any live gesture
   // so Delete/arrows/⌘Z can never edit the graph from another view.
   if (currentShownView === 'workflows' && name !== 'workflows') workflowsExit();
+  // worca Chat: leaving hides the page (voice stops, popovers close); the panel keeps its chat for the way back.
+  if (currentShownView === 'chat' && name !== 'chat') askPanel?.close();
   // Leaving the wizard resets it (a scan, once started, is a run on Running — nothing to abort).
   if (currentShownView === 'workspace-create' && name !== 'workspace-create') resetWizard();
   // Settings is tabbed, so its two body-level overlays must be torn down on a TAB
@@ -30840,6 +30856,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-projects', name === 'projects');
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
+  document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -30898,6 +30915,7 @@ function showView(name, param = '') {
     if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
+  if (name === 'chat') enterChatView(param, prevView);
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
   if (name === 'marketplace') loadPluginsView({ refresh: true });
@@ -31051,7 +31069,7 @@ $('#topnav-new')?.addEventListener('click', () => {
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
 // from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
 // live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like New run from Ask: close the Ask sheet, then route, or the page opens under it.
+// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -31067,7 +31085,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   },
   placeOf: (x) => runsGroupFor({ projectDir: x.projectDir || '', workspaceId: x.workspaceId || '', projectKey: x.projectKey || '' }).name,
   tz: browserTimeZone(),
-  navigate: (hash) => { askPanel?.close(); location.hash = hash; },
+  navigate: (hash) => { location.hash = hash; },
 }) : null;
 
 // Settings tabs are hash-first, exactly like the nav buttons: the single
@@ -31151,6 +31169,115 @@ if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}
 // exit cleanly with zero effect on browser behaviour.
 if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 
+// ---- worca Chat (CONTRACT §3): the Chat page's route and the seams other plans plug into ----------------------
+const CHAT_THREAD_RE = /^ask_[0-9a-f]{8}$/;
+/** #chat → home (a new chat) · #chat/<threadId> → that chat · #chat/<threadId|new>/run/<runId>[/<tab>] → P4's panel
+ *  over it ('new' = no chat yet). A first segment that is no chat id (a typo, a stale link) is home, and the
+ *  address says so. Any route without run segments closes the panel route. */
+function enterChatView(param = '', prevView = null) {
+  const parts = String(param || '').split('/').filter(Boolean);
+  const head = parts[0] || '';
+  let threadId = CHAT_THREAD_RE.test(head) ? head : null;
+  // Home's own address is #chat: a typo'd or stale chat id, and a bare #chat/new (the worca logo), land there.
+  // Every swap below also moves the Workflows view's Back target (showView recorded the address before the swap).
+  if (head && !threadId && (head !== 'new' || parts[1] !== 'run')) {
+    try { window.history.replaceState(null, '', '#chat'); } catch { /* sandboxed */ }
+    wfvReturn = 'chat';
+    parts.length = 0;
+  }
+  // A bare #chat reached from ANOTHER page reopens a chat (the Runs page's D6 rule) and the address says which: the
+  // chat whose reply is unread when the Chat row (or Back) brings the user here, else the chat the page last showed;
+  // an entry point carrying text (openChat) always takes the last one. The boot (no previous page) and the worca
+  // logo (#chat/new: `head` is set) are home — a new chat (U5).
+  const viaEntry = chatEntryPending;
+  chatEntryPending = false;
+  if (!head && prevView && prevView !== 'chat') {
+    const pick = (viaEntry ? null : askPanel?.unreadThreadId?.()) || askPanel?.threadId?.() || null;
+    if (pick) {
+      threadId = pick;
+      try { window.history.replaceState(null, '', `#chat/${pick}`); } catch { /* sandboxed */ }
+      wfvReturn = `chat/${pick}`;
+    }
+  }
+  askPanel?.open({ threadId });
+  if (typeof chatPanelRouter === 'function') {
+    try { chatPanelRouter(parts[1] === 'run' ? parts.slice(2) : []); } catch (e) { console.warn('[worca] the chat panel route failed', e); }
+  }
+}
+/** The panel moved to another chat (a History row, New chat, a first send, a deleted chat): the address follows —
+ *  pushed, so Back returns to the previous chat, or swapped (`replace`: a first send, a chat that is gone). Only
+ *  while Chat shows; the echo (hashchange → enterChatView → open) is a no-op for the chat already shown. */
+function chatRoute(threadId, { replace = false } = {}) {
+  if (currentShownView !== 'chat') return;
+  // A swapped address keeps an open run panel's tail (P4): #chat/new/run/<id>/logs → #chat/<id>/run/<id>/logs.
+  const [, cur] = parseHash();
+  const parts = String(cur || '').split('/');
+  const tail = replace && parts[1] === 'run' ? `/${parts.slice(1).join('/')}` : '';
+  const target = threadId ? `chat/${threadId}${tail}` : (tail ? `chat/new${tail}` : 'chat');
+  if (location.hash.slice(1) === target) return;
+  if (replace) {
+    try { window.history.replaceState(null, '', `#${target}`); } catch { /* sandboxed */ }
+    wfvReturn = target;                          // no hashchange, so showView never records the swapped address
+    return;
+  }
+  location.hash = target;
+}
+/** The Chat row's dot (ask-panel onUnread): a reply in the chat the page shows finished while Chat was not on screen. */
+function paintChatUnread(on) {
+  const dot = document.getElementById('nav-chat-unread');
+  if (dot) dot.hidden = !on;
+  const row = document.querySelector('.nav button[data-nav="chat"]');
+  if (!row) return;
+  if (on) row.setAttribute('aria-label', 'Chat, new reply');
+  else row.removeAttribute('aria-label');
+}
+// The worca logo (#chat/new, home) on Chat home is a no-op: its push would be swapped back to #chat, leaving a Back
+// step that goes nowhere.
+for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) {
+  a.addEventListener('click', (e) => { if (currentShownView === 'chat' && location.hash === '#chat') e.preventDefault(); });
+}
+/** Every Ask entry point outside the chat (R3): go to Chat — home, or that chat — then add `text` to the composer
+ *  WITHOUT sending, so several can stack and the user presses send once. */
+function openChat({ text = '', threadId = null } = {}) {
+  const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
+  // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
+  if (!(currentShownView === 'chat' && !id)) {
+    const target = id ? `chat/${id}` : 'chat';
+    chatEntryPending = !id;                    // a bare #chat from an entry point reopens the LAST chat (enterChatView)
+    if (location.hash.slice(1) === target) showView('chat', id);   // no hashchange fires for the same address
+    else location.hash = target;
+  }
+  const add = String(text ?? '').trim();
+  if (add) askPanel?.appendToComposer(add);
+  else if (currentShownView === 'chat') document.querySelector('[data-chat-page] textarea.ask-input')?.focus();
+}
+/** chatDeps.openRunPanel's P1 default (P4 swaps in the panel): the run's own page — Running while this tab has the
+ *  run, else its History page. `opts.tab` opens that Details tab (Running calls Q&A `qa`, History `clarify`). */
+function chatOpenRunPage(ref = {}, opts = {}) {
+  const r = ref && typeof ref === 'object' ? ref : {};
+  const tab = opts && typeof opts.tab === 'string' ? opts.tab : '';
+  const live = (r.pipelineId && latestPipelineRun(r.pipelineId)) || (r.runId && runs.get(r.runId)) || null;
+  if (live && live.runId) {
+    const t = tab === 'clarify' ? 'qa' : tab;
+    location.hash = rdHash(live.runId, t ? 'details' : 'glance', t);
+    return;
+  }
+  const key = r.workspaceId ? `workspaces/${r.workspaceId}` : (r.projectKey || '');
+  const t = tab === 'qa' ? 'clarify' : tab;
+  if (r.pipelineId && key) { location.hash = hdHash({ projectKey: key, id: r.pipelineId }, t ? 'details' : 'glance', t); return; }
+  if (r.runId) location.hash = rdHash(r.runId, tab ? 'details' : 'glance', tab === 'clarify' ? 'qa' : tab);
+}
+// Test hook (worca Chat): the seams as an in-app caller sees them; P4 assigns the two hooks directly in app.js.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    chat: {
+      deps: chatDeps, enterChatView, openChat, getPageContext,
+      setPanelRouter(fn) { chatPanelRouter = typeof fn === 'function' ? fn : null; },
+      setPanelContext(fn) { chatPanelContext = typeof fn === 'function' ? fn : null; },
+    },
+  });
+}
+
 // ---- Ask Worca seams (§10.2) ----------------------------------------------
 
 // Append a reference to the chat composer WITHOUT sending, so several comments can
@@ -31158,10 +31285,13 @@ if (_timerTick && typeof _timerTick.unref === 'function') _timerTick.unref();
 // server-built and any attempt to forge one here is flattened server-side. A thread
 // that already has replies says so, so the model reads them (list_diff_comments
 // nests them) before it answers in the thread.
-function askAboutDiffComment(comment, replyCount = 0) {
+function askAboutDiffComment(comment, replyCount = 0, runId = '') {
   const where = `${comment.path}:${comment.line} (${comment.side})`;
   const thread = replyCount ? `, ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : '';
-  askPanel?.appendToComposer(`[diff comment ${comment.id} — ${where}${thread}] "${comment.body}"`);
+  // The Chat page carries no run of its own (worca Chat R4): the reference names it, so the model can read the
+  // thread with list_diff_comments({ id }).
+  const run = runId ? `, run ${runId}` : '';
+  openChat({ text: `[diff comment ${comment.id} — ${where}${thread}${run}] "${comment.body}"` });
 }
 
 // Server-resolvable page context only (§6.5 keys); the server re-validates and
@@ -31178,7 +31308,14 @@ function runPagePart(screen, mode) {
 
 function getPageContext() {
   const [view, param] = parseHash();
-  const ctx = { view: VIEW_NAMES.includes(view) ? view : 'new' };
+  const ctx = { view: VIEW_NAMES.includes(view) ? view : 'chat' };
+  // worca Chat R4: on the Chat page "Auto" follows the run open in its panel (P4's chatPanelContext); with no panel
+  // there is no page context at all — never the dropdown fallback below.
+  if (ctx.view === 'chat') {
+    let panel = null;
+    try { panel = typeof chatPanelContext === 'function' ? chatPanelContext() : null; } catch { panel = null; }
+    return { view: 'chat', ...(panel && typeof panel === 'object' ? panel : {}) };
+  }
   if (ctx.view === 'running' && param) {
     const parts = runDetailParts(param);   // `<id>` or `<id>/details/<tab>`
     const runId = parts.runId;
@@ -31274,7 +31411,6 @@ function getPageContext() {
 
 function openNewPipeline(prefill) {
   newPipelinePrefill = prefill || null;
-  askPanel?.close();
   // hash already #new fires no hashchange — call showView directly (the
   // nav-click guard at the navLinks handler models this exact case).
   if (location.hash.slice(1) === 'new') showView('new');
@@ -31284,7 +31420,6 @@ function openNewPipeline(prefill) {
 /** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
  *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
 async function openWorkflowFromAsk(workflowId) {
-  askPanel?.close();
   location.hash = `workflows/${workflowId}`;
   return true;
 }
@@ -31488,31 +31623,10 @@ connectWS();
 // the workspace options + re-points the config panel; 'project' is the default.
 const bootTarget = localStorage.getItem(LAST_TARGET_KEY) === 'workspace' ? 'workspace' : 'project';
 if (bootTarget === 'workspace') setRunTarget('workspace');
-// Boot: parse view + optional param so a reload on a deep link (#running/<id>)
-// restores the Running view instead of silently resetting to New.
-const [bootView, bootParam] = parseHash();
-const bootMoved = redirectRoute(bootView, bootParam);
-if (bootMoved) { rewriteHash(bootMoved); showView(bootMoved[0], bootMoved[1]); }
-else showView(VIEW_NAMES.includes(bootView) ? bootView : 'new', VIEW_NAMES.includes(bootView) ? bootParam : '');
-refreshAllCounts();
-refreshBudget();
-startBudgetTick();
-loadWhoami();
-// Credential broker badges ("your key / no key" on model pickers): fetched at boot and
-// again when the tab regains focus — people add keys on the key page in another tab.
-// Pickers already on screen repaint once the answer changes what they show.
-{
-  const repaintPickers = () => {
-    if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'models') loadModelsView();
-  };
-  loadCredentials().then((d) => { if (d) repaintPickers(); });
-  window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });
-}
-
-// Ask Worca mount (§10.2 seam 1): a JS-built body-level overlay — index.html is
-// untouched, so the routed-view count in test/ui-boot.test.mjs stays as it is. No network happens here;
-// the panel fetches only on first open / hello.
+// The Chat page (worca Chat P1): createAskPanel builds div.chat-page and it lives in <section data-view="chat">.
+// Mounted HERE, above the boot route, so a boot on Chat (the default) opens it at once. Extension registrations
+// (registerChatCard / registerComposerAddon, worca Chat CONTRACT §2) must run above this line. The panel fetches
+// only when Chat first shows (or on a hello for an open chat).
 askPanel = createAskPanel({
   doc: document,
   win: window,
@@ -31538,8 +31652,34 @@ askPanel = createAskPanel({
   runStore: askRunStore,
   // Voice mode (docs/speech.md): the mic in the composer; the controller owns the audio.
   createVoice: (hooks) => createVoiceController({ win: window, doc: document, fetch: (...args) => fetch(...args), ...hooks }),
+  // worca Chat (CONTRACT §3): the mutable deps later plans swap, the address, the Chat row's dot.
+  chatDeps,
+  onRoute: chatRoute,
+  onUnread: paintChatUnread,
 });
-document.body.appendChild(askPanel.root);
+($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+
+// Boot: parse view + optional param so a reload on a deep link (#running/<id>)
+// restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).
+const [bootView, bootParam] = parseHash();
+const bootMoved = redirectRoute(bootView, bootParam);
+if (bootMoved) { rewriteHash(bootMoved); showView(bootMoved[0], bootMoved[1]); }
+else showView(VIEW_NAMES.includes(bootView) ? bootView : 'chat', VIEW_NAMES.includes(bootView) ? bootParam : '');
+refreshAllCounts();
+refreshBudget();
+startBudgetTick();
+loadWhoami();
+// Credential broker badges ("your key / no key" on model pickers): fetched at boot and
+// again when the tab regains focus — people add keys on the key page in another tab.
+// Pickers already on screen repaint once the answer changes what they show.
+{
+  const repaintPickers = () => {
+    if (currentView() === 'new') refreshNewPipelinePickers();
+    if (currentView() === 'models') loadModelsView();
+  };
+  loadCredentials().then((d) => { if (d) repaintPickers(); });
+  window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });
+}
 
 // Terminal pane (issue #573): a JS-built body-level pane on the right, like the Ask dock above. No
 // network until it is opened (or was left open); xterm.js loads on first open, and opening it on a run

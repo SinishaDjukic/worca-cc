@@ -108,8 +108,8 @@ function keydown(window, target, init) {
 // hello row: ui-running-routing's 7-key fixture (:91-94) + explicit pipelineId/pauseReason nulls (upsertRun reads both; null is the idle default)
 const RUN_ROW = { runId: 'r1', title: 'a run', projectDir: '/p', status: 'running', startedAt: '10:00:00', kind: 'run', pipelineId: null, pendingQuestion: null, pauseReason: null };
 
-async function openSheet(window) {
-  window.document.querySelector('.ask-pill').click();
+async function openChat(window) {
+  go(window, 'chat');
   await settle(window);
 }
 async function sendText(window, text) {
@@ -119,59 +119,50 @@ async function sendText(window, text) {
   await settle(window, 6);
 }
 
-test('ui-ask-integration: boot mounts a closed dock as a body child; zero /api/ask fetches at boot', async () => {
-  const { window, calls } = await boot();
-  const dock = window.document.querySelector('body > .ask-dock');
-  assert.ok(dock, 'dock is a direct body child');
-  assert.equal(dock.querySelector('.ask-sheet').hidden, true);
-  assert.equal(dock.querySelector('.ask-pill').hidden, false);
-  assert.equal(dock.querySelector('[data-view],[data-nav]'), null);
-  assert.ok(calls.every((c) => !c.url.includes('/api/ask')), 'no ask fetch at boot — the repo-wide fence');
+test('ui-ask-integration: the boot opens Chat with the panel inside its section; a boot on #new fetches no /api/ask', async () => {
+  await checkRows([
+    { name: 'a bare boot lands on Chat: the panel root is a child of section[data-view="chat"]; no floating launcher', run: async () => {
+      const { window } = await boot();
+      const doc = window.document;
+      assert.equal(window.location.hash, '#chat');
+      const section = doc.querySelector('section.view[data-view="chat"]');
+      assert.equal(section.classList.contains('hidden'), false);
+      assert.ok(section.querySelector(':scope > .chat-page[data-chat-page]'), 'the panel root is mounted into the Chat section');
+      assert.equal(doc.querySelector('.ask-dock, .ask-pill, .ask-tip, .ask-sheet, [data-ask-sheet]'), null);
+    } },
+    { name: 'a boot on #new: zero /api/ask fetches — the panel loads when Chat first shows', run: async () => {
+      const { calls } = await boot({ url: 'http://localhost:4317/#new' });
+      assert.ok(calls.every((c) => !c.url.includes('/api/ask')), 'no ask fetch at boot — the repo-wide fence');
+    } },
+  ]);
 });
 
-test('ui-ask-integration: Escape is routed by focus location', async () => {
+test('ui-ask-integration: on Chat, Escape closes a popover and routes nowhere; off Chat the panel never owns Escape — the Running page still steps back', async () => {
   const { window, recv } = await boot();
   recv({ type: 'hello', runs: [RUN_ROW], ask: [] });
   await settle(window);
+  await openChat(window);
+  window.document.querySelector('[data-ask-model-btn]').click();
+  keydown(window, window.document.querySelector('textarea.ask-input'), { key: 'Escape' });
+  await settle(window);
+  assert.equal(window.document.querySelector('.ask-pop'), null, 'Escape closed the popover');
+  assert.equal(window.location.hash, '#chat', 'and routed nowhere');
+  window.document.querySelector('textarea.ask-input').focus();      // focus stays in the hidden composer as the user leaves
   go(window, 'running/r1');
   await settle(window);
   assert.ok(window.document.querySelector('.run-shell').classList.contains('detail-open'), 'running detail open');
-  await openSheet(window);
-  const input = window.document.querySelector('textarea.ask-input');
-  input.focus();
-  keydown(window, input, { key: 'Escape' });
-  await settle(window);
-  assert.equal(window.location.hash, '#running/r1', 'sheet-owned Escape left the detail alone');
-  window.document.querySelector('.ask-header button[aria-label="Close"]').click();
-  await settle(window);
-  keydown(window, window.document.body, { key: 'Escape' });
-  await settle(window);
-  assert.equal(window.location.hash, '#running/r1',
-    'side by side, document Escape on the glance keeps the pane (D16): the list is already in view');
-  assert.ok(window.document.querySelector('.run-shell').classList.contains('detail-open'));
-
-  // The narrow slide layout, where the glance's Escape DOES route back to the list: there a
-  // sheet-owned Escape that leaked to the document would visibly navigate.
   window.document.getElementById('runs-shell').dataset.layout = 'slide';
-  await openSheet(window);
-  assert.equal(window.document.querySelector('.ask-sheet').hidden, false, 'the sheet is open again');
-  const input2 = window.document.querySelector('textarea.ask-input');
-  input2.focus();
-  keydown(window, input2, { key: 'Escape' });
-  await settle(window);
-  assert.equal(window.location.hash, '#running/r1', 'slide: sheet-owned Escape still leaves the detail alone');
-  window.document.querySelector('.ask-header button[aria-label="Close"]').click();
-  await settle(window);
   keydown(window, window.document.body, { key: 'Escape' });
   await settle(window);
-  assert.equal(window.location.hash, '#runs', 'slide: document Escape still routes the detail back to the list');
+  assert.equal(window.location.hash, '#runs', 'slide: document Escape routes the detail back to the list');
 });
+
 
 test('ui-ask-integration: ask frames reach the panel, runId frames and an ask-less hello are ignored safely', async () => {
   const { window, recv } = await boot();
   await checkRows([
     { name: 'ui-ask-integration: ask frames reach the panel; runId frames do not', run: async () => {
-      await openSheet(window);
+      await openChat(window);
       await sendText(window, 'stream something');
       recv({ type: 'ask-start', userMessageId: 'askm_u0000001', model: 'claude-opus-5-5', effort: 'high', startedAt: 't', threadId: TID, messageId: MID, seq: 1 });
       recv({ type: 'ask-delta', text: 'streamed!', threadId: TID, messageId: MID, seq: 2 });
@@ -185,14 +176,14 @@ test('ui-ask-integration: ask frames reach the panel, runId frames and an ask-le
       recv({ type: 'hello', runs: [] });
       recv({ type: 'hello', runs: [], ask: [] });
       await settle(window);
-      assert.ok(window.document.querySelector('body > .ask-dock'), 'still alive');
+      assert.ok(window.document.querySelector('[data-view="chat"] > [data-chat-page]'), 'still alive');
     } },
   ]);
 });
 
-test('ui-ask-integration: delete flows through confirmModal and focus returns to the textarea', async () => {
+test('ui-ask-integration: delete flows through confirmModal and focus stays in the History column', async () => {
   const { window, calls } = await boot();
-  await openSheet(window);
+  await openChat(window);
   window.document.querySelector('[data-ask-threads-btn]').click();
   await settle(window);
   window.document.querySelector('.ask-thread-trash').click();
@@ -203,50 +194,47 @@ test('ui-ask-integration: delete flows through confirmModal and focus returns to
   window.document.querySelector('#confirm-ok').click();
   await settle(window, 6);
   assert.ok(calls.some((c) => c.url.includes(`/api/ask/threads/${TID}`) && c.opts.method === 'DELETE'));
-  assert.equal(window.document.activeElement, window.document.querySelector('textarea.ask-input'));
+  // jsdom is 1024px wide: the History column is an overlay over the chat, so focus stays in it, never under its scrim.
+  assert.ok(window.document.querySelector('[data-chat-history]').contains(window.document.activeElement), 'focus stays in the History overlay');
 });
 
-test('ui-ask-integration: the send body carries the resolved page context (new / running / settings fallback tagged / workspace)', async () => {
+test('ui-ask-integration: a Chat send carries { view: chat } (plus the run its panel shows); getPageContext still names every other page', async () => {
   const { window, calls, recv } = await boot();
-  // One boot, sequential sends across views.
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lastCtx = () => JSON.parse(calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1).opts.body).context;
   await checkRows([
-    { name: 'ui-ask-integration: the send body carries the resolved page context', run: async () => {
-      await openSheet(window);
+    { name: 'a send from Chat with no run panel: { view: chat } and no project (worca Chat R4)', run: async () => {
+      await openChat(window);
       await sendText(window, 'context check one');
-      const post1 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-      assert.deepEqual(JSON.parse(post1.opts.body).context, { view: 'new', projectDir: '/repos/proj', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }); // #397: Auto declares itself
-      recv({ type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {}, threadId: TID, messageId: MID, seq: 1 });
+      assert.deepEqual(lastCtx(), { view: 'chat', pinned: false, timeZone: tz }); // #397: Auto declares itself
+    } },
+    { name: 'with a run in the panel (P4\'s chatPanelContext) the send carries its ids', run: async () => {
+      const run = { runId: '0f0f0f0f-0000-4000-8000-000000000001', pipelineId: 'aaaa1111', projectDir: '/p', runPage: 'logs' };
+      window.__np.chat.setPanelContext(() => run);
+      await sendText(window, 'context check two');
+      assert.deepEqual(lastCtx(), { view: 'chat', ...run, pinned: false, timeZone: tz });
+      window.__np.chat.setPanelContext(null);
+    } },
+    { name: 'MCP registry §9.1 still holds for getPageContext: Running names its run, New Pipeline its project untagged, the generic fallback is tagged, a workspace page its workspace', run: async () => {
+      const pc = () => window.__np.chat.getPageContext();
       recv({ type: 'hello', runs: [RUN_ROW], ask: [] });
       await settle(window);
       go(window, 'running/r1');
       await settle(window);
-      await sendText(window, 'context check two');
-      const post2 = calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1);
-      assert.deepEqual(JSON.parse(post2.opts.body).context, { view: 'running', runId: 'r1', projectDir: '/p', runPage: 'glance', pinned: false, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }); // #397
-    } },
-    { name: 'MCP registry §9.1: New Pipeline names its project untagged, a workspace page its workspace; the generic fallback is tagged', run: async () => {
-      const lastCtx = () => JSON.parse(calls.filter((c) => c.url.includes('/messages') && c.opts.method === 'POST').at(-1).opts.body).context;
-      const done = () => recv({ type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {}, threadId: TID, messageId: MID, seq: 1 });
-      done();                                          // the previous row left its second turn open
-      go(window, 'new');                               // back to New Pipeline for this row's first send
+      assert.deepEqual(pc(), { view: 'running', runId: 'r1', projectDir: '/p', runPage: 'glance' });
+      go(window, 'new');
       await settle(window);
-      await openSheet(window);
-      await sendText(window, 'on new pipeline');
-      assert.equal(lastCtx().projectDir, '/repos/proj');
-      assert.equal(lastCtx().projectSource, undefined, 'the New Pipeline page is ABOUT its project target');
-      done();
+      assert.equal(pc().projectDir, '/repos/proj');
+      assert.equal(pc().projectSource, undefined, 'the New Pipeline page is ABOUT its project target');
       go(window, 'settings');
       await settle(window);
-      await sendText(window, 'on settings');
-      assert.equal(lastCtx().projectDir, '/repos/proj');
-      assert.equal(lastCtx().projectSource, 'fallback', 'the dropdown fallback is tagged');
-      done();
+      assert.equal(pc().projectDir, '/repos/proj');
+      assert.equal(pc().projectSource, 'fallback', 'the dropdown fallback is tagged');
       go(window, 'workspaces/wks-team-0000abcd');
       await settle(window, 10);
-      await sendText(window, 'on a workspace page');
-      assert.equal(lastCtx().workspaceId, 'wks-team-0000abcd');
-      assert.equal(lastCtx().projectDir, undefined);
-      assert.equal(lastCtx().projectSource, undefined);
+      assert.equal(pc().workspaceId, 'wks-team-0000abcd');
+      assert.equal(pc().projectDir, undefined);
+      assert.equal(pc().projectSource, undefined);
     } },
   ]);
 });

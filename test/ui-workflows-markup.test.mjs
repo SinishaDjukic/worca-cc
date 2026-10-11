@@ -44,8 +44,8 @@ test('the canvas-keys fence covers every non-canvas surface', () => {
   for (const f of floats) assert.equal(f.dataset.canvasKeys, 'off', f.className);
 });
 
-test('full screen: the sidebar, the top bar and the Ask dock are hidden on the view', () => {
-  assert.match(css, /body\.view-workflows \.sidebar,body\.view-workflows #topnav,body\.view-workflows > \.ask-dock\{display:none !important;\}/);
+test('full screen: the sidebar and the top bar are hidden on the view', () => {
+  assert.match(css, /body\.view-workflows \.sidebar,body\.view-workflows #topnav\{display:none !important;\}/);
 });
 
 test('narrow screens: only Auto-layout goes icon-only (the zoom keeps its %), and the selection toolbar stays on the stage', () => {

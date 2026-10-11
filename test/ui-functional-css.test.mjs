@@ -94,7 +94,7 @@ const ROWS = [
   ['.hd-report', 'latent: .hd-menu .hd-report outranks .hd-report[hidden] (fixed by the global rule)'],
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
-  ['.ask-pill', 'ui-ask-style: the launcher button keeps its hidden twin'],
+  ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
   ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-page-branch', '.rd-pr-slot']
     .map((sel) => [sel, 'ui-history-detail-tabs: the saved run bar shares the run page bar\'s rules']),
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],

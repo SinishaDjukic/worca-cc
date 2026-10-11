@@ -64,6 +64,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await settle();
   const doc = window.document;
+  doc.activeElement?.blur?.();                         // the Chat page focused its composer at boot; start these rows with focus free
   const $ = (id) => doc.getElementById(id);
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).

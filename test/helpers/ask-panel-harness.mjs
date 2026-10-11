@@ -84,6 +84,9 @@ export function makePanel(overrides = {}) {
     now: overrides.now || (() => 1_000_000),
     ...(overrides.deps || {}),
   };
+  // `innerWidth: n` fixes window.innerWidth before the panel is built (jsdom's is 1024): the History column opens
+  // by default from 1600px and turns into an overlay below 1100px.
+  if (overrides.innerWidth) Object.defineProperty(window, 'innerWidth', { value: overrides.innerWidth, configurable: true });
   const panel = createAskPanel(deps);
   window.document.body.appendChild(panel.root);
   // Force one flush pass, then drain whatever it re-arms. With nothing armed
@@ -120,15 +123,4 @@ export function pointerdown(window, target) {
 export function pointer(window, type, init = {}) {
   const buttons = type === 'pointerup' || type === 'pointercancel' ? 0 : 1;
   return new window.PointerEvent(type, { pointerId: 1, button: 0, buttons, bubbles: true, cancelable: true, ...init });
-}
-
-/**
- * jsdom reports every box as 0×0. Give the dock a content box so the sheet's
- * clamp has an upper bound: inner width = width − 2×28, inner height = height − 26 − 20.
- */
-export function sizeDock(doc, width, height) {
-  const dock = doc.querySelector('.ask-dock');
-  Object.defineProperty(dock, 'clientWidth', { value: width, configurable: true });
-  Object.defineProperty(dock, 'clientHeight', { value: height, configurable: true });
-  return dock;
 }

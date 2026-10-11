@@ -419,8 +419,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Ask Worca
 
-- **An assistant on every view** — the **Ask Worca** pill, or the last row of the top bar's
-  search (⌘K / Ctrl K), opens a chat that
+- **A chat that is the home page** — **Chat** (the first sidebar row, and the worca logo), or the
+  last row of the top bar's search (⌘K / Ctrl K), opens a chat that
   answers from Worca's own records: runs, their diffs, progress and clarify answers, workflows
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
@@ -448,7 +448,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   built-in voice speaks English. See [`docs/speech.md`](docs/speech.md) and
   [`docs/speech-languages.md`](docs/speech-languages.md).
 
-![Ask Worca sheet over the app: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
+![The Chat page: a finished "Paginate the search endpoint" run card for nimbus-crm with elapsed time, cost, 5/5 agents and its workflow graph, then a follow-up answer about the docs repository](docs/screenshots/ask-worca.png)
 
 ### Away mode
 

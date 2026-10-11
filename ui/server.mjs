@@ -9779,6 +9779,20 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
+ *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
+function askWaitingCount(threadId) {
+  const set = askFollowers.get(threadId);
+  if (!set) return 0;
+  let n = 0;
+  for (const f of set) {
+    if (f.detached) continue;
+    const entry = liveRunEntry(f.runId);
+    if (entry && !SETTLED_RUN.has(String(entry.status || '')) && entry.pendingQuestion) n += 1;
+  }
+  return n;
+}
+
 function askRunningCount() {
   let n = 0;
   for (const job of askJobs.values()) if (job.status === 'running') n += 1;
@@ -9863,7 +9877,7 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = req.query.mode === 'composer' ? 'composer' : null;
     const threads = askListThreads({ limit, visibleTo, mode }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
     });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
     res.json({ threads, total: askCountThreads({ visibleTo, mode }) });
@@ -10613,8 +10627,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
-    // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
-    const agentOn = !composerMode && askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
+    // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
+    // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
+    const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
       : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });

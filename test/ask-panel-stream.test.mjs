@@ -30,9 +30,8 @@ function handlerFor(snapshotRef) {
 async function openWith(snapshotRef, overrides = {}) {
   const ctx = makePanel({ fetchHandler: handlerFor(snapshotRef), ...overrides });
   ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick();
-  ctx.doc.querySelector('.ask-pop [role="menuitem"]').click();
+  await ctx.tick();                                    // the first show loaded the History column
+  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
   await ctx.tick();
   await ctx.tick();
   ctx.flush();
@@ -269,9 +268,8 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   const ctx = makePanel({ fetchHandler: handler });
   ctx.panel.open();
   const pick = async (i) => {
-    ctx.doc.querySelector('[data-ask-threads-btn]').click();
     await ctx.tick();
-    ctx.doc.querySelectorAll('.ask-pop [role="menuitem"]')[i].click();
+    ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i].click();
     await ctx.tick();
     await ctx.tick();
     ctx.flush();
@@ -285,7 +283,7 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   assert.equal(ctx.doc.querySelector('[data-ask-send]').hidden, false, 'send back');
 });
 
-test('ask-panel-stream: an open History popover refetches its rows on ask-run-status for ANY thread (debounced), keeps its caption, and stops once closed', async () => {
+test('ask-panel-stream: the History column refetches its rows on ask-run-status / ask-start for ANY thread (debounced) while Chat shows — column open or not — keeps its node and the composer focus, and stops once Chat is hidden', async () => {
   const TID2 = 'ask_00000002';
   const listRow = (id, inFlight, tracking) => ({ id, title: id, updatedAt: 't', createdAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {}, runLinks: 0, inFlight, tracking });
   const list = { threads: [listRow(TID, false, false), listRow(TID2, false, false)], total: 2 };
@@ -298,16 +296,17 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   const listFetches = () => ctx.fetchCalls.filter((c) => c.url.startsWith('/api/ask/threads?')).length;
   const settle = () => new Promise((r) => setTimeout(r, 320));   // past the ~250 ms debounce
   ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
   await ctx.tick();
-  assert.equal(listFetches(), 1, 'one fetch on open');
-  const pop = ctx.doc.querySelector('.ask-pop-threads');
-  const rows = () => [...pop.querySelectorAll('.ask-thread-pick')];
+  assert.equal(listFetches(), 1, 'one fetch on the first show');
+  assert.equal(ctx.panel.root.dataset.history, 'closed', 'jsdom is 1024px wide: the column is closed, its rows are built');
+  const col = ctx.doc.querySelector('[data-chat-history]');
+  const rows = () => [...col.querySelectorAll('.ask-thread-pick')];
+  assert.equal(rows().length, 2);
   assert.equal(rows()[1].querySelector('.ask-dot-track'), null, 'T2 not tracking at open');
-  const focused = ctx.doc.activeElement;
-  assert.equal(focused, rows()[0], 'the first row holds focus');
+  const input = ctx.doc.querySelector('textarea.ask-input');
+  assert.equal(ctx.doc.activeElement, input, 'open() focused the composer');
   // The chat behind row 2 starts following a run: no thread is active (st.threadId null),
-  // so the frame would otherwise be dropped before the model — the popover still refetches.
+  // so the frame would otherwise be dropped before the model — the column still refetches.
   list.threads[1] = listRow(TID2, false, true);
   list.total = 3;
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'plan' });
@@ -318,12 +317,10 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   assert.equal(listFetches(), 2, 'three frames in a burst → ONE refetch');
   assert.ok(rows()[1].querySelector('.ask-dot-track'), 'T2 now shows the violet tracking dot');
   assert.equal(rows()[0].querySelector('.ask-dot-track'), null);
-  assert.equal(pop.querySelectorAll('.ask-threads-list').length, 1, 'the rows were replaced, not appended');
-  assert.equal(pop.querySelectorAll('.ask-thread-pick').length, 2);
-  assert.equal(pop.querySelector('.ask-pop-caption').textContent, 'History', 'the caption survives');
-  assert.equal(pop.querySelector('.ask-pop-caption-meter').textContent, '3 chats', 'the meter follows the fresh total');
-  assert.equal(ctx.doc.activeElement, rows()[0], 'focus stays on the same row, not reset by the rebuild');
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), pop, 'same panel node — never reopened');
+  assert.equal(rows().length, 2, 'the rows were replaced, not appended');
+  assert.equal(col.querySelector('.chat-history-meter').textContent, '3 chats', 'the meter follows the fresh total');
+  assert.equal(ctx.doc.querySelector('[data-chat-history]'), col, 'same column node');
+  assert.equal(ctx.doc.activeElement, input, 'a refresh never steals focus');
   // A turn starting elsewhere arms the thinking dot the same way.
   list.threads[1] = listRow(TID2, true, true);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 't', threadId: TID2, messageId: 'askm_00000009', seq: 1 });
@@ -337,20 +334,12 @@ test('ask-panel-stream: an open History popover refetches its rows on ask-run-st
   await settle();
   assert.equal(listFetches(), 4);
   assert.ok(rows()[1].querySelector('.ask-dot-track'), 'a terminal status alone does not clear the dot');
-  // Closed: a pending debounce is cancelled and later frames fetch nothing.
+  // Hidden: a pending debounce fetches nothing, later frames neither (they mark the list stale for the next show).
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'x' });
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();   // toggles it closed
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
+  ctx.panel.close();
   ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'y' });
   await settle();
-  assert.equal(listFetches(), 4, 'no refetch once the popover is gone');
-  // Another popover open (context) is left alone.
-  ctx.doc.querySelector('[data-ask-ctx-btn]').click();
-  assert.ok(ctx.doc.querySelector('.ask-pop-ctx'), 'the context popover is open');
-  assert.equal(ctx.doc.querySelector('.ask-pop-threads'), null);
-  ctx.panel.pushServerFrame({ type: 'ask-run-status', threadId: TID2, runId: 'uuid-1', pipelineId: 'aaaa1111', cardId: null, status: 'running', phase: 'z' });
-  await settle();
-  assert.equal(listFetches(), 4, 'only the History popover refetches');
+  assert.equal(listFetches(), 4, 'no refetch while Chat is hidden');
 });
 
 test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop; the subscribe replay renders the whole answer', async () => {
