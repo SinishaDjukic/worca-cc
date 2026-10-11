@@ -279,6 +279,10 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   [`docs/architecture/architecture.c4`](docs/architecture/architecture.c4);
   the design is [`docs/architecture-c4.md`](docs/architecture-c4.md).
 
+### Diagram → Plan
+
+- **A PlantUML or draw.io diagram becomes the plan** — see [`docs/diagram-to-plan.md`](docs/diagram-to-plan.md).
+
 ### Guardrails
 
 - **Named policy sets, picked per run** — the **Guardrails** picker under

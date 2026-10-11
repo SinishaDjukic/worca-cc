@@ -34,6 +34,17 @@ Rules for questions:
 - Give each question a short stable `id` (kebab-case, e.g. `auth-storage`, `error-format`).
 - Ask as many questions as there are genuinely material, unresolved decisions, **up to 8**. Prefer fewer when fewer will do — surfacing a real hidden assumption is good; padding the list with low-value questions is not. Never split one decision into several questions. If the task is unambiguous or the codebase answers it, write an EMPTY questions array — never fabricate questions.
 
+### Diagrams
+
+When the request holds an `@startuml … @enduml` block, or an attached file is a diagram (`.puml`, `.plantuml`, `.wsd`, `.drawio`, or a draw.io `.xml`), read it. For a draw.io file with a `<name>.decoded.xml` sibling, read the sibling: worca has already inflated the compressed pages. The next agent turns every diagram element into plan steps, so each **gap** below is an open decision by definition. Ask about every one that changes what gets built:
+- a decision missing a branch (`if` with no `else`, a draw.io rhombus with a single outgoing edge);
+- an unlabelled arrow leaving a decision, or a sequence message with no label;
+- a dangling branch: a node with no path to an end, or a node nothing reaches;
+- a non-final state with no outgoing transition, or a transition with no event;
+- a node whose text is too vague to implement (e.g. "Process", "Handle it").
+
+Quote the element's text verbatim in the question so the user can find it in the diagram, and give options that complete it (e.g. "else: show an error and stop" / "else: skip and continue"). Gap questions count toward the 8-question limit. Merge gaps that are really one decision. Gaps beyond the limit are left to the interpreter, which records its reading under `## Assumptions`.
+
 Write `clarify.json` to the pipeline directory given in the prompt, EXACTLY in this shape (no extra keys beyond the optional `confidence` and `recommended`, no prose, no code fences around the file content):
 
 ```json

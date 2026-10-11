@@ -1,5 +1,5 @@
 // test/graph-prompt-parity.test.mjs
-// THE prompt snapshot pin, in two layers. For each of the 16 non-presentation builtins this
+// THE prompt snapshot pin, in two layers. For each of the 17 non-presentation builtins this
 // assembles the v2 task prompt through the SAME builder runAgentExecution ships
 // (buildAgentPrompt, driven by the REAL agents/*.meta.json sidecars — never a
 // fixture) and then:
@@ -47,7 +47,8 @@ useTempHome(after);
 
 const AGENTS_DIR = fileURLToPath(new URL('../agents/', import.meta.url));
 /** Builtin layer only — the pin is about the 14 coding/workspace files that ship
- *  in agents/, plus the two architecture builtins (architectSetup, architect), which
+ *  in agents/, plus the two architecture builtins (architectSetup, architect) and the diagram
+ *  interpreter (diagramInterpreter), which
  *  have no v1 prompt but take the same generic builder and so get the same
  *  marker + whole-prompt pins. The eight presentation-domain builtins (wf_presentation) embed the
  *  designing-presentations criteria and their own directions block; they are not
@@ -275,6 +276,8 @@ const MOCK_ROLES = {
   // The architecture pair is post-v1: the setup form rides the clarify writer, the
   // architect has its own c4-architect writer.
   architectSetup: 'clarify', architect: 'c4-architect',
+  // The diagram interpreter rides the planner writer: same plan port.
+  diagramInterpreter: 'planner-plan',
 };
 
 test('every builtin pins its v1 MOCK_ROLE and names its allocated outputs absolutely', () => {
