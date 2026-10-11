@@ -53,6 +53,9 @@ anything.
    welcome dismissal both end "fresh", so each pins the derived mode first
    (`pinUiLevel`) — a new user never jumps to Expert by using the app.
 
+Feature flags are not levels: an element with `data-flag` shows when its flag is on, at any level;
+with `data-min-level` as well, both must allow it ([feature-flags.md](feature-flags.md)).
+
 ## Placing a new element
 
 Ask these in order and stop at the first yes.
@@ -262,6 +265,7 @@ inside the view.
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits | S |
+| Experimental tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |

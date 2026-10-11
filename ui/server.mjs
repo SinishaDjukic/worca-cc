@@ -46,7 +46,8 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, FlagError } from '../src/core/flags.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
@@ -735,7 +736,7 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
-  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), runs: summarizeRuns(), ask: askHello(ws) });
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws) });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
@@ -859,6 +860,8 @@ function emitChanged(type, action) {
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+// D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1561,12 +1564,14 @@ async function pinUiLevel() {
   if (!storedUiLevel()) await setUiLevel(effectiveUiLevel());
 }
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
-if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
-  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+{
+  const shell = fs.readFileSync(INDEX_FILE, 'utf8');
+  if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+  if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -8305,6 +8310,7 @@ const settingsState = () => ({
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -8683,6 +8689,7 @@ app.post('/api/settings', async (req, res) => {
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
+  const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
   const hasNightKey = has('nightMode') || has('nightModeToggle');
   const autoModels = hasAutoKey ? await listModels('') : null;
@@ -8789,6 +8796,7 @@ app.post('/api/settings', async (req, res) => {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -8813,6 +8821,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
+    if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
@@ -8842,6 +8851,26 @@ app.post('/api/settings', async (req, res) => {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
     const { error, field } = settingsErrorReply(err, err && err.settingsCtx);
     return res.status(400).json({ error, ...(field ? { field } : {}) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Feature flags (docs/feature-flags.md). GET lists every non-retiring flag; PATCH takes
+// { key: true|false|null } (null = back to the default), applies `requires`, persists and
+// broadcasts a `flags` frame (flagEvents above). 400 unknown key / bad value, 409 env-locked.
+// ---------------------------------------------------------------------------
+const flagsPayload = () => ({
+  flags: listFlags().map((f) => ({ ...f, docsUrl: f.docs && APP_REPO_URL ? `${APP_REPO_URL}/blob/dev/${f.docs}` : null })),
+});
+app.get('/api/flags', (_req, res) => res.json(flagsPayload()));
+app.patch('/api/flags', async (req, res) => {
+  try {
+    await setFlags(req.body);
+    return res.json(flagsPayload());
+  } catch (err) {
+    if (err instanceof FlagError && err.code === 'locked') return res.status(409).json({ error: err.message, code: 'locked', key: err.key });
+    if (err instanceof FlagError) return res.status(400).json({ error: err.message, ...(err.key ? { key: err.key } : {}) });
+    return res.status(500).json({ error: err && err.message ? err.message : 'could not save the flags' });
   }
 });
 

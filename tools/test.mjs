@@ -95,6 +95,7 @@ function main() {
     WORCA_NO_REAL_CLAUDE_LOG: join(testHome, 'real-claude-spawns.log'), // read by the shim and assert-none.mjs
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ') };
   delete env.WORCA_HOST_PID; // a test run is never a worca-hosted child
+  delete env.WORCA_FLAGS; // feature flags (docs/feature-flags.md): a developer's shell flags never reach the suite
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
   // A developer's own Azure DevOps / push-as-person settings must not open host-lookup gates in tests
