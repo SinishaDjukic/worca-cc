@@ -336,12 +336,12 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
 });
 
 // ── the sidebar's Add-ons group (CONTRACT §3) ─────────────────────────────────
-test('the sidebar\'s Add-ons group sits between Nodes and Manage: a label and four rows, each with its level', () => {
+test('the sidebar\'s Add-ons group sits between Workflows and Manage: a label and four rows, each with its level', () => {
   const doc = new JSDOM(html).window.document;
   const sect = [...doc.querySelectorAll('.nav > .nav-sect')].find((s) => s.textContent.trim() === 'Add-ons');
   assert.ok(sect, 'the Add-ons label');
   assert.equal(sect.dataset.minLevel, 'advanced', 'the label hides with its Advanced rows');
-  assert.equal(sect.previousElementSibling.id, 'nav-nodes-fly', 'right after the Nodes flyout');
+  assert.equal(sect.previousElementSibling.dataset.nav, 'workflows', 'right after the Workflows row');
   const rows = [];
   for (let n = sect.nextElementSibling; n && n.tagName === 'BUTTON'; n = n.nextElementSibling) rows.push(n);
   assert.deepEqual(rows.map((b) => [b.dataset.nav, b.dataset.minLevel, b.querySelector(':scope > span').textContent]), [

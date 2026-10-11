@@ -20,7 +20,9 @@ const BINARY_TYPES = Object.freeze({
   '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf',
 });
 /** Viewer-only additions (never Ask attachments). */
-const VIEWER_TEXT_TYPES = Object.freeze({ '.ndjson': 'application/x-ndjson', '.diff': 'text/x-diff', '.patch': 'text/x-diff' });
+const VIEWER_TEXT_TYPES = Object.freeze({ '.ndjson': 'application/x-ndjson', '.diff': 'text/x-diff', '.patch': 'text/x-diff',
+  // LikeC4 sources: text on the wire; the UI's C4 layer (artifact-view-c4.mjs) picks the diagram viewer
+  '.c4': 'text/plain', '.likec4': 'text/plain' });
 const DOCUMENT_TYPES = Object.freeze({ '.html': 'text/html', '.htm': 'text/html', '.svg': 'image/svg+xml' });
 const OPAQUE_TYPES = Object.freeze({
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',

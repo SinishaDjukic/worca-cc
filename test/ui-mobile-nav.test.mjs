@@ -120,7 +120,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
       assert.ok($('.sidebar').classList.contains('collapsed'), 'rail on tablets');
       assert.ok(window.document.body.classList.contains('rail-collapsed'), 'the Ask dock follows (left:60px)');
       assert.equal(window.localStorage.getItem(SIDEBAR_KEY), null, 'nothing persisted');
-      assert.equal($('.nav button[data-nav="composer"]').title, 'Workflow Composer', 'rail tooltips');
+      assert.equal($('.nav button[data-nav="workflows"]').title, 'Workflows', 'rail tooltips');
       recv({ type: 'hello', runs: [live('auth-fix')] });
       assert.equal($('#nav-running-count').textContent, '1', 'the Runs badge counts the live run (no per-run rows)');
     } },
@@ -141,7 +141,7 @@ test('rail derivation per tier: desktop follows the stored preference (hamburger
 
 // One phone boot, the steps in order: each row starts where the previous one left the page
 // (drawer closed, on New pipeline → Statistics → Runs), and a failing row names its step.
-test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; the Nodes flyout and the account menu do not close it', async () => {
+test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with focus + inert managed; the account menu does not close it', async () => {
   const { $, click, key, resize, window } = await boot({ width: 390 });
   await checkRows([
     { name: 'phone: open, close by scrim / close button / Escape; focus and inert are managed', run: async () => {
@@ -165,16 +165,10 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       click('#mbar-menu'); key('Escape');
       assert.equal(body.classList.contains('nav-open'), false);
     } },
-    { name: 'phone: a route closes the drawer and names the page in the bar; the Nodes flyout and the account menu do not', run: async () => {
+    { name: 'phone: a route closes the drawer and names the page in the bar; the account menu does not', run: async () => {
       const body = window.document.body;
       assert.equal($('#topnav-title').textContent, 'New run');
       click('#mbar-menu');
-      click('.nav .nav-group[data-nav-group="nodes"]');
-      assert.ok(body.classList.contains('nav-open'), 'opening Nodes keeps the drawer open');
-      assert.equal($('#nav-nodes-fly').hidden, false, 'its flyout opens over the drawer');
-      key('Escape');
-      assert.equal($('#nav-nodes-fly').hidden, true, 'Escape closes the flyout…');
-      assert.ok(body.classList.contains('nav-open'), '…and only the flyout');
       click('#side-acct');
       assert.equal($('#acct-menu').hidden, false, 'the account menu opens inside the drawer');
       click('#acct-lvl');
@@ -219,17 +213,6 @@ test('phone drawer: opens; closes by scrim/close/Escape/route/back/resize with f
       await tick();
       assert.equal(window.document.body.classList.contains('nav-open'), false);
       assert.equal($('#topnav-title').textContent, 'Runs');
-    } },
-    { name: 'phone: Agents in the Nodes flyout routes, and puts the flyout and the drawer away', run: async () => {
-      click('#mbar-menu');
-      click('.nav .nav-group[data-nav-group="nodes"]');
-      assert.equal($('#nav-nodes-fly').hidden, false);
-      click('#nav-nodes-fly button[data-nav="agents"]');
-      await tick();
-      assert.equal(window.location.hash, '#agents');
-      assert.equal($('#nav-nodes-fly').hidden, true);
-      assert.equal(window.document.body.classList.contains('nav-open'), false);
-      assert.equal($('#topnav-title').textContent, 'Agents');
     } },
     { name: 'resizing across tiers closes the drawer and re-derives the rail', run: async () => {
       click('#mbar-menu');

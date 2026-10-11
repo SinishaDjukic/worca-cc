@@ -24,7 +24,7 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
           }, { doc });
 
           const evs = [...el.querySelectorAll('input.chat-ev')];
-          assert.deepEqual(evs.map((e) => e.dataset.ev), ['question', 'done', 'error', 'paused', 'away']);
+          assert.deepEqual(evs.map((e) => e.dataset.ev), ['question', 'done', 'error', 'paused', 'away', 'prWatch']);
           assert.equal(evs.find((e) => e.dataset.ev === 'question').checked, false);
           assert.equal(evs.find((e) => e.dataset.ev === 'done').checked, true);
 
@@ -47,7 +47,7 @@ test('chat settings render and round-trip, including the Ask Worca script toggle
           el.querySelector('input.chat-ev[data-ev="done"]').checked = false;
           el.querySelector('input.chat-ch[data-channel-key="telegram-chat/main"]').checked = false;
           assert.deepEqual(collectChatSettings(el), {
-            notify: { question: true, done: false, error: true, paused: true, away: true },
+            notify: { question: true, done: false, error: true, paused: true, away: true, prWatch: true },
             channels: { 'telegram-chat/main': { enabled: false }, 'teams-chat/main': { enabled: true } },
           });
 

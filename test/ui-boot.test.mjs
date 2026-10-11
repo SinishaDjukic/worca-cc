@@ -50,5 +50,5 @@ test('app.js boots without throwing and finds 14 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('[data-view]').length, 19);   // + getting-started + scripts + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages
+  assert.equal(window.document.querySelectorAll('[data-view]').length, 16);   // + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent
 });

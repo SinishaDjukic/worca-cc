@@ -199,3 +199,12 @@ export function renderEmptyInspector({ doc = globalThis.document } = {}) {
   root.appendChild(h(doc, 'p', 'ins-blurb', 'Select a node or a wire to configure it.'));
   return root;
 }
+
+/** Every field at every interface level (the Workflows view, D5): drop the simple-level alternates
+ *  (`data-max-level`) and un-gate the rest (`data-min-level`, `data-level-keep`). */
+export function stripLevels(root) {
+  if (!root || !root.querySelectorAll) return root;
+  for (const n of [...root.querySelectorAll('[data-max-level]')]) n.remove();
+  for (const n of root.querySelectorAll('[data-min-level]')) { n.removeAttribute('data-min-level'); n.removeAttribute('data-level-keep'); }
+  return root;
+}

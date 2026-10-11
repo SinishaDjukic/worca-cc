@@ -295,6 +295,28 @@ function checkedOutRows() {
   return rows.map((row) => ({ row, rec: checkoutRecordsFor(row) })).filter((x) => x.rec);
 }
 
+export async function freeBranchCheckout({ projectDir, branch, busy = new Set(), stopServices = async () => {}, by = 'pr-watch' }) {
+  if (!projectDir || !branch) throw cerr('projectDir and branch are required', 'BAD_REQUEST');
+  if (branch === 'main' || branch === 'master') throw cerr('The default branch cannot be released.', 'MAIN_BRANCH');
+  const holder = await worktreePathForBranch(projectDir, branch);
+  if (!holder) return { released: false };
+  const matches = [];
+  for (const { row, rec } of checkedOutRows()) {
+    for (const member of membersOfRow(row)) {
+      const held = rec.members.find((x) => x.projectKey === member.projectKey);
+      if (!held || held.external === true || held.branch !== branch) continue;
+      if (!member.projectDir || canon(member.projectDir) !== canon(projectDir)) continue;
+      if (canon(held.worktreeDir) !== canon(holder)) continue;
+      matches.push({ row, rec: held });
+    }
+  }
+  if (matches.length !== 1) throw cerr('The branch checkout is not uniquely owned by Worca.', matches.length ? 'AMBIGUOUS_HOLDER' : 'FOREIGN_HOLDER');
+  const { row, rec } = matches[0];
+  if (busy.has(row.id)) throw cerr('The branch checkout is in use by a live or finishing run.', 'BUSY');
+  await discardCheckout({ id: row.id, members: [rec.projectKey], force: false, stopServices, by });
+  return { released: true, runId: row.id, projectKey: rec.projectKey };
+}
+
 /** All live checkouts, oldest first: [{ runId, at, policy }]. */
 export function listCheckouts() {
   // A linked folder (useExisting) is the person's own: the cap and the keep policy never unlink it.

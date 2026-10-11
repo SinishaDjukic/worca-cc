@@ -178,7 +178,7 @@ export function scriptPayload(data) {
  *  `lintCopy` and `LintCopy` on macOS and Windows): an exact-match candidate that
  *  differs from a taken key only in case answers 409 on every press, and the
  *  Duplicate button has no other key to offer. */
-function nextCopyKey(key, list) {
+export function nextCopyKey(key, list) {
   const taken = new Set((list || []).map((s) => String((s && s.key) || '').toLowerCase()));
   for (let i = 1; ; i += 1) {
     const candidate = i === 1 ? `${key}Copy` : `${key}Copy${i}`;
@@ -201,7 +201,7 @@ export function createScriptsController({
     list: [], runtimes: null, caseState: new Map(), flash: null,
     data: null, savedMeta: null, root: null, isNew: false, baseline: '', stepDirty: false, srcMode: '', srcTab: 'default',
     rows: null, removed: new Set(), verdict: false, routing: false, advOpen: false, keyTouched: false, pickerInPlace: false,
-    bench: null, benchMounting: false, projects: [], inferTimer: null, saving: false,
+    bench: null, benchMounting: false, projects: [], inferTimer: null, saving: false, pendingCases: [],
   };
   // Request token: a route change, a frame poke and a write can all be in flight
   // at once, and the LAST one issued must win however the responses land.
@@ -511,7 +511,7 @@ export function createScriptsController({
         // here): the old tree goes FIRST. Both arms below read the mounted tree through snapshot(),
         // which spreads st.data.meta — null from here on — and a saved script's tree is never the draft.
         disposeDetail();
-        st.data = null; st.savedMeta = null; st.keyTouched = false; st.stepDirty = false; st.runtime = 'node'; st.baseline = '';
+        st.data = null; st.savedMeta = null; st.keyTouched = false; st.stepDirty = false; st.runtime = 'node'; st.baseline = ''; st.pendingCases = [];
       }
       if (parsed.step === 1) {
         // Leaving step 2 for the picker: what is typed lives in the DOM, and paintRuntimeStep
@@ -559,6 +559,37 @@ export function createScriptsController({
     st.list = Array.isArray(l.data.scripts) ? l.data.scripts : [];
     paintList();
     showFlash();
+  }
+
+  /** A draft from the composer chat (D18): a NEW script at Build & test with its meta, program and DECLARED
+   *  interface, unsaved — the baseline stays the blank script `route('new/<rt>')` painted, so isDirty() is true.
+   *  Its test cases are written after the first Save (PUT …/cases), when the script exists. */
+  async function openDraft({ meta = {}, source = '', sourceWin32 = null, cases = [] } = {}) {
+    const runtime = SCRIPT_RUNTIME_IDS.includes(meta.runtime) ? meta.runtime : 'node';
+    await route(`new/${runtime}`);                    // a blank workspace + its baseline (applyRuntime + paintDetail({rebase}))
+    // A later route() (a scripts-changed frame while the runtimes probe was out) supersedes ours and paints nothing yet.
+    if (!st.data || !onWorkspace()) await route(`new/${runtime}`);
+    if (!st.data || !onWorkspace()) return;
+    st.pendingCases = Array.isArray(cases) ? cases : [];
+    st.keyTouched = Boolean(meta.key);                // the chat may already have placed the draft under this key
+    // applyRuntime put a shell script in Command mode with the template command; a drafted shell script is a
+    // PROGRAM (source) unless the draft names a command.
+    const command = runtime === 'shell' && meta.command ? meta.command : null;
+    st.data = { ...st.data, meta: { ...st.data.meta, ...meta, runtime, file: null, command },
+      source: String(source || ''), sourceWin32: sourceWin32 ?? '' };
+    st.srcMode = command ? 'command' : 'file';
+    st.srcTab = 'default';
+    initInterface();
+    // A drafted shell script routes on its exit code only when the draft says so (a verdict, or a when-gated output).
+    if (runtime === 'shell') st.routing = Boolean(meta.verdict) || (Array.isArray(meta.outputs) && meta.outputs.some((o) => o && (o.when === 'blocking' || o.when === 'clean')));
+    if (st.data.meta.ports !== 'config') {
+      // The draft DECLARES its ports (types, `when`, filenames): merge them over what the code infers, the way a
+      // saved sidecar is merged (st.savedMeta is null for a new script, so initInterface alone would drop them).
+      const inferred = inferInterface(sourceForInference(false), runtime);
+      st.rows = mergeInterface({ inferred, saved: st.data.meta, rows: null, removed: st.removed });
+      st.verdict = inferred.verdict || Boolean(st.data.meta.verdict);
+    }
+    paintDetail();                                    // NO rebase: the baseline stays the blank script
   }
 
   function showFlash() { if (st.flash) { say(...st.flash); st.flash = null; } }
@@ -612,6 +643,11 @@ export function createScriptsController({
     if (st.isNew) {
       st.baseline = JSON.stringify(draft);                 // the page is clean now: no leave-guard on the way to its own hash
       flash(`Saved "${key}".`, 'ok');
+      if (Array.isArray(st.pendingCases) && st.pendingCases.length) {
+        const c = await api.writeCases(key, st.pendingCases);
+        if (!c.ok) flash(`Saved "${key}". Its test cases were not saved: ${(c.data && c.data.error) || c.status}`, 'warn');
+        st.pendingCases = [];
+      }
       navigate(scriptRoute(key));
       return;
     }
@@ -854,6 +890,8 @@ export function createScriptsController({
 
   return {
     route,
+    openDraft,
+    pendingCases: () => [...(st.pendingCases || [])],
     onChanged() {
       // A frame must never clobber an unsaved draft (the memory controller's rule).
       if (st.mode !== 'list' && isDirty()) return;

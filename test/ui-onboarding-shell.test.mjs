@@ -78,7 +78,7 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
   assert.equal(pillHost.nextElementSibling.dataset.nav, 'runs', 'right above Runs');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Schedules, Team policy, Scripts and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 12, 'the nav census (Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to New run: welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -297,7 +297,7 @@ test('a step above the interface mode asks to switch first (Not now leaves all a
       const { doc, window } = await boot({ level: 'simple', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
       click(window, doc.querySelector('.gs-pill'));
       await settle();
-      click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+      click(window, doc.querySelector('.gs-tile[data-step="workspace"]'));
       await settle();
       const modal = doc.getElementById('confirm-modal');
       assert.ok(!modal.classList.contains('hidden'), 'the confirm opens before any hop');
@@ -330,20 +330,20 @@ test('a step above the interface mode asks to switch first (Not now leaves all a
       click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
       await settle();
       assert.ok(doc.getElementById('confirm-modal').classList.contains('hidden'));
-      assert.ok((doc.querySelector('.guide-layer')?.dataset.target || '').startsWith('.nav button[data-nav="composer"]'));
+      assert.ok((doc.querySelector('.guide-layer')?.dataset.target || '').startsWith('.nav button[data-nav="workflows"]'));
       doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
     } },
   ]);
 });
 
 test('a mode lowered mid-tour: the hop rings the account corner, then Interface mode, then the mode; choosing it carries the tour on', async () => {
-  const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
+  const { doc, window } = await boot({ level: 'advanced', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }, { name: 'q', path: '/tmp/q', key: 'q-00000002', exists: true }] });
   const target = () => doc.querySelector('.guide-layer')?.dataset.target || '';
   click(window, doc.querySelector('.gs-pill'));
   await settle();
-  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  click(window, doc.querySelector('.gs-tile[data-step="workspace"]'));
   await settle();
-  assert.ok(target().startsWith('.nav button[data-nav="composer"]'), target());
+  assert.ok(target().startsWith('.nav button[data-nav="workspaces"]'), target());
   // Lowered from the account menu itself: its side menu is still open, so the hop rings the mode there.
   click(window, doc.getElementById('side-acct'));
   click(window, doc.getElementById('acct-lvl'));
@@ -359,14 +359,14 @@ test('a mode lowered mid-tour: the hop rings the account corner, then Interface 
   assert.equal(await until(() => target() === '#lvl-menu [data-level-choice="advanced"]'), true, `then the mode: ${target()}`);
   click(window, doc.querySelector('#lvl-menu [data-level-choice="advanced"]'));
   assert.equal(doc.documentElement.dataset.level, 'advanced');
-  assert.equal(await until(() => target().startsWith('.nav button[data-nav="composer"]')), true, `the tour carries on: ${target()}`);
+  assert.equal(await until(() => target().startsWith('.nav button[data-nav="workspaces"]')), true, `the tour carries on: ${target()}`);
 });
 
 test('a switch the server refuses when a tour starts: the dialog says why, once (no toast as well), and no tour starts', async () => {
   const { doc, window } = await boot({ level: 'simple', settingsError: 'disk full', onboarding: status(['claude', 'project'], { welcomeSeen: true }), projects: [{ name: 'p', path: '/tmp/p', key: 'p-00000001', exists: true }] });
   click(window, doc.querySelector('.gs-pill'));
   await settle();
-  click(window, doc.querySelector('.gs-tile[data-step="workflows"]'));
+  click(window, doc.querySelector('.gs-tile[data-step="workspace"]'));
   await settle();
   assert.equal(doc.getElementById('confirm-title').textContent, 'Switch to Advanced?');
   click(window, doc.getElementById('confirm-ok'));

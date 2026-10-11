@@ -74,8 +74,9 @@ test('sidebar buttons route via the hash, and back/forward (a plain hashchange) 
     { name: 'back/forward (a plain hashchange) still routes', run: async () => {
       click(window, doc.querySelector('.nav button[data-nav="runs"]'));
       await tick();
-      click(window, doc.querySelector('.nav button[data-nav="agents"]'));
+      click(window, doc.querySelector('.nav button[data-nav="workflows"]'));
       await tick();
+      assert.equal(window.location.hash, '#workflows', 'the Workflows row routes');
       window.location.hash = 'runs';                          // what Back does
       window.dispatchEvent(new window.Event('hashchange'));
       await tick();

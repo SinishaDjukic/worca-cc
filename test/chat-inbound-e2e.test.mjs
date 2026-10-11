@@ -158,7 +158,7 @@ test('/api/chat/status: channels, allow-list size, last refused command; /api/ch
 
 test('settings round-trip: chat prefs ride GET/POST /api/settings without clearing root', async () => {
   const before0 = await (await fetch(`${base}/api/settings`)).json();
-  assert.deepEqual(before0.chat.notify, { done: true, error: true, question: true, paused: true, away: true });
+  assert.deepEqual(before0.chat.notify, { done: true, error: true, question: true, paused: true, away: true, prWatch: true });
   const posted = await (await fetch(`${base}/api/settings`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat: { notify: { question: false } } }),

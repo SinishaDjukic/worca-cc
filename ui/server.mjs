@@ -21,6 +21,7 @@ import { runsOn } from '../src/shared/connections.mjs';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
+import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
@@ -104,11 +105,13 @@ import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
 import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
 import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
-  buildSystemPrompt as askBuildSystemPrompt, buildContextHeader as askBuildContextHeader,
+  buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
 import { askScriptPromptInput } from '../src/core/ask/script-deps.mjs';
+import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
+import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
 import {
   classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
 } from '../src/core/ask/attachment-kind.mjs';
@@ -177,7 +180,7 @@ import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamp
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
 import { checkoutRun, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
-  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords } from '../src/core/checkout.mjs';
+  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
@@ -262,7 +265,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
 } from '../src/core/worktree.mjs';
 import {
-  fetchRemote, remoteInfo, syncStatus, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
+  fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
 } from '../src/core/git-sync.mjs';
 import {
@@ -270,8 +273,10 @@ import {
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
-  prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl } from '../src/core/git-info.mjs';
-import { prNumberFromUrl } from '../src/core/forge.mjs';
+  prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
+import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -284,7 +289,7 @@ import {
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS } from '../src/core/graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -1960,7 +1965,7 @@ const startRunHandler = async (req, res) => {
     const startedBy = internal
       ? (typeof internal.runNowBy === 'string' && internal.runNowBy ? internal.runNowBy
         : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
-      : startedByOf(req);
+      : (req._startedBy || startedByOf(req));
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -2142,7 +2147,7 @@ const startRunHandler = async (req, res) => {
       return res.status(403).json({ error: 'total cost limit reached', budget });
     }
 
-    const runId = internal ? internal.ticket.id : randomUUID();
+    const runId = internal ? internal.ticket.id : (req._runId || randomUUID());
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
     // Materialize any uploaded extra files to a temp dir; the orchestrator's
@@ -2275,6 +2280,7 @@ const startRunHandler = async (req, res) => {
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
+        ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
         sync,
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
@@ -2401,6 +2407,7 @@ const startRunHandler = async (req, res) => {
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
+        ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
         sync,
         humanInLoop,
@@ -2850,14 +2857,15 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
     status(code) { this.statusCode = code; return this; },
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
-  await startRunHandler({ body, _internal: internal }, res);
+  await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
+    _prWatchRunId: prWatchRunId }, res);
   return out;
 }
 
@@ -5841,6 +5849,85 @@ async function stopMemberServices(runId, projectKey) {
 const stopCheckoutServices = (pk, runId) => stopMemberServices(runId, pk);
 
 // ---------------------------------------------------------------------------
+// Watch PR (#619): one background loop batches newly failed checks and trusted review feedback on a
+// watched github.com PR into a bounded fix run on that PR's own branch (src/core/pr-watch.mjs owns the
+// state machine; this block supplies its IO). Home/config stay lazy: nothing here runs at import.
+// ---------------------------------------------------------------------------
+const PR_WATCH_BUSY = new Set(['starting', 'created', 'running', 'pausing', 'paused']);
+/** A live, paused or finishing run on exactly this canonical project + branch (the matching member only). */
+function liveRunOnBranch({ projectDir, branch }) {
+  const dir = canon(projectDir);
+  const holds = (row) => !!row && membersOfRow(row).some((m) => m.projectDir && canon(m.projectDir) === dir && m.br?.feature === branch);
+  for (const r of runs.values()) {
+    if (r.kind === 'action' || r.kind === 'scriptbench' || !r.orch) continue;
+    if (!PR_WATCH_BUSY.has(String(r.status || '')) && !(r.pipelineId && isFinishingRun(r.pipelineId))) continue;
+    // Not created yet: its branch is unknown, so any run starting in this project (or a workspace) defers.
+    if (!r.pipelineId) { if (r.workspaceId || (r.projectDir && canon(r.projectDir) === dir)) return true; continue; }
+    if (holds(findPipelineRowById(r.pipelineId))) return true;
+  }
+  // Only what membersOfRow reads: this runs on every watcher tick.
+  return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
+    .all().some(holds);
+}
+/** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
+ *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
+function prWatchOrigin(w) {
+  const row = findPipelineRowById(w.pipelineId);
+  if (!row || row.archived_at) return null;
+  const m = memberFor(row, w.memberKey || null);
+  if (!m?.projectDir || !m.br?.feature) return null;
+  let rp = null; try { rp = JSON.parse(row.resume_point || 'null'); } catch { /* unreadable point: not mock */ }
+  return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
+    sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
+    guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
+    mock: rp?.mock === true };
+}
+/** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
+ *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
+function prWatchFrame(pipelineId, memberKey) {
+  const row = findPipelineRowById(pipelineId);
+  const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
+}
+const prWatcher = createPrWatcher({
+  originOf: prWatchOrigin,
+  host: { snapshot: prWatchSnapshot, jobLog: prWatchJobLog, rerun: prWatchRerun, reply: prWatchReply, comment: prWatchComment },
+  git: {
+    fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
+    status: ({ projectDir, branch, remote }) => syncStatus(projectDir, { base: branch, remote }),
+    fastForward: ({ projectDir, branch, remote }) => fastForward(projectDir, { base: branch, remote }),
+    push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
+    subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
+    checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
+  },
+  liveOnBranch: liveRunOnBranch,
+  freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
+    busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
+  startRun: (body, opts) => invokeStartRun(body, null, opts),
+  // By pipeline once one exists: every resume (manual, after a drain or restart, after a cost pause) runs
+  // under a fresh run id, so the start-time id only finds the run until its pipeline row exists.
+  liveRun: ({ runId, pipelineId }) => {
+    if (pipelineId) {
+      const e = liveRunEntry(pipelineId); const finishing = isFinishingRun(pipelineId);
+      return e || finishing ? { status: String(e?.status || ''), finishing } : null;
+    }
+    const e = runs.get(runId);
+    return e ? { status: String(e.status || ''), finishing: e.pipelineId ? isFinishingRun(e.pipelineId) : !e.settled } : null;
+  },
+  pipelineStatus: (id) => findPipelineRowById(id)?.status || null,
+  // Strict: the fix row must carry the PR, read back, before anything is published for it.
+  attachPr: (pipelineId, pr) => {
+    persistPrState(pipelineId, pr);
+    if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
+  },
+  notify: (event) => chatNotifier.notifyPrWatch(event),
+  onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
+  log: (m) => console.warn(`[worca-ui] ${m}`),
+});
+/** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
+const kickPrWatch = () => { void prWatcher.runner.kick(); };
+
+// ---------------------------------------------------------------------------
 // Terminal (issue #573): worca-owned shells in the right-side pane. Sessions live in a TerminalManager;
 // their output rides /ws as term-* frames to the sockets that attached (D1). Gated like Actions:
 // local, or a hosted worca that set WORCA_TERMINAL_REMOTE; never a possible agent; and only for
@@ -6772,6 +6859,7 @@ app.post('/api/pr', async (req, res) => {
   if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
     return badRequest(res, 'draft must be a boolean');
   }
+  if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
   if (!(await anyPrHost())) {
     return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
@@ -6859,8 +6947,97 @@ app.post('/api/pr', async (req, res) => {
   }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null, baseRemote: baseR });
+  let watching;
+  if (body.watch === true) {
+    watching = false;
+    if (watchablePrUrl(pr.url)) {
+      try {
+        const w = setWatch({ prUrl: pr.url, pipelineId: pipelineIdForPr, memberKey: memberKey || '', pushRemote, enabled: true, enabledBy: actorOf(req) });
+        watching = !!w.enabled;
+        broadcast(prWatchFrame(pipelineIdForPr, memberKey));
+        kickPrWatch();
+      } catch (err) { console.error(`[worca-ui] could not watch PR: ${err?.message || err}`); }
+    }
+  }
   // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
-  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft, ...(memberKey ? { memberKey } : {}) });
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft,
+    ...(memberKey ? { memberKey } : {}), ...(body.watch === true ? { watching } : {}) });
+});
+
+function watchView(w) {
+  return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null,
+    resolving: !!w?.pending?.conflict && w.pending.conflict.why !== 'behind',
+    // A merge-first fix: the PR is behind its base and the base head passes the checks failing here.
+    mergingBase: w?.pending?.conflict?.why === 'behind' ? w.pending.conflict.base || null : null };
+}
+async function prWatchTarget(src, res) {
+  const resolved = await resolvePrPipeline(src, res); if (!resolved) return null;
+  const { state, id } = resolved;
+  if (state.archivedAt || state.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  const target = prTargetFor(state, src.memberKey); if (target.error) { badRequest(res, target.error); return null; }
+  const pr = target.memberKey
+    ? readMemberPrStates(state.id || id)[target.memberKey]
+    : readPrState(state.id || id);
+  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub or Azure DevOps pull request is required'); return null; }
+  return { state, id: state.id || id, target, pr };
+}
+app.get('/api/pr/watch', async (req, res) => {
+  try { const t = await prWatchTarget(req.query, res); if (t) res.json(watchView(getWatch(t.pr.url))); }
+  catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending, skipped, inherited }, mergeable,
+// base, status, watch } for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot
+// answer). `inherited` counts failures that also fail on the base branch head; they are not in `failed`.
+app.get('/api/pr/checks', async (req, res) => {
+  try {
+    const t = await prWatchTarget(req.query, res); if (!t) return;
+    const read = (await prChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' };
+    res.json({ ...read, watch: watchView(getWatch(t.pr.url)) });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/pr/watch', async (req, res) => {
+  try {
+    const body = req.body || {}; if (typeof body.watch !== 'boolean') return badRequest(res, 'watch must be a boolean');
+    const t = await prWatchTarget(body, res); if (!t) return;
+    // Re-homing keeps the remote the PR was pushed to: the existing watch's, else the published one.
+    const published = t.target.memberKey ? t.state.branches?.[t.target.memberKey]?.published : t.state.branch?.published;
+    const pushRemote = getWatch(t.pr.url)?.pushRemote || published?.remote || 'origin';
+    const w = setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '', pushRemote, enabled: body.watch,
+      enabledBy: actorOf(req) });
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
+    if (w.enabled) kickPrWatch();
+    res.json(watchView(w));
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
+// conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
+/** Resolve's refusals, naming the PR's host (GitHub or Azure DevOps). */
+const resolveRefusals = (host) => ({
+  BUSY: [409, 'A fix run is already working on this pull request.'],
+  RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
+  ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
+  READ_FAILED: [502, `Could not read the pull request from ${host}.`],
+  PR_CLOSED: [409, 'The pull request is no longer open.'],
+  NO_CONFLICT: [409, `${host} reports no merge conflicts on this pull request now.`],
+  NEEDS_PERSON: [409, 'The branch cannot be fixed unattended right now.'],
+  NOT_STARTED: [409, 'The fix run could not start now (the branch is busy, or git did not answer). Try again.'],
+});
+app.post('/api/pr/resolve', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const t = await prWatchTarget(body, res); if (!t) return;
+    const published = t.target.memberKey ? t.state.branches?.[t.target.memberKey]?.published : t.state.branch?.published;
+    const cur = getWatch(t.pr.url);
+    // No watch row yet: a switched-off one to own the run (setWatch leaves an existing row's switch alone).
+    const w = cur || setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '',
+      pushRemote: published?.remote || 'origin', enabled: false, enabledBy: actorOf(req) });
+    const r = await prWatcher.resolveOnce(w);
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
+    if (r.ok) return res.json(watchView(r.watch));
+    const [status, error] = resolveRefusals(FORGE_LABEL[forgeOfPrUrl(t.pr.url)] || 'GitHub')[r.code] || [500, 'Could not start the conflict fix.'];
+    const why = r.code === 'NEEDS_PERSON' ? r.watch?.reason : null;
+    res.status(status).json({ error: why ? `${error} (${why})` : error, code: r.code, watch: watchView(r.watch) });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 
 // ---------------------------------------------------------------------------
@@ -9537,6 +9714,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
+  if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });
@@ -9859,12 +10037,13 @@ app.get('/api/ask/threads', (req, res) => {
     const raw = Number.parseInt(String(req.query.limit ?? ''), 10);
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
-    const threads = askListThreads({ limit, visibleTo }).map((t) => {
+    const mode = req.query.mode === 'composer' ? 'composer' : null;
+    const threads = askListThreads({ limit, visibleTo, mode }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
     });
     // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads({ visibleTo }) });
+    res.json({ threads, total: askCountThreads({ visibleTo, mode }) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -9875,7 +10054,7 @@ app.get('/api/ask/threads', (req, res) => {
 app.get('/api/ask/history', (req, res) => {
   try {
     res.json({
-      threads: askCountThreads({ visibleTo: askViewer(req) }),
+      threads: askCountThreads({ visibleTo: askViewer(req), mode: 'any' }),
       worktrees: askCountWorktrees(),
       attachments: askCountAttachments(),
       inFlight: askRunningCount(),
@@ -9928,7 +10107,9 @@ app.post('/api/ask/threads', (req, res) => {
       }
       title = body.title.trim() || null;
     }
-    const thread = askCreateThread({ createdBy: actorOf(req) });
+    // Workflows view (D9): the editor's chat is a composer thread — its own toolset, prompt and history list.
+    if (body.mode !== undefined && body.mode !== null && body.mode !== 'composer') return badRequest(res, 'mode must be "composer"');
+    const thread = askCreateThread({ createdBy: actorOf(req), mode: body.mode === 'composer' ? 'composer' : null });
     if (title) askUpdateThread(thread.id, { title });
     res.status(201).json({ thread: askGetThread(thread.id) });
   } catch (err) {
@@ -10240,6 +10421,13 @@ async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = 
   return askBuildSystemPrompt(catalog, { scripts: await askScriptPromptInput(), deployment: DEPLOYMENT, web, mcp, commands, ...(engine === 'codex' ? { engine } : {}) });
 }
 
+/** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
+async function askComposerSystemPromptFor(catalog, { web = null, engine = 'claude' } = {}) {
+  // `enabled: true`: draft_script is ALWAYS a composer tool, so its program contract ("Scripts you can create") must
+  // be in the prompt even when Ask's "Create and run scripts" setting is off (that setting gates test_script only).
+  return askBuildComposerSystemPrompt(catalog, { scripts: await askScriptPromptInput({ enabled: true }), web, ...(engine === 'codex' ? { engine } : {}) });
+}
+
 /** "scheduled Sat Sep 19, 02:00 (run 1a2b…)" / "repeats: Every weekday at 02:00 (sch_…)" / "proposes: …" — or ''. */
 function askCardScheduleLine(b, tz = null) {
   if (b.state === 'scheduled' && b.scheduleId) return `repeats: ${b.sentence || ''} (${b.scheduleId})`;
@@ -10406,6 +10594,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
         const wf = !!(b.card && b.card.type === 'workflow');
         if (wf && b.state === 'building') continue;   // transient (no name yet) — never worth a header line
+        // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
+        const cc = composerHeaderCard(b);
+        if (cc) { cards.push(cc); continue; }
         if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
@@ -10510,6 +10701,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  const composerMode = thread.mode === 'composer';
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
   const modelEngine = model ? askTurnEngine(id, thread, model) : null;
@@ -10589,23 +10781,27 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
-    const mcp = await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
+    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
     // D12: the chat's engine is its (validated, engine-locked) model's. A Codex chat gets no registry copies (§4.6, §10)
     // and is told so once per chat.
     const engine = modelEngine === 'codex' ? 'codex' : 'claude';
-    const mcpCodexNote = engine === 'codex' && mcp.result.copies.length > 0
+    const mcpCodexNote = !composerMode && engine === 'codex' && mcp.result.copies.length > 0
       && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
-    const skills = await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
+    const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
     // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
-    const agentOn = askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
-    const systemPrompt = await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+    const agentOn = !composerMode && askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
+    const systemPrompt = composerMode
+      ? await askComposerSystemPromptFor(catalog, { web, engine })
+      : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
     const header = askBuildContextHeader(headerCtx);
-    const prompt = askBuildTurnPrompt(header, text, inline);
+    // The open canvas rides the composer chat's turn prompt (never the 1 KB context header, which clips).
+    const composerBlock = composerMode ? await composerPromptBlock(askGetThread(id)) : '';
+    const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
     const attachmentNames = {};
@@ -10628,6 +10824,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       mcp: engine === 'codex' ? null : mcp.result,
       skills: skills.result,
       agentMode: agentOn,
+      composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       ...(engine === 'codex' ? {
         engine,
         mcpCodexNote,
@@ -10649,7 +10846,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         onWorktreeMutation: () => { emitAskWorktrees(id); },
         // §9.1 (D17): at turn end, name the copies a worktree opened this turn brings into the next one.
         // A Codex chat's notice names only the skills that join (#635): it starts no copy.
-        mcpJoinNotice: () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
+        mcpJoinNotice: composerMode ? () => '' : () => askMcpJoinNotice({ before: { ...mcp, skills: skills.result }, ctx, threadId: id, off: askGetThread(id)?.mcpOff ?? null, model, engine }),
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
@@ -10742,6 +10939,16 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const mo = body.mcpOff === undefined ? { ok: true, value: undefined } : validateMcpOff(body.mcpOff);
     if (!mo.ok) return badRequest(res, mo.error);
     if (body.agentMode !== undefined && typeof body.agentMode !== 'boolean') return badRequest(res, 'agentMode must be true or false');
+    // Workflows view (D11): a composer chat sends the open canvas with EVERY message. It is validated here and
+    // stored on the thread before the turn, so the MCP child and the prompt read what the user sees now.
+    let composerState = null;
+    if (thread.mode === 'composer') {
+      // Attachments ride a composer message exactly as an Ask one: validated below (before any write), then stored,
+      // inlined and listed by startAskTurn, whose prompt path is the same for both modes.
+      const pc = validateComposerPayload(body.composer);
+      if (!pc.ok) return badRequest(res, pc.error);
+      composerState = pc.value;
+    }
     // #397: explicit pin beats page context, per field. A context carrying its own
     // `pinned` verdict is authoritative — the selector-aware client already merged
     // (true) or explicitly chose Auto (false). A context WITHOUT one comes from a
@@ -10799,6 +11006,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       }
     }
 
+    if (composerState) askUpdateThread(id, { composer: composerState });
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
@@ -11048,6 +11256,15 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
+    if (found.block.card && isComposerCard(found.block.card)) {
+      // Workflows chat cards (D13): the dock applies/undoes/saves in the browser and records it here. No event
+      // turn — the next message carries the canvas, so the model sees the result anyway.
+      const next = composerCardPatch(found.block.card, found.block.state, body);
+      if (!next.ok) return res.status(next.status).json({ error: next.error });
+      const block = flipCard(id, cardId, next.patch);
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
     if (found.block.card && found.block.card.type === 'schedule') {
       // Schedule card (docs/scheduled-runs.md "Ask Worca"): proposed → applied | failed | declined. The change —
       // start now, move, edit, cancel, delete — happens HERE, behind the click, through the same scheduleVerb
@@ -13458,6 +13675,14 @@ async function settleShutdownSteps(steps, { timeoutMs = SHUTDOWN_STEPS_MS, log =
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Never serve from a run's own folder: Worca deletes it when the run is discarded or
+  // archived, or by the boot sweep below, and the server would lose its own code.
+  const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());
+  if (hostingRun) {
+    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree. Not starting.`);
+    process.exit(1);
+  }
+
   // A hosting platform's outbound network policy (WORCA_EGRESS_MODE, src/core/egress-policy.mjs):
   // the policy proxy starts on loopback and its address goes into process.env before anything
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
@@ -13548,7 +13773,7 @@ if (isMain) {
     }, drainTimeoutMs() + SHUTDOWN_STEPS_MS + 5_000);
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
-      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll() }))
+      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
       .finally(() => { clearTimeout(hardExit); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -13582,6 +13807,9 @@ if (isMain) {
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
+    // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
+    try { prWatcher.runner.start(); }
+    catch (err) { console.warn(`[worca-ui] PR watch: ${err?.message || err}`); }
     // Model bridge (model-bridge-design.md §4.1): up before the first bridged
     // spawn so resolveModelEnv's synchronous start is the exception, not the rule.
     startBridge({ log: (m) => console.warn(m) }).catch((err) => console.warn(`[worca-ui] model bridge: ${err?.message || err}`));
@@ -13630,6 +13858,6 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

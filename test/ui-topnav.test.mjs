@@ -14,14 +14,14 @@ test('pageTitle: New run, the three Runs routes, and the pages the sidebar does 
   for (const v of ['runs', 'running', 'history']) assert.equal(pageTitle(v), 'Runs', v);
   assert.equal(pageTitle('getting-started'), 'Getting started');
   assert.equal(pageTitle('workspace-create'), 'New workspace');
-  assert.equal(pageTitle('agent-create'), 'New agent');
+  assert.equal(pageTitle('workflows'), 'Workflows');
   assert.equal(pageTitle('settings'), 'Settings');
 });
 
 test('pageTitle: every sidebar page is named by its own sidebar label', () => {
   const doc = new JSDOM(read('index.html')).window.document;
   const rows = [...doc.querySelectorAll('.nav button[data-nav]:not([data-nav="new"])')];
-  assert.ok(rows.length >= 14, `${rows.length} sidebar pages`);
+  assert.ok(rows.length >= 12, `${rows.length} sidebar pages`);
   for (const b of rows) {
     const label = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)').textContent.trim();
     assert.equal(pageTitle(b.dataset.nav), label, b.dataset.nav);
@@ -30,7 +30,7 @@ test('pageTitle: every sidebar page is named by its own sidebar label', () => {
 
 test('pageTitle: every route app.js knows has a name; anything else is "Worca"', () => {
   const names = JSON.parse(read('app.js').match(/const VIEW_NAMES = (\[[^\]]*\]);/)[1].replace(/'/g, '"'));
-  assert.ok(names.length >= 20, `${names.length} routes`);
+  assert.ok(names.length >= 18, `${names.length} routes`);
   for (const v of names) assert.notEqual(pageTitle(v), 'Worca', `${v} has no title`);
   for (const v of ['', 'bogus', 'constructor', '__proto__', 'toString', undefined]) assert.equal(pageTitle(v), 'Worca', String(v));
   assert.ok(Object.isFrozen(PAGE_TITLES));
