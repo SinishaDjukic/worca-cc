@@ -782,12 +782,13 @@ test('codex: enableAllProjectMcpServers approves every committed server but a di
   assert.match(committedWarning(rcOff.warnings)[0], /: a, b, c, d\. /);
 });
 
-test('codex: a Claude run of the same checkout is unchanged — the committed servers load natively, no mcp.json, no warning', async () => {
+test('claude: the committed servers load natively, no mcp.json; the unapproved ones are named and not granted', async () => {
   const { member, home } = await committedMcpMember({ user: { enabledMcpjsonServers: ['a', 'b'] } });
   const rc = await assemble({ runRoot: await mkRunRoot(), members: [member], homeDir: home, platform: 'darwin' });
   assert.equal(rc.mcpConfigPath, null);
-  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical `a` is granted, as before');
-  assert.deepEqual(committedWarning(rc.warnings), []);
+  assert.deepEqual(rc.mcpServerNames, ['a'], 'the real dir\'s identical, approved `a` is granted, as before');
+  const [w] = committedWarning(rc.warnings);
+  assert.match(w, /^engine claude: .* are not started: c, d\. /, 'the runner holds them (claude-runner.mjs); the run says so');
 });
 
 test('mcpjsonApproval: the committed .claude/settings.json (and a tracked settings.local.json) can only restrict; user and managed settings approve', async () => {
@@ -1623,13 +1624,13 @@ test('registry layer: taken = pre-screen merged ∪ nativeOnly ∪ committed ∪
   const file = JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers;
   assert.deepEqual(Object.keys(file).sort(), ['jira_w', 'sentry_billing'], 'leaky dropped by block mode, native loads natively');
   assert.equal(file.sentry_billing.headers.Authorization, 'Token token=${MCPSECRET_2EB4507A}', 'a resolver ref the screen would flag is kept');
-  assert.deepEqual(rc.mcpServerNames, ['jira_w', 'native', 'sentry_billing'], 'grants follow `written` ∪ nativeOnly');
+  assert.deepEqual(rc.mcpServerNames, ['jira_w', 'sentry_billing'], 'grants follow `written` ∪ nativeOnly; the unapproved committed `native` is held, so not granted');
   assert.ok(!JSON.stringify(await readRunManifest(rr)).includes('sntrys_live_token_value'), 'no secret value reaches run.json');
   const md = await readFile(rc.claudeMdPath, 'utf8');
   assert.match(md, /- `sentry_billing` — Sentry issues and events · set Billing · projects shop\n/);
   assert.match(md, /- `jira_w` — Search and read Jira issues · set General · projects shop \(renamed from `jira`\)/);
   assert.doesNotMatch(md, /`leaky`/, 'the roster lists written ∪ nativeOnly only');
-  assert.match(md, /`native` — from/);
+  assert.doesNotMatch(md, /`native` — from/, 'nor the held committed `native`: it does not start');
 });
 
 test('registry layer: warnings for problem skips, renames, the cap and the broker (D18) — none for off / opted-out', async () => {
@@ -1691,7 +1692,7 @@ test('§5.5.6: a committed .mcp.json server that references ${MCPSECRET_…} loa
   };
   const same = await run({ thief });
   assert.equal(same.calls, 0, 'the resolver never runs: no registry secret enters the spawn env');
-  assert.deepEqual(same.rc.mcpServerNames, ['thief'], 'no registry copy; the native grant is unchanged');
+  assert.deepEqual(same.rc.mcpServerNames, [], 'no registry copy; the unapproved committed `thief` is held, so not granted');
   for (const n of ['thief', 'wtthief']) {
     assert.ok(same.rc.warnings.includes(`MCP server \`${n}\` in a committed .mcp.json references a registry secret (\${MCPSECRET_…}); no registry MCP servers were added to this run.`), n);
   }

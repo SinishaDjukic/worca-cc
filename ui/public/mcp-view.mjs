@@ -1170,9 +1170,9 @@ export async function mountProjectMcp(sec, { key, name, api, doc = globalThis.do
   await paintMcpResolution(servers, { target: { projectKey: key }, title: `Servers in runs on ${name}`, skillsTitle: `Skills in runs on ${name}`, api, doc });
 }
 
-// ── the repository's own .mcp.json (src/core/mcpjson-approval.mjs): Claude Code asks for these itself; a Codex,
-// Copilot or Cursor run attaches only the approved ones, so an unapproved one gets an Approve button ──
-const COMMITTED_STATUS = { approved: 'approved', unapproved: 'not approved: Codex, Copilot and Cursor runs leave it out', disabled: 'turned off in Claude Code settings' };
+// ── the repository's own .mcp.json (src/core/mcpjson-approval.mjs): a run starts only the approved ones, on every
+// engine, so an unapproved one gets an Approve button ──
+const COMMITTED_STATUS = { approved: 'approved', unapproved: 'not approved: runs leave it out', disabled: 'turned off in Claude Code settings' };
 export async function paintCommittedMcp(sec, { key, api, doc = globalThis.document }) {
   const r = await api('GET', `/api/mcp/projects/${enc(key)}/mcpjson`);
   if (!r.ok) { sec.replaceChildren(h(doc, 'small', 'hint err', r.data?.error || `HTTP ${r.status}`)); return; }
@@ -1200,7 +1200,7 @@ export async function paintCommittedMcp(sec, { key, api, doc = globalThis.docume
     card.appendChild(row);
   }
   card.appendChild(h(doc, 'small', 'hint', canApprove || !servers.some((s) => s.status === 'unapproved')
-    ? 'Claude runs ask in Claude Code. Approve writes the server into this project’s .claude/settings.local.json, which git does not track.'
+    ? 'Approve writes the server into this project’s .claude/settings.local.json, which git does not track.'
     : 'This repository tracks .claude/settings.local.json, so an approval there does not count. Approve the servers in ~/.claude/settings.json.'));
   card.appendChild(msg);
   sec.replaceChildren(card);

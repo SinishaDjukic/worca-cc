@@ -1,10 +1,10 @@
 // src/core/mcpjson-approval.mjs
-// A project's committed `.mcp.json` servers as Worca sees them for an engine that reads no
-// `.mcp.json` on its own (Codex, Copilot, Cursor): each one approved, unapproved or disabled by
-// the same rules a run uses (run-context.mjs mcpjsonApproval), and the Approve action, which
-// names a server in the project's own `.claude/settings.local.json`, the file Claude Code keeps
-// for local answers. That file only counts while git does not track it, so Approve refuses a
-// tracked one and keeps a new one out of git.
+// A project's committed `.mcp.json` servers as Worca sees them on every engine: each one approved,
+// unapproved or disabled by the rules a run uses (run-context.mjs mcpjsonApproval). Codex, Copilot
+// and Cursor attach only the approved ones; a Claude spawn names the rest in disabledMcpjsonServers
+// (unapprovedMcpjsonNames). The Approve action names a server in the project's own
+// `.claude/settings.local.json`, the file Claude Code keeps for local answers. That file only counts
+// while git does not track it, so Approve refuses a tracked one and keeps a new one out of git.
 
 import { readFile, appendFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -66,6 +66,20 @@ export async function committedMcpStatus(projectDir, { homeDir = homedir() } = {
     canApprove: !localSettingsTracked(projectDir),
     error: null,
   };
+}
+
+/**
+ * The servers of `<cwd>/.mcp.json` that are not approved for `projectDir` (default `cwd`), by raw name. A Claude
+ * spawn starts every server of that file in `-p` whatever its approval (probed on Claude Code 2.1.293), so the
+ * runner names these in `disabledMcpjsonServers`, which Claude Code honors over any approval. Read at each spawn:
+ * an agent may have edited the file since the run started. No file, or one Claude Code cannot parse either: none.
+ */
+export async function unapprovedMcpjsonNames(cwd, projectDir = cwd, { homeDir = homedir() } = {}) {
+  if (!cwd) return [];
+  const { servers } = await readMcpFile(join(cwd, '.mcp.json'));
+  if (!servers || !Object.keys(servers).length) return [];
+  const verdict = await mcpjsonApproval(projectDir || cwd, homeDir, () => {});
+  return Object.keys(servers).filter((n) => verdict(n) !== 'approved').sort();
 }
 
 /**
