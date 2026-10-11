@@ -33,6 +33,14 @@ after(async () => {
   await Promise.all(tmpDirs.map((d) => rm(d, { recursive: true, force: true })));
 });
 
+test('worktreeGraphInstruction: dated to the run start, never "fresh", and names the refresh command', () => {
+  // Every step of a run gets this same text, also after the code has changed.
+  const text = worktreeGraphInstruction();
+  assert.match(text, /built at the start of this run/);
+  assert.doesNotMatch(text, /fresh/i);
+  assert.match(text, /does not show changes made since; run `graphify update \.` first/);
+});
+
 test('runGraphifyUpdate: success — runs in cwd and targets the dir arg', POSIX_SHIM, async () => {
   const binDir = await makeTmpDir('worca-cc-bin-');
   const work = await makeTmpDir('worca-cc-work-');   // the dir arg (target)
