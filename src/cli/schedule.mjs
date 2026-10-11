@@ -348,7 +348,7 @@ export async function waitAndRun({ ticketId, tz, out, c, drive, pollMs = 5000, s
     recordOutcome(ticketId, { status: 'error', detail: err && err.message ? err.message : String(err) });
     throw err;
   }
-  recordOutcome(ticketId, { status: res.status, pipelineId: res.pipelineId || null, reason: res.reason || null, detail: res.detail || null });
+  recordOutcome(ticketId, { status: res.status, pipelineId: res.pipelineId || null, reason: res.reason || null, detail: res.detail || null, limitEngine: res.limitEngine || null });
   return res.code;
 }
 

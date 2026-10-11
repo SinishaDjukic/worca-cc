@@ -1,12 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import {
-  ZOOM_MIN, GEOMETRY_CSS_VARS, injectGeometry,
-  nodeSize, portAnchor, snap,
-  hitNode, hitPort, graphBounds, fitBounds,
-  BAND_H, geometryCssVars,
-} from '../src/shared/graph/geometry.mjs';
+import { NODE_W, LABEL_H, ROW_H, SEP_H, PAD_T, PAD_B, CAP_H, DESC_H, BAND_H, FOOT_H, EXEC_ROW_H, ROW0,
+  ZOOM_MIN, GEOMETRY_CSS_VARS, injectGeometry, snap, hitNode, hitPort, fitBounds,
+  nodeSize, portAnchor, graphBounds, geometryCssVars } from '../src/shared/graph/geometry.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
 
 // The reference prototype's 3-card scene (the 2026-08-26 CDP measurement).
@@ -18,44 +15,6 @@ const N_TASK = { id: 'n_task', kind: 'task', x: 60, y: 143, config: {} };
 const N_AGENT = { id: 'n_agent', kind: 'agent', key: 'planner', x: 400, y: 80, config: {} };
 const N_END = { id: 'n_end', kind: 'end', x: 760, y: 143, config: {} };
 const P = (n) => portsFn(n);
-
-test('nodeSize closed forms', () => {
-  assert.deepEqual(nodeSize(N_AGENT, P(N_AGENT)), { w: 220, h: 191.5 });   // 95.5 + 24*4
-  assert.equal(nodeSize(N_TASK, P(N_TASK)).h, 110.5);
-  assert.equal(nodeSize(N_END, P(N_END)).h, 110.5);
-  const or2 = { id: 'o', kind: 'or', x: 0, y: 0, config: { arity: 2 } };
-  const and2 = { id: 'a', kind: 'and', x: 0, y: 0, config: { arity: 2 } };
-  assert.equal(nodeSize(or2, P(or2)).h, 167.5);
-  assert.equal(nodeSize(and2, P(and2)).h, 134.5);
-  const agentPorts = (nIn, nOut) => ({
-    inputs: [...Array.from({ length: nIn }, (_, i) => ({ id: `i${i}`, type: 'md' })),
-      { id: 'await', type: 'any', synthetic: true }],
-    outputs: Array.from({ length: nOut }, (_, i) => ({ id: `o${i}`, type: 'md' })) });
-  const bare = { id: 'x', kind: 'agent', key: 'k', x: 0, y: 0, config: {} };
-  for (const [nIn, nOut] of [[1, 1], [2, 2], [3, 2], [1, 3]]) {
-    assert.equal(nodeSize(bare, agentPorts(nIn, nOut)).h, 95.5 + 24 * (nIn + nOut), `agent ${nIn}/${nOut}`);
-  }
-  // A zone is emitted only when NON-EMPTY, so a zero-input agent loses one
-  // separator and falls BELOW the closed form (which assumes both zones exist).
-  // The SAME rule moves its await gate up by the missing separator: the spec's
-  // `y + 74 + 24·(nIn+nOut)` becomes `y + 65 + 24·nOut` at nIn = 0. Both are
-  // deviations from the closed form and both are CORRECT — pin them together so
-  // P5's CDP measurement script cannot "fix" the code towards the formula.
-  assert.equal(nodeSize(bare, agentPorts(0, 1)).h, 110.5);            // not 119.5
-  assert.equal(portAnchor(bare, agentPorts(0, 1), 'await', 'in').y, 89);   // y(0) + 65 + 24·1, not 98
-  assert.equal(portAnchor(bare, agentPorts(1, 1), 'await', 'in').y, 122);  // y(0) + 74 + 24·2 — the closed form holds from nIn = 1
-});
-
-test('port anchors match the measured prototype', () => {
-  assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'task', 'in'), { x: 400, y: 136 });
-  assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'fix', 'in'), { x: 400, y: 160 });
-  assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'plan', 'out'), { x: 620, y: 193 });
-  assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'review', 'out'), { x: 620, y: 217 });
-  assert.deepEqual(portAnchor(N_AGENT, P(N_AGENT), 'await', 'in'), { x: 400, y: 250 });
-  assert.deepEqual(portAnchor(N_TASK, P(N_TASK), 'task', 'out'), { x: 280, y: 199 });
-  assert.deepEqual(portAnchor(N_END, P(N_END), 'result', 'in'), { x: 760, y: 199 });
-  assert.equal(portAnchor(N_AGENT, P(N_AGENT), 'ghost', 'in'), null);
-});
 
 test('hit tests', () => {
   const size = nodeSize(N_AGENT, P(N_AGENT));
@@ -75,55 +34,83 @@ test('snap rounds to the 11px half-grid', () => {
   assert.equal(snap(100, 10), 100);
 });
 
-test('graphBounds + fitBounds reproduce the measured auto-fit', () => {
+const AGENT = { id: 'n_a', kind: 'agent', key: 'planner', x: 100, y: 200, config: {} };
+const AGENT_PORTS = {
+  inputs: [{ id: 'task', type: 'md' }, { id: 'answers', type: 'json' }, { id: 'await', type: 'any', synthetic: true }],
+  outputs: [{ id: 'plan', type: 'md' }],
+};
+const TASK = { id: 'n_t', kind: 'task', x: 0, y: 0, config: {} };
+const TASK_PORTS = { inputs: [], outputs: [{ id: 'task', type: 'md' }] };
+
+test('mockup numbers: 232 wide, 22px rows, 6px pads, 9px zone gap, label row 26 above, ROW0 17', () => {
+  assert.deepEqual([NODE_W, ROW_H, SEP_H, PAD_T, PAD_B, LABEL_H, CAP_H, DESC_H, BAND_H, FOOT_H, EXEC_ROW_H, ROW0],
+    [232, 22, 9, 6, 6, 26, 27, 46, 24, 26, 22, 17]);
+});
+
+test('nodeSize: inputs (await last) · gap · outputs; caption on flow cards; description only when describe', () => {
+  assert.deepEqual(nodeSize(AGENT, AGENT_PORTS), { w: 232, h: 6 + 3 * 22 + 9 + 22 + 6 });            // 109
+  assert.equal(nodeSize(AGENT, AGENT_PORTS, { describe: true }).h, 109 + 46);
+  assert.equal(nodeSize(TASK, TASK_PORTS).h, 6 + 22 + 6 + 27, 'Task = 61 (mockup)');
+  assert.equal(nodeSize(TASK, TASK_PORTS, { describe: true }).h, 61, 'describe never touches a flow card');
+  assert.equal(nodeSize(AGENT, AGENT_PORTS, { band: true }).h, 109 + 24);
+  assert.equal(nodeSize(AGENT, AGENT_PORTS, { footerRows: 2 }).h, 109 + 26 + 22);
+  assert.deepEqual(nodeSize(AGENT, AGENT_PORTS, { scale: 0.5 }), { w: 116, h: 54.5 });
+});
+
+test('portAnchor: inputs on the left edge from y+17, the await gate after the meta inputs, outputs after the gap', () => {
+  assert.deepEqual(portAnchor(AGENT, AGENT_PORTS, 'task', 'in'), { x: 100, y: 217 });
+  assert.deepEqual(portAnchor(AGENT, AGENT_PORTS, 'answers', 'in'), { x: 100, y: 239 });
+  assert.deepEqual(portAnchor(AGENT, AGENT_PORTS, 'await', 'in'), { x: 100, y: 261 });
+  assert.deepEqual(portAnchor(AGENT, AGENT_PORTS, 'plan', 'out'), { x: 332, y: 200 + 17 + 3 * 22 + 9 });
+  assert.deepEqual(portAnchor(AGENT, AGENT_PORTS, 'task', 'in', { band: true }), { x: 100, y: 241 });
+  assert.equal(portAnchor(AGENT, AGENT_PORTS, 'nope', 'out'), null);
+  assert.deepEqual(portAnchor(TASK, TASK_PORTS, 'task', 'out'), { x: 232, y: 17 });
+});
+
+test('graphBounds reaches up over the label row', () => {
+  const b = graphBounds({ nodes: [TASK] }, () => TASK_PORTS);
+  assert.deepEqual(b, { x: 0, y: -26, w: 232, h: 26 + 61 });
+});
+
+test('the CSS variable set: label/cap/desc replace the old head height', () => {
+  const v = geometryCssVars(1);
+  assert.equal(v['--gv-label-h'], '26px');
+  assert.equal(v['--gv-cap-h'], '27px');
+  assert.equal(v['--gv-desc-h'], '46px');
+  assert.equal(v['--gv-border'], '0px');
+  assert.equal('--gv-head-h' in v, false);
+});
+
+test('graphBounds + fitBounds: the union of the boxes AND their label rows; fit centres, clamps at the floor, never magnifies', () => {
   const tpl = { version: 2, nodes: [N_TASK, N_AGENT, N_END], wires: [] };
-  assert.deepEqual(graphBounds(tpl, portsFn), { x: 60, y: 80, w: 920, h: 191.5 });
+  const b = graphBounds(tpl, portsFn);
+  const bottom = Math.max(N_AGENT.y + nodeSize(N_AGENT, P(N_AGENT)).h, N_END.y + nodeSize(N_END, P(N_END)).h);
+  assert.deepEqual(b, { x: 60, y: 80 - LABEL_H, w: 760 + NODE_W - 60, h: bottom - (80 - LABEL_H) });
   const padded = graphBounds(tpl, portsFn, { pad: 60 });
-  assert.deepEqual(padded, { x: 0, y: 20, w: 1040, h: 311.5 });
-  assert.deepEqual(fitBounds(padded, { width: 1280, height: 560 }), { z: 1, tx: 120, ty: 104.25 });
+  assert.deepEqual(padded, { x: b.x - 60, y: b.y - 60, w: b.w + 120, h: b.h + 120 });
+  assert.deepEqual(fitBounds(padded, { width: 1280, height: 560 }), { z: 1, tx: (1280 - padded.w) / 2 - padded.x, ty: (560 - padded.h) / 2 - padded.y });
+  assert.deepEqual(fitBounds(b, { width: 1280, height: 560 }), { z: 1, tx: (1280 - b.w) / 2 - b.x, ty: (560 - b.h) / 2 - b.y }, 'centred on the box, not on the origin');
   assert.equal(fitBounds(padded, { width: 200, height: 100 }).z, ZOOM_MIN, 'fit clamps at the floor');
   assert.equal(fitBounds(padded, { width: 200, height: 100 }, { zoomMin: 0 }).z < 0.4, true);
   assert.deepEqual(graphBounds({ nodes: [] }, portsFn), null);
-  // A truthy non-object entry survived `filter(Boolean)` and sized as a card at
-  // the origin, stretching the bounds of every thumbnail built from a junk row.
+  // A truthy non-object entry must never size as a card at the origin.
   const junk = { nodes: [null, 7, 'x', N_TASK, N_AGENT, N_END] };
   assert.deepEqual(graphBounds(junk, portsFn), graphBounds(tpl, portsFn));
 });
 
-test('scale multiplies every length; band adds BAND_H under an AGENT head only', () => {
-  assert.equal(BAND_H, 24);
-  const s = 0.65;
-  assert.deepEqual(nodeSize(N_AGENT, P(N_AGENT), { scale: s }), { w: 220 * s, h: 191.5 * s });
-  assert.equal(nodeSize(N_AGENT, P(N_AGENT), { band: true }).h, 191.5 + 24);
-  assert.equal(nodeSize(N_TASK, P(N_TASK), { band: true }).h, 110.5, 'flow cards get no band');
-  assert.equal(Math.round(nodeSize(N_AGENT, P(N_AGENT), { band: true, scale: s }).h * 10) / 10, 140.1, 'Plan at chat scale (mockup F)');
-  const a0 = portAnchor(N_AGENT, P(N_AGENT), 'task', 'in');
-  const a1 = portAnchor(N_AGENT, P(N_AGENT), 'task', 'in', { band: true });
-  assert.equal(a1.y - a0.y, 24, 'inputs move down by the band');
-  const o = portAnchor(N_AGENT, P(N_AGENT), 'plan', 'out', { band: true, scale: s });
-  assert.equal(o.x, N_AGENT.x + 220 * s, 'output anchors sit on the SCALED right edge');
-  assert.equal(o.y, N_AGENT.y + (56 + 24 + 2 * 24 + 9) * s, 'first output = ROW0 + band + 2 input rows + 1 sep, scaled');
-  assert.equal(portAnchor(N_AGENT, P(N_AGENT), 'await', 'in', { band: true, scale: s }).y,
-    N_AGENT.y + (56 + 24 + 2 * 24 + 9 + 2 * 24 + 9) * s);
-  const b = graphBounds({ nodes: [N_AGENT] }, portsFn, { band: true, scale: s });
-  assert.deepEqual(b, { x: N_AGENT.x, y: N_AGENT.y, w: 220 * s, h: (191.5 + 24) * s });
-});
-
-test('geometryCssVars(scale) scales the px vars, carries --gv-scale and --gv-band-h; injectGeometry(el, scale) writes them', () => {
+test('geometryCssVars(scale) scales the px vars and keeps one key set; injectGeometry(el, scale) writes them', () => {
   const one = geometryCssVars(1);
-  assert.equal(one['--gv-node-w'], '220px');
-  assert.equal(one['--gv-band-h'], '24px');
+  assert.equal(one['--gv-node-w'], `${NODE_W}px`);
   assert.equal(one['--gv-scale'], '1');
   assert.deepEqual(GEOMETRY_CSS_VARS, one, 'the frozen constant is scale 1');
   const s = geometryCssVars(0.65);
-  assert.equal(s['--gv-node-w'], '143px');
-  assert.equal(s['--gv-head-h'], '22.1px');
-  assert.equal(s['--gv-band-h'], '15.6px');
+  assert.equal(s['--gv-node-w'], '150.8px');
+  assert.equal(s['--gv-label-h'], '16.9px');
   assert.equal(s['--gv-scale'], '0.65');
   assert.deepEqual(Object.keys(s), Object.keys(one), 'same key set at every scale (ui-graph-css pins the set)');
   const dom = new JSDOM('<!doctype html><body><div id="s"></div></body>');
   const el = dom.window.document.getElementById('s');
   injectGeometry(el, 0.65);
-  assert.equal(el.style.getPropertyValue('--gv-node-w'), '143px');
+  assert.equal(el.style.getPropertyValue('--gv-node-w'), '150.8px');
   assert.equal(el.style.getPropertyValue('--gv-scale'), '0.65');
 });

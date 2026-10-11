@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  BUDGET_WARN_AT, renderKpiRow, renderBudgetIndicator,
+  BUDGET_WARN_AT, renderKpiRow,
   renderCostPauseBanner, renderStatsBody,
 } from '../ui/public/stats-view.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -73,52 +73,6 @@ test('renderKpiRow: a payload without the new fields renders zeros, not a throw'
   assert.match(tiles[2].querySelector('.stat-value').textContent, /\$12\.34/,
     'pipelineSpendUsd falls back to spentUsd');
   assert.match(tiles[3].querySelector('.stat-sub').textContent, /no sessions in this period/);
-});
-
-test('renderBudgetIndicator: states default/warn/over/no-limit + period label + nav target', () => {
-  let el = renderBudgetIndicator({ ...BUDGET, windowSpendUsd: 10 }, { doc });
-  assert.equal(el.dataset.nav, 'stats');
-  assert.match(el.querySelector('.spend-ind-label').textContent, /Spent this week/);
-  assert.ok(!el.classList.contains('warn') && !el.classList.contains('over'));
-  assert.ok(el.querySelector('.spend-ind-meter'), 'the status bar stays');
-  assert.equal(el.querySelector('.spend-ind-sub'), null,
-    'no "of $X · resets in Y" sub-line — the card is value + bar only');
-  el = renderBudgetIndicator(BUDGET, { doc });                       // 41.23/50 = 82%
-  assert.ok(el.classList.contains('warn'));
-  assert.equal(el.querySelector('.spend-ind-sub'), null, 'warn state has no sub-line either');
-  assert.match(el.title, /\$41\.2312/);
-  assert.match(el.title, /not authoritative billing/);
-  el = renderBudgetIndicator({ ...BUDGET, windowSpendUsd: 52, blocked: true }, { doc });
-  assert.ok(el.classList.contains('over'));
-  assert.match(el.querySelector('.spend-ind-sub').textContent, /new runs blocked/);
-  el = renderBudgetIndicator({ ...BUDGET, totalLimitUsd: null, blocked: false,
-    resetPeriod: 'monthly' }, { doc });
-  assert.equal(el.querySelector('.spend-ind-meter'), null);
-  assert.equal(el.querySelector('.spend-ind-row'), null, 'no limit is the one-line card');
-  assert.equal(el.querySelector('.spend-ind-spent').textContent, '$41 spent');
-  assert.equal(el.querySelector('.spend-ind-sub'), null, 'the "no total limit" note is gone');
-});
-
-// ---- no total limit: one line, "Oct   $163 spent   $3,591 saved", spread space-between ----
-// Local-calendar bounds, as costWindowStart/End build them, so the month reads the same in every TZ.
-const OCT = { windowStartMs: new Date(2026, 9, 1).getTime(), windowEndMs: new Date(2026, 10, 1).getTime() };
-const NO_LIMIT = { ...BUDGET, ...OCT, totalLimitUsd: null, remainingUsd: null, blocked: false,
-  resetPeriod: 'monthly', windowSpendUsd: 163.49, windowHumanHours: 60, windowSavedUsd: 3591.31 };
-// The figures after the month: one flex item each, siblings of the period (no wrapper, no dot).
-const figs = (el) => [...el.querySelector('.spend-ind-line').children].slice(1).map((c) => c.textContent);
-
-test('renderBudgetIndicator: no Saved figure in the payload -> "Oct  $163 spent" alone, never a fake $0', () => {
-  for (const windowSavedUsd of [undefined, null, Number.NaN]) {
-    const el = renderBudgetIndicator({ ...NO_LIMIT, windowSavedUsd }, { doc });
-    assert.equal(el.querySelectorAll('.spend-ind-line').length, 1, `windowSavedUsd=${windowSavedUsd}`);
-    assert.equal(el.querySelector('.spend-ind-period').textContent, 'Oct');
-    assert.deepEqual(figs(el), ['$163 spent'], 'the spent figure alone closes the line (flush right)');
-    assert.equal(el.querySelector('.spend-ind-saved'), null);
-    assert.equal(el.querySelector('.spend-ind-sep'), null, 'no dangling separator');
-    assert.equal(el.querySelector('.spend-ind-sub'), null);
-    assert.equal(el.getAttribute('aria-label'), 'Spent this month: $163.49');
-    assert.doesNotMatch(el.title, /Saved/);
-  }
 });
 
 test('renderCostPauseBanner: cb-pipeline offers override + settings with both figures; cb-total has no override and names the reset moment', async () => {

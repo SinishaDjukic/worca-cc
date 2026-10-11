@@ -25,7 +25,7 @@ import { projectKey } from '../src/core/store.mjs';
 import { readPipelineForResume, readPipelineByKey, listPipelines } from '../src/core/artifacts.mjs';
 import { setActionsSettings } from '../src/core/settings.mjs';
 import {
-  readRunManifest, updateRunManifest, claudeMdFenceBegin, CLAUDE_MD_FENCE_END,
+  readRunManifest, updateRunManifest, claudeMdFenceBegin, CLAUDE_MD_FENCE_END, RUN_ROOT_KNOWN_SET, scanStrayEntries,
 } from '../src/core/run-manifest.mjs';
 import { RUN_LOG_FILE } from '../src/core/run-log.mjs';
 import { STALE_INDEX_LOCK_MS } from '../src/core/git-lock.mjs';
@@ -226,6 +226,21 @@ test('detached: a failed teardown commit retains the worktree + run root and per
 // Phase 3 addition: the generated context files are part of the run root, so they go
 // with it — and they are NOT strays (RUN_ROOT_KNOWN_SET whitelists all of them), so
 // the §8.11 scan must stay silent about them.
+test('a Cursor run\'s .cursor config at a workspace run root is a known entry, not a stray', async () => {
+  assert.ok(RUN_ROOT_KNOWN_SET.has('.cursor'));
+  const runRoot = mkdtempSync(join(tmpdir(), 'worca-cc-cursor-root-'));
+  const pipelineDir = mkdtempSync(join(tmpdir(), 'worca-cc-cursor-pipe-'));
+  try {
+    mkdirSync(join(runRoot, '.cursor'));
+    writeFileSync(join(runRoot, '.cursor', 'cli.json'), '{}');
+    assert.deepEqual(await scanStrayEntries({ runRoot, pipelineDir }), []);
+    assert.ok(!existsSync(join(pipelineDir, 'stray')));
+  } finally {
+    rmSync(runRoot, { recursive: true, force: true });
+    rmSync(pipelineDir, { recursive: true, force: true });
+  }
+});
+
 test('detached: the generated CLAUDE.md / mcp.json / skill mount are removed WITH the run root, never rescued as strays', async () => {
   const repo = await freshRepo();
   await writeFile(join(repo, 'CLAUDE.md'), '# memory\n');

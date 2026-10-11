@@ -88,7 +88,7 @@ test('workflows and guardrail sets created while away show in the pickers on ret
       const sel = window.document.getElementById('workflowSelect');
       assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default'], 'boot: Auto + Default only');
 
-      await go(window, 'composer');
+      await go(window, 'workflows');
       server.workflows.push(WF_A);                       // what Composer's save does server-side
       await go(window, 'new');
       assert.deepEqual(optionIds(sel), ['wf_auto', 'wf_default', 'wf_a'], 'picker re-fetched on re-entry');
@@ -117,7 +117,7 @@ test('re-entry drops the per-id memo so a re-saved workflow repaints with its ne
   const rows = () => [...window.document.querySelectorAll('#agents-rows .agent-row')].map((r) => r.dataset.nodeId);
   assert.deepEqual(rows(), ['s0_0'], 'one node before the re-save');
 
-  await go(window, 'composer');
+  await go(window, 'workflows');
   server.workflows.splice(0, 1, WF_A2);              // same id, new topology
   await go(window, 'new');
   assert.equal(sel.value, 'wf_a', 'selection kept across the refresh');

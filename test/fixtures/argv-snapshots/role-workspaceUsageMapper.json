@@ -1,0 +1,24 @@
+{
+  "args": [
+    "-p",
+    "<PROMPT>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+    "--append-system-prompt",
+    "## Host process protection\nYou run under the worca app server (PID <PID>, `node ui/server.mjs`). Never kill it, and never kill any process you did not spawn yourself.\nPattern kills are forbidden and a PreToolUse hook blocks them on every OS: `pkill`, `killall`, `xargs kill`, `taskkill /IM`, `Stop-Process -Name`, `wmic process … delete`, and any `kill` fed from a pipe, variable, or substitution (e.g. `ps aux | grep … | while read p; do kill $p; done`).\nTo stop a process you started: record its PID when you spawn it (or list PIDs with `ps`, which is always allowed), then run `kill <literal pid>`.\n\n<SYSTEM_PROMPT>",
+    "--settings",
+    "{\"hooks\":{\"PreToolUse\":[{\"matcher\":\"Bash\",\"hooks\":[{\"type\":\"command\",\"command\":\"\\\"<NODE>\\\" \\\"<REPO>/src/core/host-guard.mjs\\\"\"}]}]}}",
+    "--allowedTools",
+    "Read,Write,Edit,Bash,Grep,Glob,Skill,Task,Agent"
+  ],
+  "stdin": "",
+  "files": {},
+  "envAdded": {
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+    "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8",
+    "WORCA_HOST_PID": "<PID>"
+  }
+}

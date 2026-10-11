@@ -23,6 +23,7 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { createAskTurn } from '../src/core/ask/turn.mjs';
 import { createThread, appendMessage, getMessage, getThread } from '../src/core/ask/store.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
+import { generatePrDescription } from '../src/core/pr-description.mjs';
 import { persistResults, persistDiffPatch } from '../src/core/results.mjs';
 import { listSubAgents } from '../src/core/artifacts.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
@@ -134,12 +135,15 @@ const spawnFrame = (id, input = {}) => ({
   type: 'assistant',
   raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Agent', input: { description: 'd', ...input } }] } },
 });
-const hookFrame = (id, costUsd) => ({
-  type: 'hook-event',
-  raw: {
-    type: 'hook-event', hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: id,
-    tool_response: { totalDurationMs: 100, totalTokens: 10, usage: { cost_usd: costUsd, input_tokens: 1_000_000 } },
-  },
+// The CLI's PostToolUse hook line: the payload rides as the hook's echoed stdout.
+const hookEnvelope = (payload) => {
+  const out = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Agent', ...payload });
+  return { type: 'hook-event', raw: { type: 'system', subtype: 'hook_response',
+    hook_name: 'PostToolUse:Agent', hook_event: 'PostToolUse', output: out, stdout: out } };
+};
+const hookFrame = (id, costUsd) => hookEnvelope({
+  tool_use_id: id,
+  tool_response: { totalDurationMs: 100, totalTokens: 10, usage: { cost_usd: costUsd, input_tokens: 1_000_000 } },
 });
 
 test('sub-agent: inherits the PARENT node\'s price — the child shares its endpoint', async () => {
@@ -176,13 +180,10 @@ test('sub-agent: an unpriceable {perMtok} child leaves the row\'s cost UNSET, no
   const { orch } = pausedOrch('mcos-sub4');
   const attr = { model: 'priced', stepKey: 'plan', nodeId: 'n', stepIndex: 0, cycle: 1 };
   orch._onAgentEvent('planner', spawnFrame('toolu_D'), attr);
-  orch._onAgentEvent('planner', {
-    type: 'hook-event',
-    raw: {
-      type: 'hook-event', hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_use_id: 'toolu_D',
-      tool_response: { totalDurationMs: 100, totalTokens: 10, cost_usd: 0.012 }, // cost, but no usage
-    },
-  }, attr);
+  orch._onAgentEvent('planner', hookEnvelope({
+    tool_use_id: 'toolu_D',
+    tool_response: { totalDurationMs: 100, totalTokens: 10, cost_usd: 0.012 }, // cost, but no usage
+  }), attr);
   const rec = orch.state.subAgents.find((s) => s.id === 'toolu_D');
   assert.equal(rec.costUsd, undefined);
   assert.equal(rec.durationMs, 100, 'the rest of the telemetry still lands');
@@ -304,4 +305,39 @@ test('overview agent: its sub-agent row is priced by the override, like any pipe
   const row = listSubAgents(id).find((s) => s.id === `overview-${id}`);
   assert.ok(row, 'the overview run is recorded as a sub-agent');
   assert.equal(row.costUsd, 0, 'the CLI\'s by-name 0.4625 is discarded');
+});
+
+test('overview agent: a runner that emits the normalized vocabulary is priced from its usage', async () => {
+  await addGlobalModel({ id: 'per-norm', env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { perMtok: { input: 5 } } });
+  const { id, dir, key } = await seedPipeline(join(home, 'proj-norm'));
+  await mkdir(dir, { recursive: true });
+  await persistResults(dir, { summary: { filesNew: 1 } });
+  await persistDiffPatch(dir, 'diff --git a/x b/x\n+hi');
+  await generateOverview(key, id, {
+    model: 'per-norm',
+    runClaudeImpl: async (opts) => {
+      opts.onEvent({ type: 'result', text: '', costUsd: 9, isError: false, usage: { input_tokens: 2_000_000 } });
+      return { text: '{"narrative":"did x","diffFindings":[],"diffCheckTruncated":false}' };
+    },
+  });
+  const row = listSubAgents(id).find((s) => s.id === `overview-${id}`);
+  assert.equal(row.costUsd, 10, '2M input tokens at $5/Mtok, read from the normalized result');
+});
+
+test('pr description: a runner that emits the normalized vocabulary is priced from its usage', async () => {
+  await addGlobalModel({ id: 'per-norm-pr', env: { ANTHROPIC_BASE_URL: 'https://p' }, cost: { perMtok: { input: 5 } } });
+  const { id, dir, key } = await seedPipeline(join(home, 'proj-norm-pr'));
+  await mkdir(dir, { recursive: true });
+  await persistResults(dir, { summary: { filesNew: 1 } });
+  await persistDiffPatch(dir, 'diff --git a/x b/x\n+hi');
+  await generatePrDescription(key, id, {
+    model: 'per-norm-pr', baseBranch: 'main',
+    runClaudeImpl: async (opts) => {
+      opts.onEvent({ type: 'result', text: '', costUsd: 9, isError: false, usage: { input_tokens: 2_000_000 } });
+      return { text: '## Summary\nDid x.' };
+    },
+  });
+  const row = listSubAgents(id).find((s) => s.subagentType === 'pr-description');
+  assert.ok(row, 'the generation is recorded as a sub-agent');
+  assert.equal(row.costUsd, 10, '2M input tokens at $5/Mtok, read from the normalized result');
 });

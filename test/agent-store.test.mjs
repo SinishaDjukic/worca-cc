@@ -54,6 +54,14 @@ test('createAgent rejects a builtin-key collision and an empty markdown', async 
     (e) => e.code === 'DUPLICATE');
 });
 
+test('createAgent refuses a key that differs from an existing agent only in case: one <key>.md on macOS and Windows', async () => {
+  await assert.rejects(
+    () => createAgent({ meta: { ...META, key: 'DocsWriter', displayName: 'DocsWriter' }, markdown: '# a different agent\n' }),
+    (e) => e.code === 'DUPLICATE' && /an agent "docsWriter" already exists — agent keys differ only in case/.test(e.message));
+  assert.equal(await readFile(join(userAgentsDir(), 'docsWriter.md'), 'utf8'), MD, 'the existing agent is untouched');
+  await assert.rejects(() => createAgent({ meta: { ...META, key: 'Planner' }, markdown: MD }), (e) => e.code === 'DUPLICATE', 'a built-in twin too');
+});
+
 test('readAgent returns {meta, markdown} for user AND builtin agents', async () => {
   const user = await readAgent('docsWriter');
   assert.equal(user.markdown, MD);
@@ -61,6 +69,8 @@ test('readAgent returns {meta, markdown} for user AND builtin agents', async () 
   assert.equal(builtin.meta.origin, 'builtin');
   assert.match(builtin.markdown, /\w/); // agents/worca-cc-planner.md body loaded
   assert.equal(await readAgent('nope'), null);
+  // An Object.prototype name is no agent (the registry is a plain object; the Workflows chat's get_agent reads through here).
+  for (const key of ['constructor', 'toString', 'hasOwnProperty']) assert.equal(await readAgent(key), null, key);
 });
 
 test('updateAgent edits meta + markdown for user agents; built-ins are 409-coded', async () => {

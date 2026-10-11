@@ -2,6 +2,7 @@
 // Ask Worca's side of the MCP registry (docs/superpowers/specs/2026-09-29-mcp-registry-design-v2.md §9):
 // the per-chat picker's choices (`mcpOff`), the targets in play, one resolve per turn or preview, the
 // prompt section's input and the turn-end worktree notice. The resolver itself is src/core/mcp/registry.mjs.
+import { codexSkillNames } from './prompt.mjs';
 import { SET_ID_RE, MEMBERSHIP_KEY_RE } from '../mcp/definitions.mjs';
 import { listProjects } from '../projects.mjs';
 import { readWorkspace } from '../workspaces.mjs';
@@ -176,23 +177,38 @@ function pickerSets(mcpSets, skillSets, blocked) {
  *  with the name the picker shows (P3's `qualifiedName`: the set's plugin name over the whole store, a never-consented
  *  Team skill too), the line and the reason P4's /api/mcp/preview gives them (`message`, `why`), and whether it is a
  *  problem rather than a choice; `started` counts 0 when the host refuses --plugin-dir (`layer`). */
-function skillsPreview(r) {
+function skillsPreview(r, engine = 'claude') {
+  // A Codex chat (#635): the names it loads them by (codexSkillNames) replace `<plugin>:<skill>`, and Claude Code's
+  // --plugin-dir block does not apply — codex reads the skills through read_file.
+  const codex = engine === 'codex';
+  const names = codex ? codexSkillNames(r.mounted) : null;
+  const blocked = codex ? null : r.blocked ?? null;
   return {
-    mounted: r.mounted.map(({ dir, ...m }) => m),
+    mounted: r.mounted.map(({ dir, ...m }) => (codex ? { ...m, qualifiedName: names.get(m.qualifiedName) } : m)),
     plugins: r.plugins,
-    skipped: r.skipped.map((x) => ({ ...x, message: skillSkipMessage(x), why: skillSkipReasonText(x), problem: SKILL_PROBLEM_REASONS.includes(x.reason) })),
-    started: r.blocked ? 0 : r.mounted.length,
-    layer: { blocked: r.blocked ?? null, text: r.blocked ? skillLayerText(r.blocked) : null },
+    skipped: r.skipped.map((x) => {
+      const row = codex ? { ...x, qualifiedName: x.name } : x;
+      return { ...row, message: skillSkipMessage(row), why: skillSkipReasonText(row), problem: SKILL_PROBLEM_REASONS.includes(x.reason) };
+    }),
+    started: blocked ? 0 : r.mounted.length,
+    layer: { blocked, text: blocked ? skillLayerText(blocked) : null },
     newer: r.newer === true,
   };
 }
 
 /** §9.4 — POST /api/ask/mcp-preview's body: the same resolve as the turn, reduced to what the picker shows.
  *  Never the servers, the env or a secret value. Skills registry §4.4: plus the turn's skills and the per-set counts. */
-export async function askMcpPreview({ ctx, threadId = null, off = null, model = null }, deps = {}) {
+export async function askMcpPreview({ ctx, threadId = null, off = null, model = null, engine = 'claude' }, deps = {}) {
   const d = { ...DEFAULT_DEPS, ...deps };
   const { result } = await resolveAskMcp({ ctx, threadId, off, model }, d);
   const { result: sk } = await resolveAskSkills({ ctx, threadId, off }, d);
+  // §4.6: a Codex chat starts no registry copy, only the set skills (#635). Its set rows count skills only, and
+  // `codexServers` says how many servers wait for a Claude chat, so the picker can say so.
+  if (engine === 'codex') {
+    const sets = pickerSets(result.sets, sk.sets, false).map((x) => ({ ...x, members: 0, started: 0 }));
+    return { sets, copies: [], started: 0, skipped: [], skippedTools: [], newer: result.newer === true,
+      codexServers: result.copies.length + result.skipped.length, skills: skillsPreview(sk, 'codex') };
+  }
   const { catalog } = result.skipped.length ? await storeAndCatalog(d) : { catalog: [] };
   return {
     sets: pickerSets(result.sets, sk.sets, !!sk.blocked), copies: result.copies, started: result.copies.length,
@@ -206,18 +222,20 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
 /** §9.1 (D17) — at turn end: re-run the targets in play and name, per project a new worktree brought in, the copies
  *  that join from the next message. null when no worktree target joined or it brings no copy. Skills registry §4.4:
  *  with `before.skills` (the turn's skills result) the skills that join are named too. */
-export async function askMcpJoinNotice({ before, ctx, threadId, off = null, model = null }, deps = {}) {
+export async function askMcpJoinNotice({ before, ctx, threadId, off = null, model = null, engine = 'claude' }, deps = {}) {
+  const codex = engine === 'codex';   // #635: a Codex chat gains skills only, named as it loads them (codexSkillNames)
   const next = await resolveAskMcp({ ctx, threadId, off, model }, deps);
   const nextSkills = before.skills ? (await resolveAskSkills({ ctx, threadId, off }, deps)).result : null;
   const had = new Set(before.targets.filter((t) => t.kind === 'project').map((t) => t.key));
   const old = new Set(before.result.copies.map((c) => c.name));
   const oldSkills = new Set((before.skills?.mounted ?? []).map((m) => m.qualifiedName));
+  const nameOf = codex && nextSkills ? ((names) => (m) => names.get(m.qualifiedName))(codexSkillNames(nextSkills.mounted)) : (m) => m.qualifiedName;
   const parts = [];
   for (const t of next.targets) {
     if (t.kind !== 'project' || t.route !== 'worktree' || had.has(t.key)) continue;   // §9.1: only an open worktree joins mid-turn
-    const joined = next.result.copies.filter((c) => !old.has(c.name) && c.projects.includes(t.key)).map((c) => c.name);
-    const skills = nextSkills && !nextSkills.blocked
-      ? nextSkills.mounted.filter((m) => !oldSkills.has(m.qualifiedName) && m.projects.includes(t.key)).map((m) => m.qualifiedName) : [];
+    const joined = codex ? [] : next.result.copies.filter((c) => !old.has(c.name) && c.projects.includes(t.key)).map((c) => c.name);
+    const skills = nextSkills && (codex || !nextSkills.blocked)
+      ? nextSkills.mounted.filter((m) => !oldSkills.has(m.qualifiedName) && m.projects.includes(t.key)).map(nameOf) : [];
     if (joined.length && skills.length) parts.push(`${t.name}'s MCP servers (${joined.join(', ')}) and skills (${skills.join(', ')}) join from the next message`);
     else if (joined.length) parts.push(`${t.name}'s MCP servers (${joined.join(', ')}) join from the next message`);
     else if (skills.length) parts.push(`${t.name}'s skills (${skills.join(', ')}) join from the next message`);

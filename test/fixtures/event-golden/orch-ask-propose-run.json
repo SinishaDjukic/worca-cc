@@ -1,0 +1,93 @@
+{
+ "emitted": [
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "[init] model=claude-haiku-4-5",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "stepskills",
+   "payload": {
+    "stepKey": "0:n1",
+    "nodeId": "n1",
+    "cycle": 1,
+    "skills": [
+     "mcp:worca:propose_run"
+    ],
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ mcp__worca__propose_run",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "← result ok toolu_00",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "proposed",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "proposed",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  }
+ ],
+ "subAgents": [],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "modelUsed": "claude-haiku-4-5",
+  "skills": [
+   "mcp:worca:propose_run"
+  ],
+  "costUsd": 0.0084
+ },
+ "totalCost": 0.0084
+}

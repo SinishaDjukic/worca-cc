@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keepListNames } from '../src/core/mcp/keep-list.mjs';
-import { childEnv, parseLaunchArgs, spawnPlan, winShimLine } from '../src/core/mcp/launch.mjs';
+import { childEnv, parseLaunchArgs, spawnPlan, winShimLine, scopeLauncherEnv } from '../src/core/mcp/launch.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const LAUNCH = fileURLToPath(new URL('../src/core/mcp/launch.mjs', import.meta.url));
@@ -58,7 +58,7 @@ test('childEnv: keep-list + only the --env keys renamed from MCPCHILD_*; every M
 
 test('parseLaunchArgs / spawnPlan / winShimLine: the verbatim cmd.exe line for a .cmd shim', () => {
   const o = parseLaunchArgs(['--copy', 'pw', '--env', 'A,B', '--win-shim', '--', 'C:\\Program Files\\nodejs\\npx.cmd', '-y', 'pkg', 'a b']);
-  assert.deepEqual(o, { copy: 'pw', envKeys: ['A', 'B'], winShim: true, command: 'C:\\Program Files\\nodejs\\npx.cmd', args: ['-y', 'pkg', 'a b'] });
+  assert.deepEqual(o, { copy: 'pw', envKeys: ['A', 'B'], envPrefix: 'MCPCHILD_', winShim: true, command: 'C:\\Program Files\\nodejs\\npx.cmd', args: ['-y', 'pkg', 'a b'] });
   assert.equal(winShimLine(o.command, o.args), '"C:\\Program Files\\nodejs\\npx.cmd" -y pkg "a b"');
   // an empty argument stays (quoted); a quoted argument's trailing backslashes are doubled, else `\"` reads as a quote
   assert.equal(winShimLine('x.cmd', ['C:\\a b\\', '', 'C:\\t\\']), 'x.cmd "C:\\a b\\\\" "" C:\\t\\');
@@ -84,6 +84,35 @@ test('the server sees exactly the keep-list (every LC_*, names compared case-sen
   delete seen.__CF_USER_TEXT_ENCODING;   // macOS adds it to every process it starts
   assert.deepEqual(seen, { ...BASE, LANG: 'C', TMPDIR: '/t', LC_CTYPE: 'UTF-8', REQUESTS_CA_BUNDLE: '/ca.pem',
     https_proxy: 'http://proxy:3128', JIRA_URL: 'https://acme.atlassian.net', JIRA_TOKEN: 'tok' });
+});
+
+test('scopeLauncherEnv: a copy reads its declared env from its own MCPCHILD_<TAG>_ names (codex shares one env between servers)', () => {
+  const copy = (name) => ({ type: 'stdio', command: process.execPath, args: ['/w/src/core/mcp/launch.mjs', '--copy', name, '--env', 'GITHUB_TOKEN', '--', 'npx', 'gh-mcp'],
+    env: { MCPCHILD_GITHUB_TOKEN: `\${MCPSECRET_${name.length}}` } });
+  const work = scopeLauncherEnv(copy('github_work'));
+  const personal = scopeLauncherEnv(copy('github_personal'));
+  const [wk] = Object.keys(work.env); const [pk] = Object.keys(personal.env);
+  assert.match(wk, /^MCPCHILD_[0-9A-F]{8}_GITHUB_TOKEN$/);
+  assert.notEqual(wk, pk, 'two copies of one server: two names');
+  assert.deepEqual(work.args, ['/w/src/core/mcp/launch.mjs', '--copy', 'github_work', '--env', 'GITHUB_TOKEN',
+    '--env-prefix', wk.slice(0, -'GITHUB_TOKEN'.length), '--', 'npx', 'gh-mcp']);
+  assert.equal(work.env[wk], '${MCPSECRET_11}', 'the value as it was');
+  assert.deepEqual(scopeLauncherEnv(work), work, 'scoped once');
+  const plain = { command: 'x', args: ['a'], env: { MCPCHILD_K: 'v' } };
+  assert.equal(scopeLauncherEnv(plain), plain, 'not a launcher entry: as it was');
+  // The launcher reads the scoped name and nothing else.
+  const o = parseLaunchArgs(work.args.slice(1));
+  assert.deepEqual(childEnv({ [wk]: 'w', [pk]: 'p', MCPCHILD_GITHUB_TOKEN: 'shared' }, o.envKeys, 'linux', o.envPrefix), { GITHUB_TOKEN: 'w' });
+});
+
+test('the launcher refuses an --env-prefix outside MCPCHILD_', POSIX, async () => {
+  const ok = await launch(['--copy', 'x', '--env', 'K', '--env-prefix', 'MCPCHILD_AB12_', '--', process.execPath, '-e', 'process.stdout.write(process.env.K)'],
+    { ...BASE, MCPCHILD_AB12_K: 'scoped', MCPCHILD_K: 'plain' });
+  assert.equal(ok.code, 0, ok.stderr);
+  assert.equal(ok.stdout, 'scoped');
+  const bad = await launch(['--copy', 'x', '--env', 'PATH', '--env-prefix', 'MCPSECRET_', '--', process.execPath, '-e', '0'], BASE);
+  assert.equal(bad.code, 127);
+  assert.match(bad.stderr, /--env-prefix must look like MCPCHILD_/);
 });
 
 test('a declared NODE_OPTIONS reaches the server and never acts on the launcher', POSIX, async () => {

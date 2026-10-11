@@ -11,6 +11,7 @@
 //            archived, archivedAt (archived-feed rows only) }
 //   sched: { id, scheduleId, title (may be null), status, after, queued, retryAt, runAt, groupKey, groupName, by }
 import { glanceCopy } from './run-glance.mjs';
+import { engineLabel } from '../../src/shared/engine-switch.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -63,9 +64,11 @@ const STATE_TERMS = Object.freeze({
   run: 'running', start: 'starting running', done: 'done finished', scheduled: 'scheduled',
 });
 
-function parkedState(s, pauseReason) {
+/** `limitEngine`: a usage limit an engine hit names that engine ("Codex usage limit"). */
+function parkedState(s, pauseReason, limitEngine = null) {
   if (s === 'pausing') return { icon: 'paused', word: 'Pausing', detail: '' };
   if (s === 'interrupted') return { icon: 'paused', word: 'Interrupted', detail: '' };
+  if (pauseReason === 'usage_limit' && limitEngine) return { icon: 'paused', word: `${engineLabel(limitEngine)} usage limit`, detail: '' };
   return { icon: 'paused', word: PAUSE_WORDS[pauseReason] || 'Paused', detail: '' };
 }
 
@@ -92,7 +95,7 @@ function doneWord({ pr = null, checks = null, files = null } = {}) {
  *  parked-ness outranks a question, a question outranks the raw terminal status. */
 export function liveRowState(it) {
   const s = String((it && it.status) || '').toLowerCase();
-  if (PARKED.has(s)) return parkedState(s, it.pauseReason);
+  if (PARKED.has(s)) return parkedState(s, it.pauseReason, it.limitEngine);
   if (it.ask) return { icon: 'ask', word: askWord(it.ask), detail: '' };
   if (FAILED.has(s)) return { icon: 'fail', word: it.failedStep ? `${it.failedStep} failed` : 'Failed', detail: '' };
   if (STOPPED.has(s)) return { icon: 'stop', word: 'Stopped', detail: '' };
@@ -105,7 +108,7 @@ export function liveRowState(it) {
 export function histRowState(p) {
   const s = String((p && p.status) || '').toLowerCase();
   let st;
-  if (PARKED.has(s)) st = parkedState(s, p.pauseReason);
+  if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine);
   else if (FAILED.has(s)) st = { icon: 'fail', word: 'Failed', detail: '' };
   else if (STOPPED.has(s)) st = { icon: 'stop', word: 'Stopped', detail: '' };
   else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p), detail: '' };
@@ -137,13 +140,20 @@ export function needsYou({ kind = 'live', status = '', ask = false, unread = fal
   return !!unread && FAILED.has(s);
 }
 
-/** The Runs badge: the Needs you count without building the list (runs on every WS frame). */
-export function countNeedsYou({ live = [], history = [] } = {}) {
+/** The items Needs you holds: live items that need you, and History rows that do whose run is not
+ *  listed live. countNeedsYou counts exactly these; the top bar's Activity lists them. */
+export function needsYouItems({ live = [], history = [] } = {}) {
   const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
-  let n = 0;
-  for (const r of live) if (r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })) n += 1;
-  for (const p of history) if (p && !pids.has(p.id) && needsYou({ kind: 'hist', status: p.status })) n += 1;
-  return n;
+  return {
+    live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
+    history: history.filter((p) => p && !pids.has(p.id) && needsYou({ kind: 'hist', status: p.status })),
+  };
+}
+
+/** The Runs badge: the Needs you count without building the list (runs on every WS frame). */
+export function countNeedsYou(src = {}) {
+  const { live, history } = needsYouItems(src);
+  return live.length + history.length;
 }
 
 function baseRow(kind, st, fields, when, now) {
@@ -260,7 +270,7 @@ const cmpDateRows = (a, b) => ((KIND_RANK[a.kind] ?? 3) - (KIND_RANK[b.kind] ?? 
   || (a.kind === 'hist' ? (b.activityMs || 0) - (a.activityMs || 0) : 0);
 
 const NEEDS_RANK = Object.freeze({ ask: 0, paused: 1, fail: 2 });
-const cmpNeeds = (a, b) => ((NEEDS_RANK[a.icon] ?? 3) - (NEEDS_RANK[b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
+export const cmpNeeds = (a, b) => ((NEEDS_RANK[a.icon] ?? 3) - (NEEDS_RANK[b.icon] ?? 3)) || ((b.sortMs || 0) - (a.sortMs || 0));
 
 /**
  * The list model: { needs: Row[], groups: [{key, name, count, collapsed, rows}], total, searching, filter }.

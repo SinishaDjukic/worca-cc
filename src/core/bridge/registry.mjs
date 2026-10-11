@@ -17,6 +17,11 @@ export function keyOptional(provider, baseUrl) {
   return provider === 'openai' && isLocalBaseUrl(baseUrl);
 }
 
+/** Every entry with an upstream is bridged when Claude Code runs it (src/shared/connections.mjs: Claude Code
+ *  reaches every provider through the bridge). Codex connects to an OpenAI Responses endpoint itself
+ *  (engines/codex-endpoint.mjs), so the same entry is bridged on a Claude run and direct on a Codex run. */
+const bridgedUpstream = (m) => (m.upstream && (m.engine || 'claude') !== 'cursor' ? m.upstream : null);
+
 /**
  * The bridged catalog entry for `id` (user global → plugin → team policy), or
  * null when the id is unknown or not bridged. Shape:
@@ -27,12 +32,12 @@ export function findBridgedEntry(id) {
   const key = typeof id === 'string' ? id.trim().toLowerCase() : '';
   if (!key) return null;
   const g = listGlobalModels().find((m) => m.id.toLowerCase() === key);
-  if (g) return g.upstream ? { id: g.id, label: g.label, upstream: g.upstream, cost: g.cost, source: 'global' } : null;
+  if (g) return bridgedUpstream(g) ? { id: g.id, label: g.label, upstream: g.upstream, cost: g.cost, source: 'global' } : null;
   const p = listPluginModels().find((m) => m.id.toLowerCase() === key);
-  if (p) return p.upstream ? { id: p.id, label: p.label, upstream: p.upstream, cost: p.cost, source: 'plugin', plugin: p.plugin } : null;
+  if (p) return bridgedUpstream(p) ? { id: p.id, label: p.label, upstream: p.upstream, cost: p.cost, source: 'plugin', plugin: p.plugin } : null;
   let t = null;
   try { t = policyCatalogModels().find((m) => m.id.toLowerCase() === key); } catch { t = null; }
-  if (t && t.upstream) return { id: t.id, label: t.label, upstream: t.upstream, source: 'policy' };
+  if (t && bridgedUpstream(t)) return { id: t.id, label: t.label, upstream: t.upstream, source: 'policy' };
   return null;
 }
 
@@ -49,18 +54,18 @@ export function providerReadiness(upstream) {
   // is the broker's question, answered per spawn. Copilot's terms stay an install setting.
   if (brokerEnabled()) {
     if (p === 'copilot' && !copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Providers' };
+      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
     }
     const r = routeBridgedUpstream(upstream);
     return r.error ? { ok: false, reason: 'no_key', message: `provider ${p}: ${r.error}` } : { ok: true };
   }
   if (p === 'copilot') {
     if (!copilotTermsAcknowledged()) {
-      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open Settings › Providers' };
+      return { ok: false, reason: 'terms', message: 'provider copilot: terms not acknowledged — open the Providers page' };
     }
     const cfg = providerConfig('copilot');
     if (!resolveProviderSecret(cfg.githubToken)) {
-      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Settings › Providers' };
+      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open the Providers page' };
     }
     return { ok: true };
   }
@@ -75,7 +80,7 @@ export function providerReadiness(upstream) {
       ok: false, reason: 'no_key',
       message: has
         ? `provider ${p}: the API key's \${VAR} is not set in worca's environment`
-        : `provider ${p}: no API key — open Settings › Providers`,
+        : `provider ${p}: no API key — open the Providers page`,
     };
   }
   return { ok: true };

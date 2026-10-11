@@ -60,7 +60,7 @@ export function defaultMemoryDeps({ threadId }) {
           extra: existing?.meta.extra || {},
         };
         const nextBody = mode === 'append' && existing ? `${existing.body.trimEnd()}\n\n${String(body).trim()}\n` : String(body);
-        const r = await writeMemory(memoryRoot(), scope, name, renderMemoryFile(meta, nextBody), { source, caps: memoryCaps() });
+        const r = await writeMemory(memoryRoot(), scope, name, renderMemoryFile(meta, nextBody), { source, caps: memoryCaps(scope && scope.kind === 'project' ? { projectKey: scope.projectKey } : null) });
         return { created: r.created, bytes: r.bytes };
       }),
       forget: (scope, name) => removeMemory(memoryRoot(), scope, name, { source }),

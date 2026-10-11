@@ -229,7 +229,7 @@ test('Back and Cancel discard the stage; refusals show in the modal (a taken nam
   type(body(taken.modal).querySelector('[data-imp="path"]'), '/src/db-migrations');
   await act(taken.modal, 'Preview');
   await act(taken.modal, 'Import');
-  assert.equal(msgOf(taken.modal).textContent, 'a skill named db-migrations is already in the library — remove the existing one in Settings › Sets › Skills first, or change the name in its SKILL.md.');
+  assert.equal(msgOf(taken.modal).textContent, 'a skill named db-migrations is already in the library — remove the existing one in Connectors › Skills first, or change the name in its SKILL.md.');
   assert.ok(taken.modal.opened);
   assert.deepEqual(taken.done, []);
   const damaged = harness({ over: { 'POST /api/skills/import': { ok: false, status: 409,
@@ -333,7 +333,7 @@ test('a hosted Worca: only Git URL and Paste; the summary counts only the findin
     findings: [...many, { path: 'SKILL.md', kind: 'expansion', text: '… and 70 more' }] }), '1 file · 1.0 kB · 0 scripts · 0 shell blocks · 120 ${…} references');
 });
 
-test('Settings › Sets › Skills: Import skill opens the modal (hosted: Git URL and Paste only); a finished import reloads the catalog', async () => {
+test('Connectors › Skills: Import skill opens the modal (hosted: Git URL and Paste only); a finished import reloads the catalog', async () => {
   const boot = async (folderImports) => {
     const calls = [];
     const modal = { opened: null, open(title, b, actions) { this.opened = { title, body: b, actions }; }, close() { this.opened = null; } };

@@ -1,0 +1,11 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll call the three spike tools in the requested order."}}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"spike","tool":"echo","arguments":{"text":"hello"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"spike","tool":"echo","arguments":{"text":"hello"},"result":{"content":[{"type":"text","text":"{\"echoed\":\"hello\"}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"spike","tool":"env","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"spike","tool":"env","arguments":{},"result":{"content":[{"type":"text","text":"{\"count\":11,\"markers\":{\"SPIKE_KEY\":\"key-ok\",\"SPIKE_INLINE\":\"inline-ok\",\"SSH_AUTH_SOCK\":\"set\",\"WORCA_HOME\":null,\"HOME\":\"set\",\"PATH\":\"set\",\"OPENAI_API_KEY\":null,\"AWS_SECRET_ACCESS_KEY\":null,\"ANTHROPIC_API_KEY\":null}}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.started","item":{"id":"item_3","type":"mcp_tool_call","server":"spike","tool":"fail","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_3","type":"mcp_tool_call","server":"spike","tool":"fail","arguments":{},"result":{"content":[{"type":"text","text":"error: fail: as asked"}],"structured_content":null},"error":null,"status":"failed"}}
+{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"DONE"}}
+{"type":"turn.completed","usage":{"input_tokens":61315,"cached_input_tokens":50816,"cache_write_input_tokens":0,"output_tokens":153,"reasoning_output_tokens":18}}

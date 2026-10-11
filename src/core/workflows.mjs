@@ -11,11 +11,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig, EFFORTS } from './config.mjs';
-import { isSubagentModelValue, SUBAGENT_MODELS } from './model-env.mjs';
+import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
+import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
  *  is `undefined` so firstDefined falls through to the next layer. */
@@ -24,7 +25,6 @@ import { slugify } from './artifacts.mjs';
 import { DEFAULT_AGENTS_DIR, loadAgentRegistry } from './agent-registry.mjs'; // fileURLToPath-based (Windows-safe)
 import { loadScriptRegistry } from './script-registry.mjs';
 import { readPluginsLock } from './plugins-lock.mjs';                 // a DISABLED plugin's rows are hidden
-import { teamDefault } from './policy/cache.mjs';                     // team-policy models.steps defaults
 import { validateGraph, formatIssue, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { KEYED_KINDS } from '../shared/graph/constants.mjs';
@@ -32,7 +32,7 @@ import { scriptNodeCtx } from '../shared/graph/script-meta.mjs';
 import {
   GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, AUTO_WORKFLOW_STUB,
   GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_NAME, isReservedWorkflowId,
-  GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID,
+  GRAPH_WORKSPACE_SCAN_WORKFLOW, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_PR_FIX_WORKFLOW, PR_FIX_WORKFLOW_ID,
 } from './graph/builtin-workflows.mjs';
 export { GRAPH_DEFAULT_WORKFLOW, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
@@ -107,7 +107,7 @@ export function sanitizeNodeDefaults(raw, nodeId = '?') {
   }
   if (raw.effort !== undefined) {
     const effort = typeof raw.effort === 'string' ? raw.effort.trim() : '';
-    if (EFFORTS.includes(effort)) out.effort = effort;
+    if (ALL_EFFORTS.includes(effort)) out.effort = effort;
     else if (effort) warn('effort', `unknown effort "${effort}"`);
   }
   // An effort without a model is meaningless (it is filtered by the model's
@@ -225,6 +225,7 @@ function rowToTpl(r) {
     base.nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
     base.wires = Array.isArray(graph.wires) ? graph.wires : [];
     if (graph.canvas && typeof graph.canvas === 'object') base.canvas = graph.canvas;
+    if (graph.codeGraph === false) base.codeGraph = false;
     return base;
   }
   base.steps = parseArr(r.steps);
@@ -324,6 +325,7 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   const origin = typeof tpl?.origin === 'string' && tpl.origin ? tpl.origin : null;
   const graph = { nodes: Array.isArray(tpl?.nodes) ? tpl.nodes : [], wires: Array.isArray(tpl?.wires) ? tpl.wires : [] };
   if (tpl?.canvas && typeof tpl.canvas === 'object') graph.canvas = tpl.canvas;
+  if (tpl?.codeGraph === false) graph.codeGraph = false;
 
   getDb();
   const existing = prepare('SELECT created_at, archived_at FROM workflows WHERE id = ?').get(id);
@@ -371,6 +373,7 @@ export async function readWorkflow(id, opts = {}) {
   if (id === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return GRAPH_MEMORY_DEFRAG_WORKFLOW;
   if (id === WORKSPACE_SCAN_WORKFLOW_ID) return GRAPH_WORKSPACE_SCAN_WORKFLOW;
+  if (id === PR_FIX_WORKFLOW_ID) return GRAPH_PR_FIX_WORKFLOW;
   return readRaw(id, opts);
 }
 
@@ -427,7 +430,7 @@ function assertValidGraph(tpl, registry, scripts) {
   if (ok) return;
   throw Object.assign(
     new Error(`workflow "${tpl.id}" no longer matches the agents it uses: `
-      + `${errors.map(formatIssue).join('; ')} — open it in the Composer and re-wire it`),
+      + `${errors.map(formatIssue).join('; ')} — open it in the Workflows view and re-wire it`),
     { code: 'INVALID_GRAPH', issues: errors },
   );
 }
@@ -452,7 +455,7 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
     if (pluginDisabled(live.origin, readPluginsLock())) {
       const plugin = live.origin.slice('plugin:'.length);
       throw Object.assign(new Error(`workflow "${wanted}" belongs to plugin "${plugin}", which is disabled — `
-        + `enable the plugin (Plugins view, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
+        + `enable the plugin (the Marketplace page, or: worca plugin enable ${plugin}) to use it`), { code: 'PLUGIN_DISABLED' });
     }
     // A v1 row is not a graph: engine-select owns its refusal (V1_RUN_RETIRED).
     if (checkGraph && live.version === 2) assertValidGraph(live, registry, scripts);
@@ -461,7 +464,7 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
   const archived = await readWorkflow(wanted, { includeArchived: true });
   if (archived) {
     throw Object.assign(new Error(`workflow "${wanted}" was archived by the v2 upgrade `
-      + '(v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Composer'), { code: 'ARCHIVED' });
+      + '(v1 template, not runnable) — pick a v2 pipeline or rebuild it in the Workflows view'), { code: 'ARCHIVED' });
   }
   throw Object.assign(new Error(`unknown workflowId "${wanted}"`), { code: 'NOT_FOUND' });
 }
@@ -484,10 +487,10 @@ export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph
  */
 export async function setWorkflowNodeDefaults(id, map) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) {
-    throw new Error('the built-in Default workflow cannot store defaults — save a copy in Composer first');
+    throw new Error('the built-in Default workflow cannot store defaults — save a copy in the Workflows view first');
   }
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) {
-    throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in Composer first');
+    throw new Error('the built-in Memory defragment workflow cannot store defaults — save a copy in the Workflows view first');
   }
   const tpl = readRaw(id);
   if (!tpl) throw new Error(`workflow not found: ${id}`);
@@ -535,6 +538,7 @@ export async function deleteWorkflow(id) {
   if (id === GRAPH_DEFAULT_WORKFLOW.id) return false; // built-in default is undeletable
   if (id === AUTO_WORKFLOW_ID) return false;    // never a row
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return false; // a constant, never a row
+  if (id === PR_FIX_WORKFLOW_ID) return false;  // a constant, never a row
   if (!isSafeWorkflowId(id)) return false;      // SECURITY: reject unsafe ids
   getDb();
   let changed = 0;
@@ -602,6 +606,15 @@ export function workspaceVariants(registry) {
  * `nodes`/`wires` to buildGraphManifest as `overlays`.
  * @throws {Error} unknown workflow, a v1 row, an unknown/un-ported/unplaceable agent
  */
+function ownedPair(sel, engine, projectDir) {
+  if (!sel || typeof sel !== 'object') return {};
+  const model = typeof sel.model === 'string' && sel.model ? sel.model : undefined;
+  if (model && !modelForEngine(model, engine, { projectDir: projectDir || null })) return {};
+  // A model on two harnesses keeps its own engine's efforts: this harness takes the nearest one (effortOn).
+  const own = typeof sel.effort === 'string' && sel.effort ? sel.effort : undefined;
+  const effort = own && (engine === 'claude' || effortsForEngine(engine).includes(own)) ? own : (own && model ? (effortOn(own, engine) || undefined) : undefined);
+  return { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+}
 export async function resolveGraph(projectDir, workflowId, registry, agentsDir = DEFAULT_AGENTS_DIR, opts = {}) {
   if (workflowId === AUTO_WORKFLOW_ID) {
     throw new Error('the Auto workflow is decided per run — resolveGraph needs the adopted workflow id');
@@ -638,10 +651,9 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // store (projectKey(null) throws); its legacy per-role layer is empty by definition.
   const stepsCfg = (!ignore && workflowId === GRAPH_DEFAULT_WORKFLOW.id && projectDir) ? (await readConfig(projectDir)).steps : {};
   const firstDefined = (...vals) => vals.find((v) => v !== undefined);
-  // Team policy `models.steps` (a default, team-policy design §8): model and effort per ROLE for
-  // roles the project has not configured — below the project's own node and per-role config,
-  // above the template's authored config. Cache-only read; absent without a policy.
-  const teamSteps = (!ignore && projectDir) ? (teamDefault(projectDir, 'models.steps') || {}) : {};
+  const engine = MODEL_ENGINES.includes(opts.engine) ? opts.engine : 'claude';
+  const slotDefaults = ignore ? {} : stepSlotDefaults(engine, { projectDir: projectDir || null, workspace: isWorkspace });
+  const owned = (selection) => ownedPair(selection, engine, projectDir);
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —
   // named at start, else the global setting. The one layer that beats even the project's own node
   // pick (the setting is global by design: no per-project override), and it carries its own
@@ -699,8 +711,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // Legacy per-role config is keyed by the AUTHORED key, so a substituted
     // variant still inherits the user's model/effort for that role.
     const legacy = stepsCfg[authored] || {};
-    const team = (sel.model || sel.effort || legacy.model || legacy.effort) ? {} : (teamSteps[authored] || {});
     const cfg = node.config && typeof node.config === 'object' ? node.config : {};
+    const selP = owned(sel);
+    const legacyP = engine === 'claude' ? owned(legacy) : {};
+    const cfgP = owned(cfg);
+    const team = (selP.model || selP.effort || legacyP.model || legacyP.effort) ? {} : owned(slotDefaults[authored]);
     nodes[node.id] = {
       nodeId: node.id,
       kind: 'agent',
@@ -713,10 +728,10 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
       promptHints: typeof meta.promptHints === 'string' ? meta.promptHints : '',
       tools,
       config: { ...cfg },
-      model: pair ? pair.model : firstDefined(sel.model, legacy.model, team.model, cfg.model),
+      model: pair ? pair.model : firstDefined(selP.model, legacyP.model, team.model, cfgP.model),
       // An effort only travels with the model that advertises it: an override
       // naming its own model must not inherit the lower layer's effort.
-      effort: pair ? pair.effort : firstDefined(sel.effort, legacy.effort, team.effort, (sel.model || legacy.model || team.model) ? undefined : cfg.effort),
+      effort: pair ? pair.effort : firstDefined(selP.effort, legacyP.effort, team.effort, (selP.model || legacyP.model || team.model) ? undefined : cfgP.effort),
       // workspaceFanOut forces fan-out on a workspace run (the generic
       // replacement for the v1 FANOUT_ELIGIBLE key list).
       fanOut: isWorkspace && meta.workspaceFanOut

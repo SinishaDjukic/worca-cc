@@ -1,0 +1,11 @@
+{
+  "scenario": "subagent-foreground",
+  "prompt": "Use the Agent tool exactly once (subagent_type general-purpose, model haiku) with the prompt 'Reply with the single word: pong'. Then reply with what it returned.",
+  "model": "haiku",
+  "env": { "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1" },
+  "argv": ["-p", "<prompt>", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--include-hook-events", "--setting-sources", "", "--permission-mode", "bypassPermissions", "--settings", "{\"hooks\":{\"PostToolUse\":[{\"matcher\":\"Agent\",\"hooks\":[{\"type\":\"command\",\"command\":\"cat\"}]}]}}"],
+  "exitCode": 0,
+  "captured": "2026-09-26",
+  "claudeVersion": "2.1.282",
+  "sanitised": "tools/ask-capture-fixtures.mjs createSanitizer (paths, uuids, tool/message/agent ids, timestamps, signatures)"
+}

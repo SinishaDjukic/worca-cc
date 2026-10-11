@@ -4,7 +4,7 @@
 // reserved-key policy for per-model routing env, whole-value ${VAR}
 // indirection, and the defensive spawn-time filter.
 //
-// This module imports NOTHING. settings.mjs — whose import contract forbids
+// This module imports only the zero-import src/shared/engine-switch.mjs (the engine list). settings.mjs — whose import contract forbids
 // core-graph modules (it would cycle via projects.mjs) — validates catalog
 // writes against this policy, and claude-runner.mjs applies the same policy
 // defensively at spawn time. Keeping the single source of truth in a
@@ -12,10 +12,30 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
  *  without importing the core graph. */
 export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+/** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
+export const CURSOR_EFFORTS = [];
+export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
+/** The engines a run's agent nodes can run on (engines/index.mjs). Copilot runs pipelines but owns no catalog
+ *  model, so it is not a MODEL_ENGINES member (no step or helper slots, no Ask chats). */
+export const RUN_ENGINES = [...ENGINE_NAMES];
+/** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
+export const HELPER_ENGINES = ['claude', 'codex'];
+/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
+ *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+ *  the workspace scan are agent nodes of the run, not helper jobs. */
+export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
+/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
+ *  and a codex that has every flag in it, ask/turn.mjs). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+export const ASK_ENGINES = ['claude', 'codex'];
+export function effortsForEngine(engine) { return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : EFFORTS; }
+export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS])];
 
 // The effort worca's own auxiliary calls run at (title generation, the Models
 // view Test button). Deliberately BELOW the pipeline list: the CLI accepts
@@ -149,7 +169,7 @@ export function isReservedModelEnvKey(key) {
     || RESERVED_MODEL_ENV_PREFIXES.some((p) => typeof key === 'string' && key.startsWith(p));
 }
 
-// A registry spawn's own env names (MCP registry §5.5.6): runReal merges the model env over the run env, so a
+// A registry spawn's own env names (MCP registry §5.5.6): composeSpawnEnv (engines/spawn.mjs) merges the model env over the run env, so a
 // model entry that set one would replace a copy's secret. Refused by prepareModelEnv and the plugin manifest —
 // deliberately NOT reserved: cleanRunEnv shares isReservedModelEnvKey and must keep the registry env.
 export function isMcpRegistryEnvKey(key) {
@@ -577,6 +597,23 @@ export function assertModelUpstream(upstream) {
     if (or) out.openrouter = or;
   }
   return out;
+}
+
+/** The wire protocols a Codex model's endpoint may speak. codex talks to the endpoint itself (no
+ *  bridge), and codex-cli 0.146 refuses `wire_api = "chat"`, so only the Responses API is left. */
+export const CODEX_UPSTREAM_APIS = Object.freeze(['openai-responses']);
+
+/**
+ * Why a validated `upstream` (assertModelUpstream's output) cannot sit on a Codex model, or null.
+ * codex connects to an OpenAI-compatible endpoint natively; the copilot and anthropic providers,
+ * chat completions and OpenRouter routing exist only in worca's bridge, which a Codex model never uses.
+ */
+export function codexUpstreamProblem(upstream) {
+  if (!upstream) return null;
+  if (upstream.provider !== 'openai') return 'a codex model connects to an OpenAI-compatible endpoint only (upstream.provider openai)';
+  if (!CODEX_UPSTREAM_APIS.includes(upstream.api)) return 'a codex model speaks the Responses API only (upstream.api openai-responses) — codex no longer supports chat completions';
+  if (upstream.openrouter) return 'upstream.openrouter is not available on a codex model';
+  return null;
 }
 
 /** The first env key an `upstream` entry may not also carry, or null. */

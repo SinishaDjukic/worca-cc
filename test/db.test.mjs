@@ -301,6 +301,10 @@ test('a fresh DB carries every spec table, index and incremental column/table wi
       assert.ok(SCHEMA_VERSION >= 47);
       assert.ok(colsOf(getDb(), 'workspaces').includes('actions_json'));
     } },
+    { name: 'v54 adds ask_threads.mode + composer on a fresh DB', run: () => {
+      assert.ok(SCHEMA_VERSION >= 54);
+      for (const c of ['mode', 'composer']) assert.ok(colsOf(getDb(), 'ask_threads').includes(c), c);
+    } },
     { name: 'a DB stamped 47 gains night_decisions through the ladder (fresh-DB half: the exact column list)', run: () => {
       assert.ok(SCHEMA_VERSION >= 48);
       const db = getDb();
@@ -355,6 +359,7 @@ const RUNGS = [
   // own-rung arms of v44..v47 re-run V48's IF NOT EXISTS DDL over the existing table and its
   // seeded row (HOST_ROWS) must survive.
   { v: 48, tables: [['night_decisions', ['idx_night_decisions_pipeline']]] },
+  { v: 54, cols: [['ask_threads', 'mode', null], ['ask_threads', 'composer', null]] },
 ];
 
 // One row per host table, written before the removal: every one must survive the climb,
@@ -428,7 +433,7 @@ test('ladder: each incremental addition, removed (rows kept), is restored by one
     name: `v${r.v} stamp ${stamp} (${rungLabel(r)})`,
     run: () => climbAndCheck(r, stamp, SCHEMA_VERSION),
   })));
-  assert.equal(rows.length, 18, 'nine rungs >= 25, two arms each');
+  assert.equal(rows.length, 20, 'ten rungs >= 25, two arms each');
   await checkRows(rows);
 });
 

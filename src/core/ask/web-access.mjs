@@ -14,7 +14,7 @@ export const WEB_OFF = Object.freeze({ enabled: false, allowedDomains: Object.fr
  * `teamCap` (the team allowlist, or null) travels along so the parent can refuse a card outside it.
  */
 export function askWebAccess({ projectKey = null, chatHosts = [], readLocal = askWeb, policyFor = cachedPolicyForKey } = {}) {
-  const local = readLocal();
+  const local = readLocal(projectKey ? { projectKey } : undefined);
   let team = {};
   if (projectKey) { const p = policyFor(projectKey); if (p) team = fieldsForRun(p.doc) || {}; }
   // A policy only narrows (registry: the web fields): it can switch web off or cap the hosts, never turn it on or add one.

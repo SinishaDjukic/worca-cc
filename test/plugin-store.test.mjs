@@ -383,11 +383,11 @@ test('plugin models: inventory (base URL verbatim, env keys, secrets), doctor se
       const inv = buildInstallInventory(dev);
       assert.deepEqual(inv.models, [
         {
-          id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'],
+          id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'], engine: 'claude',
           envKeys: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN'],
           baseUrl: 'https://api.ds.example',
         },
-        { id: 'ds-plain', label: 'DS Plain', efforts: ['medium', 'high', 'xhigh', 'max'], envKeys: [], baseUrl: null },
+        { id: 'ds-plain', label: 'DS Plain', efforts: ['medium', 'high', 'xhigh', 'max'], engine: 'claude', envKeys: [], baseUrl: null },
       ]);
       assert.deepEqual(inv.modelSecrets, [{ key: 'ds-token', label: 'DS token' }]);
     } },
@@ -448,7 +448,7 @@ test('doctorPlugin: a multiProfile source with an EMPTY roster is unhealthy, not
   assert.equal(empty.ok, false);
   const gap = empty.checks.find((c) => c.id === 'config:src');
   assert.equal(gap.ok, false);
-  assert.match(gap.detail, /no profiles yet/);
+  assert.match(gap.detail, /no profiles yet — create one on the Marketplace page/);
 
   // With a roster the check runs per profile (WORCA_MOCK cans validateConfig ok).
   createProfile('profiled-plugin', 'work', 'Work');

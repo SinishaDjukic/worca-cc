@@ -49,7 +49,7 @@ export const FIELDS = Object.freeze([
   // branch is writable by whoever can push to the repo — so a policy may switch it off or cap the hosts, never widen.
   { key: 'ask.webEnabled', group: 'ask', label: 'Web access', help: 'Off switches Ask Worca web access off for chats pinned to this project. A policy can never switch it on — each developer opts in.', type: 'bool', kinds: ['soft'], offOnly: true, local: 'askWeb.enabled' },
   { key: 'ask.webAllowedDomains', group: 'ask', label: 'Web allowlist', help: 'The most a developer may allow (example.com or *.example.com): hosts outside this list are dropped from their own Ask web allowlist. It never adds a host.', type: 'string[]', kinds: ['soft'], domains: true, local: 'askWeb.allowedDomains' },
-  { key: 'guardrails.default', group: 'guardrails', label: 'Default set', help: 'What the New pipeline picker starts on. A built-in id, a user set id, or gp:<name> for a set this policy ships.', type: 'string', kinds: ['default'] },
+  { key: 'guardrails.default', group: 'guardrails', label: 'Default set', help: 'What the New run picker starts on. A built-in id, a user set id, or gp:<name> for a set this policy ships.', type: 'string', kinds: ['default'] },
   { key: 'guardrails.minimum', group: 'guardrails', label: 'Minimum tier', help: 'A run whose set ranks below this warns and is recorded.', type: 'enum', values: TIERS, kinds: ['soft'] },
   { key: 'models.allowed', group: 'models', label: 'Allowed models', help: 'A chosen step model outside this list warns and is recorded. Others still run.', type: 'string[]', kinds: ['soft'] },
   { key: 'models.steps', group: 'models', label: 'Step defaults', help: 'Model and effort per role, applied to roles the project has not configured.', type: 'steps', kinds: ['default'] },
@@ -97,7 +97,7 @@ const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -368,8 +368,23 @@ function normalizeModels(raw, warnings) {
     const lc = m.id.toLowerCase();
     if (seen.has(lc)) { warnings.push(`catalogs.models: duplicate id ${m.id} dropped`); continue; }
     const entry = { id: m.id, label: clip(typeof m.label === 'string' && m.label.trim() ? m.label : m.id, 80) };
-    const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => EFFORTS.includes(e)) : [];
-    entry.efforts = efforts.length ? efforts : ['medium', 'high'];
+    if (m.engine !== undefined && !MODEL_ENGINES.includes(m.engine)) { warnings.push(`catalogs.models: ${m.id}: engine must be ${MODEL_ENGINES.join(', ')} — entry dropped`); continue; }
+    const engine = m.engine || 'claude';
+    const codex = engine === 'codex';                 // KEEP: the upstream check below reads `codex`
+    const allowed = engine === 'claude' ? EFFORTS : effortsForEngine(engine);
+    const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
+    entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
+    if (engine === 'cursor') {
+      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
+      entry.engine = 'cursor';
+    }
+    if (codex) {
+      // §3.1a: codex ignores routing env. Its upstream (an OpenAI-compatible endpoint) is checked below.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a codex model takes no env — entry dropped`); continue; }
+      entry.engine = 'codex';
+    }
     if (m.env != null) {
       if (!isPlainObject(m.env)) { warnings.push(`catalogs.models: ${m.id}: env is not an object — dropped`); continue; }
       const env = {}; let bad = null;
@@ -391,6 +406,8 @@ function normalizeModels(raw, warnings) {
       try {
         upstream = assertModelUpstream(m.upstream);
         if (upstream && upstream.apiKey && !/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(upstream.apiKey)) throw new Error('upstream.apiKey must be a ${VAR} reference');
+        const codexWhy = codex ? codexUpstreamProblem(upstream) : null;
+        if (codexWhy) throw new Error(codexWhy);
         const clash = upstream ? upstreamEnvConflict(entry.env) : null;
         if (clash) throw new Error(`env key ${clash} is set by the bridge for an upstream entry`);
       } catch (e) {

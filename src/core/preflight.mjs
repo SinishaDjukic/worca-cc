@@ -9,11 +9,11 @@
 // Every probe is wrapped so that a missing binary, missing file, or failing
 // subprocess resolves to `false` and NEVER throws.
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
-import { constants as FS, existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { constants as FS, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync } from 'node:fs';
 
 /**
  * Run a command and resolve to its trimmed stdout, or null on any failure.
@@ -208,15 +208,20 @@ export function buildInstruction(tool, kind) {
 }
 
 /**
- * Instruction for agents when a fresh AST graph has been built INSIDE the
- * current worktree at ./graphify-out/. Paths are cwd-relative (agents run with
- * cwd=worktree); the AST-only nature is called out so agents calibrate.
+ * Instruction for agents when an AST graph has been built INSIDE the current
+ * worktree at ./graphify-out/. Paths are cwd-relative (agents run with
+ * cwd=worktree); the AST-only nature is called out so agents calibrate. The
+ * graph is built once, at run start, and every later step gets this same text,
+ * so it says when the graph was built instead of calling it fresh, and how to
+ * refresh it (GRAPH_REPORT.md's own header asks for `graphify update .` too).
  */
 export function worktreeGraphInstruction() {
   return (
-    'A code knowledge-graph CLI named "graphify" is available, and a fresh graph ' +
-    'for THIS worktree has been built at graphify-out/ (relative to your working ' +
-    'directory). It is an AST-only structural graph (symbols, files, and their ' +
+    'A code knowledge-graph CLI named "graphify" is available, and a graph of this ' +
+    'worktree, built at the start of this run, is at graphify-out/ (relative to your ' +
+    'working directory). It does not show changes made since; run ' +
+    '`graphify update .` first if you need them. ' +
+    'It is an AST-only structural graph (symbols, files, and their ' +
     'structural relationships) with NO semantic/inferred edges. BEFORE analyzing ' +
     'or planning, ground yourself in the real code: first read ' +
     'graphify-out/GRAPH_REPORT.md for the overview, then query the graph via Bash. ' +
@@ -236,8 +241,25 @@ export function worktreeGraphInstruction() {
  * manifest write lands inside the same worktree, never the main repo. Bounded
  * by timeoutMs (macOS has no timeout(1)); on overrun the child is SIGKILLed.
  * Never throws. Resolves { ok, code, timedOut, stderr }.
+ *
+ * Before the build, <dir>/graphify-out/.gitignore = `*` makes the output ignore
+ * itself (the memory mount's sentinel, memory-sync.mjs mountMemory): a target
+ * repo that does not gitignore graphify-out/ would otherwise get the graph in
+ * the reviewer diff, an agent's `git add -A` and the kept-branch commit. The
+ * sentinel ignores itself too, so it never reaches a commit. A repo that already
+ * tracks files under graphify-out/ gets no sentinel (it commits its graph on
+ * purpose). A failed write is not fatal: the build runs as before.
  */
 export function runGraphifyUpdate({ dir, cwd, timeoutMs = 120000 } = {}) {
+  try {
+    if (!existsSync(dir)) throw new Error('no dir');
+    // A repo that commits its graph keeps doing so: hiding only the NEW files would commit half a graph.
+    const tracked = spawnSync('git', ['ls-files', '--', 'graphify-out'], { cwd: dir, encoding: 'utf8', timeout: 10000 });
+    if (!(tracked.status === 0 && tracked.stdout.trim())) {
+      mkdirSync(join(dir, 'graphify-out'), { recursive: true });
+      writeFileSync(join(dir, 'graphify-out', '.gitignore'), '*\n', 'utf8');
+    }
+  } catch { /* the build still runs; the output is just not hidden */ }
   return new Promise((resolveP) => {
     let child;
     try {

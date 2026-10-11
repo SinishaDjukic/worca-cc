@@ -288,3 +288,19 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.ok(out.some((l) => /gpt-5.*OpenAI/.test(l)));
   assert.equal(await cmdModels(['logout', 'copilot'], io), 0);
 });
+
+test('/api/models: readiness is per entry, not per provider — a keyless local endpoint does not make a remote one ready', async () => {
+  assert.equal((await patch('/api/providers/openai', { apiKey: null, baseUrl: 'https://api.openai.com/v1' })).status, 200);
+  const up = (model, baseUrl) => ({ provider: 'openai', api: 'openai-responses', model, baseUrl });
+  assert.equal((await post('/api/models', { id: 'cx-api-local', engine: 'codex', upstream: up('qwen3-coder', 'http://127.0.0.1:8000/v1') })).status, 200);
+  assert.equal((await post('/api/models', { id: 'cx-api-remote', engine: 'codex', upstream: up('gpt-oss-120b', 'https://gw.example/v1') })).status, 200);
+  const chat = await post('/api/models', { id: 'cx-api-chat', engine: 'codex', upstream: { ...up('m', 'http://127.0.0.1:8000/v1'), api: 'openai-chat' } });
+  assert.equal(chat.status, 400);
+  assert.match(chat.body.error, /Responses API only/);
+  const rows = (await jfetch('/api/models')).body.models;
+  const row = (id) => rows.find((m) => m.id === id);
+  assert.equal(row('cx-api-local').needsSignIn, false, 'a local endpoint needs no key');
+  assert.equal(row('cx-api-remote').needsSignIn, true);
+  assert.equal(row('cx-api-remote').signInReason, 'no_key');
+  assert.equal(formatModelLine({ ...row('cx-api-remote'), custom: 'global', upstreamModel: 'gpt-oss-120b' }), 'cx-api-remote  yours  endpoint: openai → gpt-oss-120b  NEEDS API KEY');
+});

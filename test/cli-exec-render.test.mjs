@@ -1,7 +1,7 @@
 // test/cli-exec-render.test.mjs — the CLI's exec line formatter (pure, no IO).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatExecLine, formatGateHeader, formatResultLine, formatTotals, formatRunSummary, fmtDur } from '../src/cli/render.mjs';
+import { formatExecLine, formatGateHeader, formatResultLine, formatTotals, formatRunSummary, formatResumeHints, fmtDur } from '../src/cli/render.mjs';
 
 // Every node kind the engine ships (task / agent / or / and / end); the OR
 // valve's out-wire feeds a LOOP input, which is how a loop re-fires through a
@@ -117,6 +117,9 @@ test('gate header, result line, totals and fmtDur', () => {
   assert.equal(formatResultLine(null), 'Result: completed');
   assert.equal(formatTotals({ executions: 9, activeMs: 720000, costUsd: 1.23 }), '9 executions · 12m00s active · $1.23');
   assert.equal(formatTotals({ executions: 1, activeMs: 0, costUsd: 0 }), '1 execution · 0s active · $0.00', 'singular');
+  assert.equal(formatTotals({ executions: 2, activeMs: 0, costUsd: 0, engine: 'cursor' }), '2 executions · 0s active · cost unknown', 'Cursor: never $0.00');
+  assert.equal(formatTotals({ executions: 2, activeMs: 0, costUsd: 0.1, engine: 'cursor' }), "2 executions · 0s active · cost unknown (worca's own calls: $0.10)");
+  assert.match(formatRunSummary({ stepper: { version: 2 }, steps: [], runEngine: 'cursor', totalCostUsd: 0 })[1], /· cost unknown$/, 'the end-of-run summary reads the run engine');
   assert.deepEqual([fmtDur(12000), fmtDur(63000), fmtDur(3660000), fmtDur(0), fmtDur(-5)], ['12s', '1m03s', '1h01m', '0s', '0s']);
 });
 
@@ -165,4 +168,19 @@ test('formatRunSummary: the Away mode line, only when it answered', () => {
   const base = { stepper: { version: 2 }, steps: [], endReached: true, result: null, totalCostUsd: 0 };
   assert.ok(formatRunSummary({ ...base, night: { decisions: 3, flagged: 1 } }).includes('Away mode: 3 answers while you were away — 1 to check'));
   assert.ok(!formatRunSummary({ ...base, night: { decisions: 0, flagged: 0 } }).some((l) => /Away mode/.test(l)));
+});
+
+test('formatResumeHints: the resume command, plus each other engine after a usage limit an engine hit', () => {
+  assert.deepEqual(formatResumeHints({ reason: 'error' }, 'ab12cd34'), ['Resume with: worca resume ab12cd34']);
+  // A provider's limit (no limitEngine): no other engine, but another model has its own allowance.
+  assert.deepEqual(formatResumeHints({ reason: 'usage_limit' }, 'ab12cd34'), ['Resume with: worca resume ab12cd34', 'Or continue now with another model: worca resume ab12cd34 --model <id>'], 'not an engine limit');
+  assert.deepEqual(formatResumeHints({ reason: 'usage_limit', limitEngine: 'codex' }, 'ab12cd34'), [
+    'Resume with: worca resume ab12cd34',
+    'Or continue now on Claude: worca resume ab12cd34 --engine claude',
+    'Or continue now on Cursor: worca resume ab12cd34 --engine cursor',
+    'Or continue now with another model: worca resume ab12cd34 --model <id>',
+  ]);
+  const bold = formatResumeHints({ reason: 'usage_limit', limitEngine: 'claude' }, 'x', { color: (n, s) => `<${n}>${s}` });
+  assert.equal(bold[1], 'Or continue now on Codex: <bold>worca resume x --engine codex');
+  assert.equal(bold[2], 'Or continue now on Cursor: <bold>worca resume x --engine cursor');
 });

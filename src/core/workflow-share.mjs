@@ -18,7 +18,7 @@
 //   ID_TAKEN (+ .id) | NOT_FOUND | UNSUPPORTED | SCRIPTS_UNCONFIRMED (+ .scriptNodes)
 
 import { listModels } from './config.mjs';
-import { EFFORTS, subagentModelIssue } from './model-env.mjs';
+import { EFFORTS, ALL_EFFORTS, subagentModelIssue } from './model-env.mjs';
 import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
@@ -82,7 +82,7 @@ export function nodeDefaultsError(raw, models, where) {
   const subIssue = subagentModelIssue(raw.subagentModel);
   if (subIssue) return subIssue;
   if (!effort) return '';
-  if (!EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
+  if (!ALL_EFFORTS.includes(effort)) return `unknown effort "${effort}"`;
   if (!entry) return 'select a model before choosing an effort';
   if (!entry.efforts.includes(effort)) return `model "${model}" does not support effort "${effort}"`;
   return '';
@@ -100,7 +100,7 @@ export async function exportGraphJson(id) {
   if (!tpl) throw err(`workflow not found: ${id}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
   if (tpl.version !== 2) {
-    throw err(`workflow ${id} is a v1 template — open and save it in the composer first`, 'UNSUPPORTED');
+    throw err(`workflow ${id} is a v1 template — open and save it in the Workflows view first`, 'UNSUPPORTED');
   }
   const out = {
     version: 2,
@@ -110,6 +110,7 @@ export async function exportGraphJson(id) {
     wires: Array.isArray(tpl.wires) ? tpl.wires : [],
   };
   if (tpl.canvas && typeof tpl.canvas === 'object') out.canvas = tpl.canvas;
+  if (tpl.codeGraph === false) out.codeGraph = false;
   return out;
 }
 
@@ -152,6 +153,7 @@ function prepareGraph(body, { keepId, name }) {
     nodes: Array.isArray(body.nodes) ? body.nodes : [],
     wires: Array.isArray(body.wires) ? body.wires : [],
     ...(body.canvas && typeof body.canvas === 'object' ? { canvas: body.canvas } : {}),
+    ...(body.codeGraph === false ? { codeGraph: false } : {}),
   };
   if (!graph.name) throw err('name is required', 'BAD_REQUEST');
   return graph;

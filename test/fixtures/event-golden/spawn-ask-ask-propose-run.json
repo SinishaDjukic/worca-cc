@@ -1,0 +1,138 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-label",
+   "label": "Preparing a run"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__propose_run",
+    "input": {
+     "projectKey": "worca-ask-capture-proj-hjftlr-92d8cef7",
+     "workflowId": "wf_default",
+     "brief": "Add a README badge for the test status",
+     "guardrailsId": "normal",
+     "title": "Add a README badge for the test status"
+    },
+    "status": "running",
+    "durationMs": null
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 10,
+    "output": 305,
+    "cacheRead": 10205,
+    "cacheCreation": 1143,
+    "ctx": 11663
+   },
+   "costUsd": null,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__propose_run",
+    "input": {
+     "projectKey": "worca-ask-capture-proj-hjftlr-92d8cef7",
+     "workflowId": "wf_default",
+     "brief": "Add a README badge for the test status",
+     "guardrailsId": "normal",
+     "title": "Add a README badge for the test status"
+    },
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  },
+  {
+   "type": "ask-label",
+   "label": "Writing"
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 20,
+    "output": 353,
+    "cacheRead": 21553,
+    "cacheCreation": 1734,
+    "ctx": 11997
+   },
+   "costUsd": null,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 20,
+    "output": 353,
+    "cacheRead": 21553,
+    "cacheCreation": 1734,
+    "ctx": 11997,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.0084273,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-delta",
+   "text": "proposed"
+  }
+ ],
+ "summary": {
+  "text": "proposed",
+  "blocks": [
+   {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__propose_run",
+    "input": {
+     "projectKey": "worca-ask-capture-proj-hjftlr-92d8cef7",
+     "workflowId": "wf_default",
+     "brief": "Add a README badge for the test status",
+     "guardrailsId": "normal",
+     "title": "Add a README badge for the test status"
+    },
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  ],
+  "usage": {
+   "input": 20,
+   "output": 353,
+   "cacheRead": 21553,
+   "cacheCreation": 1734,
+   "ctx": 11997,
+   "ctxWindow": 200000
+  },
+  "costUsd": 0.0084273,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "status": "done",
+  "reason": null,
+  "resultSubtype": "success",
+  "isError": false,
+  "errors": [],
+  "numTurns": 2,
+  "durationMs": "<T>",
+  "sawInit": true,
+  "sawAssistant": true,
+  "sawResult": true,
+  "agents": 0,
+  "labels": [
+   "Thinking",
+   "Preparing a run",
+   "Writing"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

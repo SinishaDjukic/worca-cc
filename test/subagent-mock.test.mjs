@@ -11,16 +11,8 @@ after(async () => { await Promise.all(dirs.map((d) => rm(d, { recursive: true, f
 async function tmp() { const d = await mkdtemp(join(tmpdir(), 'worca-cc-sub-mock-')); dirs.push(d); return d; }
 
 function subBlocks(events) {
-  const spawns = [];
-  const finishes = [];
-  for (const e of events) {
-    const content = e?.raw?.message?.content;
-    if (!Array.isArray(content)) continue;
-    for (const c of content) {
-      if (c?.type === 'tool_use' && (c.name === 'Task' || c.name === 'Agent') && c.id) spawns.push(c.id);
-      if (c?.type === 'tool_result' && c.tool_use_id) finishes.push(c.tool_use_id);
-    }
-  }
+  const spawns = events.filter((e) => e.type === 'subagent' && e.event === 'spawn').map((e) => e.toolUseId);
+  const finishes = events.filter((e) => e.type === 'subagent' && (e.event === 'finish' || e.event === 'error')).map((e) => e.toolUseId);
   return { spawns, finishes };
 }
 
@@ -31,5 +23,5 @@ test('the implementer mock emits ≥2 sub-agent spawns each with a matching fini
     prompt: 'MOCK_ROLE: implementer' });
   const { spawns, finishes } = subBlocks(events);
   assert.ok(spawns.length >= 2, `expected ≥2 fake spawns, got ${spawns.length}`);
-  for (const id of spawns) assert.ok(finishes.includes(id), `spawn ${id} has a matching tool_result`);
+  for (const id of spawns) assert.ok(finishes.includes(id), `spawn ${id} has a matching finish`);
 });

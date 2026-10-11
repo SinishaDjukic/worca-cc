@@ -3,7 +3,7 @@
 // binary is ever spawned; hintFor is pure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { testModel, hintFor, CLAUDE_SIGNED_OUT_HINT } from '../src/core/model-test.mjs';
+import { testModel, hintFor, bridgeHintFor, CLAUDE_SIGNED_OUT_HINT, CODEX_SIGNED_OUT_HINT } from '../src/core/model-test.mjs';
 
 // Never ask the real CLI whether it is signed in (the failure paths would).
 const notSignedOut = async () => false;
@@ -93,7 +93,7 @@ test('testModel: empty reply is a failure, not a silent pass', async () => {
 
 test('testModel: a bridge failure for this model replaces the CLI message (a bridged run\'s stderr only carries warnings)', async () => {
   const listeners = bridgeEvents.listenerCount('failure');
-  const fix = 'copilot: model "gpt-6-astra" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Settings › Models › Import models…) or change its API in the model editor';
+  const fix = 'copilot: model "gpt-6-astra" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Models › Import models…) or change its API in the model editor';
   const run = async () => {
     bridgeEvents.emit('failure', { tag: '', catalogId: 'other-model', provider: 'copilot', status: 400, message: 'unrelated' });
     bridgeEvents.emit('failure', { tag: '', catalogId: 'CP-Test-Model', provider: 'copilot', status: 400, message: fix });
@@ -132,4 +132,37 @@ test('testModel: when the Test times out while the CLI retries a failure the bri
   const cancelled = await testModel('cp', { signedOut: notSignedOut, signal: ctrl.signal, run: async () => { bridgeEvents.emit('failure', { tag: '', catalogId: 'cp', message: unreachable }); throw aborted(); } });
   assert.equal(cancelled.errorClass, 'timeout');
   assert.equal(bridgeEvents.listenerCount('failure'), listeners);
+});
+
+test('testModel on a Codex model: the codex adapter, read-only, no Claude routing; a failure names the codex sign-in', async () => {
+  let seen = null;
+  const ok = await testModel('gpt-5.5', { signedOut: notSignedOut, run: async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; } });
+  assert.deepEqual(ok, { ok: true, text: 'OK' });
+  assert.equal(seen.engine, 'codex');
+  assert.equal(seen.sandbox, 'read-only');
+  assert.equal(seen.model, 'gpt-5.5');
+  assert.equal(seen.modelEnv, undefined);
+  let probed = false;
+  const bad = await testModel('gpt-5.5', {
+    run: async () => { throw Object.assign(new Error('codex: 401 Unauthorized'), { errorClass: 'auth' }); },
+    signedOut: async () => { probed = true; return true; },
+  });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.errorClass, 'auth');
+  assert.equal(bad.hint, CODEX_SIGNED_OUT_HINT);
+  assert.equal(probed, false, 'the Claude sign-in is never asked about a Codex model');
+});
+
+test('testModel on a Claude model: no engine, no sandbox (unchanged spawn)', async () => {
+  let seen = null;
+  await testModel('claude-haiku-4-5', { signedOut: notSignedOut, run: async (o) => { seen = o; return { text: 'OK', exitCode: 0 }; } });
+  assert.equal('engine' in seen, false);
+  assert.equal('sandbox' in seen, false);
+});
+
+test('the hints name the page that fixes the problem: the Models page, the Providers page (with the CLI alternative)', () => {
+  assert.equal(hintFor('model'), 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours on the Models page');
+  assert.equal(bridgeHintFor('not_signed_in', 'copilot'), 'sign in to copilot on the Providers page (or `worca models login copilot`)');
+  assert.equal(bridgeHintFor('terms'), 'acknowledge the GitHub Copilot notice on the Providers page first');
+  assert.equal(bridgeHintFor('no_key', 'openai'), "set an API key for openai on the Providers page, or on this model's Connection");
 });

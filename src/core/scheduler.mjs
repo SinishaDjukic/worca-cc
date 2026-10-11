@@ -29,6 +29,8 @@ import { getDb, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
 import { projectKey } from './store.mjs';
 import { addNotification, resolveNotifications } from './notifications.mjs';
+import { usageLimitSwitches, engineList } from '../shared/engine-switch.mjs';
+import { readyEnginesCached } from './engines/ready-cache.mjs';
 import {
   normalizeRule, nextOccurrence, describeRule, OVERLAP_POLICIES, MISSED_POLICIES,
 } from '../shared/schedule/recurrence.mjs';
@@ -986,7 +988,7 @@ export async function runDueTickets({
  * quiet item; `error` counts towards the streak; a forced `paused` (it carries a
  * reason) notifies but does not count; `stopped` (by the user) is silent.
  */
-export function recordOutcome(ticketId, { status, pipelineId = null, reason = null, detail = null, now = Date.now() } = {}) {
+export function recordOutcome(ticketId, { status, pipelineId = null, reason = null, detail = null, limitEngine = null, now = Date.now() } = {}) {
   const t = getTicket(ticketId);
   if (!t || t.status !== 'fired') return;
   if (pipelineId) setTicketPipeline(ticketId, pipelineId, { now });
@@ -998,7 +1000,10 @@ export function recordOutcome(ticketId, { status, pipelineId = null, reason = nu
     addNotification({ ...base, kind: 'run_error', message: `ended with an error${detail ? `: ${detail}` : '.'}` });
     if (t.scheduleId) { setLastResult(t.scheduleId, 'error', now); bumpFailure(t.scheduleId, now); }
   } else if (status === 'paused') {
-    if (reason) addNotification({ ...base, kind: 'run_paused', message: `paused (${String(reason).replace(/_/g, ' ')})${detail ? `: ${detail}` : '.'}` });
+    // A usage limit the engine hit says how to continue now: on another engine.
+    const others = usageLimitSwitches({ reason, limitEngine }, readyEnginesCached());
+    const hint = others.length ? `${detail ? ' —' : ''} resume on ${engineList(others)} to continue now.` : '';
+    if (reason) addNotification({ ...base, kind: 'run_paused', message: `paused (${String(reason).replace(/_/g, ' ')})${detail ? `: ${detail}` : '.'}${hint}` });
     setLastResult(t.scheduleId, 'paused', now);
   } else if (status === 'stopped') {
     setLastResult(t.scheduleId, 'stopped', now);

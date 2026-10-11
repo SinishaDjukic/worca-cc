@@ -4,6 +4,7 @@
 // ahead of it in the catalog does not take the default) > any Sonnet > the first
 // catalog entry.
 import { autoWorkflowModel } from '../settings.mjs';
+import { runsOn } from '../../shared/connections.mjs';
 
 export const AUTO_MODEL_ENV = 'WORCA_AUTO_MODEL';
 
@@ -15,9 +16,11 @@ export const AUTO_MODEL_ENV = 'WORCA_AUTO_MODEL';
  * @param {string} [setting] the stored id, '' when unset
  * @returns {string} a model id, or '' when the catalog is empty
  */
-export function pickCatalogModel(models, setting) {
-  const ids = (Array.isArray(models) ? models : []).map((m) => m && m.id).filter((id) => typeof id === 'string' && id);
+export function pickCatalogModel(models, setting, { engine = 'claude' } = {}) {
+  const pool = (Array.isArray(models) ? models : []).filter((m) => m && runsOn(m, engine));
+  const ids = pool.map((m) => m.id).filter((id) => typeof id === 'string' && id);
   const find = (id) => ids.find((x) => x.toLowerCase() === String(id || '').trim().toLowerCase());
+  if (engine !== 'claude') return find(setting) || pool.find((m) => m.builtin)?.id || ids[0] || '';
   return find(setting)
     || ids.find((id) => /^claude-sonnet-5$/i.test(id))
     || ids.find((id) => /^claude-sonnet/i.test(id))
@@ -30,7 +33,12 @@ export function pickCatalogModel(models, setting) {
  * @param {{env?:object, setting?:string}} [o] injectable for tests
  * @returns {string} a model id, or '' when the catalog is empty and nothing is configured
  */
-export function resolveAutoModel(models, { env = process.env, setting = autoWorkflowModel() } = {}) {
+export function resolveAutoModel(models, { env = process.env, setting = autoWorkflowModel(), engine = 'claude' } = {}) {
+  if (engine !== 'claude') {
+    const id = typeof setting === 'string' ? setting.trim().toLowerCase() : '';
+    const hit = id ? (Array.isArray(models) ? models : []).find((m) => m && runsOn(m, engine) && String(m.id).toLowerCase() === id) : null;
+    return hit ? hit.id : '';
+  }
   const fromEnv = typeof env?.[AUTO_MODEL_ENV] === 'string' ? env[AUTO_MODEL_ENV].trim() : '';
   if (fromEnv) return fromEnv;
   return pickCatalogModel(models, setting);

@@ -1,0 +1,137 @@
+{
+ "frames": [
+  {
+   "type": "ask-label",
+   "label": "Thinking"
+  },
+  {
+   "type": "ask-label",
+   "label": "Finding runs"
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "running",
+    "durationMs": null
+   }
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0002",
+    "name": "mcp__worca__list_runs",
+    "input": {
+     "limit": 1
+    },
+    "status": "running",
+    "durationMs": null
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 10,
+    "output": 148,
+    "cacheRead": 10205,
+    "cacheCreation": 1100,
+    "ctx": 11463
+   },
+   "costUsd": null,
+   "estimatedCostUsd": null
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  },
+  {
+   "type": "ask-block",
+   "block": {
+    "kind": "tool",
+    "id": "toolu_0002",
+    "name": "mcp__worca__list_runs",
+    "input": {
+     "limit": 1
+    },
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  },
+  {
+   "type": "ask-usage",
+   "usage": {
+    "input": 10,
+    "output": 148,
+    "cacheRead": 10205,
+    "cacheCreation": 1100,
+    "ctx": 11463,
+    "ctxWindow": 200000
+   },
+   "costUsd": 0.0049465,
+   "estimatedCostUsd": null
+  }
+ ],
+ "summary": {
+  "text": "",
+  "blocks": [
+   {
+    "kind": "tool",
+    "id": "toolu_0001",
+    "name": "mcp__worca__list_runs",
+    "input": {},
+    "status": "done",
+    "durationMs": "<T>"
+   },
+   {
+    "kind": "tool",
+    "id": "toolu_0002",
+    "name": "mcp__worca__list_runs",
+    "input": {
+     "limit": 1
+    },
+    "status": "done",
+    "durationMs": "<T>"
+   }
+  ],
+  "usage": {
+   "input": 10,
+   "output": 148,
+   "cacheRead": 10205,
+   "cacheCreation": 1100,
+   "ctx": 11463,
+   "ctxWindow": 200000
+  },
+  "costUsd": 0.0049465,
+  "sessionId": "00000000-0000-4000-8000-000000000001",
+  "status": "stopped",
+  "reason": "max_turns",
+  "resultSubtype": "error_max_turns",
+  "isError": true,
+  "errors": [
+   "Reached maximum number of turns (1)"
+  ],
+  "numTurns": 2,
+  "durationMs": "<T>",
+  "sawInit": true,
+  "sawAssistant": true,
+  "sawResult": true,
+  "agents": 0,
+  "labels": [
+   "Thinking",
+   "Finding runs"
+  ],
+  "reducerErrors": 0,
+  "cliErrorText": null
+ }
+}

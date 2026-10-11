@@ -88,7 +88,7 @@ test('allowlist: deny-by-default silent; unknown commands get a hint; non-comman
 
 test('/help /whoami /projects reply; /runs lists live; /last reads history', async () => {
   const { send } = fixture();
-  assert.match(text(await send('/help')), /worca-cc chat commands/);
+  assert.match(text(await send('/help')), /Worca chat commands/);
   assert.match(text(await send('/whoami')), /chat: `42`/);
   assert.match(text(await send('/projects')), /worca[\s\S]*other/);
   const runsMsg = text(await send('/runs'));
@@ -105,6 +105,20 @@ test('/cost and /last read the real camelCase history-entry fields', async () =>
   const last = await handle(f, '/last');
   assert.match(last.body[0].value, /\$2\.50/);
   assert.match(last.body[0].value, /1m01s/);
+});
+
+test('a Cursor run reads "cost unknown" on /cost, /last and /status, never $0.00', async () => {
+  const f = makeRouter({ history: async () => [{ id: 'p-5678', title: 'C', status: 'done', runEngine: 'cursor', totalCostUsd: 0, totalActiveMs: 1000 }] });
+  assert.match((await handle(f, '/cost *5678')).body[0].value, /cost: cost unknown$/);
+  assert.match((await handle(f, '/last')).body[0].value, /\*\*Cost:\*\* cost unknown/);
+  assert.match((await handle(f, '/status *5678')).body[0].value, /\*\*Cost:\*\* cost unknown/);
+  const helper = makeRouter({ history: async () => [{ id: 'p-5678', title: 'C', status: 'done', runEngine: 'cursor', totalCostUsd: 0.2 }] });
+  assert.match((await handle(helper, '/cost *5678')).body[0].value, /cost unknown \(worca's own calls: \$0\.20\)/);
+  const { send, state } = fixture();
+  state.states['run-aaaa1111'].runEngine = 'cursor';
+  state.states['run-aaaa1111'].totalCostUsd = 0;
+  assert.match(text(await send('/status')), /\*\*Cost:\*\* cost unknown/);
+  assert.match(text(await send('/cost')), /cost so far: cost unknown/);
 });
 
 test('/status: no-arg single-active default, wildcard suffix, history fallback, pending hint', async () => {
@@ -464,7 +478,7 @@ test('a refused command from a NOTIFIED chat gets one throttled hint naming its 
   assert.equal(first.severity, 'warning');
   assert.match(text(first), /not allowed to send commands/);
   assert.match(text(first), /`-100123`/);
-  assert.match(text(first), /Allowed chat IDs/);
+  assert.match(text(first), /\*\*Allowed chat IDs\*\* in worca → Marketplace → telegram-chat → Settings\./, 'the hint names the Marketplace page');
   assert.match(text(first), /telegram-chat/);
 
   assert.equal(await send('/approve', '-100123'), null, 'throttled inside the window');
@@ -526,4 +540,25 @@ test('Auto workflow proposal: /status names it; /approve accepts, /answer revise
       assert.deepEqual(calls.at(-1), ['answer', 'run-aaaa1111', 'auto-1', { decision: 'cancel' }]);
     } },
   ]);
+});
+
+test('/resume [*ref] [engine]: an engine continues the run on it; the refusal says where the consent is', async () => {
+  const got = [];
+  let answer = { ok: true };
+  const { send } = fixture({ resume: async (pipelineId, by, opts) => { got.push([pipelineId, opts]); return answer; } });
+  assert.match(text(await send('/resume *3333 claude')), /Resuming `\*3333` on Claude/);
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'claude' }]);
+  assert.match(text(await send('/resume Codex')), /Resuming `\*3333` on Codex/, 'bare, with the engine first');
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', { engine: 'codex' }]);
+  await send('/resume *3333');
+  assert.deepEqual(got.at(-1), ['pipe-cccc3333', undefined], 'no engine named: the saved one');
+  const n = got.length;
+  assert.match(text(await send('/resume *3333 gemini')), /Unknown engine `gemini` — use claude, codex or cursor/);
+  assert.equal(got.length, n, 'nothing resumed');
+
+  answer = { ok: false, code: 'engine-refused', overridable: true, error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce — run it with the Permissive set, or pass --allow-unguarded-engine to run it without them' };
+  const refused = text(await send('/resume *3333 codex'));
+  assert.match(refused, /Could not resume `\*3333` on Codex: engine codex: guardrail set "normal"/);
+  assert.match(refused, /or resume it in the Worca UI with Allow unguarded to run it without them/, 'the consent is the UI\'s, never a chat word');
+  assert.doesNotMatch(refused, /--allow-unguarded-engine/, 'no CLI flag in chat');
 });

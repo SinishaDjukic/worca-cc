@@ -22,6 +22,8 @@ import { openRepoLook, openWorkspaceRepoLook } from '../auto/repo-look.mjs';
 import { buildProposal, remapTunables } from '../auto/proposal.mjs';
 import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { utilityModelFor } from '../settings-cascade.mjs';
+import { runsOn } from '../../shared/connections.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -95,17 +97,25 @@ function dropUnknownModels(shape, models) {
   return warnings;
 }
 
+/** The catalog rows one engine runs (a row without `engine` is Claude's, as in the orchestrator's Auto filter). */
+export function modelsOfEngine(all, engine) {
+  const want = engine || 'claude';
+  return (Array.isArray(all) ? all : []).filter((m) => m && runsOn(m, want));
+}
+
 /**
  * The deterministic half (spec §8.2): assemble (validateGraph inside), match, buildProposal. Pure w.r.t. the workflows table.
  * Also resolves the target project (v4) or workspace: the parent needs its NAME for the card and the context header, and
  * the MCP child's result may not carry it (the mock never does). A workspace's project overrides are its primary member's.
- * @param {{shape:object, projectKey?:string|null, workspaceId?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null}} o
+ * `engine` (the chat's, default claude) narrows the catalog when `models` is not given: a card never offers another
+ * engine's models as node options (a Claude chat's card offering gpt-* ids, whose pick the run would then drop).
+ * @param {{shape:object, projectKey?:string|null, workspaceId?:string|null, warnings?:Array, costUsd?:number, fingerprint?:string, models?:Array|null, registry?:object|null, engine?:string|null}} o
  * @returns {Promise<{proposal:object, template:object, match:{id,name}|null, tunables:object, shape:object, summary:string, project:{key,name,path}|null, workspace:{id,name,members:string[]}|null}>}
  * @throws {ShapeError} on an unassemblable shape
  */
-export async function revalidateWorkflowProposal({ shape, projectKey = null, workspaceId = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null }) {
+export async function revalidateWorkflowProposal({ shape, projectKey = null, workspaceId = null, warnings = [], costUsd = 0, fingerprint = '', models = null, registry = null, engine = null }) {
   const reg = registry || loadAgentRegistry();
-  const catalog = models || await listModels('');
+  const catalog = models || modelsOfEngine(await listModels(''), engine);
   const built = assembleShape(shape, { registry: reg, humanInLoop: true });
   const match = findEquivalentWorkflow(built.template, await autoCandidates());
   const ws = workspaceId ? await workspaceTarget(workspaceId) : null;     // null for an unknown id — never throws (as projectByKey)
@@ -162,8 +172,10 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  *             the classifier honours it, so a Stop in the chat no longer leaves a nested claude running for up to 4 × 90 s (v7)
  *   classify  test seam for the classifier (defaults to classifyTask); tests inject a thrower / a recorder, never a spawn
  */
-export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask } = {}) {   // eslint-disable-line no-unused-vars
+export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
+  // A Codex chat's classifier runs on Codex too: a Codex chat makes no Claude call (D8).
+  const chatEngine = env && env.WORCA_ASK_ENGINE === 'codex' ? 'codex' : null;
   return {
     workflow: {
       /**
@@ -186,7 +198,8 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           ? { workspaceId: ws.id, workspaceName: flat(ws.name, 120), projectKey: null, projectName: null }
           : { projectKey: project.key, projectName: flat(project.name, 120), workspaceId: null, workspaceName: null };
         const registry = loadAgentRegistry();
-        const models = await listModels('');
+        const all = await listModels('');
+        const models = modelsOfEngine(all, chatEngine);
         const fingerprint = ws
           ? await fingerprintWorkspace(ws.members, { name: ws.name, description: ws.description })
           : await fingerprintProject(project.path);
@@ -200,13 +213,16 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           // D6 amendment: the classifier may Read/Grep/Glob a throwaway detached checkout of the
           // project's HEAD to SIZE the change. Mock never spawns, so it never borrows one; a project
           // without git (or a failed `git worktree add`) classifies text-only, exactly as before.
+          // A Codex chat's classifier runs on codex with its shell off (classify.mjs): no look to borrow.
           // A workspace gets one checkout per member under repos/<projectKey> (the run root's shape).
-          const look = mockEnabled({}) ? null : ws
+          const look = mockEnabled({}) || chatEngine === 'codex' ? null : ws
             ? await openWorkspaceRepoLook(ws.members, cwd, { signal: signal || bundleSignal })
             : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
-            humanInLoop: true, feedback: [], priorShape: null, model: resolveAutoModel(models), cwd: look ? look.cwd : cwd, repoLook: !!look,
+            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || '') : resolveAutoModel(models),
+            ...(chatEngine ? { engine: chatEngine } : {}),
+            cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
             ...(ws ? { workspace: {
               name: ws.name,

@@ -7,6 +7,7 @@
 import { decorFromState, applyDecor, manifestTemplate, manifestPortsFn, manifestAgents, isGraphManifest, fmtDur, fmtUsd } from './graph/run-decor.mjs';
 import { mountStaticGraph } from './graph/view.mjs';
 import { FLOW_SCALE } from './graph/model.mjs';
+import { engineReportsCost } from '../../src/shared/engine-switch.mjs';
 
 export const PROGRESS_CARD_TYPE = 'progress';
 /** app.js isTerminalStatus's set, verbatim (app.js:4304-4306). */
@@ -44,7 +45,7 @@ export function snapshotFromState(state, { now = Date.now() } = {}) {
     terminal: TERMINAL_RUN_STATUS.has(status),
     startedAt: state.startedAt || null,
     elapsedMs: Number(state.totalActiveMs) || 0,
-    costUsd: Number(state.totalCostUsd) || 0,
+    costUsd: engineReportsCost(state.runEngine) ? (Number(state.totalCostUsd) || 0) : null,   // null: cost unknown (Cursor), never $0.00
     progress: decor ? decor.progress : null,
     active: decor ? decor.activeNodes : [],          // a v1 row names no agent even when state.active is set
     stepper: graph ? state.stepper : null,
@@ -182,7 +183,7 @@ export function createRunProgressCard({ doc, ident, onOpen = null }) {
     const pid = (snap && snap.pipelineId) || ident.pipelineId;
     sub.textContent = [projectLabel(ident, snap), pid ? `#${pid}` : ''].filter(Boolean).join(' · ');
     timeEl.textContent = fmtDur(snap ? snap.elapsedMs : 0);
-    costEl.textContent = fmtUsd(snap ? snap.costUsd : 0);
+    costEl.textContent = snap && snap.costUsd == null ? 'cost unknown' : fmtUsd(snap ? snap.costUsd : 0);
     const prog = snap && snap.progress;
     progEl.textContent = prog && prog.total ? `${prog.done}/${prog.total} agents` : '—';
     paintActive(snap && Array.isArray(snap.active) ? snap.active : []);

@@ -18,7 +18,7 @@ a ready check and a live log come with them.
 | Run Overview › actions strip, Ship It › **Try it first** | The same actions, one click from the result |
 | Project page › **Actions** tab | The project's setup command, its actions and the built-in buttons |
 | Workspace page › **Actions** tab | Stacks: one click starts actions across several member projects |
-| Header pill, sidebar **Running actions** card | Every service still running, with Stop. Shown at every level, only while something runs |
+| Header pill, sidebar **Running actions** rows | Every service still running, each with a Stop button; on the collapsed rail one tile with the count opens them. Shown at every level, only while something runs |
 | Settings › Runs › **Actions** | Keep policy, port range, editor and terminal, checkout cap |
 
 The tabs, strips and the Settings card are Advanced (see [ui-levels.md](ui-levels.md)).

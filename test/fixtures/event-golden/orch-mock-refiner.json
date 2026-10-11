@@ -1,0 +1,346 @@
+{
+ "emitted": [
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] starting role=refiner cycle=1",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] refiner reviewing plan (cycle 1)",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "wrote <CWD>/out.md",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "wrote <CWD>/out.json",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "stepskills",
+   "payload": {
+    "stepKey": "0:n1",
+    "nodeId": "n1",
+    "cycle": 1,
+    "skills": [
+     "skill:graphify",
+     "mcp:playwright:browser_snapshot"
+    ],
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ Skill",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ mcp__plugin_playwright_playwright__browser_snapshot",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "spawn",
+    "id": "mock_refiner_1",
+    "label": "investigate area A",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "running",
+    "subagentType": "general-purpose",
+    "runModel": "sonnet",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "spawn",
+    "id": "mock_refiner_2",
+    "label": "investigate area B",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "running",
+    "subagentType": "Explore",
+    "runModel": "sonnet",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ Agent investigate area A",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "→ Agent investigate area B",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "update",
+    "id": "mock_refiner_1",
+    "label": "investigate area A",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "running",
+    "skills": [
+     "skill:brainstorming",
+     "mcp:playwright:browser_navigate",
+     "mcp:playwright:browser_click"
+    ],
+    "subagentType": "general-purpose",
+    "runModel": "sonnet",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner ▸ investigate area A",
+    "level": "debug",
+    "text": "→ Skill",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "sub": true
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner ▸ investigate area A",
+    "level": "debug",
+    "text": "→ mcp__plugin_playwright_playwright__browser_navigate",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "sub": true
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner ▸ investigate area A",
+    "level": "debug",
+    "text": "→ mcp__plugin_playwright_playwright__browser_click",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "sub": true
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "finish",
+    "id": "mock_refiner_1",
+    "label": "investigate area A",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "finished",
+    "skills": [
+     "skill:brainstorming",
+     "mcp:playwright:browser_navigate",
+     "mcp:playwright:browser_click"
+    ],
+    "subagentType": "general-purpose",
+    "runModel": "sonnet",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "← result ok mock_ref",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "subagent",
+   "payload": {
+    "transition": "finish",
+    "id": "mock_refiner_2",
+    "label": "investigate area B",
+    "nodeId": "n1",
+    "uiPhase": null,
+    "stepKey": "0:n1",
+    "stepIndex": 0,
+    "cycle": 1,
+    "status": "finished",
+    "subagentType": "Explore",
+    "runModel": "sonnet",
+    "ts": "<T>"
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "debug",
+    "text": "← result ok mock_ref",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] done role=refiner",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  }
+ ],
+ "subAgents": [
+  {
+   "id": "mock_refiner_1",
+   "label": "investigate area A",
+   "nodeId": "n1",
+   "uiPhase": null,
+   "stepIndex": 0,
+   "cycle": 1,
+   "stepKey": "0:n1",
+   "status": "finished",
+   "startedAt": "<T>",
+   "finishedAt": "<T>",
+   "subagentType": "general-purpose",
+   "model": "sonnet",
+   "runModel": "sonnet",
+   "skills": [
+    "skill:brainstorming",
+    "mcp:playwright:browser_navigate",
+    "mcp:playwright:browser_click"
+   ]
+  },
+  {
+   "id": "mock_refiner_2",
+   "label": "investigate area B",
+   "nodeId": "n1",
+   "uiPhase": null,
+   "stepIndex": 0,
+   "cycle": 1,
+   "stepKey": "0:n1",
+   "status": "finished",
+   "startedAt": "<T>",
+   "finishedAt": "<T>",
+   "subagentType": "Explore",
+   "model": "sonnet",
+   "runModel": "sonnet"
+  }
+ ],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "sessionId": "mock-session-refiner-c1",
+  "skills": [
+   "skill:graphify",
+   "mcp:playwright:browser_snapshot"
+  ],
+  "costUsd": 0
+ },
+ "totalCost": 0
+}

@@ -369,10 +369,19 @@ export const MEMORY_BLOCK_INTRO =
 
 /**
  * @param {Array<{label:string, dir:string}>} sections  one per mounted scope, in mount order
+ * @param {{engine?:string}} [o]  an engine other than Claude does not load `.claude/rules`: its intro says to read them
  * @returns {string} the block with one trailing newline; byte-stable for identical input
  */
-export function renderMemoryBlock(sections) {
-  const lines = [MEMORY_BLOCK_HEADING, MEMORY_BLOCK_INTRO];
+/** The intro on an engine that does not load `.claude/rules` (codex): the agent reads the files itself. */
+export const MEMORY_BLOCK_INTRO_READ = MEMORY_BLOCK_INTRO.replace(
+  /^Durable rules, preferences and traps kept across runs and chats\. .*? if you are one\)\. /,
+  'Durable rules, preferences and traps kept across runs and chats. Nothing has loaded them for you: before you start, ' +
+  'read the files in the directories below whose `description` fits your task (a file with `paths` applies when you work on a ' +
+  'matching file). ',
+).replace('is Claude Code\'s own and a write there is refused as a sensitive path, so never write there', 'is a read-only copy, so never write there');
+
+export function renderMemoryBlock(sections, { engine = 'claude' } = {}) {
+  const lines = [MEMORY_BLOCK_HEADING, engine && engine !== 'claude' ? MEMORY_BLOCK_INTRO_READ : MEMORY_BLOCK_INTRO];
   for (const s of sections || []) lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
   return `${lines.join('\n')}\n`;
 }

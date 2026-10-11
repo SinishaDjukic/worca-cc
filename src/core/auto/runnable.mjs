@@ -18,7 +18,7 @@ export function autoModelsFor(models, { auth, routed }) {
   if (!usable.length) {
     return {
       models: ready, requireModel: false,
-      note: "Claude Code isn't signed in and no endpoint or provider model is set up — the run's first-party models will fail; sign in, or add a model under Settings › Providers.",
+      note: "Claude Code isn't signed in and no endpoint or provider model is set up — the run's first-party models will fail; sign in, or add an endpoint or provider model on the Models page.",
     };
   }
   return {

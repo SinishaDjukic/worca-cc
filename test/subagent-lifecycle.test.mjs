@@ -196,17 +196,15 @@ test('getState() deep-clones subAgents (mutating the clone never touches live st
   assert.equal(snap.subAgents.length, 1);
 });
 
-function spawnRaw(id, desc) {
-  return { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Task', input: { description: desc } }] } };
-}
+const subagentSpawn = (id, desc) => ({ type: 'subagent', event: 'spawn', toolUseId: id, label: desc });
 
-test('_recordSubAgentSpawns stamps uiPhase from attr onto the record and the spawn delta', async () => {
+test('_recordSubAgentSpawn stamps uiPhase from attr onto the record and the spawn delta', async () => {
   const orch = createOrchestrator({ projectDir: '/tmp/proj' });
   const seen = [];
   orch.on('subagent', (e) => seen.push(e));
-  orch._recordSubAgentSpawns(spawnRaw('t1', 'research'), { nodeId: 's0_0', stepIndex: 0, cycle: 0, stepKey: '0:s0_0', uiPhase: 'plan' });
+  orch._recordSubAgentSpawn(subagentSpawn('t1', 'research'), { nodeId: 's0_0', stepIndex: 0, cycle: 0, stepKey: '0:s0_0', uiPhase: 'plan' });
   await checkRows([
-    { name: '_recordSubAgentSpawns stamps uiPhase from attr onto the record', run: () => {
+    { name: '_recordSubAgentSpawn stamps uiPhase from attr onto the record', run: () => {
       assert.equal(orch.state.subAgents.length, 1);
       assert.equal(orch.state.subAgents[0].uiPhase, 'plan', 'record carries uiPhase');
     } },

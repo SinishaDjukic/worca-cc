@@ -20,6 +20,7 @@ import process from 'node:process';
 
 import { preflightNode } from '../core/preflight-node.mjs';
 import { preflightDeps } from '../core/preflight-deps.mjs';
+import { resolveRunEngine } from '../core/settings-cascade.mjs';
 import {
   addProject,
   listProjects,
@@ -27,7 +28,7 @@ import {
   normalizeProjectPath,
 } from '../core/projects.mjs';
 import { projectKey } from '../core/store.mjs';
-import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal } from './render.mjs';
+import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
 // statement, not a longer first one); the field-by-field asker lives in forms.mjs.
 import { formatFormErrors, FORM_REPROMPT_MAX } from './render.mjs';
@@ -135,6 +136,7 @@ function parseArgs(argv) {
     '--title',
     '--extras',
     '--model',
+    '--engine',
     '--permission-mode',
     '--workflow',
     '--install',
@@ -152,6 +154,7 @@ function parseArgs(argv) {
     '--title': 'title',
     '--extras': 'extras',
     '--model': 'model',
+    '--engine': 'engine',
     '--permission-mode': 'permissionMode',
     '--workflow': 'workflow',
     '--install': 'install',
@@ -185,6 +188,10 @@ function parseArgs(argv) {
     }
     if (arg === '--past-team-cap') {
       out.pastTeamCap = true;
+      continue;
+    }
+    if (arg === '--allow-unguarded-engine') {
+      out.allowUnguardedEngine = true;
       continue;
     }
     if (arg === '--ui') {
@@ -313,6 +320,8 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
+  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
+  --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
   --workflow <id>          Saved pipeline template to run (default: wf_default — the built-in graph)
@@ -798,7 +807,7 @@ async function attachAndDrive(orch, flags, start) {
     } else {
       out(c('yellow', 'Pipeline paused.'));
     }
-    out(`Resume with: ${c('bold', `worca resume ${orch.state.id}`)}`);
+    for (const line of formatResumeHints(result, orch.state.id, { color: c })) out(line);
   } else if (result?.status === 'stopped') {
     out(c('yellow', 'Pipeline stopped.'));
   } else {
@@ -1289,9 +1298,9 @@ async function cmdConfig(argv) {
 
 /** `worca resume <pipelineId>` — continue a paused pipeline from its resume point. */
 async function cmdResume(argv) {
-  const id = (argv.find((a) => !a.startsWith('--')) || '').trim();
+  const id = (argv.find((a, i) => !a.startsWith('--') && !['--reason', '--engine', '--model', '--effort'].includes(argv[i - 1])) || '').trim();
   if (!id) {
-    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
+    process.stderr.write('usage: worca resume <pipelineId> [--mock] [--yes] [--engine <name>] [--model <id> [--effort <e>]] [--allow-unguarded-engine] [--ignore-cost-cap] [--past-team-cap [--reason "<why>"]]\n');
     return 1;
   }
   const mock = argv.includes('--mock');
@@ -1300,6 +1309,15 @@ async function cmdResume(argv) {
   const pastTeamCap = argv.includes('--past-team-cap');
   const reasonAt = argv.indexOf('--reason');
   const policyReason = reasonAt !== -1 ? argv[reasonAt + 1] ?? null : null;
+  const engineAt = argv.indexOf('--engine');
+  const engine = engineAt !== -1 ? argv[engineAt + 1] ?? null : null;
+  const allowUnguardedEngine = argv.includes('--allow-unguarded-engine');
+  // --model: every remaining step runs on it (a usage limit spent on the provider the steps were on).
+  const modelAt = argv.indexOf('--model');
+  const model = modelAt !== -1 ? (argv[modelAt + 1] ?? '').trim() : '';
+  const effortAt = argv.indexOf('--effort');
+  const effort = effortAt !== -1 ? (argv[effortAt + 1] ?? '').trim() : '';
+  if (modelAt !== -1 && !model) { process.stderr.write('worca resume: --model needs a model id\n'); return 1; }
   if (mock) process.env.WORCA_MOCK = '1';
 
   const { readPipelineForResume, reconcileStaleRunning } = await import('../core/artifacts.mjs');
@@ -1336,6 +1354,15 @@ async function cmdResume(argv) {
   if (saved.row.archived_at) {
     process.stderr.write('worca resume: pipeline is archived\n');
     return 1;
+  }
+  if (model) {
+    const { catalogHasModel, modelRunsOn, enginesOfModel } = await import('../core/config.mjs');
+    const target = engine || saved.resumePoint?.claude?.engine || 'claude';
+    if (!catalogHasModel(model)) { process.stderr.write(`worca resume: unknown model "${model}" — add it to the catalog first\n`); return 1; }
+    if (modelRunsOn(model, target) === false) {
+      process.stderr.write(`worca resume: model "${model}" runs on ${(enginesOfModel(model) || []).join(' or ')}, not on ${target}\n`);
+      return 1;
+    }
   }
   const { budgetStatus, setCostCapOverride, readCostCapOverride } =
     await import('../core/cost-budget.mjs');
@@ -1410,7 +1437,7 @@ async function cmdResume(argv) {
   const orch = await createOrchestratorFor({
     projectDir,
     ...(workspace ? { workspace } : {}),
-    claude: { mock },
+    claude: { mock, ...(engine ? { engine } : {}), ...(allowUnguardedEngine ? { allowUnguardedEngine: true } : {}), ...(model ? { model, ...(effort ? { effort } : {}), modelForAll: true } : {}) },
     auto,
     resume: saved,
   });
@@ -1464,7 +1491,7 @@ working, including updates (install provenance lives in plugins.lock.json).
 Exit codes: 0 ok, 1 failure, 2 usage/validation errors.
 `;
 
-const WORKFLOW_HELP = `worca workflow — export a saved Composer workflow (as a Claude Code skill, as
+const WORKFLOW_HELP = `worca workflow — export a saved workflow (as a Claude Code skill, as
 shareable JSON, or as a Worca plugin) and import one shared as JSON
 
 Usage:
@@ -3313,6 +3340,7 @@ async function main() {
     if (!flags.wait) return 0;
     waitTicketId = made.ticket.id;
   }
+  const runEngine = resolveRunEngine({ explicit: flags.engine || null, projectDir }).engine;
   const buildOrch = async () => (await import('../core/engine-select.mjs')).createOrchestratorFor({
     projectDir,
     prompt: flags.prompt || undefined,
@@ -3327,6 +3355,8 @@ async function main() {
       permissionMode: flags.permissionMode,
       model: flags.model,
       mock: flags.mock,
+      ...(runEngine !== 'claude' ? { engine: runEngine } : {}),
+      ...(flags.allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
     },
     auto: flags.auto,
     humanInLoop: flags.humanInLoop === false ? false : undefined,
@@ -3343,7 +3373,7 @@ async function main() {
         if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
         const exit = await attachAndDrive(o, flags, () => o.run());
         const st = o.state || {};
-        return { code: exit, status: st.status || (exit === 0 ? 'done' : 'error'), pipelineId: st.id || null, reason: st.status === 'paused' ? (st.pauseReason || 'paused') : null };
+        return { code: exit, status: st.status || (exit === 0 ? 'done' : 'error'), pipelineId: st.id || null, reason: st.status === 'paused' ? (st.pauseReason || 'paused') : null, limitEngine: st.status === 'paused' ? (st.limitEngine || null) : null };
       },
     });
     await drainMetricsFlushes();

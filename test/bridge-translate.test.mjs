@@ -386,7 +386,7 @@ test('errors: an upstream that serves the model through the other API → 400 wi
   const e = mapUpstreamError(400, '{"error":{"message":"model \\"gpt-5.6-sol\\" is not accessible via the /chat/completions endpoint","code":"unsupported_api_for_model"}}', { provider: 'copilot' });
   assert.equal(e.status, 400);
   assert.equal(e.body.error.type, 'invalid_request_error');
-  assert.equal(e.body.error.message, 'copilot: model "gpt-5.6-sol" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Settings › Models › Import models…) or change its API in the model editor');
+  assert.equal(e.body.error.message, 'copilot: model "gpt-5.6-sol" is not accessible via the /chat/completions endpoint — this model needs a different API: re-import it (Models › Import models…) or change its API in the model editor');
   const g = mapUpstreamError(400, '{"error":{"message":"model gemini-3.8-flash does not support Responses API.","code":"unsupported_api_for_model"}}', { provider: 'copilot' });
   assert.match(g.body.error.message, /does not support Responses API\. — this model needs a different API: re-import it/);
   const byCode = mapUpstreamError(400, '{"error":{"message":"nope","code":"unsupported_api_for_model"}}', { provider: 'openai' });

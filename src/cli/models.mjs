@@ -85,7 +85,8 @@ export function formatModelLine(m) {
   else if (m.custom === 'policy') bits.push('policy');
   else if (m.custom === 'global') bits.push('yours');
   else if (!m.custom) bits.push('built-in');
-  if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${isTranslatedApi(m.upstreamApi) ? ' (translated)' : ''}`);
+  if (m.bridged && m.engine === 'codex') bits.push(`endpoint: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}`);
+  else if (m.bridged) bits.push(`bridged: ${m.bridged}${m.upstreamModel ? ` → ${m.upstreamModel}` : ''}${isTranslatedApi(m.upstreamApi) ? ' (translated)' : ''}`);
   else if (m.routed) bits.push('endpoint-routed');
   if (m.needsSignIn) bits.push(`NEEDS ${m.signInReason === 'no_key' ? 'API KEY' : m.signInReason === 'terms' ? 'ACKNOWLEDGEMENT' : 'SIGN-IN'}`);
   if (m.hidden) bits.push('hidden');

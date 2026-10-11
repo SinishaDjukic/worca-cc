@@ -6,6 +6,7 @@ import * as ports from '../src/shared/graph/ports.mjs';
 import * as template from '../src/shared/graph/template.mjs';
 import * as geometry from '../src/shared/graph/geometry.mjs';
 import * as route from '../src/shared/graph/route.mjs';
+import * as curves from '../src/shared/graph/curves.mjs';
 import * as loops from '../src/shared/graph/loops.mjs';
 import * as layout from '../src/shared/graph/layout.mjs';
 import * as thumbnail from '../src/shared/graph/thumbnail.mjs';
@@ -29,6 +30,9 @@ test('ui/public/graph/model.mjs re-exports the SHARED functions — same identit
   assert.equal(uiModel.routePathD, route.routePathD);
   assert.equal(uiModel.routeMid, route.routeMid);
   assert.equal(uiModel.hitRoute, route.hitRoute);
+  // The bezier wire shape (curves.mjs) is shared too — paint, ghost and hit read the same samples.
+  assert.equal(uiModel.wireCurve, curves.wireCurve);
+  assert.equal(uiModel.ghostCurve, curves.ghostCurve);
   assert.equal(uiModel.classifyLoops, loops.classifyLoops);
   assert.equal(uiModel.autoLayout, layout.autoLayout);
   assert.equal(uiModel.thumbnailSvg, thumbnail.thumbnailSvg);

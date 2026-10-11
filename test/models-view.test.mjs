@@ -7,9 +7,10 @@ import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import {
   suggestDuplicateId, renderModelsList, renderModelEditor,
-  collectModelEditor, makeEnvRow, setModelCost,
-  renderExportWizard, collectExportWizard,
+  collectModelEditor, makeEnvRow, setModelCost, setModelEngine,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from '../ui/public/models-view.mjs';
+import { bridgedBadge, degradationLine } from '../ui/public/bridge-view.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -332,4 +333,170 @@ test('list (#422): endpoint-routed badge on global + plugin cards whose env carr
   assert.equal(badgeOf('plain'), null, 'no base url → no badge');
   assert.ok(badgeOf('pm'), 'routed plugin');
   assert.match(badgeOf('glm-4.7').title, /haiku\/sonnet\/opus\/fable/);
+});
+
+const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+
+test('list: Codex built-ins have their own group; a Codex custom model carries a Codex badge', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low', 'high'], engine: 'codex' }],
+    predefined: PREDEFINED, efforts: EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+  }, { doc });
+  const sec = el.querySelector('.mv-section[data-section="codex"]');
+  assert.ok(sec);
+  assert.equal(sec.querySelector('.mv-section-title').textContent, 'Codex built-in models');
+  assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
+  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5 — all efforts/);
+  const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
+  assert.equal(card.querySelector('.mv-engine').textContent, 'Codex');
+  assert.match(card.querySelector('.mv-summary').textContent, /low · high/);
+  assert.equal(el.querySelectorAll('.mv-builtin:not(.mv-codex)').length, 2);
+});
+
+test('editor: the engine swaps the efforts and hides env for Codex; collect sends it', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const engine = el.querySelector('.mv-engine');
+  assert.equal(engine.value, 'claude');
+  assert.equal(engine.disabled, false);
+  setModelEngine(el, 'codex');
+  assert.equal(engine.value, 'codex');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-conn').closest('.mv-field').hidden, false, 'a Codex model keeps a (narrowed) Connection');
+  el.querySelector('.mv-id').value = 'gpt-5.5-tuned';
+  el.querySelector('.mv-effort-cb[value="minimal"]').checked = false;
+  const { id, body } = collectModelEditor(el);
+  assert.equal(id, null);
+  assert.equal(body.engine, 'codex');
+  assert.deepEqual(body.efforts, ['low', 'medium', 'high']);
+  assert.deepEqual(body.env, {});
+  assert.equal('upstream' in body, false);
+  setModelEngine(el, 'claude');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
+  assert.equal(collectModelEditor(el).body.engine, undefined, 'a Claude create body is unchanged');
+  const edit = renderModelEditor({ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low'], engine: 'codex' }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  assert.equal(edit.querySelector('.mv-engine').disabled, true, 'the engine is fixed once created');
+  assert.deepEqual([...edit.querySelectorAll('.mv-effort-cb')].filter((c) => c.checked).map((c) => c.value), ['low']);
+  assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
+});
+
+test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on Codex too', () => {
+  const providers = { openai: { configured: false, keySet: false, keyOptional: false } };
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, providers });
+  const conn = el.querySelector('.mv-conn');
+  const signin = el.querySelector('.mv-signin-field');
+  // A new entry is on no engine until its connection says so: every mode, whatever the sign-in.
+  setModelEngine(el, 'codex');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'env', 'provider']);
+  assert.equal(shown[0].querySelector('.mv-conn-mode-title').textContent, "A harness's own sign-in");
+  assert.equal(signin.hidden, false, 'the sign-in asks which harness');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Codex only/);
+  // Through a provider the entry is Claude Code's: the sign-in leaves, the efforts are Claude Code's list.
+  conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
+  applyConnectionModeIn(el);
+  assert.equal(signin.hidden, true);
+  assert.equal(el.dataset.engine, 'claude');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
+  const prov = conn.querySelector('.mv-conn-provider');
+  assert.equal(prov.disabled, false);
+  prov.value = 'openai';
+  conn.querySelector('.mv-conn-api').value = 'openai-responses';
+  conn.querySelector('.mv-conn-model').value = 'gpt-5.5';
+  applyConnectionModeIn(el);
+  assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  // The id follows the provider and the upstream model until typed: gpt-5.5 itself is Codex's own sign-in.
+  assert.equal(el.querySelector('.mv-id').value, 'openai-gpt-5.5');
+  const { body } = collectModelEditor(el);
+  assert.equal('engine' in body, false, 'stored as Claude Code\'s; its harnesses follow from the connection');
+  assert.equal(body.id, 'openai-gpt-5.5');
+  assert.equal(body.upstream.model, 'gpt-5.5');
+  conn.querySelector('.mv-conn-api').value = 'openai-chat';
+  applyConnectionModeIn(el);
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Claude Code, through worca's bridge\./);
+  // A typed id is kept.
+  el.querySelector('.mv-id').value = 'my-gpt'; el.querySelector('.mv-id').dataset.auto = 'off';
+  applyConnectionModeIn(el);
+  assert.equal(el.querySelector('.mv-id').value, 'my-gpt');
+});
+
+test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its own sign-in or an OpenAI-compatible Responses endpoint', () => {
+  const upstream = { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '${CX_KEY}', headers: { 'X-Team': 'blue' } };
+  const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const conn = edit.querySelector('.mv-conn');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'provider'], 'no env mode on Codex');
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['Codex default', 'OpenAI-compatible endpoint']);
+  assert.equal(edit.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
+  const prov = conn.querySelector('.mv-conn-provider');
+  assert.equal(prov.value, 'openai');
+  assert.equal(prov.disabled, true);
+  assert.deepEqual([...conn.querySelectorAll('.mv-conn-api option')].map((o) => o.value), ['openai-responses'], 'codex no longer speaks chat completions');
+  assert.equal(conn.querySelector('.mv-conn-caps').hidden, true, 'the bridge\'s capability pins do not apply');
+  assert.match(conn.querySelector('.mv-conn-note').textContent, /Codex calls the endpoint’s Responses API itself/);
+  assert.equal(conn.querySelector('.mv-conn-runs').textContent, "Runs on Claude Code (through worca's bridge) and Codex (directly).");
+  const { body } = collectModelEditor(edit);
+  assert.deepEqual(body.env, {});
+  assert.deepEqual(body.upstream, upstream);
+  edit.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true;
+  assert.equal(collectModelEditor(edit).body.upstream, null, 'switching back to codex\'s default clears the endpoint');
+});
+
+test('cards: a Codex endpoint model says endpoint, not bridged, and carries no translation line', () => {
+  const m = { id: 'cx-local', engine: 'codex', bridged: 'openai', upstreamModel: 'qwen3-coder', upstream: { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder' } };
+  const b = bridgedBadge(m, { doc });
+  assert.equal(b.textContent, 'endpoint: openai');
+  assert.match(b.title, /Codex connects to this OpenAI-compatible endpoint itself as qwen3-coder/);
+  assert.equal(degradationLine(m), '');
+});
+
+test('list: a Codex built-in shadowed by a same-id model of any engine says overridden', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'gpt-5.5', label: 'GPT via proxy', efforts: ['medium'] }],
+    predefined: PREDEFINED, efforts: EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+    policy: [{ id: 'gpt-5.6-sol', label: 'Sol via Acme', efforts: ['medium'], home: 'acme/gateway' }],
+  }, { doc });
+  const badge = (id) => !!el.querySelector(`.mv-builtin.mv-codex[data-id="${id}"] .mv-shadowed`);
+  assert.equal(badge('gpt-5.5'), true, 'a Claude global of the same id owns it');
+  assert.equal(badge('gpt-5.6-sol'), true, 'a team-policy model of the same id owns it');
+});
+
+test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'cursor']);
+  setModelEngine(el, 'cursor');
+  assert.equal(el.querySelector('.mv-engine').value, 'cursor');
+  assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true, 'the whole Pricing field');
+  assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
+  const conn = el.querySelector('.mv-conn');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  // A new entry still offers every connection; on Cursor's sign-in it runs on Cursor alone.
+  assert.equal(shown.length, 3);
+  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on Cursor only/);
+  assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+  el.querySelector('.mv-id').value = 'sonnet-4.5';
+  const { body } = collectModelEditor(el);
+  assert.equal(body.engine, 'cursor');
+  assert.deepEqual(body.env, {});
+  assert.deepEqual(body.efforts, []);
+  assert.equal('upstream' in body, false);
+  setModelEngine(el, 'codex');
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'Pricing is back');
+  assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false, 'efforts are back');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
+});
+
+test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
+  const el = renderModelsList({
+    globals: [{ id: 'sonnet-4.5', label: 'Sonnet via Cursor', efforts: [], engine: 'cursor' }],
+    predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS, cursorEfforts: [],
+  }, { doc });
+  assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
+  assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);
 });

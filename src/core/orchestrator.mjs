@@ -13,6 +13,7 @@
 import { join, isAbsolute, extname } from 'node:path';
 import { rm, readFile, readdir, access, stat } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
+import { runsOn } from '../shared/connections.mjs';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
@@ -34,9 +35,10 @@ import { runExecution, allocateOutputs, allocateVerdict, readDecomposition } fro
 import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
-import { humanEstimateOverrides, memoryDefragModel } from './settings.mjs';
+import { humanEstimateOverrides } from './settings.mjs';
 import { renderPromptArtifact } from './phases.mjs';
-import { listModels, modelHasBaseUrlRouting, resolveRunConfig } from './config.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines } from './config.mjs';
+import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
@@ -48,6 +50,7 @@ import { buildProposal, sanitizeProposalAnswer, remapTunables, mintAutoWorkflowI
 import { resolveAutoModel } from './auto/model.mjs';
 import { autoModelsFor } from './auto/runnable.mjs';
 import { probeClaudeAuth } from './preflight.mjs';
+import { helperEngineFor } from './model-env.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions, forgetMissingArtifacts,
@@ -108,7 +111,10 @@ export class GraphOrchestrator extends RunHarness {
     this._classify = typeof opts?.classify === 'function' ? opts.classify : null;
     // Whether Claude Code is signed in decides which models Auto may design with
     // (auto/runnable.mjs). `claudeAuth` is the test seam.
-    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth : () => probeClaudeAuth({ bin: this.claude.bin || undefined });
+    // The run's `bin` only on a Claude run: on any other run it is another CLI's (cursor-agent on a Cursor run), and the
+    // probe reads Claude's own sign-in with no bin.
+    this._claudeAuth = typeof opts?.claudeAuth === 'function' ? opts.claudeAuth
+      : () => probeClaudeAuth({ bin: (this.claude.engine || 'claude') === 'claude' ? (this.claude.bin || undefined) : undefined });
     Object.assign(this.state, {
       engine: 2,
       active: [],                // [{nodeId, executionId}]
@@ -147,10 +153,17 @@ export class GraphOrchestrator extends RunHarness {
     const defrag = this.memoryScope ? await this._defragAgentPair() : null;
     const scan = this._scanModelPins();
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
     this._adoptResolvedGraph(resolved);
+    // Cascading settings §7: name each node model that came from a step slot, and where it was set
+    // (run log + audit), so a model the engine rejects is traceable to its setting.
+    const engineNow = this.claude.engine || 'claude';
+    for (const line of slotSourceLines(engineNow, this.resolved.nodeCtx, stepSlotDefaults(engineNow, { projectDir: this.projectDir, workspace: this.isWorkspace }))) {
+      this._log('orchestrator', 'info', line);
+      this._pendingAudits.push(`${line}.`);
+    }
     // A setting that failed the catalog check degrades — and says what the run uses INSTEAD, read
     // off the resolved graph (a project's own pick, a team default or the template's model): a run
     // log line, and an audit line queued until the pipeline dir exists (RunHarness._pendingAudits).
@@ -184,14 +197,15 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {Promise<{pair: ({model:string, effort:(string|null)}|null), warning: (string|null)}>}
    */
   async _defragAgentPair() {
+    const engine = this.claude.engine || 'claude';
     const explicit = { model: this.claude.model, effort: this.claude.effort };
-    const stored = memoryDefragModel();
+    const stored = defragSlotPair(engine, this._settingsScope());
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
-      ? await listModels(this.projectDir) : [];
+      ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
     const r = resolveDefragModel({ explicit, stored, models });
     if (!r.model) return { pair: null, warning: r.warning };
-    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : 'Settings › Memory'})`);
+    this._log('orchestrator', 'info', `Memory defragment model: ${r.model}${r.effort ? ` · ${r.effort}` : ''} (${r.source === 'explicit' ? 'named at start' : (engine === 'claude' ? 'Settings › Memory' : 'Models › Codex')})`);
     return { pair: { model: r.model, effort: r.effort }, warning: r.warning };
   }
 
@@ -204,8 +218,14 @@ export class GraphOrchestrator extends RunHarness {
    * @returns {{agentPair:{model:string, effort:(string|null)}, subagentPin:{model:string, effort:string}}|null}
    */
   _scanModelPins() {
+    if (!this._isWorkspaceScan()) return null;
+    if ((this.claude.engine || 'claude') !== 'claude') {
+      const slot = utilityModelFor(this.claude.engine, 'workspaceScan', { workspace: true });
+      if (!slot.model) return null;
+      return { agentPair: { model: slot.model, effort: slot.effort }, subagentPin: null };
+    }
     const m = this.opts.scanModels;
-    if (!this._isWorkspaceScan() || !m || typeof m !== 'object' || !m.scanModel) return null;
+    if (!m || typeof m !== 'object' || !m.scanModel) return null;
     this._log('orchestrator', 'info', `Workspace scan models: ${describeScanModels(m)} (${m.source || 'explicit'})`);
     if (m.warning) {
       this._log('orchestrator', 'warn', m.warning);
@@ -270,15 +290,28 @@ export class GraphOrchestrator extends RunHarness {
 
   async _decideTopologyInner() {
     const registry = this.registry;
-    // Only models this install can run (auto/runnable.mjs): signed out, a first-party pick —
-    // or the CLI default a stage without a model falls back to — dies at its first spawn.
-    let auth = 'unknown';
-    try { auth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
-    const runnable = autoModelsFor(await listModels(this.projectDir), { auth, routed: modelHasBaseUrlRouting });
+    // Node models stay on the run engine; the classifier call runs on the helper engine (Claude on a Cursor run).
+    const engine = this.claude.engine || 'claude';
+    const helper = helperEngineFor(engine);
+    let helperAuth = 'unknown';
+    if (helper === 'claude') {
+      // On a Claude run: the run's own sign-in. On a Cursor run: the helper's Claude (the seam probes with no bin).
+      try { helperAuth = (await this._claudeAuth())?.state || 'unknown'; } catch { /* unknown narrows nothing */ }
+    }
+    const catalog = (await listModels(this.projectDir)).filter((m) => runsOn(m, engine));
+    const runnable = autoModelsFor(catalog, { auth: engine === 'claude' ? helperAuth : 'unknown', routed: modelHasBaseUrlRouting });
     const models = runnable.models;
     const requireModel = runnable.requireModel;
     if (runnable.note) this._log('orchestrator', requireModel ? 'info' : 'warn', `auto: ${runnable.note}`);
-    const model = resolveAutoModel(models);
+    const slot = this._utilitySlot('classifier');
+    // The classifier's own call runs on the helper engine: on a Cursor run that is Claude, picking from Claude's catalog.
+    let callPool = models;
+    if (helper !== engine) {
+      const pool = autoModelsFor((await listModels(this.projectDir)).filter((m) => runsOn(m, helper)), { auth: helperAuth, routed: modelHasBaseUrlRouting });
+      if (pool.note) this._log('orchestrator', 'warn', `auto: ${pool.note}`);   // e.g. Claude signed out on a Cursor run
+      callPool = pool.models;
+    }
+    const model = resolveAutoModel(callPool, { engine: helper, ...(helper !== 'claude' || slot.source === 'project' ? { setting: slot.model || '' } : {}) });
     const fingerprint = this.isWorkspace
       ? await fingerprintWorkspace(this.members, {
         name: this.workspace.name,
@@ -375,8 +408,11 @@ export class GraphOrchestrator extends RunHarness {
 
   /** One round: classifier call (one assembler-driven retry), match, proposal. */
   async _autoRound({ registry, models, requireModel = false, model, fingerprint, extras, taskText, classify, round }) {
+    const runEngine = this.claude.engine || 'claude';
+    const helper = helperEngineFor(runEngine);
     const input = {
       taskText, extras, fingerprint, models, requireModel, registry,
+      engine: helper,                                  // the classifier's own spawn: Claude on a Cursor run
       domain: 'coding',                                // the domain the assembler stamps: coding + shared + general agents are offered
       humanInLoop: this.humanInLoop, feedback: [...this._auto.feedback], priorShape: this._auto.prior,
       // D6 amendment (2026-09-07): the classifier may Grep/Glob/Read the RUN'S OWN checkout to
@@ -386,7 +422,8 @@ export class GraphOrchestrator extends RunHarness {
       // falls back to the scratch dir, text-only, exactly as before. (A workspace run adds
       // `workspace` (members + each checkout, ./repos/<key> under a detached run root) and,
       // under legacy mode, the non-primary worktrees as `addDirs`.)
-      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, bin: this.claude.bin, mock: this.claude.mock,
+      model, cwd: this.runCwd || this.pipeline.dir, repoLook: !!this.runCwd, mock: this.claude.mock,
+      ...(helper === runEngine && this.claude.bin ? { bin: this.claude.bin } : {}),   // the run's bin is the run engine's
       ...this._autoWorkspaceInput(),
       // Stop OR pause ends the call (the same composition every node spawn uses).
       signal: AbortSignal.any([this.abort.signal, this.pauseAbort.signal]),
@@ -527,7 +564,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -901,11 +938,11 @@ export class GraphOrchestrator extends RunHarness {
       // advance it), so a resume credits the paused execution's pre-pause work at its terminal.
       humanCursor: this._humanCursorReady ? (this._humanCursor ?? { files: 0, insertions: 0, deletions: 0 }) : null,
       stepModels: this.stepModels,
-      // The run-level model the run was started with (restored by the harness
-      // constructor); only the fields that are set, so an older reader sees none.
-      ...(this.claude.model || this.claude.effort
-        ? { claude: { ...(this.claude.model ? { model: this.claude.model } : {}), ...(this.claude.effort ? { effort: this.claude.effort } : {}) } }
-        : {}),
+      // The run-level choices the harness constructor restores: the model the run was
+      // started with, and an engine other than Claude with the consent to run it
+      // unguarded. Only the fields that are set and differ from the default, so a
+      // Claude run's point is unchanged and an older reader sees none.
+      ...this._resumePointClaude(),
       // A run started as mock (a per-request `mock: true`) resumes as mock (the harness constructor).
       ...(this.claude.mock ? { mock: true } : {}),
       workflowId: this.workflowId,
@@ -930,12 +967,26 @@ export class GraphOrchestrator extends RunHarness {
       workspace: this.isWorkspace ? { projects: this._workspaceProjects() } : null,
       pauseReason: this.pauseReason || null,
       pauseDetail: this.pauseDetail || null,
+      ...(this.limitEngine ? { limitEngine: this.limitEngine } : {}),
       // The EFFECTIVE instruction at dispatch time (post in-worktree graph
       // build), not the detect-time tools.instruction.
       toolInstruction: this.toolInstruction ?? '',
       pipelineDir: this.pipeline.dir,
       pausedAt: new Date().toISOString(),
     };
+  }
+
+  /** The resume point's `claude` blob, or nothing when every field is the default. */
+  _resumePointClaude() {
+    const engine = this.claude.engine && this.claude.engine !== 'claude' ? this.claude.engine : null;
+    const c = {
+      ...(this.claude.model ? { model: this.claude.model } : {}),
+      ...(this.claude.effort ? { effort: this.claude.effort } : {}),
+      ...(engine ? { engine } : {}),
+      ...(engine && this._allowUnguardedEngine ? { allowUnguardedEngine: true } : {}),
+      ...(this._modelForAll && this.claude.model ? { modelForAll: true } : {}),
+    };
+    return Object.keys(c).length ? { claude: c } : {};
   }
 
   /** Per-member worktree facts the v1 point kept under rp.bus.workspace. */
@@ -1275,8 +1326,11 @@ export class GraphOrchestrator extends RunHarness {
       cycle: ordinal,
       uiPhase: this._uiPhaseOf(node.id),
       // A script has no model: no per-model cost override, no cost-reliability observation.
-      model: nc.kind === 'script' ? null : (nc.model || this.claude.model),
+      // The model the spawn gets (_engineModel drops a Claude model on another engine), so
+      // a Claude model's cost override never prices another engine's tokens.
+      model: nc.kind === 'script' ? null : this._nodeModelPair(nc).model,
     };
+    const engineOpts = this._engineNodeOpts(nc);
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -1322,7 +1376,12 @@ export class GraphOrchestrator extends RunHarness {
       node: {
         ...node,
         key: nc.key,
-        fanOut: !!nc.fanOut,
+        fanOut: engineOpts.fanOut,
+        engine: engineOpts.engine,
+        // The workspace directive's per-project dispatch names Claude's Task tool and agent types: on another
+        // engine (and on one with no sub-agent tool at all) the agent does that work itself, one unit at a
+        // time (executor.mjs#buildAgentPrompt). Research fan-out still runs on Codex (fanOutDirective).
+        ...(engineOpts.subagents && engineOpts.engine === 'claude' ? {} : { noSubagents: true }),
         subagentModel: nc.subagentModel || '',
         subagentEffort: nc.subagentEffort || '',
         // Same fallback as claudeOpts.model below: the flag must describe the
@@ -1367,10 +1426,10 @@ export class GraphOrchestrator extends RunHarness {
       onEvent: (e) => this._onAgentEvent(nc.key || node.kind, e, attr),
       claudeOpts: {
         bin: this.claude.bin,
+        engine: this.claude.engine,
         permissionMode: this.claude.permissionMode,
-        model: nc.model || this.claude.model,  // per-node, falling back to global
-        effort: nc.effort,                     // per-node effort (undefined when unset)
-        permissionRules: this.guardrailPermissionRules || undefined,
+        ...this._nodeModelPair(nc),
+        permissionRules: this._spawnPermissionRules(),
         envScrub: this.guardrails?.envScrub || undefined,
         // §5.5.1: a scrubbed spawn with a registry stdio copy keeps the launcher's keep-list.
         envAllowlist: this.guardrails?.envScrub
@@ -1479,6 +1538,8 @@ export class GraphOrchestrator extends RunHarness {
         this._upsertSubAgent(rec);
         this._subAgentTransition('finish', rec);
       }
+      // Its stream has ended: drop the normalizer its legacy envelopes went through.
+      this._legacyNormalizers.delete(key);
     }
     this._emit('state', this.getState());
     this._persist().catch(() => {});
@@ -2142,6 +2203,21 @@ export class GraphOrchestrator extends RunHarness {
       // The base writes this line (P1 hook-4 contract); v1's is "from <kind> at step <n>".
       audit: `Pipeline **resumed** (graph snapshot at seq ${rp.snapshot?.seq ?? 0}).`,
     };
+  }
+
+  /** Engine hook (run-harness.mjs#_engineResumeGate): the agent nodes of the frozen
+   *  manifest, with the model the manifest froze and the tools their agent file grants
+   *  (the manifest never carries tools), for the engine gate before the graph is restored. */
+  async _engineGateNodes(rp) {
+    const registry = loadAgentRegistry(this.agentsDir);
+    const nodes = [];
+    for (const mn of rp?.manifest?.graph?.nodes || []) {
+      if (mn.kind !== 'agent') continue;
+      const meta = registry[mn.key] || {};
+      const { tools } = await loadAgentFile(this.agentsDir, meta.agentFile ?? null, meta.agentPath ?? null);
+      nodes.push({ nodeId: mn.id, key: mn.key, model: mn.model || undefined, tools });
+    }
+    return nodes;
   }
 
   /**

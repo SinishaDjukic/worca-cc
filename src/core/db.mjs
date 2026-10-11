@@ -26,6 +26,8 @@ import { SEED_TEMPLATES, NODE_ID_MAP, FB_WIRE_MAP } from './graph/seed-templates
 import { AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS }
   from './graph/presentation-workflow.mjs';
+import { GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS }
+  from './graph/architecture-workflow.mjs';
 
 const _require = createRequire(import.meta.url);
 let _DatabaseSync; // cached node:sqlite DatabaseSync ctor (lazy-loaded once)
@@ -58,7 +60,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 52;
+export const SCHEMA_VERSION = 56;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -858,7 +860,10 @@ const INCREMENTAL_COLUMNS = {
   ask_threads:            { created_by: 'TEXT',      // v37: the thread's owner (identity.mjs actor); NULL = ownerless (legacy)
                             mcp_off: 'TEXT',         // v45: JSON {sets, members} the chat's MCP picker switched off; NULL = none
                             contexts: 'TEXT',        // v46: JSON [{kind,id,label,home?,pinned?,source?}] the chat was asked in / talked about, origin first; NULL = before v46 (no indicator)
-                            agent_mode: 'INTEGER' }, // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
+                            agent_mode: 'INTEGER',   // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
+                            engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
+                            mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
+                            composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
   pipeline_events:        { actor: 'TEXT' },         // v38: who did it (identity.mjs actor); NULL = the run itself / before attribution
   workspaces:             { metrics_project: 'TEXT',    // v30: team-metrics home (member absolute path); NULL = no home
                             policy_project: 'TEXT',     // v32: team-policy home (member absolute path); NULL = no home
@@ -999,6 +1004,35 @@ CREATE TABLE IF NOT EXISTS pipeline_member_prs (
 );
 `;
 
+const PR_WATCH_DDL = `
+CREATE TABLE IF NOT EXISTS pr_watches (
+  pr_url TEXT PRIMARY KEY,
+  pipeline_id TEXT NOT NULL,
+  member_key TEXT NOT NULL DEFAULT '',
+  push_remote TEXT NOT NULL DEFAULT 'origin',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'watching',
+  reason TEXT,
+  fix_runs INTEGER NOT NULL DEFAULT 0,
+  active_run_id TEXT,
+  active_pipeline_id TEXT,
+  handled TEXT NOT NULL DEFAULT '[]',
+  pending TEXT,
+  retry_state TEXT NOT NULL DEFAULT '{}',
+  enabled_by TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS pr_watch_runs (
+  run_id TEXT PRIMARY KEY,
+  pr_url TEXT NOT NULL,
+  pipeline_id TEXT UNIQUE,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (pr_url) REFERENCES pr_watches(pr_url) ON DELETE CASCADE,
+  FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1020,6 +1054,8 @@ const INCREMENTAL_TABLES = {
   pipeline_commands: PIPELINE_COMMANDS_DDL,
   notification_reads: NOTIFICATION_READS_DDL,
   pipeline_member_prs: PIPELINE_MEMBER_PRS_DDL,
+  pr_watches: PR_WATCH_DDL,
+  pr_watch_runs: PR_WATCH_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1479,8 +1515,17 @@ function applySchemaV40(db) {
  *  OR IGNORE: a user's own live row with the id wins; an archived row keeps the
  *  id and the seed is skipped, exactly like V24's SEED_TEMPLATES pass. */
 function applySchemaV41(db) {
+  seedShippedWorkflow(db, GRAPH_PRESENTATION_WORKFLOW);
+}
+
+/** v55: seed the shipped Architecture (C4) workflow — V41's shape for a second shipped graph. */
+function applySchemaV55(db) {
+  seedShippedWorkflow(db, GRAPH_ARCHITECTURE_WORKFLOW);
+}
+
+/** INSERT OR IGNORE one shipped v2 workflow row (see applySchemaV41). */
+function seedShippedWorkflow(db, t) {
   if (!presentationSeedable(db)) return;
-  const t = GRAPH_PRESENTATION_WORKFLOW;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
   const now = new Date().toISOString();
   db.prepare(`INSERT OR IGNORE INTO workflows
@@ -1510,8 +1555,16 @@ function presentationSeedable(db) {
  *  user removed on purpose. No row = nothing to refresh, which is exactly right
  *  for that user. */
 function refreshPresentationSeed(db) {
+  refreshShippedSeed(db, GRAPH_PRESENTATION_WORKFLOW, presentationGraphFingerprint, PRESENTATION_SHIPPED_FINGERPRINTS);
+}
+
+/** The Architecture (C4) seed's refresh — the same rules, its own shipped shapes. */
+function refreshArchitectureSeed(db) {
+  refreshShippedSeed(db, GRAPH_ARCHITECTURE_WORKFLOW, architectureGraphFingerprint, ARCHITECTURE_SHIPPED_FINGERPRINTS);
+}
+
+function refreshShippedSeed(db, t, fingerprint, shipped) {
   if (!presentationSeedable(db)) return;
-  const t = GRAPH_PRESENTATION_WORKFLOW;
   const graph = JSON.stringify({ nodes: t.nodes, wires: t.wires });
   const now = new Date().toISOString();
 
@@ -1533,9 +1586,9 @@ function refreshPresentationSeed(db) {
   if (!row || !row.graph) return;
   let stored = null;
   try { stored = JSON.parse(row.graph); } catch { return; }   // unparseable: leave it alone
-  const fp = presentationGraphFingerprint(stored);
-  if (fp === presentationGraphFingerprint({ nodes: t.nodes, wires: t.wires })) return;  // already current
-  if (!PRESENTATION_SHIPPED_FINGERPRINTS.includes(fp)) return;                          // user-edited
+  const fp = fingerprint(stored);
+  if (fp === fingerprint({ nodes: t.nodes, wires: t.wires })) return;  // already current
+  if (!shipped.includes(fp)) return;                                   // user-edited
   // Rewire WITHOUT discarding settings. The fingerprint is node ids + wire ids, so
   // it cannot see a config edit — setWorkflowNodeDefaults writes a model pin
   // straight into graph.nodes[].config without touching ids, `origin` or
@@ -2077,6 +2130,13 @@ export function migrate(db) {
     if (current < 50) db.exec(TERMINAL_DDL);         // built-in terminal (#573) — IF NOT EXISTS, reconcile-safe
     // v51 (#574): ask_threads.agent_mode — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 52) applySchemaV52(db);            // workspace PRs: pipeline_member_prs + gated backfill
+    // v53 (#635): ask_threads.engine — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v54 (Workflows view): ask_threads.mode + composer — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // The shipped Architecture (C4) workflow: one-shot seed at its own rung, refresh on every bump
+    // (the Presentation seed's two halves, above).
+    if (current < 55) applySchemaV55(db);
+    if (current < SCHEMA_VERSION) refreshArchitectureSeed(db);
+    if (current < 56) db.exec(PR_WATCH_DDL);         // watched PRs + crash-safe fix-run provenance
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

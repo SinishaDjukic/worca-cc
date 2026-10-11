@@ -42,9 +42,9 @@ test('promptHints surfaces with a safe default; the v1 uiPhase/version fields do
   }
 });
 
-test('all 22 builtins validate as meta v2', () => {
+test('all 24 builtins validate as meta v2', () => {
   const raws = rawSidecars();
-  assert.equal(raws.length, 22);
+  assert.equal(raws.length, 24);
   for (const raw of raws) {
     assert.equal(raw.metaVersion, 2, `${raw.key} declares metaVersion 2`);
     assert.deepEqual(validateMetaV2(raw, { mockWriterRoles: MOCK_WRITER_ROLES }).errors, [], raw.key);
@@ -52,9 +52,9 @@ test('all 22 builtins validate as meta v2', () => {
   }
 });
 
-test('the 22 shipped sidecars are pure meta v2 — typed ports and nothing v1', () => {
+test('the 24 shipped sidecars are pure meta v2 — typed ports and nothing v1', () => {
   const reg = loadAgentRegistry(undefined, { userAgentsDir: null });
-  assert.equal(Object.keys(reg).length, 22);
+  assert.equal(Object.keys(reg).length, 24);
   for (const m of Object.values(reg)) {
     for (const k of ['consumes', 'optionalConsumes', 'produces', 'connectsTo', 'loopSource', 'uiPhase', 'channelDefs']) {
       assert.equal(k in m, false, `${m.key} still carries the v1 field "${k}"`);
@@ -66,13 +66,14 @@ test('the 22 shipped sidecars are pure meta v2 — typed ports and nothing v1', 
     assert.equal(m.inputs.some((p) => p.id === 'await'), false, 'await is synthesized, never declared');
   }
   // The coding builtins that carry prompt hints, plus the six presentation
-  // agents (all six set promptHints); clarify and workspaceScanner stay empty
+  // agents (all six set promptHints), plus architectSetup (its copy-the-formData
+  // instruction); clarify, workspaceScanner and architect stay empty
   // (clarify's v1 sentences are the executor's clarifier base instruction, the
   // scanner has no v2 prompt). P3's prompt-parity suite pins every coding hint
   // byte-for-byte against dev phases.mjs — a "fix" that deletes a hint to shorten
   // this list breaks test/graph-prompt-parity.test.mjs.
   assert.deepEqual(Object.values(reg).filter((m) => m.promptHints).map((m) => m.key).sort(),
-    ['deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs', 'deckReviewer', 'deckSystem',
+    ['architectSetup', 'deckAudit', 'deckBuilder', 'deckClarify', 'deckExport', 'deckNarrative', 'deckOutputs', 'deckReviewer', 'deckSystem',
       'decomposer', 'implementer', 'manualTestsChecklist', 'manualWebUiTesting', 'planReviewer',
       'planner', 'refiner', 'reviewer', 'workspaceReviewer']);
   assert.deepEqual(reg.implementer.inputs.map((p) => p.id), ['fix', 'task', 'plan'],

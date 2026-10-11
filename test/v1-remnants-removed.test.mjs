@@ -101,7 +101,7 @@ const AGENT_KEYS = ['planner', 'refiner', 'implementer', 'reviewer', 'decomposer
 // a DB table name, and `run-harness.mjs` branches on all three.
 const KEY_ALLOW = new Set([
   'src/core/agent-registry.mjs',   // LEGACY_LABELS: per-builtin display labels (data)
-  'src/core/claude-runner.mjs',    // MOCK_WRITER_ROLES: the offline mock's role table
+  'src/core/engines/mock.mjs',     // MOCK_WRITER_ROLES: the offline mock's role table
   'src/core/graph/seed-templates.mjs',
   'src/core/graph/builtin-workflows.mjs',
   'src/core/auto/recipes.mjs',   // Auto recipes: prompt + mock data (D23 — the ONE Auto module that may name agents)

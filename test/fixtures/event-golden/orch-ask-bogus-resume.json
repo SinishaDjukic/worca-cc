@@ -1,0 +1,11 @@
+{
+ "emitted": [],
+ "subAgents": [],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "costUsd": 0
+ },
+ "totalCost": 0
+}

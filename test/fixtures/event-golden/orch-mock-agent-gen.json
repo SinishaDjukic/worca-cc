@@ -1,0 +1,78 @@
+{
+ "emitted": [
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] starting role=agent-gen cycle=1",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "DRAFTING agent metadata for Custom Agent",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "wrote <CWD>/out.md",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "wrote <CWD>/out.json",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] done role=agent-gen",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  }
+ ],
+ "subAgents": [],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "sessionId": "mock-session-agent-gen-c1",
+  "costUsd": 0
+ },
+ "totalCost": 0
+}

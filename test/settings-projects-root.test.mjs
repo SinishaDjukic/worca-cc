@@ -321,9 +321,9 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'app', 'askMaxBudgetUsd', 'askMaxTurns', 'askWeb', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'root',
-      'schedule', 'sync', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'workspaceScan', 'workspaceScanDefault']);
+    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'root', 'runEngine',
+      'schedule', 'stepModels', 'sync', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
     assert.equal(j.titleModel, null, 'no title model stored -> the run\'s model');

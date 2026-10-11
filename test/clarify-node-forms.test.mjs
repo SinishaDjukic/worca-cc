@@ -134,7 +134,7 @@ test('a clarifier ask form refused twice downgrades to one free-text question â€
   // the first spawn logs none and the repair logs the first's id; a fresh-session repair logs nothing.
   const sessions = events.filter((e) => e.type === 'session').map((e) => e.sessionId);
   assert.equal(sessions.length, 2, 'the first spawn and ONE repair spawn');
-  assert.deepEqual(events.filter((e) => e.type === 'assistant' && /\[mock\] resumed session/.test(e.text)).map((e) => e.text),
+  assert.deepEqual(events.filter((e) => e.type === 'text' && /\[mock\] resumed session/.test(e.text)).map((e) => e.text),
     [`[mock] resumed session ${sessions[0]}`], 'the repair spawn resumes the first spawn\'s session, and nothing else re-attaches');
   assert.equal(out.sessionId, sessions[1], 'the execution reports the session the repair ended on');
 });

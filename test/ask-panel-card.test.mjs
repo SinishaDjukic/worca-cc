@@ -55,8 +55,8 @@ const MODELS = [
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', efforts: ['medium', 'high'], custom: false },
 ];
 // The real GET /api/config envelope: {config, models, steps, efforts, subagentModels} (ui/server.mjs:3044-3050).
-function configBody() {
-  return { config: { steps: {}, customModels: [], workflows: {} }, models: MODELS, steps: [], efforts: ['medium', 'high', 'xhigh', 'max'],
+function configBody(recorder = {}) {
+  return { config: { steps: {}, customModels: [], workflows: recorder.configWorkflows || {} }, models: [...MODELS, ...(recorder.extraModels || [])], steps: [], efforts: ['medium', 'high', 'xhigh', 'max'],
     subagentModels: ['sonnet', 'opus', 'fable', 'auto', 'inherit'] };
 }
 
@@ -72,7 +72,7 @@ function apiHandler(recorder = {}) {
     if (path === '/api/agents') return { ok: true, status: 200, json: async () => ({ agents: AGENTS, mockWriterRoles: [] }) };
     if (path === '/api/config' && method === 'GET') {
       recorder.configGets = [...(recorder.configGets || []), url];
-      return { ok: true, status: 200, json: async () => configBody() };
+      return { ok: true, status: 200, json: async () => configBody(recorder) };
     }
     if (path === '/api/config' && (method === 'PATCH' || method === 'POST')) {
       recorder.configWrites = [...(recorder.configWrites || []), { method, body: JSON.parse(opts.body) }];
@@ -80,6 +80,7 @@ function apiHandler(recorder = {}) {
       if (recorder.configResponse) return recorder.configResponse;
       return { ok: true, status: 200, json: async () => ({ config: configBody().config }) };
     }
+    if (path === '/api/run-defaults') return { ok: true, status: 200, json: async () => ({ engine: { value: recorder.runEngine || 'claude', source: 'default' } }) };
     if (url === '/api/projects') return { ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: '/repos/proj', exists: true }, { name: 'other', path: '/repos/other', exists: false }] }) };
     if (url === '/api/workflows') return { ok: true, status: 200, json: async () => ({ workflows: [{ id: 'wf_default', name: 'Default' }, { id: 'wf_review', name: 'Review only' }] }) };
     if (url === '/api/guardrails') return { ok: true, status: 200, json: async () => ({ guardrails: [{ id: 'permissive', name: 'Permissive' }, { id: 'normal', name: 'Normal' }, { id: 'strict', name: 'Strict' }] }) };
@@ -285,6 +286,7 @@ test('ask-panel-card: Open in New Pipeline hands over the CURRENT values', async
     target: 'project', projectDir: '/repos/proj', workflowId: 'wf_default', guardrailsId: 'normal',
     prompt: 'edited brief', title: 'Fix login', sourceBranch: '', featureBranch: 'worca/fix-login',
     memoryScope: null,
+    engine: null,
   });
 });
 
@@ -465,6 +467,43 @@ test('ask-panel-card v2: Start writes every edited row (pruned) BEFORE /api/run 
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.deepEqual(rec.order, ['config:PATCH', 'run']);
       assert.deepEqual(rec.configWrites[0].body, { projectDir: '/repos/proj', workflowId: 'wf_review', nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'max', fanOut: null, askQuestions: null, subagentModel: '' } } });
+    } },
+  ]);
+});
+
+const GPT = { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'] };
+
+test('ask-panel-card v2: the lane follows the run engine — Codex models only on a Codex run, none on a Claude run', async () => {
+  await checkRows([
+    { name: 'on a Codex run the agent rows offer Codex models only, heal a Claude pick and hide sub-agents', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { runEngine: 'codex', extraModels: [GPT] });
+      const lane = await laneOf(ctx);
+      const plan = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
+      assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5']);
+      assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the workflow\'s Claude pick is skipped on Codex');
+      assert.equal(lane.querySelector('.ask-rp-subagent'), null);
+      assert.deepEqual([...lane.querySelectorAll('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-effbtn')].map((b) => b.textContent), ['minimal', 'low', 'medium', 'high']);
+    } },
+    { name: 'on a Claude run a Codex model is not offered', run: async () => {
+      const ctx = await openWithCard(PROJECT_CARD, { extraModels: [GPT] });
+      const lane = await laneOf(ctx);
+      assert.equal([...lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model').options].some((o) => o.value === 'gpt-5.5'), false);
+      assert.ok(lane.querySelector('.ask-rp-subagent'));
+    } },
+    { name: 'on a Codex run, saving another tunable re-sends the project\'s Claude pick instead of erasing it', run: async () => {
+      const rec = { runEngine: 'codex', extraModels: [GPT],
+        configWorkflows: { wf_review: { nodes: { n_impl: { model: 'claude-opus-5-5', effort: 'high' } }, feedbacks: {} } } };
+      const ctx = await openWithCard({ ...PROJECT_CARD, workflowId: 'wf_review', workflowName: 'Review only' }, rec);
+      const lane = await laneOf(ctx);
+      assert.equal(lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] .ask-rp-model').value, '', 'the Claude pick shows as inherit on Codex');
+      const fan = lane.querySelector('.ask-rp-tile[data-node-id="n_impl"] [data-ctl="fanOut"]');
+      fan.checked = !fan.checked;
+      fan.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      const impl = rec.configWrites[0].body.nodes.n_impl;
+      assert.equal(impl.model, 'claude-opus-5-5');
+      assert.equal(impl.effort, 'high');
     } },
   ]);
 });
@@ -755,7 +794,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
   // workspace `.ask-mcard-note b`, web and actions `.ask-mcard-note i`, web's exact URL as text):
   // the five bodies are carried whole, cosmetic rows included.
   await checkRows([
-    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', run: async () => {
+    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links the Models page; a removal reads as one', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -785,7 +824,8 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       const done = ctx.doc.querySelector('[data-ask-modcard="applied"]');
       assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied model change');
       assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'oa updated');
-      assert.ok(done.querySelector('a[href="#settings/models"]'));
+      const open = done.querySelector('a[href="#models"]');
+      assert.equal(open && open.textContent, 'Models', 'the card links the Models page');
       assert.equal(done.querySelector('.ask-modcard-warn'), null, 'warnings belong to the proposal');
       const rm = { ...card, kind: 'remove_model', summary: 'Remove model OA', rows: [{ field: 'Label', before: 'OA', after: null }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 5 });
@@ -1023,4 +1063,48 @@ test('ask-panel-card: a tracker-task proposal shows the task (not a brief) and S
   const body = rec.runBodies.at(-1);
   assert.equal('prompt' in body, false);
   assert.deepEqual(body.source, { type: 'plugin', plugin: 'jira-source', sourceId: 'jira', taskId: 'PROJ-123', profile: 'acme', inputs: { writeBack: 'yes' } });
+});
+
+// Engines: "Default" sends none (/api/run resolves the user's / project's engine) and names it once the lane has read
+// it; a proposal that names an engine preselects it, and Start and Open in New Pipeline both carry it.
+test('ask-panel-card: the Engine field — Default sends none, a proposed engine rides Start and the New Pipeline handoff', async () => {
+  await checkRows([
+    { name: 'ask-panel-card: Default names the resolved engine and Start sends no engine', run: async () => {
+      const rec = { runEngine: 'codex' };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      for (let i = 0; i < 10; i++) await ctx.tick();
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.value, '');
+      assert.equal(sel.options[0].textContent, 'Codex (default)');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor'], 'Codex is listed once, as the default');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies.length, 1);
+      assert.equal('engine' in rec.runBodies[0], false);
+    } },
+    { name: 'ask-panel-card: a proposed engine is preselected, stays visible at every mode and is sent', run: async () => {
+      const rec = {};
+      const ctx = await openWithCard({ ...PROJECT_CARD, engine: 'cursor' }, rec);
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.value, 'cursor');
+      const field = sel.closest('.ask-rp-field');
+      assert.equal(field.dataset.minLevel, 'advanced');
+      assert.equal(field.dataset.levelKeep, '1');
+      ctx.doc.querySelector('[data-ask-card-start]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(rec.runBodies[0].engine, 'cursor');
+    } },
+    { name: 'ask-panel-card: a picked engine is handed to New Pipeline', run: async () => {
+      const handed = [];
+      const ctx = await openWithCard(PROJECT_CARD, {}, { openNewPipeline: (p) => handed.push(p) });
+      const sel = ctx.doc.querySelector('.ask-card-engine');
+      assert.equal(sel.closest('.ask-rp-field').dataset.levelKeep, undefined, 'no proposed engine: Advanced and up only');
+      sel.value = 'codex';
+      sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      ctx.doc.querySelector('[data-ask-card-open-np]').click();
+      for (let i = 0; i < 6; i++) await ctx.tick();
+      assert.equal(handed[0].engine, 'codex');
+    } },
+  ]);
 });

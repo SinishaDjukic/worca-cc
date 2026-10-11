@@ -5,12 +5,17 @@
 // the id via resolveModelEnv, no tools, low effort, hard timeout. Never
 // throws — the outcome is a result object either way.
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runClaude } from './claude-runner.mjs';
-import { resolveModelEnv } from './config.mjs';
+import { resolveModelEnv, engineOfModel } from './config.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { classifyError, isFreeDailyLimit, freeDailyHint } from './recoverable-error.mjs';
 import { failedBecauseSignedOut } from './claude-auth.mjs';
 import { bridgeEvents } from './bridge/telemetry.mjs';
+import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
+import { CURSOR_SIGNED_OUT_HINT } from './engines/cursor.mjs';
 
 const TEST_TIMEOUT_MS = 60_000;
 const REPLY_CAP = 100;
@@ -22,7 +27,7 @@ const SYSTEM = 'You are a connectivity check. Reply with exactly OK.';
 export function hintFor(errorClass) {
   switch (errorClass) {
     case 'auth': return 'authentication failed — check the token/secret for this model';
-    case 'model': return 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours in Settings › Models';
+    case 'model': return 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours on the Models page';
     case 'network': return 'endpoint unreachable — check ANTHROPIC_BASE_URL';
     case 'rate_limit': return 'the endpoint is rate-limiting or overloaded — try again shortly';
     case 'quota': return 'quota/billing problem — check the account behind this endpoint';
@@ -33,13 +38,16 @@ export function hintFor(errorClass) {
 }
 
 export const CLAUDE_SIGNED_OUT_HINT = "Claude Code isn't signed in — run `claude` in a terminal and type /login";
+export const CODEX_SIGNED_OUT_HINT = "codex isn't signed in — run `codex login` in a terminal";
+/** A Codex model on its own endpoint that the endpoint did not answer. */
+export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this model's Base URL, or the OpenAI-compatible provider's";
 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
-    case 'not_signed_in': return `sign in to ${provider} under Settings › Providers (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice under Settings › Providers first';
-    case 'no_key': return `set an API key for ${provider} under Settings › Providers, or on this model's Connection`;
+    case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
+    case 'terms': return 'acknowledge the GitHub Copilot notice on the Providers page first';
+    case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
     default: return '';
   }
 }
@@ -52,7 +60,8 @@ export function bridgeHintFor(reason, provider = 'the provider') {
  *   `run` / `signedOut` are injectable for unit tests.
  * @returns {Promise<{ok:true, text:string}|{ok:false, errorClass:(string|null), message:string, hint?:string}>}
  */
-export async function testModel(id, { signal, bin, run = runClaude, signedOut = failedBecauseSignedOut } = {}) {
+export async function testModel(id, { signal, bin, run = runClaude, signedOut = failedBecauseSignedOut, engine = engineOfModel(id) || 'claude' } = {}) {
+  const onClaude = engine === 'claude';
   const ctrl = new AbortController();
   const onOuterAbort = () => ctrl.abort();
   if (signal) {
@@ -72,16 +81,23 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
   let bridgeFailure = null;
   const onBridgeFailure = (e) => { if (e && !e.tag && String(e.catalogId || '').toLowerCase() === want) bridgeFailure = e; };
   bridgeEvents.on('failure', onBridgeFailure);
+  // A Cursor test never runs in the server's cwd: cursor-agent has its shell and file tools on (no read-only
+  // mode), and the cwd may be $HOME, whose .cursor/ holds the user's own config.
+  let scratch = null;
   try {
+    if (engine === 'cursor') scratch = mkdtempSync(join(tmpdir(), 'worca-model-test-'));   // inside: a throw here still runs the finally
     const { text } = await run({
-      cwd: process.cwd(),
+      cwd: scratch || process.cwd(),
       systemPrompt: SYSTEM,
       prompt: 'Reply with exactly OK.',
       model: id,
-      modelEnv: resolveModelEnv(id),
+      modelEnv: onClaude ? resolveModelEnv(id) : undefined,
+      // Codex runs it read-only. Cursor has no read-only mode (engines/cursor.mjs); the prompt is worca's own text.
+      ...(onClaude ? {} : { engine, ...(engine === 'codex' ? { sandbox: 'read-only' } : {}) }),
       effort: AUX_EFFORT,
       permissionMode: 'acceptEdits',
       allowedTools: [],          // empty → no --allowedTools flag; pure text gen
+      ...(onClaude ? { tools: [], strictMcpConfig: true } : {}),   // and no tools at all: cwd is the server's own checkout
       signal: ctrl.signal,
       bin,
       onEvent: () => {},
@@ -114,11 +130,13 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
     // A signed-out CLI is not this model's token: a first-party model needs the
     // Claude Code sign-in (and signed out the CLI may only say `unrecognized_model`),
     // so say that instead of the generic advice.
-    const cliSignedOut = !(err && err.bridgeReason) && !bridgeFailure
+    const cliSignedOut = onClaude && !(err && err.bridgeReason) && !bridgeFailure
       && await signedOut({ message, model: id, ...(bin ? { bin } : {}) });
     const hint = err && err.bridgeReason ? bridgeHintFor(err.bridgeReason, err.bridgeProvider)
       : bridgeFailure && bridgeFailure.message && errorClass === 'network' ? ''
       : cliSignedOut ? CLAUDE_SIGNED_OUT_HINT
+      : !onClaude && hasCodexEndpoint(id) ? (errorClass === 'network' ? CODEX_ENDPOINT_NETWORK_HINT : hintFor(errorClass))
+      : !onClaude && errorClass === 'auth' ? (engine === 'cursor' ? CURSOR_SIGNED_OUT_HINT : CODEX_SIGNED_OUT_HINT)
       : isFreeDailyLimit(message) ? freeDailyHint(message)
       : hintFor(errorClass);
     return { ok: false, errorClass, message, ...(hint ? { hint } : {}) };
@@ -126,5 +144,6 @@ export async function testModel(id, { signal, bin, run = runClaude, signedOut = 
     bridgeEvents.off('failure', onBridgeFailure);
     clearTimeout(timer);
     if (signal) signal.removeEventListener?.('abort', onOuterAbort);
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
 }

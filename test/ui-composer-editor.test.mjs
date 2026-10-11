@@ -12,6 +12,11 @@ import { JSDOM } from 'jsdom';
 import { fixture, portsFn, AGENTS } from './helpers/graph-view-fixture.mjs';
 import { routeWire, routePathD, routeMid, hitRoute } from '../src/shared/graph/route.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
+import { portAnchor } from '../src/shared/graph/geometry.mjs';
+import { ghostCurve } from '../src/shared/graph/curves.mjs';
+
+/** A port anchor of the open template's node, from the shared geometry (never a typed pixel). */
+const anc = (c, id, port, dir) => { const n = c.template().nodes.find((x) => x.id === id); return portAnchor(n, c.view.ports(n), port, dir); };
 
 const composerPath = new URL('../ui/public/graph/composer.mjs', import.meta.url).href;
 
@@ -23,46 +28,27 @@ function ghostD(c, anchor, pt, mirror) {
 }
 const RECT = { left: 0, top: 0, width: 1280, height: 560 };
 
-const IDS = ['gv-canvas', 'gv-chip', 'gv-head', 'gv-name', 'gv-errors', 'gv-new', 'gv-autolayout',
-  'gv-save', 'gv-ins-rail', 'gv-ins-body', 'gv-ins-toggle', 'gv-ins-tabs', 'gv-palette', 'gv-agent-filter',
-  'gv-nav', 'gv-zoom-in', 'gv-zoom-out', 'gv-center',
-  'gv-saved-list', 'gv-saved-count', 'gv-archived', 'gv-dialog-host'];
+const IDS = ['gv-canvas', 'gv-chip', 'gv-name', 'gv-errors', 'gv-autolayout', 'gv-save', 'gv-ins-body', 'gv-dialog-host'];
 
 export function shell() {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:4317/' });
   const doc = dom.window.document;
   const el = {};
   for (const id of IDS) {
-    // Anchored: a loose /save/ also matches gv-saved-list and gv-saved-count,
-    // which are containers, not buttons.
-    const tag = /^gv-(name|agent-filter)$/.test(id) ? 'input'
-      : (/^gv-(save|new|autolayout|errors|ins-toggle|zoom-in|zoom-out|center)$/.test(id) ? 'button' : 'div');
+    const tag = id === 'gv-name' ? 'input' : (/^gv-(save|autolayout|errors)$/.test(id) ? 'button' : 'div');
     const n = doc.createElement(tag);
     n.id = id;
     doc.body.appendChild(n);
   }
-  // chip and rail are the stage's SIBLINGS inside the canvas host, exactly as in index.html
-  // …and the nav cluster follows the rail, as the `~` offset selector requires.
-  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'), doc.getElementById('gv-ins-rail'),
-    doc.getElementById('gv-nav'));
-  doc.getElementById('gv-nav').append(doc.getElementById('gv-zoom-in'),
-    doc.getElementById('gv-zoom-out'), doc.getElementById('gv-center'));
-  // …and the tablist is the rail's own top row, mirroring index.html.
-  for (const tab of ['agents', 'info']) {
-    const b = doc.createElement('button');
-    b.type = 'button'; b.dataset.tab = tab; b.textContent = tab;
-    doc.getElementById('gv-ins-tabs').appendChild(b);
-  }
+  // the chip is the stage's SIBLING inside the canvas host
+  doc.getElementById('gv-canvas').append(doc.getElementById('gv-chip'));
   for (const id of IDS) el[id.replace(/^gv-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = doc.getElementById(id);
   const q = [];
   return {
     dom, win: dom.window, doc, el,
     hostEls: {
-      canvas: el.canvas, chip: el.chip, head: el.head, name: el.name, errors: el.errors,
-      newBtn: el.new, autoBtn: el.autolayout, saveBtn: el.save, insRail: el.insRail, insBody: el.insBody,
-      insToggle: el.insToggle, insTabs: el.insTabs, palette: el.palette, filter: el.agentFilter, savedList: el.savedList,
-      zoomIn: el.zoomIn, zoomOut: el.zoomOut, centerBtn: el.center,
-      savedCount: el.savedCount, archived: el.archived, dialogHost: el.dialogHost,
+      canvas: el.canvas, chip: el.chip, name: el.name, errors: el.errors,
+      autoBtn: el.autolayout, saveBtn: el.save, insBody: el.insBody, dialogHost: el.dialogHost,
     },
     raf: (fn) => { q.push(fn); return q.length; },
     flush: () => { const l = q.splice(0, q.length); for (const fn of l) fn(); return l.length; },
@@ -87,7 +73,7 @@ export async function open(overrides = {}) {
   const c = createComposer(s.hostEls, {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
     viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn: overrides.portsFn || portsFn,
-    highlight: overrides.highlight || null,
+    highlight: overrides.highlight || null, allLevels: overrides.allLevels === true,
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);
@@ -103,7 +89,8 @@ test('perf invariants: 60 pointermoves coalesce into one frame/one ghost write, 
     { name: '60 pointermoves coalesce into ONE frame and ONE ghost d write', run: async () => {
       const s = await open();
       s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-      down(s, 620, 193);                                     // n_agent.plan output anchor
+      const plan = anc(s.c, 'n_agent', 'plan', 'out');
+      down(s, plan.x, plan.y);                               // n_agent.plan output anchor
       assert.equal(s.c.gesture().type, 'wire');
       const g0 = s.c.view.stats.ghostUpdates;
       for (let i = 0; i < 60; i += 1) move(s, 200 + i, 480 + (i % 7));
@@ -135,17 +122,21 @@ test('perf invariants: 60 pointermoves coalesce into one frame/one ghost write, 
 test('a drag from an INPUT port mirrors the tangent, snaps to a legal anchor and commits', async () => {
   const s = await open();
   s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-  down(s, 400, 160);                                     // n_agent.fix (input)
-  move(s, 280, 160); s.flush();
+  const fix = anc(s.c, 'n_agent', 'fix', 'in');
+  const out = anc(s.c, 'n_task', 'task', 'out');
+  const cur = { x: fix.x - 60, y: fix.y };               // left of the input, clear of every port
+  down(s, fix.x, fix.y);                                 // n_agent.fix (input)
+  move(s, cur.x, cur.y); s.flush();
   const d = s.c.view.ghostEl.getAttribute('d');
-  const n = d.match(/-?\d+(?:\.\d+)?/g).map(Number);
-  assert.equal(d, ghostD(s.c, { x: 400, y: 160 }, { x: 280, y: 160 }, true));
-  assert.ok(n[2] < n[0], 'the first emitted x is LEFT of the anchor (mirrored exit)');
-  move(s, 280, 199); s.flush();                          // onto n_task.task (output)
+  assert.equal(d, ghostCurve(fix, cur, { mirror: true }));
+  const n = d.match(/-?\d+(?:\.\d+)?/g).map(Number);   // M x0 y0 C x1 y1 x2 y2 x3 y3
+  assert.ok(Math.abs(n[6] - fix.x) < 0.5 && Math.abs(n[7] - fix.y) < 0.5, 'the mirrored path ENDS at the input anchor');
+  assert.ok(n[4] < n[6], 'and enters the input from its left');
+  move(s, out.x, out.y); s.flush();                      // onto n_task.task (output)
   assert.equal(s.c.view.ghostEl.getAttribute('class'), 'wire ghost on legal');
-  assert.match(s.c.view.ghostEl.getAttribute('d'), /280 199$/, 'ghost end snapped to the anchor');
+  assert.ok(s.c.view.ghostEl.getAttribute('d').startsWith(`M ${out.x} ${out.y} `), 'snapped: the path starts at the output anchor');
   assert.ok(s.c.view.nodeEl('n_task').querySelector('.prow[data-port="task"]').classList.contains('drop-ok'));
-  up(s, 280, 199); s.flush();
+  up(s, out.x, out.y); s.flush();
   assert.equal(s.c.template().wires.length, 3);
   const w = s.c.template().wires[2];
   assert.deepEqual(w.from, { node: 'n_task', port: 'task' }, 'normalised output → input on commit');
@@ -157,17 +148,20 @@ test('a drag from an INPUT port mirrors the tangent, snaps to a legal anchor and
 test('illegal drops show the reason chip at world→screen + 14 and commit nothing', async () => {
   const s = await open();
   s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-  down(s, 620, 193);                                     // n_agent.plan (already wired to n_end.result)
-  move(s, 760, 199); s.flush();                          // over n_end.result
+  const plan = anc(s.c, 'n_agent', 'plan', 'out');
+  const res = anc(s.c, 'n_end', 'result', 'in');
+  const task = anc(s.c, 'n_agent', 'task', 'in');
+  down(s, plan.x, plan.y);                               // n_agent.plan (already wired to n_end.result)
+  move(s, res.x, res.y); s.flush();                      // over n_end.result
   assert.equal(s.c.view.ghostEl.getAttribute('class'), 'wire ghost on illegal');
   assert.equal(s.el.chip.textContent, 'already connected');
   assert.equal(s.el.chip.hidden, false);
-  assert.equal(s.el.chip.style.left, `${760 + 14}px`);
-  assert.equal(s.el.chip.style.top, `${199 + 14}px`);
+  assert.equal(s.el.chip.style.left, `${res.x + 14}px`);
+  assert.equal(s.el.chip.style.top, `${res.y + 14}px`);
   assert.ok(s.c.view.nodeEl('n_end').querySelector('.prow[data-port="result"]').classList.contains('drop-bad'));
-  move(s, 400, 136); s.flush();                          // over n_agent.task — same node
+  move(s, task.x, task.y); s.flush();                    // over n_agent.task — same node
   assert.equal(s.el.chip.textContent, 'same node');
-  up(s, 400, 136); s.flush();
+  up(s, task.x, task.y); s.flush();
   assert.equal(s.c.template().wires.length, 2);
   assert.equal(s.el.chip.hidden, true);
   assert.equal(s.c.isDirty(), false);
@@ -176,22 +170,25 @@ test('illegal drops show the reason chip at world→screen + 14 and commit nothi
 test('a self-loop drop (blocking output → own loop input) is legal and commits an amber loop wire', async () => {
   const s = await open();
   s.c.view.setTransform({ x: 0, y: 0, z: 1 });
-  down(s, 620, 193);                                     // n_agent.plan (when:'always')
-  move(s, 400, 160); s.flush();                          // over n_agent.fix (loop input) — same card
+  const plan = anc(s.c, 'n_agent', 'plan', 'out');
+  const review = anc(s.c, 'n_agent', 'review', 'out');
+  const fix = anc(s.c, 'n_agent', 'fix', 'in');
+  down(s, plan.x, plan.y);                               // n_agent.plan (when:'always')
+  move(s, fix.x, fix.y); s.flush();                      // over n_agent.fix (loop input) — same card
   assert.equal(s.el.chip.textContent, 'same node', 'a plain output still cannot feed its own card');
-  up(s, 400, 160); s.flush();
+  up(s, fix.x, fix.y); s.flush();
   assert.equal(s.c.template().wires.length, 2);
-  down(s, 620, 217);                                     // n_agent.review (when:'blocking')
-  move(s, 400, 160); s.flush();                          // over n_agent.fix again
+  down(s, review.x, review.y);                           // n_agent.review (when:'blocking')
+  move(s, fix.x, fix.y); s.flush();                      // over n_agent.fix again
   assert.equal(s.c.view.ghostEl.getAttribute('class'), 'wire ghost on legal');
   assert.equal(s.el.chip.hidden, true);
   assert.ok(s.c.view.nodeEl('n_agent').querySelector('.prow[data-port="fix"]').classList.contains('drop-ok'));
-  up(s, 400, 160); s.flush();
+  up(s, fix.x, fix.y); s.flush();
   assert.equal(s.c.template().wires.length, 3, 'the self-loop committed');
   const w = s.c.template().wires[2];
   assert.deepEqual(w.from, { node: 'n_agent', port: 'review' });
   assert.deepEqual(w.to, { node: 'n_agent', port: 'fix' });
-  assert.equal(s.c.view.wiresEl.querySelector(`path[data-wire-id="${w.id}"]`).getAttribute('class'), 'wire loop', 'classified as a loop wire');
+  assert.equal(s.c.view.wiresEl.querySelector(`path[data-wire-id="${w.id}"]`).getAttribute('class'), 'wire w-md loop', 'classified as a loop wire (tinted by its md source)');
   assert.deepEqual(s.c.report().errors, [], 'the validator agrees');
   assert.equal(s.c.isDirty(), true);
 });
@@ -217,10 +214,6 @@ test('destroy() unbinds everything; pointercancel and window blur end a gesture'
 const key = (s, k, o = {}) => s.doc.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
 
 const click = (s, el) => el.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
-// RECT is 1280x560 and INSET_OPEN is 340, so the open-rail band centre is the
-// stage-local (470, 280) — and RECT.left/top are 0, so it is also the client point.
-const BAND_CX = (1280 - 340) / 2;
-const BAND_CY = 560 / 2;
 
 test('keyboard: nudge, delete, undo/redo, Escape — all skipped while typing', async () => {
   const s = await open();
@@ -247,30 +240,15 @@ test('keyboard: nudge, delete, undo/redo, Escape — all skipped while typing', 
   assert.equal(s.c.selection(), null);
 });
 
-test('fit/Center: zoom-to-fit into the band left of the inspector, centred, never past 1x', async () => {
-  await checkRows([
-    { name: 'fit centres the model in the band left of the inspector and never magnifies', run: async () => {
-      const s = await open();
-      s.c.fit();                                   // rail open => insetRight 340 => vw 940
-      const T = s.c.view.getTransform();
-      assert.ok(Math.abs(T.z - 940 / 1040) < 1e-12, 'z = vw / bounds.w');
-      assert.ok(Math.abs(T.x - 0) < 1e-9, 'exactly centred: (940 - 1040*z)/2 - 0*z = 0');
-      s.c.fit({ insetRight: 28 });                 // rail collapsed => vw 1252
-      assert.equal(s.c.view.getTransform().z, 1, 'fit never magnifies past 1x');
-    } },
-    { name: 'Center is a zoom-to-FIT: it scales the graph into the band, never past 1x, and lands its centre on the band centre', run: async () => {
-      const s = await open();
-      s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
-      click(s, s.el.center);
-      const b = s.c.view.bounds(60);                       // fit() pads by 60
-      const expect = Math.max(0.4, Math.min(1, Math.min(BAND_CX * 2 / b.w, 560 / b.h)));
-      assert.ok(Math.abs(s.c.view.getTransform().z - expect) < 1e-9, 'the zoom is the fit zoom, clamped 0.4..1');
-      const c = s.c._internal.toWorld(BAND_CX, BAND_CY);
-      assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6, 'the padded bounds centre sits under the band centre');
-      assert.ok(Math.abs(c.y - (b.y + b.h / 2)) < 1e-6);
-      assert.equal(s.el.zoomIn.disabled, false, 'and the cluster repaints off the fit');
-    } },
-  ]);
+test('fit: zoom-to-fit into the whole stage (no rail inset)', async () => {
+  const s = await open();
+  s.c.view.setTransform({ x: 0, y: 0, z: 1.3 });
+  s.c.fit();
+  const b = s.c.view.bounds(60);
+  const z = Math.max(0.4, Math.min(1, 1280 / b.w, 560 / b.h));
+  assert.ok(Math.abs(s.c.view.getTransform().z - z) < 1e-9);
+  const c = s.c._internal.toWorld(640, 280);
+  assert.ok(Math.abs(c.x - (b.x + b.w / 2)) < 1e-6 && Math.abs(c.y - (b.y + b.h / 2)) < 1e-6, 'the graph is centred in the whole stage');
 });
 
 test('a whole drag is ONE undo entry and the ring caps at 50', async () => {
@@ -363,45 +341,6 @@ test('errors disable Save, show the chip, pip and centre the node; a pristine ca
       assert.equal(s.el.save.title, '');
     } },
   ]);
-});
-
-test('palette groups by domain, pins Flow last, hides placeable:false, disables placed bookends', async () => {
-  const agents = [
-    { key: 'planner', displayName: 'Plan', domain: 'coding', color: 'violet', order: 1, inputs: [{ id: 'plan', type: 'md' }], outputs: [{ id: 'plan', type: 'md' }, { id: 'revise', type: 'md' }] },
-    { key: 'wsScan', displayName: 'Workspace Scan', domain: 'shared', order: 0.5, placeable: false, inputs: [], outputs: [] },
-    { key: 'docs', displayName: 'Docs', domain: 'writing', order: 2, inputs: [], outputs: [{ id: 'doc', type: 'md' }] },
-  ];
-  const s = await open({ api: { agents: async () => agents, agentsAll: async () => agents } });
-  const { renderPalette } = await import(new URL('../ui/public/graph/palette.mjs', import.meta.url).href);
-  renderPalette(s.el.palette, { agents, placedKinds: ['task', 'end'], collapsed: new Set(), doc: s.doc });
-  const groups = [...s.el.palette.querySelectorAll('.pal-group')].map((g) => g.dataset.domain);
-  assert.deepEqual(groups, ['coding', 'writing', 'flow'], 'domains first-seen (empty groups omitted), pinned Flow last');
-  assert.equal(s.el.palette.querySelector('.ap[data-key="wsScan"]'), null, 'placeable:false never listed');
-  assert.equal(s.el.palette.querySelector('.ap[data-key="planner"] .p').textContent, 'in plan · out plan, revise');
-  assert.equal(s.el.palette.querySelector('.ap[data-kind="task"]').disabled, true);
-  assert.equal(s.el.palette.querySelector('.ap[data-kind="and"]').disabled, false);
-  assert.equal(s.el.palette.querySelector('.ap[data-kind="and"] .p').textContent, 'in in1..inN · out out');
-});
-
-test('drag-to-spawn: ghost after 4px, drop inside the stage commits, outside cancels', async () => {
-  const s = await open();
-  const agents = [{ key: 'planner', displayName: 'Plan', domain: 'coding', order: 1, inputs: [], outputs: [] }];
-  const { renderPalette } = await import(new URL('../ui/public/graph/palette.mjs', import.meta.url).href);
-  renderPalette(s.el.palette, { agents, placedKinds: [], collapsed: new Set(), doc: s.doc });
-  const pill = s.el.palette.querySelector('.ap[data-key="planner"]');
-  const n0 = s.c.template().nodes.length;
-  pill.dispatchEvent(new s.win.PointerEvent('pointerdown', { pointerId: 3, button: 0, clientX: 100, clientY: 700, bubbles: true }));
-  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 3, clientX: 102, clientY: 700, bubbles: true }));
-  assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, '2px is still a click');
-  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 3, clientX: 400, clientY: 300, bubbles: true }));
-  assert.ok(s.doc.querySelector('.gv-drag-ghost'), 'ghost after 4px');
-  s.doc.dispatchEvent(new s.win.PointerEvent('pointerup', { pointerId: 3, clientX: 400, clientY: 300, bubbles: true }));
-  assert.equal(s.c.template().nodes.length, n0 + 1, 'dropped inside the stage => spawned');
-  assert.equal(s.doc.querySelector('.gv-drag-ghost'), null, 'ghost removed');
-  pill.dispatchEvent(new s.win.PointerEvent('pointerdown', { pointerId: 4, button: 0, clientX: 100, clientY: 700, bubbles: true }));
-  s.doc.dispatchEvent(new s.win.PointerEvent('pointermove', { pointerId: 4, clientX: 1270, clientY: 300, bubbles: true }));
-  s.doc.dispatchEvent(new s.win.PointerEvent('pointerup', { pointerId: 4, clientX: 1270, clientY: 300, bubbles: true }));
-  assert.equal(s.c.template().nodes.length, n0 + 1, 'a drop under the inspector rail cancels');
 });
 
 test('agent inspector gates rows on meta booleans and commits; locked questions forced + disabled, non-asking agent has no row', async () => {
@@ -617,7 +556,7 @@ test('MAJ-6: confirmDiscard refused/throwing keeps canvas+undo+dirty, accepted p
       const depth = s.c.undoDepth();
       assert.equal(s.c.isDirty(), true, 'precondition: dirty');
       assert.ok(depth > 0, 'precondition: undo has the spawn');
-      s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+      void s.c.newCanvas();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(asked, 1, 'New canvas asked');
       assert.equal(s.c.template().nodes.length, nodes, 'canvas untouched');
@@ -633,12 +572,12 @@ test('MAJ-6: confirmDiscard refused/throwing keeps canvas+undo+dirty, accepted p
       const s = await open();
       let asked = 0;
       s.c.hooks.confirmDiscard = async () => { asked += 1; return true; };
-      s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+      void s.c.newCanvas();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(asked, 0, 'a CLEAN canvas is never guarded');
       s.c.spawn({ key: 'planner' });
       assert.equal(s.c.isDirty(), true);
-      s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+      void s.c.newCanvas();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(asked, 1);
       assert.equal(s.c.template().nodes.length, 2, 'back to the bare Task/End canvas');
@@ -648,7 +587,7 @@ test('MAJ-6: confirmDiscard refused/throwing keeps canvas+undo+dirty, accepted p
       const s2 = await open();
       s2.c.spawn({ key: 'planner' });
       assert.equal(s2.c.isDirty(), true);
-      s2.hostEls.newBtn.dispatchEvent(new s2.win.MouseEvent('click', { bubbles: true }));
+      void s2.c.newCanvas();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(s2.c.template().nodes.length, 2, 'no hook installed => New canvas proceeds');
     } },
@@ -657,7 +596,7 @@ test('MAJ-6: confirmDiscard refused/throwing keeps canvas+undo+dirty, accepted p
       s.c.hooks.confirmDiscard = async () => { throw new Error('modal blew up'); };
       s.c.spawn({ key: 'planner' });
       const nodes = s.c.template().nodes.length;
-      s.hostEls.newBtn.dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+      void s.c.newCanvas();
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(s.c.template().nodes.length, nodes, 'a broken hook never costs the user the canvas');
     } },
@@ -872,7 +811,6 @@ const SCRIPT_METAS = { shell: SHELL, gitDiff: DIFF };
 test('spawn({kind:"script"}) places a script node and seeds config.ports from a config-ported sidecar', async () => {
   const s = await open({ portsFn: portsFnFor(AGENTS, SCRIPT_METAS) });
   s.c.setScripts(SCRIPT_METAS);
-  s.c.paintPalette();
   const n0 = s.c.template().nodes.length;
   const node = s.c.spawn({ kind: 'script', key: 'shell' });
   assert.equal(node.kind, 'script');
@@ -883,7 +821,6 @@ test('spawn({kind:"script"}) places a script node and seeds config.ports from a 
   assert.deepEqual(diff.config, {}, 'a sidecar-ported script seeds nothing');
   assert.equal(s.c.template().nodes.length, n0 + 2);
   assert.ok(s.el.canvas.querySelector('.node[data-kind="script"]'), 'the canvas paints a script card');
-  assert.ok(s.el.palette.querySelector('.ap[data-key="shell"][data-kind="script"]'), 'the palette lists it');
 });
 
 test('script inspector edits commit params, timeout and ports through the undo ring', async () => {
@@ -971,7 +908,7 @@ test('config-port edits carry their wires: rename/remove and the params-port tog
       tick(true);
       assert.equal(cfg().paramsPort, true);
       assert.deepEqual(portsFnFor(AGENTS, metas)(s.c.template().nodes.find((n) => n.id === node.id)).inputs.map((p) => p.id), ['done', 'params', 'await']);
-      assert.deepEqual([...s.c.view.stage.querySelectorAll(`.node[data-node-id="${node.id}"] [data-port]`)].map((r) => r.dataset.port), ['done', 'params', 'diff', 'await'],
+      assert.deepEqual([...s.c.view.stage.querySelectorAll(`.node[data-node-id="${node.id}"] [data-port]`)].map((r) => r.dataset.port), ['done', 'params', 'await', 'diff'],
         'the card redraws with the new input row');
       s.c.commit('wire', () => { s.c.template().wires.push({ id: 'w_p', from: { node: 'n_agent', port: 'plan' }, to: { node: node.id, port: 'params' } },
         { id: 'w_d', from: { node: 'n_agent', port: 'plan' }, to: { node: node.id, port: 'await' } }); });
@@ -1053,4 +990,203 @@ test('code/command params mount the shared code editor (declared language, eight
       s.c.destroy();
     } },
   ]);
+});
+
+test('keyboard: a defaultPrevented key or one typed inside [data-canvas-keys="off"] never edits the graph', async () => {
+  const s = await open();
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const x0 = s.c.template().nodes.find((n) => n.id === 'n_agent').x;
+  const lib = s.doc.createElement('div');
+  lib.dataset.canvasKeys = 'off';
+  const btn = s.doc.createElement('button');
+  lib.appendChild(btn);
+  s.doc.body.appendChild(lib);
+  btn.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  btn.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  const pre = new s.win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true });
+  pre.preventDefault();
+  s.doc.body.dispatchEvent(pre);
+  assert.equal(s.c.template().nodes.find((n) => n.id === 'n_agent').x, x0);
+  assert.equal(s.c.template().nodes.length, 3);
+});
+
+test('⌘Z still undoes the canvas from a fenced button (Save, Auto-layout, a chat card), never from a field', async () => {
+  const s = await open();
+  const x0 = s.c.template().nodes.find((n) => n.id === 'n_agent').x;
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  s.doc.body.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+  assert.notEqual(s.c.template().nodes.find((n) => n.id === 'n_agent').x, x0, 'the nudge committed');
+  const bar = s.doc.createElement('div');
+  bar.dataset.canvasKeys = 'off';
+  const btn = s.doc.createElement('button');
+  const field = s.doc.createElement('input');
+  bar.append(btn, field);
+  s.doc.body.appendChild(bar);
+  const typed = new s.win.KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true });
+  field.dispatchEvent(typed);
+  assert.equal(typed.defaultPrevented, false, 'a field keeps its own ⌘Z');
+  assert.notEqual(s.c.template().nodes.find((n) => n.id === 'n_agent').x, x0);
+  const ev = new s.win.KeyboardEvent('keydown', { key: 'z', metaKey: true, bubbles: true, cancelable: true });
+  btn.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(s.c.template().nodes.find((n) => n.id === 'n_agent').x, x0, 'undone from the button');
+});
+
+test('a commit inside the inspector keeps the keyboard focus on the same control (the More popover stays usable)', async () => {
+  const s = await open({ allLevels: true });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const box = s.el.insBody.querySelector('[data-field="awaitAll"]');
+  box.focus();
+  box.checked = true;                                    // Space on the focused checkbox
+  box.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  assert.equal(s.c.template().nodes.find((n) => n.id === 'n_agent').config.awaitAll, true);
+  assert.equal(box.isConnected, false, 'the commit repainted the body');
+  const now = s.doc.activeElement;
+  assert.equal(now, s.el.insBody.querySelector('[data-field="awaitAll"]'), 'the focus is on the new awaitAll box, not <body>');
+  now.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }));
+  assert.ok(s.c.template().nodes.some((n) => n.id === 'n_agent'), 'the next Delete never reaches the canvas');
+  s.c.destroy();
+});
+
+test('a Tab that commits a field (change after blur) lands on the NEXT control; a click elsewhere is never pulled back', async () => {
+  const s = await open({ allLevels: true });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  const model = s.el.insBody.querySelector('[data-field="model"]');
+  model.focus();
+  model.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  model.blur();                                          // Chrome: the focus has let go when `change` fires
+  model.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.doc.activeElement, s.el.insBody.querySelector('[data-field="effort"]'), 'Tab moved on one control');
+  const out = s.doc.createElement('button');
+  s.doc.body.appendChild(out);
+  const effort = s.el.insBody.querySelector('[data-field="effort"]');
+  effort.dispatchEvent(new s.win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  out.focus();                                           // this Tab left the popover for a control that still exists
+  effort.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.doc.activeElement, out, 'a Tab out of the popover stays out');
+  const again = s.el.insBody.querySelector('[data-field="effort"]');
+  again.focus();
+  again.blur();                                          // a press on plain text: the focus goes to <body>
+  again.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.doc.activeElement, s.doc.body, 'no Tab, no pull back (a waiting chat edit may land)');
+  s.c.destroy();
+});
+
+test('a press on the label row above a card selects the card', async () => {
+  const s = await open();
+  const n = s.c.template().nodes.find((x) => x.id === 'n_agent');
+  const p = s.c._internal.toScreen(n.x + 40, n.y - 10);
+  down(s, p.x, p.y);
+  up(s, p.x, p.y);
+  assert.deepEqual(s.c.selection(), { kind: 'node', id: 'n_agent' });
+});
+
+test('applyOps commits ONE undo entry; a refused batch commits nothing; docToken changes only on load', async () => {
+  const s = await open();
+  const tok = s.c.docToken();
+  const key = s.c.template().nodes.find((n) => n.id === 'n_agent').key;
+  const depth = s.c.undoDepth();
+  const r = s.c.applyOps([{ op: 'add_node', ref: '$p', kind: 'agent', key, x: 330, y: 400 }], 'chat: add');
+  assert.equal(r.ok, true);
+  assert.equal(s.c.undoDepth(), depth + 1);
+  assert.equal(s.c.template().nodes.length, 4);
+  const bad = s.c.applyOps([{ op: 'connect', from: { node: 'n_agent', port: 'x' }, to: { node: 'n_nope', port: 'x' } }]);
+  assert.equal(bad.ok, false);
+  assert.equal(s.c.undoDepth(), depth + 1);
+  assert.equal(s.c.docToken(), tok);
+  s.c.loadTemplate(null);
+  assert.notEqual(s.c.docToken(), tok);
+});
+
+test('applyOps refuses a batch that would NOW add a real error (D12): the user drew a wire since the chat validated it', async () => {
+  const s = await open();
+  const key = s.c.template().nodes.find((n) => n.id === 'n_agent').key;
+  assert.equal(s.c.applyOps([{ op: 'add_node', id: 'n_b', kind: 'agent', key, x: 400, y: 400 }], 'chat: add').ok, true);
+  const chat = [{ op: 'connect', from: { node: 'n_b', port: 'plan' }, to: { node: 'n_agent', port: 'await' } }];
+  // The user's own wire lands while the turn runs (the canvas stays live); the chat validated `chat` without it.
+  assert.equal(s.c.applyOps([{ op: 'connect', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_b', port: 'task' } }], 'wire').ok, true);
+  const depth = s.c.undoDepth();
+  const wires = JSON.stringify(s.c.template().wires);
+  const r = s.c.applyOps(chat, 'chat: connect');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /^that change would now leave the graph invalid — cycle without a blocking-source edge: n_agent, n_b /);
+  assert.equal(s.c.undoDepth(), depth, 'no undo entry');
+  assert.equal(JSON.stringify(s.c.template().wires), wires, 'the wires are unchanged');
+  assert.equal(s.c.applyOps([{ op: 'move_node', node: 'n_b', x: 420, y: 420 }], 'chat: move').ok, true, 'a clean batch still applies');
+  assert.equal(s.c.undoDepth(), depth + 1);
+  // An error the canvas ALREADY had is not the batch's: the cycle drawn by hand, then a clean chat batch.
+  s.c.loadTemplate({ ...fixture(), nodes: [...fixture().nodes, { id: 'n_b', kind: 'agent', key, x: 400, y: 400, config: {} }],
+    wires: [...fixture().wires, { id: 'w_u', from: { node: 'n_agent', port: 'plan' }, to: { node: 'n_b', port: 'task' } },
+      { id: 'w_c', from: { node: 'n_b', port: 'plan' }, to: { node: 'n_agent', port: 'await' } }] });
+  assert.equal(s.c.applyOps([{ op: 'move_node', node: 'n_b', x: 440, y: 440 }], 'chat: move').ok, true, 'an old error does not refuse a clean batch');
+  assert.equal(s.c.undoDepth(), 1);
+  s.c.destroy();
+});
+
+test('loadDraft opens a NEW unsaved workflow: no id, dirty, fresh undo ring, new docToken', async () => {
+  const s = await open();
+  const tok = s.c.docToken();
+  s.c.loadDraft({ name: 'Bug fix', domain: 'coding', nodes: fixture().nodes, wires: fixture().wires });
+  assert.equal(s.c.template().id, '');
+  assert.equal(s.c.template().name, 'Bug fix');
+  assert.equal(s.c.isDirty(), true);
+  assert.equal(s.c.undoDepth(), 0);
+  assert.notEqual(s.c.docToken(), tok);
+  assert.equal(s.el.name.value, 'Bug fix');
+});
+
+test('allLevels: the inspector and the save dialog carry no data-min-level / data-max-level', async () => {
+  const s = await open({ allLevels: true });
+  s.c.select({ kind: 'node', id: 'n_agent' });
+  assert.equal(s.el.insBody.querySelector('[data-min-level],[data-max-level]'), null);
+  const dlg = s.c.openSaveDialog();
+  assert.equal(dlg.querySelector('[data-min-level],[data-max-level]'), null);
+});
+
+test('a Save in flight saves what it SENT: an edit that lands before the answer (a chat canvas-edit) stays unsaved', async () => {
+  const posts = [];
+  let release = null;
+  const s = await open({ api: { saveWorkflow: (b) => { posts.push(b); return new Promise((r) => { release = () => r({ ok: true, workflow: { id: 'wf_t' } }); }); } } });
+  s.c.commit('move', () => { s.c.template().nodes[0].x += 22; });
+  const dlg = s.c.openSaveDialog();
+  dlg.querySelector('.sd-confirm').dispatchEvent(new s.win.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts.length, 1, 'the request is out');
+  // The chat's sweep applies a canvas-edit card through applyOps the moment its frame lands.
+  assert.equal(s.c.applyOps([{ op: 'move_node', node: 'n_end', x: 990, y: 200 }], 'chat: move').ok, true);
+  release();
+  for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0));
+  assert.equal(s.el.dialogHost.querySelector('dialog[open]'), null, 'the save itself went through');
+  assert.equal(posts[0].nodes.find((n) => n.id === 'n_end').x, 760, 'the request carried the graph before the chat edit');
+  assert.equal(s.c.isDirty(), true, 'the chat edit is not in the saved row');
+  s.c.undo();
+  assert.equal(s.c.isDirty(), false, 'undoing it is back at the graph the server holds');
+  s.c.destroy();
+});
+
+test('a field typed for one card and let go after a press selects another commits to ITS card, never the pressed one', async () => {
+  const s = await open({ portsFn: portsFnFor(AGENTS, SCRIPT_METAS) });
+  s.c.setScripts(SCRIPT_METAS);
+  const shell = s.c.spawn({ kind: 'script', key: 'shell' });
+  const other = s.c.template().nodes.find((n) => n.kind === 'agent');
+  const before = JSON.stringify(other.config);
+  const stale = s.el.insBody.querySelector('textarea[data-field="param:command"]');
+  stale.value = 'echo half typed';
+  // Chrome: the press re-selects (paintInspector swaps the panel) and the edited field commits as it leaves — its
+  // blur fires `change` while the selection already names the pressed card. jsdom fires no such `change`: model it.
+  const swap = s.el.insBody.replaceChildren;
+  s.el.insBody.replaceChildren = function (...kids) {
+    s.el.insBody.replaceChildren = swap;
+    stale.dispatchEvent(new s.win.Event('change', { bubbles: true }));
+    return swap.apply(this, kids);
+  };
+  s.c.select({ kind: 'node', id: other.id });
+  const t = s.c.template();
+  assert.deepEqual(t.nodes.find((n) => n.id === shell.id).config.params, { command: 'echo half typed' }, 'the typed command stays on the Shell card');
+  assert.equal(JSON.stringify(t.nodes.find((n) => n.id === other.id).config), before, 'the pressed card takes no stray "param:command" key');
+  assert.deepEqual(s.c.selection(), { kind: 'node', id: other.id });
+  s.c.destroy();
 });

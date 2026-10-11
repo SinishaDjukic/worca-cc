@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000c2","model":"Auto"}
+{"type":"tool_call","subtype":"started","call_id":"call_1","tool_call":{"mcpToolCall":{"args":{"providerIdentifier":"github","toolName":"get_issue","args":{"number":7}}}},"session_id":"00000000-0000-4000-8000-0000000000c2"}
+{"type":"tool_call","subtype":"completed","call_id":"call_1","tool_call":{"mcpToolCall":{"args":{"providerIdentifier":"github","toolName":"get_issue","args":{"number":7}},"result":{"success":{"content":[{"type":"text","text":"Issue 7"}]}}}},"session_id":"00000000-0000-4000-8000-0000000000c2"}
+{"type":"tool_call","subtype":"completed","call_id":"call_2","tool_call":{"readToolCall":{"args":{"path":".env"},"result":{"rejected":{"reason":"Read(.env) is denied by permissions"}}}},"session_id":"00000000-0000-4000-8000-0000000000c2"}
+{"type":"tool_call","subtype":"completed","call_id":"call_3","tool_call":{"function":{"name":"todo_write","arguments":"{\"todos\":[]}"}},"session_id":"00000000-0000-4000-8000-0000000000c2"}
+{"type":"result","subtype":"success","is_error":false,"result":"Issue 7 read.","session_id":"00000000-0000-4000-8000-0000000000c2","usage":{"input_tokens":1200,"output_tokens":40}}

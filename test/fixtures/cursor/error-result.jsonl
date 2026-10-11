@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000c3","model":"Auto"}
+{"type":"result","subtype":"error","is_error":true,"result":"You've hit your usage limit. It resets at 5pm.","session_id":"00000000-0000-4000-8000-0000000000c3"}

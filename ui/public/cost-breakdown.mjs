@@ -27,8 +27,9 @@ export function awayTotalText(b, fmtUsd) {
 
 /** Rows: Agents, one per booked aux line (with its call count), a hairline, Total, then — apart and
  *  never summed — the reviews stopped before their result and the agent turns a pause, stop or crash
- *  cut off, each as a lower bound. */
-export function costBreakdownEl(doc, b, { fmtUsd }) {
+ *  cut off, each as a lower bound. `agentsUnknown`: the run's engine reports no cost (Cursor) — the Agents row reads
+ *  "cost unknown" and the Total is worca's own calls only, never a $0.00 for the agents. */
+export function costBreakdownEl(doc, b, { fmtUsd, agentsUnknown = false }) {
   const box = doc.createElement('div');
   box.className = 'cost-bd';
   const row = (cls, kind, label, value, note) => {
@@ -41,14 +42,14 @@ export function costBreakdownEl(doc, b, { fmtUsd }) {
     if (note) { const n = doc.createElement('span'); n.className = 'cost-bd-n'; n.textContent = note; r.appendChild(n); }
     box.appendChild(r);
   };
-  row('', 'agents', 'Agents', fmtUsd(b.agents), '');
+  row('', 'agents', 'Agents', agentsUnknown ? 'cost unknown' : fmtUsd(b.agents), '');
   for (const l of b.lines) {
     if (l.calls > 0 || l.usd > 0) row('', l.kind, l.label, fmtUsd(l.usd), fmtAuxCalls(l.kind, l.calls));
   }
   const hr = doc.createElement('hr');
   hr.className = 'cost-bd-hr';
   box.appendChild(hr);
-  row('cost-bd-total', 'total', 'Total', fmtUsd(b.total), '');
+  row('cost-bd-total', 'total', agentsUnknown ? "Total (worca's own calls)" : 'Total', fmtUsd(b.total), '');
   const away = awayLine(b);
   if (away && (away.stopped > 0 || away.floorUsd > 0)) {
     row('cost-bd-floor', 'stopped', 'Stopped reviews', floorValue(away.floorUsd, fmtUsd), `${fmtAuxCalls('away', away.stopped)} · not in total`);

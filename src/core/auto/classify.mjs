@@ -6,12 +6,17 @@
 // catalog, so plugin agents and custom models are covered automatically. Mock
 // mode answers from recipes.mjs without spawning.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
+import { normalizingOnEvent } from '../engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost } from '../config.mjs';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { safeParseJson } from '../protocol.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
 import { RECIPE_GUIDE, WORKSPACE_GUIDE, mockShapeFor } from './recipes.mjs';
+import { rmSync } from 'node:fs';
+import { join, resolve, isAbsolute } from 'node:path';
+import { worcaHome } from '../projects.mjs';
+import { writeFilesMcpConfig } from '../engines/codex-files-mcp.mjs';
 
 export const CLASSIFIER_TIMEOUT_MS = 90_000;
 // The bounded repo look (spec D6 amendment, 2026-09-07): the classifier may Read/Grep/Glob
@@ -75,14 +80,15 @@ export function summarizeTools(tools) {
  * flags) + the agent .md's frontmatter (role, tools, model) — never its body.
  * Placeable, ported, project-scope; registry order. `domain` (optional) keeps
  * agents of that domain plus 'shared'/'general' (the fail-safe default a sidecar
- * gets when it names none); an explicit OTHER domain is not offered.
+ * gets when it names none); an explicit OTHER domain is not offered. `limit` caps the list
+ * (default VOCAB_LIMITS.maxAgents; the Workflows chat passes Infinity).
  */
-export function agentVocabulary(registry, { domain = null } = {}) {
+export function agentVocabulary(registry, { domain = null, limit = VOCAB_LIMITS.maxAgents } = {}) {
   const domainOk = (m) => !domain || m.domain === domain || m.domain === 'shared' || m.domain === 'general';
   return Object.values(registry || {})
     .filter((m) => m && m.key && m.placeable !== false && m.scope !== 'workspace-only' && Array.isArray(m.inputs) && Array.isArray(m.outputs) && domainOk(m))
     .sort((a, b) => (a.order ?? 999) - (b.order ?? 999) || byCodeUnit(a.key, b.key))
-    .slice(0, VOCAB_LIMITS.maxAgents)
+    .slice(0, limit)
     .map((m) => {
       const fm = m.frontmatter && typeof m.frontmatter === 'object' ? m.frontmatter : null;
       const purpose = clip(m.description, VOCAB_LIMITS.purpose);
@@ -154,21 +160,23 @@ export function shapeForPrompt(shape) {
   return { ...shape, stages: (Array.isArray(shape.stages) ? shape.stages : []).map((u) => (isObject(u) && Array.isArray(u.parallel) ? { ...u, parallel: u.parallel.map(flatStage) } : flatStage(u))) };
 }
 
-/** The workspace section: the members, which of them have a readable checkout (repo look only), and the guide. */
-function workspaceSection(workspace, repoLook) {
+/** The workspace section: the members, which of them have a readable checkout (repo look only), and the guide.
+ *  `repoRoot` (an engine without its own file tools: worca's take absolute paths only): checkouts are named absolute. */
+function workspaceSection(workspace, repoLook, repoRoot = null) {
   const members = Array.isArray(workspace?.members) ? workspace.members : [];
   const lines = ['', '## Workspace',
     `The task targets the workspace "${cleanText(workspace.name, 80) || 'workspace'}" — ${members.length} repositories: ${members.map((m) => `${cleanText(m.projectName, 60) || m.projectKey} (${m.projectKey})`).join(', ')}. The fingerprint has one block per repository.`];
   if (repoLook) {
     const seen = members.filter((m) => m.checkout);
     const unseen = members.filter((m) => !m.checkout);
-    if (seen.length) lines.push(`Readable checkouts: ${seen.map((m) => `${m.projectKey} at ${m.checkout}`).join('; ')}.${unseen.length ? ` No checkout for ${unseen.map((m) => m.projectKey).join(', ')} — size those from the fingerprint.` : ''}`);
+    const at = (c) => (repoRoot && !isAbsolute(c) ? resolve(repoRoot, c) : c);
+    if (seen.length) lines.push(`Readable checkouts: ${seen.map((m) => `${m.projectKey} at ${at(m.checkout)}`).join('; ')}.${unseen.length ? ` No checkout for ${unseen.map((m) => m.projectKey).join(', ')} — size those from the fingerprint.` : ''}`);
   }
   lines.push('', WORKSPACE_GUIDE);
   return lines;
 }
 
-export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false, workspace = null } = {}) {
+export function buildClassifierSystemPrompt({ agents = [], models = [], humanInLoop = true, repoLook = false, requireModel = false, repoRoot = null, workspace = null } = {}) {
   const modelLines = models.filter((m) => m && !m.hidden).map((m) => `- ${m.id}${m.label && m.label !== m.id ? ` (${m.label})` : ''}: efforts ${(m.efforts || []).join('/')}`);
   return [
     'You design a worca workflow for ONE software task. Reply with exactly one fenced ```json block containing a shape object and nothing else.',
@@ -193,9 +201,11 @@ export function buildClassifierSystemPrompt({ agents = [], models = [], humanInL
     ...(repoLook ? [
       '',
       '## Repository',
-      `${workspace ? 'Your working directory holds read-only checkouts of the repositories listed under Workspace' : 'Your working directory is a read-only checkout of the repository the task targets'}. Before you decide, you may use Read, Grep and Glob — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`,
+      repoRoot
+        ? `${repoRoot} ${workspace ? 'holds read-only checkouts of the repositories listed under Workspace' : 'is a read-only checkout of the repository the task targets'}. Before you decide, you may use the read_file, grep and glob tools (absolute paths under ${workspace ? 'the readable checkouts listed there' : 'that folder'}) — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`
+        : `${workspace ? 'Your working directory holds read-only checkouts of the repositories listed under Workspace' : 'Your working directory is a read-only checkout of the repository the task targets'}. Before you decide, you may use Read, Grep and Glob — at most ${REPO_LOOK_MAX_TOOL_CALLS} tool calls in total — to see how many files and subsystems the change touches and how well the task text maps onto the code. Look only to SIZE the work, never to design it; then reply with the shape.`,
     ] : []),
-    ...(workspace ? workspaceSection(workspace, repoLook) : []),
+    ...(workspace ? workspaceSection(workspace, repoLook, repoRoot) : []),
     '',
     RECIPE_GUIDE,
     '',
@@ -276,9 +286,13 @@ export function withCardsSignal(shape, n) {
 export async function classifyTask(input, deps = {}) {
   const {
     taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null, requireModel = false,
-    model, modelEnv, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook = false, timeoutMs, bridgeTag = null,
+    model, modelEnv, engine, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook: lookAsked = false, timeoutMs, bridgeTag = null,
     workspace = null, addDirs = [],
   } = input || {};
+  // The repo look is Claude's Read/Grep/Glob. On codex the classifier is a read-only spawn with its shell off
+  // (codex.mjs CODEX_SHELL_OFF): it looks through worca's own read_file/grep/glob over the checkout instead
+  // (engines/codex-files-mcp.mjs), behind the same secret-path denies.
+  const repoLook = !!lookAsked;
   const timeout = Number.isFinite(timeoutMs) ? timeoutMs : (repoLook ? REPO_LOOK_TIMEOUT_MS : CLASSIFIER_TIMEOUT_MS);
   const run = deps.run || runClaude;
   const usage = { input_tokens: 0, output_tokens: 0 };
@@ -288,13 +302,18 @@ export async function classifyTask(input, deps = {}) {
     return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
   }
   const known = new Set(agents.map((a) => a.key));
-  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel, workspace });
+  // Never 'cursor': its helper jobs run on Claude (model-env.mjs helperEngineFor).
+  const onClaude = !engine || engine === 'claude';
+  const systemPrompt = buildClassifierSystemPrompt({ agents, models, humanInLoop, repoLook, requireModel, repoRoot: repoLook && !onClaude ? cwd : null, workspace });
   const nudge = repoLook ? ' Do not spend more tool calls: reply with the shape now.' : '';
   let fb = [...feedback];
   let prior = priorShape;
   let costUsd = 0;
   const warnings = [];
+  // D8/D11: the classifier runs on the run's engine. Another engine gets no Claude routing env, a read-only
+  // sandbox, and the repo look's file tools with its tool calls capped by the adapter (codex.mjs maxTurns).
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const mcpConfigPath = repoLook && !onClaude ? writeFilesMcpConfig({ dir: join(worcaHome(), 'tmp', 'classifier'), roots: [cwd, ...addDirs], name: 'classifier' }) : null;
     const prompt = buildClassifierUserPrompt({ taskText, extras, fingerprint, feedback: fb, priorShape: prior });
     const ctrl = new AbortController();
     let timedOut = false;
@@ -310,25 +329,25 @@ export async function classifyTask(input, deps = {}) {
     let text = '';
     try {
       const res = await run({
-        cwd, systemPrompt, prompt, model, modelEnv: modelEnv ?? resolveModelEnv(model, { tag: bridgeTag || undefined }),
+        cwd, systemPrompt, prompt, model, modelEnv: onClaude ? (modelEnv ?? resolveModelEnv(model, { tag: bridgeTag || undefined })) : undefined,
+        ...(onClaude ? {} : { engine, sandbox: 'read-only', ...(mcpConfigPath ? { mcpConfigPath } : {}) }),
         effort: 'medium', permissionMode: 'acceptEdits',
         // Text-only: no built-in tools at all. Repo look: the three read-only tools, hard-capped
         // by --max-turns (the prompt budget is smaller, so a normal reply lands first).
         allowedTools: repoLook ? [...REPO_LOOK_TOOLS] : [], tools: repoLook ? [...REPO_LOOK_TOOLS] : [],
         ...(repoLook ? { maxTurns: REPO_LOOK_MAX_TURNS } : {}),
-        ...(repoLook && addDirs.length ? { addDirs: [...addDirs] } : {}),   // legacy-mode workspace: the non-primary worktrees
+        // Legacy-mode workspace: the non-primary worktrees (on another engine they are file-tool roots above, never writable dirs).
+        ...(repoLook && onClaude && addDirs.length ? { addDirs: [...addDirs] } : {}),
         signal: ctrl.signal, bin, mock, envScrub, envAllowlist,
-        onEvent: (e) => {
-          // ONLY the terminal `result` frame is booked: it is the one frame whose
-          // top-level `usage` is the whole call (assistant frames nest a running
-          // `message.usage`; partial-message frames repeat it), and runClaude puts
-          // `costUsd` on result frames only — so cost and tokens come from the same frame.
-          if (e?.type !== 'result') return;
-          const r = e.raw && typeof e.raw === 'object' ? e.raw : null;
-          // The --max-turns cap ends the call with THIS frame and an exit 1 whose stderr is
-          // empty (claude-runner.mjs:849-861): the frame is the only evidence, so note it here.
-          if (r && (r.subtype === 'error_max_turns' || r.terminal_reason === 'max_turns')) turnCap = true;
-          const u = r && r.usage && typeof r.usage === 'object' ? r.usage : null;
+        onEvent: normalizingOnEvent((e) => {
+          // ONLY the terminal `result` event is booked: its `usage` is the whole call
+          // (per-message usage arrives separately), and it carries the cost — so cost
+          // and tokens come from the same event.
+          if (e.type !== 'result') return;
+          // The --max-turns cap ends the call with THIS event and an exit 1 whose stderr is
+          // empty: the event is the only evidence, so note it here.
+          if (e.subtype === 'error_max_turns' || e.terminalReason === 'max_turns') turnCap = true;
+          const u = e.usage && typeof e.usage === 'object' ? e.usage : null;
           if (u) {
             usage.input_tokens += Number(u.input_tokens) || 0;
             usage.output_tokens += Number(u.output_tokens) || 0;
@@ -338,7 +357,7 @@ export async function classifyTask(input, deps = {}) {
           if (up) forgetBridgeTag(bridgeTag);
           const c = up ? up.costUsd : resolveModelCost(model, Number(e.costUsd), u);
           if (Number.isFinite(c)) costUsd += c;
-        },
+        }),
       });
       text = res?.text || '';
     } catch (err) {
@@ -352,7 +371,7 @@ export async function classifyTask(input, deps = {}) {
         if (signal?.aborted) throw Object.assign(err, { costUsd, usage });
         throw new ClassifierError('CLASSIFIER_TIMEOUT', `no reply after ${Math.round(timeout / 1000)}s`, [], { costUsd, usage });
       }
-      if (turnCap) {
+      if (turnCap || err?.turnCap) {
         // The repo look ran out of turns before replying: one failed attempt (already billed above).
         // One more try, tools still on but told to stop looking; a second cap hit is fatal.
         const detail = `the repository look ran out of turns (${REPO_LOOK_MAX_TURNS}) before replying`;
@@ -365,6 +384,7 @@ export async function classifyTask(input, deps = {}) {
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener?.('abort', onOuterAbort);
+      if (mcpConfigPath) rmSync(mcpConfigPath, { force: true });
     }
     if (timedOut) throw new ClassifierError('CLASSIFIER_TIMEOUT', `no reply after ${Math.round(timeout / 1000)}s`, [], { costUsd, usage });
 

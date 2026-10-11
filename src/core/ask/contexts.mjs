@@ -9,6 +9,10 @@ const LABEL_MAX = 80;
 /** Named pages that earn a chip; every other view (lists, `new`, detail kinds) produces none. */
 export const PAGE_LABELS = Object.freeze({
   settings: 'Settings',
+  marketplace: 'Marketplace',
+  connectors: 'Connectors',
+  models: 'Models',
+  providers: 'Providers',
   'team-metrics': 'Team metrics',
   'team-policy': 'Team policy',
 });

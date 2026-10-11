@@ -19,11 +19,12 @@ import { readTotalAck, setTotalAck, hasPipelineOverride, writePolicyState, clean
  * @param {{projectDir?:string, workspaceId?:string}} target
  */
 export async function teamCapsForTarget({ projectDir = null, workspaceId = null } = {}, { discover = 'if-missing' } = {}) {
+  const scope = workspaceId ? null : projectDir;
   let r = null;
   try {
     r = workspaceId ? await resolveWorkspacePolicy(workspaceId, { discover }) : projectDir ? await resolveProjectPolicy(projectDir, { discover }) : null;
   } catch { r = null; }
-  if (!r || !r.ok) return { policy: null, fields: {}, pipeline: effectiveCap({ local: pipelineCostLimitUsd() }), total: effectiveCap({ local: totalCostLimitUsd() }), period: costLimitResetPeriod() };
+  if (!r || !r.ok) return { policy: null, fields: {}, pipeline: effectiveCap({ local: pipelineCostLimitUsd(scope) }), total: effectiveCap({ local: totalCostLimitUsd() }), period: costLimitResetPeriod() };
   const fields = fieldsForRun(r.doc, { workspaceRun: !!workspaceId });
   const stored = readSettings().costLimitResetPeriod;
   const teamPeriod = fields['cost.resetPeriod']?.value;
@@ -31,7 +32,7 @@ export async function teamCapsForTarget({ projectDir = null, workspaceId = null 
   return {
     policy: { home: r.home, homeDir: r.homeDir, sha: r.sha, delegated: r.delegated, from: r.from },
     fields,
-    pipeline: effectiveCap({ local: pipelineCostLimitUsd(), team: fields['cost.pipelineLimitUsd'] || null }),
+    pipeline: effectiveCap({ local: pipelineCostLimitUsd(scope), team: fields['cost.pipelineLimitUsd'] || null }),
     total: effectiveCap({ local: totalCostLimitUsd(), team: fields['cost.totalLimitUsd'] || null }),
     period,
   };

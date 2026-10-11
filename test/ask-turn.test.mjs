@@ -10,6 +10,7 @@ import { resolve as pathResolve } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createAskTurn, humanErrorText } from '../src/core/ask/turn.mjs';
+import { normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
   updateThread, setThreadTitle, deleteThread,
@@ -105,6 +106,25 @@ test('happy path: frames ordered, session stored immediately, row + totals persi
   const done = frames.at(-1);
   assert.equal(done.status, 'done');
   assert.deepEqual(done.threadTotals, totals);
+});
+
+test('session: the init frame\'s session event does not store the id a second time', async () => {
+  const s = seed();
+  const writes = [];
+  const { turn } = makeTurn(s, {}, {
+    store: { updateThread: (id, patch) => { if ('sessionId' in patch) writes.push(patch.sessionId); updateThread(id, patch); } },
+    runClaudeImpl: async (opts) => {
+      // What the Claude adapter delivers per spawn: its own session event, then the init frame's.
+      opts.onEvent({ type: 'session', sessionId: 'sess-1' });
+      opts.onEvent({ type: 'session', sessionId: 'sess-1', model: 'claude-opus-5-5', init: true });
+      say(opts.onEvent, 'msg_1', 'answer');
+      push(opts.onEvent, RESULT());
+      return { text: 'answer', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  assert.deepEqual(writes, ['sess-1']);
+  assert.equal(getThread(s.thread.id).sessionId, 'sess-1');
 });
 
 test('conversation chips: refs resolved and merged as chat chips on ask-done; a failing resolver is logged and the turn still ends done', async () => {
@@ -687,6 +707,7 @@ test('title: the first turn titles with the hardened option set; a mid-generatio
       assert.deepEqual(o.envAllowlist, []);
       assert.equal(o.permissionMode, 'dontAsk');
       assert.equal(o.runModel, 'claude-opus-5-5', '#422: the chat\'s own model is the title default');
+      assert.equal(o.engine, undefined, 'a Claude chat\'s title spawn carries no engine option (D8/D12: titles follow the chat\'s engine; Claude chats stay byte-identical)');
       assert.equal(typeof o.onError, 'function', '#422: a failed title is reported, not swallowed');
       assert.equal(o.signal, undefined, 'no signal — fires after ANY terminal, incl. a stop that aborted the controller');
       assert.equal(getThread(s.thread.id).title, 'Fable Title');
@@ -1199,7 +1220,7 @@ test('workflow card: building at START, proposed at RESULT (cost booked); a tool
       assert.deepEqual(Object.keys(building.card).sort(), BUILDING_KEYS);
       assert.equal(building.card.type, 'workflow'); assert.equal(building.card.mode, 'task'); assert.equal(building.card.projectKey, 'demo-00000001', 'the pinned project is the default target');
       assert.equal(building.card.note, 'A note'); assert.equal(building.card.trace.step, 1); assert.equal(building.card.thenRun, true);
-      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/' });
+      assert.deepEqual(revalArgs, { shape: { name: 'N', stages: [] }, projectKey: 'demo-00000001', warnings: ['w1'], costUsd: 0.02, fingerprint: 'top-level: src/', engine: 'claude' });
       const final = getMessage(s.asst.id);
       const card = final.blocks.find((b) => b.kind === 'card');
       assert.equal(card.id, building.id, 'same block, flipped in place');
@@ -1598,15 +1619,17 @@ test('MCP §10 Ask notices: one muted line per copy the CLI could not start (onc
       const { turn } = makeTurn(s, { mcp: MCP(['jira', 'pg', 'gh', 'linear', 'slow', 'odd']), resumeSessionId: 'dead-sid' }, {
         runClaudeImpl: async (opts) => {
           n += 1;
-          push(opts.onEvent, { ...INIT({}), parent_tool_use_id: 'toolu_sub' });   // a sub-agent's init is not the turn's
-          push(opts.onEvent, { type: 'system', subtype: 'init', session_id: 'sess-2', parent_tool_use_id: null });   // no list: says nothing (never "absent")
-          push(opts.onEvent, INIT(statuses));
-          push(opts.onEvent, INIT(statuses));                     // a second init in the same attempt adds nothing
+          // What runClaude delivers: the adapter's normalized events, one normalizer per spawn.
+          const emit = normalizingOnEvent(opts.onEvent);
+          push(emit, { ...INIT({}), parent_tool_use_id: 'toolu_sub' });   // a sub-agent's init is not the turn's
+          push(emit, { type: 'system', subtype: 'init', session_id: 'sess-2', parent_tool_use_id: null });   // no list: says nothing (never "absent")
+          push(emit, INIT(statuses));
+          push(emit, INIT(statuses));                     // a second init in the same attempt adds nothing
           if (n === 1) {
-            push(opts.onEvent, RESULT({ subtype: 'error_during_execution', is_error: true, total_cost_usd: 0, errors: ['No conversation found with session ID: dead-sid'] }));
+            push(emit, RESULT({ subtype: 'error_during_execution', is_error: true, total_cost_usd: 0, errors: ['No conversation found with session ID: dead-sid'] }));
             throw new Error('claude exited with code 1: No conversation found with session ID: dead-sid');
           }
-          push(opts.onEvent, RESULT());
+          push(emit, RESULT());
           return { text: '', exitCode: 0 };
         },
       });
@@ -1777,4 +1800,62 @@ test('run_command result mints one command card; an error result mints nothing',
   assert.equal(cards[0].state, 'command');
   assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null });
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'command'));
+});
+
+const CE_TOOL = 'mcp__worca__edit_canvas';
+const ceStart = (onEvent, id) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: CE_TOOL, input: { summary: 'Add Plan', ops: [] } }] } });
+
+test('composer: an edit_canvas RESULT persists one proposed canvas-edit card stamped with the session and emits ask-card; an isError result adds none; no Task', async () => {
+  const s = seed();
+  let spawned = null;
+  const { turn, frames } = makeTurn(s, { composer: { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34' } }, {
+    runClaudeImpl: async (opts) => {
+      spawned = { tools: opts.tools, allowedTools: opts.allowedTools };
+      ceStart(opts.onEvent, 'toolu_ce');
+      wfResult(opts.onEvent, 'toolu_ce', JSON.stringify({ ok: true, summary: 'Add Plan', ops: [{ op: 'layout', positions: {} }], added: [], removed: [], todo: 0, warnings: [] }));
+      ceStart(opts.onEvent, 'toolu_bad');
+      wfResult(opts.onEvent, 'toolu_bad', 'error: edit_canvas: op 1 (connect): unknown port', true);
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].state, 'proposed');
+  assert.deepEqual([cards[0].card.type, cards[0].card.sessionId, cards[0].card.docToken, cards[0].card.summary], ['canvas-edit', 'cs_ab12cd34', 'd_ab12cd34', 'Add Plan']);
+  assert.equal(frames.filter((f) => f.type === 'ask-card').length, 1);
+  // Only main-stream results become cards: a Task sub-agent's edit_canvas would change the canvas behind the user's back.
+  assert.deepEqual(spawned, { tools: ['Read', 'Grep', 'Glob'], allowedTools: ['Read', 'Grep', 'Glob'] }, 'a composer turn has no Task');
+});
+
+test('composer: Ask\'s run, workflow, track and away hooks stand down — a hallucinated propose_run adds no "Proposal rejected" notice', async () => {
+  const s = seed();
+  const calls = { validate: 0, track: 0, away: 0 };
+  const use = (onEvent, id, name, input) => push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${id}`, content: [{ type: 'tool_use', id, name, input }] } });
+  const { turn } = makeTurn(s, { composer: { sessionId: 'cs_ab12cd34', docToken: 'd_ab12cd34' } }, {
+    validateProposal: async () => { calls.validate += 1; return { ok: false, errors: ['unknown projectKey "x"'] }; },
+    trackRun: async () => { calls.track += 1; return { ok: true, card: { type: 'progress' } }; },
+    awaySwitch: async () => { calls.away += 1; return { ok: true, line: 'Right now you count as away.' }; },
+    runClaudeImpl: async (opts) => {
+      // The composer child lists none of these tools, so the CLI answers each with an is_error result…
+      use(opts.onEvent, 'toolu_pr', 'mcp__worca__propose_run', { projectKey: 'x', prompt: 'p' });
+      wfResult(opts.onEvent, 'toolu_pr', 'Error: No such tool available: mcp__worca__propose_run', true);
+      use(opts.onEvent, 'toolu_pw', 'mcp__worca__propose_workflow', { task: 'build it' });
+      wfResult(opts.onEvent, 'toolu_pw', 'Error: No such tool available: mcp__worca__propose_workflow', true);
+      // …and even an ok result (a stale child) never tracks a run or flips Away mode from the Workflows chat.
+      use(opts.onEvent, 'toolu_tr', 'mcp__worca__track_run', { id: 'abcd1234' });
+      wfResult(opts.onEvent, 'toolu_tr', '{"ok":true}');
+      use(opts.onEvent, 'toolu_aw', 'mcp__worca__set_away_now', { mode: 'away' });
+      wfResult(opts.onEvent, 'toolu_aw', JSON.stringify({ ok: true, requested: { kind: 'global', toggle: 'g' } }));
+      await drain();
+      push(opts.onEvent, RESULT());
+      return { text: '', exitCode: 0 };
+    },
+  });
+  await turn.run();
+  const blocks = getMessage(s.asst.id).blocks;
+  assert.deepEqual(blocks.filter((b) => b.kind !== 'tool').map((b) => [b.kind, b.text || (b.card && b.card.type) || '']), [], 'no card, no notice');
+  assert.deepEqual(calls, { validate: 0, track: 0, away: 0 });
 });

@@ -12,6 +12,7 @@ import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/man
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 import { stepAux, fmtAuxCalls, floorText } from '../../../src/shared/cost/breakdown.mjs';
+import { engineReportsCost } from '../../../src/shared/engine-switch.mjs';
 
 /** The run-level warning a run that drained without binding End carries. */
 export const QUIESCENCE_WARNING = 'finished at quiescence — End not reached';
@@ -264,13 +265,14 @@ function truncate(s) {
 const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const sumUsd = (rows) => round2(rows.reduce((a, r) => a + (Number(r.costUsd) || 0), 0));
 
-/** `3 runs · $1.12`; the cost half is dropped when the total is zero. */
-export function stripText(rows) {
+/** `3 runs · $1.12`; the cost half is dropped when the total is zero, or when the run's engine reports no cost
+ *  (`unpriced`: the rows then hold only worca's own helper spend, never the run's cost). */
+export function stripText(rows, { unpriced = false } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   if (!list.length) return '';
   const total = sumUsd(list);
   const runs = `${list.length} ${list.length === 1 ? 'run' : 'runs'}`;
-  return total > 0 ? `${runs} · ${fmtUsd(total)}` : runs;
+  return total > 0 && !unpriced ? `${runs} · ${fmtUsd(total)}` : runs;
 }
 
 /** The status the 7px leds / row classes use ('start' is the wire's word for active). */
@@ -313,6 +315,7 @@ const awayTitle = (a, floorShown) => ['Away mode', a.calls ? fmtAuxCalls('away',
 
 function decorateExecutions(decor, ctx) {
   const { nodes, wires, grouped, activeList, rowFor, state, now, live, subsOf, lastLines, status, modelLabel } = ctx;
+  const unpriced = !engineReportsCost(state?.runEngine);   // Cursor: no $0.00 pill
 
   for (const node of nodes) {
     const list = grouped.get(node.id) || [];
@@ -338,7 +341,7 @@ function decorateExecutions(decor, ctx) {
         ordinal: Number(row.ordinal ?? row.cycle) || 1,
         label: rowLabel(node, row), led: ledOf(row.status),
         dur: !flow && row.activeMs != null ? fmtDur(durMs) : '',
-        cost: flow || script ? '' : fmtUsd(costUsd),
+        cost: flow || script || unpriced ? '' : fmtUsd(costUsd),
         exit: script && row.exitCode != null ? `exit ${row.exitCode}` : '',
         durMs, costUsd, flow,
         ...(away ? { away } : {}),
@@ -350,7 +353,7 @@ function decorateExecutions(decor, ctx) {
       : null;
 
     if (rows.length || fan) {
-      decor.footers[node.id] = { rows, summary: stripText(rows), leds: rows.map((r) => r.led), fan };
+      decor.footers[node.id] = { rows, summary: stripText(rows, { unpriced }), leds: rows.map((r) => r.led), fan };
     }
     // S4: the last captured line of a RUNNING script, when the page has one.
     const liveLine = script && live && status[node.id] === 'active' && lastLines && typeof lastLines.get === 'function' ? lastLines.get(node.id) : null;
@@ -362,7 +365,7 @@ function decorateExecutions(decor, ctx) {
       const durMs = rows.reduce((a, r) => a + r.durMs, 0);
       const costUsd = sumUsd(rows);
       decor.totals[node.id] = {
-        durMs, dur: fmtDur(durMs), costUsd, cost: script ? '' : fmtUsd(costUsd),
+        durMs, dur: fmtDur(durMs), costUsd, cost: script || unpriced ? '' : fmtUsd(costUsd),
         hasStep: rows.some((r) => r.dur !== ''),
       };
       // The node's Away mode share, kept apart from (and already inside) `cost`. Booked reviews show

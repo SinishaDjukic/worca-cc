@@ -1,0 +1,52 @@
+{
+ "emitted": [
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] starting role=deck-builder cycle=1",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "wrote <CWD>/out.md",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  },
+  {
+   "name": "log",
+   "payload": {
+    "source": "planner",
+    "level": "info",
+    "text": "[mock] done role=deck-builder",
+    "ts": "<T>",
+    "nodeId": "n1",
+    "executionId": "x:n1:1",
+    "stepIndex": 0,
+    "cycle": 1
+   }
+  }
+ ],
+ "subAgents": [],
+ "step": {
+  "key": "0:n1",
+  "nodeId": "n1",
+  "cycle": 1,
+  "sessionId": "mock-session-deck-builder-c1",
+  "costUsd": 0
+ },
+ "totalCost": 0
+}

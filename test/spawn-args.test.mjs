@@ -334,7 +334,8 @@ test('runClaude FORWARDS redactValues: every event, the result text and the erro
   } finally {
     if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
   }
-  assert.ok(events.some((e) => e.type === 'stderr') && events.some((e) => e.type === 'assistant'));
+  // runClaude emits the normalized vocabulary: the assistant frame arrives as `text` from 'assistant'.
+  assert.ok(events.some((e) => e.type === 'stderr') && events.some((e) => e.type === 'text' && e.from === 'assistant'));
   assert.ok(!JSON.stringify(events).includes('s3cret-value-123'));
 });
 // ── guardrails: env scrub ────────────────────────────────────────────────────

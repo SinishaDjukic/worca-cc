@@ -47,7 +47,7 @@ export function hostGuardHookEntry() {
   };
 }
 
-/** The system-prompt preamble every real spawn carries (runReal prepends it). */
+/** The system-prompt preamble every real spawn carries (runClaudeProcess prepends it). */
 export function hostGuardSystemPrompt(pid) {
   return [
     '## Host process protection',

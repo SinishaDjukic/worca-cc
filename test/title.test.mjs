@@ -3,6 +3,11 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { sanitizeTitle, generateTitle, isRefusalTitle } from '../src/core/title.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fakeCodex } from './helpers/fake-codex.mjs';
+import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -136,9 +141,41 @@ test('generateTitle honors opts.mock without WORCA_MOCK — no spawn even with a
   }
 });
 
+test('generateTitle on codex: one codex spawn, read-only, codex\'s default model and no Claude title model', POSIX_SHIM, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-title-codex-'));
+  const codex = fakeCodex(dir, 'Add Billing Export');
+  const prev = process.env.WORCA_TITLE_MODEL;
+  process.env.WORCA_TITLE_MODEL = 'claude-haiku-4-5';   // a Claude override must not reach codex
+  const errors = [];
+  try {
+    const title = await generateTitle('add a billing export to the admin page', { engine: 'codex', bin: codex.bin, cwd: dir, onError: (e) => errors.push(e) });
+    assert.equal(title, 'Add Billing Export');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_TITLE_MODEL; else process.env.WORCA_TITLE_MODEL = prev;
+  }
+  assert.deepEqual(errors, []);
+  const args = codex.args();
+  assert.equal(args[0], 'exec');
+  assert.deepEqual(args.slice(args.indexOf('--sandbox'), args.indexOf('--sandbox') + 2), ['--sandbox', 'read-only']);
+  assert.equal(args[args.indexOf('-m') + 1], CODEX_DEFAULT_MODEL, 'no title model on codex: its own default, named so it is priced');
+  assert.equal(args.includes('--add-dir'), false);
+  assert.ok(args.includes('model_reasoning_effort="low"'), 'the aux effort travels');
+});
+
+test('a failing codex title keeps the provisional title and says which engine failed', POSIX_SHIM, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-title-codex-fail-'));
+  const codex = fakeCodex(dir, null, { fail: '401 Unauthorized' });
+  const errors = [];
+  const title = await generateTitle('fix the login form', { engine: 'codex', bin: codex.bin, cwd: dir, onError: (e) => errors.push(e) });
+  assert.equal(title, '');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].error.message, /401 Unauthorized/);
+  assert.equal(errors[0].model, "codex's default model");
+});
+
 test('generateTitle reports each priced result through onCost, re-priced as the title model', async () => {
   const seen = [];
-  const run = async (o) => { o.onEvent({ type: 'result', costUsd: 0.0021, raw: { usage: { input_tokens: 90, output_tokens: 8 } } }); return { text: 'Add rate limiting' }; };
+  const run = async (o) => { o.onEvent({ type: 'result', costUsd: 0.0021, raw: { type: 'result', usage: { input_tokens: 90, output_tokens: 8 } } }); return { text: 'Add rate limiting' }; };
   // bin: before the `run` seam existed this fell through to runClaude — a bogus bin keeps that red phase offline.
   const t = await generateTitle('add rate limiting to the api', { model: 'claude-haiku-4-5', run, onCost: (c) => seen.push(c), bin: '/nonexistent/claude-must-not-spawn', mock: false });
   assert.equal(t, 'Add rate limiting');
@@ -167,7 +204,7 @@ describe('the title call is priced as its model (a {free} title model books $0, 
   });
   test('onCost reports the re-priced figure', async () => {
     const seen = [];
-    const run = async (o) => { o.onEvent({ type: 'result', costUsd: 0.0021, raw: { usage: { input_tokens: 90, output_tokens: 8 } } }); return { text: 'Add rate limiting' }; };
+    const run = async (o) => { o.onEvent({ type: 'result', costUsd: 0.0021, raw: { type: 'result', usage: { input_tokens: 90, output_tokens: 8 } } }); return { text: 'Add rate limiting' }; };
     await generateTitle('add rate limiting to the api', { model: 'title-free', run, onCost: (c) => seen.push(c), bin: '/nonexistent/claude-must-not-spawn', mock: false });
     assert.deepEqual(seen.map((c) => [c.costUsd, c.model]), [[0, 'title-free']]);
   });

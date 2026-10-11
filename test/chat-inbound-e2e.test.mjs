@@ -79,7 +79,7 @@ test('mock channel is connected; /help round-trips through the full pipeline', a
   assert.equal(channelHost.status()[0].state, 'connected');
   clearMockSentMessages();
   await inject('/help');
-  assert.match(lastReplyText(), /worca-cc chat commands/);
+  assert.match(lastReplyText(), /Worca chat commands/);
   const sent = mockSentMessages().at(-1);
   assert.equal(sent.plugin, NAME);
   assert.equal(sent.chatId, '42', 'reply goes to the originating chat');
@@ -158,7 +158,7 @@ test('/api/chat/status: channels, allow-list size, last refused command; /api/ch
 
 test('settings round-trip: chat prefs ride GET/POST /api/settings without clearing root', async () => {
   const before0 = await (await fetch(`${base}/api/settings`)).json();
-  assert.deepEqual(before0.chat.notify, { done: true, error: true, question: true, paused: true, away: true });
+  assert.deepEqual(before0.chat.notify, { done: true, error: true, question: true, paused: true, away: true, prWatch: true });
   const posted = await (await fetch(`${base}/api/settings`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat: { notify: { question: false } } }),

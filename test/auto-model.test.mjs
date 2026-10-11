@@ -82,3 +82,20 @@ test('settings: autoWorkflowModel round-trips through the API, validates BEFORE 
   assert.throws(() => assertAutoWorkflowModelInput('nope', [{ id: 'claude-opus-5-5' }]), /unknown model "nope"/);
   await assert.rejects(() => setAutoWorkflowModel(42), /catalog model id/);
 });
+
+test('pickCatalogModel picks from Claude entries only unless told otherwise', async () => {
+  const { pickCatalogModel } = await import('../src/core/auto/model.mjs');
+  const mixed = [{ id: 'gpt-5.5', engine: 'codex' }, { id: 'my-proxy' }];
+  assert.equal(pickCatalogModel(mixed, ''), 'my-proxy', 'a Codex row is never a Claude default');
+  assert.equal(pickCatalogModel(mixed, 'gpt-5.5'), 'my-proxy', 'a Codex id is never a Claude setting');
+  assert.equal(pickCatalogModel([{ id: 'gpt-5.5', engine: 'codex' }], ''), '', 'no Claude entry, no Claude pick');
+});
+
+test('off Claude Auto names no classifier model; Codex prefers its first built-in when a pick is needed', async () => {
+  const { pickCatalogModel } = await import('../src/core/auto/model.mjs');
+  const codex = [{ id: 'my-codex', engine: 'codex' }, { id: 'gpt-6-astra', engine: 'codex', builtin: true }, { id: 'gpt-5.5', engine: 'codex', builtin: true }];
+  assert.equal(resolveAutoModel(codex, { env: { [AUTO_MODEL_ENV]: 'claude-sonnet-5' }, setting: 'claude-sonnet-5', engine: 'codex' }), '', 'no Claude override or setting reaches codex');
+  assert.equal(pickCatalogModel(codex, '', { engine: 'codex' }), 'gpt-6-astra');
+  assert.equal(pickCatalogModel(codex, 'GPT-5.5', { engine: 'codex' }), 'gpt-5.5');
+  assert.equal(pickCatalogModel([{ id: 'my-codex', engine: 'codex' }], '', { engine: 'codex' }), 'my-codex');
+});

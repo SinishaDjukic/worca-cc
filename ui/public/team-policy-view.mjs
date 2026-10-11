@@ -6,6 +6,7 @@
 // no fetch, no network — app.js owns data and delegates events. The few listeners here are
 // purely local (a show-all toggle, chip add/remove inside the editor).
 
+import { engineLabel } from '../../src/shared/engine-switch.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const POLICY_PAUSE_REASONS = Object.freeze(['cost_pipeline_policy', 'cost_total_policy']);
 export const PROTECT_HINT = 'Protect worca-policy on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page.';
@@ -417,7 +418,7 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
   actions.append(requiredActions(doc, reqs));
   head.append(actions);
   card.append(head);
-  card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Plugins page.'));
+  card.append(h(doc, 'small', 'hint tp-plugins-hint', 'Installing shows the plugin\'s source, commit and what it ships, and waits for your click. Nothing installs on its own unless you trust the policy home on the Marketplace page.'));
   if (!reqs.length) card.append(h(doc, 'div', 'hist-empty', 'This policy expects no plugins.'));
   else {
     const table = h(doc, 'table', 'tm-tbl tp-tbl tp-plugins-tbl');
@@ -442,7 +443,7 @@ export function renderPolicyPluginsPanel(payload, { doc = globalThis.document } 
       const act = h(doc, 'td', 'tp-plugin-act');
       if (r.state === 'missing') { const b = btn(doc, 'pl-policy-install', 'Install…'); b.dataset.name = r.name; b.dataset.marketplace = r.marketplace || ''; act.append(b); }   // quiet: the head carries the primary action
       else if (r.state === 'outdated') { const b = btn(doc, 'pl-policy-update', 'Update…'); b.dataset.name = r.name; act.append(b); }
-      else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Plugins page'));
+      else if (r.state === 'disabled') act.append(h(doc, 'small', 'hint', 'enable it on the Marketplace page'));
       else if (r.config) { const b = btn(doc, 'pl-policy-configure', 'Configure…'); b.dataset.name = r.name; act.append(b); }
       tr.append(name, want, have, state, act);
       tbody.append(tr);
@@ -496,7 +497,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
   root.append(sc);
   const mc = h(doc, 'section', 'card tp-catalog-models');
   const mh = h(doc, 'div', 'card-head');
-  mh.append(h(doc, 'h2', null, 'Models'), h(doc, 'small', 'hint', 'Selectable everywhere a model is chosen · Settings › Models'));
+  mh.append(h(doc, 'h2', null, 'Models'), h(doc, 'small', 'hint', 'Selectable everywhere a model is chosen · the Models page'));
   mc.append(mh);
   if (!models.length) mc.append(h(doc, 'div', 'hist-empty', 'This policy ships no models.'));
   else {
@@ -505,6 +506,7 @@ export function renderPolicyCatalogPanel(payload, { doc = globalThis.document } 
       const row = h(doc, 'div', 'tp-cat-row');
       const main = h(doc, 'div', 'tp-cat-main');
       main.append(h(doc, 'b', null, m.label || m.id), ' ', code(doc, m.id));
+      if (m.engine && m.engine !== 'claude') main.append(' ', h(doc, 'span', 'badge violet tp-engine', engineLabel(m.engine)));
       const envKeys = Object.keys(m.env || {});
       main.append(h(doc, 'small', 'hint', [(m.efforts || []).join(' · ') || 'default efforts', envKeys.length ? `${envKeys.length} env var${envKeys.length === 1 ? '' : 's'}` : null, m.env?.ANTHROPIC_BASE_URL ? 'routes via base URL' : null].filter(Boolean).join(' · ')));
       row.append(main, h(doc, 'span', 'badge blue', 'policy'));
@@ -544,6 +546,8 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
 // ---- Team policy page: edit mode (board 5) --------------------------------------------------
 const KIND_LABEL = { default: 'Default', soft: 'Soft', hard: 'Hard' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
+const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [] };
 
 function listChips(doc, row, items, labelOf) {
   const list = row.querySelector('.tp-list');
@@ -610,14 +614,14 @@ function catalogItem(doc, cat, item) {
       chipField(doc, 'Deny rules', 'deny', item?.deny, 'Bash(git push)'),
       chipField(doc, 'Env allowlist', 'envAllowlist', item?.envAllowlist, 'HOME'));
   } else {
-    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), rm);
+    head.append(h(doc, 'b', null, item?.label || item?.id || 'New model'), ...(item?.engine && item.engine !== 'claude' ? [h(doc, 'span', 'badge violet tp-engine', engineLabel(item.engine))] : []), rm);
     grid.append(
       textField(doc, 'Id', 'tp-cat-id', item?.id, 'acme-proxy-opus', true),
       textField(doc, 'Label', 'tp-cat-label', item?.label, 'Opus via Acme gateway'),
     );
     const eff = h(doc, 'div', 'tp-cat-field tp-cat-efforts'); eff.append(h(doc, 'label', null, 'Efforts'));
     const row = h(doc, 'div', 'tp-cat-effort-row');
-    for (const e of EFFORTS) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
+    for (const e of (EFFORTS_BY_ENGINE[item?.engine || 'claude'] || EFFORTS)) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
     eff.append(row);
     const env = h(doc, 'div', 'tp-cat-field tp-cat-env'); env.append(h(doc, 'label', null, 'Env'));
     const rows = h(doc, 'div', 'tp-env-rows');
@@ -1608,7 +1612,7 @@ export function renderSetupChecklist({ home, requirements = [], seeds = [], trus
   root.append(list);
   const trust = h(doc, 'label', 'switch-row tp-trust-row');
   const cb = h(doc, 'input', 'sw-input tp-trust'); cb.type = 'checkbox'; cb.checked = !!trusted; cb.dataset.home = home || '';
-  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Plugins page at any time.`));
+  const txt = h(doc, 'span', 'txt'); txt.append(h(doc, 'b', null, 'Trust this policy home'), h(doc, 'small', 'hint', `Install and update required plugins from ${home || 'this home'} automatically on this machine, without this checklist. Plugins run with your user privileges. MCP servers are never installed or turned on automatically, and required skills are never turned on automatically — but updates to required skills apply without another review when you trust this home. You can turn this off on the Marketplace page at any time.`));
   trust.append(cb, h(doc, 'span', 'switch switch-sm'), txt);
   root.append(trust);
   // One footer action: the modal's own Close is the way out (a "Later" here said the same twice).

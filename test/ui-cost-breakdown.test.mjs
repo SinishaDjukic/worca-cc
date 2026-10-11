@@ -262,3 +262,57 @@ test('History: "Answered for you" names each review\'s model and cost, and the h
     ['Clarifying questions · 14:02 · the default model · $0.05', 'Review loop · 14:52 · rule · $0.00']);
   assert.equal(sec.querySelector('h3').textContent, 'Answered for you · 2 answers · $0.12');
 });
+
+test('a run on an engine that reports no cost: Agents reads "cost unknown", the Total is worca\'s own calls', () => {
+  const { window } = new JSDOM('<!doctype html><body></body>');
+  const fmt = (n) => (n > 0 && n < 0.01 ? '<$0.01' : `$${n.toFixed(2)}`);
+  const el = costBreakdownEl(window.document, runCostBreakdown(STEPS(), TOTAL), { fmtUsd: fmt, agentsUnknown: true });
+  const rows = panelRows(el);
+  assert.deepEqual(rows[0], ['Agents', 'cost unknown', '']);
+  assert.deepEqual(rows.find((r) => r[0].startsWith('Total')), ["Total (worca's own calls)", '$3.33', '']);
+  assert.deepEqual(rows[1], ['Away mode', '$0.12', '2 reviews'], 'worca\'s own helper lines keep their real cost');
+  window.close();
+});
+
+test('cost unknown, never $0.00: a Cursor run on the run page and in History; a Codex run with 0 still reads $0.00', async () => {
+  const runPage = async (runEngine) => {
+    const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [], ghAvailable: false }) }) : null) });
+    const ws = ctx.wsBox.ws;
+    ws.dispatch('open', {});
+    const frame = (msg) => ws.dispatch('message', { data: JSON.stringify(msg) });
+    frame({ type: 'hello', runs: [] });
+    await settle(ctx.window, 4);
+    frame({ type: 'run-created', runId: 'r1', title: 'T', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+    frame({ type: 'state', runId: 'r1', id: 'p1', status: 'running', steps: OLD_STEPS(), subAgents: [], totalCostUsd: 0, runEngine });
+    go(ctx.window, 'running/r1/details/overview');
+    await settle(ctx.window, 6);
+    return ctx.window.document.querySelector('#run-detail .rd');
+  };
+  await checkRows([
+    { name: 'run page, Cursor: the header and the Overview card read cost unknown', run: async () => {
+      const rd = await runPage('cursor');
+      assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, 'cost unknown');
+      assert.match(rd.querySelector('.rd-meta .rd-cost').title, /Cursor reports no cost/);
+      assert.equal(rd.querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+      assert.doesNotMatch(rd.querySelector('.rd-meta').textContent, /\$0\.00/);
+    } },
+    { name: 'run page, Codex with 0: $0.00 as today', run: async () => {
+      const rd = await runPage('codex');
+      assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, '$0.00');
+    } },
+    { name: 'History, Cursor: the header and the COST card read cost unknown', run: async () => {
+      const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: 0, runEngine: 'cursor' } } });
+      await openDetail(ctx, 'details/overview');
+      const doc = ctx.window.document;
+      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').textContent, 'cost unknown');
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+    } },
+    { name: 'History, a reporting engine with no cost number: the empty header cost and the — card as today', run: async () => {
+      const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: undefined, runEngine: 'codex' } } });
+      await openDetail(ctx, 'details/overview');
+      const doc = ctx.window.document;
+      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost'), null);
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, '—');
+    } },
+  ]);
+});

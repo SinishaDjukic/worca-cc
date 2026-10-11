@@ -26,6 +26,7 @@ import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RESERVED_KEY_VAR } from '../web-allowlist.mjs';
 import { keepListNames } from '../mcp/keep-list.mjs';
+import { ASK_DENY_RULES } from './deny-rules.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -40,38 +41,8 @@ export const ASK_PERMISSION_MODE = 'dontAsk';
 // a read cannot mutate.
 export const ASK_BUILTIN_TOOLS = Object.freeze(['Task', 'Read', 'Grep', 'Glob']);
 export const ASK_MCP_GRANTS = Object.freeze(['mcp__worca']);
-// Deny beats allow, and the chat's worktrees live INSIDE the home
-// (<home>/ask/<thread>/wt/…), so the home cannot be denied as a whole: worca's
-// own state is enumerated instead — everything under the home except ask/.
-// Path rules are `//` (filesystem root) or `~/` anchored; worcaHome() is never
-// interpolated (its characters would be read as glob). `.worca-cc` is the home's
-// conventional basename (a differently named WORCA_HOME simply does not match
-// the home-relative denies — exactly as the old blanket deny did not).
-export const ASK_DENY_RULES = Object.freeze([
-  'Bash', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Skill',
-  'Read(//**/worca-cc.db*)',           // the DB (+ -wal/-shm/backups), wherever the home is
-  'Read(//**/worca.db*)',              // the pre-rename DB file, still present on older homes
-  'Read(//**/secrets.json)',           // plugins/*/data/secrets.json and any other
-  'Read(//**/.env*)',
-  'Read(//**/.worca-cc/settings.json)',
-  'Read(//**/.worca-cc/store/**)',     // run store: transcripts, logs, artifacts
-  'Read(//**/.worca-cc/runs/**)',      // pipeline checkouts + per-run logs (run diffs come through get_run_diff, filtered)
-  'Read(//**/.worca-cc/plugins/**)',
-  'Read(//**/.worca-cc/tmp/**)',       // the chat's own scratch cwd (per-turn mcp-*.json)
-  'Read(//**/.worca-cc/logs/**)',      // ask-web.jsonl: every thread's fetched URLs
-  'Read(//**/.worca-cc/mcp/**)',       // the MCP registry: servers, sets, secrets, tests (MCP registry §5.5.4)
-  'Read(//**/.worca-cc/skills/**)',    // the skill library (skills registry §2b-7); a turn reads only its own mount under ask/<thread>/
-  'Read(~/.ssh/**)',
-  'Read(~/.aws/**)',
-  'Read(~/.gnupg/**)',
-  'Read(~/.kube/**)',
-  'Read(~/.docker/**)',
-  'Read(~/.claude/**)',                // Claude Code's own credentials + session transcripts
-  'Read(~/.netrc)',
-  'Read(~/.npmrc)',
-  'Read(~/.config/gh/**)',
-  'Read(//proc/**)',                   // the server's own environment (/proc/<pid>/environ holds its GitHub and model tokens)
-]);
+// The deny list lives in deny-rules.mjs, shared with the Codex file tools (one matcher, D13).
+export { ASK_DENY_RULES };
 export const ASK_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' });
 // Native-rules revision: the CLI loads `<dir>/.claude/rules` from an --add-dir only under this
 // override (probes J/J2, 2.1.270; the E2 note in claude-runner.mjs). CLAUDE_-prefixed ⇒ survives
@@ -168,11 +139,13 @@ export function buildMockMarkers(card) {
  * @param {object|null} [o.registry]  resolveRegistry()'s result for this turn (MCP registry §9.2); no copies ⇒ ignored
  * @param {{url:string, token:string}|null} [o.commands]  agent mode's command bridge for this turn (#574); null ⇒ no command tools
  * @param {{pluginDirs:string[], names:string[]}|null} [o.skills]  this turn's set-skill mount (skills registry §4.4); no plugin dir ⇒ ignored
+ * @param {boolean} [o.composer]  a Workflows-chat turn: no Task built-in
  * @returns {object} runClaude options
  */
-export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, skills = null } = {}) {
+export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, skills = null, engine = 'claude', composer = false } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
+  if (engine === 'codex') return buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -186,7 +159,10 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   // denied. Skills without `allowed-tools` (most set skills, bundled `simplify`, …) load without any rule.
   const skillAllows = sk && Array.isArray(sk.names) ? sk.names.filter((n) => typeof n === 'string' && QUALIFIED_SKILL_RE.test(n)).map((n) => `Skill(${n})`) : [];
   // With copies, ToolSearch keeps their schemas deferred: `--tools` without it sends every MCP schema in full (§16.1 #9).
-  const builtins = reg ? [...ASK_BUILTIN_TOOLS, 'ToolSearch'] : [...ASK_BUILTIN_TOOLS];
+  // The Workflows chat (composer) gets no Task: a sub-agent's edit_canvas / draft_* calls would change the MCP child's
+  // working canvas, but only main-stream tool results become cards (events.mjs onToolResults) — the user would never see them.
+  const own = composer ? ASK_BUILTIN_TOOLS.filter((t) => t !== 'Task') : [...ASK_BUILTIN_TOOLS];
+  const builtins = reg ? [...own, 'ToolSearch'] : own;
   // A stdio copy starts through the launcher, which reads the keep-list from the scrubbed claude env (§5.5.1).
   const stdio = !!reg && Object.values(reg.servers).some((srv) => srv && typeof srv.command === 'string');
   return {
@@ -233,6 +209,39 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   };
 }
 
+/**
+ * A Codex chat's spawn (cascading-settings-design.md D13, §4.6): read-only sandbox, the lockdown (no shell, no image
+ * viewer, no native web search, no browser/apps — codex.mjs CODEX_ASK_LOCKDOWN; codex keeps its sub-agent tools, which the
+ * watchdog stops the turn on), the worca MCP server from the same per-turn
+ * config file, approval `never` (exec has no other mode), and NO writable dir: memory is read through read_file, never
+ * an --add-dir root. Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd, routing env) do not
+ * exist on codex; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the adapter.
+ */
+function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null }) {
+  const keyVar = !relayed ? webKeyVar(web) : null;
+  return {
+    engine: 'codex',
+    cwd: scratchDir,
+    prompt: String(turn.prompt ?? ''),
+    systemPrompt: String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : ''),
+    model: turn.model,
+    effort: turn.effort,
+    sandbox: 'read-only',
+    askLockdown: true,
+    mcpConfigPath,
+    envScrub: true,
+    // The MCP child needs them (ssh-remote git fetch; the web search key): codex hands them on through env_vars.
+    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
+    ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
+    ...(Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
+    // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
+    // chat's spawn env to its MCP servers (codex.mjs askLockdown).
+    ...(commands?.token ? { spawnEnv: { ASK_COMMAND_TOKEN: commands.token } } : {}),
+    signal: turn.signal,
+    onEvent: turn.onEvent,
+  };
+}
+
 /** Server-side knobs the MCP child's NESTED classifier spawn needs (P3 propose_workflow, task mode). The chat's claude is
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
@@ -262,7 +271,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, engine = 'claude', skillRoot = null }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -292,6 +301,11 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     // WORCA_ASK_READER: the shared sign-in behind this turn (identity.mjs), so the child's
     // notification reads/marks are per person; absent on local/operator deployments.
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
+      // A Codex chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on Codex (D13, D8).
+      ...(engine === 'codex' ? { WORCA_ASK_ENGINE: 'codex' } : {}),
+      // A Codex turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
+      // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
+      ...(engine === 'codex' && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}) },
   });

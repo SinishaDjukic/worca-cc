@@ -438,6 +438,16 @@ test('14 buildAgentPrompt assembles the blocks in the documented order', () => {
   assert.ok(p.includes('MOCK_IN: /abs/plan.md'));
 });
 
+test('14b a node without a sub-agent tool (codex) gets the serial workspace directive', () => {
+  const workspace = { projects: [{ projectKey: 'api', projectName: 'API', worktreeDir: '/w/api', checkpointRef: 'aaa1' }] };
+  const meta = { ...CUSTOM, workspaceStrategy: 'explore' };
+  const fan = buildAgentPrompt(ctx8({ meta, workspace }));
+  assert.ok(fan.includes('## Workspace fan-out — explore across member projects'));
+  const serial = buildAgentPrompt(ctx8({ meta, workspace, node: { ...ctx8().node, noSubagents: true } }));
+  assert.ok(serial.includes('## Workspace survey — explore across member projects'));
+  assert.ok(!serial.includes('## Workspace fan-out'));
+});
+
 test('15 prompt hints substitute {pipelineDir}, {cycle} and {diffInstruction}; the decomposition contract renders for an expands producer', () => {
   const p = buildAgentPrompt(ctx8());
   assert.ok(p.includes(`Read ${pipelineDir}/notes.md at cycle 2. Changes are via \`git diff\` in your cwd.`),

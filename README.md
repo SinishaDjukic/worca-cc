@@ -10,9 +10,10 @@ work, and a state machine runs the agents of a workflow in sequence — by
 default **Clarify → Plan → Refine → Implement → Review** — looping until the
 work clears quality gates, pausing to ask *you* the questions that matter, and
 keeping every run isolated in its own git worktree and branch. Pick **Auto**
-and Worca chooses the workflow for the task, draw your own in the **Workflow
-Composer**, or start the shipped **Presentation** workflow to turn a brief into
-a slide deck.
+and Worca chooses the workflow for the task, draw your own in **Workflows** (or
+ask its chat to build it), or start the shipped **Presentation** workflow to turn a brief into
+a slide deck, or **Architecture (C4)** to keep a diagram of your code that
+draws itself from the code.
 
 It ships as a **web UI**, a **CLI**, and an installable **`/worca` skill** for
 Claude Code — all running the same engine — and chat plugins (Telegram, Slack,
@@ -93,7 +94,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
   worktree is removed; the branch stays.
-- **Live cockpit** — **Runs** (under Activity) lists every run, live and
+- **Live cockpit** — **Runs** in the sidebar lists every run, live and
   finished, with **All / Live / Finished / Needs you** tabs, search, and
   grouping by project or date. A live run's page shows its state and current
   step, ticking time, cost and changed files, and a **Live view** of the running
@@ -127,12 +128,14 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
     Workspace Usage and Workspace Synthesis, which only the scan can place.
   - *Presentations* — Deck Clarify, Narrative Spine, Visual System, Deck
     Builder, Deck Audit, Deck Review, Deck Outputs, Deck Export.
+  - *Architecture* — C4: setup (the which-file, which-bands form) and C4:
+    architect (reads the code, writes the LikeC4 model).
   - *Memory defragment* — restructures one memory scope.
-- **Agents page** — **Build › Nodes › Agents** (Expert) lists every agent
+- **Agents in the Library** — **Workflows › Library › Agents** lists every agent
   with its ports; built-ins are read-only, so **Duplicate** one to get an
-  editable copy ([docs/ui-levels.md](docs/ui-levels.md#agents-page-e)).
-- **AI-assisted agent creation** — **Create agent** (or **Create agent…** in
-  the composer): give a name, a purpose and a description and Worca drafts
+  editable copy ([docs/ui-levels.md](docs/ui-levels.md#workflows)).
+- **AI-assisted agent creation** — **+ New agent** in the Library (or **New
+  agent…** in the canvas **+** menu): give a name, a purpose and a description and Worca drafts
   both the system prompt and the metadata, or paste your own prompt and let it
   infer just the wiring; edit the draft, **Regenerate**, **Save agent**.
 - **Ask forms** — an agent that needs a human can declare the form its
@@ -144,8 +147,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Implementation, Narrative Spine, Visual System and Deck Outputs ask this way;
   plugins can ship forms too.
 - **Per-agent model & effort** — pick a model and reasoning effort (medium,
-  high, xhigh, max) per agent node: in the composer's **Info** pane for the
-  workflow, or in New pipeline › **Advanced** › **Agents** for one project,
+  high, xhigh, max) per agent node: in the toolbar over a selected agent card
+  in Workflows, or in New pipeline › **Advanced** › **Agents** for one project,
   kept for its later runs (**Save as workflow defaults** moves them into the
   workflow). A project pick beats a team-policy default, which beats the
   workflow's own; `--model` only fills nodes with none. Fan-out agents also
@@ -158,8 +161,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   with your own Node.js, Shell or Python program (Python when the host has an
   interpreter), so a test gate or a transform costs no model call. See
   [docs/scripts.md](docs/scripts.md).
-- **The Scripts page** — **Build › Nodes › Scripts** (Expert) lists every
-  built-in, own and plugin script with its runtime and ports. **New script**
+- **Scripts in the Library** — **Workflows › Library › Scripts** lists every
+  built-in, own and plugin script with its runtime and ports. **+ New script**
   picks a runtime, then reads the ports and params from the code as you type;
   **Duplicate** copies any script into your own folder; **Delete** refuses while
   a saved workflow still places it. Built-in and plugin scripts open read-only.
@@ -169,31 +172,50 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   expectation (verdict, fired ports, summary text); **Run all** re-runs every
   case.
 - **Shipped scripts** — Shell, JavaScript and Python cards, Git diff, and the
-  steps behind the presentation and workspace-map workflows come built in.
+  steps behind the presentation, architecture and workspace-map workflows come
+  built in.
   Plugins can ship scripts and test cases of their own.
 
-![Scripts page in Expert mode: built-in Shell, JavaScript, Python, Git diff, Deck PDF, Deck audio and Deck bundle cards, each with a runtime chip and Open and Duplicate buttons, under a Filter scripts box and a New script button](docs/screenshots/scripts.png)
+![The Workflows view with the Library on its Scripts tab: built-in Git diff, Workspace map, Deck PDF, Deck audio, Deck bundle, Shell, JavaScript and Python rows grouped by domain, each with a runtime chip and its port line, under the All, Built-in and Yours chips and a + New script button, beside an empty canvas holding Task and End](docs/screenshots/scripts.png)
 
-### Workflow Composer
+### Workflows
 
-- **Compose your own pipeline** — **Build › Workflow Composer** (Advanced) is a
-  canvas: click or drag a card from the palette and wire its typed ports
-  (`md`, `json`, `void`). Each card declares what it consumes and produces, a
+- **A full-screen editor** — **Build › Workflows** (every interface mode) is a
+  canvas of frosted cards: drag a card from the Library, or add one with the
+  black **+**, and wire its typed ports (`md`, `json`, `void`) with smooth
+  wires coloured by type. Each card declares what it consumes and produces, a
   wire only connects compatible ports, and **Save** stays off until the graph
   is valid. A blocking output wired back to an earlier card becomes a loop
-  (drawn amber): a reviewer keeps sending work back until it passes or the
-  loop hits its cycle cap — 3 by default, set per loop wire in Expert mode.
-  Flow cards — **Task** (the run's request), **End** (the result) and, in
-  Expert, **AND**, **OR**, **Combine** — express joins, choices and merges
-  without any code. See [`docs/ui-levels.md`](docs/ui-levels.md#workflow-composer-page-a)
-  for what each level shows.
-- **Saved pipelines** — the list under the canvas is tabbed by domain; click a
-  card to open it. The built-in **Default** and **Memory defragment** open
-  read-only (Save makes a copy). Saved pipelines are offered in New pipeline's
-  **Workflow** picker, and so in schedules.
-- **Share a pipeline** — **Export…** on a saved card offers three formats.
-  A **JSON file** carries the graph only; the recipient picks it up with
-  **Import…** (a taken name gets a ` (2)` suffix; nothing is ever overwritten,
+  (drawn amber, swooping under the cards with a **≤N** pill): a reviewer keeps
+  sending work back until it passes or the loop hits its cycle cap — 3 by
+  default, set per loop wire in its toolbar. Flow cards — **Task** (the run's
+  request), **End** (the result), **AND**, **OR**, **Combine** — express joins,
+  choices and merges without any code. A selected card's toolbar sets its
+  model, effort and await-all; **More** holds every other setting. The top
+  bar keeps only Back, **Workflows ▾** (New canvas, Open…, Import…, Export…),
+  the name, the Library toggle and **Save**; **Auto-layout** and the zoom menu
+  sit bottom right. See [`docs/ui-levels.md`](docs/ui-levels.md#workflows).
+- **The Library** — the card beside the canvas switches between **Agents**,
+  **Scripts** and **Workflows**. Every agent and script action lives there (view,
+  edit, create, duplicate, delete, the script test bench); their editors open in
+  a sheet inside the view. The old `#composer`, `#agents`, `#scripts` and
+  `#agent-create` addresses land in the view.
+- **The composer chat** — the pill beside **+** grows into a chat on Ask Worca's
+  engine that only works on the open canvas: it adds, removes and rewires
+  agent and script cards and sets model, effort, max cycles and await-all (each
+  change lands at once with an inline **Undo**), builds whole workflows
+  (**Apply to canvas** opens one as a new unsaved workflow), and drafts new
+  agents (metadata and system prompt) and scripts (code, interface and test
+  cases, which it can test) that you **Save** from their card. It never runs
+  anything: save the workflow, then start a run from **New run**. **New chat**
+  starts over.
+- **Saved pipelines** — the Library's **Workflows** tab lists them with domain
+  chips; click a row to open it. The built-in **Default** and **Memory
+  defragment** open read-only (Save makes a copy). Saved pipelines are offered
+  in New pipeline's **Workflow** picker, and so in schedules.
+- **Share a pipeline** — **Export…** on a Library row (or in **Workflows ▾**)
+  offers three formats. A **JSON file** carries the graph only; the recipient
+  picks it up with **Workflows ▾ › Import…** (a taken name gets a ` (2)` suffix; nothing is ever overwritten,
   and any script commands are shown for approval first). In Expert, a
   **Claude Code skill** writes a `SKILL.md` plus the agents it dispatches
   under `.claude/`, so the pipeline runs inside Claude Code without Worca
@@ -205,7 +227,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca workflow list`, `worca workflow export <id> --format json|claude|plugin`
   and `worca workflow import <file>`.
 
-![Workflow Composer with the built-in Default pipeline on the canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires back from the reviewers — beside the Agents palette of coding agents with their in/out ports, above the Saved pipelines list tabbed coding, presentation and shared](docs/screenshots/composer.png)
+![The Workflows view with the built-in Default pipeline on the full-screen canvas — Task, Clarify, Plan, Refine Plan, Implementation, Review Implementation and End wired port to port, amber loop wires swooping back under the reviewers with ≤3 pills — beside the Library open on its Workflows tab (Default, Memory defragment, Presentation), with the black + and the composer chat pill at the bottom and Auto-layout and the zoom menu bottom right](docs/screenshots/composer.png)
 
 ### Presentations
 
@@ -239,6 +261,24 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Python 3.8+. The narrated deck linked from
   [`docs/why-worca.md`](docs/why-worca.md) runs on the same kit.
 
+### Architecture (C4)
+
+- **A model of your code, kept by your code** — the built-in **Architecture
+  (C4)** workflow (`worca --workflow wf_architecture_c4 --prompt "…"`, on a
+  project or a workspace) finds the project's LikeC4 files, asks on one card
+  which to update — or where to create one and how to group the deployment
+  sheet into bands, each with prose criteria for what belongs in it — and which
+  images to export. The architect reads the code and writes the model; a check
+  card parses it with the viewer's own parser and sends blocking problems back,
+  up to 2 cycles.
+- **Drawn the same everywhere** — open the `.c4` from a run's **Artifacts** tab
+  and it draws in Worca's viewer, with a view picker, an info rail, hover and
+  selection highlighting, a JPEG button and **Full screen**. The render card
+  writes SVG, JPEG or PNG of every view with the same renderer (JPEG and PNG
+  need Chrome, Chromium or Edge; in a container, the `-full` image). Worca's own model is
+  [`docs/architecture/architecture.c4`](docs/architecture/architecture.c4);
+  the design is [`docs/architecture-c4.md`](docs/architecture-c4.md).
+
 ### Guardrails
 
 - **Named policy sets, picked per run** — the **Guardrails** picker under
@@ -268,8 +308,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 ### MCP servers & credential broker
 
 - **Worca's own MCP registry** — servers installed for Worca only, never written into your
-  Claude Code config, that pipeline agents and Ask Worca can call. **Settings › Sets**
-  (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
+  Claude Code config, that pipeline agents and Ask Worca can call. The **Connectors**
+  page (Advanced) has three views: **Servers**, the catalog (servers shipped by plugins, added by hand
   with **Add MCP server** as `stdio`, `http` or `sse`, or required by a team policy), and
   **Sets**, where each server gets its values and secrets, so one server can sit in two sets
   with different credentials, and **Skills**, the skill catalog ([Skills](docs/skills.md)): skills that
@@ -331,8 +371,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Configure once** — commands live on the project's **Actions** tab, stacks
   on the workspace's; Settings › Runs › **Actions** sets the keep policy, port
   range, editor and terminal. All Actions tabs and that card are Advanced
-  level; the sidebar's **Running actions** card shows at every level while a
-  service runs, with **Stop**.
+  level; the sidebar's **Running actions** rows show at every level while a
+  service runs, each with **Stop** (on the collapsed rail, one tile opens them).
 - **People start commands, agents don't** — every start goes by action id from
   stored config; Ask Worca can read and propose actions but never runs one; a
   hosted Worca runs nothing unless `WORCA_ACTIONS_REMOTE=1`. See
@@ -347,7 +387,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc-plugin.json`. It can contribute task sources (e.g. GitHub Issues),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from **Settings › Plugins** (Advanced) or `worca plugin install`;
+  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
   **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
@@ -356,7 +396,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   diffstat, and flags new secrets, changed setup and changed model env, before
   you accept (`worca plugin update --diff` adds the full diff). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
-  Models tab; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
+  Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
   its `dev` branch, is registered on every install (nothing is installed until
   you pick it): the GitHub Issues task source, the four chat channels below,
@@ -379,7 +419,8 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Ask Worca
 
-- **An assistant on every view** — the **Ask Worca** pill (⌘K / Ctrl K) opens a chat that
+- **An assistant on every view** — the **Ask Worca** pill, or the last row of the top bar's
+  search (⌘K / Ctrl K), opens a chat that
   answers from Worca's own records: runs, their diffs, progress and clarify answers, workflows
   and agents, schedules, team metrics and policy, models, Actions, and tasks from installed
   trackers. It reads code in read-only, detached worktrees with an allowlisted `git` (`log`,
@@ -411,12 +452,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Away mode
 
-- **Runs keep going while you're away** — during your away hours, or after you click **I'm away**
-  on the sidebar's *I'm here | I'm away* switch, Worca answers what a run would wait on: clarifying
+- **Runs keep going while you're away** — during your away hours, or after you click **Step away**
+  in the account menu (the corner at the foot of the sidebar), Worca answers what a run would wait on: clarifying
   questions, mid-step questions, input forms, review-loop gates, proposed workflows and failed-step
   retries. It trusts the agent's recommendation when the agent is sure enough. Otherwise a
-  read-only review (Read, Grep and Glob only) scores each option against your Worca memory, how
-  easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
+  read-only review (it can only read files), on the run's engine, scores each option against your
+  Worca memory, how easily it can be undone, scope, the codebase's conventions and cost. An answer it is unsure of is
   still given, but flagged *please check*.
 - **You choose when and where** — **Settings › Runs › Away mode** (Advanced level) sets the away
   hours and time zone, *Only runs I marked* or *All runs*, the method, the model and effort that
@@ -432,8 +473,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   own cost caps always hold; Worca passes the team's soft cap only if you allow it.
 - **Every answer on record** — the run page lists *Answered for you* (question, answer, reason
   and the deciding model), one group per ask, with the answers to check marked and listed first.
-  A note above it reads like "5 answers while you were away — 2 to check". The
-  sidebar announces when away hours start and end.
+  A note above it reads like "5 answers while you were away — 2 to check". A
+  short notice says when away hours start and end, and a violet dot sits on your avatar while you
+  are away; **I'm back** in the account menu ends it.
 
 ### Scheduled runs
 
@@ -474,8 +516,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Statistics** (Advanced) — pick Today, This week, This month or All time for Spent, Saved
   (estimated human hours × your developer rate, minus spend), Pipeline spend, Ask Worca, Time
   worked, Pipelines finished and PRs merged, plus *Spend per* and *Runs per* charts by hour, day
-  or month (runs split into finished, stopped and failed). A spend indicator in the sidebar shows
-  spend against the budget.
+  or month (runs split into finished, stopped and failed). With a total limit, a ring around your
+  avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
+  menu's spend card has the figures.
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
   pipeline)* or `worca resume <id> --ignore-cost-cap` lifts it for that run. A total cost limit
@@ -546,7 +589,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 
 ### Models
 
-- **Bring your own models** — *Add model* on **Settings › Models** registers any
+- **Bring your own models** — *Add model* on the **Models** page registers any
   model id (a proxy, a fine-tune, an alternative provider), declares which effort
   levels it supports, and attaches per-model routing env (e.g. `ANTHROPIC_BASE_URL`)
   that is merged into that model's agent spawns. *Share as plugin…* exports your
@@ -554,7 +597,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   the repo as a secret each teammate enters once, after installing, under the
   plugin's *Model secrets*.
 - **No first-party account needed** — the *Title generation*, *Auto workflow model*
-  and *PR description model* cards on Settings › Models put Worca's own helper calls
+  and *PR description model* cards on the Models page put Worca's own helper calls
   on a model you pick (left empty, an Ask Worca chat titles itself with its own
   model, a `worca --model` run with that model, and other runs with the built-in
   Haiku); endpoint-routed models carry Claude Code's internal
@@ -566,9 +609,9 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Gemini and the rest translated to chat completions or the Responses API), any
   OpenAI-compatible server (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter) or an
   Anthropic-compatible gateway — no LiteLLM, no second daemon. Sign in or set keys
-  on **Settings › Providers**, then *Import models…* lists what a source serves,
+  on the **Providers** page, then *Import models…* lists what a source serves,
   windows and capabilities included; `worca models` does the same from a terminal.
-  Both tabs are Expert level. See [`docs/models.md`](docs/models.md).
+  Both pages are Expert level. See [`docs/models.md`](docs/models.md).
 
 ### Storage
 
@@ -583,7 +626,7 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
 - **Move it** — `WORCA_HOME=<dir>` (or Settings › General › **Worca root
   folder**, Advanced) puts everything under `<dir>/.worca-cc/`; only the
   global `settings.json` stays in your home folder.
-- **One list for every project** — **Runs** (sidebar Activity) shows live,
+- **One list for every project** — **Runs** in the sidebar shows live,
   scheduled and finished runs from every project on the machine (see
   [Pipeline](#pipeline)). See [`docs/storage.md`](docs/storage.md).
 
@@ -600,16 +643,16 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   says why, and moves on when you do the real thing; Esc or **Skip** leaves it. **Hide from sidebar**
   drops the pill and **Settings › General › Getting started** brings it back. See
   [`docs/getting-started.md`](docs/getting-started.md).
-- **Three interface modes** — **Simple** shows the core loop: New pipeline, Runs, Projects, budget
-  limits and Ask Worca. **Advanced** adds Schedules, Statistics, Workflow Composer and Workspaces,
-  plus branches, guardrails, per-agent models, the diff, pull requests, plugins, memory and the live
-  log. **Expert** shows everything: Agents and Scripts, Team metrics, Team policy, Models,
-  diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
+- **Three interface modes** — **Simple** shows the core loop: New pipeline, Runs, Projects,
+  Workflows (agents and scripts included), budget limits and Ask Worca. **Advanced** adds
+  Schedules, Statistics and Workspaces, plus branches, guardrails, per-agent models, the diff, pull
+  requests, plugins, memory and the live log. **Expert** shows everything: Team metrics, Team
+  policy, Models, diagnostics and every per-node tunable. Modes are cumulative, so raising one never removes
   anything.
-- **A view preference, not a permission** — the sidebar button just above **Settings**, which names
-  the current mode, opens the **Interface mode** dialog. A choice applies at
+- **A view preference, not a permission** — **Interface mode** in the account menu (the corner at
+  the foot of the sidebar) names the current mode and lists the three. A choice applies at
   once, for every browser that opens this Worca; **Settings › General › Interface mode › Change…**
-  opens the same dialog. A fresh install starts at Simple, one that already has projects or runs at
+  opens the same choice as a dialog. A fresh install starts at Simple, one that already has projects or runs at
   Expert. A link to a page above your mode still opens it, under a banner offering *Switch to …*;
   values set in a higher mode keep applying, and a question a run waits on shows in every mode. A
   guide step that needs a higher mode asks first (*Switch to Advanced?*). See
@@ -803,7 +846,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Getting started](docs/getting-started.md) — the welcome dialog, the Getting started checklist and its spotlight guides
 - [UI levels](docs/ui-levels.md) — Simple, Advanced and Expert: what each interface mode shows, and where every element sits
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
-- [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Scripts page, testing a script by itself
+- [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan

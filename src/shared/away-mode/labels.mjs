@@ -122,7 +122,6 @@ export const DECIDER_WORDS = Object.freeze({
   defaultModel: 'the default model',     // the review ran with no model named (the CLI's own)
 });
 /** The "Decided by" picker's option groups: the Settings title-model picker's (app.js buildTitleModelOptions). */
-export const DECIDER_GROUPS = Object.freeze({ mine: 'Your models', policy: 'Team policy', plugins: 'From plugins', builtIn: 'Built-in' });
 /** The answers list's small line under an answer the review gave: "Decided by Opus 5.5". */
 export const decidedByText = (label) => `Decided by ${label || DECIDER_WORDS.defaultModel}`;
 

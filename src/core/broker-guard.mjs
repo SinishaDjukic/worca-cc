@@ -12,6 +12,7 @@ export const MODEL_CREDENTIAL_ENV_KEYS = Object.freeze([
   'OPENAI_API_KEY', 'OPENROUTER_API_KEY',
   'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK',
   'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_FOUNDRY_API_KEY', 'AZURE_OPENAI_API_KEY',
+  'CODEX_API_KEY', 'CURSOR_API_KEY',
 ]);
 
 // ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY, … — but not *_MAX_OUTPUT_TOKENS (same rule as ask/model-proposal.mjs).
@@ -22,7 +23,7 @@ const LOOPBACK_RE =/^https?:\/\/(127\.\d+\.\d+\.\d+|localhost|\[::1\])(:\d+)?(\/
 const describe = (v) => `(set, ${String(v).length} chars)`;
 
 /**
- * @param {{env?:Record<string,string|undefined>, files?:{path:string, kind:'login'|'settings'|'secret', content?:string}[],
+ * @param {{env?:Record<string,string|undefined>, files?:{path:string, kind:'login'|'codex-login'|'settings'|'secret', content?:string}[],
  *          models?:object[], providers?:Record<string,object>, brokerUrl?:string, slotOrigins?:string[],
  *          brokeredModels?:string[], pluginSecrets?:{plugin:string, key:string}[]}} o
  *   brokeredModels: lower-cased ids of plugin models that spend from their own plugin slot
@@ -39,6 +40,7 @@ export function findLocalCredentials({ env = {}, files = [], models = [], provid
   }
   for (const f of files) {
     if (f.kind === 'login') out.push(`${f.path}: a stored Claude Code sign-in`);
+    else if (f.kind === 'codex-login') out.push(`${f.path}: a stored Codex sign-in`);
     else if (f.kind === 'secret') out.push(`${f.path}: a mounted API key`);
     else if (f.kind === 'settings' && /"apiKeyHelper"\s*:/.test(f.content || '')) out.push(`${f.path}: an apiKeyHelper`);
   }
@@ -100,6 +102,10 @@ export function credentialFiles(homes, { exists = existsSync, read = (p) => read
     const dir = process.env.CLAUDE_CONFIG_DIR && home === process.env.HOME ? process.env.CLAUDE_CONFIG_DIR : join(home, '.claude');
     const login = join(dir, '.credentials.json');
     if (exists(login)) out.push({ path: login, kind: 'login' });
+    // Codex's ChatGPT sign-in (or a stored API key): its refresh token is readable by whoever owns the HOME.
+    const codexDir = process.env.CODEX_HOME && home === process.env.HOME ? process.env.CODEX_HOME : join(home, '.codex');
+    const codexLogin = join(codexDir, 'auth.json');
+    if (exists(codexLogin)) out.push({ path: codexLogin, kind: 'codex-login' });
     const settings = join(dir, 'settings.json');
     if (exists(settings)) {
       let content = '';

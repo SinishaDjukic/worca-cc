@@ -4,6 +4,7 @@
 // elements — no fetch, no listeners outside the returned tree. app.js owns
 // endpoint calls, the modal shell, and mounting; node:test drives these via jsdom.
 
+import { engineLabel } from '../../src/shared/engine-switch.mjs';
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
   if (cls) n.className = cls;
@@ -78,11 +79,11 @@ export function renderPluginList(plugins, { doc = globalThis.document, channelSt
     const contrib = h(doc, 'small', 'pl-contrib hint', contribSummary(p.contributions));
     const mcp = Number(p.contributions && p.contributions.mcpServers) || 0;
     if (mcp) {
-      // MCP servers are configured in their own Settings tab; the count is the way there.
+      // MCP servers are configured on the Connectors page; the count is the way there.
       if (contrib.textContent === 'no contributions') contrib.textContent = '';
       else contrib.appendChild(doc.createTextNode(' · '));
       const a = h(doc, 'a', 'pl-mcp-link', `${mcp} MCP server${mcp > 1 ? 's' : ''}`);
-      a.href = '#settings/mcp/servers';
+      a.href = '#connectors/servers';
       contrib.appendChild(a);
     }
     card.appendChild(contrib);
@@ -220,6 +221,7 @@ export function renderInstallConsent(entry, inventory, { doc = globalThis.docume
     for (const m of inv.models) {
       const row = h(doc, 'div', 'pl-consent-row', `${m.label || m.id} `);
       row.appendChild(h(doc, 'span', 'mono', `(${m.id})`));
+      if (m.engine && m.engine !== 'claude') row.appendChild(h(doc, 'span', 'badge blue pl-engine', engineLabel(m.engine)));
       if (m.baseUrl) row.appendChild(h(doc, 'span', 'pl-secret pl-baseurl', ` routes to: ${m.baseUrl}`));
       if ((m.envKeys || []).length) row.appendChild(h(doc, 'small', 'hint', ` env: ${m.envKeys.join(', ')}`));
       models.appendChild(row);

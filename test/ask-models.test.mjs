@@ -136,3 +136,16 @@ test('bound defaults use the real catalog: every predefined id is present, no pr
   assert.deepEqual(cat.default, { model: ASK_LIMITS.defaultModel, effort: ASK_LIMITS.defaultEffort });
   assert.equal((await validateModelEffort('claude-opus-5-5', 'high')).ok, true, 'the D8 initial choice validates');
 });
+
+test('askCatalog: Codex models are offered with their engine and validate (Plan 2, design D12)', async () => {
+  const withCodex = createAskModels({
+    listModels: async () => [...FAKE, { id: 'gpt-5.5', label: 'GPT-5.5', efforts: ['minimal', 'low', 'medium', 'high'], custom: false, hasEnv: false, engine: 'codex' }],
+    pluginModels: () => PLUGIN_MODELS,
+    secretStatus: (name) => SECRET_STATUS[name] || [],
+    askPrefs: () => ({ engine: 'claude', slots: {} }),
+    codexAvailable: () => true,   // a lockable codex (Task 0 (a) was NOT CONFIRMED on 0.146, so the real catalog hides Codex)
+  });
+  const cat = await withCodex.askCatalog();
+  assert.equal(cat.models.find((m) => m.id === 'gpt-5.5').engine, 'codex');
+  assert.deepEqual(await withCodex.validateModelEffort('gpt-5.5', 'low'), { ok: true, model: 'gpt-5.5', effort: 'low' });
+});

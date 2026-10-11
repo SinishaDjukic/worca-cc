@@ -5,6 +5,25 @@
 // its own ports source (panelPortsFn, which can fall back to the Composer index).
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
+import { runsOn } from '../../src/shared/connections.mjs';
+
+function catalogEntryOf(catalog, id) {
+  if (!id || !catalog) return null;
+  const lc = String(id).toLowerCase();
+  return catalog.find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === lc) || null;
+}
+
+export function healForEngine(t, { models, engine } = {}) {
+  const catalog = Array.isArray(models) && models.length ? models : null;
+  if (!engine || !catalog) return { t, enginePair: null };
+  // A pick the run's harness cannot run (its connection reaches other harnesses only) — src/shared/connections.mjs.
+  const foreign = (id) => { const hit = catalogEntryOf(catalog, id); return !!hit && !runsOn(hit, engine); };
+  const def = foreign(t.def.model) ? { ...t.def, model: '', effort: '' } : t.def;
+  if (!foreign(t.model)) return { t: { ...t, def }, enginePair: null };
+  const stored = t.override.model !== undefined && foreign(t.override.model)
+    ? { model: t.override.model, effort: t.override.effort || '' } : null;
+  return { t: { ...t, def, model: def.model, effort: def.effort }, enginePair: stored };
+}
 
 // Flatten workflow.steps[][] into an ordered list of node rows, joining each
 // node's role `key` to its registry metadata (label/color) and resolving every
@@ -43,7 +62,8 @@ export function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
       const metaLocked = !!(meta && meta.questionsLocked);
       const metaQDefault = !!(meta && meta.questionsDefault);
 
-      const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
+      const healed = healForEngine(resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault }), opts);
+      const t = healed.t;
 
       rows.push({
         nodeId: node.id,
@@ -67,6 +87,7 @@ export function buildNodeConfigRows(workflow, registry, runConfig, opts = {}) {
         // as a modification (it cannot be reset either).
         modified: modifiedFieldsOf(t, t.def,
           { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
+        ...(healed.enginePair ? { enginePair: healed.enginePair } : {}),
       });
     });
   });
@@ -145,7 +166,13 @@ export function pruneNodeSelection(row, next = {}) {
   // A PINNED row (Settings › Memory owns the pair) never edits model/effort, and the setters
   // REPLACE both on every save: re-send the project's own stored pick untouched, so saving
   // another tunable cannot erase it — it applies again the moment the setting is cleared.
-  const kept = row.pinned && row.storedPair ? row.storedPair : null;
+  // A pick of the other engine (healed off this run's rows) is re-sent the same way while the
+  // row's model and effort are left as shown: the New pipeline save passes the live controls,
+  // so "untouched" is "equal to the healed row", not "absent".
+  const untouched = (next.model === undefined || (next.model || '') === (row.model || ''))
+    && (next.effort === undefined || (next.effort || '') === (row.effort || ''));
+  const kept = row.pinned && row.storedPair ? row.storedPair
+    : (row.enginePair && untouched ? row.enginePair : null);
   return {
     model: kept ? kept.model : (inheritPair ? '' : (eff.model || '')),
     effort: kept ? kept.effort : (inheritPair || !eff.model ? '' : eff.effort),
@@ -202,14 +229,16 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
     const stored = { ...(role ? legacySteps[role] : null), ...nodes[node.id] };
     const authored = (node.config && typeof node.config === 'object') ? node.config : {};
     const saved = pin ? withoutPair(stored) : stored;
+    const slot = !pin && opts.slotDefaults && node.key ? opts.slotDefaults[node.key] : null;
     const wfDef = pin
       ? { ...withoutPair(authored), model: pin.model, ...(typeof pin.effort === 'string' && pin.effort ? { effort: pin.effort } : {}) }
-      : authored;
+      : (slot && (slot.model || slot.effort) ? { ...withoutPair(authored), ...(slot.model ? { model: slot.model } : {}), ...(slot.effort ? { effort: slot.effort } : {}) } : authored);
     const metaFan = meta && typeof meta.fanOut === 'boolean' ? meta.fanOut : false;
     const metaAsks = !!(meta && meta.asksQuestions);
     const metaLocked = !!(meta && meta.questionsLocked);
     const metaQDefault = !!(meta && meta.questionsDefault);
-    const t = resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault });
+    const healed = healForEngine(resolveNodeTunables(saved, wfDef, { fanOut: metaFan, questionsDefault: metaQDefault }), opts);
+    const t = healed.t;
     rows.push({
       nodeId: node.id, key: node.key, role, // non-null => persist via saveStep (wf_default)
       label: (meta && meta.displayName) || node.key || node.id,
@@ -224,6 +253,7 @@ export function buildGraphNodeRows(tpl, registry, runConfig, opts = {}) {
         { asksQuestions: metaAsks, questionsLocked: metaLocked }).length > 0,
       // `storedPair`: the project's own pick the pin hides — pruneNodeSelection re-sends it.
       ...(pin ? { pinned: 'settings', storedPair: healPair(stored.model, stored.effort) } : {}),
+      ...(healed.enginePair ? { enginePair: healed.enginePair } : {}),
     });
   }
   return rows;

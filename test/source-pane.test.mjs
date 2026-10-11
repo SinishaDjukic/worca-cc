@@ -185,6 +185,13 @@ test('profile gate: unbound project offers the roster and binds what was picked'
   assert.deepEqual(picked, ['globex']);
 });
 
+test('profile gate: a source with no profiles links the Marketplace page, where profiles are added', () => {
+  const doc2 = new JSDOM('<!doctype html><body></body>').window.document;
+  const link = renderProfileGate({ source: JIRA, profiles: [], via: 'none' }, { doc: doc2 }).querySelector('.sp-profile-settings');
+  assert.equal(link.textContent, 'Add one on the Marketplace page');
+  assert.equal(link.getAttribute('href'), '#marketplace');
+});
+
 test('profile gate: a workspace whose projects disagree names the candidates', () => {
   const doc2 = new JSDOM('<!doctype html><body></body>').window.document;
   const gate = renderProfileGate(

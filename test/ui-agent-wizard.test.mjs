@@ -63,7 +63,7 @@ test('Generate POSTs the wizard body, shows Step 2, subscribes by genId; agentge
       return null;
     },
   });
-  window.location.hash = 'agent-create';
+  window.location.hash = 'workflows/agents/new';
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
@@ -113,7 +113,7 @@ test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the err
       return null;
     },
   });
-  window.location.hash = 'agent-create';
+  window.location.hash = 'workflows/agents/new';
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;
@@ -144,7 +144,7 @@ test('Step 3 Save POSTs /api/agents; a 409 keeps the user on Step 3 with the err
   status = 201;
   click(window, doc.querySelector('#agw-save'));
   await new Promise((r) => setTimeout(r, 0));
-  assert.equal(window.location.hash, '#agents', 'navigated to agents on success');
+  assert.equal(window.location.hash, '#workflows/agents', 'navigated to the Library\'s Agents tab on success');
 });
 
 test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a live gen', async () => {
@@ -156,7 +156,7 @@ test('agentgen-error returns to Step 1; leave-guard POSTs stop + unsubscribes a 
       return null;
     },
   });
-  window.location.hash = 'agent-create';
+  window.location.hash = 'workflows/agents/new';
   window.dispatchEvent(new window.Event('hashchange'));
   await new Promise((r) => setTimeout(r, 0));
   const doc = window.document;

@@ -21,6 +21,23 @@ process.on('exit', () => {
   }
 });
 
+/** Run a synchronous template build with git's auto-maintenance off. A commit, fetch or merge
+ *  otherwise starts `git maintenance run --auto --detach`, which takes `.git/objects/maintenance.lock`
+ *  in the background while copyOf is still copying the template: cpSync then fails with ENOENT on a
+ *  file that vanished mid-copy. Set through the environment so a build's own git calls inherit it. */
+function withoutAutoMaintenance(build) {
+  const keys = ['GIT_CONFIG_COUNT', 'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  const n = Number.parseInt(process.env.GIT_CONFIG_COUNT || '0', 10) || 0;
+  process.env[`GIT_CONFIG_KEY_${n}`] = 'maintenance.auto';
+  process.env[`GIT_CONFIG_VALUE_${n}`] = 'false';
+  process.env.GIT_CONFIG_COUNT = String(n + 1);
+  try { return build(); } finally {
+    delete process.env[`GIT_CONFIG_KEY_${n}`]; delete process.env[`GIT_CONFIG_VALUE_${n}`];
+    for (const k of keys) if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k];
+  }
+}
+
 function git(cwd, args) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} (${cwd}): ${r.stderr}`);
@@ -47,21 +64,26 @@ export function templateRepo(tag = 'repo', { commit = true, branch = null, user 
   const key = `repo:${JSON.stringify({ commit, branch, user, files })}`;
   if (!_templates.has(key)) {
     const t = mkdtempSync(join(tmpdir(), 'worca-cc-tpl-'));
-    git(t, branch ? ['init', '-q', '-b', branch] : ['init', '-q']);
-    if (user) { git(t, ['config', 'user.email', 't@t']); git(t, ['config', 'user.name', 't']); }
-    for (const [rel, text] of Object.entries(files || {})) {
-      const abs = join(t, ...rel.split('/'));
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, text);
-    }
-    if (commit) {
-      if (files) git(t, ['add', '-A']);
-      git(t, ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
-        'commit', '-q', '--no-verify', ...(files ? [] : ['--allow-empty']), '-m', 'init']);
-    }
+    withoutAutoMaintenance(() => buildRepo(t, { commit, branch, user, files }));
     _templates.set(key, t);
   }
   return copyOf(_templates.get(key), { tag, prefix, into });
+}
+
+/** The template repo templateRepo copies: init, optional stored identity and files, optional first commit. */
+function buildRepo(t, { commit, branch, user, files }) {
+  git(t, branch ? ['init', '-q', '-b', branch] : ['init', '-q']);
+  if (user) { git(t, ['config', 'user.email', 't@t']); git(t, ['config', 'user.name', 't']); }
+  for (const [rel, text] of Object.entries(files || {})) {
+    const abs = join(t, ...rel.split('/'));
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, text);
+  }
+  if (commit) {
+    if (files) git(t, ['add', '-A']);
+    git(t, ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false',
+      'commit', '-q', '--no-verify', ...(files ? [] : ['--allow-empty']), '-m', 'init']);
+  }
 }
 
 /** [templateSpelling, copySpelling] pairs: git records a path as given OR realpath'd (a relative
@@ -99,7 +121,7 @@ export function templateWorld(key, build /* (root) => void, runs once */, tag = 
   const k = `world:${key}`;
   if (!_templates.has(k)) {
     const t = mkdtempSync(join(tmpdir(), 'worca-cc-tplw-'));
-    const built = build(t);
+    const built = withoutAutoMaintenance(() => build(t));
     if (built && typeof built.then === 'function') throw new TypeError('templateWorld: build must be synchronous (an async build caches a half-built template)');
     _templates.set(k, t);
   }
