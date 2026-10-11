@@ -1,0 +1,213 @@
+// test/ui-flags.test.mjs — feature flags in the real shell (D4-D9, D12): the first paint hides an off
+// flag, a `flags` frame flips it live and fires onFlagChange, data-flag + data-min-level need both,
+// Settings › Experimental lists / toggles / locks / resets at every level, and the chip links to the row.
+import { test, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { JSDOM } from 'jsdom';
+import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { checkRows } from './helpers/rows.mjs';
+import { renderIndexHtml } from '../src/core/index-html.mjs';
+import { applyFlags, flagOn, onFlagChange, chip, decorateFlagChips } from '../ui/public/flags.mjs';
+import { createFlagsView } from '../ui/public/flags-view.mjs';
+
+const trackDom = useDomRelease(afterEach);
+const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
+const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
+const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
+// The three level-gate selectors (ui-levels.test.mjs pins them); jsdom never loads style.css.
+const LEVEL_GATES = [...css.matchAll(/:root\[data-level="\w+"\] \[data-min-level="\w+"\]:not\(\[data-level-keep\]\)/g)].map((m) => m[0]);
+
+/** Hidden by a flag gate (#flag-gates) or a level gate, on the element or an ancestor. */
+function gated(el) {
+  const doc = el.ownerDocument;
+  const flagSel = [...doc.getElementById('flag-gates').sheet.cssRules].map((r) => r.selectorText);
+  for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+    if (flagSel.some((s) => n.matches(s))) return true;
+    if (LEVEL_GATES.some((s) => n.matches(s.replace(/^:root(\[[^\]]+\]) /, '')) && doc.documentElement.matches(`:root${s.match(/^:root(\[[^\]]+\])/)[1]}`))) return true;
+  }
+  return false;
+}
+/** A flagged fixture note in the Experimental card (the shell itself carries no static flagged markup). */
+function addNote(doc) {
+  const p = doc.createElement('p');
+  p.id = 'flags-demo-note';
+  p.dataset.flag = 'specBuilder';
+  p.setAttribute('data-flag-chip', '');
+  p.textContent = 'Flagged note.';
+  doc.getElementById('flags-settings-card').appendChild(p);
+}
+const page = ({ level = 'expert', flags = { specBuilder: false } } = {}) => {
+  const { window } = trackDom(new JSDOM(renderIndexHtml(html, 'system', level, flags), { url: 'http://localhost:4320/' }));
+  addNote(window.document);
+  return window;
+};
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+test('first paint, live flip, events, and flags × levels', async () => {
+  await checkRows([
+    { name: 'off: the demo note is gated from the first paint; on: it is not', run: () => {
+      assert.ok(gated(page().document.getElementById('flags-demo-note')));
+      assert.ok(!gated(page({ flags: { specBuilder: true } }).document.getElementById('flags-demo-note')));
+    } },
+    { name: 'applyFlags (what a flags frame does) flips it without a reload; onFlagChange + worca:flags fire once per change', run: () => {
+      const { document: doc } = page();
+      const seen = []; const events = [];
+      const off = onFlagChange('specBuilder', (on) => seen.push(on));
+      doc.addEventListener('worca:flags', (e) => events.push(e.detail.changed));
+      applyFlags({ specBuilder: true }, doc);
+      applyFlags({ specBuilder: true }, doc);
+      assert.ok(flagOn('specBuilder', doc));
+      assert.equal(doc.documentElement.dataset.flags, 'specBuilder');
+      assert.ok(!gated(doc.getElementById('flags-demo-note')));
+      applyFlags({ specBuilder: false, ghostFlag: true }, doc);
+      assert.ok(gated(doc.getElementById('flags-demo-note')));
+      assert.deepEqual(seen, [true, false]);
+      assert.deepEqual(events, [['specBuilder'], ['specBuilder']]);
+      off();
+    } },
+    { name: 'data-flag with data-min-level needs both', run: () => {
+      for (const [level, on, hidden] of [['simple', true, true], ['expert', true, false], ['expert', false, true]]) {
+        const { document: doc } = page({ level, flags: { specBuilder: on } });
+        const el = doc.createElement('div');
+        el.dataset.flag = 'specBuilder'; el.dataset.minLevel = 'advanced';
+        doc.body.appendChild(el);
+        assert.equal(gated(el), hidden, `${level} / ${on}`);
+      }
+    } },
+    { name: 'chip: links to the row, gated like its host, after an interactive host, idempotent', run: () => {
+      const { document: doc } = page();
+      decorateFlagChips(doc);
+      const note = doc.getElementById('flags-demo-note');
+      const a = note.querySelector('a.flag-chip');
+      assert.equal(a.getAttribute('href'), '#settings/experimental/specBuilder');
+      assert.equal(a.textContent, 'Beta');
+      assert.equal(a.dataset.flag, 'specBuilder');
+      decorateFlagChips(doc);
+      assert.equal(note.querySelectorAll('a.flag-chip').length, 1);
+      const b = doc.createElement('button'); b.dataset.flag = 'specBuilder'; doc.body.appendChild(b);
+      chip(b);
+      assert.equal(b.nextElementSibling.className, 'flag-chip flag-chip-beta');
+    } },
+  ]);
+});
+
+test('Settings › Experimental view: rows, toggle PATCH body, locked row, requires confirm, Reset all', async () => {
+  const { document: doc } = page();
+  const host = doc.getElementById('flags-host');
+  const calls = []; const confirms = [];
+  let state = [{ key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
+  const api = async (method, body) => {
+    calls.push([method, body]);
+    if (method === 'PATCH') state = state.map((f) => (f.key in body ? { ...f, on: body[f.key] === true, source: body[f.key] === null ? 'default' : 'settings' } : f));
+    return { ok: true, status: 200, data: { flags: state } };
+  };
+  const view = createFlagsView({ host, msgEl: doc.getElementById('flags-msg'), resetBtn: doc.getElementById('flags-reset'), api,
+    confirm: async (o) => { confirms.push(o.title); return true; } });
+  await checkRows([
+    { name: 'load lists the flag with its stage badge and an off switch', run: async () => {
+      await view.load();
+      const row = host.querySelector('[data-flag-row="specBuilder"]');
+      assert.equal(row.querySelector('.flag-stage').textContent, 'Experimental');
+      assert.equal(row.querySelector('[role="switch"]').getAttribute('aria-checked'), 'false');
+      assert.ok(doc.getElementById('flags-reset').disabled, 'nothing stored: nothing to reset');
+    } },
+    { name: 'a click PATCHes { key: true }, repaints on and applies the flag to the page', run: async () => {
+      host.querySelector('[data-flag-switch="specBuilder"]').click();
+      await tick(); await tick();
+      assert.deepEqual(calls.at(-1), ['PATCH', { specBuilder: true }]);
+      assert.equal(host.querySelector('[data-flag-switch="specBuilder"]').getAttribute('aria-checked'), 'true');
+      assert.ok(!gated(doc.getElementById('flags-demo-note')));
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder', 'focus survives the repaint');
+    } },
+    { name: 'Reset all confirms, then PATCHes null for every unlocked flag', run: async () => {
+      doc.getElementById('flags-reset').click();
+      await tick(); await tick();
+      assert.equal(confirms.at(-1), 'Reset all experimental features?');
+      assert.deepEqual(calls.at(-1), ['PATCH', { specBuilder: null }]);
+    } },
+    { name: 'a repaint (what a flags frame triggers) keeps focus on the switch', run: async () => {
+      host.querySelector('[data-flag-switch="specBuilder"]').focus();
+      await view.load();
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder');
+    } },
+    { name: 'a locked row: disabled switch, the note, and a click does nothing', run: async () => {
+      state = [{ ...state[0], on: true, source: 'env', locked: true }];
+      await view.load();
+      const sw = host.querySelector('[data-flag-switch="specBuilder"]');
+      assert.ok(sw.classList.contains('disabled'));
+      assert.equal(sw.getAttribute('aria-disabled'), 'true');
+      assert.match(host.textContent, /Locked by WORCA_FLAGS/);
+      const n = calls.length;
+      sw.click(); await tick();
+      assert.equal(calls.length, n);
+    } },
+    { name: 'turning on a flag with an off prerequisite asks first, naming it', run: async () => {
+      state = [
+        { key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] },
+        { key: 'childFlag', title: 'Child', description: 'D', stage: 'beta', on: false, source: 'default', locked: false, docs: null, docsUrl: 'https://x/blob/dev/docs/c.md', requires: ['specBuilder'] },
+      ];
+      await view.load();
+      assert.equal(host.querySelector('[data-flag-row="childFlag"] .flag-row-docs').getAttribute('href'), 'https://x/blob/dev/docs/c.md');
+      await view.toggle('childFlag');
+      assert.equal(confirms.at(-1), 'Turn on Child?');
+    } },
+  ]);
+});
+
+// The full app: the tab exists at every level, a `flags` frame flips the page, a chip deep-links to the row.
+async function bootApp({ level, flags }) {
+  const window = trackDom(new JSDOM(renderIndexHtml(html, 'system', level, flags), { url: 'http://localhost:4320/#settings/experimental' })).window;
+  window.Element.prototype.scrollIntoView = function () {};
+  addNote(window.document);
+  class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
+    addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } emit(t, e) { (this._l[t] || []).forEach((fn) => fn(e)); } }
+  window.WebSocket = WSStub;
+  const list = [{ key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: !!flags.specBuilder, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
+  window.fetch = (u) => {
+    const s = String(u);
+    const body = s.startsWith('/api/flags') ? { flags: list } : s.startsWith('/api/settings') ? { root: '/tmp/x', default: '/tmp/x', flags } : { config: { steps: {}, customModels: [] }, models: [], efforts: [], projects: 0, pipelines: 0 };
+    return Promise.resolve({ ok: true, status: 200, json: async () => body });
+  };
+  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
+    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
+  }
+  window.localStorage.clear();
+  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  for (let i = 0; i < 6; i++) await tick();
+  WSStub.last?.emit('open', {});
+  for (let i = 0; i < 6; i++) await tick();
+  return { window, doc: window.document, frame: (msg) => WSStub.last.emit('message', { data: JSON.stringify(msg) }) };
+}
+
+test('app: the Experimental tab shows at every level; a flags frame flips the page; the chip opens the row', async () => {
+  await checkRows([
+    { name: 'the tab button is level simple and never gated, at simple, advanced and expert', run: async () => {
+      for (const level of ['simple', 'advanced', 'expert']) {
+        const { doc } = await bootApp({ level, flags: { specBuilder: false } });
+        const b = doc.querySelector('#settings-tabs button[data-tab="experimental"]');
+        assert.equal(b.dataset.minLevel, 'simple');
+        assert.ok(!gated(b), level);
+        assert.ok(!doc.querySelector('.settings-pane[data-tab="experimental"]').classList.contains('hidden'), `${level}: the pane opens`);
+      }
+    } },
+    { name: 'a flags frame shows the demo note without a reload; hello carries flags too', run: async () => {
+      const { doc, frame } = await bootApp({ level: 'simple', flags: { specBuilder: false } });
+      assert.ok(gated(doc.getElementById('flags-demo-note')));
+      frame({ type: 'flags', flags: { specBuilder: true } });
+      assert.ok(!gated(doc.getElementById('flags-demo-note')));
+      frame({ type: 'hello', bootId: 'b', runs: [], flags: { specBuilder: false } });
+      assert.ok(gated(doc.getElementById('flags-demo-note')));
+    } },
+    { name: 'the chip deep-links to and focuses the row', run: async () => {
+      const { window, doc } = await bootApp({ level: 'expert', flags: { specBuilder: true } });
+      const a = doc.querySelector('#flags-demo-note a.flag-chip');
+      window.location.hash = a.getAttribute('href').slice(1);
+      window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+      for (let i = 0; i < 6; i++) await tick();
+      assert.ok(doc.getElementById('flag-row-specBuilder').classList.contains('flag-row-target'));
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder');
+    } },
+  ]);
+});

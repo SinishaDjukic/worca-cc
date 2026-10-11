@@ -153,6 +153,7 @@ be skipped by forgetting it.
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
 | "Set in Advanced mode and still applied" note | S |
 | Target switch, task source (Markdown), source and feature branch | A |
+| Task source: Spec Builder (behind the specBuilder flag, Beta chip) | A |
 | Engine dropdown beside the workflow (greyed-out engines the credential broker refuses) | A — stays visible at every level while a non-Claude engine is picked (rule 2) |
 | Advanced disclosure: guardrails, human in the loop, per-agent model and effort | A |
 | Per-agent fan-out, sub-agent model, questions; feedback-loop max cycles; "Save as workflow defaults"; memory scope | E |

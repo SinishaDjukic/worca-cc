@@ -214,6 +214,9 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
+  // Spec Builder (docs/spec-builder.md): the thread's first message is matched before every other arm — its own
+  // words ("run", "workflow", "task", …) would otherwise trip them.
+  const specBuild = userText.trimStart().startsWith('[worca spec-builder]');
   const fail = /\bMOCK_FAIL\b/.test(userText);
   const maxTurns = /\bMOCK_MAX_TURNS\b/.test(userText);
   const maxBudget = /\bMOCK_MAX_BUDGET\b/.test(userText);
@@ -228,29 +231,29 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const trEvent = /\[worca event\] terminal block (t-[0-9a-f]{10}:\d+) exited (\S+?);/.exec(userText);
   // The metrics arm wants a CHANGE, not a question: "metrics" plus a verb of intent ("stop recording my metrics",
   // "route ... to the metrics home"). A bare "which workspaces use team metrics?" gets the generic echo answer.
-  const metrics = !wfEvent && !tmEvent && !trEvent && /\bmetrics\b/i.test(userText)
+  const metrics = !specBuild && !wfEvent && !tmEvent && !trEvent && /\bmetrics\b/i.test(userText)
     && /\b(?:stop|start|turn|toggle|switch|record\w*|route|change|enable|disable|set)\b/i.test(userText);
   // Scheduled runs (docs/scheduled-runs.md "Ask Worca"): a schedule-card EVENT; a CHANGE to an existing schedule
   // (its id in the text); or a new run to schedule ("schedule …"). All before the run arm, whose \brun\b would fire.
   const scEvent = /^\s*\[worca event\] schedule card (card_[0-9a-f]{8}) (applied|declined|failed)/.exec(userText);
   const scId = /\b(sch_[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i.exec(userText);
-  const scChange = !wfEvent && !tmEvent && !trEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
-  const scNew = !wfEvent && !tmEvent && !trEvent && !scEvent && !scChange && /\bschedul/i.test(userText);
+  const scChange = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && !!scId && /\b(?:run now|move|delete|cancel|edit|change)\b/i.test(userText);
+  const scNew = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && !scChange && /\bschedul/i.test(userText);
   // The team-policy arm, the metrics rule: "policy" plus a verb of intent ("raise the policy cap to $30").
   // It proposes an edit of the context project's per-pipeline cap: `$<n>` in the text, else $30.
-  const policy = !wfEvent && !tmEvent && !trEvent && !metrics && !scEvent && !scNew && !scChange && /\bpolicy\b/i.test(userText)
+  const policy = !specBuild && !wfEvent && !tmEvent && !trEvent && !metrics && !scEvent && !scNew && !scChange && /\bpolicy\b/i.test(userText)
     && /\b(?:raise|lower|set|change|edit|make|cap)\b/i.test(userText);
   // A tracker task named by key ("fix jira bug PROJ-123"): the run's task is the issue (mock-source's
   // fixture plugin), and "auto" asks for the Auto workflow. Folds into the schedule and run arms.
-  const taskKey = !wfEvent && !tmEvent && !trEvent && !scEvent && /\b(?:issue|ticket|bug|task)\b/i.test(userText) ? /\b([A-Z][A-Z0-9]+-\d+)\b/.exec(userText) : null;
+  const taskKey = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && /\b(?:issue|ticket|bug|task)\b/i.test(userText) ? /\b([A-Z][A-Z0-9]+-\d+)\b/.exec(userText) : null;
   const wantsAuto = /\bauto\b/i.test(userText);
-  const workflow = !wfEvent && !tmEvent && !trEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
-  const agents = !wfEvent && !tmEvent && !trEvent && /\bagents?\b/i.test(userText);
+  const workflow = !specBuild && !wfEvent && !tmEvent && !trEvent && !metrics && !policy && !scNew && !scChange && !taskKey && /\bworkflow\b/i.test(userText);
+  const agents = !specBuild && !wfEvent && !tmEvent && !trEvent && /\bagents?\b/i.test(userText);
   // Models (docs/models.md "Ask Worca"): "add a local llama model" proposes a keyless llama.cpp entry; "remove model
   // <id>" its removal. The parent re-validates the INPUT against the real catalog and mints the card.
-  const modelAdd = !wfEvent && !tmEvent && !trEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
-  const modelRemove = !wfEvent && !tmEvent && !trEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
-  const propose = !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
+  const modelAdd = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && /\bllama\b/i.test(userText) && /\b(?:add|register)\b/i.test(userText);
+  const modelRemove = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && !modelAdd ? /\bremove model ([A-Za-z0-9._-]+)/i.exec(userText) : null;
+  const propose = !specBuild && !wfEvent && !tmEvent && !trEvent && !scEvent && !workflow && !metrics && !policy && !scNew && !scChange && !modelAdd && !modelRemove && (!!taskKey || /\b(propose|start|run)\b/i.test(userText));
   // The proposal both arms send: a brief, or the task reference instead of one.
   const proposal = () => {
     if (!taskKey) return { ...card, ...(wantsAuto ? { workflowId: 'wf_auto' } : {}) };
@@ -269,7 +272,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
   const firstLine = userText.split(/\r?\n/).map((l) => l.trim()).find(Boolean) || '';
   const ANSWER = `[mock] ${firstLine.slice(0, 200)}`;
   const init = { type: 'system', subtype: 'init', session_id: SID, cwd, model: 'mock', permissionMode: 'dontAsk',
-    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change', 'mcp__worca__propose_policy_change', 'mcp__worca__get_away_mode', 'mcp__worca__set_away_now', 'mcp__worca__set_run_away_mode', 'mcp__worca__propose_away_mode_change'],
+    tools: ['Task', 'mcp__worca__list_runs', 'mcp__worca__get_run', 'mcp__worca__propose_run', 'mcp__worca__propose_workflow', 'mcp__worca__propose_metrics_change', 'mcp__worca__propose_spec', 'mcp__worca__propose_policy_change', 'mcp__worca__get_away_mode', 'mcp__worca__set_away_now', 'mcp__worca__set_run_away_mode', 'mcp__worca__propose_away_mode_change'],
     mcp_servers: [{ name: 'worca', status: 'connected' }], plugins: [], skills: [], slash_commands: [], agents: [], uuid: 'mock-uuid-init' };
   const mstart = (id) => ({ type: 'stream_event', event: { type: 'message_start', message: { id, model: 'mock', role: 'assistant', content: [], usage: USAGE } }, parent_tool_use_id: null, session_id: SID });
   const delta = (t) => ({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: t } }, parent_tool_use_id: null, session_id: SID });
@@ -317,6 +320,16 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
         atool(MSG1, 'toolu_mock_workflow', 'mcp__worca__propose_workflow', wfInput),
         uresult('toolu_mock_workflow', JSON.stringify({ ok: true, mode: 'task', ...target, ...targetName, name: shape.name, match: null,
           warnings: [], summary: '', shape, costUsd: 0, fingerprint: 'top-level: (mock)\nhints: mock', note: '', thenRun: wfInput.thenRun })));
+      answerMsg = MSG2;
+    }
+    if (specBuild) {
+      // The Spec Builder thread's first message carries a ready skeleton in a ```markdown fence: fill each
+      // <hint> line with a mock sentence and propose it (the parent re-validates and mints the spec card).
+      const skel = /```markdown\n([\s\S]*?)\n```/.exec(userText)?.[1] || '';
+      const markdown = skel.replace(/^<[^>\n]*>$/gm, 'mock: written by the offline Spec Builder.') + '\n';
+      frames.push(delta('[mock] '), delta('drafting '), delta('the spec'), atext(MSG1, 'Drafting the spec.'),
+        atool(MSG1, 'toolu_mock_spec', 'mcp__worca__propose_spec', { markdown, path: 'plans/mock-spec-design.md' }),
+        uresult('toolu_mock_spec', JSON.stringify({ ok: true, card: { type: 'spec' } })));
       answerMsg = MSG2;
     }
     if (metrics) {

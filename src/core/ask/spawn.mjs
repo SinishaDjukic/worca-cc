@@ -246,7 +246,9 @@ function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, re
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
-export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW']);
+// WORCA_FLAGS: env-enabled feature flags (src/core/flags.mjs) must resolve the same in the child, or a flag-gated
+// tool (propose_spec) is listed by nobody. Settings-stored flags already reach it through WORCA_HOME.
+export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW', 'WORCA_FLAGS']);
 
 /** The search key's env var name for one turn, or null. The VALUE never touches disk: the per-turn mcp json sits in
  *  the chat's own cwd (tmp/ask, where a Grep can ignore the Read deny), so the var instead rides the claude process's

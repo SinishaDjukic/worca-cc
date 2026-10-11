@@ -209,6 +209,22 @@ test('real child: web_fetch listed only with WORCA_ASK_WEB, and refuses an exfil
   assert.equal(call.isError, true); assert.match(call.content[0].text, /^error: web_fetch: host "evil.example" is not on the Ask web allowlist/);
 });
 
+test('real child: propose_spec listed only with the specBuilder flag on (WORCA_FLAGS, forwarded by buildMcpConfig)', async () => {
+  const thread = createThread();
+  const list = [
+    { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+  ];
+  const names = async (env) => {
+    const r = await runChild(['--home', home, '--thread', thread.id], list, { env });
+    assert.equal(r.code, 0, `exit 0 (stderr: ${r.err})`);
+    return r.out.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((m) => m.id === 1).result.tools.map((t) => t.name);
+  };
+  assert.ok((await names({ WORCA_FLAGS: 'specBuilder' })).includes('propose_spec'));
+  assert.ok(!(await names({ WORCA_FLAGS: '' })).includes('propose_spec'));
+});
+
 test('main() drops every MCPSECRET_* (any case) before the relay branch, so test_script and nested spawns inherit none (MCP registry §5.5.2)', async () => {
   process.env.MCPSECRET_AAAA1111 = 'secret-a';
   process.env.mcpsecret_bbbb2222 = 'secret-b';

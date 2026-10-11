@@ -197,8 +197,8 @@ jobs:
             proofs: "verify:composer verify:run-monitor"
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
-          - group: ask-forms + workspace-map
-            proofs: "verify:ask-forms verify:workspace-map"
+          - group: ask-forms + workspace-map + spec-builder
+            proofs: "verify:ask-forms verify:workspace-map verify:spec-builder"
     steps:
       - uses: actions/checkout@v6
 

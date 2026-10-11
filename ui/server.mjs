@@ -46,7 +46,14 @@ import {
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
-import { renderIndexHtml, INDEX_THEME_ANCHOR } from '../src/core/index-html.mjs';
+import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
+import { allFlags, listFlags, setFlags, flagEvents, FlagError, requireFlag } from '../src/core/flags.mjs';
+import { validateWorcaFrontMatter, normalizeAnswers, frontMatterFromAnswers } from '../src/shared/spec-builder/front-matter.mjs';
+import { estimateFromHistory } from '../src/core/spec-builder/history.mjs';
+import { suggestAreas } from '../src/core/spec-builder/areas.mjs';
+import { saveSpec, SpecSaveError } from '../src/core/spec-builder/save.mjs';
+import { renderSpecBuilderPrompt } from '../src/core/ask/spec-builder-prompt.mjs';
+import { SPEC_MAX_BYTES } from '../src/core/ask/spec-proposal.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
@@ -274,7 +281,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge, trackedFiles } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -735,7 +742,7 @@ wss.on('connection', (ws, req) => {
   }
   const id = requestedRunId || requestedGenId || requestedBenchId || requestedInstanceId;
 
-  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), runs: summarizeRuns(), ask: askHello(ws) });
+  send(ws, { type: 'hello', bootId: BOOT_ID, serverMock: serverMockMode(), flags: allFlags(), runs: summarizeRuns(), ask: askHello(ws) });
 
   if (id && runs.has(id)) {
     replayEntry(ws, runs.get(id));
@@ -859,6 +866,8 @@ function emitChanged(type, action) {
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
+// D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1561,12 +1570,14 @@ async function pinUiLevel() {
   if (!storedUiLevel()) await setUiLevel(effectiveUiLevel());
 }
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
-if (!fs.readFileSync(INDEX_FILE, 'utf8').includes(INDEX_THEME_ANCHOR)) {
-  throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+{
+  const shell = fs.readFileSync(INDEX_FILE, 'utf8');
+  if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
+  if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
 function sendIndex(res) {
   let html;
-  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel()); }
+  try { html = renderIndexHtml(fs.readFileSync(INDEX_FILE, 'utf8'), storedTheme(), effectiveUiLevel(), allFlags()); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -8846,6 +8857,73 @@ app.post('/api/settings', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Feature flags (docs/feature-flags.md). GET lists every non-retiring flag; PATCH takes
+// { key: true|false|null } (null = back to the default), applies `requires`, persists and
+// broadcasts a `flags` frame (flagEvents above). 400 unknown key / bad value, 409 env-locked.
+// ---------------------------------------------------------------------------
+const flagsPayload = () => ({
+  flags: listFlags().map((f) => ({ ...f, docsUrl: f.docs && APP_REPO_URL ? `${APP_REPO_URL}/blob/dev/${f.docs}` : null })),
+});
+app.get('/api/flags', (_req, res) => res.json(flagsPayload()));
+app.patch('/api/flags', async (req, res) => {
+  try {
+    await setFlags(req.body);
+    return res.json(flagsPayload());
+  } catch (err) {
+    if (err instanceof FlagError && err.code === 'locked') return res.status(409).json({ error: err.message, code: 'locked', key: err.key });
+    if (err instanceof FlagError) return res.status(400).json({ error: err.message, ...(err.key ? { key: err.key } : {}) });
+    return res.status(500).json({ error: err && err.message ? err.message : 'could not save the flags' });
+  }
+});
+
+// ── Spec Builder (plans/spec-builder §3.4–§3.6) — all 404 while the specBuilder flag is off ─────────────
+app.post('/api/spec-builder/estimate', requireFlag('specBuilder'), syncRoute(async (req, res) => {
+  const v = validateWorcaFrontMatter(req.body?.frontMatter);
+  if (!v.ok) return badRequest(res, v.errors.join('; '));
+  res.json({ estimate: estimateFromHistory(v.fm) });
+}));
+
+app.get('/api/spec-builder/areas', requireFlag('specBuilder'), syncRoute(async (req, res) => {
+  const dir = resolveProjectDir(req.query.projectDir);
+  if (!dir) return badRequest(res, 'projectDir is required');
+  if (!(await registeredProjectForDir(dir))) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
+  res.json({ areas: suggestAreas(await trackedFiles(dir), String(req.query.q || '').slice(0, 300)) });
+}));
+
+app.post('/api/spec-builder/prompt', requireFlag('specBuilder'), syncRoute(async (req, res) => {
+  const body = req.body || {};
+  const dir = resolveProjectDir(body.projectDir);
+  if (!dir) return badRequest(res, 'projectDir is required');
+  const p = await registeredProjectForDir(dir);
+  if (!p) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
+  const answers = normalizeAnswers(body.answers);
+  if (!answers.goal) return badRequest(res, 'goal is required');
+  const v = validateWorcaFrontMatter(frontMatterFromAnswers(answers));
+  if (!v.ok) return badRequest(res, v.errors.join('; '));
+  const examples = await fsp.readdir(path.join(dir, 'plans')).then((names) => names.filter((n) => n.endsWith('-design.md')).sort().slice(0, 5).map((n) => `plans/${n}`), () => []);
+  res.json({
+    text: renderSpecBuilderPrompt({ answers, fm: v.fm, examples, projectName: p.name, today: new Date().toISOString().slice(0, 10) }),
+    projectKey: p.key, projectName: p.name,
+  });
+}));
+
+app.post('/api/spec-builder/save', requireFlag('specBuilder'), syncRoute(async (req, res) => {
+  const { projectKey, path, markdown } = req.body || {};
+  const p = (await listProjects()).find((x) => x.key === projectKey);
+  if (!p) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
+  if (typeof markdown !== 'string' || !markdown.trim()) return badRequest(res, 'markdown is required');
+  if (Buffer.byteLength(markdown, 'utf8') > SPEC_MAX_BYTES) return badRequest(res, `markdown is over ${SPEC_MAX_BYTES} bytes`);
+  try {
+    const r = await saveSpec({ projectDir: p.path, path, markdown });
+    if (!r.ok) return res.status(409).json({ error: `${r.path} already exists`, code: 'EXISTS', suggestion: r.suggestion });
+    return res.json({ path: r.path });
+  } catch (err) {
+    if (err instanceof SpecSaveError) return badRequest(res, err.message);
+    throw err;
+  }
+}));
+
+// ---------------------------------------------------------------------------
 // Per-project model/effort config + custom-model registry. Validation lives in
 // src/core/config.mjs; these routes are thin delegation (mirror /api/projects).
 // ---------------------------------------------------------------------------
@@ -10602,6 +10680,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         }
         if (b.card && b.card.type === 'schedule') {
           cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
+          continue;
+        }
+        // Spec Builder: a spec card names its title and project (never the run-card `workflowId on target` line).
+        if (b.card && b.card.type === 'spec') {
+          cards.push({ id: b.id, type: 'spec', state: b.state, title: b.card.title || '', projectKey: b.card.projectKey || null, projectName: b.card.projectName || null });
           continue;
         }
         cards.push(wf

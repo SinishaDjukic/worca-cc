@@ -13,6 +13,7 @@ import { safeParseJson } from '../protocol.mjs';
 import { classifyError } from '../recoverable-error.mjs';
 import { normalizeShape, ShapeError, cleanText, SHAPE_LIMITS } from '../../shared/graph/assemble.mjs';
 import { RECIPE_GUIDE, WORKSPACE_GUIDE, mockShapeFor } from './recipes.mjs';
+import { guardClassifiedShape } from './spec-guard.mjs';
 import { rmSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
@@ -299,7 +300,10 @@ export async function classifyTask(input, deps = {}) {
   // The vocabulary is pure and offline, and BOTH arms stamp its size into the signals (A9).
   const agents = agentVocabulary(registry, { domain });
   if (mockEnabled({ mock })) {
-    return { shape: withCardsSignal(normalizeShape(mockShapeFor(taskText, { humanInLoop })), agents.length), warnings: [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
+    const mshape = normalizeShape(mockShapeFor(taskText, { humanInLoop }));
+    // mock shapes carry no models and the mock arm never checked them: keep that (no-op model check)
+    const g = guardClassifiedShape(mshape, { taskText, feedback, known: new Set(agents.map((a) => a.key)), checkModels: () => [] });
+    return { shape: withCardsSignal(g.shape, agents.length), warnings: g.warning ? [g.warning] : [], attempts: 0, costUsd: 0, usage, raw: '', model: model || null };
   }
   const known = new Set(agents.map((a) => a.key));
   // Never 'cursor': its helper jobs run on Claude (model-env.mjs helperEngineFor).
@@ -399,7 +403,12 @@ export async function classifyTask(input, deps = {}) {
         issues.push(...checkShapeModels(shape, models, { requireModel }));
       }
     }
-    if (!issues.length) return { shape: withCardsSignal(shape, agents.length), warnings, attempts: attempt, costUsd, usage, raw: text, model: model || null };
+    if (!issues.length) {
+      // The Spec Builder guard (spec-guard.mjs): the user's own `feedback`, never the retry notes in `fb`, marks a revise round.
+      const g = guardClassifiedShape(shape, { taskText, feedback, known, checkModels: (s) => checkShapeModels(s, models, { requireModel }) });
+      if (g.warning) warnings.push(g.warning);
+      return { shape: withCardsSignal(g.shape, agents.length), warnings, attempts: attempt, costUsd, usage, raw: text, model: model || null };
+    }
     const detail = issues.map((i) => i.message).join('; ');
     warnings.push({ code: 'CLASSIFIER_RETRY', message: `attempt ${attempt}: ${detail}` });
     if (attempt === maxAttempts) throw new ClassifierError('CLASSIFIER_FAILED', `unusable shape after ${attempt} attempts: ${detail}`, issues, { costUsd, usage });

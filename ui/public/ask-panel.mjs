@@ -10,6 +10,7 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
+import { estimateSummary } from './spec-builder.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
@@ -253,7 +254,7 @@ const PILL_NAME_UNREAD = 'Ask Worca, new reply';
 /** Hover has to rest on the button this long before its tooltip shows. */
 const PILL_TIP_DELAY_MS = 400;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500 }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, onUseSpec = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500 }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -3559,6 +3560,70 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return { el: rootEl };
   }
 
+  // ---- Spec card (propose_spec, docs/spec-builder.md): never flipped server-side --------------------------------------
+  /** Use this spec → onUseSpec (the New run Markdown pane); Save to plans/ → POST /api/spec-builder/save, where a
+   *  409 offers the next free name. Both buttons work any number of times; "saved" lasts for this page load only. */
+  function buildSpecCard(block) {
+    const card = block.card || {};
+    const rootEl = make('div', 'ask-card ask-mcard ask-speccard is-proposed');
+    rootEl.setAttribute('data-ask-speccard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', card.title || 'Untitled spec'));
+    head.appendChild(make('span', 'ask-mcard-kind', 'Spec'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    if (card.projectName || card.projectKey) body.appendChild(make('div', 'ask-mcard-summary', `For ${card.projectName || card.projectKey}`));
+    const details = make('details', 'ask-spec-details');
+    details.appendChild(make('summary', null, 'Preview the spec'));
+    const preview = make('div', 'ask-spec-preview');
+    const out = renderer.render(String(card.markdown || ''));
+    if (out.kind === 'md') { preview.classList.add('ask-md'); preview.replaceChildren(out.frag); }
+    else { preview.classList.add('ask-answer-plain'); preview.textContent = String(card.markdown || ''); }
+    details.appendChild(preview);
+    body.appendChild(details);
+    if (card.estimate) {
+      const est = make('div', 'ask-mcard-detail', estimateSummary(card.estimate));
+      est.setAttribute('data-ask-spec-estimate', '');
+      body.appendChild(est);
+    }
+    rootEl.appendChild(body);
+    const err = make('div', 'ask-card-err');
+    rootEl.appendChild(err);
+    const actions = make('div', 'ask-mcard-actions');
+    const btn = (cls, text, attr) => { const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, ''); return b; };
+    const save = btn('ask-card-not-now', 'Save to plans/', 'data-ask-spec-save');
+    let savePath = card.path || null;
+    save.addEventListener('click', async () => {
+      err.textContent = '';
+      const hadFocus = doc.activeElement === save;   // disabling blurs it in real browsers: restore it below
+      save.disabled = true;
+      let res = null;
+      try {
+        res = await fetch('/api/spec-builder/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectKey: card.projectKey, path: savePath, markdown: card.markdown }) });
+      } catch { res = null; }
+      let j = {};
+      try { j = res ? await res.json() : {}; } catch { j = {}; }
+      if (res && res.ok) { save.textContent = `Saved to ${j.path || savePath}`; if (hadFocus) use.focus(); return; }
+      save.disabled = false;
+      if (hadFocus) save.focus();
+      if (res && res.status === 409 && j.suggestion) {
+        err.textContent = `${savePath || j.path || 'the file'} exists`;
+        savePath = j.suggestion;
+        save.textContent = `Save as ${savePath}`;
+        return;
+      }
+      err.textContent = res ? (j.error || `request failed (${res.status})`) : 'network error';
+    });
+    const use = btn('ask-card-start', 'Use this spec', 'data-ask-spec-use');
+    use.addEventListener('click', () => {
+      if (typeof onUseSpec === 'function') onUseSpec({ markdown: card.markdown, projectKey: card.projectKey, projectDir: card.projectDir });
+    });
+    actions.append(make('span', 'ask-card-actions-spacer'), save, use);
+    rootEl.appendChild(actions);
+    return { el: rootEl };
+  }
+
   // ---- Workspace card (propose_workspace_change): create, add / remove members, rename ------------------------------
   const WS_KIND_LABEL = { create: 'Create', add_members: 'Add members', remove_member: 'Remove member', rename: 'Rename' };
   const WS_APPLY_LABEL = { create: 'Create', add_members: 'Add', remove_member: 'Remove', rename: 'Rename' };
@@ -4420,7 +4485,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'spec') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -4436,9 +4501,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
+    const isSpec = !!(block.card && block.card.type === 'spec');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isCommand || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isSpec || isCommand || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -4449,6 +4515,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
+      : isSpec ? buildSpecCard(block)
       : isCommand ? buildCommandCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
@@ -5356,10 +5423,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     root.remove();
   }
 
+  /** Spec Builder (plans/spec-builder §3.3 step 6): a brand-new chat pinned to `scope`, whose first message is `text`. */
+  async function startThread({ text, scope = null } = {}) {
+    newThread();
+    if (scope && scope.projectKey) setScope({ pinned: true, projectKey: scope.projectKey, label: scope.label || null });
+    openSheet();
+    el.input.value = String(text || '');
+    return sendMessage();
+  }
+
   return Object.freeze({
     root,
     open: openSheet,
     openThread,
+    startThread,
     close: closeSheet,
     toggle: toggleSheet,
     isOpen: () => st.open,

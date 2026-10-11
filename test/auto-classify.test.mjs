@@ -11,6 +11,8 @@ import {
 import { normalizeShape, SHAPE_LIMITS } from '../src/shared/graph/assemble.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { WORKSPACE_GUIDE } from '../src/core/auto/recipes.mjs';
+import { renderWorcaFrontMatter } from '../src/shared/spec-builder/front-matter.mjs';
+import { sectionsFor } from '../src/shared/spec-builder/roles.mjs';
 
 const REG = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
 const MODELS = [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['medium', 'high', 'max'] }, { id: 'claude-sonnet-5', label: 'Sonnet 5', efforts: ['medium', 'high'] }];
@@ -424,4 +426,96 @@ test('a pause or stop during the second attempt keeps the first attempt\'s bille
   assert.equal(err.name, 'AbortError', 'still the pause/stop itself');
   assert.equal(err.costUsd, 0.01, 'attempt 1 was billed: _autoRound books it before the run parks');
   assert.deepEqual(err.usage, { input_tokens: 10, output_tokens: 5 });
+});
+
+const specText = (fm) => `${renderWorcaFrontMatter(fm)}# Spec\n\n${sectionsFor(fm.roles).map((s) => `## ${s.n}. ${s.title}\n\ntext\n`).join('\n')}`;
+const planned = { name: 'Plan it', taskKind: 'plan-partial', size: 'small', signals: ['plan'],
+  stages: [{ agent: 'planner' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
+
+test('spec guard: a complete worca: spec → plan-complete-detailed, planner stripped', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'medium', roles: ['product', 'qa'] }) }), { run });
+  assert.equal(out.shape.taskKind, 'plan-complete-detailed');
+  assert.equal(out.shape.size, 'medium');
+  assert.deepEqual(out.shape.stages.map((s) => s.agent), ['implementer', 'reviewer']);
+});
+
+test('spec guard: size: large → the plan-complete-large stages', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'large', roles: ['product'] }) }), { run });
+  assert.equal(out.shape.size, 'large');
+  assert.deepEqual(out.shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer']);
+});
+
+test('spec guard: signals: [risky] is kept, and the model\'s good stages stand', async () => {
+  // 'claude-opus-5-5' is in this file's MODELS; a normalized stage keeps its model in tunables (R4)
+  const ok = { name: 'x', taskKind: 'plan-complete-detailed', size: 'large', signals: [], stages: [{ agent: 'refiner', selfLoop: true }, { agent: 'implementer', model: 'claude-opus-5-5' }, { agent: 'reviewer' }] };
+  const { run } = fakeRun([reply(ok)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'fix', size: 'medium', signals: ['risky'], roles: ['product', 'security'] }) }), { run });
+  assert.ok(out.shape.signals.includes('risky'));
+  assert.equal(out.shape.size, 'medium');
+  assert.equal(out.shape.stages.find((s) => s.agent === 'implementer').tunables.model, 'claude-opus-5-5');
+});
+
+test('spec guard: replaced stages keep the classifier\'s model picks (R2)', async () => {
+  const picked = { ...planned, stages: [{ agent: 'planner', model: 'claude-sonnet-5' }, { agent: 'implementer', model: 'claude-opus-5-5', effort: 'high' }, { agent: 'reviewer' }] };
+  const { run } = fakeRun([reply(picked)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'large', roles: ['product'] }) }), { run });
+  const by = Object.fromEntries(out.shape.stages.map((s) => [s.agent, s.tunables]));
+  assert.deepEqual(Object.keys(by), ['refiner', 'implementer', 'reviewer']);
+  assert.deepEqual(by.implementer, { model: 'claude-opus-5-5', effort: 'high' });
+  assert.equal(by.refiner.model, 'claude-sonnet-5');            // no refiner stage: the first stage with a model
+});
+
+test('spec guard: requireModel — the replaced stages carry models, so the guarded shape still passes (R2)', async () => {
+  const withModels = { ...planned, stages: planned.stages.map((s) => ({ ...s, model: 'claude-sonnet-5' })) };
+  const { run } = fakeRun([reply(withModels)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'large', roles: ['product'] }), requireModel: true }), { run });
+  assert.deepEqual(out.shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer']);
+  assert.ok(out.shape.stages.every((s) => s.tunables.model === 'claude-sonnet-5'));
+  assert.ok(!out.warnings.some((w) => w.code === 'SPEC_GUARD_SKIPPED'));
+});
+
+test('spec guard: a staged agent the classifier left on the run default stays on it (v3)', async () => {
+  const picked = { ...planned, stages: [{ agent: 'planner', model: 'claude-sonnet-5' }, { agent: 'implementer', model: 'claude-opus-5-5' }, { agent: 'reviewer' }] };
+  const { run } = fakeRun([reply(picked)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'large', roles: ['product'] }) }), { run });
+  assert.equal(out.shape.stages.find((s) => s.agent === 'reviewer').tunables.model, undefined);
+});
+
+test('spec guard: UX + large → plan-complete-large+web', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'large', roles: ['product', 'ux'] }) }), { run });
+  assert.deepEqual(out.shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting']);
+});
+
+test('spec guard: an incomplete spec keeps the model\'s kind and stages, but size/risky follow the block', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  const text = `${renderWorcaFrontMatter({ kind: 'feature', size: 'large', signals: ['risky'], roles: ['product'] })}# T\n## 1. Problem and goal\n`;
+  const out = await classifyTask(base({ taskText: text }), { run });
+  assert.equal(out.shape.taskKind, 'plan-partial');
+  assert.equal(out.shape.size, 'large');
+  assert.ok(out.shape.signals.includes('risky'));
+  assert.equal(out.shape.stages[0].agent, 'planner');
+});
+
+test('spec guard: no block → today\'s behaviour, unchanged', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  const out = await classifyTask(base({ taskText: '# A spec\n## 1. Problem and goal\n' }), { run });
+  assert.equal(out.shape.taskKind, 'plan-partial');
+  assert.deepEqual(out.shape.stages.map((s) => s.agent), ['planner', 'implementer', 'reviewer']);
+});
+
+test('spec guard: skipped on a revise round (feedback given)', async () => {
+  const { run } = fakeRun([reply(planned)]);
+  // feedback is an ARRAY (classify.mjs :288 defaults it to []); a string would not be a real revise round (R1)
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'medium', roles: ['product'] }), feedback: ['add a planner please'], priorShape: planned }), { run });
+  assert.equal(out.shape.stages[0].agent, 'planner');
+});
+
+test('spec guard: the mock arm honours the block too, even with requireModel (mock never checks models)', async () => {
+  const out = await classifyTask(base({ taskText: specText({ kind: 'feature', size: 'medium', roles: ['product'] }), mock: true, requireModel: true }), {});
+  assert.equal(out.shape.taskKind, 'plan-complete-detailed');
+  assert.ok(!out.shape.stages.some((s) => ['clarify', 'planner', 'decomposer'].includes(s.agent)));
+  assert.deepEqual(out.warnings, []);
 });

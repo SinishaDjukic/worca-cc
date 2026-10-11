@@ -276,6 +276,11 @@ test('context header: the spec layout, exactly — plus the [pinned by the user]
       assert.ok(!ws.includes('project:'), 'absent lines are omitted');
       assert.ok(!ws.includes('runs from this thread'), 'empty lists are omitted');
     } },
+    { name: 'a Spec Builder card names its spec and project, never the run-card line', run: async () => {
+      const h = buildContextHeader({ view: 'new', now: CTX.now, cards: [{ id: 'card_5bec0001', type: 'spec', state: 'proposed', title: 'Dark mode', projectKey: 'app-0000abcd', projectName: 'app' }] });
+      assert.ok(h.includes('\ncards: spec card "Dark mode" for app (proposed)\n'), h);
+      assert.ok(!h.includes('undefined on'), h);
+    } },
     { name: '#397: a pinned scope renders the [pinned by the user] marker on the scope line only', run: async () => {
       const h = buildContextHeader({ ...CTX, pinned: true });
       assert.ok(h.includes('project: worca-cc (key worca-cc-551183d0) [pinned by the user]\n'), h);

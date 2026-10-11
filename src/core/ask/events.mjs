@@ -148,6 +148,7 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'draft_agent': return 'Drafting an agent';
     case 'draft_script': return 'Drafting a script';
     case 'propose_metrics_change': return 'Proposing a metrics change';
+    case 'propose_spec': return 'Proposing a spec';
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
     case 'push_team_metrics': return 'Pushing team metrics';
@@ -268,6 +269,7 @@ export function createTurnReducer({
   onWorkflowStart = null,
   onWorkflowResult = null,
   onMetricsProposal = null,      // propose_metrics_change RESULT (team metrics card; the parent re-validates the input)
+  onSpecProposal = null,         // propose_spec RESULT (Spec Builder card; the parent re-validates the input)
   onPolicyProposal = null,       // propose_policy_change RESULT (team policy card; same split)
   onScheduleProposal = null,     // propose_schedule_change RESULT (schedule card; the parent re-validates the input)
   onModelProposal = null,        // propose_model_change RESULT (model card; same split)
@@ -669,6 +671,12 @@ export function createTurnReducer({
         // the raw result text only says whether the child accepted it.
         try {
           const ret = onMetricsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_spec' && typeof onSpecProposal === 'function') {
+        try {
+          const ret = onSpecProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

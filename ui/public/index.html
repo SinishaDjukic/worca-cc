@@ -6,6 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <title>Worca CC</title>
     <link rel="stylesheet" href="/style.css" />
+    <!-- Feature flags (docs/feature-flags.md): the server fills this with one rule per flag that is off. -->
+    <style id="flag-gates"></style>
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" type="image/png" href="/assets/worca-favicon.png" />
   </head>
@@ -1507,6 +1509,8 @@
                  strip. Plugins, Sets, Models and Providers left for the Add-ons pages. -->
             <button type="button" class="on" data-tab="general" data-min-level="simple" aria-pressed="true">General</button>
             <button type="button" data-tab="runs" data-min-level="simple" aria-pressed="false">Runs</button>
+            <!-- Experimental (docs/feature-flags.md) shows at every level: flags are not levels. -->
+            <button type="button" data-tab="experimental" data-min-level="simple" aria-pressed="false">Experimental</button>
             <button type="button" data-tab="ask" data-min-level="advanced" aria-pressed="false">Ask Worca</button>
             <button type="button" data-tab="guardrails" data-min-level="advanced" aria-pressed="false">Guardrails</button>
             <button type="button" data-tab="memory" data-min-level="advanced" aria-pressed="false">Memory</button>
@@ -1991,6 +1995,22 @@
             </section>
           </section>
           <!-- /pane runs -->
+
+          <!-- ===== TAB: EXPERIMENTAL (docs/feature-flags.md, D8) — every level ===== -->
+          <section class="settings-pane hidden" data-tab="experimental">
+            <div class="topbar">
+              <div>
+                <div class="sub">Try features before they are finished. A switch applies at once, in every open tab, for everyone using this Worca.</div>
+              </div>
+              <button type="button" class="btn btn-ghost btn-mini" id="flags-reset">Reset all</button>
+            </div>
+            <section class="card settings-card" id="flags-settings-card" data-min-level="simple">
+              <p class="flags-warn" role="note">Experimental features may change, break or disappear in any release.</p>
+              <p id="flags-msg" class="form-msg" aria-live="polite"></p>
+              <div id="flags-host" class="flags-host"></div>
+            </section>
+          </section>
+          <!-- /pane experimental -->
 
           <!-- ===== TAB: ASK WORCA — the assistant chat's limits, tools, web access and history ===== -->
           <section class="settings-pane hidden" data-tab="ask">

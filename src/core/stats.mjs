@@ -230,3 +230,31 @@ export function getStats({ range = 'month', now = new Date() } = {}) {
     totals, prev, budget, series, humanRateUsd: rate,
   };
 }
+
+/**
+ * Per-phase cost and active time of every step of a FINISHED run (status 'done') last written in the
+ * past `sinceDays` days — the Spec Builder estimate's history (plans/spec-builder §3.4). `phase` is the
+ * agent key (orchestrator: node.key). One sample per execution/cycle row; rows with neither cost nor
+ * time (skipped steps) are left out. No recipe/size column exists: v1 matches on phase only.
+ * `runs` = distinct pipelines behind the samples (what the "Based on N past runs" label counts).
+ * @returns {Record<string, {costs:number[], ms:number[], runs:number}>}
+ */
+export function stepCostHistory({ sinceDays = 90, now = new Date() } = {}) {
+  const since = new Date(now.getTime() - sinceDays * 86_400_000).toISOString();
+  const rows = prepare(`
+    SELECT s.pipeline_id AS pid, s.phase AS phase, s.cost_usd AS cost, s.active_ms AS ms
+      FROM pipeline_steps s JOIN pipelines p ON p.id = s.pipeline_id
+     WHERE p.status = 'done' AND p.updated_at >= ? AND s.phase IS NOT NULL
+       AND (s.cost_usd > 0 OR s.active_ms > 0)
+     ORDER BY s.phase, s.pipeline_id, s.key`).all(since);
+  const out = {};
+  const pids = {};
+  for (const r of rows) {
+    const h = (out[r.phase] ??= { costs: [], ms: [], runs: 0 });
+    h.costs.push(Number(r.cost) || 0);
+    h.ms.push(Number(r.ms) || 0);
+    (pids[r.phase] ??= new Set()).add(r.pid);
+    h.runs = pids[r.phase].size;
+  }
+  return out;
+}

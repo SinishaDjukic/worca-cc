@@ -33,6 +33,7 @@ import { SIDELOAD_REFUSAL_RE as SIDELOAD_REFUSED_RE } from '../skills-registry/h
 import { renderSkillsSection, renderCodexSkillsSection, codexSkillNames } from './prompt.mjs';
 import { validateProposal } from './proposal.mjs';
 import { validateMetricsChange } from './metrics-deps.mjs';
+import { validateSpecProposal } from './spec-deps.mjs';
 import { validateAwayChange } from './away-deps.mjs';
 import { validatePolicyChange } from './policy-deps.mjs';
 import { validateModelChange } from './model-deps.mjs';
@@ -207,6 +208,7 @@ class AskTurn extends EventEmitter {
       validateProposal: deps.validateProposal ?? validateProposal,
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
+      validateSpecProposal: deps.validateSpecProposal ?? validateSpecProposal,
       validateAwayChange: deps.validateAwayChange ?? validateAwayChange,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
@@ -425,6 +427,24 @@ class AskTurn extends EventEmitter {
       }
     } catch (err) {
       this.reducer.addBlock({ kind: 'notice', text: `Metrics change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
+  /** propose_spec RESULT (plans/spec-builder D8): the child validated; the parent re-validates the same INPUT
+   *  against the pinned project, prices it from this machine's history, and mints the card. */
+  async _onSpecProposal(input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = await d.validateSpecProposal(input && typeof input === 'object' ? input : {}, { projectKey: this.pinnedScope?.projectKey || null });
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else this.reducer.addBlock({ kind: 'notice', text: `Spec rejected: ${((r && r.errors) || ['invalid spec']).join('; ')}` });
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Spec rejected: ${err?.message || err}` });
     }
     this._persistBlocks();
   }
@@ -747,6 +767,7 @@ class AskTurn extends EventEmitter {
       onRunCommand: ({ text, isError }) => this._onRunCommand(text, isError),
       onAwaySwitch: this.composer ? null : ({ text, isError }) => this._onAwaySwitch(text, isError),
       onMetricsProposal: ({ input, text, isError }) => this._onMetricsProposal(input, text, isError),
+      onSpecProposal: this.composer ? null : ({ input, text, isError }) => this._onSpecProposal(input, text, isError),
       onAwayProposal: ({ input, text, isError }) => this._onAwayProposal(input, text, isError),
       onPolicyProposal: ({ input, text, isError }) => this._onPolicyProposal(input, text, isError),
       onScheduleProposal: ({ input, text, isError }) => this._onScheduleProposal(input, text, isError),

@@ -334,6 +334,36 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.ok(final.blocks.some((b) => b.kind === 'notice' && b.text === 'Metrics change rejected: gateway already records team metrics on its own branch'));
       assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'metrics'), 'the card was broadcast mid-turn');
     } },
+    { name: 'propose_spec: the parent re-validates the INPUT against the pinned project and mints the card; a refusal is a notice; a child error is nothing', run: async () => {
+      const s = seed();
+      const seen = [];
+      const runner = (frames) => async (opts) => {
+        for (const [id, name, input, text, isError] of frames) {
+          push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name, input }] } });
+          push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError ? { is_error: true } : {}) }] } });
+        }
+        await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+        push(opts.onEvent, RESULT());
+        return { text: '', exitCode: 0 };
+      };
+      const card = { type: 'spec', title: 'Dark mode', markdown: '# Dark mode', projectKey: 'demo-00000001' };
+      const { turn, frames } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+        validateSpecProposal: async (input, ctx) => { seen.push([input, ctx]); return input.markdown === '# good' ? { ok: true, card } : { ok: false, errors: ['missing section: ## Testing'] }; },
+        runClaudeImpl: runner([
+          ['toolu_1', 'mcp__worca__propose_spec', { markdown: '# good' }, '{"ok":true,"card":{}}', false],
+          ['toolu_2', 'mcp__worca__propose_spec', { markdown: '# bad' }, '{"ok":true,"card":{}}', false],
+          ['toolu_3', 'mcp__worca__propose_spec', { markdown: '# x' }, 'error: propose_spec: Spec Builder is off in this session', true],
+          ['toolu_4', 'mcp__worca__propose_spec', { markdown: '# x' }, '{"ok":false,"errors":["x"]}', false],
+        ]),
+      });
+      await turn.run();
+      assert.deepEqual(seen, [[{ markdown: '# good' }, { projectKey: 'demo-00000001' }], [{ markdown: '# bad' }, { projectKey: 'demo-00000001' }]], 'child refusals and errors never reach the validator');
+      const final = getMessage(s.asst.id);
+      const cards = final.blocks.filter((b) => b.kind === 'card');
+      assert.equal(cards.length, 1); assert.equal(cards[0].state, 'proposed'); assert.deepEqual(cards[0].card, card);
+      assert.ok(final.blocks.some((b) => b.kind === 'notice' && b.text === 'Spec rejected: missing section: ## Testing'));
+      assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'spec'), 'the card was broadcast mid-turn');
+    } },
     { name: 'propose_workspace_change: the parent re-validates the INPUT (pinned workspace replayed, never for create) and mints the card; a refusal is a notice', run: async () => {
       const s = seed();
       const seen = [];

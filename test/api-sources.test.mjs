@@ -251,6 +251,16 @@ test('legacy POST /api/run { prompt } is byte-identical: 200 + runId, default so
   assert.equal(mdRow.source_type, 'markdown');
   assert.equal(mdRow.source_ref, null);
   await rmWithRetry(mdProj);
+  // A Spec Builder spec: the worca: front-matter reaches the run verbatim (the Auto guard reads it from promptText).
+  const specProj = await mkdtemp(join(tmpdir(), 'worca-cc-specrun-'));
+  const spec = '---\nworca:\n  kind: fix\n  size: small\n  roles: [product]\n---\n# spec run task\n';
+  assert.equal((await post('/api/run', { projectDir: specProj, promptMarkdown: spec, mock: true })).status, 200);
+  const specRow = await waitFor(
+    () => getDb().prepare('SELECT prompt FROM pipelines WHERE prompt LIKE ?').get('%# spec run task%'),
+    'spec pipelines row',
+  );
+  assert.equal(specRow.prompt, spec);
+  await rmWithRetry(specProj);
   // The no-prompt 400 message is the exact legacy string.
   const bad = await post('/api/run', { projectDir: join(tmpdir(), 'worca-cc-never-created') });
   assert.equal(bad.status, 400);

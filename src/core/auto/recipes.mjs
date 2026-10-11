@@ -32,6 +32,12 @@ export const WORKSPACE_GUIDE = [
   '- the large-task modifier does not apply to a workspace: never insert decomposer and never set fanOut; take the rung the task would get without that modifier',
 ].join('\n');
 
+// The Spec Builder guard (spec-guard.mjs) names agents through these: the stages a complete spec must not plan
+// again with, the refiner large or risky work needs, and the web test stages UX asks for.
+export const SPEC_PLANNING_AGENTS = Object.freeze(['clarify', 'planner', 'decomposer']);
+export const SPEC_REFINE_AGENT = 'refiner';
+export const SPEC_WEB_AGENTS = Object.freeze(['manualTestsChecklist', 'manualWebUiTesting']);
+
 const S = (agent, extra = {}) => ({ agent, ...extra });
 const REFINER = () => S('refiner', { selfLoop: true });
 
@@ -52,6 +58,7 @@ export const RECIPE_SHAPES = Object.freeze([
   { id: 'prompt+risky', shape: { name: 'Clarify, plan + plan review, refine, implement + review', taskKind: 'prompt', stages: [S('clarify'), S('planner'), S('planReviewer'), REFINER(), S('implementer'), S('reviewer')] } },
   { id: 'plan-partial+web+large', shape: { name: 'Plan, refine, decompose, implement + web tests', taskKind: 'plan-partial', stages: [S('planner'), REFINER(), S('decomposer'), S('implementer', { fanOut: true }), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting')] } },
   { id: 'plan-complete-detailed+web', shape: { name: 'Implement, review + web tests', taskKind: 'plan-complete-detailed', stages: [S('implementer'), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting')] } },
+  { id: 'plan-complete-large+web', shape: { name: 'Refine, implement, review + web tests', taskKind: 'plan-complete-detailed', stages: [REFINER(), S('implementer'), S('reviewer'), S('manualTestsChecklist'), S('manualWebUiTesting')] } },
   // A group may sit anywhere; a verifier after it loops to a stage the whole group
   // depends on (or to a member it reads) — the assembler refuses anything else.
   { id: 'parallel-end', shape: { name: 'Plan, refine, implement, review ∥ checklist', taskKind: 'plan-partial', stages: [S('planner'), REFINER(), S('implementer'), { parallel: [S('reviewer'), S('manualTestsChecklist')] }] } },

@@ -728,6 +728,12 @@ export function createAskTools(deps) {
           name: SCHEMA.s('folder and project name (default: the repository name)'),
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }, ['url']) },
     ] : []),
+    // Spec Builder (docs/spec-builder.md): listed only while the specBuilder flag is on (spec-deps.mjs).
+    ...(deps.specs ? [
+      { name: 'propose_spec',
+        description: 'Spec Builder: propose the finished spec as a card for the user — it never writes anything itself; the card offers "Use this spec" (fills the New run Markdown pane) and "Save to plans/". markdown: the WHOLE spec, starting with its ---/worca:/--- front-matter block, with every section its roles need. path: optional plans/<slug>-design.md to suggest for saving. The chat must be pinned to the project. Returns {ok:true, card} or {ok:false, errors} to fix and retry.',
+        inputSchema: SCHEMA.obj({ markdown: SCHEMA.s('the whole spec Markdown, at most 64 KB'), path: SCHEMA.s('optional: plans/<slug>-design.md') }, ['markdown']) },
+    ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',
         description: 'Propose a workspace change for the user to confirm — it never changes anything itself; the user sees a card and applies or declines it. kind: "create" (name + projectKeys: two or more registered projects from list_projects), "add_members" (workspaceId + projectKeys to add), "remove_member" (workspaceId + projectKey of one member; at least two stay), "rename" (workspaceId + name). workspaceId defaults to the pinned workspace (not for create). The workspace keeps its id; runs already started keep their members. Returns {ok:true, card} (card.warnings: a live run, a new member off the metrics / policy home, a removed home, schedules naming members; card.followUps: what to offer once applied) or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens.',
@@ -1620,6 +1626,11 @@ export function createAskTools(deps) {
       return { results: (results || []).map((r) => ({
         slug: r.slug ?? null, ok: r.ok === true, pushed: r.pushed ?? 0, pending: r.pending ?? 0, code: r.code ?? null,
         error: r.stderr ? deps.redact(String(r.stderr)) : null, hint: r.hint ?? null })) };
+    },
+    async propose_spec(input) {
+      if (!deps.specs || typeof deps.specs.validate !== 'function') throw new AskToolError('propose_spec: Spec Builder is off in this session');
+      const pin = pinnedScope();
+      return deps.specs.validate(input, { projectKey: pin?.projectKey || null });
     },
     async propose_metrics_change(input) {
       const m = tmRequire('propose_metrics_change');

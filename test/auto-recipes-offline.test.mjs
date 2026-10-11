@@ -52,7 +52,7 @@ test('RECIPE_GUIDE names every task kind, rung, modifier and agent key; RECIPE_S
   for (const key of ['clarify', 'planner', 'refiner', 'implementer', 'reviewer', 'decomposer', 'planReviewer', 'manualTestsChecklist', 'manualWebUiTesting']) assert.ok(RECIPE_GUIDE.includes(key), key);
   assert.ok(RECIPE_GUIDE.includes('a stage after a parallel group waits for the whole group'), 'the group rule is taught');
   assert.ok(!RECIPE_GUIDE.includes('only as the LAST stage'), 'the old (false) terminal-only rule is gone');
-  assert.ok(RECIPE_SHAPES.length >= 15);
+  assert.ok(RECIPE_SHAPES.length >= 16);
   for (const id of ['trivial', 'small', 'needs-plan', 'plan-complete-large', 'parallel-mid']) assert.ok(RECIPE_SHAPES.some((r) => r.id === id), `recipe ${id}`);
   assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'trivial').shape.stages.map((s) => s.agent), ['implementer']);
   assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'small').shape.stages.map((s) => s.agent), ['implementer', 'reviewer']);
@@ -60,6 +60,14 @@ test('RECIPE_GUIDE names every task kind, rung, modifier and agent key; RECIPE_S
   assert.deepEqual(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer']);
   assert.equal(RECIPE_SHAPES.find((r) => r.id === 'plan-complete-large').shape.taskKind, 'plan-complete-detailed', 'a given large plan keeps the plan-of-record seed');
   for (const r of RECIPE_SHAPES) { assert.ok(r.id); normalizeShape(r.shape); }
+});
+
+test('plan-complete-large+web: refine, implement, review + web tests, no planner', () => {
+  const r = RECIPE_SHAPES.find((x) => x.id === 'plan-complete-large+web');
+  assert.ok(r);
+  assert.equal(r.shape.taskKind, 'plan-complete-detailed');
+  assert.deepEqual(r.shape.stages.map((s) => s.agent), ['refiner', 'implementer', 'reviewer', 'manualTestsChecklist', 'manualWebUiTesting']);
+  assert.equal(r.shape.stages[0].selfLoop, true);
 });
 
 test('mockShapeFor never inserts decomposer or sets fanOut (the workspace path relies on it, D-W4); WORKSPACE_GUIDE forbids both', () => {

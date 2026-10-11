@@ -68,6 +68,7 @@
     "verify:run-monitor": "node --disable-warning=ExperimentalWarning tools/verify-run-monitor-cdp.mjs",
     "verify:theme": "node --disable-warning=ExperimentalWarning tools/verify-theme-cdp.mjs",
     "verify:memory": "node --disable-warning=ExperimentalWarning tools/verify-memory-cdp.mjs",
+    "verify:spec-builder": "node --disable-warning=ExperimentalWarning tools/verify-spec-builder-cdp.mjs",
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",

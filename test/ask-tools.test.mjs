@@ -13,6 +13,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { createAskTools, AskToolError, splitUnifiedDiff, isProtectedBasename, sliceBytes, isByteArtifact } from '../src/core/ask/tools.mjs';
+import { defaultSpecDeps } from '../src/core/ask/spec-deps.mjs';
 import { viewerKindFor, BINARY_KINDS } from '../src/shared/artifact-kinds.mjs';
 import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { closeDb } from '../src/core/db.mjs';
@@ -1188,4 +1189,19 @@ test('isByteArtifact agrees with the shared artifact-kind table', () => {
   }
   assert.equal(isByteArtifact('Makefile'), false, 'no extension is not bytes');
   assert.equal(isByteArtifact('shots/S01.PNG'), true, 'the extension match is case-insensitive');
+});
+
+test('propose_spec is listed only with the specs bundle, and passes the pinned project', async () => {
+  const calls = [];
+  const specs = { validate: async (input, ctx) => { calls.push([input, ctx]); return { ok: true, card: { type: 'spec' } }; } };
+  assert.equal(createAskTools(fake).list().some((d) => d.name === 'propose_spec'), false);
+  const tools = createAskTools({ ...fake, specs, pinnedScope: () => ({ projectKey: 'app-0000abcd' }) });
+  assert.equal(tools.list().some((d) => d.name === 'propose_spec'), true);
+  await tools.call('propose_spec', { markdown: '# x' });
+  assert.deepEqual(calls, [[{ markdown: '# x' }, { projectKey: 'app-0000abcd' }]]);
+});
+
+test('defaultSpecDeps follows the flag', () => {
+  assert.deepEqual(defaultSpecDeps({ enabled: () => false }), {});
+  assert.equal(typeof defaultSpecDeps({ enabled: () => true }).specs.validate, 'function');
 });

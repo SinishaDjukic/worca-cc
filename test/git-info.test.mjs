@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   parseShortstat, normalizeMergeable, diffShortstat, branchExists,
-  findPrForBranch, commitsAhead, readPrBody, editPrBody, _testing as gitInfo,
+  findPrForBranch, commitsAhead, readPrBody, editPrBody, trackedFiles, _testing as gitInfo,
 } from '../src/core/git-info.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -157,4 +157,17 @@ test('readPrBody / editPrBody use gh pr view --json body / gh pr edit --body', a
   gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'HTTP 404', code: 1 }));
   assert.deepEqual(await editPrBody({ prUrl: 'https://github.com/o/r/pull/1', body: 'x' }), { ok: false, error: 'HTTP 404' });
   gitInfo.reset();
+});
+
+test('trackedFiles: ls-files -z with quotePath off, capped; [] on failure or no dir', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, opts) => { seen.push([cmd, args, opts.cwd]); return Promise.resolve({ ok: true, stdout: 'a.js\0src/b é.js\0c.md\0', stderr: '', code: 0 }); });
+  try {
+    assert.deepEqual(await trackedFiles('/repo'), ['a.js', 'src/b é.js', 'c.md']);
+    assert.deepEqual(seen[0], ['git', ['-c', 'core.quotePath=false', 'ls-files', '-z'], '/repo']);
+    assert.deepEqual(await trackedFiles('/repo', { max: 2 }), ['a.js', 'src/b é.js']);
+    gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'fatal', code: 128 }));
+    assert.deepEqual(await trackedFiles('/repo'), []);
+    assert.deepEqual(await trackedFiles(''), []);
+  } finally { gitInfo.reset(); }
 });

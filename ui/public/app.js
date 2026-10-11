@@ -68,6 +68,7 @@ const state = {
   // --- Pluggable task sources (New Pipeline) ---
   pluginSources: [],        // GET /api/sources entries with type:'plugin'
   activePluginSource: null, // selected plugin source | null (legacy prompt/markdown)
+  activeSpecBuilder: false, // the Spec Builder source is selected (behind the specBuilder flag)
   // The profile the active source resolved to for the selected project /
   // workspace (multiProfile sources only; null otherwise). Submitted with the
   // run so the pipeline records WHICH instance the task came from.
@@ -212,6 +213,9 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange, chip } from './flags.mjs';
+import { createSpecBuilder } from './spec-builder.mjs';
+import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
@@ -555,6 +559,11 @@ const el = {
   // Memory view (Settings tab; the Projects expanders mount their own hosts)
   memoryHost: $('#memory-host'),
   memoryMsg: $('#memory-msg'),
+
+  // Experimental (Settings tab; docs/feature-flags.md)
+  flagsHost: $('#flags-host'),
+  flagsMsg: $('#flags-msg'),
+  flagsReset: $('#flags-reset'),
 
   // Models view
   modelsList: $('#models-list'),
@@ -1215,6 +1224,11 @@ function handleServerMessage(msg) {
     if (terminalPane) terminalPane.onHello(msg);
     return;
   }
+  if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
+    applyFlags(msg.flags);
+    if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
+    return;
+  }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -1550,6 +1564,7 @@ function onHello(msg) {
   const rebooted = !!(msg.bootId && state.serverBootId && state.serverBootId !== msg.bootId);
   noteBoot(state, msg.bootId, runs);   // a restarted server numbers run events from 1 again
   applyServerMock(msg.serverMock);     // every hello: a restarted server may have changed mode
+  if (msg.flags) applyFlags(msg.flags);  // every hello: a frame missed while the socket was down, or a restart with a new WORCA_FLAGS
   // A restarted server lists only the runs IT started, and nothing below drops the old ones: mark
   // every entry stale, and the upserts below clear the ones it lists. The saved run's bar skips a
   // stale entry (hdPipelineRun), which would otherwise offer a Pause / Stop the server answers
@@ -6096,7 +6111,7 @@ function onError(r) {
 // ---------------------------------------------------------------------------
 function syncSourceToggle() {
   const val = (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt';
-  const plugin = !!state.activePluginSource;
+  const plugin = !!state.activePluginSource || !!state.activeSpecBuilder;
   el.promptPane.classList.toggle('hidden', plugin || val !== 'prompt');
   el.markdownPane.classList.toggle('hidden', plugin || val !== 'markdown');
   if (el.pluginSourcePane) el.pluginSourcePane.classList.toggle('hidden', !plugin);
@@ -6110,7 +6125,9 @@ $$('#source-seg button[data-src]').forEach((btn) => {
   btn.addEventListener('click', () => {
     const src = btn.dataset.src;
     state.activePluginSource = null;
+    state.activeSpecBuilder = false;
     $$('#source-seg button[data-plugin-src]').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); });
+    $$('#source-seg button[data-spec-builder]').forEach((b) => { b.classList.remove('on'); b.setAttribute('aria-pressed', 'false'); });
     $$('#source-seg button[data-src]').forEach((b) => {
       const on = b === btn;
       b.classList.toggle('on', on);
@@ -6186,6 +6203,7 @@ function sourceCall(src, profile) {
 
 function selectPluginSource(src, btn) {
   state.activePluginSource = src;
+  state.activeSpecBuilder = false;
   $$('#source-seg button').forEach((b) => {
     const on = b === btn;
     b.classList.toggle('on', on);
@@ -6193,6 +6211,77 @@ function selectPluginSource(src, btn) {
   });
   syncSourceToggle();
   mountPluginSourcePane(src);
+}
+
+// --- Spec Builder (docs/spec-builder.md), behind the specBuilder flag. The wizard is made once per page, so its
+// answers survive source switches; its "Start over" is the reset.
+let specBuilder = null;
+
+/** Spec Builder's source button (plans/spec-builder D1): created only while the flag is on, so with the
+ *  flag off #source-seg is byte-identical to today. Right after Markdown; plugin buttons append after it. */
+function syncSpecBuilderButton() {
+  const existing = el.sourceSeg.querySelector('button[data-spec-builder]');
+  if (!flagOn('specBuilder')) {
+    if (existing) {
+      if (existing.nextElementSibling?.classList.contains('flag-chip')) existing.nextElementSibling.remove();
+      existing.remove();
+      if (state.activeSpecBuilder) el.sourceSeg.querySelector('button[data-src="markdown"]').click();
+    }
+    return;
+  }
+  if (existing) return;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = 'Spec Builder';
+  b.setAttribute('data-spec-builder', '');
+  b.setAttribute('data-flag', 'specBuilder');
+  b.setAttribute('data-flag-chip', '');
+  b.setAttribute('aria-pressed', 'false');
+  b.addEventListener('click', () => selectSpecBuilder(b));
+  el.sourceSeg.querySelector('button[data-src="markdown"]').after(b);
+  chip(b);
+}
+
+function selectSpecBuilder(btn) {
+  state.activePluginSource = null;
+  state.activeSpecBuilder = true;
+  $$('#source-seg button').forEach((b) => { const on = b === btn; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+  syncSourceToggle();
+  mountSpecBuilderPane();
+}
+
+/** Same host as the plugin sources (X3); bumping gateRun makes any in-flight mountPluginSourcePane give up. */
+function mountSpecBuilderPane() {
+  const host = el.pluginSourcePane;
+  host.dataset.gateRun = String((Number(host.dataset.gateRun) || 0) + 1);
+  specBuilder ??= createSpecBuilder({
+    doc: document,
+    api: {
+      estimate: async (frontMatter) => {
+        const r = await fetch('/api/spec-builder/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ frontMatter }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `estimate failed (${r.status})`);
+        return j.estimate;
+      },
+      areas: async (q) => {
+        const dir = selectedProjectPath();
+        if (!dir) return [];
+        const r = await fetch(`/api/spec-builder/areas?projectDir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`);
+        return r.ok ? (await r.json()).areas || [] : [];
+      },
+    },
+    onGenerate: async (answers) => {
+      const projectDir = selectedProjectPath();
+      if (!projectDir) throw new Error('Select a project first.');
+      const r = await fetch('/api/spec-builder/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectDir, answers }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `could not prepare the prompt (${r.status})`);
+      const sent = await askPanel.startThread({ text: j.text, scope: { projectKey: j.projectKey, label: j.projectName } });
+      if (sent === false) throw new Error('Ask Worca could not start the thread.');
+    },
+    onOpenAsk: () => askPanel.open(),
+  });
+  host.replaceChildren(specBuilder.el);
 }
 
 // Which project/workspace a binding hangs off, in the shape both binding routes
@@ -13020,6 +13109,8 @@ el.form.addEventListener('submit', async (e) => {
     body.prompt = promptText || (state.memoryScope === 'project'
       ? `Defragment the memory of project ${pn}.` : 'Defragment global memory.');
     if (!title) body.title = state.memoryScope === 'project' ? `Memory defragment: ${pn}` : 'Memory defragment (global)';
+  } else if (state.activeSpecBuilder) {
+    return fieldError(el.pluginSourcePane, 'Generate the spec, then press "Use this spec" on its Ask card.');
   } else if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return cardAlert(newFormCard(), { title: 'Run not started', detail: picked.error });
@@ -15363,6 +15454,18 @@ function globalDefragHost() {
   const picked = path ? state.projects.find((x) => x && x.path === path) : null;
   const p = picked || state.projects.find((x) => x && x.exists && x.key) || null;
   return p && p.key ? { key: p.key, name: p.name } : null;
+}
+
+// Settings › Experimental (docs/feature-flags.md): one controller, made on first entry; a chip's
+// '#settings/experimental/<key>' lands on that flag's row.
+let flagsTabCtl = null;
+function loadFlagsTab(sub = '') {
+  if (!el.flagsHost) return;
+  if (!flagsTabCtl) {
+    flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+  }
+  void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
 
 async function loadMemoryTab(sub = '') {
@@ -30910,7 +31013,7 @@ document.addEventListener('worca:level', () => {
 // The tab is the Settings view's hash param; a guardrail deep link nests its id
 // behind it (#settings/guardrails/<id>). parseHash splits on the FIRST '/' only,
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
-const SETTINGS_TABS = ['general', 'runs', 'ask', 'guardrails', 'memory'];
+const SETTINGS_TABS = ['general', 'runs', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
 // it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
 const SETTINGS_FORM_TABS = ['general', 'runs', 'ask'];
@@ -31236,6 +31339,7 @@ function showSettingsTab(param = '') {
   if (tab === 'ask') void paintAskMcpBlock(document.getElementById('ask-mcp-host'), { api: mcpApi });
   if (tab === 'guardrails') loadGuardrailsView(sub);
   if (tab === 'memory') loadMemoryTab(sub);
+  if (tab === 'experimental') loadFlagsTab(sub);
 }
 
 // A link to one card ('#settings/runs/actions', '#models/engine'): scroll to the
@@ -31285,6 +31389,15 @@ let syncingHash = false;
 // Boot paint of the account menu's mode row / Settings card. Here, not beside levelCtl: a first paint can
 // dispatch worca:level, whose banner repaint reads currentShownView (declared just above).
 levelCtl.paint();
+// Feature flags: the shell came with them (data-flags + #flag-gates); a page restored from a stale
+// cache corrects itself from the server (D6), and static [data-flag-chip] markup gets its chip (D9).
+decorateFlagChips(document);
+// Spec Builder's source button follows its flag (the shell's data-flags now, then every flags frame).
+syncSpecBuilderButton();
+onFlagChange('specBuilder', syncSpecBuilderButton);
+void mcpApi('GET', '/api/flags').then((r) => {
+  if (r.ok && r.data && Array.isArray(r.data.flags)) applyFlags(Object.fromEntries(r.data.flags.map((f) => [f.key, f.on])));
+});
 // Renderers that branch on the mode. Registered here (after levelListeners exists); every callee
 // is a hoisted function declaration.
 onLevelChange(() => { refreshNewPipelinePickers(); });     // Simple lists Auto + Default only
@@ -31550,6 +31663,23 @@ function openNewPipeline(prefill) {
   else location.hash = 'new';
 }
 
+/** "Use this spec" (plans/spec-builder §3.3 step 8): the spec becomes an ordinary Markdown run — the same
+ *  body a hand-pasted spec submits (D2). Auto replaces Default only (open question 1: a saved workflow stays). */
+async function applySpecPrefill(p) {
+  setRunTarget('project');
+  if (p.projectDir) {
+    const idx = state.projects.findIndex((x) => x && x.path === p.projectDir);
+    if (idx >= 0) el.projectSelect.selectedIndex = idx + 1;
+  }
+  // AWAITED even for the same project: setRunTarget's own un-awaited onProjectChanged reloads the config,
+  // and its workflow picker reset would otherwise land after the Auto switch below.
+  await onProjectChanged();
+  $('#source-seg button[data-src="markdown"]').click();
+  el.promptMarkdown.value = p.markdown || '';
+  if (state.workflowId === 'wf_default') await loadWorkflowsInto(AUTO_WORKFLOW_ID);
+  el.startBtn.focus({ preventScroll: true });
+}
+
 /** Ask Worca's "Open in composer" and the top-bar search's workflow rows: the Workflows view opens the
  *  saved row by its address (#workflows/<id>); the view asks before discarding an unsaved canvas. */
 async function openWorkflowFromAsk(workflowId) {
@@ -31566,17 +31696,19 @@ async function applyAskPrefill() {
   const p = newPipelinePrefill;
   if (!p) return;
   newPipelinePrefill = null;
+  if (p.kind === 'spec') return applySpecPrefill(p);
   setRunTarget(p.target === 'workspace' ? 'workspace' : 'project');
   // The card's engine pick (none: the defaults the project change loads decide). Touched, so they keep off it.
   if (p.engine) { state.engineTouched = true; setRunEngine(p.engine); }
   // force the prompt source — the three-step reset of the segment handler
   state.activePluginSource = null;
+  state.activeSpecBuilder = false;
   el.sourceRadios.forEach((r) => { r.checked = r.value === 'prompt'; });
   document.querySelectorAll('#source-seg button[data-src]').forEach((b) => {
     b.classList.toggle('on', b.dataset.src === 'prompt');
     b.setAttribute('aria-pressed', String(b.dataset.src === 'prompt')); // the real handlers keep it: :4662/:4666 (static), :4692 (plugin buttons)
   });
-  document.querySelectorAll('#source-seg button[data-plugin-src]').forEach((b) => {
+  document.querySelectorAll('#source-seg button[data-plugin-src], #source-seg button[data-spec-builder]').forEach((b) => {
     b.classList.remove('on');
     b.setAttribute('aria-pressed', 'false');
   });
@@ -31797,6 +31929,7 @@ askPanel = createAskPanel({
   confirm: confirmModal,
   getPageContext,
   openNewPipeline,
+  onUseSpec: (spec) => openNewPipeline({ kind: 'spec', ...spec }),
   openComposer: (id) => { openWorkflowFromAsk(id); },
   openClaudeSetup: () => { openClaudeSetup(); },
   loadMarkdown: loadAskMarkdown,

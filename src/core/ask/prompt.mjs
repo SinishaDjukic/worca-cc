@@ -517,6 +517,8 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
       // workflowId once the user saved it; a run card keeps its pre-P3 line byte for byte.
       const one = (c) => (c.type === 'workflow'
         ? `workflow ${label(c.id)} ${label(c.state)} "${clip(c.name || '', titleMax)}"${c.workflowId ? ` → ${label(c.workflowId)}` : ''} (on ${clip(c.targetName, titleMax)})`
+        : c.type === 'spec'
+          ? `spec card "${clip(c.title || '', titleMax)}" for ${clip(c.projectName || c.projectKey || '', titleMax)} (${label(c.state)})`
         : c.type === 'metrics' || c.type === 'policy' || c.type === 'schedule' || c.type === 'clone' || c.type === 'web' || c.type === 'workspace' || c.type === 'actions' || c.type === 'away'
           || c.type === 'canvas-edit' || c.type === 'workflow-build' || c.type === 'agent-draft' || c.type === 'script-draft'
           ? `${c.type} ${label(c.id)} ${label(c.state)} "${clip(c.summary || '', titleMax)}"`

@@ -35,6 +35,7 @@ import { defaultScheduleDeps } from './schedule-deps.mjs';
 import { defaultSourceDeps } from './source-deps.mjs';
 import { defaultModelDeps } from './model-deps.mjs';
 import { defaultCloneDeps } from './clone-deps.mjs';
+import { defaultSpecDeps } from './spec-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
@@ -81,6 +82,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultSourceDeps(),
       ...defaultModelDeps({ threadId }),
       ...defaultCloneDeps(),
+      ...defaultSpecDeps(),
       ...defaultWorkspaceDeps(),
       // Actions (docs/actions.md "Ask Worca"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
