@@ -14,7 +14,7 @@ import { checkC4, isBlocking } from '../scripts/c4-check.mjs';
 import runCheck from '../scripts/c4-check.mjs';
 import runDiscover, { setupFormData } from '../scripts/c4-discover.mjs';
 import { renderPlan, parseFormats } from '../scripts/c4-render.mjs';
-import { browserCandidates } from '../scripts/c4-raster.mjs';
+import { browserCandidates, noBrowserReason } from '../scripts/c4-raster.mjs';
 import { c4Roots, resolveC4Path, toPosixRel } from '../scripts/c4-paths.mjs';
 import { parseBandLines, bandsFor, mockC4Source, writeMockC4 } from '../src/core/c4-mock.mjs';
 import { migrate } from '../src/core/db.mjs';
@@ -170,6 +170,11 @@ test('browserCandidates: an override first, then the OS install paths, then PATH
   assert.ok(mac.includes('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'));
   const linux = browserCandidates('linux', { PATH: '/usr/bin:/snap/bin' });
   assert.ok(linux.includes(join('/usr/bin', 'chromium')) && linux.includes(join('/snap/bin', 'google-chrome')));
+});
+
+test('no browser: the reason names the fix (the -full image in a container, WORCA_CHROME elsewhere)', () => {
+  assert.match(noBrowserReason({ WORCA_CONTAINER: '1' }), /-full image/);
+  assert.match(noBrowserReason({}), /set WORCA_CHROME/);
 });
 
 test('the mock architect honours the setup answers and writes a file the check passes', async () => {

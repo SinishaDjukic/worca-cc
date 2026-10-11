@@ -51,6 +51,12 @@ export function findBrowser(platform = process.platform, env = process.env) {
   return null;
 }
 
+/** Why there are no images, in the words that fix it: the slim container image ships no browser. */
+export function noBrowserReason(env = process.env) {
+  if (env.WORCA_CONTAINER === '1') return 'no browser in this image: run the -full image (it ships Chromium) or set WORCA_CHROME';
+  return 'no Chrome, Chromium or Edge found (set WORCA_CHROME to its executable)';
+}
+
 function fontFaces() {
   const faces = [];
   for (const [family, weight, file] of FONT_FILES) {
@@ -114,7 +120,7 @@ function cdpClient(ws) {
 export async function openRaster({ timeoutMs = 20000 } = {}) {
   if (typeof WebSocket !== 'function') return { reason: 'this Node has no WebSocket (needs Node 22+)' };
   const exe = findBrowser();
-  if (!exe) return { reason: 'no Chrome, Chromium or Edge found (set WORCA_CHROME to its executable)' };
+  if (!exe) return { reason: noBrowserReason() };
   const profile = mkdtempSync(join(tmpdir(), 'worca-c4-'));
   const args = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', '--mute-audio', 'about:blank'];
