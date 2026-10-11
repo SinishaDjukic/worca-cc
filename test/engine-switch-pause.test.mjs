@@ -98,12 +98,16 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   assert.equal(res.status, 'paused');
   assert.equal(res.reason, 'usage_limit');
   assert.equal(res.limitEngine, 'claude', 'the done payload names the engine');
+  assert.equal(typeof res.limitResetAt, 'string', 'the done payload carries the parsed reset time');
+  assert.ok(Number.isFinite(Date.parse(res.limitResetAt)));
   assert.equal(orch.getState().limitEngine, 'claude', 'the live state too');
   const saved = readPipelineForResume(orch.state.id);
   assert.equal(saved.resumePoint.limitEngine, 'claude', 'the resume point keeps it across a restart');
   assert.equal(readPipelineStateById(orch.state.id).limitEngine, 'claude', 'the saved row\'s state reads it back');
+  assert.equal(readPipelineStateById(orch.state.id).limitResetAt, res.limitResetAt, 'the saved row\'s state reads the reset time back');
   const row = (await listPipelines(dir)).find((p) => p.id === orch.state.id);
   assert.equal(row.limitEngine, 'claude', 'the history list row too');
+  assert.equal(row.limitResetAt, res.limitResetAt, 'the history list row carries the reset time');
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.state.id).map((e) => e.text).join('\n');
   assert.match(audit, /Resume after the reset, or continue now on Codex or Cursor, or resume with another model\./);
 

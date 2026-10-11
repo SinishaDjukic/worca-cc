@@ -27,3 +27,4 @@ docker/.pack/
 docs/changelog/worca-app-v*.html
 !docs/changelog/worca-app-v*.src.html
 test/live/out/
+.gstack/

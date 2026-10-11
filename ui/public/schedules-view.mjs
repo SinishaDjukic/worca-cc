@@ -9,6 +9,7 @@
 //   view.showTab(tab)    'activity' (default) | 'once' | 'repeating' — the route's param
 //   view.loadFeed()      feed only (`notification`, `notifications-changed`)
 //   view.upcoming(ms)    tickets due within `ms` — the Running view's Scheduled group
+//   view.tickets() / noteTicket(t) / forgetTicket(id)   every ticket; upsert one by id; drop one
 //   view.destroy()       stop the countdown tick
 
 import { formatInstant, formatCountdown } from '../../src/shared/schedule/recurrence.mjs';
@@ -454,6 +455,15 @@ export function createSchedulesView({ tabsHost = null, feedHost, onceHost, repea
       const limit = Date.now() + ms;
       return model.tickets.filter((t) => t.status === 'missed' || (t.after && (t.status === 'scheduled' || t.status === 'firing')) || Date.parse(t.runAt) <= limit);
     },
+    /** Every ticket the server listed (scheduled, firing, missed) — unlike upcoming(), none is dropped for being far out. */
+    tickets() { return model.tickets; },
+    /** Upsert a ticket by id (an optimistic add before the next load). */
+    noteTicket(t) {
+      const i = model.tickets.findIndex((x) => x.id === t.id);
+      if (i < 0) model.tickets.push(t);
+      else model.tickets[i] = t;
+    },
+    forgetTicket(id) { model.tickets = model.tickets.filter((t) => t.id !== id); },
     ticketRow,
     isLoaded: () => model.loaded,
     destroy() { clearInterval(timer); timer = null; },

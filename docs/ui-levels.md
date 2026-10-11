@@ -167,6 +167,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner, retained-work banner | all |
+| Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
+| Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
+| Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
@@ -188,6 +191,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | "Answered for you", as on the run page | S |
+| History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Diff tab, diff pill, inline comments; Create PR / View PR; branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
@@ -234,7 +238,7 @@ inside the view.
 | Element | Level |
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
-| Runs tab: Budget & cost limits | S |
+| Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |

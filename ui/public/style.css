@@ -5247,6 +5247,7 @@ button.rd-srow:hover{background:var(--hover-on-field);}
   .side-toggle{display:none;}
 }
 @media (max-width:760px){
+  .rd-ov-state .limit-resume{flex-basis:100%;width:100%}
   .mbar-menu{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 auto;
     width:40px;height:40px;padding:0;border:0;border-radius:12px;background:transparent;color:var(--ink);cursor:pointer;}
   .mbar-menu svg{width:22px;height:22px;}

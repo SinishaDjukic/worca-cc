@@ -46,6 +46,10 @@ test('live row states: questions name their step, pause reasons, a named failure
   assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).word, 'Claude usage limit');
   assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit' }).word, 'Usage limit', 'a limit that was not the engine\'s (OpenRouter) names none');
   assert.equal(liveRowState({ status: 'paused', pauseReason: null }).word, 'Paused');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude', limitNote: 'resets 18:00' }).detail, 'resets 18:00', 'a usage-limit pause carries its reset note');
+  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit', limitNote: 'resets 18:00' }).detail, 'resets 18:00');
+  assert.equal(liveRowState({ status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' }).detail, '', 'no note: no detail');
+  assert.equal(histRowState({ status: 'paused', pauseReason: 'usage_limit' }).detail, '');
   assert.equal(liveRowState({ status: 'paused', ask: { kind: 'form' } }).icon, 'paused',
     'a pause outranks the question, as statusPill does');
   assert.deepEqual(liveRowState({ status: 'error', failedStep: 'Tester' }), { icon: 'fail', word: 'Tester failed', detail: '' });

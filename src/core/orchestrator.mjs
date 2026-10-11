@@ -1681,6 +1681,7 @@ export class GraphOrchestrator extends RunHarness {
    *    after the last phase (_finishComposite).
    */
   async _afterExecution(nc, ctx, result) {
+    this._autoLimitResumes = 0;   // D7: real progress ends an automatic-resume streak
     // `missing` = the verifier never wrote its verdict (MAJ-10). Persisting that as
     // a zero-issue row makes History render a genuine-looking clean review of work
     // nobody reviewed, so the row is SKIPPED; the run log + state.warnings carry it.
