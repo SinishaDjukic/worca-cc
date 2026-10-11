@@ -478,7 +478,7 @@ test('a refused command from a NOTIFIED chat gets one throttled hint naming its 
   assert.equal(first.severity, 'warning');
   assert.match(text(first), /not allowed to send commands/);
   assert.match(text(first), /`-100123`/);
-  assert.match(text(first), /Allowed chat IDs/);
+  assert.match(text(first), /\*\*Allowed chat IDs\*\* in worca → Marketplace → telegram-chat → Settings\./, 'the hint names the Marketplace page');
   assert.match(text(first), /telegram-chat/);
 
   assert.equal(await send('/approve', '-100123'), null, 'throttled inside the window');

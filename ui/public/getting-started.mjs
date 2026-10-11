@@ -14,7 +14,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
   { id: 'run',         label: 'Watch a run end to end',          vig: 'run' },
   { id: 'ask',         label: 'Ask Worca about a run',           vig: 'ask' },
   { id: 'realRun',     label: 'Run a real pipeline',             vig: 'realRun' },
-  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow',    level: 'advanced' },
+  { id: 'workflows',   label: 'Explore the built-in workflows',  vig: 'workflow' },
   { id: 'workspace',   label: 'Group projects into a workspace', vig: 'workspace',   level: 'advanced' },
   { id: 'teamMetrics', label: 'Turn on team metrics',            vig: 'teamMetrics', level: 'expert' },
   { id: 'teamPolicy',  label: 'Set a team policy',               vig: 'teamPolicy',  level: 'expert' },
@@ -22,7 +22,7 @@ export const GETTING_STARTED_STEPS = Object.freeze([
 
 // `level` (docs/ui-levels.md) is the interface mode a step's controls live in; absent = simple.
 // Every tile shows at every mode — the count stays "n of 9" — but a step above the current mode
-// wears its level, and its guide opens by ringing the mode switch.
+// wears its level, and its guide asks to switch the mode before it starts.
 const LEVEL_ORDER = ['simple', 'advanced', 'expert'];
 const LEVEL_LABEL = { advanced: 'Advanced', expert: 'Expert' };
 
@@ -234,7 +234,7 @@ export function renderGettingStarted(host, status, { onStep, onHide, animate = t
 /* ------------------------------------------------------------------- pill */
 
 /**
- * The sidebar row under New pipeline: "Getting started · 2/9". It follows the
+ * The sidebar's first row: "Getting started · 2/9". It follows the
  * user to every view (the guides leave the shelf behind) and vanishes once the
  * checklist is hidden or complete — nothing left to nag about.
  * @param {Element} host

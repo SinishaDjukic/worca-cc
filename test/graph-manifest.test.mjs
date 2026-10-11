@@ -244,3 +244,11 @@ test('the manifest keeps the engine params port and its marker, so a resumed run
   assert.equal(cell.config.paramsPort, true, 'the authored config rides verbatim: scriptNodeCtx re-derives paramsPort from it on resume');
   assert.deepEqual(manifestPortsFn(m)({ id: 'n_tests' }).inputs.map((p) => [p.id, p.engine ?? null]), [['done', null], ['params', 'params'], ['await', null]]);
 });
+
+test('codeGraph:false is frozen into the manifest (resume decides the same); absent otherwise', async () => {
+  const { GRAPH_PR_FIX_WORKFLOW, GRAPH_DEFAULT_WORKFLOW } = await import('../src/core/graph/builtin-workflows.mjs');
+  assert.equal(GRAPH_PR_FIX_WORKFLOW.codeGraph, false, 'the PR fix workflow skips the graph build');
+  assert.equal(buildGraphManifest({ ...TPL, codeGraph: false }, AGENTS).codeGraph, false);
+  assert.equal('codeGraph' in build(), false);
+  assert.equal('codeGraph' in GRAPH_DEFAULT_WORKFLOW, false);
+});

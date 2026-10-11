@@ -321,7 +321,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     root.appendChild(head);
   }
   root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
-    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models tab and pick them anywhere a model is picked."));
+    "Providers let Worca run models that don't speak the Anthropic API — through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
   // Credential broker: keys and the Copilot sign-in are per person, on the broker's key page.
   // This card keeps the shared settings (base URLs, concurrency, the Copilot notice, imports);
   // its key fields, sign-in and key test are hidden (style.css .mv-providers--broker).
@@ -1043,8 +1043,8 @@ export function applyConnectionMode(connEl) {
   const p = conn._providers;
   if (hint) {
     if (!p) hint.textContent = '';
-    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected — sign in on the Providers card above, or Save is refused.';
-    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint — no key needed.' : 'No provider key — set one on the Providers card, or override it under Advanced.');
+    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected — sign in on the Providers page, or Save is refused.';
+    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint — no key needed.' : 'No provider key — set one on the Providers page, or override it under Advanced.');
     hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !(p?.[provider]?.configured || p?.[provider]?.keyOptional)) && p ? ' warn' : ''}`;
   }
   const note = conn.querySelector('.mv-conn-note');

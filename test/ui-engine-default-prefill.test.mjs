@@ -67,7 +67,7 @@ test('a project default of Codex prefills Codex and says it comes from the proje
   assert.equal(on(ctx.doc), 'codex');
   assert.equal(ctx.doc.getElementById('engine-default-hint').hidden, false);
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from project');
-  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Models: Settings › Models › Codex');
+  assert.equal(ctx.doc.getElementById('engine-hint').textContent, 'Codex runs this pipeline, including titles and summaries. Its models: Models › Codex');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'codex');
 });
@@ -83,7 +83,7 @@ test('a user default of Copilot prefills Copilot and sends it', async () => {
 test('switching back to Claude over a Codex default sends engine: claude (Review Focus 1)', async () => {
   const ctx = await boot({ defaults: () => ({ engine: { value: 'codex', source: 'user' }, steps: { claude: {}, codex: { planner: { model: 'gpt-5.5', source: 'project' } } } }) });
   assert.equal(ctx.doc.getElementById('engine-default-hint').textContent, 'Default from your settings');
-  assert.match(ctx.doc.getElementById('engine-hint').textContent, /Models: project Settings$/);
+  assert.match(ctx.doc.getElementById('engine-hint').textContent, /Its models: project Settings$/);
   { const s = ctx.doc.getElementById('engineSelect'); s.value = 'claude'; s.dispatchEvent(new ctx.window.Event('change', { bubbles: true })); }
   for (let i = 0; i < 4; i++) await tick();
   assert.equal(ctx.doc.getElementById('engine-default-hint').hidden, true, 'not the default any more');

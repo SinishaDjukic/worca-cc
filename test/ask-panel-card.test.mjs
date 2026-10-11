@@ -794,7 +794,7 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
   // workspace `.ask-mcard-note b`, web and actions `.ask-mcard-note i`, web's exact URL as text):
   // the five bodies are carried whole, cosmetic rows included.
   await checkRows([
-    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links Settings › Models; a removal reads as one', run: async () => {
+    { name: 'model card: the change list, warnings, Decline / Apply post the card verbs; applied links the Models page; a removal reads as one', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);
       const ctx = await openWithCard(PROJECT_CARD, rec, { fetchHandler: (url, opts) => {
@@ -824,7 +824,8 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       const done = ctx.doc.querySelector('[data-ask-modcard="applied"]');
       assert.equal(done.querySelector('.ask-mcard-title').textContent, 'Applied model change');
       assert.equal(done.querySelector('.ask-mcard-detail').textContent, 'oa updated');
-      assert.ok(done.querySelector('a[href="#settings/models"]'));
+      const open = done.querySelector('a[href="#models"]');
+      assert.equal(open && open.textContent, 'Models', 'the card links the Models page');
       assert.equal(done.querySelector('.ask-modcard-warn'), null, 'warnings belong to the proposal');
       const rm = { ...card, kind: 'remove_model', summary: 'Remove model OA', rows: [{ field: 'Label', before: 'OA', after: null }], warnings: [] };
       ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_0000000b', state: 'proposed', card: rm }, threadId: TID, messageId: MID, seq: 5 });

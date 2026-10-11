@@ -5,6 +5,22 @@ import { isAzureHost, parseAzurePath, parseAzurePrUrl } from '../shared/azure-re
 
 export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps' });
 
+export function parseGithubPrUrl(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^https:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/pull\/([1-9]\d*)$/.exec(value);
+  if (!m) return null;
+  const [, owner, repo, raw] = m;
+  if (!owner || !repo || owner.includes('@')) return null;
+  const number = Number(raw);
+  if (!Number.isSafeInteger(number)) return null;
+  return { owner, repo, number, url: `https://github.com/${owner}/${repo}/pull/${number}` };
+}
+
+/** A PR Watch PR can follow (#619): a canonical github.com PR, or an Azure DevOps one. */
+export function watchablePrUrl(value) {
+  return !!(parseGithubPrUrl(value) || parseAzurePrUrl(value));
+}
+
 /**
  * Parse a git remote URL into { host, owner, repo } or null when it is not a
  * hosted owner/repo URL (local paths, file://, bare hosts). Accepts

@@ -1,0 +1,367 @@
+{
+  "key": "architectSetup",
+  "metaVersion": 2,
+  "mockRole": "clarify",
+  "humanEffort": {
+    "hours": 0.25
+  },
+  "promptHints": "Copy the formData object from the discovery JSON (the found input) verbatim into {\"form\":\"c4-setup\",\"data\":<formData>}, write it to the answers path and stop.",
+  "inputs": [
+    {
+      "id": "task",
+      "type": "md"
+    },
+    {
+      "id": "found",
+      "type": "json"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "answers",
+      "type": "json",
+      "filename": "c4-setup.json",
+      "artifactKind": "c4-setup"
+    }
+  ],
+  "domain": "architecture",
+  "displayName": "C4: setup",
+  "description": "Asks which C4 file to update, or where to create a new one; for a new one the grouping bands and the prose criteria that decide what goes in each; and which images to export. One Ask form; the answers steer the architect and the render card.",
+  "color": "red",
+  "icon": "<rect x=\"3\" y=\"9\" width=\"6\" height=\"6\" rx=\"1.6\"/><rect x=\"15\" y=\"4\" width=\"6\" height=\"5.5\" rx=\"1.6\"/><rect x=\"15\" y=\"14.5\" width=\"6\" height=\"5.5\" rx=\"1.6\"/><path d=\"M9 12h3M12 12V6.8h3M12 12v5.2h3\"/>",
+  "agentFile": "worca-cc-architect-setup.md",
+  "runnerType": "clarifier",
+  "asksQuestions": true,
+  "questionsLocked": true,
+  "questionsDefault": true,
+  "order": 63,
+  "ask": {
+    "forms": {
+      "c4-setup": {
+        "version": 1,
+        "title": "Architecture (C4): which file, which bands?",
+        "data": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "maxItems": 40,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "path"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "path": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "project": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "views": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "bands": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "status": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "defaultTarget": {
+              "type": "string",
+              "enum": [
+                "Update a found file",
+                "Create a new file"
+              ]
+            },
+            "projects": {
+              "type": "array",
+              "maxItems": 40,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "name": {
+                    "type": "string",
+                    "maxLength": 120
+                  }
+                }
+              }
+            },
+            "defaultProject": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "defaultFile": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "required": [
+            "target"
+          ],
+          "properties": {
+            "target": {
+              "type": "string",
+              "enum": [
+                "Update a found file",
+                "Create a new file"
+              ],
+              "defaultFrom": "data.defaultTarget",
+              "default": "Create a new file"
+            },
+            "file": {
+              "type": "string",
+              "maxLength": 300,
+              "defaultFrom": "data.defaultFile"
+            },
+            "newPath": {
+              "type": "string",
+              "maxLength": 300,
+              "default": "docs/architecture/architecture.c4"
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "Whole project",
+                "Only what the task names"
+              ],
+              "default": "Whole project"
+            },
+            "bandsPreset": {
+              "type": "string",
+              "enum": [
+                "Standard: People \u00b7 Clients \u00b7 Host \u00b7 External",
+                "Deployment: You \u00b7 Host \u00b7 Services \u00b7 Data \u00b7 Models",
+                "No bands (element views only)",
+                "My own (below)"
+              ],
+              "default": "Standard: People \u00b7 Clients \u00b7 Host \u00b7 External"
+            },
+            "bands": {
+              "type": "string",
+              "maxLength": 6000
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "exports": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "SVG",
+                  "JPEG",
+                  "PNG"
+                ]
+              },
+              "default": [
+                "SVG",
+                "JPEG"
+              ]
+            },
+            "exportViews": {
+              "type": "string",
+              "enum": [
+                "All views",
+                "Deployment sheet only"
+              ],
+              "default": "All views"
+            },
+            "imagesTo": {
+              "type": "string",
+              "enum": [
+                "Beside the file (committed)",
+                "Run artifacts only"
+              ],
+              "default": "Beside the file (committed)"
+            },
+            "newProject": {
+              "type": "string",
+              "enumFrom": "data.projects[].id",
+              "defaultFrom": "data.defaultProject"
+            }
+          }
+        },
+        "layout": [
+          {
+            "widget": "markdown",
+            "bind": "data.summary"
+          },
+          {
+            "widget": "select",
+            "field": "target",
+            "label": "What to do",
+            "style": "segmented"
+          },
+          {
+            "widget": "table-select",
+            "bind": "data.files",
+            "field": "file",
+            "label": "File to update",
+            "columns": [
+              {
+                "key": "path",
+                "label": "File"
+              },
+              {
+                "key": "project",
+                "label": "Project"
+              },
+              {
+                "key": "views",
+                "label": "Views"
+              },
+              {
+                "key": "bands",
+                "label": "Bands"
+              },
+              {
+                "key": "status",
+                "label": "Status"
+              }
+            ],
+            "when": {
+              "target": "Update a found file"
+            }
+          },
+          {
+            "widget": "select",
+            "field": "newProject",
+            "label": "Project",
+            "style": "segmented",
+            "help": "Where the new file goes. On a workspace run, pick the member that should own the model.",
+            "when": {
+              "target": "Create a new file"
+            },
+            "options": {
+              "from": "data.projects",
+              "value": "id",
+              "label": "name"
+            }
+          },
+          {
+            "widget": "text",
+            "field": "newPath",
+            "label": "Path for the new file",
+            "mono": true,
+            "help": "Relative to the project root. The folder is created.",
+            "when": {
+              "target": "Create a new file"
+            }
+          },
+          {
+            "widget": "select",
+            "field": "scope",
+            "label": "Scope",
+            "style": "segmented",
+            "help": "Whole project reads the codebase top to bottom. The other only touches what the task text names."
+          },
+          {
+            "widget": "select",
+            "field": "bandsPreset",
+            "label": "Grouping bands",
+            "style": "cards",
+            "help": "A band is a horizontal layer of the deployment sheet. Each carries prose criteria; the architect places elements by those criteria and the viewer draws them in this order.",
+            "when": {
+              "target": "Create a new file"
+            }
+          },
+          {
+            "widget": "textarea",
+            "field": "bands",
+            "label": "Your bands, one per line: Name \u2014 criteria",
+            "rows": 8,
+            "placeholder": "You \u2014 things a person operates directly: UIs, CLIs, chat clients\nWorca host \u2014 everything that runs where Worca is installed\n  @worca/app \u2014 modules of the core library, one tile each\nModels \u2014 external model APIs a harness calls",
+            "help": "Indent a line with two spaces to nest it as a frame inside the band above. Criteria are free prose for the architect; they are stored in the file as metadata and shown in the viewer.",
+            "when": {
+              "bandsPreset": "My own (below)"
+            }
+          },
+          {
+            "widget": "group",
+            "title": "Images",
+            "children": [
+              {
+                "widget": "multiselect",
+                "field": "exports",
+                "label": "Export formats",
+                "style": "chips",
+                "help": "Every view is rendered with the same renderer the viewer uses. JPEG and PNG need Chrome, Chromium or Edge on the host; without one only SVG is written."
+              },
+              {
+                "widget": "select",
+                "field": "exportViews",
+                "label": "Which views",
+                "style": "segmented"
+              },
+              {
+                "widget": "select",
+                "field": "imagesTo",
+                "label": "Where to save them",
+                "style": "segmented",
+                "help": "Committed images sit in <name>.renders/ beside the file. Either way they are in this run's Artifacts."
+              }
+            ]
+          },
+          {
+            "widget": "textarea",
+            "field": "notes",
+            "label": "Anything the architect should know",
+            "rows": 3,
+            "placeholder": "e.g. ignore the legacy/ folder; the broker is optional; name the harnesses by their CLI"
+          }
+        ],
+        "example": {
+          "summary": "Two C4 files found. Pick one to update, or create a new one.",
+          "files": [
+            {
+              "id": "docs/architecture.c4",
+              "path": "docs/architecture.c4",
+              "project": "worca-cc",
+              "views": "14 views",
+              "bands": "You \u00b7 Worca host \u00b7 Models",
+              "status": "parses"
+            }
+          ],
+          "defaultTarget": "Update a found file",
+          "projects": [
+            {
+              "id": "worca-cc",
+              "name": "worca-cc"
+            }
+          ],
+          "defaultProject": "worca-cc",
+          "defaultFile": "docs/architecture.c4"
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 // src/core/mcp/views.mjs
-// Read models for Settings › MCP servers (spec §7), the project MCP tab (§8) and Test (§7.3). Pure
+// Read models for the Connectors page (spec §7), the project MCP tab (§8) and Test (§7.3). Pure
 // builders over { snapshot, catalog, teams, host facts, … } — every per-member state comes from the
 // resolver itself, run on one set as a spawn would (resolveSet) — plus thin async shells that gather
 // those inputs. Nothing here writes, and no secret value ever leaves: secrets read as { set, updatedAt, env? }.

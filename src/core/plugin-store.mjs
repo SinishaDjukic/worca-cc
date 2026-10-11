@@ -819,7 +819,7 @@ export async function doctorPlugin(name) {
         // upgrade flipped the source to multiProfile — a plugin nothing can run.
         const profiles = s.multiProfile ? listProfileIds(name) : [];
         if (s.multiProfile && !profiles.length) {
-          c(`config:${s.id}`, false, 'no profiles yet — create one in Plugins settings (every run is rejected until then)');
+          c(`config:${s.id}`, false, 'no profiles yet — create one on the Marketplace page (every run is rejected until then)');
           continue;
         }
         for (const profile of profiles.length ? profiles : [undefined]) {

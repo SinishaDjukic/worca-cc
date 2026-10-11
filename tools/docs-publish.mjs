@@ -71,8 +71,9 @@ if (stableVersion && !versions.includes(stableVersion)) {
 // --- build the target's tree exactly as Workers Builds will --------------------
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'worca-docs-publish-'));
 try {
-  // The paths build.mjs reads: changelog pages point at ui/public/assets for the logo.
-  const archive = spawnSync('git', ['archive', '--format=tar', target, 'package.json', 'docs', 'docs-site', 'ui/public/assets'], {
+  // The paths build.mjs reads: changelog pages point at ui/public/assets for the logo; the
+  // /architecture/ page copies the C4 viewer and its dagre from ui/public/c4.
+  const archive = spawnSync('git', ['archive', '--format=tar', target, 'package.json', 'docs', 'docs-site', 'ui/public/assets', 'ui/public/c4'], {
     cwd: repo, maxBuffer: 1024 * 1024 * 1024,
   });
   if (archive.status !== 0) fail(`git archive failed: ${archive.stderr}`);

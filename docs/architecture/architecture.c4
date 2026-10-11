@@ -1,0 +1,1040 @@
+// Worca — architecture as code (LikeC4)
+// Source of truth: the code of github.com/SinishaDjukic/worca-cc at @worca/app 1.10.0
+// (HEAD fc5ba23, schema v54). Every element names the file or directory it stands for; every
+// relationship was checked against an import or a call site. Where docs/ARCHITECTURE.md
+// disagrees with the code, the code wins (see the deployment view's description).
+// Validate:  node scripts/c4-check-cli.mjs docs/architecture/architecture.c4
+// Preview:   docs/architecture/viewer.html, or open the file from a run's Artifacts tab
+
+specification {
+
+  color worcaRed #c8323c
+  color agentTeal #1f7a78
+  color scriptOchre #a9741b
+
+  element actor {
+    style {
+      shape person
+      color slate
+    }
+  }
+  element system {
+    style {
+      color worcaRed
+    }
+  }
+  element external {
+    style {
+      color muted
+    }
+  }
+  element client {
+    style {
+      shape browser
+      color sky
+    }
+  }
+  element process {
+    style {
+      color worcaRed
+    }
+  }
+  element module {
+    style {
+      color slate
+    }
+  }
+  element harness {
+    style {
+      color indigo
+    }
+  }
+  element store {
+    style {
+      shape storage
+      color gray
+    }
+  }
+  element catalog {
+    style {
+      color muted
+    }
+  }
+  element workflow {
+    style {
+      color muted
+    }
+  }
+  element agent {
+    style {
+      color agentTeal
+    }
+  }
+  element script {
+    style {
+      color scriptOchre
+    }
+  }
+  element flow {
+    style {
+      shape queue
+      color gray
+    }
+  }
+
+  relationship loop {
+    color amber
+    line dashed
+  }
+  relationship spawns {
+    color indigo
+    line solid
+  }
+  relationship guards {
+    color red
+    line dotted
+  }
+
+  tag human
+  tag gate
+  tag optional
+  tag fanout
+  tag beta
+  tag unverified
+
+  deploymentNode zone
+  deploymentNode machine
+  deploymentNode runtime
+}
+
+model {
+
+  // ───────────────────────── People ─────────────────────────
+
+  developer = actor 'Developer' {
+    description 'Describes a task, answers clarify questions, approves loops and ships the PR.'
+  }
+  lead = actor 'Team lead' {
+    description 'Publishes team policy and reads team metrics.'
+  }
+
+  // ─────────────────────── Harnesses (one per run, --engine) ───────────────────────
+  // src/core/engines/index.mjs registers claude, codex, copilot, cursor and mock.
+  // The engine is picked per RUN (settings-cascade.mjs runEngine, default claude), not per node.
+
+  claudeCode = harness 'Claude Code' {
+    description 'The `claude` CLI, one headless process per agent step inside the run\'s worktree. The only harness that goes through the model bridge or the credential broker, and the only one with full deny-rule enforcement.'
+    technology 'claude -p --output-format stream-json (src/core/engines/claude.mjs)'
+  }
+  codex = harness 'Codex' {
+    #beta
+    description 'The `codex` CLI, `codex exec --json`. Signs in with its own ChatGPT account or connects straight to an OpenAI Responses endpoint from the catalog; the bridge is never in its path. Deny rules: Bash and WebSearch enforced, paths and MCP rules not.'
+    technology 'codex exec (src/core/engines/codex.mjs)'
+  }
+  copilotCli = harness 'Copilot CLI' {
+    #beta
+    description 'The GitHub `copilot` CLI with its own sign-in. Owns no catalog models and reports no cost. Not the same thing as Copilot-as-a-provider, which runs Claude Code through the bridge.'
+    technology 'copilot --output-format json (src/core/engines/copilot.mjs)'
+  }
+  cursorCli = harness 'Cursor' {
+    #beta
+    #unverified
+    description 'The `cursor-agent` CLI. Written without the CLI installed: its own header says none of it is verified. No cost, no sub-agents, no skills; helper jobs run on Claude instead.'
+    technology 'cursor-agent -p (src/core/engines/cursor.mjs)'
+  }
+
+  // ─────────────────────── Model endpoints ───────────────────────
+
+  models = external 'Model endpoints' {
+    description 'Where a harness sends its model calls. Routing is per catalog entry (src/core/config.mjs resolveModelEnv).'
+
+    anthropic = external 'Anthropic cloud' {
+      description 'Claude Code\'s own sign-in; the default when a catalog entry has neither env nor upstream.'
+    }
+    gateway = external 'Anthropic-compatible gateway' {
+      description 'Any endpoint reached by putting ANTHROPIC_BASE_URL in the entry\'s env. Bedrock, Vertex and Foundry work the same way, through the CLI\'s own CLAUDE_CODE_USE_* switches: Worca has no code for them.'
+    }
+    openaiCompat = external 'OpenAI-compatible endpoint' {
+      description 'llama.cpp, Ollama, LM Studio, vLLM, OpenRouter. Reached through the bridge, which translates the Messages API to chat completions or the Responses API.'
+    }
+    openai = external 'OpenAI API' {
+      description 'A bridge provider for Claude Code, and the direct endpoint for Codex when the entry is openai-responses.'
+    }
+    copilotApi = external 'GitHub Copilot API' {
+      description 'api.githubcopilot.com. A bridge provider (Worca holds the GitHub token and exchanges it) and the Copilot CLI\'s own backend.'
+    }
+    cursorCloud = external 'Cursor cloud' {
+      description 'The Cursor CLI\'s own backend, reached with its sign-in or CURSOR_API_KEY.'
+    }
+  }
+
+  forge = external 'Git host' {
+    description 'GitHub or Azure DevOps: the project\'s origin, pull requests, and the orphan worca-metrics and worca-policy branches.'
+  }
+
+  chatPlatforms = external 'Chat platforms' {
+    description 'Telegram, Slack, Discord, Microsoft Teams.'
+  }
+
+  mcpServers = external 'MCP servers' {
+    description 'stdio, http or sse servers from Worca\'s own registry (Atlassian, Cloudflare, Firebase, Notion, Railway, or added by hand).'
+  }
+
+  // ───────────────────────────── Worca ─────────────────────────────
+
+  worca = system 'Worca' {
+    description 'Turns a task into reviewed, merge-ready work: a deterministic multi-agent pipeline with quality gates, budgets and a human in the loop.'
+    link https://github.com/SinishaDjukic/worca-cc 'Repository'
+    link https://docs.worca.dev 'Docs'
+
+    // ── Ways in ──
+
+    webui = client 'Web UI' {
+      description 'Runs cockpit, Workflow Composer, Ask Worca, Settings. Talks REST and WebSocket to the server.'
+      technology 'Browser SPA (ui/public)'
+    }
+    cli = client 'CLI' {
+      description '`worca`: a run from flags (--prompt, --workflow), resume, runs, logs, schedule, workflow, script, models, plugin, marketplace, policy, metrics, container, broker, ui. `worca ui` spawns ui/server.mjs as a child. A run started here builds its own orchestrator in-process; it does not go through the HTTP server. The CLI and the UI server share one SQLite database and coordinate through it.'
+      technology 'Node.js (src/cli/worca-cc.mjs)'
+      style {
+        shape rectangle
+      }
+    }
+    c4View = client 'C4 viewer' {
+      description 'The <worca-c4> web component: its own parser for a LikeC4 subset, dagre layout for element views and a band/frame/tile sheet for deployment views. The same module draws .c4 artifacts in the Web UI, backs docs/architecture/viewer.html, and is imported headless by the c4 scripts, so a file that passes the check is a file the viewer draws.'
+      technology 'ui/public/c4/c4-view.mjs, artifact-view-c4.mjs, vendored dagre.min.js'
+    }
+    skill = client '/worca skill' {
+      description 'Shells out to the CLI from inside Claude Code; it never calls the HTTP API.'
+      technology 'Claude Code skill (skills/worca/SKILL.md)'
+      style {
+        shape rectangle
+      }
+    }
+    chat = client 'Chat channels' {
+      description 'Telegram, Slack, Discord and Teams plugins, one long-lived child process per enabled channel. They need the UI server: the CLI only uses them for --check.'
+      technology 'Plugin worker processes (plugins/*-chat)'
+      style {
+        shape rectangle
+      }
+    }
+
+    // ── The library every host process loads ──
+
+    app = process '@worca/app' {
+      description 'The core library. docs/ARCHITECTURE.md calls it one Node process; in the code the UI server and each CLI run are separate processes over one SQLite database, and scripts, chat channels, MCP launchers and the Ask MCP server are child processes.'
+      technology 'Node.js >= 22.13, ES modules (src/core)'
+
+      server = module 'HTTP + WebSocket server' {
+        description 'Express static UI, REST API and a WebSocket bridge. The composition root: it starts runs in-process, ticks scheduled runs, hosts chat channels, serves Ask Worca and the terminal, and creates pull requests. Default port 4317.'
+        technology 'ui/server.mjs'
+      }
+
+      harness = module 'Run harness' {
+        description 'Engine-agnostic run shell: run() and resume(), run root and worktrees, guardrails, run context, cost limits, recovery, questions, git checkpoints, step ledger, logs, artifacts, heartbeat.'
+        technology 'src/core/run-harness.mjs'
+      }
+
+      orchestrator = module 'Graph orchestrator' {
+        description 'GraphOrchestrator extends RunHarness and supplies one adapter, _execute, called once per execution. Built per run by createOrchestratorFor in engine-select.mjs, which refuses runs pinned to the retired v1 engine.'
+        technology 'src/core/orchestrator.mjs, engine-select.mjs'
+      }
+
+      scheduler = module 'Graph scheduler' {
+        description 'The in-run dataflow loop: token store, drain/launch walk, per-wire loop budgets and their human gates. Does no IO, so the execution order is deterministic. Not the scheduled-runs store.'
+        technology 'src/core/graph/scheduler.mjs'
+      }
+
+      executor = module 'Executor' {
+        description 'Generic execution layer: output allocation, the Ports prompt block, prompt assembly, clarifier gate, script dispatch. No per-agent branches.'
+        technology 'src/core/graph/executor.mjs'
+      }
+
+      scriptRunner = module 'Script runner' {
+        description 'Runs script cards as one child process each: Node.js, Shell or Python. No model call.'
+        technology 'src/core/graph/script-runner.mjs, script-child.mjs, worca_script.py'
+      }
+
+      auto = module 'Auto workflow' {
+        description 'One classifier call reads the task and a repo fingerprint and returns a shape; the shared assembler turns it into a validated graph; the matcher reuses a saved workflow with the same topology.'
+        technology 'src/core/auto, src/shared/graph/assemble.mjs'
+      }
+
+      registries = module 'Agent, script and workflow registries' {
+        description 'Agents and scripts are data: a prompt or program plus a metadata sidecar with typed ports. Built-in, own and plugin entries load the same way.'
+        technology 'agent-registry.mjs, agent-store.mjs, script-registry.mjs, workflows.mjs, workflow-share.mjs, graph/builtin-workflows.mjs'
+      }
+
+      guardrails = module 'Guardrails' {
+        #gate
+        description 'Named policy sets picked per run, compiled to Claude Code permissions.deny rules plus an optional env scrub. Full enforcement on Claude Code only; the other harnesses enforce a subset and a run on them is refused unless --allow-unguarded-engine is given.'
+        technology 'src/core/guardrails.mjs, guardrail-store.mjs'
+      }
+
+      budget = module 'Costs & budgets' {
+        #gate
+        description 'Per-pipeline and total cost limits over a cost ledger. A cap pauses the run before its next step and blocks new runs until lifted or reset. Copilot and Cursor report no cost.'
+        technology 'src/core/cost-budget.mjs'
+      }
+
+      engines = module 'Engine adapters' {
+        description 'The registry of harness adapters (claude, codex, copilot, cursor, mock) behind the runClaude() facade, which despite its name picks the adapter from the run\'s engine. Each adapter spawns its CLI through one shared supervisor.'
+        technology 'src/core/engines, claude-runner.mjs'
+      }
+
+      bridge = module 'Model bridge' {
+        description 'In-process loopback HTTP server that presents the Anthropic Messages API to the spawned `claude` CLI and forwards to the entry\'s upstream: Copilot, OpenAI, or an Anthropic-compatible one. Only Claude Code uses it.'
+        technology 'src/core/bridge'
+      }
+
+      brokerClient = module 'Broker client' {
+        #optional
+        description 'Worca\'s side of the credential broker. With WORCA_BROKER_URL set, Worca holds no model credential: each claude spawn gets a short-lived token from the broker, the bridge routes through it, and git pushes borrow the github slot. Off when the variable is unset.'
+        technology 'broker-client.mjs, broker-routing.mjs, broker-guard.mjs, broker-boot.mjs, plugin-broker-slots.mjs'
+      }
+
+      mcp = module 'MCP registry' {
+        description 'Servers and skills for Worca only, grouped in sets per project and switched per run. State is files under mcp/, not the database. Secrets reach a server as spawn environment.'
+        technology 'src/core/mcp'
+      }
+
+      skills = module 'Skills registry' {
+        description 'The skill library: imported skills mounted into a run as generated Claude Code plugins.'
+        technology 'src/core/skills-registry'
+      }
+
+      plugins = module 'Plugin system' {
+        description 'A plugin is a git repo or folder with worca-cc-plugin.json. It can add task sources, agents, scripts, skills, workflow templates, models, chat channels and MCP servers. Task-source operations run in an ephemeral child process.'
+        technology 'src/core/plugin-*.mjs, marketplaces.mjs'
+      }
+
+      sources = module 'Task sources' {
+        description 'Where a run\'s task comes from: the prompt, a markdown brief, or a tracker through a plugin connector (GitHub Issues, Azure Boards).'
+        technology 'src/core/sources.mjs, source-bindings.mjs'
+      }
+
+      chatHost = module 'Chat channel host' {
+        description 'Supervises one child process per enabled channel, routes commands and sends notifications. Created only by the UI server.'
+        technology 'src/core/chat'
+      }
+
+      ask = module 'Ask Worca' {
+        description 'Assistant that answers from Worca\'s own records and reads code in read-only detached worktrees. Runs on Claude Code or Codex. Changes are cards the person confirms. Its tools are served by a separate worca MCP stdio process.'
+        technology 'src/core/ask (56 files)'
+      }
+
+      schedules = module 'Scheduled runs' {
+        description 'Launch tickets and repeating schedules in the database. No daemon: the UI server ticks them, or a CLI run with --wait.'
+        technology 'src/core/scheduler.mjs'
+      }
+
+      night = module 'Away mode' {
+        description 'While the person is away, a decider answers open questions and gates by strategy, within configured hours, and records every decision.'
+        technology 'src/core/night, src/shared/away-mode'
+      }
+
+      memory = module 'Agent memory' {
+        description 'Global and per-project memory files that pipeline agents and Ask Worca both load; mounted into each run and synced back.'
+        technology 'src/core/memory-store.mjs, memory-sync.mjs'
+      }
+
+      metrics = module 'Team metrics' {
+        description 'Pushes one record per finished run to the orphan worca-metrics branch on the project\'s origin.'
+        technology 'src/core/metrics'
+      }
+
+      policy = module 'Team policy' {
+        description 'Reads team caps and expectations from the orphan worca-policy branch. Soft by design: defaults and warnings, recorded when overridden.'
+        technology 'src/core/policy'
+      }
+
+      workspaces = module 'Workspaces' {
+        description 'Groups of 2 to 40 repos run as one: per-member worktrees, one review per changed project, per-member PRs, and the cross-repo workspace map.'
+        technology 'src/core/workspaces.mjs, workspace-scan-run.mjs, workspace-map'
+      }
+
+      actions = module 'Actions & terminal' {
+        description 'Checks out a finished run\'s branch and starts the project\'s own commands; server-owned PTY shells streamed over WebSocket. People start commands, agents do not.'
+        technology 'src/core/actions, src/core/terminal'
+      }
+
+      pr = module 'Pull requests' {
+        description 'Pushes the run branch and opens the PR with the GitHub CLI or an Azure DevOps token. Driven by the server\'s Ship-it flow, not by the harness.'
+        technology 'src/core/git-info.mjs, forge.mjs, pr/azure.mjs, pr-description.mjs, github-credentials.mjs, github-app.mjs'
+      }
+
+      hosted = module 'Hosted access' {
+        description 'Multi-person hosted installs: Cloudflare Access identity, JWT issuer, one agent user per signed-in person, drain and heartbeat.'
+        technology 'remote-access.mjs, cf-access.mjs, identity.mjs, issuer-jwt.mjs, agent-pool.mjs, drain.mjs, platform-heartbeat.mjs'
+      }
+    }
+
+    // ── Optional containment (container and hosted installs) ──
+
+    broker = process 'Credential broker' {
+      #optional
+      description 'Separate process (`worca broker`) that holds the model keys. Each `claude` spawn gets a short-lived wbt_ token valid only on the broker\'s private port; the broker adds the real key for its slot: anthropic, openai, openrouter, copilot, github (push as the person), local, and p-* plugin slots. With the broker on, every non-Claude harness is refused.'
+      technology 'Node.js (src/broker), ports 8080 and 8081'
+    }
+
+    egress = process 'Egress proxy' {
+      #optional
+      description 'Forward proxy sidecar that relays only to allowlisted hosts. Unrelated to guardrails, which are per-run permission rules.'
+      technology 'Node.js (src/core/egress-proxy.mjs, egress-policy.mjs)'
+    }
+
+    // ── State ──
+
+    state = store 'Worca home' {
+      description 'Default ~/.worca-cc. Nothing lives in the project\'s working tree.'
+
+      db = store 'worca-cc.db' {
+        description 'All structured state: projects, workspaces, workflows, run state, steps, audit events, clarify Q&A, review verdicts, schedules, Ask threads, terminal sessions, Away decisions. Schema v54 (v54 seeds the Architecture (C4) workflow). Shared by the UI server and every CLI run.'
+        technology 'SQLite, WAL mode (node:sqlite)'
+        style {
+          shape cylinder
+        }
+      }
+      files = store 'External store' {
+        description 'Plan and review markdown, prompt.md, the captured diff and per-run artifacts, keyed by repo identity.'
+        technology 'store/<projectKey>/'
+      }
+      worktrees = store 'Run worktrees' {
+        description 'One git worktree and one worca-cc/… branch per run. The worktree is removed when the run ends; the branch stays.'
+        technology 'git worktree'
+      }
+      memoryFiles = store 'Memory' {
+        description 'Global and per-project memory files.'
+        technology 'memory/'
+      }
+      mcpFiles = store 'MCP registry files' {
+        description 'servers.json, sets.json, secrets.json and tests.json, all mode 0600.'
+        technology 'mcp/'
+      }
+      engineHomes = store 'Engine homes' {
+        description 'Per-harness homes and usage: codex/homes, copilot/usage, cursor/owned.'
+        technology 'engines/{codex,copilot,cursor}/'
+      }
+    }
+
+    // ── Built-in catalog: 24 agents, all data, grouped by the sidecar's domain ──
+
+    agents = catalog 'Built-in agents' {
+      description '24 agents in agents/. Each is a markdown prompt plus a metadata sidecar with typed ports; the sidecar\'s domain field (coding, shared, presentation, architecture) is the family.'
+
+      coding = catalog 'Coding' {
+        clarify = agent 'Clarify' {
+          #human
+          description 'Turns hidden decisions into up to 8 multiple-choice questions; asks none when the task is clear.'
+        }
+        planner = agent 'Plan' {
+          description 'Explores the codebase and writes an implementation plan with concrete code snippets.'
+        }
+        refiner = agent 'Refine Plan' {
+          #gate
+          description 'Reviews and rewrites the plan (-v2, -v3, …) until no critical or major issues remain. Loops on itself through its revise port, capped at 3 cycles by default.'
+        }
+        planReviewer = agent 'Plan Review'
+        decomposer = agent 'Decompose' {
+          description 'Splits a plan into vertical-slice tasks, one implementer each.'
+        }
+        implementer = agent 'Implementation' {
+          description 'Follows the approved plan with no deviation, using TDD (red-green-refactor).'
+        }
+        reviewer = agent 'Review Implementation' {
+          #gate
+          description 'Reviews the git diff against the plan. Only critical and major findings block.'
+        }
+        manualTestsChecklist = agent 'Manual Tests Checklist'
+        manualWebUiTesting = agent 'Manual web UI testing' {
+          description 'Runs the checklist in a browser via Playwright.'
+        }
+      }
+
+      workspace = catalog 'Shared' {
+        description 'Domain shared: the workspace agents and the memory defragmenter.'
+        workspaceReviewer = agent 'Workspace Review' {
+          description 'One review per changed project, one cross-project verdict.'
+        }
+        workspaceScanner = agent 'Workspace Survey' {
+          #fanout
+        }
+        workspaceUsageMapper = agent 'Workspace Usage' {
+          #fanout
+        }
+        workspaceSynthesizer = agent 'Workspace Synthesis'
+        memoryDefragmenter = agent 'Memory defragment' {
+          description 'Restructures one memory scope.'
+        }
+      }
+
+      deck = catalog 'Presentation' {
+        deckClarify = agent 'Deck Clarify' {
+          #human
+        }
+        deckNarrative = agent 'Narrative Spine'
+        deckSystem = agent 'Visual System'
+        deckBuilder = agent 'Deck Builder'
+        deckAudit = agent 'Deck Audit'
+        deckReviewer = agent 'Deck Review'
+        deckOutputs = agent 'Deck Outputs'
+        deckExport = agent 'Deck Export'
+      }
+
+      architecture = catalog 'Architecture' {
+        architectSetup = agent 'C4: setup' {
+          #human
+          description 'One Ask form (c4-setup): which C4 file to update or where to create one, the bands and their criteria for a new file, and which images to export. Copies the discovery result into the form and decides nothing itself.'
+          technology 'agents/worca-cc-architect-setup.md'
+        }
+        architect = agent 'C4: architect' {
+          #fanout
+          description 'Reads the code and writes or updates a LikeC4 file whose deployment bands follow the person\'s criteria, then runs the check CLI on it itself before handing the model envelope on.'
+          technology 'agents/worca-cc-architect.md'
+        }
+      }
+    }
+
+    // ── Built-in workflows (graphs of typed ports) ──
+
+    wfDefault = workflow 'Default workflow' {
+      description 'wf_default: Clarify → Plan → Refine → Implement → Review, looping until the work clears its quality gates.'
+
+      task = flow 'Task' {
+        description 'The prompt, or a markdown brief.'
+      }
+      end = flow 'End' {
+        description 'Work committed to the run\'s worca-cc/… branch, ready for Create PR.'
+      }
+    }
+
+    wfScan = workflow 'Workspace scan workflow' {
+      description 'wf_workspace_scan: builds the cross-project workspace map.'
+
+      scanTask = flow 'Task'
+      extract = script 'Map extract' {
+        technology 'scripts/workspace-map-extract.mjs'
+      }
+      catalogStep = script 'Map catalog' {
+        technology 'scripts/workspace-map-catalog.mjs'
+      }
+      join = script 'Map join' {
+        technology 'scripts/workspace-map-join.mjs'
+      }
+      render = script 'Map render' {
+        technology 'scripts/workspace-map-render.mjs'
+      }
+      scanEnd = flow 'End'
+    }
+
+    wfC4 = workflow 'Architecture (C4) workflow' {
+      description 'wf_architecture_c4: Discover → Setup → Architect → Check → Render. Not a reserved built-in: seeded into the database by schema v54 (INSERT OR IGNORE), so a person who edits or deletes it keeps their choice.'
+      technology 'src/core/graph/architecture-workflow.mjs'
+
+      c4Task = flow 'Task'
+      discover = script 'C4: discover' {
+        description 'Finds .c4 and .likec4 files in every checkout, lists each one\'s views and bands, and builds the setup form\'s data and the architect\'s check command.'
+        technology 'scripts/c4-discover.mjs, c4-paths.mjs'
+      }
+      check = script 'C4: check' {
+        #gate
+        description 'Parses the architect\'s file with the viewer\'s own parser and blocks on parse errors, unresolved references, empty bands and bands without a deployment view. The same rules print from c4-check-cli.mjs for a shell.'
+        technology 'scripts/c4-check.mjs, c4-check-cli.mjs'
+      }
+      render = script 'C4: render' {
+        description 'Draws every view to SVG headless; JPEG or PNG through a headless Chrome-family browser over DevTools when one is installed. Copies the file and images into the run\'s c4/ artifacts and, if asked, beside the file.'
+        technology 'scripts/c4-render.mjs, c4-raster.mjs, c4-dagre.mjs'
+      }
+      c4End = flow 'End' {
+        description 'The C4 file in the run branch, plus its renders as run artifacts.'
+      }
+    }
+  }
+
+  // ───────────────────── Relationships: context ─────────────────────
+
+  developer -> worca.webui 'starts runs, answers questions, reviews diffs'
+  developer -> worca.cli 'runs and resumes from a terminal'
+  developer -> worca.skill 'invokes /worca in Claude Code'
+  developer -> chatPlatforms 'sends /answer, /approve, /pause'
+  lead -> worca.webui 'edits team policy, reads team metrics'
+  chatPlatforms -> worca.chat 'commands in, notifications out'
+
+  worca.webui -> worca.app.server 'REST + WebSocket'
+  worca.cli -> worca.app.orchestrator 'builds its own orchestrator in-process'
+  worca.cli -> worca.app.schedules 'schedules with --at, --every; fires with --wait'
+  worca.skill -> worca.cli 'shells out to src/cli/worca-cc.mjs'
+  worca.chat -> worca.app.chatHost 'JSON lines over stdio'
+
+  // ───────────────────── Relationships: the host process ─────────────────────
+
+  worca.app.server -> worca.app.orchestrator 'starts and resumes runs in-process'
+  worca.app.server -> worca.app.ask 'chat turns'
+  worca.app.server -> worca.app.schedules 'ticks due tickets'
+  worca.app.server -> worca.app.chatHost 'creates the channel host, router and notifier'
+  worca.app.server -> worca.app.actions 'starts an action by id; opens terminals'
+  worca.app.server -> worca.app.pr 'Ship it: push branch, generate description, open PR'
+  worca.app.server -> worca.app.night 'hours watch'
+  worca.app.server -> worca.app.bridge 'starts the bridge at boot'
+  worca.app.server -> worca.app.hosted 'identity, drain, heartbeat'
+  worca.app.schedules -> worca.app.orchestrator 'starts a due run'
+  worca.app.chatHost -> worca.app.orchestrator 'routes chat commands to the run'
+  worca.app.ask -> worca.app.orchestrator 'run card, once confirmed'
+  worca.app.ask -> worca.app.auto 'propose_workflow'
+  worca.app.ask -> worca.app.engines 'one turn = one spawn'
+  worca.app.ask -> worca.app.memory 'remember …'
+
+  worca.app.orchestrator -> worca.app.harness 'extends RunHarness'
+  worca.app.orchestrator -> worca.app.auto 'decides topology for an Auto run'
+  worca.app.orchestrator -> worca.app.registries 'resolves the graph, loads agent files'
+  worca.app.orchestrator -> worca.app.scheduler 'hands over the graph'
+  worca.app.orchestrator -> worca.app.workspaces 'workspace runs and scans'
+  worca.app.scheduler -> worca.app.executor 'execute(node), in deterministic order'
+  worca.app.executor -> worca.app.engines 'agent node'
+  worca.app.executor -> worca.app.scriptRunner 'script node'
+  worca.app.auto -> worca.app.engines 'the classifier call'
+
+  worca.app.harness -[guards]-> worca.app.guardrails 'compiles the run\'s policy set'
+  worca.app.harness -[guards]-> worca.app.budget 'checks the cap before each step'
+  worca.app.harness -> worca.app.policy 'effective team policy'
+  worca.app.harness -> worca.app.metrics 'records the finished run'
+  worca.app.harness -> worca.app.memory 'mounts memory into the run'
+  worca.app.harness -> worca.app.mcp 'per-run MCP config'
+  worca.app.harness -> worca.app.skills 'mounts the set\'s skills'
+  worca.app.harness -> worca.app.sources 'resolves the task input'
+  worca.app.harness -> worca.app.night 'Away mode answers open asks'
+  worca.app.harness -> worca.app.engines 'engine registry for the run'
+  worca.app.harness -> worca.app.registries 'agent definitions'
+  worca.app.harness -> worca.app.workspaces 'workspace scan runs'
+  worca.app.harness -> worca.app.bridge 'bridge telemetry'
+  worca.app.policy -> worca.app.guardrails 'default set and minimum tier'
+  worca.app.policy -> worca.app.budget 'team caps'
+  worca.app.guardrails -[guards]-> worca.app.engines '--settings deny rules, env scrub'
+  worca.app.plugins -> worca.app.registries 'agents, scripts, workflows, models'
+  worca.app.plugins -> worca.app.mcp 'MCP servers and skills'
+  worca.app.plugins -> worca.app.chatHost 'chat channels'
+  worca.app.plugins -> worca.app.sources 'task-source connectors'
+  worca.app.actions -> worca.app.scriptRunner 'shared spawn helpers'
+  worca.app.workspaces -> worca.app.pr 'per-member PRs'
+
+  // ───────────────────── Relationships: harnesses and models ─────────────────────
+
+  worca.app.engines -[spawns]-> claudeCode 'one headless process per agent step'
+  worca.app.engines -[spawns]-> codex 'one process per agent step (--engine codex)'
+  worca.app.engines -[spawns]-> copilotCli 'one process per agent step (--engine copilot)'
+  worca.app.engines -[spawns]-> cursorCli 'one process per agent step (--engine cursor)'
+  worca.app.engines -> worca.app.bridge 'routes a bridged catalog entry'
+  worca.app.engines -> worca.app.brokerClient 'short-lived token per claude spawn'
+  worca.app.bridge -> worca.app.brokerClient 'broker routing'
+  worca.app.pr -> worca.app.brokerClient 'github slot: push as the person'
+  worca.app.brokerClient -> worca.broker '/internal API, shared secret'
+  worca.app.bridge -> worca.broker 'forwards upstream calls with a broker token'
+
+  claudeCode -> worca.app.bridge 'Anthropic Messages API on 127.0.0.1' {
+    technology 'HTTP loopback, per-process secret'
+  }
+  worca.app.bridge -> models.copilotApi 'Copilot provider: token exchange, VS Code headers'
+  worca.app.bridge -> models.openai 'OpenAI provider'
+  worca.app.bridge -> models.openaiCompat 'translated to chat completions or Responses API'
+  worca.app.bridge -> models.gateway 'Anthropic passthrough'
+
+  claudeCode -> models.anthropic 'model calls (default sign-in)'
+  claudeCode -> models.gateway 'model calls when the entry sets ANTHROPIC_BASE_URL'
+  claudeCode -> worca.broker 'model calls with a wbt_ token (container installs)'
+  worca.broker -> models.anthropic 'adds the real key'
+  worca.broker -> models.openai 'openai and openrouter slots'
+  worca.broker -> models.copilotApi 'copilot slot'
+  codex -> models.openai 'ChatGPT sign-in, or a Responses endpoint from the catalog, direct'
+  copilotCli -> models.copilotApi 'its own sign-in'
+  cursorCli -> models.cursorCloud 'its own sign-in or CURSOR_API_KEY'
+
+  claudeCode -> worca.egress 'all other outbound traffic (egress overlay)'
+  claudeCode -> mcpServers 'tool calls'
+  codex -> mcpServers 'stdio servers only'
+  copilotCli -> mcpServers 'tool calls'
+  claudeCode -> worca.state.worktrees 'reads and edits code'
+  codex -> worca.state.worktrees 'reads and edits code'
+  copilotCli -> worca.state.worktrees 'reads and edits code'
+  cursorCli -> worca.state.worktrees 'reads and edits code'
+
+  // ───────────────────── Relationships: state ─────────────────────
+
+  worca.app.harness -> worca.state.db 'run state, steps, audit events'
+  worca.app.harness -> worca.state.files 'plans, reviews, artifacts'
+  worca.app.harness -> worca.state.worktrees 'creates the worktree and branch, commits checkpoints'
+  worca.app.schedules -> worca.state.db 'tickets and schedules'
+  worca.app.ask -> worca.state.db 'threads and messages'
+  worca.app.night -> worca.state.db 'night_decisions'
+  worca.app.actions -> worca.state.db 'terminal sessions and audit'
+  worca.app.memory -> worca.state.memoryFiles 'reads and writes'
+  worca.app.mcp -> worca.state.mcpFiles 'reads and writes'
+  worca.app.engines -> worca.state.engineHomes 'per-harness homes and usage'
+  worca.app.registries -> worca.agents 'loads prompt + sidecar'
+
+  worca.app.pr -> forge 'pushes the branch, opens the PR'
+  worca.app.metrics -> forge 'pushes run records to worca-metrics'
+  worca.app.policy -> forge 'pulls worca-policy on start and hourly'
+  worca.app.plugins -> forge 'installs from marketplaces'
+  worca.app.sources -> forge 'reads issues and work items through a connector'
+
+  // ───────────────── Relationships: Default workflow wires ─────────────────
+  // Labels are the port names from src/core/graph/builtin-workflows.mjs.
+
+  worca.wfDefault.task -> worca.agents.coding.clarify 'task'
+  worca.wfDefault.task -> worca.agents.coding.planner 'task'
+  worca.agents.coding.clarify -> worca.agents.coding.planner 'answers'
+  worca.agents.coding.planner -> worca.agents.coding.refiner 'plan'
+  worca.agents.coding.refiner -> worca.agents.coding.implementer 'plan'
+  worca.agents.coding.refiner -> worca.agents.coding.reviewer 'plan'
+  worca.agents.coding.implementer -> worca.agents.coding.reviewer 'done'
+  worca.agents.coding.refiner -[loop]-> worca.agents.coding.refiner 'revise (max 3 cycles)'
+  worca.agents.coding.reviewer -[loop]-> worca.agents.coding.implementer 'review → fix (max 3 cycles)'
+  worca.agents.coding.reviewer -> worca.wfDefault.end 'pass'
+
+  worca.agents.coding.clarify -> developer 'asks clarify questions'
+  worca.agents.coding.reviewer -> developer 'asks to approve another cycle when the loop budget runs out'
+
+  // ───────────────── Relationships: workspace scan wires ─────────────────
+
+  worca.wfScan.scanTask -> worca.wfScan.extract 'task'
+  worca.wfScan.extract -> worca.agents.workspace.workspaceScanner 'brief'
+  worca.wfScan.extract -> worca.wfScan.catalogStep 'extract'
+  worca.agents.workspace.workspaceScanner -> worca.wfScan.catalogStep 'survey'
+  worca.wfScan.catalogStep -> worca.agents.workspace.workspaceUsageMapper 'brief'
+  worca.wfScan.catalogStep -> worca.wfScan.join 'catalog'
+  worca.agents.workspace.workspaceUsageMapper -> worca.wfScan.join 'usage'
+  worca.wfScan.join -> worca.agents.workspace.workspaceSynthesizer 'brief'
+  worca.wfScan.join -> worca.wfScan.render 'map'
+  worca.agents.workspace.workspaceSynthesizer -> worca.wfScan.render 'synthesis'
+  worca.wfScan.render -> worca.wfScan.scanEnd 'workspace'
+
+  // ───────────────── Relationships: Architecture (C4) wires ─────────────────
+  // Port names from src/core/graph/architecture-workflow.mjs.
+
+  worca.wfC4.c4Task -> worca.wfC4.discover 'task'
+  worca.wfC4.c4Task -> worca.agents.architecture.architectSetup 'task'
+  worca.wfC4.c4Task -> worca.agents.architecture.architect 'task'
+  worca.wfC4.discover -> worca.agents.architecture.architectSetup 'found'
+  worca.wfC4.discover -> worca.agents.architecture.architect 'found'
+  worca.agents.architecture.architectSetup -> worca.agents.architecture.architect 'answers → setup'
+  worca.agents.architecture.architect -> worca.wfC4.check 'model'
+  worca.wfC4.check -[loop]-> worca.agents.architecture.architect 'review → fix (max 2 cycles)'
+  worca.wfC4.check -> worca.wfC4.render 'checked'
+  worca.wfC4.render -> worca.wfC4.c4End 'renders'
+
+  worca.agents.architecture.architectSetup -> developer 'asks the c4-setup form'
+  worca.agents.architecture.architect -> worca.wfC4.check 'runs c4-check-cli.mjs on its own file'
+  worca.agents.architecture.architect -> worca.state.worktrees 'writes the .c4 file'
+
+  // ───────────────── Relationships: the C4 viewer ─────────────────
+
+  worca.wfC4.discover -> worca.c4View 'parseC4, buildViews'
+  worca.wfC4.check -> worca.c4View 'parseC4, buildViews'
+  worca.wfC4.render -> worca.c4View 'renderToSVG with the vendored dagre'
+  worca.wfC4.render -> worca.state.files 'c4/ artifacts: the file and its images'
+  worca.webui -> worca.c4View '.c4 artifacts open in <worca-c4>'
+  worca.app.scriptRunner -> worca.wfC4 'runs c4Discover, c4Check, c4Render'
+}
+
+// ───────────────────────── Deployment ─────────────────────────
+// The layered picture, corrected against the code: four ways in, the Worca host
+// with every module of @worca/app and the four harnesses it can spawn, and the
+// model endpoints each harness actually reaches.
+
+deployment {
+
+  you = zone 'You' {
+    description 'Four ways in, plus the C4 viewer people read the architecture in. The web UI and chat go through the server; the CLI and the skill run a private in-process orchestrator.'
+    metadata {
+      criteria 'Everything a person operates or looks at directly: the clients that start and steer runs, and the viewers they read results in.'
+      order 'declared'
+    }
+
+    webui = instanceOf worca.webui
+    cli = instanceOf worca.cli
+    skill = instanceOf worca.skill
+    chat = instanceOf worca.chat {
+      technology 'Telegram · Slack · Discord · Teams'
+    }
+    c4View = instanceOf worca.c4View {
+      technology 'Web UI · viewer.html · headless'
+    }
+  }
+
+  host = machine 'Worca host' {
+    description 'Your dev machine, a server, or the worca container.'
+    technology 'Dev machine · Server · Container'
+    metadata {
+      criteria 'Every process that runs on the machine Worca is installed on: the @worca/app library with its modules, and the harness processes it spawns.'
+      order 'declared'
+    }
+
+    app = runtime '@worca/app' {
+      description 'The core library, loaded by the UI server and by every CLI run over one SQLite database.'
+      technology 'UI server · CLI'
+      metadata {
+        criteria 'Modules of the core library under src/core and ui/server.mjs, loaded in-process by the UI server or a CLI run.'
+        order 'dependencies'
+      }
+
+      server = instanceOf worca.app.server
+      harness = instanceOf worca.app.harness
+      orchestrator = instanceOf worca.app.orchestrator
+      scheduler = instanceOf worca.app.scheduler
+      executor = instanceOf worca.app.executor
+      scriptRunner = instanceOf worca.app.scriptRunner
+      auto = instanceOf worca.app.auto
+      registries = instanceOf worca.app.registries
+      guardrails = instanceOf worca.app.guardrails
+      budget = instanceOf worca.app.budget
+      engines = instanceOf worca.app.engines
+      bridge = instanceOf worca.app.bridge
+      brokerClient = instanceOf worca.app.brokerClient {
+        technology 'Optional'
+      }
+      mcp = instanceOf worca.app.mcp
+      skills = instanceOf worca.app.skills
+      plugins = instanceOf worca.app.plugins
+      sources = instanceOf worca.app.sources
+      chatHost = instanceOf worca.app.chatHost
+      ask = instanceOf worca.app.ask
+      schedules = instanceOf worca.app.schedules
+      night = instanceOf worca.app.night
+      memory = instanceOf worca.app.memory
+      metrics = instanceOf worca.app.metrics
+      policy = instanceOf worca.app.policy
+      workspaces = instanceOf worca.app.workspaces
+      actions = instanceOf worca.app.actions
+      pr = instanceOf worca.app.pr
+      hosted = instanceOf worca.app.hosted
+    }
+
+    harnesses = runtime 'Harness ×N' {
+      description 'One harness process per agent step, as many as run in parallel. The KIND is picked once per run with --engine (default claude); the four never mix inside one run.'
+      technology 'One kind per run'
+      metadata {
+        criteria 'The coding-agent CLIs Worca spawns, one process per agent step.'
+        order 'declared'
+      }
+
+      claude = instanceOf claudeCode {
+        title 'Claude Code'
+        technology 'Default'
+      }
+      codex = instanceOf codex {
+        technology 'Beta'
+      }
+      copilot = instanceOf copilotCli {
+        technology 'Beta'
+      }
+      cursor = instanceOf cursorCli {
+        technology 'Beta · Unverified'
+      }
+    }
+  }
+
+  endpoints = zone 'Models' {
+    description 'Each harness brings its own sign-in; only Claude Code is routed by Worca.'
+    metadata {
+      criteria 'The model endpoints a harness sends its model calls to, directly or through the bridge or broker.'
+      order 'declared'
+    }
+
+    anthropic = instanceOf models.anthropic {
+      technology 'Default'
+    }
+    gateway = instanceOf models.gateway {
+      technology 'Env passthrough'
+    }
+    openaiCompat = instanceOf models.openaiCompat {
+      technology 'Via bridge'
+    }
+    openai = instanceOf models.openai
+    copilotApi = instanceOf models.copilotApi
+    cursorCloud = instanceOf models.cursorCloud
+  }
+}
+
+views {
+
+  view index {
+    title 'Worca in context'
+    description 'You talk to Worca, Worca spawns a harness per run, and the harness talks to a model with its own sign-in.'
+
+    include developer, lead, worca, claudeCode, codex, copilotCli, cursorCli, models, forge, chatPlatforms, mcpServers
+    autoLayout TopBottom
+  }
+
+  view stack of worca {
+    title 'The Worca stack'
+    description 'Four ways in, one core library in two kinds of host process, state outside the working tree, and optional containment.'
+
+    include
+      developer,
+      worca.webui, worca.cli, worca.skill, worca.chat, worca.c4View,
+      worca.app, worca.broker, worca.egress, worca.state,
+      claudeCode, codex, copilotCli, cursorCli, models, forge, chatPlatforms, mcpServers
+    autoLayout TopBottom
+  }
+
+  view runPath of worca.app {
+    title 'The run path'
+    description 'Only the modules a pipeline step passes through, from an entry point down to the harness.'
+
+    include
+      worca.cli, worca.app.server, worca.app.harness, worca.app.orchestrator, worca.app.auto,
+      worca.app.registries, worca.app.scheduler, worca.app.executor, worca.app.scriptRunner,
+      worca.app.engines, worca.app.bridge, worca.app.guardrails, worca.app.budget,
+      claudeCode, codex, copilotCli, cursorCli,
+      worca.state.db, worca.state.files, worca.state.worktrees
+    autoLayout TopBottom
+  }
+
+  view surfaces of worca.app {
+    title 'Starting and steering a run'
+    description 'The UI and chat go through the server; the CLI and the skill build their own orchestrator. All of them end at the same graph orchestrator.'
+
+    include
+      developer, chatPlatforms,
+      worca.webui, worca.cli, worca.skill, worca.chat,
+      worca.app.server, worca.app.chatHost, worca.app.ask, worca.app.schedules,
+      worca.app.actions, worca.app.pr, worca.app.orchestrator, worca.app.night,
+      forge
+    autoLayout TopBottom
+  }
+
+  view wrap of worca.app {
+    title 'What wraps every agent spawn'
+    description 'Guardrails, budgets, team policy, MCP sets, skills, memory and plugins all meet at the engine adapters.'
+
+    include
+      worca.app.harness, worca.app.guardrails, worca.app.budget, worca.app.policy,
+      worca.app.mcp, worca.app.skills, worca.app.memory, worca.app.plugins, worca.app.registries,
+      worca.app.metrics, worca.app.engines,
+      claudeCode, codex, copilotCli, cursorCli, mcpServers, forge
+    autoLayout TopBottom
+  }
+
+  view harnesses of worca.app {
+    title 'Harnesses and model routing'
+    description 'Which harness reaches which endpoint, and through what. Only Claude Code goes through the bridge or the broker.'
+
+    include
+      worca.app.engines, worca.app.bridge, worca.app.brokerClient, worca.broker,
+      claudeCode, codex, copilotCli, cursorCli,
+      models, models.*
+    autoLayout TopBottom
+  }
+
+  view defaultWorkflow of worca.wfDefault {
+    title 'Default workflow'
+    description 'Five agents wired by typed ports. Dashed amber is the review → fix loop; the refiner also loops on itself.'
+
+    include
+      developer,
+      worca.wfDefault.task, worca.wfDefault.end,
+      worca.agents.coding.clarify, worca.agents.coding.planner, worca.agents.coding.refiner,
+      worca.agents.coding.implementer, worca.agents.coding.reviewer
+    autoLayout LeftRight
+  }
+
+  view workspaceScan of worca.wfScan {
+    title 'Workspace scan workflow'
+    description 'Scripts and agents alternate: scripts do the deterministic work, agents the judgement.'
+
+    include
+      worca.wfScan.*,
+      worca.agents.workspace.workspaceScanner,
+      worca.agents.workspace.workspaceUsageMapper,
+      worca.agents.workspace.workspaceSynthesizer
+    autoLayout LeftRight
+  }
+
+  view architectureWorkflow of worca.wfC4 {
+    title 'Architecture (C4) workflow'
+    description 'Discovery and the setup form feed the architect; the check gate loops back to it at most twice, and the render card reuses the viewer to draw every view.'
+
+    include
+      developer,
+      worca.wfC4.*,
+      worca.agents.architecture.architectSetup,
+      worca.agents.architecture.architect,
+      worca.c4View
+    autoLayout LeftRight
+  }
+
+  view agentCatalog of worca.agents {
+    title 'Built-in agents'
+    description '24 agents in four families, one per sidecar domain.'
+
+    include worca.agents.*, worca.agents.coding.*, worca.agents.workspace.*, worca.agents.deck.*, worca.agents.architecture.*
+    exclude * -> *
+    autoLayout TopBottom
+  }
+
+  view containment of worca {
+    title 'Containment in a container install'
+    description 'Model keys stay in the broker; everything else leaves through the egress proxy. Only Claude Code can run under the broker.'
+
+    include
+      worca.app, worca.app.brokerClient, worca.broker, worca.egress, worca.state,
+      claudeCode, models.anthropic, models.openai, models.copilotApi, mcpServers
+    autoLayout LeftRight
+  }
+
+  view storage of worca.state {
+    title 'Where Worca keeps its state'
+    description 'One SQLite database plus a machine-wide file store, by default under ~/.worca-cc.'
+
+    include *
+    include worca.app.harness, worca.app.schedules, worca.app.ask, worca.app.night, worca.app.actions,
+      worca.app.memory, worca.app.mcp, worca.app.engines, claudeCode, codex, copilotCli, cursorCli
+    autoLayout TopBottom
+  }
+
+  view engine of worca.app {
+    title 'All modules of @worca/app'
+    description 'The whole core library on one sheet.'
+
+    include *
+    exclude worca.webui, worca.cli, worca.skill, worca.chat
+    autoLayout LeftRight
+  }
+
+  dynamic view run {
+    title 'A run, end to end'
+    description 'One pass through the Default workflow, started from the web UI on the default harness.'
+
+    developer -> worca.webui 'describes the task, picks workflow, guardrails and harness'
+    worca.webui -> worca.app.server 'POST /api/run'
+    worca.app.server -> worca.app.orchestrator 'createOrchestratorFor(…).run() (engine-select.mjs)'
+    worca.app.orchestrator -> worca.app.harness 'run(): worktree, guardrails, policy, cost cap'
+    worca.app.harness -> worca.state.worktrees 'creates worktree + worca-cc/… branch'
+    worca.app.orchestrator -> worca.app.scheduler 'graph'
+    worca.app.scheduler -> worca.app.executor 'execute(Clarify)'
+    worca.app.executor -> worca.app.engines 'runClaude(): prompt + ports'
+    worca.app.engines -> claudeCode 'spawn with --settings deny rules'
+    claudeCode -> models.anthropic 'model calls'
+    worca.app.server -> worca.webui 'clarify questions'
+    developer -> worca.webui 'answers'
+    worca.app.scheduler -> worca.app.executor 'Plan, Refine, Implement, Review'
+    claudeCode -> worca.state.worktrees 'edits code, runs tests'
+    worca.app.harness -> worca.state.db 'steps, verdicts, cost'
+    worca.app.harness -> worca.state.files 'plan and review markdown'
+    worca.app.harness -> worca.app.metrics 'records the finished run'
+    worca.app.server -> worca.webui 'Ready to ship'
+    developer -> worca.webui 'Create pull request'
+    worca.app.server -> worca.app.pr 'push branch, open PR'
+    worca.app.pr -> forge 'gh pr create'
+
+    autoLayout LeftRight
+  }
+
+  deployment view deployment {
+    title 'Deployment'
+    description 'Where everything runs, corrected against the code. The harness is picked per run (--engine, default claude); only Claude Code is routed by Worca through the bridge or broker, the others bring their own sign-in.'
+
+    include you.*, host.*, host.app.*, host.harnesses.*, endpoints.*
+    autoLayout TopBottom
+  }
+}

@@ -27,7 +27,7 @@ const SYSTEM = 'You are a connectivity check. Reply with exactly OK.';
 export function hintFor(errorClass) {
   switch (errorClass) {
     case 'auth': return 'authentication failed — check the token/secret for this model';
-    case 'model': return 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours in Settings › Models';
+    case 'model': return 'this model id is not served by the endpoint — pick a model the endpoint serves, or add yours on the Models page';
     case 'network': return 'endpoint unreachable — check ANTHROPIC_BASE_URL';
     case 'rate_limit': return 'the endpoint is rate-limiting or overloaded — try again shortly';
     case 'quota': return 'quota/billing problem — check the account behind this endpoint';
@@ -45,9 +45,9 @@ export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
-    case 'not_signed_in': return `sign in to ${provider} under Settings › Providers (or \`worca models login ${provider}\`)`;
-    case 'terms': return 'acknowledge the GitHub Copilot notice under Settings › Providers first';
-    case 'no_key': return `set an API key for ${provider} under Settings › Providers, or on this model's Connection`;
+    case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
+    case 'terms': return 'acknowledge the GitHub Copilot notice on the Providers page first';
+    case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
     default: return '';
   }
 }

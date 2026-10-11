@@ -1,10 +1,9 @@
 // ui/public/openrouter-free-view.mjs
 // OpenRouter's daily allowance of `:free` requests (src/core/openrouter-free.mjs), where it
-// comes up: the sidebar line under the spend block, a run's cost pill, the new-run form's
-// warning and the Providers card. Pure helpers plus one renderer; app.js fetches
-// /api/openrouter/free-daily and mounts the result.
+// comes up: the row in the account menu's spend card, a run's cost pill, the new-run form's
+// warning and the Providers page. Pure helpers; app.js fetches /api/openrouter/free-daily.
 
-/** Below this share of the day's allowance the line turns amber. */
+/** Below this share of the day's allowance the row turns amber. */
 export const FREE_LOW_AT = 0.1;
 /** A run's typical free requests when this install has no history yet (a small pipeline run). */
 export const FREE_RUN_DEFAULT = 90;
@@ -79,40 +78,16 @@ export function providerFreeLine(s, { now = Date.now() } = {}) {
 }
 
 /**
- * The sidebar block: "OpenRouter free · 941 / 1000 today", a meter of what is left, amber
- * below 10%, red at 0, the reset on hover. null when there is nothing to show.
+ * The account menu's row in the spend card: "Free requests today  37 / 50", amber below 10%, red at
+ * 0, the reset in the tip. null when there is nothing to show. Pure.
  */
-export function renderFreeDaily(s, { doc = globalThis.document, now = Date.now() } = {}) {
+export function freeDailyRow(s, { now = Date.now() } = {}) {
   if (!s || !s.enabled || !s.known) return null;
   const level = freeLevel(s);
-  const btn = doc.createElement('button');
-  btn.type = 'button';
-  btn.className = `spend-ind free-ind${level === 'low' ? ' warn' : level === 'out' ? ' over' : ''}`;
   const reset = Date.parse(s.resetAt || '');
-  btn.title = `OpenRouter free-model requests left today: ${s.remaining} of ${s.limit}` +
+  const title = `OpenRouter free-model requests left today: ${s.remaining} of ${s.limit}` +
     (Number.isFinite(reset) ? ` · resets ${utcClock(s.resetAt)}, in ${untilText(reset - now)}` : '') +
-    ' — every model call on a :free model is one request';
-  const row = doc.createElement('span');
-  row.className = 'spend-ind-row';
-  const label = doc.createElement('span');
-  label.className = 'spend-ind-label';
-  label.textContent = 'OpenRouter free today';
-  const amt = doc.createElement('span');
-  amt.className = 'spend-ind-amt mono';
-  amt.textContent = `${s.remaining} / ${s.limit}`;
-  row.append(label, amt);
-  const meter = doc.createElement('span');
-  meter.className = 'spend-ind-meter';
-  const fill = doc.createElement('span');
-  fill.className = 'spend-ind-meter-fill';
-  fill.style.width = `${s.limit > 0 ? Math.max(0, Math.min(100, (s.remaining / s.limit) * 100)) : 0}%`;
-  meter.appendChild(fill);
-  btn.append(row, meter);
-  if (level === 'out') {
-    const sub = doc.createElement('small');
-    sub.className = 'spend-ind-sub';
-    sub.textContent = 'used up · free models pause until the reset';
-    btn.appendChild(sub);
-  }
-  return btn;
+    ' — every model call on a :free model is one request' +
+    (level === 'out' ? '. Used up: free models pause until the reset.' : '');
+  return { text: `${s.remaining} / ${s.limit}`, tone: level === 'low' ? 'warn' : level === 'out' ? 'over' : '', title };
 }

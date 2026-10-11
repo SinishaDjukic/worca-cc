@@ -174,7 +174,8 @@ requests would look local.
 Everyone signed in acts with the deployment's GitHub identity, so worca records the person behind
 each run. This is attribution, not permissions: everyone keeps the same rights.
 
-- The signed-in email shows in the sidebar ("Signed in as …"). Run cards, History cards and
+- The signed-in email shows in the account corner at the foot of the sidebar (the name up to the
+  "@"), and in full in its menu ("Signed in as …"). Run cards, History cards and
   sidebar rows show an initials circle and "by …" ("by you" for your own runs); both run detail
   headers show a person chip with the full name. History gets a *Started by* filter. Scheduled
   runs keep the name of whoever scheduled them.

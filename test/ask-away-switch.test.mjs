@@ -44,7 +44,7 @@ test('global switch: sets the toggle, tells every surface; "I\'m back" inside th
       assert.equal(r.ok, true);
       // The zone is named only when it differs from this machine's (a UTC CI runner shows none).
       const tag = Intl.DateTimeFormat().resolvedOptions().timeZone === 'UTC' ? '' : ' UTC';
-      assert.equal(r.line, `Right now it is 23:00${tag}. You count as here because you said "I'm here". Your away hours apply again from 22:00.`);
+      assert.equal(r.line, `Right now it is 23:00${tag}. You count as here because you said "I'm back". Your away hours apply again from 22:00.`);
       assert.equal(s.live.orch.changed, 2, 'every run re-checks');
     } },
   ]);

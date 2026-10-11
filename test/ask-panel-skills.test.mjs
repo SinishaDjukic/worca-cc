@@ -95,7 +95,7 @@ test('level 1: "N servers · N skills · route" under the set name, started/tota
         ['General', '2 servers · 1 skill'], ['Billing', '1 server · 4 skills · pinned'], ['Docs', '1 skill · open worktree'], ['Shop', '1 server · open worktree'],
       ]);
       assert.deepEqual(rows.map((r) => r.children[1].querySelector('.ask-pop-row-value').textContent), ['3/3', '3/5', '0/1', '1/1']);
-      assert.match(pop(ctx).textContent, /Manage in Settings › Sets/);
+      assert.match(pop(ctx).textContent, /Manage on the Connectors page/);
       assert.equal(pop(ctx).querySelector('.ask-pop-empty'), null);
       ctx.panel.destroy();
     } },
@@ -138,7 +138,7 @@ test('level 2: Servers then Skills captions, skill switches by qualified name, s
         'skipped billing:db-migrations — off', 'skipped billing:old — no longer installed (problem)',
       ]);
       assert.equal(pop(ctx).querySelector('[data-mcp-key="member:billing|skill:library:pdf-tools"]').getAttribute('aria-label'), 'billing:pdf-tools');
-      assert.match(pop(ctx).textContent, /Manage Billing in Settings › Sets/);
+      assert.match(pop(ctx).textContent, /Manage in Connectors › Billing/);
       ctx.panel.destroy();
     } },
     { name: 'a set without skills keeps today\'s rows (no caption); a skills-only set shows only the Skills caption', run: async () => {

@@ -139,3 +139,10 @@ test('script nodes are keyed like agent nodes (KEYED_KINDS): newNode keeps the k
   assert.deepEqual(t.nodes[0].config, { params: { command: 'npm test' } });
   assert.equal(normalizeTemplate({ nodes: [{ id: 'n_a', kind: 'and', x: 0, y: 0, key: 'shell' }] }).nodes[0].key, undefined);
 });
+
+test('codeGraph: only an explicit false survives normalize/serialize (the composer re-save keeps the opt-out)', () => {
+  assert.equal(serializeTemplate({ name: 'x', codeGraph: false }).codeGraph, false);
+  for (const v of [true, undefined, 'false', 0, null]) {
+    assert.equal('codeGraph' in serializeTemplate({ name: 'x', codeGraph: v }), false, String(v));
+  }
+});

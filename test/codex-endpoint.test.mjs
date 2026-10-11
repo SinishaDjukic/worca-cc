@@ -78,7 +78,7 @@ test('codexEndpointSpawn: no usable key fails fast with the provider hint, befor
   assert.equal(fake.args(), null, 'codex never ran');
   const r = await testModel('cx-nokey', { engine: 'codex' });
   assert.equal(r.ok, false);
-  assert.match(r.hint, /set an API key for openai under Settings › Providers, or on this model's Connection/);
+  assert.match(r.hint, /set an API key for openai on the Providers page, or on this model's Connection/);
 });
 
 test('runCodexProcess: an endpoint model spawns codex on its provider, the key in its env, no list price', POSIX, async () => {
