@@ -22232,7 +22232,8 @@ function hdSetArchiveGate(btn, retained) {
 // Resolve in a pipeline / Resolve in a terminal. Idempotent (re-run by refreshHdFromRow); handlers are properties.
 const BASE_FINISHED = new Set(['done', 'stopped', 'error']);
 
-/** [{ key, name, rec }] from the detail state; a row-level summary newer than the detail wins (no file list then). */
+/** [{ key, name, rec, resolving, prOpen }] from the detail state; a row-level summary newer than the detail wins
+ *  (no file list then). `prOpen`: the branch has an open PR, whose Overview row owns the pipeline Resolve. */
 function hdBaseMembers(record, data) {
   const st = (data && data.state) || {};
   const newer = (a, b) => (b && (!a || Date.parse(b.at || '') > Date.parse(a.at || '')) ? b : a);
@@ -22240,10 +22241,12 @@ function hdBaseMembers(record, data) {
     const names = new Map((st.projects || []).map((p) => [p.projectKey, p.projectName]));
     const rows = new Map(((record && record.members) || []).map((m) => [m.memberKey, m]));
     return Object.entries(st.branches || {}).filter(([, br]) => br && br.feature && br.branchKept !== false && !br.branchDeleted)
-      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck), resolving: !!br.baseResolve }));
+      .map(([key, br]) => ({ key, name: names.get(key) || key, rec: newer(br.baseCheck, rows.get(key) && rows.get(key).baseCheck),
+        resolving: !!br.baseResolve, prOpen: prStateOf(rows.get(key) && rows.get(key).pr) === 'OPEN' }));
   }
   const br = st.branch || {};
-  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve }] : [];
+  return br.feature ? [{ key: null, name: null, rec: newer(br.baseCheck, record && record.baseCheck), resolving: !!br.baseResolve,
+    prOpen: prStateOf(record && record.pr) === 'OPEN' }] : [];
 }
 
 function paintHdBase(screen, record, data) {
@@ -22307,7 +22310,8 @@ function hdBaseItem(screen, record, data, m) {
   const recheck = md.status === 'error' || m.resolving;
   li.append(
     btn('hd-base-update', 'Update branch', md.canUpdate, (b) => hdBaseAction(screen, record, data, m, 'update-branch', b)),
-    btn('hd-base-pipeline', 'Resolve in a pipeline', md.canResolve, (b) => hdBaseAction(screen, record, data, m, 'resolve-pipeline', b)),
+    // An open PR's pipeline fix is Watch PR's Resolve, on the PR row in the Overview tab: it pushes to the PR.
+    btn('hd-base-pipeline', 'Resolve in a pipeline', md.canResolve && !m.prOpen, (b) => hdBaseAction(screen, record, data, m, 'resolve-pipeline', b)),
     btn('hd-base-terminal', 'Resolve in a terminal', md.canResolve, (b) => hdBaseAction(screen, record, data, m, 'resolve-terminal', b)),
     btn('hd-base-recheck', 'Re-check', recheck, (b) => hdBaseAction(screen, record, data, m, 'base-check', b)),
   );

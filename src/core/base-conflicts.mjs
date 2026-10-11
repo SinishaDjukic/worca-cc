@@ -4,8 +4,9 @@
 // checkout.mjs; the git work is git-sync.mjs's. Nothing here force-pushes, rebases or resets.
 import { findPipelineRowById, appendAuditById } from './artifacts.mjs';
 import { membersOfRow, updateBranchRecords, withRunLock } from './checkout.mjs';
-import { checkBaseMerge, mergeBaseInto, conflictMarkers, scrubGitText, INTERACTIVE_TTL_MS } from './git-sync.mjs';
-import { branchPushedTo, branchTips, pushBranch } from './git-info.mjs';
+import { checkBaseMerge, mergeBaseInto, scrubGitText, INTERACTIVE_TTL_MS } from './git-sync.mjs';
+import { branchPushedTo, branchTips, pushBranch, leftoverMarkers } from './git-info.mjs';
+import { conflictBrief } from './pr-watch.mjs';
 import { effectiveSyncSettings } from './project-sync.mjs';
 
 const FINISHED = new Set(['done', 'stopped', 'error']);
@@ -47,9 +48,10 @@ export function assertNotResolving(m, isActive = () => false) {
   }
 }
 
-/** The mark a resolution leaves on the member (D12, D13): the conflicting files travel with it. */
+/** The mark a resolution leaves on the member (D12, D13): the branch head it started from and the
+ *  conflicting files travel with it, for the marker check when it settles. */
 export function resolveMark(via, check, { runId = null, by = null } = {}) {
-  return { via, ...(runId ? { runId } : {}), at: new Date().toISOString(), by,
+  return { via, ...(runId ? { runId } : {}), at: new Date().toISOString(), by, from: check.headSha || null,
     files: (check.files || []).slice(), fileCount: check.fileCount | 0 };
 }
 
@@ -88,8 +90,8 @@ const pushNote = (p) => (p.pushed ? `; pushed to \`${p.remote}\`` : p.error ? `;
 /**
  * Members marked as being resolved (br.baseResolve) whose fresh check is settled (up-to-date / clean):
  * - a pipeline mark whose run is still active is skipped (D18): that run settles it when it ends;
- * - leftover conflict markers in the originally conflicting files (D13) record `conflicts/markers`, keep the
- *   mark and push nothing;
+ * - leftover conflict markers on lines the resolution added (D13; the check Watch PR runs before its push,
+ *   narrowed to the conflicting files when all are known) record `conflicts/markers`, keep the mark and push nothing;
  * - otherwise push when published, drop the mark, write one audit line.
  * → { [projectKey]: { baseCheck, push } }   (push null when nothing was pushed because of markers)
  */
@@ -103,11 +105,14 @@ export async function settleResolutions(rowId, checked, { by = null, isActive = 
     const mark = m?.br?.baseResolve;
     if (!mark || !SETTLED.has(c.baseCheck?.status)) continue;
     if (mark.via === 'pipeline' && mark.runId && isActive(mark.runId)) continue;
-    const left = await conflictMarkers(m.projectDir, m.br.feature, mark.files || []);
-    if (!Array.isArray(left)) {
-      out[m.projectKey] = { baseCheck: c.baseCheck, push: null, verification: left };
+    // A mark from before `from` was recorded: every line on the branch that the base lacks.
+    const files = (mark.files || []).length >= (mark.fileCount | 0) ? mark.files : [];
+    const v = await leftoverMarkers(m.projectDir, { from: mark.from || c.baseCheck.baseSha, to: c.baseCheck.headSha, files });
+    if (!v.ok) {
+      out[m.projectKey] = { baseCheck: c.baseCheck, push: null, verification: v };
       continue;
     }
+    const left = [...new Set(v.markers.map((x) => x.replace(/:\d+$/, '')))];
     if (left.length) {
       const rec = { ...c.baseCheck, status: 'conflicts', kind: 'markers', files: left, fileCount: left.length };
       updateBranchRecords(row.id, [m.projectKey], (br) => { br.baseCheck = rec; });
@@ -122,13 +127,15 @@ export async function settleResolutions(rowId, checked, { by = null, isActive = 
   return out;
 }
 
-/** Update branch: re-check (a fetch younger than the TTL is reused), require clean, merge, record, push. */
-export function updateRunBranch({ id, member = null, by = null, isLive, isFinishing, isActive = () => false } = {}) {
+/** Update branch: re-check (a fetch younger than the TTL is reused), require clean, merge, record, push.
+ *  `assertFree(row, m)` throws while something else owns the branch (a Watch PR fix run, PR_FIXING). */
+export function updateRunBranch({ id, member = null, by = null, isLive, isFinishing, isActive = () => false, assertFree = () => {} } = {}) {
   return withRunLock(id, async () => {
     const row = findPipelineRowById(id);
     assertFinishedRow(row, { isLive, isFinishing });
     const m = pickBaseMember(row, member);
     assertNotResolving(m, isActive);
+    assertFree(row, m);
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
     const rec = toRecord(c, by);
     if (c.status !== 'clean') {
@@ -155,33 +162,21 @@ export function updateRunBranch({ id, member = null, by = null, isLive, isFinish
   });
 }
 
-/** The original run's stepper template id (manifest.mjs:204), else the default workflow. */
-export function workflowOfRow(row) {
-  try { const s = JSON.parse(row.stepper || 'null'); if (s?.template?.id) return s.template.id; } catch { /* default */ }
-  return 'wf_default';
-}
-
 const TASK_CAP = 20_000;
-/** The resolve run's task text (D5): the agent runs the merge itself. */
+/** The resolve run's task (D5): the conflict brief Watch PR's fix runs get, the files, and the original task
+ *  as context. It runs as wf_pr_fix (Implement ⇄ Review, no planner), like every conflict fix run. */
 export function resolveTaskText({ check, feature, title, prompt }) {
   const files = check.files || [];
-  const more = check.fileCount > files.length ? `\n- …and ${check.fileCount - files.length} more` : '';
+  const more = check.fileCount > files.length ? `- …and ${check.fileCount - files.length} more` : '';
   const original = String(prompt || title || '').slice(0, TASK_CAP);
   return [
-    `# Merge \`${check.baseRef}\` into \`${feature}\` and resolve the conflicts`,
-    '',
-    `This run continues on the existing branch \`${feature}\`. Its base \`${check.base}\` moved after the original run finished, and merging it now conflicts (checked ${check.at}, base at \`${short(check.baseSha)}\`).`,
-    '',
-    `1. In the worktree, run \`git merge --no-ff ${check.baseRef}\`. Merge only: do not rebase, reset or force-push.`,
-    '2. Resolve every conflict, keeping the intent of both sides: the base\'s new changes and this branch\'s feature.',
-    '3. Leave no conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). Stage each resolved file with `git add`, then commit the merge.',
-    '4. Make sure it builds and the tests pass.',
+    conflictBrief({ subject: `The branch \`${feature}\``, base: check.base, ref: check.baseRef }),
     '',
     `Conflicting files (${check.fileCount}):`,
     ...files.map((f) => `- ${f}`),
-    ...(more ? [more.trim()] : []),
+    ...(more ? [more] : []),
     '',
-    '## The original task',
+    '## The original task (context only: it is already done on this branch)',
     '',
     original,
   ].join('\n');

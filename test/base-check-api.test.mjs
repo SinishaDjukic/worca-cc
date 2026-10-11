@@ -8,7 +8,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests as closeDbForTests, getDb } from '../src/core/db.mjs';
-import { writeStoreMeta, findPipelineRowById } from '../src/core/artifacts.mjs';
+import { writeStoreMeta, findPipelineRowById, persistPrState } from '../src/core/artifacts.mjs';
+import { setWatch, updateWatch } from '../src/core/pr-watch.mjs';
 import { updateBranchRecords } from '../src/core/checkout.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { stopAndSettle } from './helpers/stop-and-settle.mjs';
@@ -175,6 +176,25 @@ test('resolve-pipeline refuses a clean branch, a checked-out branch and a name s
   assert.equal(r.status, 409); assert.equal(r.json.code, 'UNSUPPORTED_BRANCH');
 });
 
+test('an open PR: resolve-pipeline defers to its Resolve (PR_OPEN); a live Watch PR fix run blocks the rest (PR_FIXING)', async () => {
+  const wc = makeWorld(root); commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n');
+  const s = await seedRun(wc);
+  const url = `https://github.com/o/r/pull/${s.id.slice(-6)}`;
+  persistPrState(s.id, { url, number: 1, state: 'OPEN' });
+  let r = await post('resolve-pipeline', s.id, { projectKey: s.key });
+  assert.equal(r.status, 409); assert.equal(r.json.code, 'PR_OPEN');
+  assert.equal(brOf(s.id).baseResolve, undefined);
+  setWatch({ prUrl: url, pipelineId: s.id, enabled: true });
+  updateWatch(url, { status: 'fixing', activeRunId: 'r1', activePipelineId: 'fixp' });
+  for (const [path, body] of [['update-branch', {}], ['resolve-terminal', {}], ['base-check', {}]]) {
+    r = await post(path, s.id, { projectKey: s.key }, body);
+    assert.equal(r.status, 409, path); assert.equal(r.json.code, 'PR_FIXING', path);
+  }
+  r = await post('base-check', s.id, { projectKey: s.key }, { auto: true });   // the check on open only looks
+  assert.equal(r.status, 200);
+  updateWatch(url, { status: 'watching', activeRunId: null, activePipelineId: null });
+});
+
 test('resolve-pipeline: a start refusal removes the mark it wrote', async () => {
   const wc = makeWorld(root); commitOnFeat(wc, 'f.txt', 'feature\n'); teammatePush(wc, 'f.txt', 'u\n');
   const s = await seedRun(wc);
@@ -219,9 +239,10 @@ test('POST resolve-pipeline starts a mock run on the existing branch and marks t
   assert.ok(entry, 'the live entry exists');
   assert.equal(entry.orch.opts.branch.feature, 'feat');
   assert.deepEqual(entry.orch.opts.branch.resolves, { runId: conflict.id, member: conflict.key });
-  assert.equal(entry.orch.workflowId, 'wf_default');
+  assert.equal(entry.orch.workflowId, 'wf_pr_fix', 'the conflict fix workflow Watch PR uses');
+  assert.match(String(entry.orch.opts.prompt), /^The branch `feat` has merge conflicts/);
   assert.match(String(entry.orch.opts.prompt), /f\.txt/);
-  // The mock planner stops at a clarify question, so the run never ends by itself: wait for its setup.
+  // Wait for its setup, then stop it before the mock implementer is done.
   const ownBranch = () => { const id = entry.orch.state.id; const row = id && findPipelineRowById(id); return row?.branch ? JSON.parse(row.branch) : null; };
   for (let i = 0; i < 200 && !ownBranch()?.worktreeDir; i++) await new Promise((res) => setTimeout(res, 50));
   const own = ownBranch();

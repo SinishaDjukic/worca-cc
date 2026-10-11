@@ -695,17 +695,6 @@ export async function startConflictMerge(wt, { feature, baseSha, baseRef, remote
   return { ok: true, started: true, files };
 }
 
-/** Files (of `files`) on `ref`'s tip that still hold conflict markers (D13); a structured failure on doubt. */
-export async function conflictMarkers(dir, ref, files) {
-  const list = (files || []).filter((f) => typeof f === 'string' && f && !f.startsWith('-'));
-  if (!list.length || !isSafeBranchName(ref)) return [];
-  const r = await _run(['grep', '-l', '-I', '-E', '^(<{7}|>{7})( |$)', `refs/heads/${ref}`, '--', ...list], { cwd: dir });
-  // git grep prints "<rev>:<path>"; exit 1 alone means a verified no-match. Other failures fail closed.
-  if (r.ok) return [...new Set(r.stdout.split('\n').filter(Boolean).map((l) => l.slice(l.indexOf(':') + 1)))];
-  if (r.code === 1 && !r.timedOut) return [];
-  return { ok: false, kind: r.timedOut ? 'timeout' : 'failed', error: scrubGitText(r.stderr) || `git grep exited ${r.code}` };
-}
-
 /** Resolve a user/model-named source: local ref first, then (after a TTL fetch) <remote>/<name>. */
 export async function resolveSourceRef(dir, name, { remote = 'origin', fetch = true, maxAgeMs = INTERACTIVE_TTL_MS, timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
   if (typeof name !== 'string' || !name || name.startsWith('-')) return { ok: false, kind: 'bad-ref' };

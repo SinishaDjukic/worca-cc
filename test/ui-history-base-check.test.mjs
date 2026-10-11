@@ -52,6 +52,15 @@ test('conflicts: the pill, the files and both Resolve buttons; no Update branch'
   assert.ok(['btn', 'btn-ghost', 'btn-mini'].every((c) => btn(li, 'hd-base-pipeline').classList.contains(c)), 'the house small button');
 });
 
+test('an open PR: no Resolve in a pipeline here (its Overview row has Resolve); the terminal stays', async () => {
+  const pr = { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' };
+  const ctx = await bootBase(CONFLICTS, { rows: [{ ...ROW, pr }] });
+  const [li] = items(ctx);
+  assert.equal(li.querySelector('.hd-base-pill').textContent, 'Conflicts in 2 files');
+  assert.equal(shown(btn(li, 'hd-base-pipeline')), false);
+  assert.equal(shown(btn(li, 'hd-base-terminal')), true);
+});
+
 test('quiet when nothing needs doing: up to date shows no line', async () => {
   const ctx = await bootBase(UP);
   assert.equal(box(ctx).hidden, true);

@@ -180,8 +180,8 @@ import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, Ac
 import { parsePortRange } from '../src/core/actions/ports.mjs';
 import { checkoutRun, checkoutRunUnderLock, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
   enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, withRunLock, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
-import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, assertFinishedRow, assertNotResolving,
-  resolveMark, toRecord, workflowOfRow, resolveTaskText } from '../src/core/base-conflicts.mjs';
+import { checkRunBase, settleResolutions, updateRunBranch, pickBaseMember, baseMembersOfRow, assertFinishedRow, assertNotResolving,
+  resolveMark, toRecord, resolveTaskText } from '../src/core/base-conflicts.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
@@ -278,7 +278,7 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
-import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
+import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -7153,7 +7153,7 @@ app.post('/api/runs/:id/publish', async (req, res) => {
 const BASE_ERR_STATUS = { NOT_FOUND: 404, MEMBER_REQUIRED: 400, BAD_REQUEST: 400, NOT_FINISHED: 409, UP_TO_DATE: 409,
   CONFLICTS: 409, NOT_CONFLICTING: 409, NO_BRANCH: 409, DIRTY: 409, IN_USE: 409, MOVED: 409, IDENTITY: 409,
   BRANCH_CHECKED_OUT: 409, RETAINED: 409, BRANCH_MISSING: 409, TARGET_EXISTS: 409, RESOLVING: 409,
-  UNSUPPORTED_BRANCH: 409, CHECK_FAILED: 502 };
+  UNSUPPORTED_BRANCH: 409, PR_OPEN: 409, PR_FIXING: 409, CHECK_FAILED: 502 };
 function sendBaseError(res, e) {
   res.status(BASE_ERR_STATUS[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.baseCheck ? { baseCheck: e.baseCheck } : {}), ...(e?.holder ? { holder: e.holder } : {}),
@@ -7164,6 +7164,19 @@ const publicMember = ({ tree, ...m }) => m;      // the merge-tree tree id never
 const mockOfRow = (row) => { try { return JSON.parse(row.resume_point || 'null')?.mock === true; } catch { return false; } };
 /** D18: a resolve run (its LIVE run UUID, as POST /api/run answered) has not settled yet. A restart forgets it. */
 const resolveRunActive = (runId) => { const e = runs.get(runId); return !!e && !e.settled; };
+/** A member's open pull request (a project run's own), else null. */
+function openPrOfMember(row, m) {
+  const pr = row.target === 'workspace' ? readMemberPrStates(row.id)[m.projectKey] : readPrState(row.id);
+  return pr?.url && pr.state === 'OPEN' ? pr : null;
+}
+/** Watch PR owns an open PR's branch while its fix run starts, runs or publishes: a merge or push from
+ *  here would move the branch under it (the watch would stop as remote-moved). */
+function assertNoPrFix(row, m) {
+  const pr = openPrOfMember(row, m);
+  if (pr && watchActive(getWatch(pr.url))) {
+    throw Object.assign(new Error(`A Watch PR fix run is working on \`${m.br.feature}\`. Wait for it to finish.`), { code: 'PR_FIXING' });
+  }
+}
 
 // POST /api/runs/:id/base-check?projectKey=|workspaceId=|projectDir=  body: { member?, auto? }
 // -> { ok, members:[{ projectKey, name, branch, baseCheck }], settled:{ [projectKey]: { baseCheck, push } } }
@@ -7179,6 +7192,7 @@ app.post('/api/runs/:id/base-check', async (req, res) => {
     }
     const by = actorOf(req);
     const auto = req.body?.auto === true;
+    if (!auto) for (const m of baseMembersOfRow(row).filter((x) => !member || x.projectKey === member)) assertNoPrFix(row, m);
     const { members } = await checkRunBase(row.id, { members: member ? [member] : null, by, maxAgeMs: auto ? INTERACTIVE_TTL_MS : 0 });
     const settled = auto ? {} : await settleResolutions(row.id, members, { by, isActive: resolveRunActive });
     emitChanged('pipelines-changed', 'updated');
@@ -7192,7 +7206,7 @@ app.post('/api/runs/:id/update-branch', async (req, res) => {
   try {
     const row = runRowForScope(req, res); if (!row) return;
     const r = await updateRunBranch({ id: row.id, member: bodyMember(req), by: actorOf(req), isLive: isLiveRun,
-      isFinishing: isFinishingRun, isActive: resolveRunActive });
+      isFinishing: isFinishingRun, isActive: resolveRunActive, assertFree: assertNoPrFix });
     emitChanged('pipelines-changed', 'updated');
     res.json({ ok: true, ...r });
   } catch (e) { sendBaseError(res, e); }
@@ -7223,6 +7237,10 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);
+    // An open PR's conflicts belong to Watch PR: its Resolve (the Overview tab's PR row) pushes to the PR.
+    if (openPrOfMember(row, m)) {
+      return res.status(409).json({ error: `\`${m.br.feature}\` has an open pull request: use Resolve on its row in the Overview tab.`, code: 'PR_OPEN' });
+    }
     // createWorktree reuses the branch only under its sanitized name; any other name would start a NEW branch.
     if (sanitizeBranchName(m.br.feature) !== m.br.feature) {
       return res.status(409).json({ error: `A run cannot continue on \`${m.br.feature}\`: its name is not one Worca creates. Resolve it in a terminal.`, code: 'UNSUPPORTED_BRANCH' });
@@ -7244,11 +7262,14 @@ app.post('/api/runs/:id/resolve-pipeline', async (req, res) => {
       projectDir: m.projectDir,
       title: `Resolve conflicts with ${c.base}: ${row.title || m.br.feature}`.slice(0, 200),
       prompt: resolveTaskText({ check: rec, feature: m.br.feature, title: row.title, prompt: row.prompt }),
-      workflowId: workflowOfRow(row),
+      // Every conflict fix run is Watch PR's unattended Implement ⇄ Review: no planner re-plans the feature.
+      workflowId: FIX_WORKFLOW_ID,
+      humanInLoop: false,
       sourceBranch: m.br.source,
       featureBranch: m.br.feature,
       syncBeforeStart: false,
       ...(row.guardrails_id ? { guardrailsId: row.guardrails_id } : {}),
+      engine: runEngineOfRow(row),
       // #617: a mock run is resolved by a mock run. Best effort: the resume point records `mock: true` while it
       // exists; when it was cleared, the server's own mock mode decides (startRunHandler's `serverMockMode()`).
       ...(mockOfRow(row) ? { mock: true } : {}),
@@ -7283,6 +7304,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
     assertFinishedRow(row, { isLive: isLiveRun, isFinishing: isFinishingRun });
     const m = pickBaseMember(row, bodyMember(req));
     assertNotResolving(m, resolveRunActive);     // else useExisting would link the resolve run's live worktree
+    assertNoPrFix(row, m);
     const by = actorOf(req);
     const c = await checkBaseMerge(m.projectDir, { base: m.br.source, feature: m.br.feature, remote: m.remote, maxAgeMs: INTERACTIVE_TTL_MS });
     const rec = toRecord(c, by);

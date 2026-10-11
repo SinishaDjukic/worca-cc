@@ -215,8 +215,9 @@ shows no line.
 - **dev is N commits ahead, merges cleanly**: **Update branch** adds a merge commit of the base to
   the branch.
 - **Conflicts in N files**, with the file list: resolve them in one of two ways.
-  - **Resolve in a pipeline** starts a new run on the same branch, with the same workflow. Its task
-    tells the agent to merge the base and resolve the listed files.
+  - **Resolve in a pipeline** starts a new run on the same branch. It runs the same unattended
+    Implementation and Review workflow as a Watch PR fix run, with the same conflict brief, plus the
+    listed files and the original task for context.
   - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
     the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
     commit the merge, then click **Re-check**.
@@ -232,8 +233,16 @@ After Update branch or a resolution, a branch that was already published (Publis
 PR) is pushed again with a plain `git push`. Worca never force-pushes: if someone pushed to the branch
 in the meantime, the push is refused and the merge stays local. The header then shows **Push changes**;
 pull their work into the branch first, or that push is refused too. A resolution that still has conflict
-markers (`<<<<<<<`, `>>>>>>>`) in its files is not pushed; the line reads "Conflict markers left in
-N files".
+markers (`<<<<<<<`, `>>>>>>>`) on the lines it added is not pushed (the same check Watch PR runs before
+its push); the line reads "Conflict markers left in N files".
+
+When the branch has an open pull request, the pull request owns its conflicts:
+
+- **Resolve in a pipeline** isn't offered. Use **Resolve** on the pull request's row in the Overview tab
+  (see [Watch PR](ui-levels.md)); its fix run pushes to the pull request.
+- **Update branch** and **Resolve in a terminal** stay: Watch PR has neither.
+- While a Watch PR fix run is working on the branch, Update branch, Resolve in a terminal and Re-check
+  are refused until it finishes, so nothing moves the branch under it.
 
 ## Workspace stacks
 

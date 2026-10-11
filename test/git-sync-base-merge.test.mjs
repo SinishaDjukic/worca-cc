@@ -6,7 +6,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkBaseMerge, mergeBaseInto, startConflictMerge, conflictMarkers, _testing } from '../src/core/git-sync.mjs';
+import { checkBaseMerge, mergeBaseInto, startConflictMerge, _testing } from '../src/core/git-sync.mjs';
+import { leftoverMarkers, _testing as gitInfo } from '../src/core/git-info.mjs';
 import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat } from './helpers/base-world.mjs';
 
 let root; const saved = {};
@@ -175,21 +176,22 @@ test('startConflictMerge leaves the merge in progress with the unmerged files; a
   assert.deepEqual(r, { ok: true, started: false, files: ['f.txt'] });
 });
 
-test('conflictMarkers finds leftover markers on a branch tip', async () => {
+test('leftoverMarkers names markers added between two commits, narrowed to the given files', async () => {
   const w = world();
+  const from = g(w.a, 'rev-parse', 'feat');
   commitOnFeat(w, 'f.txt', '<<<<<<< HEAD\na\n=======\nb\n>>>>>>> origin/dev\n');
-  assert.deepEqual(await conflictMarkers(w.a, 'feat', ['f.txt', 'g.txt']), ['f.txt']);
-  assert.deepEqual(await conflictMarkers(w.a, 'feat', []), []);
+  const to = g(w.a, 'rev-parse', 'feat');
+  const all = await leftoverMarkers(w.a, { from, to });
+  assert.equal(all.ok, true);
+  assert.deepEqual([...new Set(all.markers.map((x) => x.replace(/:\d+$/, '')))], ['f.txt']);
+  assert.deepEqual((await leftoverMarkers(w.a, { from, to, files: ['g.txt'] })).markers, []);
+  assert.deepEqual((await leftoverMarkers(w.a, { from: to, to })).markers, []);
 });
 
-test('conflictMarkers distinguishes git grep failure from no markers', async () => {
+test('leftoverMarkers reports a git failure instead of no markers', async () => {
   const w = world();
-  const real = _testing.defaultRun;
-  _testing.setRunner((args, opts) => (args[0] === 'grep'
-    ? Promise.resolve({ ok: false, stdout: '', stderr: 'fatal: object read failed', code: 128 })
-    : real(args, opts)));
-
-  assert.deepEqual(await conflictMarkers(w.a, 'feat', ['f.txt']), {
-    ok: false, kind: 'failed', error: 'fatal: object read failed',
-  });
+  gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'fatal: bad object', code: 128 }));
+  try {
+    assert.deepEqual(await leftoverMarkers(w.a, { from: 'a', to: 'b' }), { ok: false, error: 'fatal: bad object' });
+  } finally { gitInfo.reset(); }
 });

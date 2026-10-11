@@ -10,7 +10,8 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, findPipelineRowById } from '../src/core/artifacts.mjs';
 import { updateBranchRecords } from '../src/core/checkout.mjs';
 import { _testing as gitSync } from '../src/core/git-sync.mjs';
-import { checkRunBase, updateRunBranch, settleResolutions, afterRunBaseCheck, resolveTaskText, workflowOfRow } from '../src/core/base-conflicts.mjs';
+import { checkRunBase, updateRunBranch, settleResolutions, afterRunBaseCheck, resolveTaskText } from '../src/core/base-conflicts.mjs';
+import { _testing as gitInfo } from '../src/core/git-info.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
 import { g, GITCONFIG, world as makeWorld, teammatePush, commitOnFeat, mergeBaseOnFeat } from './helpers/base-world.mjs';
 
@@ -28,7 +29,7 @@ after(async () => {
   for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await rm(root, { recursive: true, force: true });
 });
-beforeEach(() => gitSync.reset());
+beforeEach(() => { gitSync.reset(); gitInfo.reset(); });
 
 const world = () => makeWorld(root);
 const brOf = (id) => JSON.parse(findPipelineRowById(id).branch);
@@ -160,15 +161,15 @@ test('settleResolutions keeps the mark and does not push when marker verificatio
     baseResolve: { via: 'terminal', at: 'x', files: ['f.txt'], fileCount: 1 } });
   mergeBaseOnFeat(w);
   const { members } = await checkRunBase(id);
-  const real = gitSync.defaultRun;
-  gitSync.setRunner((args, opts) => (args[0] === 'grep'
+  const real = gitInfo.defaultRun;
+  gitInfo.setRunner((cmd, args, opts) => (args[0] === 'diff' && args[1] === '--check'
     ? Promise.resolve({ ok: false, stdout: '', stderr: 'fatal: object read failed', code: 128 })
-    : real(args, opts)));
+    : real(cmd, args, opts)));
 
   const settled = await settleResolutions(id, members);
 
   assert.equal(settled[key].push, null);
-  assert.equal(settled[key].verification.kind, 'failed');
+  assert.equal(settled[key].verification.error, 'fatal: object read failed');
   assert.ok(brOf(id).baseResolve, 'the mark stays');
   assert.equal(g(w.a, 'rev-parse', 'origin/feat'), pushed, 'nothing was pushed');
 });
@@ -227,13 +228,13 @@ test('afterRunBaseCheck on a resolve run refreshes the original and catches left
   }
 });
 
-test('resolveTaskText names the merge, the files and the original task; workflowOfRow reads the stepper', () => {
+test('resolveTaskText is the shared conflict brief plus the files and the original task', () => {
   const t = resolveTaskText({ check: { base: 'dev', baseRef: 'origin/dev', baseSha: 'abcdef1234', at: 'T', files: ['a.js'], fileCount: 3 },
     feature: 'feat', title: 'Title', prompt: 'Do the thing' });
+  assert.match(t, /^The branch `feat` has merge conflicts with its base branch `dev`/);
   assert.match(t, /git merge --no-ff origin\/dev/);
+  assert.match(t, /Never rebase, reset, fetch or force-push/);
   assert.match(t, /- a\.js/);
   assert.match(t, /…and 2 more/);
   assert.match(t, /Do the thing$/);
-  assert.equal(workflowOfRow({ stepper: JSON.stringify({ template: { id: 'wf_x' } }) }), 'wf_x');
-  assert.equal(workflowOfRow({ stepper: null }), 'wf_default');
 });

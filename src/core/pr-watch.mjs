@@ -12,6 +12,8 @@ export const WATCH_MARKER = '<!-- worca:pr-watch -->';
 const TRUSTED = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const PASSING = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED']);
 const ACTIVE = new Set(['starting', 'fixing', 'publishing']);
+/** A fix run is starting, running or publishing: it owns the PR's branch until it finishes. */
+export const watchActive = (w) => !!w && ACTIVE.has(w.status);
 const json = (v, fallback) => { try { return JSON.parse(v); } catch { return fallback; } };
 
 function watchOf(row) {
@@ -188,21 +190,27 @@ export function collectTriggers(pr, alreadyHandled = [], { conflictOnly = false,
     reviewOnlyComment: reviews.length > 0, conflict: null, handledKeys, skipped, waitingOnBase, reruns };
 }
 
+const NEVER = 'Never rebase, reset, fetch or force-push, and leave no conflict markers behind.';
+/** The brief of every conflict fix run: Watch PR's, and #620's Resolve in a pipeline. `ref` is ready
+ *  to merge (Worca fetched it: guardrails can deny agents `git fetch`); the agent only merges it. */
+export function conflictBrief({ subject, base, ref }) {
+  return [`${subject} has merge conflicts with its base branch \`${base}\`. Merge the base in and resolve them.`,
+    `Worca already has it: run \`git merge --no-ff ${ref}\`, resolve every conflict so both sides' changes keep working,`,
+    `run the tests, and commit the merge. ${NEVER}`].join('\n');
+}
+
 export const PR_WATCH_BATCH_LOG_BYTES = 40 * 1024;
 export function buildFixTask({ pr, triggers, logs = [] }) {
-  const never = 'Never rebase, reset, fetch or force-push, and leave no conflict markers behind.';
   if (triggers.conflict?.why === 'behind') {
     const { base, remote, checks = [] } = triggers.conflict;
     return [`Pull request ${pr.url} is behind its base branch \`${base}\`, whose latest commit passes checks that fail here: ${checks.join(', ')}.`,
       `Merge the base in first; that may be the whole fix. Worca already fetched it: run \`git merge --no-ff ${remote}/${base}\`,`,
       'resolve any conflicts so both sides\' changes keep working, run the tests, and commit the merge. Change nothing else in this run.',
-      never].join('\n');
+      NEVER].join('\n');
   }
   if (triggers.conflict) {
     const { base, remote } = triggers.conflict;
-    return [`Pull request ${pr.url} has merge conflicts with its base branch \`${base}\`. Merge the base in and resolve them.`,
-      `Worca already fetched it: run \`git merge --no-ff ${remote}/${base}\`, resolve every conflict so both sides' changes keep working,`,
-      `run the tests, and commit the merge. ${never}`].join('\n');
+    return conflictBrief({ subject: `Pull request ${pr.url}`, base, ref: `${remote}/${base}` });
   }
   const quote = (s) => String(s || '').split(/\r?\n/).map((l) => `> ${l}`).join('\n');
   const out = [`Fix the newly reported problems on pull request ${pr.url}.`,
