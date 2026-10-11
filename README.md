@@ -434,9 +434,12 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   Ask for "auto", or for work no saved workflow fits, and it drafts a **workflow card** you tune
   and **Save as workflow**. Model and provider, workspace, Actions, team-metrics, team-policy and
   Away mode changes, cloning a repo and reading a new website are cards too: nothing changes
-  until you apply one. A started run becomes a live card — status, elapsed, cost, agents done
-  and its workflow graph, with **Open run** — and the chat posts when the run waits for an
-  answer, pauses, fails or finishes.
+  until you apply one. A started run becomes a live card — status, elapsed, cost, its agents and
+  its workflow graph, with **Open run** — where you **Pause**, **Resume** or **Stop** the run and
+  answer its questions; once it ends, the card shows the result, the top changed files, its
+  artifacts and **Create pull request**. While the chat follows a live run, the composer's **→**
+  chip (named after the run) sends it a direction instead of a message. The chat still posts when
+  the run waits for an answer, pauses, fails or finishes.
 - **Memory** — say "remember …" or state a lasting preference, and Ask saves it to Worca's
   memory: global for how you work, per project for facts about one repository. Pipeline agents
   load the same memory; view, edit, delete or restore it on Settings › **Memory** and on a

@@ -8345,3 +8345,137 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
 .ask-prcard-link{color:var(--blue-ink-strong);}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:4px;}
+
+/* ===== Chat P3: run card ===== */
+/* The chat run card (ui/public/chat/run-card.mjs). It keeps the Ask progress card's look (.ask-rc-* above) and adds
+   the Workflows graph well, the inline question, the result region and the run controls. The well is a
+   .run-flow-wrap > .run-flow host, so the run monitor's status rings, pips, ants and their reduced-motion rules
+   (.run-flow.gv-host …) apply unchanged — no status rule is restated here. Dots only behind the graph (U8). Tokens
+   only, so light and dark both work; no coloured left-edge lines (emphasis is a wash or a chip). */
+.ask-card.chat-rc{gap:0;}
+.chat-rc .ask-rc-sub{display:flex;align-items:center;gap:8px;min-width:0;}
+.chat-rc-where{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-rc-auto{flex:0 0 auto;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font-family:var(--sans);font-size:10.5px;font-weight:600;}
+.chat-rc-auto[hidden]{display:none;}
+.chat-rc-chev{margin-left:2px;}
+/* An agent chip never runs out of a narrow card: the name and a long model id ellipsize (the model first), the cycle
+   label never shrinks. The model label is --ink-2: --ink-3 on the chip wash is 2.47:1 in light. */
+.chat-rc-agent{max-width:100%;}
+.chat-rc-agent-name{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:10.5px;font-weight:500;}
+.chat-rc-agent-cycle{flex:none;padding:0 6px;border-radius:999px;background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:10px;font-weight:600;}
+.run-flow-wrap.chat-rc-well{margin:14px 0 0;overflow:hidden;height:var(--run-host-h,240px);}
+.chat-rc-well[hidden]{display:none;}
+.run-flow-wrap.chat-rc-well.is-deciding{height:auto;}
+.chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12.5px;}
+.chat-rc-deciding[hidden]{display:none;}
+.gv-wrap-card .run-flow.gv-host .gv-stage,.gv-wrap-card .run-flow.gv-host .gv-world .node{cursor:grab;}
+.gv-wrap-card .run-flow.gv-host .gv-stage.panning,.gv-wrap-card .run-flow.gv-host .gv-stage.panning *{cursor:grabbing !important;}
+/* A card binds no footer accordion, row or result link (the panel is where you drill in): the expert footer bands
+   paint, but take no pointer — no pointer cursor, no hover wash, and a press is the stage's pan. */
+.gv-wrap-card .run-flow.gv-host .gv-world .xtoggle,.gv-wrap-card .run-flow.gv-host .gv-world .xrow,.gv-wrap-card .run-flow.gv-host .gv-world .xresult a{pointer-events:none;cursor:inherit;}
+.chat-rc-expand{position:absolute;top:10px;right:10px;z-index:5;display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--panel);color:var(--ink-2);cursor:pointer;}
+.chat-rc-expand:hover{color:var(--ink);background:var(--hover);}
+.chat-rc-expand:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-expand[hidden]{display:none;}
+.chat-rc-q{margin-top:14px;}
+.chat-rc-q[hidden]{display:none;}
+.chat-rc-q-head{margin-bottom:8px;font-weight:600;font-size:13px;color:var(--ink);}
+.chat-rc-q-head[hidden]{display:none;}
+.chat-rc-qbody[hidden]{display:none;}
+.chat-rc-q .qpanel{margin-top:0;}
+.chat-rc-q .qpanel-head{display:none;}
+/* The run page's question chrome a card needs (those rules are scoped to .rd-questions): no head gap above the body,
+   an issue without a coloured stripe (R16; its chip names the severity), the issue location and the "K of N answered"
+   lead in ink-2, the tunables select off the chevron (P2's `.ask-card :is(select,…)` rule has the same weight and
+   comes later), and answer buttons that wrap as whole buttons onto the next row ("Accept & run", "Cancel run"); a
+   label wider than the whole row ("Don't approve another cycle and continue" at 360–390 px) wraps inside its button,
+   never out of the card. */
+.chat-rc-q .qpanel .qbody,.chat-rc-q .qpanel .qbody > :first-child{margin-top:0;}
+.chat-rc-q .issue{border-color:var(--line);border-left-width:1px;}
+.chat-rc-q .issue-loc{color:var(--ink-2);}
+.chat-rc-q .qanswered{color:var(--ink-2);}
+.chat-rc-q .qtune .select-wrap select{padding:0 40px 0 12px;font-size:14px;}
+.chat-rc-q .qpanel-foot{flex-wrap:wrap;row-gap:8px;}
+.chat-rc-q .qpanel-foot > button{max-width:100%;white-space:normal;text-wrap:balance;}
+.chat-rc-q-err{margin-top:8px;font-size:12px;color:var(--red-ink);}
+.chat-rc-q-err[hidden]{display:none;}
+.chat-rc-receipt{padding:9px 12px;border-radius:10px;background:var(--field);color:var(--ink-2);font-size:12.5px;}
+.chat-rc-receipt[hidden]{display:none;}
+.chat-rc-receipt summary{cursor:pointer;font-weight:600;color:var(--ink);}
+.chat-rc-receipt summary:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:6px;}
+.chat-rc-receipt-list{margin:8px 0 0;padding-left:18px;}
+.chat-rc-receipt-list[hidden]{display:none;}
+.chat-rc-result{margin-top:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--field);}
+.chat-rc-result[hidden]{display:none;}
+.chat-rc-res-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
+.chat-rc-res-glyph{flex:0 0 auto;display:grid;place-items:center;width:34px;height:34px;border-radius:10px;}
+.chat-rc-res-glyph.tone-green{background:var(--green-bg);color:var(--h-green-ink);}
+.chat-rc-res-glyph.tone-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.chat-rc-res-glyph.tone-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.chat-rc-res-glyph.tone-red{background:var(--red-bg);color:var(--red-ink);}
+.chat-rc-res-text{flex:1 1 200px;min-width:0;}
+.chat-rc-res-title{font-weight:600;font-size:14px;color:var(--ink);}
+.chat-rc-res-sub{margin-top:2px;font-size:12px;color:var(--ink-2);}
+.chat-rc-res-churn{flex:0 0 auto;margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);}
+/* The status inks on the result's --field and on a hovered row: plain --green-ink / --red-ink measure 4.03–4.45:1 in
+   light; 15 % ink lifts them past 4.5:1 in both themes (the token blocks stay the only colour literals). */
+.chat-rc-add{color:color-mix(in srgb, var(--green-ink) 85%, var(--ink));}
+.chat-rc-del{color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-files{display:flex;flex-direction:column;gap:2px;margin:12px 0 0;padding:0;list-style:none;}
+.chat-rc-file{display:flex;align-items:center;gap:10px;width:100%;padding:5px 8px;border:0;border-radius:8px;background:transparent;color:var(--ink);font-family:var(--mono);font-size:11.5px;text-align:left;cursor:pointer;}
+.chat-rc-file:hover{background:var(--hover);}
+.chat-rc-file:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.chat-rc-file-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-rc-arts{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;}
+.chat-rc-art{max-width:240px;height:24px;padding:0 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink-2);font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-rc-art:hover{color:var(--ink);border-color:var(--line-2);}
+.chat-rc-art.is-more{font-family:var(--sans);font-weight:600;}
+.chat-rc-art:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
+.chat-rc-res-err{margin-right:auto;font-size:12px;color:color-mix(in srgb, var(--red-ink) 85%, var(--ink));}
+.chat-rc-res-err[hidden]{display:none;}
+.chat-rc-create-pr,.chat-rc-view-pr{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:999px;background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
+.chat-rc-create-pr:hover,.chat-rc-view-pr:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.chat-rc-create-pr:disabled{opacity:.5;cursor:default;}
+.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
+.chat-rc-foot[hidden]{display:none;}
+.chat-rc-btn{height:30px;padding:0 14px;border:1.5px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-weight:600;font-size:12px;cursor:pointer;}
+.chat-rc-btn:hover{background:var(--hover);}
+.chat-rc-btn:disabled{opacity:.5;cursor:default;}
+.chat-rc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-stop{border-color:color-mix(in srgb, var(--red) 55%, var(--line-2));color:var(--red-ink);}
+/* A hovered Stop keeps the panel under its red ink (4.81:1; on --hover it is 4.03:1) — the run page's red .rd-stop:hover border. */
+.chat-rc-stop:hover{background:var(--panel);border-color:var(--red);}
+.chat-rc-stop[hidden]{display:none;}
+.chat-rc-err{font-size:12px;color:var(--red-ink);}
+.chat-rc-err[hidden]{display:none;}
+/* While Auto decides, the empty graph host keeps .run-flow's 66px/52px padding: hide it, and no dots behind text (U8). */
+.chat-rc-well.is-deciding > .chat-rc-graph{display:none;}
+.run-flow-wrap.chat-rc-well.is-deciding{background-image:none;}
+/* A narrow card (390px) wraps the head instead of pushing "Open run ›" out of the card. */
+.chat-rc .ask-rc-head{flex-wrap:wrap;height:auto;min-height:28px;row-gap:6px;}
+.chat-rc .ask-rc-open{margin-left:auto;}
+/* A receipt with no answer list has nothing to expand. */
+.chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary{list-style:none;cursor:default;}
+.chat-rc-receipt:not(:has(> .chat-rc-receipt-list:not([hidden]))) > summary::-webkit-details-marker{display:none;}
+/* The run page's own field metrics: P2's `.ask-card :is(select,input[type="text"],textarea)` rule must not restyle them. */
+.chat-rc-q .qpanel :is(.qfree,.af-inp){padding:10px 14px;border-radius:11px;}
+@media (prefers-reduced-motion:reduce){
+  .ask-card.chat-rc{animation:none;}
+  .chat-rc.is-live .ask-rc-dot,.chat-rc .ask-rc-agent-dot{animation:none;}
+}
+/* Chat P3: the composer's "→ <run title>" chip (ui/public/chat/direction.mjs). On = a blue wash + ring on the
+   composer, never a coloured edge line. */
+.chat-dir{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;row-gap:4px;min-width:0;}
+.chat-dir-chip{display:inline-flex;align-items:center;gap:5px;max-width:240px;height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink-2);font:inherit;font-size:12px;font-weight:600;cursor:pointer;}
+.chat-dir-chip:hover{color:var(--ink);background:var(--hover);}
+.chat-dir-chip:disabled{opacity:.6;cursor:default;}
+.chat-dir-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-dir-chip.is-on{background:var(--blue-bg);border-color:var(--blue);color:var(--h-blue-ink);}
+.chat-dir-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chat-dir-err{font-size:11.5px;color:var(--red-ink);}
+.chat-dir-err[hidden]{display:none;}
+.ask-composer.is-direction .ask-composer-box{box-shadow:0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
+.ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}

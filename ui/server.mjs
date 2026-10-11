@@ -36,6 +36,7 @@ import {
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import { runCardResults, lastArtifactsWindow, RUN_CARD_ARTIFACTS, RUN_CARD_FINISHED } from '../src/core/ask/run-card-extras.mjs';
 import { readAskFileEntry, ASK_FILE_MIMES } from '../src/core/ask-files.mjs';
 import { ASK_FILES_DIR } from '../src/core/ask-forms.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
@@ -10118,16 +10119,41 @@ app.get('/api/ask/threads/:id', (req, res) => {
   }
 });
 
+/** Chat P3 (CONTRACT §5): what the chat run card's result region shows for a FINISHED run (done/stopped/error) —
+ *  results.json's counts and top files by churn, the LAST artifacts (the newest outputs), the PR. Null for a run
+ *  that is not over (results.json is written at the end) or a row that is gone. Every read is best-effort: a missing
+ *  piece is null / [] (a stop or error with no changes writes no results.json). */
+async function askRunCardExtras(row) {
+  if (!row || !RUN_CARD_FINISHED.has(String(row.status || ''))) return null;
+  let results = null;
+  try {
+    const dir = await runDirForRow(row);
+    results = runCardResults(JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')));
+  } catch { results = null; }            // no results.json, a reclaimed run folder, or junk JSON
+  let artifacts = [];
+  let moreArtifacts = false;
+  try {
+    // Count on the cheap index rows (no stat), then read (and stat) only the last page.
+    const { total, offset } = lastArtifactsWindow(await listArtifacts(row.id), RUN_CARD_ARTIFACTS);
+    const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
+    artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
+    moreArtifacts = total > RUN_CARD_ARTIFACTS;
+  } catch { /* the artifact index is best-effort here */ }
+  return { results, artifacts, moreArtifacts, pr: readPrState(row.id) };
+}
+
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
+// Chat P3: plus `extras` (askRunCardExtras) for the chat run card's result region.
 const ASK_RUN_REF_RE = /^(?:[0-9a-f]{8}|[0-9a-zA-Z-]{9,64})$/;
-app.get('/api/ask/runs/:id', (req, res) => {
+app.get('/api/ask/runs/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
   try {
     const entry = liveRunEntry(id);
     const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
     if (!state) return res.status(404).json({ error: 'run not found' });
-    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null });
+    const extras = await askRunCardExtras(findPipelineRowById(state.id));
+    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -11044,6 +11070,60 @@ app.post('/api/ask/threads/:id/stop', (req, res) => {
     try { job.turn.stop(); } catch { /* best-effort */ }
   }
   res.json({ ok: true });
+});
+
+// Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows
+// (ask_run_links: by its run_id — a live UUID, or the 8-hex id track_run stores — or its pipeline_id). The text goes
+// through the SAME in-process post as POST /api/runs/:id/directions; then the thread keeps it as a user row carrying
+// a `direction` block, plus a system notice, both broadcast like the follower's notices (no model turn, no cost).
+// A refusal appends nothing.
+app.post('/api/ask/threads/:id/directions', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const { runId, text } = req.body || {};
+  if (typeof runId !== 'string' || !runId) return badRequest(res, 'runId is required');
+  if (text === undefined || text === null || text === '') return badRequest(res, 'text is required');
+  if (typeof text !== 'string') return badRequest(res, 'text must be a string');
+  if (!text.trim()) return badRequest(res, 'text is required');
+  if (text.length > DIRECTION_MAX_CHARS) return badRequest(res, `text must be at most ${DIRECTION_MAX_CHARS} characters`);
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    const links = askListRunLinks(id);
+    // A proposal launch links the live UUID and learns the pipeline id from the follower's first `state`; the chip names
+    // the run by its pipeline id, so a link not (yet) filled in matches through its live entry.
+    const link = links.find((l) => l.runId === runId || l.pipelineId === runId)
+      || links.find((l) => !l.pipelineId && (liveRunEntry(l.runId) || {}).pipelineId === runId) || null;
+    if (!link) return res.status(404).json({ error: 'this chat does not follow that run' });
+    const entry = liveRunEntry(link.runId) || (link.pipelineId ? liveRunEntry(link.pipelineId) : null);
+    const pipelineId = link.pipelineId || (entry && entry.pipelineId) || (/^[0-9a-f]{8}$/.test(link.runId) ? link.runId : null);
+    if (!pipelineId) return res.status(409).json({ error: 'the run has not started yet', code: 'NOT_STARTED' });
+    const body = text.trim();
+    const rec = await postDirection(pipelineId, body, 'chat');        // directions.mjs source: 'ui' | 'cli' | 'chat…'
+    if (!rec) return res.status(404).json({ error: 'pipeline not found' });
+    const row = findPipelineRowById(pipelineId);
+    const title = (row && row.title) || (entry && entry.title) || 'run';
+    // The row text carries the label: the bubble reads "Direction to #<id>: …", and a restored session
+    // (buildRestoredPrompt replays user rows as "User: <text>") never mistakes it for a question to Ask.
+    const label = `Direction to #${pipelineId}`;
+    // The run HAS the direction now: a thread write that fails (the chat deleted mid-post, a busy DB) must not come back
+    // as an error the chip shows as "Not sent" — a resend would post it to the run twice.
+    let message = null, notice = null;
+    try {
+      message = askAppendMessage(id, { role: 'user', text: `${label}: ${body}`,
+        blocks: [{ kind: 'direction', id: rec.id, runId: link.runId, pipelineId, title, label }] });
+      broadcast({ type: 'ask-message', threadId: id, message });
+      const noticeText = `Direction sent to “${title}” · the next step reads it`;
+      notice = askAppendMessage(id, { role: 'system', text: noticeText, blocks: [{ kind: 'notice', text: noticeText }] });
+      broadcast({ type: 'ask-message', threadId: id, message: notice });
+    } catch (err) {
+      console.error(`[worca-ui] direction ${rec.id} reached the run but not the chat: ${err && err.message ? err.message : err}`);
+    }
+    res.status(201).json({ id: rec.id, message, notice });
+  } catch (err) {
+    if (err && err.code === 'RUN_FINISHED') return res.status(409).json({ error: err.message, code: 'RUN_FINISHED' });
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
 });
 
 /** R-B dual update. Flip in the STORE and, when the owning thread's turn is

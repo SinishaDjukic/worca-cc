@@ -220,6 +220,9 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
+import { activeAgents } from './ask-run-card.mjs';
+import { registerChatRunCard } from './chat/run-card.mjs';
+import { registerDirectionAddon } from './chat/direction.mjs';
 import { renderAskForm } from './ask/form-renderer.mjs';
 import { renderNightForm, readNightForm, updateAwaySummary } from './night-mode-form.mjs';
 import { visibleFields as visibleAnswerFields } from '../../src/shared/forms/layout.mjs';
@@ -5942,6 +5945,8 @@ function isTerminalStatus(status) {
 
 // Every mounted .qpanel for a run: the run page's, when it is open on this run (the list card
 // carries no panel; it only points at the run page).
+// Chat P3: the .qpanel nodes chat run cards mounted for a run (chatPaintQuestion), by runId.
+const CHAT_QPANELS = new Map();
 function qpanelsFor(r) {
   const out = [];
   const screen = runDetailState.screen;
@@ -5949,6 +5954,9 @@ function qpanelsFor(r) {
     const detail = screen.querySelector('.qpanel');
     if (detail) out.push(detail);
   }
+  // Chat P3: a chat run card's panel gets the same busy sweep, 422 marks and clearQpanel as the run page's.
+  const chat = CHAT_QPANELS.get(r.runId);
+  if (chat) out.push(...chat);
   return out;
 }
 
@@ -17568,7 +17576,8 @@ function resumeBody(pipelineId, { ignoreCostCap = false, pastTeamCap = false, po
 }
 
 async function resumeRunFromCard(runId, btn, opts = {}) {
-  const { engine = null, allowUnguardedEngine = false } = opts;
+  // `navigate:false` (the chat run card): resume in place — no hop to the new run's page.
+  const { engine = null, allowUnguardedEngine = false, navigate = true } = opts;
   const r = runs.get(runId);
   if (!r || !isPaused(r)) return;
   const pipelineId = r.pipelineId;
@@ -17610,6 +17619,18 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
         if (go) return resumeRunFromCard(runId, btn, { ...opts, allowUnguardedEngine: true });
         return;
       }
+      // Chat P3 (INDEX R8, lead call 6): the chat run card has no cost banner, so its Resume asks the banner's own
+      // "Continue without cap?" (confirmCostOverride) when the run is still past its own cost limit.
+      if (opts.costConfirm && res.status === 403 && data && data.needsOverride) {
+        if (btn) btn.innerHTML = prevBtnHtml;
+        const asked = confirmModal({ ...COST_OVERRIDE_CONFIRM });
+        el.confirmCancel.focus();   // the card's Resume never named the cap: a second Enter or Space must not confirm it
+        const go = await asked;
+        if (btn) btn.disabled = false;
+        if (go) return resumeRunFromCard(runId, btn, { ...opts, costConfirm: false, ignoreCostCap: true });
+        if (btn && btn.isConnected) btn.focus({ preventScroll: true });   // Cancel: back to the Resume the user pressed
+        return;
+      }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
     upsertRun({
@@ -17628,7 +17649,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
-    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    if (navigate) location.hash = `running/${data.runId}`;   // land on the continuous live card
     renderRunningView();
   } catch (err) {
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
@@ -19310,6 +19331,7 @@ async function loadHistoryView({ force = false } = {}) {
   state.adoAvailable = !!(data.prHosts && data.prHosts.azure);
   paintHistory();                                        // fresh skeleton repaint
   rdRepaintOpenGlance();                                 // an open finished run reads its PR from these rows
+  pokeAskRuns(null, 'history');                          // Chat P3: a finished run card's Create pull request reads prHostAvailable()
   if (pipelines.length) writeHistoryCache(pipelines, data.ghAvailable, state.adoAvailable);  // never cache empty/error
   requestHistoryPr(token);                               // Phase 2: ask server to push gh enrichment
   // NOTE: the spinner intentionally stays ON here; onHistoryPr (or the watchdog) clears it.
@@ -21901,7 +21923,8 @@ function btnLabelEl(btn) { return btn.querySelector('.hd-btn-label') || btn; }
 // The POST /api/resume -> upsert -> seed-log -> land-on-running recipe, shared by
 // the detail header and the cost-override path.
 async function resumePipeline(p, projectDir, btn, opts = {}) {
-  const { engine = null, allowUnguardedEngine = false } = opts;
+  // `navigate:false` (the chat run card): resume in place — no hop to the new run's page.
+  const { engine = null, allowUnguardedEngine = false, navigate = true } = opts;
   const labelEl = btnLabelEl(btn);
   btn.disabled = true;
   // Claim the button for the duration of the round-trip (and keep the failure
@@ -21949,6 +21972,17 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         if (go) return resumePipeline(p, projectDir, btn, { ...opts, allowUnguardedEngine: true });
         return;
       }
+      // Chat P3 (INDEX R8, lead call 6): the chat run card's Resume asks the cost banner's question (histCostOverride).
+      if (opts.costConfirm && res.status === 403 && data && data.needsOverride) {
+        labelEl.textContent = label;
+        const asked = confirmModal({ ...COST_OVERRIDE_CONFIRM });
+        el.confirmCancel.focus();   // the card's Resume never named the cap: a second Enter or Space must not confirm it
+        const go = await asked;
+        btn.disabled = false; delete btn.dataset.resumeState;
+        if (go) return resumePipeline(p, projectDir, btn, { ...opts, costConfirm: false, ignoreCostCap: true });
+        if (btn.isConnected) btn.focus({ preventScroll: true });   // Cancel: back to the Resume the user pressed
+        return;
+      }
       throw new Error((data && data.error) || `HTTP ${res.status}`);
     }
     upsertRun({
@@ -21975,7 +22009,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
     if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
-    location.hash = `running/${data.runId}`;   // land on the continuous live card
+    if (navigate) location.hash = `running/${data.runId}`;   // land on the continuous live card
     renderRunningView();
   } catch (err) {
     // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
@@ -26476,8 +26510,14 @@ function askRunSnapshot(r) {
     live: isLive(r), terminal: !!r._finished || isTerminalStatus(r.status),
     startedAt: r.startedAt || null, elapsedMs: liveTotalMs(r.steps, Date.now()),
     costUsd: engineReportsCost(r.runEngine) ? (r.totalCostUsd || 0) : null,   // null: cost unknown (Cursor), never $0.00
-    progress: decor ? decor.progress : null, active: graph ? activeNodes(r) : [],
+    // Chat P3 (U10): activeNodes' model + effort, named through the catalog, plus the execution's cycle.
+    progress: decor ? decor.progress : null, active: graph ? activeAgents(decor, r.stepper, { modelLabel: graphModelLabel }) : [],
     stepper: graph ? r.stepper : null, decor,
+    // Chat P3 (CONTRACT §5): the chat run card's extra facts. A live run model holds no results.json numbers,
+    // artifact rows or PR — the card reads those over REST once the run is over (GET /api/ask/runs/:id `extras`).
+    auto: (r.stepper && r.stepper.auto) || null,
+    branch: r.branchFeature || (r.branch && typeof r.branch === 'object' && typeof r.branch.feature === 'string' ? r.branch.feature : ''),
+    results: null, artifacts: null, moreArtifacts: false, pr: null,
   };
 }
 // A pipeline's current run in this tab's runs Map. D23: a resumed pipeline can leave its superseded lineage in
@@ -26510,6 +26550,117 @@ if (typeof window !== 'undefined' && window.__np) window.__np.askRunStore = askR
 function pokeAskRuns(runId, type) {
   for (const fn of askRunListeners) { try { fn(runId, type); } catch { /* a chat listener never breaks a frame */ } }
 }
+
+// ---- Chat P3: the chat run card's controls (ui/public/chat/run-card.mjs, CONTRACT §5). The card is a view; every run
+// action goes through the SAME flows the run page uses — pauseRun, resumeRunFromCard / resumePipeline (with their
+// confirms, minus the hop to #running), openStopModal (the #stop-modal warning, R7), postAnswer and the run page's
+// question renderers (R11), and Ship-it (P2's chatDeps.openShipIt, R9 without a card link). ----
+/** The run a chat card names, in THIS tab: the pipeline's current lineage first (a resume moves the runId), else the runId. */
+function chatLiveRun(ref) {
+  if (!ref) return null;
+  const byPipeline = ref.pipelineId ? latestPipelineRun(ref.pipelineId) : null;
+  if (byPipeline) return byPipeline;
+  const r = ref.runId ? runs.get(ref.runId) : null;
+  return r && isPipelineRun(r) ? r : null;
+}
+/** paintRdQuestions' rebuild key, kept in step with it: question id, kind, form, version, count. */
+function chatQuestionKey(pq) {
+  return [pq.id || 'pending', pq.kind || '', pq.form || '', pq.version == null ? '' : pq.version,
+    Array.isArray(pq.questions) ? pq.questions.length : (Array.isArray(pq.issues) ? pq.issues.length : 0)].join('|');
+}
+/** Empty a chat card's question host and drop its panel from qpanelsFor (the question went away, or the card did). */
+function chatReleaseQuestion(host) {
+  const panel = host && host.querySelector('.qpanel');
+  if (!panel) return;
+  for (const [runId, set] of CHAT_QPANELS) { set.delete(panel); if (!set.size) CHAT_QPANELS.delete(runId); }
+  if (panel.dataset.qid === undefined && !panel.childNodes.length) return;
+  disposeQpanel(panel);                        // a workflow body owns a graph mount + ResizeObserver
+  panel.classList.remove('qpanel-workflow');
+  panel.__wf = null;
+  panel.__askForm = null;
+  panel.innerHTML = '';
+  panel.classList.add('hidden');
+  delete panel.dataset.qid;
+  delete panel.dataset.qrun;
+}
+/** Mount the run's pending question into a chat card's host (its .qpanel) with the run page's renderers. Rebuilt only
+ *  when the question identity changes — or the lineage asking it does (a resume mints a new runId and may re-ask the
+ *  same question) — so an unrelated frame never wipes a half-typed answer; the panel joins qpanelsFor(r) under the
+ *  CURRENT runId, so postAnswer's busy sweep, its 422 marks and clearQpanel reach it. Null = nothing to ask here. */
+function chatPaintQuestion(ref, host) {
+  const panel = host && host.querySelector('.qpanel');
+  const r = chatLiveRun(ref);
+  const pq = r && !r._finished ? r.pendingQuestion : null;
+  if (!panel || !pq) { chatReleaseQuestion(host); return null; }
+  const key = chatQuestionKey(pq);
+  if (panel.dataset.qid !== key || panel.dataset.qrun !== r.runId) {
+    for (const [runId, old] of CHAT_QPANELS) { old.delete(panel); if (!old.size) CHAT_QPANELS.delete(runId); }
+    renderQpanel(r, host);
+    panel.dataset.qid = key;
+    panel.dataset.qrun = r.runId;
+    let set = CHAT_QPANELS.get(r.runId);
+    if (!set) { set = new Set(); CHAT_QPANELS.set(r.runId, set); }
+    set.add(panel);
+    if (r._answering) setPanelBusy(r, true);   // an answer already in flight (paintRdQuestions' rule)
+  }
+  return { id: pq.id || null, kind: askKindOf(pq), heading: askHeading(r, pq), step: pq.nodeId ? nodeLabel(r.stepper, pq.nodeId) : '' };
+}
+const chatRunControls = {
+  pause(ref, btn = null) {
+    const r = chatLiveRun(ref);
+    if (!r) return Promise.resolve('This run is not running here');
+    return pauseRun(r.runId, btn);
+  },
+  resume(ref, btn = null) {
+    const r = chatLiveRun(ref);
+    // A resume's local upsert / delete sends no frame: poke the chat's cards so they follow the new lineage at once
+    // (else a card keeps painting the old paused snapshot until the next tick or frame).
+    const follow = () => pokeAskRuns(null, 'resume');
+    // costConfirm: the card has no cost banner — a run still past its own cost limit asks "Continue without cap?" first.
+    if (r && isPaused(r)) return resumeRunFromCard(r.runId, btn, { navigate: false, costConfirm: true }).finally(follow);
+    if (r && isLive(r)) return Promise.resolve();                // this tab already runs the pipeline: nothing to resume
+    const pid = (r && r.pipelineId) || (ref && ref.pipelineId) || '';
+    if (!pid) return Promise.resolve();
+    const dir = (r && r.projectDir) || (ref && ref.projectDir) || '';
+    // The History-row shape resumePipeline reads (title, branch, and the key its log seed is fetched under).
+    const ws = ref && ref.workspaceId ? { target: 'workspace', projectKey: `workspaces/${ref.workspaceId}` } : { projectKey: (ref && ref.projectKey) || '' };
+    // resumePipeline labels its button while it works (btnLabelEl): a caller without one gets a detached stand-in.
+    return resumePipeline({ id: pid, title: (r && r.title) || (ref && ref.title) || pid, projectDir: dir,
+      branch: (r && r.branchFeature) || (ref && ref.branch) || null, ...ws }, dir, btn || document.createElement('button'), { navigate: false, costConfirm: true }).finally(follow);
+  },
+  stop(ref, onStopped = null) {
+    const r = chatLiveRun(ref);
+    if (r && r.status === 'interrupted') return;                 // R7: an interrupted run is never stoppable
+    if (r && (!r._finished || isPaused(r))) {
+      // stopRun finishes a paused copy no frame will reach locally (finishRun): poke the cards, and let the card re-read.
+      openStopModal({ runId: r.runId, onStopped: () => { pokeAskRuns(r.runId, 'stopped'); if (typeof onStopped === 'function') onStopped(); } });
+      return;
+    }
+    if (ref && ref.pipelineId && ref.status === 'paused') {
+      openStopModal({ pipelineId: ref.pipelineId, title: ref.title || ref.pipelineId, branch: ref.branch || '',
+        onStopped: () => { if (typeof onStopped === 'function') onStopped(); } });
+    }
+  },
+  answer(ref, questionId, payload) {
+    const r = chatLiveRun(ref);
+    if (!r || !r.pendingQuestion) return Promise.resolve(false);
+    if (questionId && r.pendingQuestion.id && r.pendingQuestion.id !== questionId) return Promise.resolve(false);
+    return postAnswer(r, payload);
+  },
+  paintQuestion: chatPaintQuestion,
+  releaseQuestion: chatReleaseQuestion,
+  prHost: () => prHostAvailable(),
+  openShipIt(ref, link) {
+    // P2 Task 9: chatDeps.openShipIt = openShipItFor → Promise<{opened, url?, error?}>, settling when the dialog closes.
+    // chatDeps is P1's top-level const (beside `let askPanel`), initialised long before any click.
+    if (typeof chatDeps.openShipIt === 'function') return chatDeps.openShipIt(ref, link);
+    return Promise.resolve({ opened: false });
+  },
+};
+if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = chatRunControls;
+// CONTRACT §3: registered before createAskPanel runs (this line evaluates long before the mount at the end of the file).
+registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
+registerDirectionAddon();                      // R10: the composer's "→ <run title>" chip
 
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {
