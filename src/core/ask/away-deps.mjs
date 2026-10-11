@@ -109,7 +109,7 @@ export function createAwaySwitch({ liveRun, runs, emitChanged, now = Date.now,
       catch (err) { return { ok: false, error: err?.code === 'NIGHT_NOT_LIVE' ? `the run is ${entry.orch.state?.status}` : (err?.message || String(err)) }; }
       const { config } = effective(entry.projectDir);
       const d = describeRun({ config, toggle: readToggle(), hereSince: readHereSince(), now: now(), run: entry.orch.state?.night || {} });
-      return { ok: true, line: `on run ${entry.title || entry.id}: ${d.state === 'now' ? 'answering now' : d.pill || 'waiting for you'}` };
+      return { ok: true, line: `on run ${entry.title || entry.id}: ${d.state === 'now' ? 'answering now' : d.pill || 'you answer'}` };
     }
     return { ok: false, error: 'unknown request' };
   };
