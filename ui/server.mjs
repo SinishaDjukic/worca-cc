@@ -179,7 +179,7 @@ import { buildLauncherCommand, launchAndWatch, installedLaunchers, launcherExamp
 import { assertNoRawCommand, normalizeStacks, memberAliases, SETUP_ACTION_ID, ActionConfigError } from '../src/core/actions/model.mjs';
 import { parsePortRange } from '../src/core/actions/ports.mjs';
 import { checkoutRun, discardCheckout, membersOfRow, checkoutPathFor, setSetupState, markInterruptedSetups,
-  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords } from '../src/core/checkout.mjs';
+  enforceCheckoutCap, releaseKeptCheckouts, updateBranchRecords, freeBranchCheckout, canon } from '../src/core/checkout.mjs';
 import { createAskToolServer } from '../src/core/ask/mcp-stdio.mjs';
 import { webMcpEnv as askWebMcpEnv } from '../src/core/ask/spawn.mjs';
 import { brokerEnabled, brokerEngineRefusal, brokerInfo, personSlots, brokerUsageSummary, foldUsageByPerson } from '../src/core/broker-client.mjs';
@@ -264,7 +264,7 @@ import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
 } from '../src/core/worktree.mjs';
 import {
-  fetchRemote, remoteInfo, syncStatus, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
+  fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS,
 } from '../src/core/git-sync.mjs';
 import {
@@ -272,8 +272,10 @@ import {
 } from '../src/core/project-sync.mjs';
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
-  prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl } from '../src/core/git-info.mjs';
-import { prNumberFromUrl } from '../src/core/forge.mjs';
+  prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
+  ghPrWatchSnapshot, ghPrChecks, ghFailedJobLog, ghRerunFailedJobs, ghReplyToThread, ghPrComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
+import { prNumberFromUrl, parseGithubPrUrl } from '../src/core/forge.mjs';
+import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
@@ -286,7 +288,7 @@ import {
   addWorkspaceMembers, removeWorkspaceMember, rootsHash, workspaceSetHash,
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
-import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS } from '../src/core/graph/builtin-workflows.mjs';
+import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 import { scanRunPrompt, scanRunTitle, createWorkspaceWithHomes, resolveScanModels } from '../src/core/workspace-scan-run.mjs';
 import { listWorkspacePipelines, readWorkspacePipeline, appendAuditById } from '../src/core/artifacts.mjs';
 import { generateOverview } from '../src/core/overview-agent.mjs';
@@ -1962,7 +1964,7 @@ const startRunHandler = async (req, res) => {
     const startedBy = internal
       ? (typeof internal.runNowBy === 'string' && internal.runNowBy ? internal.runNowBy
         : typeof stored.startedBy === 'string' && stored.startedBy ? stored.startedBy : null)
-      : startedByOf(req);
+      : (req._startedBy || startedByOf(req));
 
     // Mutual exclusion: exactly one of workspaceId / projectDir (§2.6).
     const hasWorkspace = typeof body.workspaceId === 'string' && body.workspaceId.trim();
@@ -2144,7 +2146,7 @@ const startRunHandler = async (req, res) => {
       return res.status(403).json({ error: 'total cost limit reached', budget });
     }
 
-    const runId = internal ? internal.ticket.id : randomUUID();
+    const runId = internal ? internal.ticket.id : (req._runId || randomUUID());
     const title = (typeof body.title === 'string' && body.title.trim()) || fallbackRunTitle(effectivePrompt, source);
 
     // Materialize any uploaded extra files to a temp dir; the orchestrator's
@@ -2277,6 +2279,7 @@ const startRunHandler = async (req, res) => {
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
+        ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
         sync,
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
@@ -2403,6 +2406,7 @@ const startRunHandler = async (req, res) => {
         guardrailsId,
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
+        ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
         sync,
         humanInLoop,
@@ -2852,14 +2856,15 @@ function releaseAskCard(item) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
     status(code) { this.statusCode = code; return this; },
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
-  await startRunHandler({ body, _internal: internal }, res);
+  await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
+    _prWatchRunId: prWatchRunId }, res);
   return out;
 }
 
@@ -5843,6 +5848,85 @@ async function stopMemberServices(runId, projectKey) {
 const stopCheckoutServices = (pk, runId) => stopMemberServices(runId, pk);
 
 // ---------------------------------------------------------------------------
+// Watch PR (#619): one background loop batches newly failed checks and trusted review feedback on a
+// watched github.com PR into a bounded fix run on that PR's own branch (src/core/pr-watch.mjs owns the
+// state machine; this block supplies its IO). Home/config stay lazy: nothing here runs at import.
+// ---------------------------------------------------------------------------
+const PR_WATCH_BUSY = new Set(['starting', 'created', 'running', 'pausing', 'paused']);
+/** A live, paused or finishing run on exactly this canonical project + branch (the matching member only). */
+function liveRunOnBranch({ projectDir, branch }) {
+  const dir = canon(projectDir);
+  const holds = (row) => !!row && membersOfRow(row).some((m) => m.projectDir && canon(m.projectDir) === dir && m.br?.feature === branch);
+  for (const r of runs.values()) {
+    if (r.kind === 'action' || r.kind === 'scriptbench' || !r.orch) continue;
+    if (!PR_WATCH_BUSY.has(String(r.status || '')) && !(r.pipelineId && isFinishingRun(r.pipelineId))) continue;
+    // Not created yet: its branch is unknown, so any run starting in this project (or a workspace) defers.
+    if (!r.pipelineId) { if (r.workspaceId || (r.projectDir && canon(r.projectDir) === dir)) return true; continue; }
+    if (holds(findPipelineRowById(r.pipelineId))) return true;
+  }
+  // Only what membersOfRow reads: this runs on every watcher tick.
+  return getDb().prepare("SELECT target, project_key, branch, workspace_meta FROM pipelines WHERE status = 'paused' AND archived_at IS NULL")
+    .all().some(holds);
+}
+/** The watched PR's origin run: its member project and branch, plus what its fix runs keep (guardrails, the
+ *  engine it ran on, a mock run's flag, which only its resume point persists), or null when gone. */
+function prWatchOrigin(w) {
+  const row = findPipelineRowById(w.pipelineId);
+  if (!row || row.archived_at) return null;
+  const m = memberFor(row, w.memberKey || null);
+  if (!m?.projectDir || !m.br?.feature) return null;
+  let rp = null; try { rp = JSON.parse(row.resume_point || 'null'); } catch { /* unreadable point: not mock */ }
+  return { pipelineId: row.id, projectKey: m.projectKey, projectDir: m.projectDir, branch: m.br.feature,
+    sourceBranch: m.br.source || null, baseRemote: effectiveSyncSettings(m.projectKey).remote || null,
+    guardrailsId: row.guardrails_id || null, engine: runEngineOfRow(row),
+    mock: rp?.mock === true };
+}
+/** The pr-watch-changed frame: the run's STORE key (a workspace run's is `workspaces/<wk>`, the key its
+ *  History detail carries), its id and the member, so only the matching open detail / member row refreshes. */
+function prWatchFrame(pipelineId, memberKey) {
+  const row = findPipelineRowById(pipelineId);
+  const projectKey = !row ? null : (row.target === 'workspace' || row.workspace_key) ? `workspaces/${row.workspace_key}` : row.project_key;
+  return { type: 'pr-watch-changed', projectKey, pipelineId: row?.id || pipelineId, memberKey: memberKey || null };
+}
+const prWatcher = createPrWatcher({
+  originOf: prWatchOrigin,
+  gh: { snapshot: ghPrWatchSnapshot, jobLog: ghFailedJobLog, rerun: ghRerunFailedJobs, reply: ghReplyToThread, comment: ghPrComment },
+  git: {
+    fetch: ({ projectDir, remote }) => fetchRemote(projectDir, { remote, maxAgeMs: 0 }),
+    status: ({ projectDir, branch, remote }) => syncStatus(projectDir, { base: branch, remote }),
+    fastForward: ({ projectDir, branch, remote }) => fastForward(projectDir, { base: branch, remote }),
+    push: ({ projectDir, branch, remote }) => pushBranch(projectDir, branch, remote),
+    subjects: ({ projectDir, from, to }) => commitSubjects(projectDir, from, to),
+    checkMerge: ({ projectDir, ...range }) => checkConflictMerge(projectDir, range),
+  },
+  liveOnBranch: liveRunOnBranch,
+  freeCheckout: ({ projectDir, branch }) => freeBranchCheckout({ projectDir, branch, stopServices: stopCheckoutServices, by: 'pr-watch',
+    busy: busyActionRunIds([...liveRunIds(), ...[...runs.values()].map((r) => r.pipelineId).filter((id) => id && isFinishingRun(id))]) }),
+  startRun: (body, opts) => invokeStartRun(body, null, opts),
+  // By pipeline once one exists: every resume (manual, after a drain or restart, after a cost pause) runs
+  // under a fresh run id, so the start-time id only finds the run until its pipeline row exists.
+  liveRun: ({ runId, pipelineId }) => {
+    if (pipelineId) {
+      const e = liveRunEntry(pipelineId); const finishing = isFinishingRun(pipelineId);
+      return e || finishing ? { status: String(e?.status || ''), finishing } : null;
+    }
+    const e = runs.get(runId);
+    return e ? { status: String(e.status || ''), finishing: e.pipelineId ? isFinishingRun(e.pipelineId) : !e.settled } : null;
+  },
+  pipelineStatus: (id) => findPipelineRowById(id)?.status || null,
+  // Strict: the fix row must carry the PR, read back, before anything is published for it.
+  attachPr: (pipelineId, pr) => {
+    persistPrState(pipelineId, pr);
+    if (readPrState(pipelineId)?.url !== pr.url) throw new Error('the fix run did not record its pull request');
+  },
+  notify: (event) => chatNotifier.notifyPrWatch(event),
+  onChange: (w) => broadcast(prWatchFrame(w.pipelineId, w.memberKey)),
+  log: (m) => console.warn(`[worca-ui] ${m}`),
+});
+/** Nudge the loop after a toggle; a no-op unless it started (listen) and WORCA_PR_WATCH is on. */
+const kickPrWatch = () => { void prWatcher.runner.kick(); };
+
+// ---------------------------------------------------------------------------
 // Terminal (issue #573): worca-owned shells in the right-side pane. Sessions live in a TerminalManager;
 // their output rides /ws as term-* frames to the sockets that attached (D1). Gated like Actions:
 // local, or a hosted worca that set WORCA_TERMINAL_REMOTE; never a possible agent; and only for
@@ -6774,6 +6858,7 @@ app.post('/api/pr', async (req, res) => {
   if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
     return badRequest(res, 'draft must be a boolean');
   }
+  if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
   if (!(await anyPrHost())) {
     return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
@@ -6861,8 +6946,96 @@ app.post('/api/pr', async (req, res) => {
   }
 
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null, baseRemote: baseR });
+  let watching;
+  if (body.watch === true) {
+    watching = false;
+    if (provider.forge === 'github' && parseGithubPrUrl(pr.url)) {
+      try {
+        const w = setWatch({ prUrl: pr.url, pipelineId: pipelineIdForPr, memberKey: memberKey || '', pushRemote, enabled: true, enabledBy: actorOf(req) });
+        watching = !!w.enabled;
+        broadcast(prWatchFrame(pipelineIdForPr, memberKey));
+        kickPrWatch();
+      } catch (err) { console.error(`[worca-ui] could not watch PR: ${err?.message || err}`); }
+    }
+  }
   // Single-project response shape is pinned by pr-api.test; the workspace arm echoes its member.
-  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft, ...(memberKey ? { memberKey } : {}) });
+  res.json({ ok: true, url: pr.url, mergeable, existed: !!pr.existed, draft: newDraft,
+    ...(memberKey ? { memberKey } : {}), ...(body.watch === true ? { watching } : {}) });
+});
+
+function watchView(w) {
+  return { watching: !!w?.enabled, status: w?.status || null, reason: w?.reason || null, activePipelineId: w?.activePipelineId || null,
+    resolving: !!w?.pending?.conflict && w.pending.conflict.why !== 'behind',
+    // A merge-first fix: the PR is behind its base and the base head passes the checks failing here.
+    mergingBase: w?.pending?.conflict?.why === 'behind' ? w.pending.conflict.base || null : null };
+}
+async function prWatchTarget(src, res) {
+  const resolved = await resolvePrPipeline(src, res); if (!resolved) return null;
+  const { state, id } = resolved;
+  if (state.archivedAt || state.archived_at) { res.status(404).json({ error: 'pipeline not found' }); return null; }
+  const target = prTargetFor(state, src.memberKey); if (target.error) { badRequest(res, target.error); return null; }
+  const pr = target.memberKey
+    ? readMemberPrStates(state.id || id)[target.memberKey]
+    : readPrState(state.id || id);
+  if (!pr?.url || pr.state !== 'OPEN' || !parseGithubPrUrl(pr.url)) { badRequest(res, 'an open github.com pull request is required'); return null; }
+  return { state, id: state.id || id, target, pr };
+}
+app.get('/api/pr/watch', async (req, res) => {
+  try { const t = await prWatchTarget(req.query, res); if (t) res.json(watchView(getWatch(t.pr.url))); }
+  catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending, skipped, inherited }, mergeable,
+// base, status, watch } for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot
+// answer). `inherited` counts failures that also fail on the base branch head; they are not in `failed`.
+app.get('/api/pr/checks', async (req, res) => {
+  try {
+    const t = await prWatchTarget(req.query, res); if (!t) return;
+    const read = (await ghPrChecks({ projectDir: t.target.repoDir, prUrl: t.pr.url })) || { checks: null, mergeable: 'UNKNOWN' };
+    res.json({ ...read, watch: watchView(getWatch(t.pr.url)) });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/pr/watch', async (req, res) => {
+  try {
+    const body = req.body || {}; if (typeof body.watch !== 'boolean') return badRequest(res, 'watch must be a boolean');
+    const t = await prWatchTarget(body, res); if (!t) return;
+    // Re-homing keeps the remote the PR was pushed to: the existing watch's, else the published one.
+    const published = t.target.memberKey ? t.state.branches?.[t.target.memberKey]?.published : t.state.branch?.published;
+    const pushRemote = getWatch(t.pr.url)?.pushRemote || published?.remote || 'origin';
+    const w = setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '', pushRemote, enabled: body.watch,
+      enabledBy: actorOf(req) });
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
+    if (w.enabled) kickPrWatch();
+    res.json(watchView(w));
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
+});
+// POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
+// conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
+const RESOLVE_REFUSALS = {
+  BUSY: [409, 'A fix run is already working on this pull request.'],
+  RATE_LIMITED: [429, 'GitHub is rate limiting Worca; try again in a minute.'],
+  ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
+  READ_FAILED: [502, 'Could not read the pull request from GitHub.'],
+  PR_CLOSED: [409, 'The pull request is no longer open.'],
+  NO_CONFLICT: [409, 'GitHub reports no merge conflicts on this pull request now.'],
+  NEEDS_PERSON: [409, 'The branch cannot be fixed unattended right now.'],
+  NOT_STARTED: [409, 'The fix run could not start now (the branch is busy, or git did not answer). Try again.'],
+};
+app.post('/api/pr/resolve', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const t = await prWatchTarget(body, res); if (!t) return;
+    const published = t.target.memberKey ? t.state.branches?.[t.target.memberKey]?.published : t.state.branch?.published;
+    const cur = getWatch(t.pr.url);
+    // No watch row yet: a switched-off one to own the run (setWatch leaves an existing row's switch alone).
+    const w = cur || setWatch({ prUrl: t.pr.url, pipelineId: t.id, memberKey: t.target.memberKey || '',
+      pushRemote: published?.remote || 'origin', enabled: false, enabledBy: actorOf(req) });
+    const r = await prWatcher.resolveOnce(w);
+    broadcast(prWatchFrame(t.id, t.target.memberKey));
+    if (r.ok) return res.json(watchView(r.watch));
+    const [status, error] = RESOLVE_REFUSALS[r.code] || [500, 'Could not start the conflict fix.'];
+    const why = r.code === 'NEEDS_PERSON' ? r.watch?.reason : null;
+    res.status(status).json({ error: why ? `${error} (${why})` : error, code: r.code, watch: watchView(r.watch) });
+  } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 
 // ---------------------------------------------------------------------------
@@ -9538,6 +9711,7 @@ app.delete('/api/workflows/:id', async (req, res) => {
   // The built-in default is not in the user store and must never be deleted.
   if (id === 'wf_default') return badRequest(res, 'the default workflow cannot be deleted');
   if (id === MEMORY_DEFRAG_WORKFLOW_ID) return badRequest(res, 'the Memory defragment workflow cannot be deleted');
+  if (id === PR_FIX_WORKFLOW_ID) return badRequest(res, 'the PR fix workflow cannot be deleted');
   try {
     const removed = await deleteWorkflow(id); // CONV-1: await
     if (!removed) return res.status(404).json({ error: 'workflow not found' });
@@ -13588,7 +13762,7 @@ if (isMain) {
     }, drainTimeoutMs() + SHUTDOWN_STEPS_MS + 5_000);
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
-      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll() }))
+      .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
       .finally(() => { clearTimeout(hardExit); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -13622,6 +13796,9 @@ if (isMain) {
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
+    // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
+    try { prWatcher.runner.start(); }
+    catch (err) { console.warn(`[worca-ui] PR watch: ${err?.message || err}`); }
     // Model bridge (model-bridge-design.md §4.1): up before the first bridged
     // spawn so resolveModelEnv's synchronous start is the exception, not the rule.
     startBridge({ log: (m) => console.warn(m) }).catch((err) => console.warn(`[worca-ui] model bridge: ${err?.message || err}`));
@@ -13670,6 +13847,6 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals,
+  askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };
