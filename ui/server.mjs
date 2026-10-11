@@ -21,6 +21,7 @@ import { runsOn } from '../src/shared/connections.mjs';
 
 import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
+import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
@@ -5632,7 +5633,7 @@ app.delete('/api/runs/:id', async (req, res) => {
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && (e.code === 'RETAINED_WORKTREE' || e.code === 'HOSTS_SERVER')) return res.status(409).json({ error: e.message });
+    if (e && e.code === 'RETAINED_WORKTREE') return res.status(409).json({ error: e.message });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -5714,7 +5715,7 @@ app.post('/api/runs/:id/discard-worktree', async (req, res) => {
     res.json({ ok: true, ...report });
   } catch (e) {
     if (e && e.code === 'RUNNING') return res.status(409).json({ error: e.message });
-    if (e && (e.code === 'SNAPSHOT_FAILED' || e.code === 'HOSTS_SERVER')) return res.status(409).json({ error: e.message });
+    if (e && e.code === 'SNAPSHOT_FAILED') return res.status(409).json({ error: e.message });
     if (e && e.code === 'BAD_REQUEST') return badRequest(res, e.message);
     res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
@@ -6287,7 +6288,7 @@ function ensureSetup(runId, pk, { enabled, rerun = false }) {
 
 function sendCheckoutError(res, e) {
   const map = { NOT_FOUND: 404, BAD_REQUEST: 400, NOT_FINISHED: 409, RETAINED: 409, BRANCH_MISSING: 409,
-    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409, HOSTS_SERVER: 409 };
+    BRANCH_CHECKED_OUT: 409, TARGET_EXISTS: 409, SNAPSHOT_FAILED: 409 };
   res.status(map[e?.code] || 500).json({ error: e?.message || String(e), code: e?.code || 'ERROR',
     ...(e?.holder ? { holder: e.holder, projectKey: e.projectKey || null } : {}) });
 }
@@ -13673,6 +13674,14 @@ async function settleShutdownSteps(steps, { timeoutMs = SHUTDOWN_STEPS_MS, log =
 // test, skip listening so the test can mount `app` on its own ephemeral port.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Never serve from a run's own folder: Worca deletes it when the run is discarded or
+  // archived, or by the boot sweep below, and the server would lose its own code.
+  const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());
+  if (hostingRun) {
+    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree. Not starting.`);
+    process.exit(1);
+  }
+
   // A hosting platform's outbound network policy (WORCA_EGRESS_MODE, src/core/egress-policy.mjs):
   // the policy proxy starts on loopback and its address goes into process.env before anything
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
