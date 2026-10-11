@@ -1,4 +1,6 @@
 // src/core/recoverable-error.mjs
+import { isValidTimeZone, zonedParts, zonedToUtc } from '../shared/schedule/recurrence.mjs';
+
 // Single source of truth for "is this pipeline error recoverable, and which class".
 // Recoverable errors are user/transient-fixable (re-auth, wait, top up, retry),
 // NOT bugs. The orchestrator uses the class to drive a retry gate; a null result
@@ -97,6 +99,90 @@ export function freeDailyResetAt(err, now = Date.now()) {
   if (Number.isFinite(named) && named > now) return named;
   const d = new Date(now);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+
+/** D4: the resume runs this long after the limit resets (clocks differ; limits reset on the minute). */
+export const LIMIT_RESUME_MARGIN_MS = 5 * 60_000;
+const LIMIT_RESET_MAX_AHEAD_MS = 8 * 24 * 3_600_000;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];   // Monday = 0, as recurrence.mjs
+// "resets 6pm", "resets at 5pm", "it resets 6pm", "resets Mon 9am", "resets Oct 12, 3pm",
+// "Try again at 6pm", "try again at 3:05 PM", "try again at 15:47" — each with an optional "(Area/City)".
+const LIMIT_AT_RE = new RegExp(
+  String.raw`\b(?:resets?|try again)\s+(?:at\s+)?`
+  + String.raw`(?:(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+(?:at\s+)?`
+  + String.raw`|(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(?:at\s+)?)?`
+  + String.raw`(\d{1,2})(?::(\d{2}))?\s*([ap])?\.?(?:m\b\.?)?(?![\d:])`
+  + String.raw`(?:\s*\(([A-Za-z_]+(?:\/[A-Za-z0-9_+\-]+)+)\))?`,
+  'i');
+// "try again in 2 hours 13 minutes", "try again in 3 days 1 hour", "resets in 45 minutes"
+const LIMIT_IN_RE = /\b(?:try again|resets?)\s+in\s+((?:\d+\s*(?:days?|hours?|hrs?|minutes?|mins?)\b[\s,]*(?:and\s+)?)+)/i;
+
+function serverTimeZone() {
+  try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; return isValidTimeZone(tz) ? tz : 'UTC'; }
+  catch { return 'UTC'; }
+}
+
+/**
+ * D1/D2: when a plan's usage limit comes back (epoch ms), read from the limit message — or null
+ * when it names no readable time, names an impossible one, or one outside (now, now + 8 days].
+ * Pure; never throws. A trailing "(Area/City)" zone wins over `tz` (the server's zone by default).
+ */
+export function limitResetAt(err, { now = Date.now(), tz = serverTimeZone() } = {}) {
+  try {
+    const msg = String((err && typeof err === 'object' ? err.message : err) ?? '');
+    if (!msg) return null;
+    const within = (t) => (Number.isFinite(t) && t > now && t - now <= LIMIT_RESET_MAX_AHEAD_MS ? t : null);
+    if (isFreeDailyLimit(msg)) return within(freeDailyResetAt(msg, now));
+    const rel = LIMIT_IN_RE.exec(msg);
+    if (rel) {
+      let ms = 0;
+      for (const [, n, unit] of rel[1].matchAll(/(\d+)\s*(d|h|m)/gi)) {
+        ms += Number(n) * ({ d: 86_400_000, h: 3_600_000, m: 60_000 })[unit.toLowerCase()];
+      }
+      return ms > 0 ? within(now + ms) : null;
+    }
+    const m = LIMIT_AT_RE.exec(msg);
+    if (!m) return null;
+    const [, wd, mon, dayStr, hStr, minStr, ap, zone] = m;
+    let hh = Number(hStr);
+    const mm = minStr == null ? 0 : Number(minStr);
+    if (mm > 59) return null;
+    if (ap) {
+      if (hh < 1 || hh > 12) return null;
+      hh = (hh % 12) + (ap.toLowerCase() === 'p' ? 12 : 0);
+    } else {
+      if (minStr == null || hh > 23) return null;   // a bare "resets 6" is ambiguous
+    }
+    const zoneTz = zone && isValidTimeZone(zone) ? zone : tz;
+    const today = zonedParts(now, zoneTz);
+    if (mon) {
+      const mo = MONTHS.indexOf(mon.toLowerCase()) + 1;
+      const d = Number(dayStr);
+      for (const y of [today.y, today.y + 1]) {
+        const t = zonedToUtc({ y, m: mo, d, hh, mm }, zoneTz);
+        if (zonedParts(t, zoneTz).d !== d) return null;          // "Feb 30"
+        if (t > now) return within(t);
+      }
+      return null;
+    }
+    const base = Date.UTC(today.y, today.m - 1, today.d);        // civil-day arithmetic in UTC
+    let add = 0;
+    let step = 1;
+    if (wd) {
+      const todayDow = (new Date(base).getUTCDay() + 6) % 7;
+      add = (WEEKDAYS.indexOf(wd.toLowerCase()) - todayDow + 7) % 7;
+      step = 7;
+    }
+    for (const k of [0, 1]) {
+      const c = new Date(base + (add + k * step) * 86_400_000);
+      const t = zonedToUtc({ y: c.getUTCFullYear(), m: c.getUTCMonth() + 1, d: c.getUTCDate(), hh, mm }, zoneTz);
+      if (t > now) return within(t);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** "3h 12m" / "12m" / "under a minute". Pure. */

@@ -123,6 +123,8 @@ test('glance state and copy for every status', () => {
   assert.deepEqual([glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · cost limit' } }).title,
     glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · cost limit' } }).sub], ['Paused', 'Cost limit · resume to continue']);
   assert.equal(glanceCopy({ status: 'paused' }, { pill: { text: 'Paused' } }).sub, 'Resume to continue where it left off');
+  assert.equal(glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · usage limit' }, limitNote: 'resets 18:00' }).sub, 'Usage limit · resets 18:00', 'a usage-limit pause names its reset instead of "resume to continue"');
+  assert.equal(glanceCopy({ status: 'paused' }, { pill: { text: 'Paused · usage limit' } }).sub, 'Usage limit · resume to continue', 'no note: unchanged');
   assert.equal(glanceCopy({ status: 'pausing' }).title, 'Pausing');
   assert.equal(earlierRows({ stepper, steps: [row('n_plan', 1, 0, 1, 'paused')] }).length, 0, 'a paused step did not complete');
   const failed = glanceCopy({ status: 'error', stepper, pauseDetail: 'ENOENT: no such file\n  at x', steps: [row('n_impl', 1, 0, 1, 'error')] });

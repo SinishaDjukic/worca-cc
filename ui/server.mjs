@@ -23,6 +23,7 @@ import { preflightNode } from '../src/core/preflight-node.mjs';
 import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
+import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
@@ -57,6 +58,7 @@ import {
   askWeb, assertAskWebInput, setAskWeb, addAskWebHost,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
+  resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
   theme as storedTheme, setTheme, assertThemeInput,
@@ -978,6 +980,7 @@ function summarizeRuns() {
     // A usage limit's own engine (engine-switch.mjs), and the run's engine: a reload keeps
     // the run page's "Resume on <other engine>" offer.
     limitEngine: r.limitEngine || null,
+    limitResetAt: r.limitResetAt || null,
     runEngine: r.orch?.state?.runEngine || null,
     startedAt: r.startedAt,
     startedBy: r.startedBy || null,
@@ -1075,6 +1078,7 @@ function wireRun(entry) {
         // ...and WHAT went wrong for an error-pause, reset alongside it.
         entry.pauseDetail = (payload && payload.detail) || null;
         entry.limitEngine = (payload && payload.limitEngine) || null;
+        entry.limitResetAt = (payload && payload.limitResetAt) || null;
         resolvePending(entry, { reason: entry.status });
         // B29: ANY run that mounted memory may have synced into its scopes (P1 syncs the mount back
         // at the run end on done, error, stopped and paused alike) — poke every mounted scope so open
@@ -1157,6 +1161,9 @@ function wireRun(entry) {
           by: entry.lastAction && entry.lastAction.by,
           reason: 'the run was resumed or stopped by hand',
         });
+      }
+      if (name === 'done' && entry.status === 'paused' && payload && payload.limitResetAt) {
+        entry._limitResumeP = maybeScheduleLimitResume(entry, payload);   // never rejects
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
         // Keep the in-memory run fresh so a late-joining client's hello
@@ -2880,6 +2887,40 @@ function cancelScheduledResumes(pipelineId, { by = null, reason } = {}) {
   } catch (err) { console.error(`[worca-ui] scheduled-resume cancel failed: ${err && err.message ? err.message : err}`); }
 }
 
+const utcStamp = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+
+/**
+ * D6/D7: with "Resume after a usage limit" on, a usage-limit pause whose reset time is known gets
+ * its resume ticket now, for just after the reset. Best-effort; never throws.
+ */
+async function maybeScheduleLimitResume(entry, payload) {
+  try {
+    if (!payload || payload.status !== 'paused' || payload.reason !== 'usage_limit' || !payload.limitResetAt) return;
+    if (!resumeAfterUsageLimit() || !entry.pipelineId) return;
+    const v = await validateResumeTarget(entry.pipelineId);   // archived, cap pause, an existing ticket, status
+    if (!v.ok) return;
+    const d = limitResumeDecision({ enabled: true, rp: v.resumePoint });
+    if (!d.schedule) {
+      if (/times in a row/.test(d.why)) appendAuditById(v.row.id, `Not resumed automatically: ${d.why}.`);
+      return;
+    }
+    // validateResumeTarget awaited: re-check with nothing awaited between here and createTicket.
+    if (resumeTicketsFor(v.row.id).length) return;
+    const by = (entry.lastAction && entry.lastAction.kind === 'resume' && entry.lastAction.by) || v.row.started_by || 'local';
+    const name = v.row.title || v.row.id;
+    createTicket({
+      title: `Resume ‘${name}’ (after usage limit)`,
+      projectDir: v.projectDir, workspaceId: v.workspaceId, runAtMs: d.at,
+      request: { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, autoLimitResume: true } },
+      ifMissed: 'run', graceMin: 360, resumePipelineId: v.row.id, createdBy: by,
+    });
+    appendAuditById(v.row.id, `Resume scheduled automatically for ${utcStamp(d.at)} UTC (usage limit resets ${utcStamp(d.resetAt)} UTC)${byActor(by)}.`, { actor: by });
+    emitChanged('schedules-changed', 'created');
+  } catch (err) {
+    console.error(`[worca-ui] automatic usage-limit resume not scheduled: ${err && err.message ? err.message : err}`);
+  }
+}
+
 /**
  * Fire a "resume this paused run" ticket. The live row is re-checked at fire time:
  * a run resumed or stopped by hand makes the ticket SKIP (feed entry, run stays as it
@@ -2898,11 +2939,13 @@ async function fireResumeTicket(ticket, pipelineId) {
   }
   const scheduledBy = ticket.createdBy || null;
   try {
-    const engine = ticket.request && ticket.request.internal && ticket.request.internal.resumeEngine;
+    const internal = (ticket.request && ticket.request.internal) || {};
+    const engine = internal.resumeEngine;
     const out = await resumeRun(pipelineId, {
       by: scheduledBy || 'local',
       mock: isTruthy(process.env.WORCA_MOCK ?? process.env.ORCH_MOCK),
       ...(engine ? { engine } : {}),
+      ...(internal.autoLimitResume ? { autoLimitResume: true } : {}),
     });
     // The feed learns how the resumed run ends through the same recordOutcome hook a
     // schedule-started run uses (wireRun keys on entry.ticketId).
@@ -3104,10 +3147,11 @@ app.post('/api/schedules/preview', (req, res) => {
   res.json({ rule: norm.rule, sentence: describeRule(norm.rule), next: previewOccurrences(norm.rule, Date.now(), n).map((t) => new Date(t).toISOString()) });
 });
 
-// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine? } — a one-off
+// POST /api/schedules/resume { pipelineId, scheduledFor, ifMissed?, graceMin?, engine?, afterUsageLimit? } — a one-off
 // "resume this paused run at <time>" ticket. ifMissed defaults to 'skip' (clarify default);
 // the sheet pre-selects 'skip' but lets the user pick 'run', so an HTTP caller may pass either.
 // `engine` resumes it on another engine; the engine gate is checked now and again when it fires.
+// `afterUsageLimit` (the notice's "Resume at") only adds the "(after usage limit)" title suffix.
 app.post('/api/schedules/resume', async (req, res) => {
   try {
     const body = req.body || {};
@@ -3142,7 +3186,7 @@ app.post('/api/schedules/resume', async (req, res) => {
       const refusal = (probe.claude?.engine || 'claude') !== 'claude' ? await probe.engineResumeRefusal() : null;
       if (refusal) return res.status(409).json({ error: engineRefusalFor(refusal.error, 'ui'), code: 'engine-refused', overridable: refusal.overridable, engine });
     }
-    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}`;
+    const title = `Resume ‘${v.row.title || v.row.id}’${engine ? ` on ${engineLabel(engine)}` : ''}${body.afterUsageLimit === true ? ' (after usage limit)' : ''}`;
     const request = { prompt: '', title: v.row.title || null, internal: { resumePipelineId: v.row.id, startedBy: by, ...(engine ? { resumeEngine: engine } : {}) } };
     const ticket = createTicket({
       title, projectDir: v.projectDir, workspaceId: v.workspaceId,
@@ -4051,7 +4095,7 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
@@ -4175,6 +4219,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     claude: { permissionMode: 'acceptEdits', mock: effMock, ...engineOpts, ...modelOpts },
     resume: saved,
     resumedBy: by || 'local',
+    ...(autoLimitResume ? { autoLimitResume: true } : {}),
   });
   // The engine gate's refusals answer here, before the resume is committed, like POST
   // /api/run's: the run stays paused, and the UI can show why and offer the consent when
@@ -8298,6 +8343,7 @@ const settingsState = () => ({
   askWeb: askWeb(),                                       // Ask Worca web access (off by default)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
+  resumeAfterUsageLimit: resumeAfterUsageLimit(),
   titleModel: storedTitleModel(),                         // the STORED id (the select), null = run's model
   titleModelEffective: describeTitleModel(),              // env override / stale id, for the hint line (#422)
   hideBuiltinModels: hideBuiltinModels(),
@@ -8679,6 +8725,7 @@ app.post('/api/settings', async (req, res) => {
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasAskWeb = has('askWeb');                // null clears back to unset (a team default applies)
   const hasDebugSpawnKey = has('debugSpawnEnabled');
+  const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
@@ -8750,6 +8797,7 @@ app.post('/api/settings', async (req, res) => {
     }
     if (hasAskWeb && body.askWeb !== null) asSettingsField('askWeb', () => assertAskWebInput(body.askWeb));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
+    if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
       assertTitleModelInput(titleModelInput);
       if (titleModelInput !== '' && titleModelInput !== null && !catalogHasModel(titleModelInput)) {
@@ -8809,6 +8857,7 @@ app.post('/api/settings', async (req, res) => {
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasAskWeb) await setAskWeb(body.askWeb);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
+    if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
@@ -13855,7 +13904,7 @@ export const _testing = {
   askTrackRun, liveRunEntry, liveDefragRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,
   broadcast, askFilesRunDir,
-  validateResumeTarget, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
+  validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
   setAutoRescan(on) { autoRescanOn = on !== false; },
