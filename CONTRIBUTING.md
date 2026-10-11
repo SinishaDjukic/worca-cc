@@ -53,6 +53,28 @@ Development state stays out of your real Worca home: set `WORCA_HOME` to point
 the SQLite database and artifact store at a throwaway directory (the test and
 smoke scripts already do this — `.worca-cc-test` / `.worca-cc-smoke`).
 
+### Trying a change a Worca run made
+
+When you use Worca to work on Worca, don't start the UI from a run's own
+checkout (`~/.worca-cc/runs/<id>/…` or `<project>/.worca-cc/worktrees/<id>`).
+Worca deletes those folders when the run is discarded or archived, and the
+server would lose its own code, so `npm start` refuses to start there. Running
+the tests in that folder is fine.
+
+To try the run's branch `X` in a UI, give it a folder of its own. The run's
+checkout still holds `X`, so take its commit detached:
+
+```bash
+git worktree add --detach ../try-X X
+cd ../try-X && npm install
+HOME=/tmp/worca-try WORCA_HOME=/tmp/worca-try PORT=4400 npm start
+```
+
+Use a separate `HOME` as well as `WORCA_HOME`: settings live under
+`$HOME/.worca-cc`, and a second server on your real home shares the live UI's
+database and runs its startup sweeps against your real runs. To commit fixes on
+`X` itself, discard the run's checkout first, then `git worktree add ../try-X X`.
+
 ## Mock mode
 
 The whole pipeline runs **fully offline** — no `claude` spawn, no tokens — with
