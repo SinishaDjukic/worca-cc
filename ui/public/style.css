@@ -1587,6 +1587,23 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    Elevate it above every other modal so it is always usable when open. */
 #folder-browser.viewer-modal{z-index:70;}
 .viewer-modal .card{width:min(860px,100%);max-height:86vh;overflow:auto;}
+/* The artifact viewer's header actions (Full screen · Close) share one row and one height. */
+#viewer-card .viewer-actions{display:inline-flex;align-items:center;gap:8px;}
+/* A C4 diagram wants the room a deck gets: a wider card, a fixed-height stage the component fills. */
+#viewer-card .card:has(.artifact-view.kind-c4){width:min(1320px,100%);}
+.artifact-view.kind-c4{overflow:hidden;}
+.artifact-view.kind-c4 worca-c4{display:block;height:min(72vh,860px);}
+/* Full screen: the card takes the screen (Fullscreen API) or the window (fallback), the typed
+   viewer the rest of the card below its head. */
+#viewer-card.is-full{padding:0;}
+#viewer-card.is-full .card,#viewer-card.is-full .card:has(.artifact-view.kind-c4){width:100vw;max-width:none;height:100vh;max-height:none;border-radius:0;
+  display:flex;flex-direction:column;overflow:hidden;}
+#viewer-card.is-full .card-head{flex:0 0 auto;margin-bottom:12px;}
+#viewer-card.is-full .viewer{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+#viewer-card.is-full .artifact-view{flex:1 1 auto;min-height:0;max-height:none;}
+#viewer-card.is-full .artifact-view.kind-c4 worca-c4{height:100%;}
+#viewer-card.is-full .artifact-view iframe{aspect-ratio:auto;height:100%;}
+#viewer-card.is-full .artifact-view embed{height:100%;}
 /* folder browser modal (native-dialog fallback). Must come AFTER the
    .viewer-modal rules: `.folder-modal .card` ties with `.viewer-modal .card`
    on specificity, so source order is what lets these declarations win. */

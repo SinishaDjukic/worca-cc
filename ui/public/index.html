@@ -2217,7 +2217,10 @@
       <div class="card">
         <div class="card-head">
           <h2 id="viewer-title">Saved pipeline</h2>
-          <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+          <span class="viewer-actions">
+            <button type="button" id="viewer-full" class="btn btn-mini" aria-pressed="false" hidden>Full screen</button>
+            <button type="button" id="viewer-close" class="btn btn-mini">Close</button>
+          </span>
         </div>
         <pre id="viewer" class="viewer"></pre>
       </div>

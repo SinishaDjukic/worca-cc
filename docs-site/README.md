@@ -19,6 +19,7 @@ already live in `docs/`; the changelog half is `changelog.mjs`:
 | `/changelog/<version>/` | `docs/changelog/worca-app-v<version>.src.html` in a document shell, with a releases bar and its `shots/<version>/` images as files |
 | `/changelog/latest/` | a 302 to the newest release (`_redirects`) |
 | `/why-worca/` | `docs/why-worca/why-worca.standalone.html` |
+| `/architecture/` | `docs/architecture/viewer.html` (the C4 viewer) with `architecture.c4` beside it, and the viewer module `ui/public/c4/c4-view.mjs` + `dagre.min.js` |
 | anything else | `404.html` (the landing page, with a 404 status) |
 
 The build fails when `entries.json` and the pages disagree or an image is
@@ -47,7 +48,7 @@ One Cloudflare Worker, `worca-docs`, defined by `wrangler.jsonc` and built by
 | Root directory | `docs-site` |
 | Build command | `npm run build` |
 | Deploy command | `npx wrangler deploy` |
-| Build watch paths | `docs-site/*`, `docs/changelog/*`, `docs/why-worca/*` (see below) |
+| Build watch paths | `docs-site/*`, `docs/changelog/*`, `docs/why-worca/*`, `docs/architecture/*`, `ui/public/c4/*` (see below) |
 | Production branch | `docs-live` |
 | Build variable | `NODE_VERSION = 22` |
 
@@ -75,6 +76,8 @@ path. Set them in the dashboard (Settings → Build → Build watch paths) to:
 docs-site/*
 docs/changelog/*
 docs/why-worca/*
+docs/architecture/*
+ui/public/c4/*
 ```
 
 With `docs-site/*` alone, a changelog-only change would build nothing. A new
