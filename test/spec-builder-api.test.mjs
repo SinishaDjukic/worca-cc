@@ -86,7 +86,7 @@ test('flag on: suggest, prompt and save', async () => {
         const r = await post('/api/spec-builder/prompt', { projectDir, idea: 'Add a dashboard', roles: ['qa'] });
         assert.equal(r.status, 200);
         const j = await r.json();
-        assert.ok(j.text.startsWith('[worca spec-builder] Draft'));
+        assert.ok(j.text.startsWith('[worca spec-builder] ') && j.text.includes('\nDraft a Worca-ready spec'));
         assert.equal(j.title, 'Spec: Add a dashboard');
         assert.equal(j.projectKey, project.key);
         assert.equal(j.projectName, 'app');
