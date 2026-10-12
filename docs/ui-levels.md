@@ -279,4 +279,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
+| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
+| Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |
 | Getting started: all nine tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", steps 8 and 9 "Expert" | S |

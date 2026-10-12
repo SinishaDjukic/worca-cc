@@ -8699,3 +8699,126 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 :is(.afb-folder,.afb-main,.afb-dl,.afb-ib):focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .afb-empty{margin:18px 10px;color:var(--ink-2);text-align:center;font-size:13px;}
 @media (prefers-reduced-motion:reduce){.afb-sbox,.afb-title,.afb-filter{transition:none;}}
+
+/* ===== Chat P6: home ===== */
+/* The Chat home (ui/public/chat/home*.mjs, intent.mjs): the heading over a CSS-only aurora, the quick actions, the
+   tabs (Needs you · Running · Recent chats · Workflows) with run tiles, the promos and the composer's intent chip.
+   Tokens only — every colour token is light-dark(), so both themes follow; emphasis is a wash or a chip, never a
+   coloured left edge; dots only behind graphs (the tile well, the workflow thumbnails). */
+/* No stacking context on the home (no isolation, no z-index): the Getting started "Ask Worca" tour rings .ask-input and
+   .ask-send in the hero slot, and its .guide-target (z 45) must reach above the fixed .guide-scrim (z 44). The aurora
+   is the first positioned child; every later child is positioned too, so it paints over the aurora in tree order. */
+.chat-home{position:relative;}
+.chat-home > :not(.chat-home-aurora){position:relative;}
+.chat-home-aurora{position:absolute;left:0;right:0;top:0;height:680px;overflow:hidden;pointer-events:none;-webkit-mask-image:linear-gradient(to bottom,currentColor 30%,transparent);mask-image:linear-gradient(to bottom,currentColor 30%,transparent);}
+.chat-aurora-orb{position:absolute;width:560px;height:560px;border-radius:50%;opacity:.55;animation:chatAurora 24s ease-in-out infinite alternate;}
+.chat-aurora-orb.o1{left:4%;top:-220px;background:radial-gradient(closest-side,color-mix(in srgb,var(--violet) 40%,transparent),transparent);}
+.chat-aurora-orb.o2{right:2%;top:-180px;background:radial-gradient(closest-side,color-mix(in srgb,var(--blue) 34%,transparent),transparent);animation-duration:28s;animation-delay:-7s;}
+.chat-aurora-orb.o3{left:32%;top:20px;background:radial-gradient(closest-side,color-mix(in srgb,var(--peach) 28%,transparent),transparent);animation-duration:32s;animation-delay:-14s;}
+@keyframes chatAurora{0%{transform:translate3d(0,0,0) scale(1);}50%{transform:translate3d(48px,26px,0) scale(1.08);}100%{transform:translate3d(-36px,12px,0) scale(.95);}}
+.chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 30px/1.2 var(--sans);letter-spacing:-.01em;}
+.chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
+.chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
+.chat-ic svg{width:100%;height:100%;}
+/* Quick actions: all 8 tiles (7 intents + More) in one row above a 640px container (8 × 72px + gaps), 4 per row
+   below it. auto-fit: a level-gated or switched-off tile collapses its track instead of leaving a hole. */
+.chat-home-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px;}
+.chat-home-act{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:78px;padding:10px 6px;box-sizing:border-box;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:500 12px/1.25 var(--sans);text-align:center;cursor:pointer;}
+.chat-home-act:hover{border-color:var(--hover-outline);}
+.chat-home-act > .chat-ic{color:var(--ink-2);}
+.chat-home-act-l{max-width:100%;overflow-wrap:anywhere;}
+/* Tabs: one sliding underline under the selected tab (moved by home-lists.mjs moveInk). */
+.chat-home-tablist{position:relative;display:flex;gap:4px;box-shadow:inset 0 -1px 0 var(--line);overflow-x:auto;scrollbar-width:none;}
+.chat-home-tab{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 10px;border:0;background:none;color:var(--ink-2);font:500 13px/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.chat-home-tab:hover,.chat-home-tab[aria-selected="true"]{color:var(--ink);}
+.chat-home-tab-n{min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font:600 11px/18px var(--sans);text-align:center;}
+.chat-home-ink{position:absolute;left:0;bottom:0;width:0;height:2px;border-radius:2px;background:var(--ink);transition:transform .22s cubic-bezier(.22,1,.36,1),width .22s cubic-bezier(.22,1,.36,1);}
+.chat-home-panel{min-height:120px;padding-top:14px;}
+.chat-home-empty{margin:0;padding:28px 0;text-align:center;color:var(--ink-2);font-size:13px;}
+/* Run tiles: the title button stretches over the tile; Answer sits above that overlay. Pill and button text on the
+   tinted washes uses the strong inks (AA in light: --X-ink on --X-bg reads 3.3–3.9:1 there). */
+.chat-home-runs{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;}
+.chat-run-tile{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
+.chat-run-tile:hover{border-color:var(--hover-outline);}
+.chat-run-tile.is-need{background:var(--amber-wash);border-color:var(--amber-line);}
+.chat-run-tile[aria-busy="true"]{opacity:.7;}
+/* The pill wraps under a long title rather than cutting either ("Waiting for your answer" is the status itself). */
+.chat-run-tile-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px;min-width:0;}
+.chat-run-tile-tt{display:flex;flex:1 1 180px;flex-direction:column;gap:2px;min-width:0;}
+.chat-run-tile-open{max-width:100%;padding:0;border:0;background:none;color:var(--ink);font:600 13.5px/1.3 var(--sans);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.chat-run-tile-open::after{content:"";position:absolute;inset:0;z-index:1;border-radius:inherit;}
+.chat-run-tile-open:focus-visible{outline:none;}
+.chat-run-tile:has(.chat-run-tile-open:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
+.chat-run-tile-sub{color:var(--ink-2);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-pill{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:100%;height:22px;padding:0 9px;box-sizing:border-box;border-radius:999px;font:500 11.5px/22px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-pt{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-dot{width:6px;height:6px;flex:none;border-radius:50%;background:currentColor;}
+.chat-run-tile-pill.st-peach{background:var(--peach-bg);color:var(--h-peach-ink);}
+.chat-run-tile-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.chat-run-tile-pill.st-green{background:var(--green-bg);color:var(--green-ink);}
+.chat-run-tile-pill.st-red{background:var(--red-bg);color:color-mix(in srgb,var(--red-ink) 80%,var(--ink));}
+.chat-run-tile-pill.st-blue{background:var(--blue-bg);color:var(--h-blue-ink);}
+.chat-run-tile-pill.st-violet{background:var(--violet-bg);color:var(--violet-ink);}
+.chat-run-tile .run-flow-wrap.chat-run-tile-well{height:176px;margin:0;overflow:hidden;border-radius:calc(var(--r-card) - 4px);}
+.chat-run-tile.is-nograph .chat-run-tile-well{display:none;}
+.chat-run-tile-note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-2);font-size:12px;}
+.chat-run-tile-foot{display:flex;align-items:center;gap:10px;min-width:0;margin-top:auto;}
+.chat-run-tile-stats{flex:1;min-width:0;color:var(--ink-2);font:12px/1.3 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-answer{position:relative;z-index:2;height:28px;padding:0 12px;border:1px solid var(--amber-line);border-radius:999px;background:var(--amber-bg);color:var(--amber-ink-strong);font:600 12px/26px var(--sans);cursor:pointer;}
+.chat-run-tile-answer:hover{border-color:var(--amber);}
+/* Recent chats */
+.chat-home-chats{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none;}
+.chat-home-chat{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:10px;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-chat:hover{background:var(--hover);}
+.chat-home-dot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--line-2);}
+.chat-home-dot.is-think{background:var(--green);animation:chatHomePulse 1.4s ease-in-out infinite;}
+.chat-home-dot.is-wait{background:var(--amber);}
+.chat-home-dot.is-live{background:var(--violet);}
+@keyframes chatHomePulse{50%{opacity:.35;}}
+.chat-home-chat-col{display:flex;flex:1;flex-direction:column;gap:2px;min-width:0;}
+.chat-home-chat-t{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-chat-m{color:var(--ink-2);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-chev{color:var(--ink-2);opacity:0;transition:opacity .15s;}
+.chat-home-chat:hover .chat-home-chev,.chat-home-chat:focus-visible .chat-home-chev{opacity:1;}
+/* Workflows: the Library's thumbnail in a dotted well; its white cards follow the theme here. */
+.chat-home-wfs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+.chat-home-wf{display:flex;flex-direction:column;gap:6px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.chat-home-wf:hover{border-color:var(--hover-outline);}
+.chat-home-wf-tb{display:grid;place-items:center;height:112px;overflow:hidden;border-radius:8px;background-color:var(--canvas-2);background-image:radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;}
+.chat-home-wf-tb svg{width:100%;height:100%;}
+.chat-home-wf-tb rect{fill:var(--panel);stroke:var(--w-void);}
+.chat-home-wf-n{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-home-wf-m{color:var(--ink-2);font-size:11.5px;}
+.chat-home-more-link{align-self:flex-start;margin-top:10px;padding:0;border:0;background:none;color:var(--blue-ink-strong);font:500 12.5px/1.4 var(--sans);cursor:pointer;}
+.chat-home-more-link:hover{text-decoration:underline;}
+/* Promos: static token gradients (a wash), no accent edge. */
+.chat-home-promos{display:flex;flex-direction:column;gap:10px;}
+.chat-home-promos-h{margin:0;color:var(--ink-2);font:600 12px/1.3 var(--sans);letter-spacing:.06em;text-transform:uppercase;}
+.chat-home-promo-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;}
+.chat-home-promo{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;padding:14px;border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink);}
+.chat-home-promo[data-promo="workflows"]{background:linear-gradient(135deg,var(--violet-bg),var(--panel) 75%);}
+.chat-home-promo[data-promo="away"]{background:linear-gradient(135deg,var(--amber-bg),var(--panel) 75%);}
+.chat-home-promo[data-promo="schedules"]{background:linear-gradient(135deg,var(--blue-bg),var(--panel) 75%);}
+.chat-home-promo-t{font-size:13.5px;font-weight:600;}
+.chat-home-promo-d{color:var(--ink-2);font-size:12px;}
+.chat-home-promo-b{margin-top:4px;height:28px;padding:0 12px;border:1px solid var(--line-2);border-radius:999px;background:var(--panel);color:var(--ink);font:500 12px/26px var(--sans);cursor:pointer;}
+.chat-home-promo-b:hover{border-color:var(--hover-outline);}
+/* The composer's intent chip (in P1's lead row). */
+.chat-intent{display:inline-flex;align-items:center;gap:6px;flex:none;max-width:220px;height:26px;padding:0 3px 0 9px;box-sizing:border-box;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font:500 12px/1 var(--sans);}
+.chat-intent-l{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-intent-x{display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:50%;background:none;color:inherit;cursor:pointer;}
+.chat-intent-x:hover{background:color-mix(in srgb,var(--violet) 18%,transparent);}
+:is(.chat-home-act,.chat-run-tile-answer,.chat-home-tab-n,.chat-run-tile-note)[hidden]{display:none;}
+:is(.chat-home-act,.chat-home-tab,.chat-home-panel,.chat-home-chat,.chat-home-wf,.chat-home-promo-b,.chat-run-tile-answer,.chat-intent-x,.chat-home-more-link):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The tab strip scrolls sideways (overflow-x:auto clips y too, at the tabs' own 36px): the ring goes inside the tab. */
+.chat-home-tab:focus-visible{outline-offset:-2px;border-radius:6px;}
+/* A long rotating example never wraps to a clipped second line in the one-row hero composer (390px). */
+.chat-hero-slot .ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+@container chat-home (max-width:640px){.chat-home-actions{grid-template-columns:repeat(4,minmax(0,1fr));}.chat-home-promo-row{grid-template-columns:1fr;}}
+@container chat-home (max-width:440px){.chat-home-runs{grid-template-columns:1fr;}.chat-home-wfs{grid-template-columns:repeat(2,minmax(0,1fr));}.chat-home-act{min-height:64px;}}
+@media (max-width:760px){.chat-home-title{font-size:24px;margin-bottom:14px;}.chat-aurora-orb{width:380px;height:380px;}}
+@media (prefers-reduced-motion: reduce){
+  .chat-aurora-orb{animation:none;}
+  .chat-home-ink,.chat-home-chev{transition:none;}
+  .chat-home-dot.is-think{animation:none;}
+}

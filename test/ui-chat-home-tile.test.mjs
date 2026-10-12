@@ -1,0 +1,174 @@
+// test/ui-chat-home-tile.test.mjs — worca Chat P6: one run tile on the Chat home. The Running list's pill, the
+// "N/M agents · dur · $cost" line, Answer while the run waits, and the Workflows-style graph mounted through
+// run-hosts (look-only, framed on the running step) — repainted in place, torn down on destroy.
+import { test, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { useDomRelease } from './helpers/jsdom-release.mjs';
+import { createRunTile, tileBag, tileStats, tileSub, decidingText, TILE_GRAPH_MODE, DECIDING_TEXT } from '../ui/public/chat/home-run-tile.mjs';
+import { decorFromState } from '../ui/public/graph/run-decor.mjs';
+
+const trackDom = useDomRelease(afterEach);
+
+const MANIFEST = {
+  version: 2, template: { id: 'wf_t', name: 'T' },
+  graph: {
+    nodes: [
+      { id: 'n_a', kind: 'agent', key: 'planner', x: 0, y: 0, label: 'Planner', color: 'violet',
+        ports: { inputs: [{ id: 'task', type: 'md', loop: false }], outputs: [{ id: 'plan', type: 'md', when: 'always' }], await: true } },
+      { id: 'n_end', kind: 'end', key: null, x: 400, y: 0, label: 'End', color: '',
+        ports: { inputs: [{ id: 'result', type: 'any' }], outputs: [], await: false } },
+    ],
+    wires: [{ id: 'w1', from: { node: 'n_a', port: 'plan' }, to: { node: 'n_end', port: 'result' } }],
+  },
+};
+const decorOf = () => decorFromState({ stepper: MANIFEST, status: 'running', steps: [], active: [] }, { live: true, now: 0 });
+function snap(over = {}) {
+  return {
+    source: 'live', key: 'live:r1', runId: 'r1', pipelineId: 'p1', projectKey: null, workspaceId: null,
+    title: 'Fix the upload test', project: 'worca-cc', workflow: 'T', status: 'running', pauseReason: null,
+    pendingQuestion: null, live: true, terminal: false, elapsedMs: 252000, costUsd: 1.2, progress: { done: 2, total: 5 },
+    active: [], stepper: MANIFEST, decor: decorOf(), ...over,
+  };
+}
+function mount(s) {
+  const dom = trackDom(new JSDOM('<!doctype html><body></body>'));
+  const doc = dom.window.document;
+  const seen = [];
+  const tile = createRunTile({ doc, snap: s, onOpen: (x) => seen.push(['open', x.key]), onAnswer: (x) => seen.push(['answer', x.key]) });
+  doc.body.appendChild(tile.el);
+  return { doc, tile, seen };
+}
+
+test('a tile: title, project · workflow, the Running list pill, the stats line and a look-only graph in its dotted well', () => {
+  const { tile } = mount(snap());
+  const el = tile.el;
+  assert.equal(el.tagName, 'ARTICLE');
+  assert.equal(el.dataset.tileKey, 'live:r1');
+  assert.equal(el.querySelector('button.chat-run-tile-open').textContent, 'Fix the upload test');
+  assert.equal(el.querySelector('.chat-run-tile-sub').textContent, 'worca-cc · T');
+  const pill = el.querySelector('.chat-run-tile-pill');
+  assert.ok(pill.classList.contains('st-peach'));
+  assert.equal(pill.querySelector('.chat-run-tile-pt').textContent, 'Running');
+  assert.equal(el.querySelector('.chat-run-tile-stats').textContent, '2/5 agents · 4m 12s · $1.20');
+  assert.equal(el.querySelector('.chat-run-tile-answer').hidden, true);
+  const well = el.querySelector('.run-flow-wrap.chat-run-tile-well');
+  assert.equal(well.getAttribute('role'), 'img');
+  assert.equal(well.getAttribute('aria-label'), 'Workflow graph');
+  assert.equal(TILE_GRAPH_MODE, 'focus');
+  assert.ok(well.classList.contains('gv-wrap-focus'), 'mounted through run-hosts in focus mode');
+  assert.equal(well.querySelector('.run-flow').hasAttribute('inert'), true, 'look-only: no tab stop on the stage or its cards');
+  assert.ok(well.querySelector('.run-flow.gv-host .gv-stage'), 'the shared renderer drew the graph');
+  assert.ok(el.querySelector('.gv-world [data-node-id="n_a"]'), 'the agent card is in the world');
+  assert.equal(el.classList.contains('is-need'), false);
+});
+
+test('a waiting run wears the amber wash and an Answer button; Answer and the title route separately', () => {
+  const { tile, seen } = mount(snap({ pendingQuestion: { kind: 'clarify', questions: [{ id: 'q1' }] } }));
+  const pill = tile.el.querySelector('.chat-run-tile-pill');
+  assert.ok(pill.classList.contains('st-amber'));
+  assert.equal(pill.textContent, 'Waiting for your answer');
+  assert.ok(tile.el.classList.contains('is-need'));
+  const answer = tile.el.querySelector('.chat-run-tile-answer');
+  assert.equal(answer.hidden, false);
+  assert.equal(answer.textContent, 'Answer');
+  answer.click();
+  tile.el.querySelector('.chat-run-tile-open').click();
+  assert.deepEqual(seen, [['answer', 'live:r1'], ['open', 'live:r1']]);
+  tile.setBusy(true);
+  assert.equal(tile.el.getAttribute('aria-busy'), 'true');
+  assert.equal(answer.getAttribute('aria-disabled'), 'true');
+  assert.equal(answer.disabled, false, 'never `disabled`: the focus stays on the button while the route looks up a chat');
+  answer.click();
+  tile.el.querySelector('.chat-run-tile-open').click();
+  assert.equal(seen.length, 2, 'a busy tile routes nothing');
+  tile.setBusy(false);
+  assert.equal(answer.hasAttribute('aria-disabled'), false);
+  answer.click();
+  assert.deepEqual(seen.at(-1), ['answer', 'live:r1'], 'routes again once the lookup is over');
+});
+
+test('update() repaints in place: same element, same graph mount; a paused run gets the wash without Answer', () => {
+  const s = snap();
+  const { tile } = mount(s);
+  const el = tile.el;
+  const stage = el.querySelector('.gv-stage');
+  tile.update(snap({ title: 'Renamed', decor: s.decor, elapsedMs: 0, costUsd: null }));
+  assert.equal(tile.el, el);
+  assert.equal(el.querySelector('.gv-stage'), stage, 'no remount for the same node set');
+  assert.equal(el.querySelector('.chat-run-tile-open').textContent, 'Renamed');
+  assert.equal(el.querySelector('.chat-run-tile-stats').textContent, '2/5 agents');
+  tile.update(snap({ status: 'paused', pauseReason: 'cost_pipeline', decor: s.decor }));
+  assert.equal(el.querySelector('.chat-run-tile-pill').textContent, 'Paused · cost limit');
+  assert.ok(el.classList.contains('is-need'));
+  assert.equal(el.querySelector('.chat-run-tile-answer').hidden, true);
+  assert.equal(tile.snapshot.status, 'paused');
+});
+
+test('no manifest hides the well; Auto deciding says so; destroy tears the mount down', () => {
+  const bare = mount(snap({ stepper: null, decor: null }));
+  assert.ok(bare.tile.el.classList.contains('is-nograph'));
+  assert.equal(bare.tile.el.querySelector('.gv-host'), null);
+  const deciding = mount(snap({ stepper: { ...MANIFEST, auto: { status: 'deciding' } } }));
+  const note = deciding.tile.el.querySelector('.chat-run-tile-note');
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, DECIDING_TEXT);
+  assert.equal(DECIDING_TEXT, 'Auto is deciding the workflow…');
+  assert.equal(deciding.tile.el.classList.contains('is-nograph'), false, 'the well stays for the deciding line');
+  assert.equal(deciding.tile.el.querySelector('.gv-host'), null);
+  const live = mount(snap());
+  assert.ok(live.tile.el.querySelector('.gv-host'));
+  live.tile.destroy();
+  assert.equal(live.tile.el.querySelector('.gv-host'), null);
+  assert.equal(live.tile.el.querySelector('.gv-stage'), null);
+});
+
+test('helpers: the stats line drops what is unknown; the bag drops expert detail and is memoised per decor generation', () => {
+  assert.equal(tileStats({ progress: null, elapsedMs: 0, costUsd: null }), '');
+  assert.equal(tileStats({ progress: { done: 0, total: 3 }, elapsedMs: 5000, costUsd: null }), '0/3 agents · 5s');
+  assert.equal(tileStats({ progress: { done: 1, total: 1 }, elapsedMs: 0, costUsd: 0.004 }), '1/1 agents · <$0.01');
+  assert.equal(tileSub({ project: 'worca-cc', workflow: '' }), 'worca-cc');
+  const d = decorOf();
+  const b = tileBag(d);
+  assert.equal(tileBag(d), b, 'one bag per decor generation (run-hosts skips an identical bag)');
+  assert.equal(b.detail, false);
+  assert.equal(b.expanded, null);
+  assert.equal(d.detail, undefined, 'the shared bag is never mutated');
+  assert.equal(tileBag(null), null);
+});
+
+test('a graph that goes away (Auto deciding again, no manifest) takes its mount with it', () => {
+  const s = snap();
+  const { tile } = mount(s);
+  assert.ok(tile.el.querySelector('.gv-host'));
+  tile.update(snap({ stepper: { ...MANIFEST, auto: { status: 'deciding' } }, decor: s.decor }));
+  assert.equal(tile.el.querySelector('.gv-host'), null);
+  assert.equal(tile.el.querySelector('.chat-run-tile-note').hidden, false);
+  assert.equal(tileStats({ progress: { done: 0, total: 0 }, elapsedMs: 0, costUsd: null }), '', 'no "0/0 agents"');
+});
+
+test('the deciding line uses the run page\'s words: waiting on its proposal, parked, or over never reads "deciding"', () => {
+  const auto = { ...MANIFEST, auto: { status: 'deciding' } };
+  const { tile } = mount(snap({ stepper: auto, pendingQuestion: { kind: 'workflow' } }));
+  assert.equal(tile.el.querySelector('.chat-run-tile-note').textContent, 'Waiting for your decision');
+  assert.equal(tile.el.querySelector('.chat-run-tile-well').getAttribute('aria-label'), 'Waiting for your decision',
+    'role="img" hides the note from screen readers: the well is named by it');
+  tile.update(snap({ stepper: auto, status: 'paused' }));
+  assert.equal(tile.el.querySelector('.chat-run-tile-note').textContent, 'Paused before deciding');
+  assert.equal(tile.el.querySelector('.chat-run-tile-well').getAttribute('aria-label'), 'Paused before deciding');
+  tile.update(snap());
+  assert.equal(tile.el.querySelector('.chat-run-tile-well').getAttribute('aria-label'), 'Workflow graph', 'decided: the graph again');
+  assert.equal(decidingText({ status: 'interrupted' }), 'Paused before deciding');
+  assert.equal(decidingText({ status: 'stopped' }), 'Auto did not decide a workflow');
+  assert.equal(decidingText({ status: 'done' }), 'Auto did not decide a workflow');
+  assert.equal(decidingText({ status: 'running' }), DECIDING_TEXT);
+});
+
+test('a decided Auto run draws its graph; a pausing run is "paused before deciding"; a busy tile marks its title aria-disabled too', () => {
+  const { tile } = mount(snap({ stepper: { ...MANIFEST, auto: { status: 'decided' } } }));
+  assert.ok(tile.el.querySelector('.gv-host'), 'only a stepper that is still deciding hides the graph');
+  assert.equal(tile.el.querySelector('.chat-run-tile-note').hidden, true);
+  assert.equal(decidingText({ status: 'pausing' }), 'Paused before deciding');
+  tile.setBusy(true);
+  assert.equal(tile.el.querySelector('.chat-run-tile-open').getAttribute('aria-disabled'), 'true');
+});

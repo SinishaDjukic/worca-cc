@@ -223,6 +223,9 @@ import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
+import { createChatHome, findFollowingThread } from './chat/home.mjs';
+import { installIntentAddon } from './chat/intent.mjs';
+import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.mjs';
 import { activeAgents } from './ask-run-card.mjs';
@@ -32475,6 +32478,168 @@ if (bootTarget === 'workspace') setRunTarget('workspace');
 registerChatActionCards();
 chatDeps.openShipIt = openShipItFor;
 
+// worca Chat P6 (CONTRACT §2/§8): the composer's intent chip — a composer add-on, registered before the chat mounts.
+// A send from the home arms the hero → dock glide (chatHome.armFlip). The home itself mounts right after the page
+// (mountChatHome, below P1's mount); every function it uses is a hoisted declaration in this block.
+let chatHome = null;
+// The home's and the intent chip's timers: app.js's own setInterval / setTimeout — the page's in a browser; Node's under
+// the jsdom tests, unref'd like _timerTick, since a jsdom window's interval would keep a test process alive for ever.
+const chatHomeTimers = {
+  setInterval: (fn, ms) => { const t = setInterval(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
+  clearInterval: (t) => clearInterval(t),
+  setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t && typeof t.unref === 'function') t.unref(); return t; },
+  clearTimeout: (t) => clearTimeout(t),
+};
+const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
+
+// ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
+// The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's
+// [data-chat-home] (P1). Run tiles read the SAME run models the Running list paints (askRunSnapshot + the Runs
+// badge's needsYouItems rule); the home re-reads them on every per-run frame (coalesced) and once a second while it
+// shows. It does nothing while the Chat section is hidden: a visit starts when Chat shows a new chat.
+function mountChatHome() {
+  if (chatHome || !askPanel || !askPanel.root) return;
+  const host = askPanel.root.querySelector('[data-chat-home]');
+  if (!host) return;
+  chatHome = createChatHome({
+    doc: document,
+    host,
+    heroSlot: host.querySelector('[data-chat-hero-slot]'),
+    timers: chatHomeTimers,
+    deps: {
+      runs: chatHomeRuns,
+      threads: chatHomeThreads,
+      workflows: chatHomeWorkflows,
+      flags: chatHomeFlags,
+      threadForRun: (ref) => findFollowingThread((...args) => fetch(...args), ref),
+      openThread: (id) => openChat({ threadId: id }),
+      openRunPanel: (ref, opts) => chatDeps.openRunPanel(ref, opts),     // P4 swaps chatDeps.openRunPanel for the panel
+      setIntent: (id, opts) => chatIntent.set(id, opts),
+      prefill: chatPrefill,
+      // "N more" asks for the Runs LIST: a bare #runs from another page reopens the remembered run (D6), so go
+      // through goRunsList (runsUi.skipRestore), as "Show in Runs" does.
+      navigate: (hash) => { const to = String(hash || '').replace(/^#/, ''); if (to === 'runs') goRunsList(); else location.hash = to; },
+      level: () => currentLevel(),
+    },
+  });
+}
+
+/** The home's runs: Needs you (the Runs badge's rule — live items and History rows this tab has no live run for),
+ *  Running (live pipelines not in Needs you), the finished runs the Explain-a-diff picker lists, and the project a
+ *  workflow prefill names (the newest History row's). Read once a second while the home shows: the History part is
+ *  memoised on the identity of state.historyAll (every load and delete assigns a new array), so the sort runs only
+ *  when History changed. */
+function chatHomeRuns() {
+  const src = runsNeedsInput();
+  const needs = chatNeedsYouItems(src);
+  const asking = new Set(needs.live.map((it) => it.runId));
+  const hist = chatHomeHistory();
+  return {
+    needs: [
+      ...needs.live.map((it) => runs.get(it.runId)).filter(Boolean).map(chatHomeTile),
+      ...needs.history.map(chatHomeHistTile),
+    ],
+    running: liveRuns().filter((r) => isPipelineRun(r) && !asking.has(r.runId)).sort(cmpTabRuns).map(chatHomeTile),
+    finished: [...chatHomeFinishedHere(hist), ...hist.finished].slice(0, 8),
+    project: hist.project,
+    // Known once the socket's hello seeded the runs and History answered (P4's crp.historySeen): until then an empty
+    // Needs you is "not yet", and the home's default tab waits (createChatHome RUNS_WAIT_MS caps it).
+    ready: helloSeeded && crp.historySeen,
+  };
+}
+let chatHomeHistMemo = null;    // { src, doneIds, finished, project } for one state.historyAll array
+function chatHomeHistory() {
+  const src = Array.isArray(state.historyAll) ? state.historyAll : [];
+  if (chatHomeHistMemo && chatHomeHistMemo.src === src) return chatHomeHistMemo;
+  const done = new Set(['done', 'complete', 'completed']);
+  const ms = (v) => (typeof v === 'number' ? v : (Date.parse(v || '') || 0));
+  const sorted = src.filter(Boolean).sort((a, b) => ms(b.startedAt || b.mtime) - ms(a.startedAt || a.mtime));
+  const recent = sorted.find((p) => p.target !== 'workspace' && (p.projectName || p.projectKey));
+  const doneRows = sorted.filter((p) => !p.archived && done.has(String(p.status || '').toLowerCase()));
+  chatHomeHistMemo = {
+    src,
+    doneIds: new Set(doneRows.map((p) => p.id)),
+    finished: doneRows.slice(0, 8)
+      .map((p) => ({ key: `hist:${p.projectKey}/${p.id}`, title: p.title || p.id, pipelineId: p.id, runId: null, project: histGroupName(p) })),
+    project: recent ? (recent.projectName || recent.projectKey) : '',
+  };
+  return chatHomeHistMemo;
+}
+/** Runs that finished in THIS tab and History does not list as done yet: History reloads only on the Runs page or
+ *  the run panel (finishRun, pipelines-changed), so the run the user just watched finish on the home would be missing
+ *  from the Explain-a-diff picker until then. Newest first. */
+function chatHomeFinishedHere(hist) {
+  const out = [];
+  for (const r of runs.values()) {
+    if (!isPipelineRun(r) || !r.pipelineId || String(r.status || '').toLowerCase() !== 'done' || hist.doneIds.has(r.pipelineId)) continue;
+    out.push(r);
+  }
+  return out.sort((a, b) => (b.orderKey || 0) - (a.orderKey || 0)).map((r) => ({
+    key: `live:${r.runId}`, title: r.title || r.pipelineId, pipelineId: r.pipelineId, runId: r.runId,
+    project: runsGroupFor({ pipelineId: r.pipelineId, projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' }).name || '',
+  }));
+}
+/** A live run's tile: askRunSnapshot + where it runs + its workflow's name. */
+function chatHomeTile(r) {
+  const g = runsGroupFor({ pipelineId: r.pipelineId || '', projectDir: r.projectDir || '', workspaceId: r.kind === 'workspace-run' ? (r.workspaceId || '') : '' });
+  const tpl = r.stepper && r.stepper.template;
+  return { ...askRunSnapshot(r), key: `live:${r.runId}`, project: g.name || '', workflow: (tpl && tpl.name) || '' };
+}
+/** A History row that needs you (paused, its run not live in this tab): the tile's stand-in, no graph. */
+function chatHomeHistTile(p) {
+  const ws = p.target === 'workspace';
+  return {
+    source: 'history', key: `hist:${p.projectKey}/${p.id}`, runId: null, pipelineId: p.id,
+    // A History row has no workspaceId: a workspace row's projectKey is `workspaces/<id>` (artifacts.mjs listAllPipelines).
+    projectKey: ws ? null : (p.projectKey || null), workspaceId: ws ? (String(p.projectKey || '').replace(/^workspaces\//, '') || null) : null,
+    kind: ws ? 'workspace-run' : 'run',
+    title: p.title || p.id, project: histGroupName(p), workflow: '', status: String(p.status || '').toLowerCase(),
+    pauseReason: p.pauseReason || null, pendingQuestion: null, live: false, terminal: false,
+    elapsedMs: Number(p.totalActiveMs) || 0,
+    costUsd: engineReportsCost(p.runEngine) && Number.isFinite(Number(p.totalCostUsd)) ? Number(p.totalCostUsd) : null,   // null: cost unknown (Cursor), as askRunSnapshot
+    progress: null, active: [], stepper: null, decor: null,
+  };
+}
+async function chatHomeThreads() {
+  const res = await fetch('/api/ask/threads?limit=6');
+  const data = await safeJson(res);
+  return res.ok && data && Array.isArray(data.threads) ? data.threads : [];
+}
+async function chatHomeWorkflows() {
+  const [list, all, scripts] = await Promise.all([
+    listWorkflows(),
+    gvApi.agentsAll().catch(() => []),
+    gvApi.scripts().catch(() => []),
+  ]);
+  return { list, portsFn: portsFnFor(indexByKey(all), indexByKey(scripts)) };
+}
+/** The switches the quick actions read: Ask's script tools (Settings › Ask Worca) and an installed task source. */
+async function chatHomeFlags() {
+  const out = { scripts: true, tasks: false };
+  try {
+    const res = await fetch('/api/settings');
+    const data = await safeJson(res);
+    if (res.ok && data && data.chat && typeof data.chat === 'object') out.scripts = data.chat.scriptTools !== false;
+  } catch { /* keep the default: on */ }
+  try {
+    const res = await fetch('/api/sources');
+    const data = await safeJson(res);
+    if (res.ok && data && Array.isArray(data.sources)) out.tasks = data.sources.some((s) => s && s.type === 'plugin');
+  } catch { /* none known */ }
+  return out;
+}
+/** A quick action's prefill: an empty composer takes the text as is (a trailing space kept, the caret at the end);
+ *  a composer with a draft gets it on a new line (appendToComposer). */
+function chatPrefill(text) {
+  const value = String(text ?? '');
+  if (!value || !askPanel || !askPanel.root) return;
+  const input = askPanel.root.querySelector('.ask-input');
+  if (!input || input.value.trim()) { askPanel.appendToComposer(value); return; }
+  input.value = value;
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));   // ask-panel's autosize + send state
+  try { input.focus({ preventScroll: true }); input.selectionStart = input.selectionEnd = value.length; } catch { /* detached */ }
+}
+
 // The Chat page (worca Chat P1): createAskPanel builds div.chat-page and it lives in <section data-view="chat">.
 // Mounted HERE, above the boot route, so a boot on Chat (the default) opens it at once. Extension registrations
 // (registerChatCard / registerComposerAddon, worca Chat CONTRACT §2) must run above this line. The panel fetches
@@ -32510,6 +32675,10 @@ askPanel = createAskPanel({
   onUnread: paintChatUnread,
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
+// render already has it (the section is still hidden here: the visit starts when the route shows it).
+mountChatHome();
+askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)
 // restores the Running view instead of silently resetting to Chat (worca Chat U5: the app's home).
