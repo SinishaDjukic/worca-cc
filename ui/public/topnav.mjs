@@ -9,6 +9,7 @@
 /** Route (a showView name) -> the name the top bar shows. test/ui-topnav.test.mjs keeps it in
  *  step with the sidebar labels in index.html and with app.js#VIEW_NAMES. */
 export const PAGE_TITLES = Object.freeze({
+  chat: 'Chat',
   new: 'New run',
   'getting-started': 'Getting started',
   runs: 'Runs',

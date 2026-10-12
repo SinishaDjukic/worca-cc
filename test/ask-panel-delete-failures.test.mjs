@@ -113,7 +113,7 @@ test('delete chat: a 500 or a throw keeps the chat (stored pointer, title) with 
       await trashThread(ctx);
       assert.equal(errToasts(ctx).length, 0);
       assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null);
-      assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca');
+      assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
     } },
   ]);
 });

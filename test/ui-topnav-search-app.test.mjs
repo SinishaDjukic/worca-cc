@@ -89,7 +89,6 @@ test('⌘K opens the top bar search, not Ask Worca; the rows come from the runs,
   const e = key(doc.body, 'k', { metaKey: true });
   assert.equal(e.defaultPrevented, true);
   assert.equal(doc.activeElement, input);
-  assert.equal(doc.querySelector('.ask-sheet').hidden, true, 'Ask Worca stays shut');
   assert.deepEqual(titles(), ['Fix login', 'Login page polish', 'Ask Worca'], 'nothing typed: runs only');
   await settle(window, 8);
   type('l');
@@ -149,9 +148,8 @@ test('one lazy read down: what the other one brought still lists', async () => {
 
 test('⌘K from the Ask Worca composer moves to the search; with a confirm open it is left to the confirm', async () => {
   await checkRows([
-    { name: 'the Ask composer has focus: the search opens and takes it', run: async () => {
+    { name: 'the chat composer has focus: the search opens and takes it', run: async () => {
       const { window, doc, input, key } = await boot();
-      doc.querySelector('.ask-pill').click();
       await settle(window);
       const composer = doc.querySelector('textarea.ask-input');
       composer.focus();
@@ -161,11 +159,8 @@ test('⌘K from the Ask Worca composer moves to the search; with a confirm open 
       assert.equal(doc.activeElement, input);
       assert.equal(doc.querySelector('#tsearch-pop').hidden, false);
     } },
-    { name: 'the sheet was opened by pressing its pill: a press on a row keeps the search open over the chat, and the click routes', run: async () => {
+    { name: 'on the Chat page a press on a row keeps the search open over the chat, and the click routes', run: async () => {
       const { window, doc, input, key, type } = await boot();
-      const pill = doc.querySelector('.ask-pill');
-      pill.focus();                                // Chrome focuses a pressed button, so the sheet's close would hand focus back to it
-      pill.click();
       await settle(window);
       const composer = doc.querySelector('textarea.ask-input');
       composer.focus();
@@ -180,7 +175,7 @@ test('⌘K from the Ask Worca composer moves to the search; with a confirm open 
       assert.equal(doc.querySelector('#tsearch-pop').hidden, false, 'still open after the press');
       assert.equal(row.isConnected, true, 'the pressed row is still there for its click');
       assert.equal(doc.activeElement, input, 'focus stayed in the search');
-      assert.equal(doc.querySelector('.ask-sheet').hidden, false, 'the press left the chat open');
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false, 'the press left the Chat page showing');
       row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
       await settle(window);
       assert.equal(window.location.hash, '#running/r1');
@@ -240,22 +235,30 @@ test('each row routes; the Ask Worca row hands what was typed to the chat', asyn
       await settle(window);
       assert.equal(window.location.hash, '#schedules/repeating');
     } },
-    { name: 'Ask Worca with text: the chat opens with it in the composer', run: async () => {
+    { name: 'Ask Worca with text, from another page: Chat opens with it in the composer', run: async () => {
       const { window, doc, key, type, click } = await boot();
+      window.location.hash = '#runs';
+      await settle(window);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
       type('  why did the login run fail ');
       click('Ask Worca');
       await settle(window);
-      assert.equal(doc.querySelector('.ask-sheet').hidden, false);
+      assert.equal(window.location.hash, '#chat');
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
       assert.equal(doc.querySelector('textarea.ask-input').value, 'why did the login run fail');
       assert.equal(doc.activeElement, doc.querySelector('textarea.ask-input'));
     } },
-    { name: 'Ask Worca with nothing typed: the chat just opens', run: async () => {
+    { name: 'Ask Worca with nothing typed, from another page: Chat just opens', run: async () => {
       const { window, doc, key, click } = await boot();
+      window.location.hash = '#runs';
+      await settle(window);
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
       click('Ask Worca');
       await settle(window);
-      assert.equal(doc.querySelector('.ask-sheet').hidden, false);
+      assert.equal(window.location.hash, '#chat');
+      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
       assert.equal(doc.querySelector('textarea.ask-input').value, '');
     } },
   ]);

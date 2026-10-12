@@ -72,3 +72,17 @@ test('isBrowsableKind hides transient markers and the subresources an artifact l
   }
   assert.equal(isBrowsableKind(''), true, 'an unknown kind stays browsable');
 });
+
+// Chat P5: the popup viewer plays media inline, so media is no longer a download-only `binary` kind — the raw route
+// keys `attachment` on `binary`. The kinds stay byte kinds (never UTF-8 decoded) and raw-streamable.
+test('media plays inline: audio and video viewer kinds, avif is an image, fonts stay binary', () => {
+  for (const p of ['n.mp3', 'n.m4a', 'n.wav', 'n.ogg', 'deck/NARRATION.MP3']) assert.equal(viewerKindFor(p), 'audio', p);
+  for (const p of ['c.mp4', 'c.webm']) assert.equal(viewerKindFor(p), 'video', p);
+  assert.equal(viewerKindFor('art.avif'), 'image');
+  for (const p of ['f.woff2', 'f.woff', 'f.ttf', 'f.otf', 'deck.pptx', 'a.zip']) assert.equal(viewerKindFor(p), 'binary', p);
+  for (const k of ['audio', 'video']) {
+    assert.equal(BINARY_KINDS.has(k), true, `${k} must never be decoded as text`);
+    assert.equal(RAW_KINDS.has(k), true, `${k} must stream from the raw route`);
+  }
+  assert.equal(mimeForPath('n.ogg'), 'audio/ogg', 'the players get the right Content-Type');
+});

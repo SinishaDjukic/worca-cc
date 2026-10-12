@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { createDotOrbs, orbSphere, ORB_PHASES } from '../ui/public/dot-orb.mjs';
+import { createDotOrbs, orbSphere, ORB_PHASES, turnPhase } from '../ui/public/dot-orb.mjs';
 
 /** A window with a hand-cranked rAF and a 2d context that counts its dots. */
 function rig({ reduced = false } = {}) {
@@ -28,6 +28,19 @@ test('orbSphere: n unit points, cached', () => {
   assert.equal(orbSphere(110), a);
   assert.deepEqual(Object.keys(ORB_PHASES), ['rest', 'think', 'tool', 'write']);
   assert.equal(ORB_PHASES.rest.spin, 0, 'rest never turns');
+});
+
+test('turnPhase lives here, shared by both chats: the Workflows dock re-exports this very function', async () => {
+  const tool = (status) => ({ kind: 'tool', id: 'toolu_01', name: 'mcp__worca__list_runs', status });
+  assert.equal(turnPhase(null, []), 'rest', 'no live turn');
+  assert.equal(turnPhase({ label: 'Thinking', text: '' }), 'think', 'no blocks yet');
+  assert.equal(turnPhase({ label: 'Finding runs', text: '' }, [tool('running')]), 'tool');
+  assert.equal(turnPhase({ label: 'Running 1 sub-agent', text: '' }, [{ kind: 'agent', id: 'toolu_02', status: 'running' }]), 'tool', 'a sub-agent counts');
+  assert.equal(turnPhase({ label: 'Finding runs', text: '' }, [tool('done')]), 'think', 'the tool finished: thinking again');
+  assert.equal(turnPhase({ label: 'Writing', text: 'Here' }, [tool('done')]), 'write');
+  assert.equal(turnPhase({ label: null, text: 'adopted' }, []), 'write', 'no tool ran: streaming text is writing');
+  const { turnPhase: dockPhase } = await import('../ui/public/workflows/chat-dock.mjs');
+  assert.equal(dockPhase, turnPhase, 'one function, not a copy');
 });
 
 test('no requestAnimationFrame (jsdom): phases still mark the canvas, and no 2d context is ever asked for', () => {
@@ -88,6 +101,41 @@ test('two orbs share one loop; a hidden live orb keeps the loop but draws nothin
   orbs.set(b, 'rest');
   r.crank(2);
   assert.equal(r.pending(), false, 'hidden and resting: snapped still, the loop ends');
+  orbs.destroy();
+  r.win.close();
+});
+
+test('an orb that left the loop while detached re-reads its ink when it is back: a theme switch between turns (Ask reuses one canvas)', () => {
+  const r = rig();
+  let ink = 'rgb(24, 24, 27)';
+  let reads = 0;
+  r.win.getComputedStyle = () => { reads += 1; return { color: ink }; };
+  const theme = (c) => { ink = c; r.doc.dispatchEvent(new r.win.Event('worca:theme')); };
+  const orbs = createDotOrbs({ doc: r.doc, win: r.win });
+  const el = orbs.create(28, 'ask-orb');
+  orbs.set(el, 'think');
+  assert.equal(reads, 0, 'detached: no colour read yet');
+  r.place(el);
+  orbs.set(el, 'think');
+  assert.equal(r.ctx.fillStyle, 'rgb(24, 24, 27)');
+  // The turn ends on screen: the orb eases to rest, the rebuilt thread drops its row, and the loop lets it go.
+  orbs.set(el, 'rest');
+  el.remove();
+  r.crank(130);
+  assert.equal(r.pending(), false, 'past the detached grace: the loop let it go');
+  theme('rgb(236, 236, 233)');
+  r.place(el);                                       // the next turn re-parents the same canvas
+  orbs.set(el, 'think');
+  assert.equal(r.ctx.fillStyle, 'rgb(236, 236, 233)', 'the new theme\'s ink, not the last turn\'s');
+  // An orb already still when its row went (the chat was out of sight) leaves at the next create()'s sweep instead.
+  orbs.set(el, 'rest');
+  for (let i = 0; i < 2000 && r.pending(); i += 1) r.crank();
+  el.remove();
+  orbs.create(16);
+  theme('rgb(24, 24, 27)');
+  r.place(el);
+  orbs.set(el, 'think');
+  assert.equal(r.ctx.fillStyle, 'rgb(24, 24, 27)', 'swept while detached: the ink is read again too');
   orbs.destroy();
   r.win.close();
 });

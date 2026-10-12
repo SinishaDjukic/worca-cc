@@ -61,6 +61,11 @@ const SCRIPT_WRITE_TOOLS = new Set(['mcp__worca__save_script']);
 // The direct schedule writes (docs/scheduled-runs.md "Ask Worca"): reversible, never a run start.
 const SCHEDULE_WRITE_TOOLS = new Set(['mcp__worca__pause_schedule', 'mcp__worca__resume_schedule',
   'mcp__worca__skip_next_run', 'mcp__worca__mark_schedule_activity_read']);
+// worca Chat P2 (act, then undo): the tools whose RESULT the PARENT acts on — it applies what the child validated (or,
+// for the two schedule verbs the child already ran, posts their receipt) and adds the receipt or card to the reply.
+const CHAT_ACTION_TOOLS = new Set(['mcp__worca__change_setting', 'mcp__worca__pause_run', 'mcp__worca__resume_run',
+  'mcp__worca__propose_stop_run', 'mcp__worca__send_direction', 'mcp__worca__propose_pull_request',
+  'mcp__worca__pause_schedule', 'mcp__worca__resume_schedule']);
 // The Workflows chat's card tools (D13): their RESULT becomes a composer card in the parent (turn.mjs).
 const COMPOSER_CARD_TOOLS = new Set(['mcp__worca__edit_canvas', 'mcp__worca__build_workflow', 'mcp__worca__draft_agent', 'mcp__worca__draft_script']);
 /** True when a SUCCESSFUL call of `name` with `input` changed this thread's worktree rows. */
@@ -147,6 +152,11 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'build_workflow': return 'Assembling the graph';
     case 'draft_agent': return 'Drafting an agent';
     case 'draft_script': return 'Drafting a script';
+    case 'get_agent': return input?.key ? `Reading agent: ${String(input.key).slice(0, 60)}` : 'Reading an agent';
+    case 'get_workflow': return 'Reading a workflow';
+    case 'read_file': { const base = String(input?.path ?? '').split(/[\\/]/).filter(Boolean).pop(); return base ? `Reading ${base.slice(0, 60)}` : 'Reading a file'; }
+    case 'grep': return 'Searching files';
+    case 'glob': return 'Listing files';
     case 'propose_metrics_change': return 'Proposing a metrics change';
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
@@ -196,6 +206,13 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_run_checkout': return input?.id ? `Checking the checkout of ${String(input.id).slice(0, 40)}` : 'Checking a run checkout';
     case 'list_running_actions': return 'Looking at running actions';
     case 'propose_actions_change': return 'Proposing an actions change';
+    case 'list_settings': return 'Reading settings';
+    case 'change_setting': return input?.id ? `Changing ${String(input.id).slice(0, 40)}` : 'Changing a setting';
+    case 'pause_run': return 'Pausing a run';
+    case 'resume_run': return 'Resuming a run';
+    case 'propose_stop_run': return 'Preparing a stop';
+    case 'send_direction': return 'Sending a direction';
+    case 'propose_pull_request': return 'Preparing a pull request';
     case 'web_fetch': { let host = ''; try { host = new URL(String(input?.url ?? '')).hostname; } catch { /* label only */ } return host ? `Reading ${host}` : 'Reading a web page'; }
     case 'web_search': return 'Searching the web';
     case 'propose_web_access': return 'Asking to read a new site';
@@ -279,6 +296,7 @@ export function createTurnReducer({
   onTrackRun = null,
   onRunCommand = null,           // run_command RESULT (#574): the command card
   onAwaySwitch = null,           // set_away_now / set_run_away_mode RESULT (the parent applies the switch)
+  onChatAction = null,           // worca Chat P2: a CHAT_ACTION_TOOLS RESULT (the parent applies it and posts its card)
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
   onCommentMutation = null,
   onWorktreeMutation = null,
@@ -630,6 +648,14 @@ export function createTurnReducer({
         pokeMemoryWrite(ct.name, text, c.is_error);
         pokeScriptWrite(ct.name, text, c.is_error);
         pokeScheduleWrite(ct.name, c.is_error);
+        if (CHAT_ACTION_TOOLS.has(ct.name) && !c.is_error && typeof onChatAction === 'function') {
+          // worca Chat P2: a sub-agent's ok result — the turn says "not applied" (only the assistant's own call acts;
+          // pause_schedule / resume_schedule already acted in the child, so theirs still get the receipt).
+          try {
+            const ret = onChatAction({ toolUseId: c.tool_use_id, name: short(ct.name), input: ct.input ?? {}, text, isError: false, sub: true });
+            if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+          } catch { reducerErrors += 1; }
+        }
         continue;
       }
       const b = byId.get(c.tool_use_id);
@@ -744,6 +770,13 @@ export function createTurnReducer({
       if ((b.name === 'mcp__worca__set_away_now' || b.name === 'mcp__worca__set_run_away_mode') && typeof onAwaySwitch === 'function') {
         try {
           const ret = onAwaySwitch({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (CHAT_ACTION_TOOLS.has(b.name) && typeof onChatAction === 'function') {
+        // The main stream's call: the parent applies it. A sub-agent's arrives from the !isMain branch above, marked sub.
+        try {
+          const ret = onChatAction({ toolUseId: b.id, name: short(b.name), input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }

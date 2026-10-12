@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel, sizeDock } from './helpers/ask-panel-harness.mjs';
+import { makePanel } from './helpers/ask-panel-harness.mjs';
 
 const TID = 'ask_00000001';
 
@@ -34,9 +34,8 @@ function handlerFor(snapshot) {
 
 async function openThread(ctx) {
   ctx.panel.open();
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick();
-  ctx.doc.querySelector('.ask-pop [role="menuitem"]').click();
+  await ctx.tick();                                    // the first show loaded the History column (closed at 1024px; rows built)
+  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
   await ctx.tick();
   await ctx.tick();
   ctx.flush();
@@ -130,11 +129,9 @@ test('ask-panel-render: agent row — name · model · tokens · ≈$ · status,
       assert.match(log.textContent, /00:00/);
       assert.match(log.textContent, /01:01/);
       assert.match(log.textContent, /→ list_runs \{\}/);
-      // a FULL re-render (re-selecting the thread rebuilds the transcript from a
-      // fresh model) keeps the expansion — st.expandedAgents is panel-level (§10.5)
-      ctx.doc.querySelector('[data-ask-threads-btn]').click();
-      await ctx.tick();
-      ctx.doc.querySelector('.ask-pop [role="menuitem"]').click();
+      // a FULL re-render (a reconnect resync reloads the thread into a fresh
+      // model) keeps the expansion — st.expandedAgents is panel-level (§10.5)
+      ctx.panel.onHello([]);
       await ctx.tick();
       await ctx.tick();
       ctx.flush();
@@ -276,7 +273,7 @@ test('ask-panel-render: a classified notice renders the human line (raw detail e
   ]);
 });
 
-test('ask-panel-render: scroll pinning drives the jump pill (also in a resized sheet), reopening re-pins, destroy unbinds resize', async () => {
+test('ask-panel-render: scroll pinning drives the jump pill, reopening re-pins, destroy unbinds resize', async () => {
   await checkRows([
     { name: 'ask-panel-render: scroll pinning with instrumented accessors + jump pill', run: async () => {
       const snap = snapBody([asstRow('askm_00000001', 1)]);
@@ -313,28 +310,16 @@ test('ask-panel-render: scroll pinning drives the jump pill (also in a resized s
       ctx.flush();
       assert.equal(t.scrollTop, 1000, 're-pinned on open');
     } },
-    { name: 'ask-panel-render: scroll pinning still drives the jump pill inside a resized sheet; destroy unbinds resize', run: async () => {
+    { name: 'ask-panel-render: destroy unbinds the window resize listener', run: async () => {
       const snap = snapBody([asstRow('askm_00000001', 1)]);
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
-      ctx.storage.setItem('worca-cc.ask.size', JSON.stringify({ w: 1000, h: 800 }));
-      const ctx2 = makePanel({ fetchHandler: handlerFor(snap), storage: ctx.storage });
-      sizeDock(ctx2.doc, 1400, 1000);
-      await openThread(ctx2);
-      const sheet = ctx2.doc.querySelector('.ask-sheet');
-      assert.equal(sheet.style.height, '800px', 'the stored size survives the thread load');
-      const t = ctx2.doc.querySelector('.ask-transcript');
-      Object.defineProperty(t, 'scrollHeight', { value: 2000, configurable: true });
-      Object.defineProperty(t, 'clientHeight', { value: 700, configurable: true });
-      t.scrollTop = 0;
-      t.dispatchEvent(new ctx2.window.Event('scroll'));
-      assert.equal(ctx2.doc.querySelector('.ask-jump').hidden, false, 'the transcript is still the scrollport');
+      await openThread(ctx);
       const removed = [];
-      const orig = ctx2.window.removeEventListener;
-      ctx2.window.removeEventListener = function (type, fn, opts) { removed.push(type); return orig.call(this, type, fn, opts); };
-      ctx2.panel.destroy();
+      const orig = ctx.window.removeEventListener;
+      ctx.window.removeEventListener = function (type, fn, opts) { removed.push(type); return orig.call(this, type, fn, opts); };
+      ctx.panel.destroy();
       assert.ok(removed.includes('resize'), 'destroy() unbinds the window resize listener');
-      ctx2.window.dispatchEvent(new ctx2.window.Event('resize'));
-      assert.equal(sheet.style.height, '800px', 'nothing runs after destroy');
+      assert.doesNotThrow(() => ctx.window.dispatchEvent(new ctx.window.Event('resize')), 'nothing runs after destroy');
     } },
   ]);
 });

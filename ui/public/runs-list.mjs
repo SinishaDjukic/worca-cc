@@ -64,12 +64,13 @@ const STATE_TERMS = Object.freeze({
   run: 'running', start: 'starting running', done: 'done finished', scheduled: 'scheduled',
 });
 
-/** `limitEngine`: a usage limit an engine hit names that engine ("Codex usage limit"). */
-function parkedState(s, pauseReason, limitEngine = null) {
+/** `limitEngine`: a usage limit an engine hit names that engine ("Codex usage limit").
+ *  `limitNote`: when that limit resets ("resets 18:00"), the usage-limit arms' detail. */
+function parkedState(s, pauseReason, limitEngine = null, limitNote = '') {
   if (s === 'pausing') return { icon: 'paused', word: 'Pausing', detail: '' };
   if (s === 'interrupted') return { icon: 'paused', word: 'Interrupted', detail: '' };
-  if (pauseReason === 'usage_limit' && limitEngine) return { icon: 'paused', word: `${engineLabel(limitEngine)} usage limit`, detail: '' };
-  return { icon: 'paused', word: PAUSE_WORDS[pauseReason] || 'Paused', detail: '' };
+  if (pauseReason === 'usage_limit' && limitEngine) return { icon: 'paused', word: `${engineLabel(limitEngine)} usage limit`, detail: limitNote || '' };
+  return { icon: 'paused', word: PAUSE_WORDS[pauseReason] || 'Paused', detail: pauseReason === 'usage_limit' ? limitNote || '' : '' };
 }
 
 /** A question's word, naming its step the way the mockup does ("Plan review"): a workflow
@@ -95,7 +96,7 @@ function doneWord({ pr = null, checks = null, files = null } = {}) {
  *  parked-ness outranks a question, a question outranks the raw terminal status. */
 export function liveRowState(it) {
   const s = String((it && it.status) || '').toLowerCase();
-  if (PARKED.has(s)) return parkedState(s, it.pauseReason, it.limitEngine);
+  if (PARKED.has(s)) return parkedState(s, it.pauseReason, it.limitEngine, it.limitNote);
   if (it.ask) return { icon: 'ask', word: askWord(it.ask), detail: '' };
   if (FAILED.has(s)) return { icon: 'fail', word: it.failedStep ? `${it.failedStep} failed` : 'Failed', detail: '' };
   if (STOPPED.has(s)) return { icon: 'stop', word: 'Stopped', detail: '' };
@@ -108,7 +109,7 @@ export function liveRowState(it) {
 export function histRowState(p) {
   const s = String((p && p.status) || '').toLowerCase();
   let st;
-  if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine);
+  if (PARKED.has(s)) st = parkedState(s, p.pauseReason, p.limitEngine, p.limitNote);
   else if (FAILED.has(s)) st = { icon: 'fail', word: 'Failed', detail: '' };
   else if (STOPPED.has(s)) st = { icon: 'stop', word: 'Stopped', detail: '' };
   else if (DONE.has(s)) st = { icon: 'done', word: doneWord(p), detail: '' };

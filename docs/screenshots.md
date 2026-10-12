@@ -97,7 +97,7 @@ is held in memory and never written anywhere.
 | `history.png` | Runs with finished runs, one run's summary open | Simple | 24 mock runs, restaged |
 | `composer.png` | Workflows (`#workflows`), the Default workflow on the canvas beside the Library | Advanced | built-in workflow, opened from the Library's Workflows section with its coding folder expanded |
 | `stats.png` | Statistics, "This week" | Advanced | restaged costs, time and Ask spend |
-| `ask-worca.png` | The Ask Worca sheet with a run card | Simple | stored conversation |
+| `ask-worca.png` | The Chat page (`#chat/<id>`) with a run card | Simple | stored conversation |
 | `schedules.png` | Schedules, Repeating tab | Advanced | three series and a ticket via `POST /api/run` |
 | `team-metrics.png` | Team metrics for `nimbus-crm`, "Last month" | Expert | records on the `worca-metrics` branch |
 | `workspace-map.png` | The `Nimbus` workspace's Map tab | Advanced | stored scan result |

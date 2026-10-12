@@ -456,7 +456,7 @@ test('the look: a 34px pill, the open ring from the search tokens, a listbox as 
   assert.ok(top > 0 && css.indexOf('\n.tsearch{') > top && css.indexOf('\n.tsearch{') < css.indexOf('\n.topbar{'), 'the block sits after the top bar rules');
 });
 
-test('stacking: open, the whole search sits over the open Ask Worca sheet, under the phone drawer, the flyouts, a tour and the modals', () => {
+test('stacking: open, the whole search sits over the terminal pane, under the phone drawer, the flyouts, a tour and the modals', () => {
   const z = (selector) => {
     const body = ruleBody(selector);
     assert.ok(body, `${selector} is styled`);
@@ -469,7 +469,6 @@ test('stacking: open, the whole search sits over the open Ask Worca sheet, under
   assert.match(ruleBody('.tsearch'), /position:relative;/);
   const open = z('.tsearch.is-open');
   assert.equal(open, 41);
-  assert.ok(open > z('.ask-dock'), 'over the Ask dock (its sheet is opaque and centred under the search)');
   assert.ok(open > z('.term-pane'), 'over the terminal pane');
   assert.ok(open < z('.nav-fly') && open < z('.guide-scrim') && open < z('.viewer-modal'), 'under the flyouts, a tour and the modals');
   assert.ok(open < Number(css.match(/\n {2}\.sidebar\{position:fixed;[^}]*z-index:(\d+);/)[1]), 'under the phone drawer');

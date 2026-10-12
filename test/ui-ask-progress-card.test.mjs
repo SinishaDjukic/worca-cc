@@ -169,7 +169,8 @@ async function settle(window, n = 4) {
 }
 
 async function openSheet(window) {
-  window.document.querySelector('.ask-pill').click();
+  // worca Chat: the chat is a page and the boot page; route there only when the test left it.
+  if (!/^#chat(\/|$)/.test(window.location.hash)) window.location.hash = '#chat';
   await settle(window);
 }
 async function sendText(window, text) {
@@ -203,7 +204,7 @@ const STATE = (over = {}) => ({ runId: 'run-uuid-1', type: 'state', id: 'abcd123
   steps: [{ key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, cycle: 1, status: 'running', activeMs: 3000, runningSince: null, costUsd: 0.2, startedAt: '2026-09-07T10:00:01.000Z' }],
   active: [{ nodeId: 'n_plan', executionId: 'x:n_plan:1' }], totalCostUsd: 0.2, subAgents: [], ...over });
 
-test('ui-ask-progress-card: a started card goes live from the run store, repaints on frames, freezes on done, and Open run closes the sheet', async () => {
+test('ui-ask-progress-card: a started card goes live from the run store, repaints on frames, freezes on done, and Open run opens the run in the Chat run panel', async () => {
   const ctx = await boot();
   const store = ctx.window.__np.askRunStore;
   assert.ok(store && typeof store.get === 'function', 'the store is on the test hook (assigned AFTER its declaration — never inside the 2183 literal)');
@@ -222,18 +223,19 @@ test('ui-ask-progress-card: a started card goes live from the run store, repaint
   assert.equal(el.querySelector('.ask-rc-pill').className, 'ask-rc-pill st-violet');
   assert.equal(el.querySelector('.ask-rc-prog').textContent, '0/2 agents');
   assert.equal(el.querySelector('.ask-rc-sub').textContent, 'proj · #abcd1234');
-  const stage = el.querySelector('.ask-rc-graph .gv-stage');
+  const stage = el.querySelector('.chat-rc-graph .gv-stage');   // Chat P3: the registered chat run card (Workflows well)
   assert.ok(stage, 'the workflow graph is mounted from the live stepper');
   ctx.recv({ runId: 'run-uuid-1', type: 'done', status: 'done' });
   await settle(ctx.window);
   assert.equal(ctx.window.document.querySelector('.ask-card.ask-rc'), el, 'patched in place');
-  assert.equal(el.querySelector('.ask-rc-graph .gv-stage'), stage, 'the mount survives the terminal frame');
+  assert.equal(el.querySelector('.chat-rc-graph .gv-stage'), stage, 'the mount survives the terminal frame');
   assert.equal(el.querySelector('.ask-rc-pill').textContent, 'Done');
   assert.equal(el.querySelector('a.ask-rc-open').getAttribute('href'), '#running/run-uuid-1', 'still in the live map');
   el.querySelector('a.ask-rc-open').click();
   await settle(ctx.window);
-  assert.equal(ctx.window.document.querySelector('.ask-sheet').hidden, true, 'the sheet closed first');
-  assert.equal(ctx.window.location.hash, '#running/run-uuid-1');
+  assert.equal(ctx.window.document.querySelector('section[data-view="chat"]').classList.contains('hidden'), false, 'Chat P4: Chat stays; the run opens in its run panel');
+  assert.equal(ctx.window.location.hash, '#chat/ask_00000001/run/run-uuid-1', 'the panel address keeps the chat');
+  assert.ok(ctx.window.document.querySelector('[data-chat-panel] .crp-host > .rd'), 'the live run screen is in the panel');
   assert.equal(store.byPipeline('abcd1234').runId, 'run-uuid-1');
   assert.equal(store.get('nope'), null);
 });

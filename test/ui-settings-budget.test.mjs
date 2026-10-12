@@ -100,7 +100,7 @@ test('save posts exactly the three keys; Saved on the button; readout refresh', 
   await settle(tick);
   assert.equal(posts.length, 1, 'exactly one POST');
   assert.deepEqual(posts[0],
-    { pipelineCostLimitUsd: 25, totalCostLimitUsd: 50, costLimitResetPeriod: 'weekly', humanRateUsdPerHour: null });
+    { pipelineCostLimitUsd: 25, totalCostLimitUsd: 50, costLimitResetPeriod: 'weekly', humanRateUsdPerHour: null, resumeAfterUsageLimit: false });
   assert.equal($('#budgetSave').textContent, 'Saved');
   assert.ok($('#budgetSave').classList.contains('is-done'));
   assert.equal($('#budgetMsg').textContent, '', 'the old status line is no longer written');
