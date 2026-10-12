@@ -174,8 +174,9 @@ export function glanceState(run) {
  * open one: no gh, a workspace run, the branch is gone), 'NONE' / null (none yet, one can
  * be opened). `files` is how many files the run changed (null while unknown).
  * A finished run also names its own glyph in `icon` (renderOrb), one per headline.
+ * `limitNote` ("resets 18:00") replaces "resume to continue" on a usage-limit pause.
  */
-export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null } = {}) {
+export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr = null, files = null, limitNote = '' } = {}) {
   const state = glanceState(run);
   const now = nowRows(run);
   const names = now.map((x) => x.label);
@@ -207,7 +208,7 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       const text = pill && pill.text ? String(pill.text) : '';
       const reason = text.replace(/^Paused\s*·\s*/, '');
       const why = reason && reason !== text ? reason : '';
-      return line('Paused', '', why ? `${cap(why)} · resume to continue` : 'Resume to continue where it left off');
+      return line('Paused', '', why ? `${cap(why)} · ${limitNote || 'resume to continue'}` : 'Resume to continue where it left off');
     }
     case 'done': {
       const p = String(pr || '').toUpperCase();

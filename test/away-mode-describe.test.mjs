@@ -47,7 +47,7 @@ test('run switch states', () => {
 
 test('an open always-wait question never counts down; "Never by day" gives its own reason', () => {
   const r = (o) => describeRun({ config: C, toggle: 'auto', now: at('2026-09-28T15:00:00Z'), run: { optIn: true, override: 'auto', openedAt: null, done: false, ...o } });
-  assert.deepEqual([r({ waiting: true }).state, r({ waiting: true }).pill], ['wait', 'waiting for you']);
+  assert.deepEqual([r({ waiting: true }).state, r({ waiting: true }).pill], ['wait', 'you answer']);
   assert.match(r({ waiting: true }).reason, /Always wait for me on/);
   assert.equal(describeRun({ config: C, toggle: 'on', now: at('2026-09-28T15:00:00Z'), run: { optIn: true, override: 'auto', openedAt: null, done: false, waiting: true } }).state, 'wait', 'even while away');
   assert.equal(r({}).state, 'after', 'no open question: what would happen');

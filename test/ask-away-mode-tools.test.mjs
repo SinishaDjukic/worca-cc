@@ -51,7 +51,7 @@ test('the run line: live, finished, paused, and a live run this process cannot s
   assert.equal((await reader()({ live: { ...live, status: 'paused' } })).run.state, 'wait', 'a paused live run waits, never "answers after"');
   assert.equal((await reader()({ row: { status: 'interrupted', project_key: 'shop-1' } })).run.state, 'wait');
   const waitingKind = { ...live, waiting: true, night: { ...live.night, openedAt: null } };
-  assert.equal((await reader()({ live: waitingKind })).run.pill, 'waiting for you', 'an always-wait question never counts down');
+  assert.equal((await reader()({ live: waitingKind })).run.pill, 'you answer', 'an always-wait question never counts down');
 });
 
 test('the tool: validates, resolves the run, prefers the live reader, and is unavailable without deps', async () => {

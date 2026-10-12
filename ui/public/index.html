@@ -727,6 +727,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -883,6 +884,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -921,6 +923,7 @@
                       <div class="rd-now-text"><h2 class="rd-now-title"></h2><p class="rd-now-sub"></p></div>
                     </div>
                   </div>
+                  <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
@@ -1772,6 +1775,12 @@
                   <label for="budgetHumanRate">Developer rate (USD/h)</label>
                 </div>
                 <input id="budgetHumanRate" data-setting="humanRateUsdPerHour" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" />
+              </div>
+              <div class="field">
+                <div class="label-row">
+                  <label class="check-row" for="budgetLimitResume"><input id="budgetLimitResume" data-setting="resumeAfterUsageLimit" type="checkbox" /> Resume runs automatically when a usage limit resets</label>
+                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
+                </div>
               </div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
