@@ -77,10 +77,12 @@ const state = {
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
-import { createAlerts, mountAlertsCard } from './alerts.mjs';
+import { createAlerts, mountAlertsCard, pauseTitle } from './alerts.mjs';
+import { createLogDrawer } from './log-drawer.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
 import { trailColumns, nowRows, glanceCopy, renderOrb, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
+import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, renderRunsList, RUNS_FILTERS, RUNS_GROUPINGS } from './runs-list.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
 // lost their last app.js caller with the retired card accordion, and `sourceBadge` with the
@@ -100,7 +102,7 @@ import { createAskPanel } from './ask-panel.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
-import { notify, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
@@ -464,6 +466,7 @@ const el = {
   budgetTotal: $('#budgetTotal'),
   budgetResetPeriod: $('#budgetResetPeriod'),
   budgetHumanRate: $('#budgetHumanRate'),
+  budgetLimitResume: $('#budgetLimitResume'),
   budgetSave: $('#budgetSave'),
   budgetReset: $('#budgetReset'),
   // Team policy surfaces (team-policy design §11)
@@ -695,10 +698,15 @@ const alerts = createAlerts({
   nav: navigator,
   storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
   win: window,
-  onOpen: (target) => { location.hash = target.schedule ? 'schedules' : rdHash(target.runId); },
+  onOpen: (target) => {
+    if (target.askThread) { openChat({ threadId: target.askThread }); return; }   // Ask Worca is the Chat page: open that chat
+    location.hash = target.schedule ? 'schedules' : rdHash(target.runId);
+  },
 });
 /** The run as alerts.mjs names it: makeRun's '(untitled)' placeholder is no title (the id stands in). */
 const alertRun = (r) => ({ runId: r.runId, title: r.title === '(untitled)' ? '' : r.title });
+/** Paused on a usage limit, an error or a cost cap: it waits on a person like a question does. */
+const pausedOnYou = (r) => r.status === 'paused' && !!pauseTitle(r.pauseReason);
 
 // ---------------------------------------------------------------------------
 // Sidebar collapse (icon rail) + the responsive nav tiers. `sidebarCollapsed` is
@@ -1249,6 +1257,7 @@ function handleServerMessage(msg) {
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
+    alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
@@ -1268,6 +1277,12 @@ function handleServerMessage(msg) {
   // same broadcast socket. Handle them BEFORE the !msg.runId early-return below.
   if (msg.type === 'history-pr') {
     onHistoryPr(msg);
+    return;
+  }
+
+  if (msg.type === 'pr-watch-changed') {
+    // Exact identity: the run's store key, its id and (a workspace's) member.
+    refreshRdPrStatus(msg.projectKey, msg.pipelineId, msg.memberKey || '');
     return;
   }
 
@@ -1299,7 +1314,7 @@ function handleServerMessage(msg) {
   if (msg.type === 'schedules-changed') {
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
-    if (currentView() === 'schedules' || inRunsView()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); });
+    if (currentView() === 'schedules' || inRunsView()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
     return;
   }
   if (msg.type === 'notification' || msg.type === 'notifications-changed') {
@@ -1596,6 +1611,7 @@ function onHello(msg) {
       pauseReason: r0.pauseReason || null,
       pauseDetail: r0.pauseDetail || null,
       limitEngine: r0.limitEngine || null,
+      limitResetAt: r0.limitResetAt || null,
       runEngine: r0.runEngine || undefined,
       startedBy: r0.startedBy || undefined,
       lastAction: r0.lastAction || undefined,
@@ -1613,6 +1629,8 @@ function onHello(msg) {
     if (r0.pendingQuestion) alerts.onQuestion(alertRun(rr), r0.pendingQuestion, { backfill: firstHello });
     // Answered while the socket was down: the upsert cleared it without a question-resolved frame.
     else if (prevQuestion && prevQuestion.id != null) alerts.onResolved(alertRun(rr), { id: prevQuestion.id });
+    // A pause is a wait too, under the same backfill rule.
+    if (r0.status === 'paused' && !r0.pendingQuestion) alerts.onPaused(alertRun(rr), r0.pauseReason, { backfill: firstHello });
 
     const nonTerminal =
       r0.status === 'starting' || r0.status === 'running' || r0.status === 'pausing' ||
@@ -1735,7 +1753,7 @@ function nowHMS() {
 function makeRun({
   runId, title, projectDir, status = 'running', startedAt, local = false,
   pendingQuestion = null, kind = 'run', pipelineId = null, pauseReason = null,
-  pauseDetail = null, limitEngine = null, runEngine = undefined, startedBy = null, lastAction = null,
+  pauseDetail = null, limitEngine = null, limitResetAt = null, runEngine = undefined, startedBy = null, lastAction = null,
   workspaceId = undefined, workspaceName = undefined, projectNames = null, night = undefined,
 }) {
   return {
@@ -1752,6 +1770,7 @@ function makeRun({
                           // (e.g. 'usage_limit'); only the cost pair renders a cost banner
     pauseDetail,          // the human-readable cause behind an 'error' pause, or null
     limitEngine,          // 'usage_limit': the engine whose own limit it is, or null (engine-switch.mjs)
+    limitResetAt,         // 'usage_limit': ISO when the limit resets, or null
     runEngine,            // the engine the run runs on (state frames carry it too); undefined = not known yet
     startedBy,            // who started it (identity.mjs), or null; 'local' is never shown
     lastAction,           // who last stopped / paused / resumed it: { kind, by, at } or null
@@ -3318,6 +3337,7 @@ if (typeof window !== 'undefined') {
     destroyGraphMounts,
     applyRunLogFilter,
     focusLogExecution,
+    openStepLog,
     paintLogFilters,
     readLogFilterFrom,
     repaintFilteredLog,
@@ -6091,10 +6111,15 @@ function onDone(r, msg) {
   // for the same reason as the code above — a later reasonless done must clear it.
   r.pauseDetail = msg.detail || null;
   r.limitEngine = msg.limitEngine || null;
+  r.limitResetAt = msg.limitResetAt || null;
   // A paused run already finished once, as paused. Its stop (or a settle from elsewhere) sends a
   // terminal done on the same runId: finish it again, for real. Never on an `error` frame: onError
   // stays guarded, so a stray error after the pause cannot turn the parked run red.
-  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) r._finished = false;
+  if (r._finished && r._finishedAs === 'paused' && RD_TERMINAL.includes(msg.status)) {
+    r._finished = false;
+    alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
+  }
+  if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   finishRun(r, msg.status || 'done');
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
   // budget-changed, and startBudgetTick refetches only while runs are live. Without
@@ -13711,6 +13736,7 @@ function paintBudgetSettings(data) {
   el.budgetTotal.value = data.totalCostLimitUsd ?? '';
   el.budgetResetPeriod.value = data.costLimitResetPeriod || 'monthly';
   el.budgetHumanRate.value = data.humanRateUsdPerHour ?? '';
+  if (el.budgetLimitResume) el.budgetLimitResume.checked = !!data.resumeAfterUsageLimit;
   settingsCardPainted('budgetSave');
 }
 
@@ -13753,6 +13779,7 @@ if (el.budgetSave) {
       pipelineCostLimitUsd: per, totalCostLimitUsd: total,
       costLimitResetPeriod: el.budgetResetPeriod.value,
       humanRateUsdPerHour: rate,
+      resumeAfterUsageLimit: !!(el.budgetLimitResume && el.budgetLimitResume.checked),
     }, { button: e.currentTarget });
   });
 }
@@ -17661,6 +17688,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     await seedResumedLog(data.runId, prevLines, null);  // in-memory pre-pause log → continuous
     // Old paused run is superseded by the resumed live run — drop it so Running
     // shows only the new card (same pipelineId would otherwise render twice).
+    alerts.onResolved(alertRun(r));
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
@@ -20734,6 +20762,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   cardAlert(card, null);
   resetShipItDesc(modal);
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
+  q('.shipit-watch-input').checked = false;
   const okBtn = q('.shipit-ok');
   okBtn.disabled = false; okBtn.textContent = 'Open pull request';
   modal.classList.remove('hidden');
@@ -20854,6 +20883,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (description.trim()) payload.body = description;
     // Draft only when ticked; unticked sends nothing (the server's default is not a draft).
     if (q('.shipit-draft-input').checked) payload.draft = true;
+    if (q('.shipit-watch-input').checked) payload.watch = true;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -21128,6 +21158,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return false;
   const q = (sel) => modal.querySelector(sel);
+  q('.shipit-watch-input').checked = false;
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
@@ -21196,6 +21227,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   // ticked, so the next click retries exactly those. Cancel stops before the next repo.
   const onOk = async () => {
     const batch = picked();
+    const watch = q('.shipit-watch-input').checked;
     if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
     okBtn.disabled = true;
     okBtn.textContent = 'Opening…';
@@ -21209,7 +21241,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(shipItRowPayload(record, r, link)),
+          body: JSON.stringify({ ...shipItRowPayload(record, r, link), ...(watch ? { watch: true } : {}) }),
         });
         const dd = await safeJson(res);
         if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
@@ -21334,6 +21366,7 @@ function hdSyncPr(projectKey, id, row) {
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
   if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
+  paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
   paintHdAfter(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdGlance(histDetailState.screen, histDetailState.record, histDetailState.data);
 }
@@ -21391,7 +21424,10 @@ function paintHdGlance(screen, record, data) {
   const createBtn = screen.querySelector('.hd-pr');
   const link = screen.querySelector('.hd-pr-link');
   const slot = glance.querySelector('.rd-pr-slot');
-  if (shown(link) && !link.hidden) {
+  const linked = shown(link) && !link.hidden;
+  paintRdPrStatus(glance.querySelector('.rd-pr-status'),
+    linked && pr === 'OPEN' && record.target !== 'workspace' ? { id: record.id, projectKey: record.projectKey } : null);
+  if (linked) {
     paintPrCta(slot, { state: pr === 'MERGED' ? 'merged' : 'view', href: link.href, cls: 'hd-g-pr-link' });
   } else if (shown(createBtn) && !createBtn.hidden) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
@@ -21476,8 +21512,9 @@ function gateHdResume(btn, { reason, detail }) {
 function hdPauseOf(live, screen, data, record) {
   const st = data?.state || {};
   return live
-    ? { reason: live.pauseReason, limitEngine: live.limitEngine }
-    : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine };
+    ? { reason: live.pauseReason, limitEngine: live.limitEngine, limitResetAt: live.limitResetAt }
+    : { reason: screen.dataset.pauseReason || st.pauseReason, limitEngine: st.limitEngine ?? record.limitEngine,
+        limitResetAt: st.limitResetAt ?? record.limitResetAt ?? null };
 }
 /** A usage limit the run's own engine hit offers "Resume on <engine>" in the Resume split's menu
  *  (paintResumeEngineItems), never as buttons of its own. The caret is Advanced and up; while the menu holds
@@ -21530,6 +21567,7 @@ function paintHdLive(screen, record, data) {
     : !over && HD_RESUMABLE.has(savedStatus) && st.resumable !== false);
   split.hidden = !resumable;
   resumeBtn.hidden = !resumable;
+  paintHdLimitNotice(screen, record, data, live, resumable);
   // The callback re-reads the CURRENT record and data (refreshHdFromRow replaces histDetailState.record), and a run
   // that is not resumable never asks.
   const ready = resumable ? readyFor(hdPauseOf(live, screen, data, record), () => {
@@ -21556,6 +21594,34 @@ function paintHdLive(screen, record, data) {
       ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.'
       : '';
   }
+  const pause = hdPauseOf(live, screen, data, record);
+  paintLimitItem(screen.querySelector('.hd-resume-limit-item'),
+    pause.reason === 'usage_limit' ? hdLimitPauseOf(screen, data, record, pause) : null);
+}
+
+/** The usage-limit pause the History detail's notice and menu item read: this run's id, the cause and the reset. */
+function hdLimitPauseOf(screen, data, record, pause) {
+  return { pipelineId: record.id, pauseDetail: screen.dataset.pauseDetail || data.state?.pauseDetail || '',
+    limitEngine: pause.limitEngine, limitResetAt: pause.limitResetAt };
+}
+
+/** The usage-limit notice under the History detail's status line, for a resumable usage-limit pause only. */
+function paintHdLimitNotice(screen, record, data, live, resumable) {
+  const notice = screen.querySelector('.hd-limit-notice');
+  if (!notice) return;
+  const pause = hdPauseOf(live, screen, data, record);
+  const on = resumable && pause.reason === 'usage_limit';
+  notice.hidden = !on;
+  const copy = notice.querySelector('.rd-ov-copy');
+  if (on) {
+    const p = hdLimitPauseOf(screen, data, record, pause);
+    copy.textContent = rdStateCopy({ status: 'paused', pauseReason: 'usage_limit', pauseDetail: p.pauseDetail, limitEngine: p.limitEngine }, '');
+    paintLimitNotice(copy, notice, p, () => paintHdLive(screen, record, data));
+  } else {
+    delete copy.dataset.limitRepaint;
+    notice.querySelectorAll('.limit-resume, .limit-cancel').forEach((n) => n.remove());
+  }
+  ensureLimitTick();
 }
 
 function paintHdPr(screen, record, data) {
@@ -21586,6 +21652,28 @@ function paintHdPr(screen, record, data) {
   btn.onclick = () => openShipItModal(record, data);
 }
 
+// Watch PR (#619): the PR's status and Watch switch live on the Overview tab (paintHdOvPrs) and the run
+// page card (paintRdPrCta), both drawn by paintRdPrStatus.
+const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
+// Words only while the watch is doing something: the switch already says on or off.
+function hdPrWatchLabel(state) {
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.resolving) return 'Resolving conflicts';
+  if (HD_PR_WATCH_ACTIVE.has(state.status) && state.mergingBase) return `Merging ${state.mergingBase} in`;
+  if (!state.watching) return HD_PR_WATCH_ACTIVE.has(state.status) ? 'Disabled — finishing' : '';
+  if (HD_PR_WATCH_ACTIVE.has(state.status)) return 'Fixing';
+  return state.status === 'needs-person' ? 'Needs a person' : '';
+}
+const hdPrWatchTone = (state) => (state.status === 'needs-person' ? 'bad' : HD_PR_WATCH_ACTIVE.has(state.status) ? 'run' : '');
+const HD_PR_WATCH_TIP = 'Watch: start a fix run when checks fail or reviewers ask for changes';
+/** The Watch switch's face: the word and the track, on or off. */
+function prWatchSwitchFace(watching) {
+  const sw = document.createElement('span');
+  sw.className = `switch${watching ? ' on' : ''}`;
+  sw.setAttribute('aria-hidden', 'true');
+  const word = document.createElement('span');
+  word.textContent = 'Watch';
+  return [word, sw];
+}
 // Workspace header: every member repo on its own line (clarification: per-repo links
 // live here, the card shows the aggregate), plus Create PR while any can still ship.
 function paintHdWsPr(record, data, btn, repos) {
@@ -22054,7 +22142,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
         || (typeof p.branch === 'string' ? p.branch : null);
       if (feat) nr.branchFeature = feat;
     }
-    if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
+    if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
@@ -22362,6 +22450,13 @@ function setupHdActions(screen, record, data) {
         return;
       }
       resumePipelineOnEngine(r, saved, resumeBtn, item.classList.contains('resume-on-other') ? item.dataset.engine : saved);
+    });
+    const resumeLimitItem = screen.querySelector('.hd-resume-limit-item');
+    resumeLimitItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const at = Number(resumeLimitItem.dataset.at);
+      closeResumeMenu();
+      if (at) scheduleLimitResume(hdCurrentRecord(record).id, at, resumeLimitItem, repaintLimitNotices);
     });
     resumeAtItem.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -22965,6 +23060,7 @@ const HD_TABS = [
       const screen = sec.closest('.hd');
       const g = screen && screen.querySelector('.hd-graph');
       if (g && g.parentElement !== sec) sec.appendChild(g);
+      if (sec.__drawer) sec.appendChild(sec.__drawer.el);   // the step log drawer stays under the graph
     } },
   { key: 'clarify', label: 'Q&A', level: 'simple',
     badge: (d) => String(hdClarifyCount(d)),
@@ -23056,10 +23152,19 @@ function wireHdGraphLogLinks(screen) {
     el.setAttribute('role', 'link');
     el.tabIndex = 0;
     const label = el.querySelector('.nmeta b, .nlabel .tt');
-    el.setAttribute('aria-label', `Filter logs by ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)}`);
+    el.setAttribute('aria-label', `Show the log of ${label ? label.textContent : (el.dataset.nodeId || el.dataset.logSource)} below the workflow`);
   }
 
+  // A click opens the step's log in the drawer under the graph; its "Open in Logs" runs openInLogs.
   const open = (node) => {
+    const label = node.querySelector('.nmeta b, .nlabel .tt');
+    const name = label ? label.textContent : (node.dataset.nodeId || node.dataset.logSource);
+    const target = node.dataset.nodeId
+      ? { node: node.dataset.nodeId, label: name }
+      : { sources: logSourceCandidates(node.dataset.logSource), mark: node.dataset.logSource, label: name };
+    openHdStepLog(screen, target, () => openInLogs(node));
+  };
+  const openInLogs = (node) => {
     const cell = tabs.cells.get('logs');
     if (!cell) return;
     if (node.dataset.nodeId) {
@@ -24493,6 +24598,11 @@ function buildHdOverview(sec, record, data) {
     verdict.append(chip, document.createTextNode(' No review results captured — the run did not complete.'));
   }
   wrap.appendChild(verdict);
+  // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
+  const prs = document.createElement('div');
+  prs.className = 'hd-ov-prs';
+  wrap.appendChild(prs);
+  paintHdOvPrs(prs, record);
   if (isTerminalStatus(record.status)) {
     const strip = document.createElement('div'); strip.className = 'act-strip'; tagLevel(strip, 'advanced');
     wrap.appendChild(strip);
@@ -24987,9 +25097,14 @@ function buildRdWorkflow(sec, ctx) {
     paintRdGraph(screen, ctx.run);
     g.classList.toggle('settled', RD_TERMINAL.includes(ctx.run.status));
   }
+  rdMountLogDrawer(sec, ctx.run);
   sec.__update = (c) => {
     const s = c.screen || (runDetailState && runDetailState.screen);
     if (s) paintRdGraph(s, c.run);
+    if (sec.__drawer && c.run.logDrawer) {
+      sec.__drawer.setLive(!RD_TERMINAL.includes(c.run.status));
+      markLogTarget(sec, c.run.logDrawer);   // a repaint may have rebuilt the cards
+    }
   };
 }
 
@@ -25431,6 +25546,192 @@ function buildRdLogs(sec, ctx) {
 
 // ── Overview tab ────────────────────────────────────────────────────────────
 
+// ── Usage-limit notice (limit-notice.mjs): the reset time, a one-click "Resume at" for 5 minutes
+// after it, and Cancel once that resume is scheduled ───────────────────────────────────────────
+const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const fullStamp = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'full', timeStyle: 'long' });
+function timeEl(ms) {
+  const t = document.createElement('time');
+  t.dateTime = new Date(ms).toISOString();
+  t.title = fullStamp(ms);
+  t.textContent = hhmm(ms);
+  return t;
+}
+
+/** The notice's state for a run or saved-run row: the resume ticket (once the schedules are loaded) and the reset time. */
+function limitModelOf(p) {
+  const ticket = resumeTicketOf(schedulesView.isLoaded() ? schedulesView.tickets() : [], p.pipelineId);
+  return limitNotice({ pauseDetail: p.pauseDetail, whose: p.limitEngine ? `${engineLabel(p.limitEngine)}'s ` : '',
+    limitResetAt: p.limitResetAt, ticket });
+}
+
+/** The Runs-list / glance note on a usage-limit pause: "resets 18:00" (B), "resumes 18:05" (C), else ''. */
+function limitRowNote(x) {
+  if (x.pauseReason !== 'usage_limit') return '';
+  const model = limitModelOf({ pipelineId: x.pipelineId || x.id, pauseDetail: x.pauseDetail, limitEngine: x.limitEngine, limitResetAt: x.limitResetAt });
+  if (model.state === 'B') return model.timeAt ? `resets ${hhmm(model.timeAt)}` : '';
+  return model.state === 'C' ? `resumes ${hhmm(model.timeAt)}` : '';
+}
+
+/** Call BEFORE a repaint that rebuilds `host`'s notice buttons; call the returned function AFTER it. If a
+ *  Resume at / Cancel button held keyboard focus and the rebuild dropped it to <body> (any repaint, not just
+ *  the one a click triggered: the `schedules-changed` frame, a run `state` frame, the minute tick), the
+ *  same kind of button, else its successor, takes the focus back. */
+function limitFocusKeeper(host) {
+  const a = document.activeElement;
+  const cls = a && host.contains(a) && a.matches?.('.limit-resume, .limit-cancel')
+    ? (a.classList.contains('limit-cancel') ? 'limit-cancel' : 'limit-resume') : null;
+  return () => {
+    if (!cls || !host.isConnected) return;
+    const cur = document.activeElement;
+    if (cur && cur !== document.body && cur.isConnected) return;
+    (host.querySelector(`.${cls}`) || host.querySelector('.limit-cancel, .limit-resume'))?.focus();
+  };
+}
+
+/** Paint the usage-limit notice for `p` = { pipelineId, pauseDetail, limitEngine, limitResetAt } into
+ *  `copyEl` (the copy span) and `actionsEl` (where the button / Cancel go). Returns the model; state A
+ *  returns without touching copyEl so the caller's existing text stands. */
+function paintLimitNotice(copyEl, actionsEl, p, repaint) {
+  const model = limitModelOf(p);
+  const restoreFocus = limitFocusKeeper(actionsEl);
+  try {
+    return paintLimitNoticeInto(copyEl, actionsEl, p, repaint, model);
+  } finally {
+    restoreFocus();
+  }
+}
+
+function paintLimitNoticeInto(copyEl, actionsEl, p, repaint, model) {
+  actionsEl.querySelectorAll('.limit-resume, .limit-cancel').forEach((n) => n.remove());
+  delete copyEl.dataset.limitRepaint;
+  if (model.state === 'A') return model;
+  copyEl.replaceChildren(model.lead);
+  if (model.sentence) {
+    const [before, after] = model.sentence.split('{t}');
+    copyEl.append(' ', before, timeEl(model.timeAt), after || '');
+    if (model.countdownTo) {
+      const cd = document.createElement('span');
+      cd.className = 'limit-countdown';
+      cd.dataset.to = String(model.countdownTo);
+      cd.textContent = countdownText(model.countdownTo);
+      copyEl.append(', ', cd);
+    }
+    copyEl.append('.');
+  }
+  if (model.repaintAt) copyEl.dataset.limitRepaint = String(model.repaintAt);
+  if (model.action?.kind === 'schedule') {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-mini limit-resume';
+    btn.textContent = `Resume at ${hhmm(model.action.at)}`;
+    btn.setAttribute('aria-label', `Resume at ${hhmm(model.action.at)}, when the usage limit resets`);
+    btn.addEventListener('click', () => scheduleLimitResume(p.pipelineId, model.action.at, btn, repaint));
+    actionsEl.append(btn);
+  } else if (model.action?.kind === 'cancel') {
+    const c = document.createElement('button');
+    c.type = 'button';
+    c.className = 'link-btn limit-cancel';
+    c.textContent = 'Cancel';
+    c.addEventListener('click', () => cancelLimitResume(model.action.ticketId, c, repaint));
+    actionsEl.append(c);
+  }
+  return model;
+}
+
+/** Run `repaint`, then, if `btn` held keyboard focus (`hadFocus`, captured BEFORE the button was disabled,
+ *  since disabling blurs it) and the repaint replaced it, focus its successor (Resume at → Cancel and back)
+ *  in the same container, so keyboard focus never falls to <body>. */
+function repaintKeepingFocus(btn, hadFocus, repaint) {
+  const host = btn.parentElement;
+  repaint();
+  if (!hadFocus || btn.isConnected || !host?.isConnected) return;
+  host.querySelector('.limit-cancel, .limit-resume')?.focus();
+}
+
+async function scheduleLimitResume(pipelineId, at, btn, repaint) {
+  const hadFocus = document.activeElement === btn;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/schedules/resume', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pipelineId, scheduledFor: new Date(at).toISOString(), ifMissed: 'run', graceMin: 360, afterUsageLimit: true }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    schedulesView.noteTicket({ id: j.runId, runAt: j.scheduledFor, status: 'scheduled', resumePipelineId: pipelineId, scheduleId: null });
+    announce(`Resume scheduled for ${hhmm(at)}`);
+    repaintKeepingFocus(btn, hadFocus, repaint);
+  } catch (err) {
+    btn.disabled = false;
+    if (hadFocus && btn.isConnected) btn.focus();
+    notify({ tone: 'err', title: 'Could not schedule the resume', detail: err.message, key: `limit-resume-${pipelineId}` });
+  }
+}
+
+async function cancelLimitResume(ticketId, btn, repaint) {
+  const hadFocus = document.activeElement === btn;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/schedules/${encodeURIComponent(ticketId)}`, { method: 'DELETE' });
+    if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j.error || `HTTP ${res.status}`); }
+    schedulesView.forgetTicket(ticketId);
+    announce('Scheduled resume cancelled');
+    repaintKeepingFocus(btn, hadFocus, repaint);
+  } catch (err) {
+    btn.disabled = false;
+    if (hadFocus && btn.isConnected) btn.focus();
+    notify({ tone: 'err', title: 'Could not cancel the scheduled resume', detail: err.message, key: `limit-cancel-${ticketId}` });
+  }
+}
+
+// One shared minute tick for every painted notice: rewrites countdowns and repaints when a notice's
+// state is due to change; stops when no notice needs it.
+let limitTick = null;
+function ensureLimitTick() {
+  const need = document.querySelector('[data-limit-repaint]');
+  if (need && !limitTick) {
+    limitTick = setInterval(() => {
+      const now = Date.now();
+      for (const cd of document.querySelectorAll('.limit-countdown[data-to]')) cd.textContent = countdownText(Number(cd.dataset.to), now);
+      const due = [...document.querySelectorAll('[data-limit-repaint]')].some((el) => Number(el.dataset.limitRepaint) <= now);
+      if (due) repaintLimitNotices();
+      ensureLimitTick();
+    }, 60_000);
+  } else if (!need && limitTick) {
+    clearInterval(limitTick);
+    limitTick = null;
+  }
+}
+
+/** Repaint the open run page's Overview banner and the open History detail (a ticket arrived or left, or a minute boundary passed). */
+function repaintLimitNotices() {
+  const screen = document.querySelector('#run-detail');
+  const host = screen && screen.querySelector('.rd-ov-state');
+  const r = host && runs.get(runDetailState.runId);
+  if (r) { rdOvStateBanner(host, r); paintRdLimitItem(screen, r); }
+  if (histDetailState?.data && histDetailState.screen?.isConnected) paintHdLive(histDetailState.screen, histDetailState.record, histDetailState.data);
+}
+
+/** The Resume menu's "Resume at HH:MM": shown only while the notice is in state B (a one-click time ahead). */
+function paintLimitItem(item, p) {
+  if (!item) return;
+  const model = p ? limitModelOf(p) : null;
+  const at = model && model.state === 'B' && model.action ? model.action.at : null;
+  item.hidden = !at;
+  item.disabled = false;
+  if (at) {
+    item.dataset.at = String(at);
+    item.querySelector('b').textContent = `Resume at ${hhmm(at)}`;
+  } else {
+    delete item.dataset.at;
+  }
+}
+function paintRdLimitItem(screen, r) {
+  paintLimitItem(screen.querySelector('.rd-resume-limit'),
+    isPaused(r) && r.pipelineId && r.pauseReason === 'usage_limit' ? r : null);
+}
+
 // One line of current-state copy (§5.7). Every arm is a fact the run model
 // already carries — nothing here is inferred or invented.
 function rdStateCopy(r, stepName) {
@@ -25482,6 +25783,7 @@ function rdStateCopy(r, stepName) {
 }
 
 function rdOvStateBanner(host, r) {
+  const restoreLimitFocus = limitFocusKeeper(host);
   host.innerHTML = '';
   const { n, m, name } = runStepLabel(r);
   const chip = document.createElement('span');
@@ -25528,6 +25830,14 @@ function rdOvStateBanner(host, r) {
     });
     host.append(btn);
   }
+  if (isPaused(r) && r.pipelineId && r.pauseReason === 'usage_limit') {
+    paintLimitNotice(copy, host, r, () => {
+      const cur = runs.get(r.runId);
+      if (cur && host.isConnected) rdOvStateBanner(host, cur);
+    });
+  }
+  restoreLimitFocus();
+  ensureLimitTick();
 }
 
 function rdOvStats(host, r) {
@@ -25840,6 +26150,7 @@ function rdAppendLogFrame(r) {
   if (RD_TERMINAL.includes(r.status)) return;
   const screen = runDetailState && runDetailState.screen;
   if (!screen) return;
+  rdAppendDrawerLine(screen, r);
   const sec = screen.querySelector('.rd-sec[data-sec="logs"]');
   if (!sec) return;
   // Hidden tab: drop the built body so activation rebuilds it from r.logLines —
@@ -25971,6 +26282,7 @@ document.addEventListener('keydown', (e) => {
   if (!el.histShell || !el.histShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
@@ -26010,6 +26322,7 @@ document.addEventListener('keydown', (e) => {
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
   // The search box owns its Escape (clears and closes the search).
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('#runs-search-row')) return;
+  if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   if (el.viewerCard && !el.viewerCard.classList.contains('hidden')) return;
   if (el.confirmModal && !el.confirmModal.classList.contains('hidden')) return;
   if (el.pluginModal && !el.pluginModal.classList.contains('hidden')) return;
@@ -27154,8 +27467,8 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
     slot = { m: null, ctx: decor };
     slot.m = mountRunGraph(host, {
       mode: decor.mode || 'monitor',
-      onRowClick: (executionId, nodeId) => focusLogExecution(slot.ctx, executionId, nodeId),
-      // Running: a card opens its live log. History links its cards itself (wireHdGraphLogLinks).
+      onRowClick: (executionId, nodeId) => openStepLog(host, slot.ctx, executionId, nodeId),
+      // Running: a card opens its log in the drawer. History links its cards itself (wireHdGraphLogLinks).
       nodeClicks: !decor.record,
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
@@ -27189,6 +27502,174 @@ function applyRunLogFilter(r, patch) {
   const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
   const sec = screen && screen.querySelector('.rd-sec-logs');
   if (sec) { rdPaintLogFilters(sec, r); rdRepaintLog(sec, r); }
+}
+
+// ── Step log drawer (plans/workflow-log-drawer-design.md) ─────────────────────
+// A card or footer-row click on the Workflow tab opens that step's log in a drawer under the
+// graph (log-drawer.mjs), so the graph stays in view; another click retargets it. The drawer
+// filters by its own target ({node, execution}, or a v1 source), never r.logFilter: the Logs
+// tab is narrowed only through the drawer's "Open in Logs" (focusLogExecution). A click from
+// anywhere else (no drawer) keeps the old Logs-tab path.
+const LOG_DRAWER_STORAGE = { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) };
+const LOG_TARGET_CARDS = '.node[data-node-id], .run-node[data-log-source]';
+
+/** Highlight the card the drawer shows (`{node}` or a v1 `{source}`); null clears it. */
+// An attribute, not a class: the contrast baselines key on a node's class list.
+function markLogTarget(root, t) {
+  if (!root) return;
+  const card = logTargetCard(root, t);
+  for (const el of root.querySelectorAll('[aria-current="true"]')) if (el !== card && el.matches(LOG_TARGET_CARDS)) el.removeAttribute('aria-current');
+  if (card) card.setAttribute('aria-current', 'true');
+}
+function logTargetCard(root, t) {
+  if (!root || !t) return null;
+  for (const el of root.querySelectorAll(LOG_TARGET_CARDS)) {
+    if (t.node ? el.dataset.nodeId === t.node : (!!t.mark && el.dataset.logSource === t.mark)) return el;
+  }
+  return null;
+}
+/** The drawer follows the Logs tab's level (Running: Advanced, History: Expert): a Logs tab the
+ *  interface mode hides still exists as a cell, so existence alone is not enough. */
+function logsTabShown(tabs) {
+  const cell = tabs && tabs.cells.get('logs');
+  return !!cell && levelAtLeast((cell.tab && cell.tab.level) || 'simple');
+}
+function stepLabel(stepper, nodeId) {
+  try { return stepper ? nodeLabelLookup(stepper)(nodeId) : nodeId; } catch { return nodeId; }
+}
+/** Render `recs` through `filter` into the drawer's body (tail-capped like the Logs tab). */
+function fillLogDrawerBody(body, recs, filter) {
+  body.innerHTML = '';
+  delete body.dataset.empty;
+  const matches = recs.filter(compileLogFilter(filter));
+  const frag = document.createDocumentFragment();
+  let cycleState = newCycleState();
+  for (const rec of matches.slice(-MAX_LOG_LINES)) cycleState = appendLogRec(frag, rec, cycleState);
+  body.appendChild(frag);
+  if (!matches.length) { body.textContent = 'No log lines for this step yet.'; body.dataset.empty = '1'; }
+  body.__pinned = true;
+  body.scrollTop = body.scrollHeight;
+  return cycleState;
+}
+// The drawer is sticky at the window's bottom, so on a short window it sits over the graph's
+// lower half. On a click, scroll the Workflow section's end to the window's end: the drawer
+// then rests in place under the graph and the graph is fully in view above it.
+function revealLogDrawer(sec) {
+  if (!sec || typeof sec.scrollIntoView !== 'function') return;   // jsdom has no layout
+  const still = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  sec.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
+}
+function newLogDrawer(sec, { onClose, onOpenInLogs }) {
+  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs });
+  // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
+  d.body.addEventListener('scroll', () => {
+    d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
+  });
+  sec.appendChild(d.el);
+  sec.__drawer = d;
+  return d;
+}
+
+// Running: the target lives on the run (r.logDrawer), so the drawer survives the Workflow
+// section's rebuild when its tab is re-activated.
+function rdMountLogDrawer(sec, r) {
+  newLogDrawer(sec, {
+    onClose: () => { r.logDrawer = null; markLogTarget(sec, null); },
+    onOpenInLogs: () => { const t = r.logDrawer; if (t) focusLogExecution(rdCtx(r), t.execution, t.node); },
+  });
+  if (r.logDrawer) rdPaintLogDrawer(sec, r);
+}
+function rdPaintLogDrawer(sec, r, opener = null) {
+  const d = sec.__drawer;
+  const t = r.logDrawer;
+  if (!d || !t) return;
+  sec._drawerCycle = fillLogDrawerBody(d.body, r.logLines, t);
+  d.open({ label: stepLabel(r.stepper, t.node), isLive: !RD_TERMINAL.includes(r.status), opener });
+  markLogTarget(sec, t);
+  if (opener) revealLogDrawer(sec);   // a click, not a rebuild on tab re-activation
+}
+function rdAppendDrawerLine(screen, r) {
+  const sec = screen.querySelector('.rd-sec[data-sec="workflow"]');
+  const d = sec && sec.__drawer;
+  const rec = r.logLines[r.logLines.length - 1];
+  if (!d || sec.hidden || !d.isOpen() || !rec || !r.logDrawer || !logLineVisible(rec, r.logDrawer)) return;
+  clearLogPlaceholder(d.body);
+  sec._drawerCycle = appendLogRec(d.body, rec, sec._drawerCycle ?? null);
+  trimLogDom(d.body);
+  if (d.body.__pinned !== false) schedulePinToBottom(d.body, null);
+}
+
+/** A graph click (card or footer row): into the Workflow tab's drawer when the graph is there. */
+function openStepLog(host, ctx, executionId, nodeId) {
+  const r = ctx && ctx.run;
+  if (!r) return;
+  if (ctx.record) {
+    const screen = histDetailState && histDetailState.screen;
+    if (screen && host && host.closest('.hd-graph')) {
+      openHdStepLog(screen, { node: nodeId || '', execution: executionId || '', label: stepLabel(r.stepper, nodeId) },
+        () => focusLogExecution(ctx, executionId, nodeId));
+      return;
+    }
+    focusLogExecution(ctx, executionId, nodeId);
+    return;
+  }
+  const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
+  const tabs = screen ? detailTabsOf(screen) : null;
+  const sec = host && host.closest('.rd-sec[data-sec="workflow"]');
+  if (!logsTabShown(tabs)) return;
+  if (!sec || !sec.__drawer) { focusLogExecution(ctx, executionId, nodeId); return; }
+  r.logDrawer = { node: nodeId || '', execution: executionId || '' };
+  rdPaintLogDrawer(sec, r, logTargetCard(sec, r.logDrawer));
+}
+
+// History: the saved NDJSON log, fetched once per screen and shared by every drawer target.
+function hdLogRecs(screen) {
+  if (!screen.__logRecs) {
+    const rec = histDetailState.record || { projectKey: histDetailState.key, id: histDetailState.id };
+    screen.__logRecs = fetch(historyLogUrl(rec.id, rec))
+      .then((res) => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text(); })
+      .then((text) => {
+        const recs = [];
+        for (const raw of text.split('\n')) {
+          const t = raw.trim();
+          if (!t) continue;
+          try { recs.push(projectLogRecord(JSON.parse(t))); } catch { /* a torn final line */ }
+        }
+        return recs;
+      })
+      .catch((e) => { screen.__logRecs = null; throw e; });   // retry on the next click
+  }
+  return screen.__logRecs;
+}
+/** `target`: {node, execution?, label} for a v2 card or row, {sources, mark, label} for a v1 card. */
+function openHdStepLog(screen, target, openInLogs) {
+  const tabs = detailTabsOf(screen);
+  if (!logsTabShown(tabs)) return;
+  const cell = tabs.cells.get('workflow');
+  if (!cell) { openInLogs(); return; }
+  const sec = cell.sec;
+  const d = sec.__drawer || newLogDrawer(sec, {
+    onClose: () => { sec.__logTarget = null; markLogTarget(screen.querySelector('.hd-graph'), null); },
+    onOpenInLogs: () => { if (sec.__logTarget) sec.__logTarget.openInLogs(); },
+  });
+  // The graph joins this section only once the Workflow tab is built, so cards are found from the screen.
+  const graph = screen.querySelector('.hd-graph');
+  const t = { ...target, openInLogs };
+  sec.__logTarget = t;
+  d.open({ label: target.label || '', isLive: false, opener: logTargetCard(graph, target) });
+  markLogTarget(graph, target);
+  revealLogDrawer(sec);
+  d.body.textContent = 'Loading…';
+  hdLogRecs(screen).then((recs) => {
+    if (sec.__logTarget !== t) return;   // retargeted while the log loaded
+    let filter;
+    if (target.node) filter = { node: target.node, execution: target.execution || '' };
+    else {
+      const seen = new Set(recs.map((x) => x.source));
+      filter = { source: target.sources.find((src) => seen.has(src)) || target.sources[0] };
+    }
+    fillLogDrawerBody(d.body, recs, filter);
+  }, (e) => { if (sec.__logTarget === t) d.body.textContent = `Could not load logs: ${e.message}`; });
 }
 
 /** Footer row -> narrow the log to that execution and bring the log into view.
@@ -28017,7 +28498,7 @@ function runsLiveItem(r) {
     runId: r.runId, pipelineId: r.pipelineId || '', title: r.title, status: r.status,
     // nodeLabel(null, id) returns the raw node id ("n3 review"): name the step only with a manifest.
     ask: pq != null ? { kind: pq.kind || '', step: pq.nodeId && r.stepper ? nodeLabel(r.stepper, pq.nodeId) : '' } : null,
-    pauseReason: r.pauseReason || '', unread: isLingering(r),
+    pauseReason: r.pauseReason || '', limitEngine: r.limitEngine || null, limitNote: limitRowNote(r), unread: isLingering(r),
     step: r.status === 'running' && pq == null ? runsStepWord(r) : '',
     failedStep: failed && failed.nodeId ? nodeLabel(r.stepper, failed.nodeId) : '',
     startedAt: r.startedAt, groupKey: g.key, groupName: g.name, by: runsPersonKey(r.startedBy),
@@ -28029,6 +28510,7 @@ function runsLiveItem(r) {
 function runsHistItem(p) {
   return {
     id: p.id, projectKey: p.projectKey, title: p.title, status: p.status, pauseReason: p.pauseReason,
+    limitEngine: p.limitEngine || null, limitNote: limitRowNote(p),
     startedAt: p.startedAt, mtime: p.mtime, groupName: histGroupName(p), by: runsPersonKey(p.startedBy),
     pr: glancePrInput(p),
     archived: !!p.archived,
@@ -28672,6 +29154,7 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   const rdResumeMore = screen.querySelector('.rd-resume-more');
   const rdResumeMenu = screen.querySelector('.rd-resume-menu');
   const rdResumeAt = screen.querySelector('.rd-resume-at');
+  const rdResumeLimit = screen.querySelector('.rd-resume-limit');
   const closeRdResumeMenu = () => {
     if (!rdResumeMenu.hidden) { rdResumeMenu.hidden = true; rdResumeMore.setAttribute('aria-expanded', 'false'); }
   };
@@ -28700,6 +29183,13 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
     }
     const engine = item.classList.contains('resume-on-other') ? item.dataset.engine : (r.runEngine || 'claude');
     resumeRunOnEngine(r.runId, pauseBtn, engine);
+  });
+  rdResumeLimit.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const r = runs.get(runDetailState.runId);
+    const at = Number(rdResumeLimit.dataset.at);
+    closeRdResumeMenu();
+    if (r && r.pipelineId && at) scheduleLimitResume(r.pipelineId, at, rdResumeLimit, repaintLimitNotices);
   });
   rdResumeAt.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -29561,7 +30051,7 @@ function paintRdGlance(screen, r) {
   const live = r;
   r = terminal ? rdGlanceRun(r) : r;
   const copy = glanceCopy(r, {
-    pill: statusPill(live), checks: rdChecksCount(live), lastLine: rdLastLine(live),
+    pill: statusPill(live), checks: rdChecksCount(live), lastLine: rdLastLine(live), limitNote: limitRowNote(live),
     pr: terminal ? glancePrInput(rdHistoryRecord(live)) : null, files: terminal ? rdFilesChanged(live) : null,
   });
   screen.dataset.glance = copy.state;
@@ -30000,6 +30490,216 @@ function rdFilesChanged(r) {
   return s ? (s.filesNew || 0) + (s.filesChanged || 0) + (s.filesDeleted || 0) : null;
 }
 
+// The open PR's own state under its button (.rd-pr-status): its checks (passed, running,
+// failed), a merge conflict, and the Watch PR toggle, whose words show only while a watch is
+// doing something (fixing, or waiting for a person). GitHub PRs only (GET /api/pr/checks).
+// One answer per run is cached so the glance's frequent repaints never refetch; a cached answer
+// older than PR_STATUS_STALE_MS is re-read on the next paint, and running checks poll.
+const PR_STATUS_STALE_MS = 15000;
+const PR_STATUS_POLL_MS = 20000;
+const prStatusCache = new Map();
+const prStatusKey = (scope) => `${scope.projectKey || ''}\u0000${scope.id}\u0000${scope.memberKey || ''}`;
+const prScopeBody = (scope) => ({ id: scope.id, projectKey: scope.projectKey, ...(scope.memberKey ? { memberKey: scope.memberKey } : {}) });
+function paintRdPrStatus(host, scope) {
+  if (!host) return;
+  if (!scope) { host.hidden = true; host.dataset.key = ''; clearTimeout(host._prTimer); return; }
+  const key = prStatusKey(scope);
+  const cached = prStatusCache.get(key);
+  if (host.dataset.key !== key) { host.dataset.key = key; host.dataset.sig = ''; host.hidden = true; clearTimeout(host._prTimer); }
+  if (cached) renderRdPrStatus(host, scope, cached);
+  if (!host._prLoading && (!cached || Date.now() - cached.at > PR_STATUS_STALE_MS)) void loadRdPrStatus(host, scope);
+}
+// One GET per PR in flight: the run page card and the Overview row can show the same PR at once.
+const prStatusReads = new Map();
+function readPrStatus(key, q) {
+  if (!prStatusReads.has(key)) {
+    const p = fetch(`/api/pr/checks?${q}`).then((r) => (r.ok ? safeJson(r) : null)).catch(() => null)
+      .finally(() => prStatusReads.delete(key));
+    prStatusReads.set(key, p);
+  }
+  return prStatusReads.get(key);
+}
+async function loadRdPrStatus(host, scope) {
+  const key = prStatusKey(scope);
+  const q = new URLSearchParams({ projectKey: '', ...prScopeBody(scope) });
+  clearTimeout(host._prTimer);
+  host._prLoading = true;
+  host._prAgain = false;
+  let c;
+  try { c = await readPrStatus(key, q); }
+  finally { host._prLoading = false; }
+  // A change announced while this read was in flight: read once more, the answer may predate it.
+  if (host._prAgain && host.dataset.key === key) { void loadRdPrStatus(host, scope); return; }
+  const w = c?.watch;
+  const next = { at: Date.now(), checks: c?.checks || null, mergeable: c?.mergeable || 'UNKNOWN',
+    status: c?.status && typeof c.status.label === 'string' ? c.status : null,
+    watch: w && typeof w.watching === 'boolean' ? w : null };
+  prStatusCache.set(key, next);
+  if (host.dataset.key !== key) return;            // the slot moved to another run meanwhile
+  renderRdPrStatus(host, scope, next);
+  if (next.checks?.state === 'pending') {
+    host._prTimer = setTimeout(() => {
+      if (host.dataset.key === key && host.isConnected && host.offsetParent) void loadRdPrStatus(host, scope);
+    }, PR_STATUS_POLL_MS);
+  }
+}
+const PR_STATUS_ICONS = {
+  'is-ok': '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 2.8 2.8L16 10"/>',
+  'is-run': '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  'is-bad': '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  'is-wait': '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/>',
+  none: '<circle cx="12" cy="12" r="9"/>',
+};
+function renderRdPrStatus(host, scope, s) {
+  const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
+  if (host.dataset.sig === sig) return;
+  host.dataset.sig = sig;
+  const span = (cls, text) => { const el = document.createElement('span'); el.className = cls; el.textContent = text; return el; };
+  const c = s.checks;
+  const wst = s.watch;
+  // The headline: GitHub's merge verdict (GET /api/pr/checks `status`: Ready to merge, Merge
+  // conflicts, Review required, the checks…), its checks line when the verdict is about something
+  // else, then what the watch is doing.
+  const v = s.status;
+  const [tone, text] = v && v.label ? [v.tone === 'none' ? 'none' : `is-${v.tone}`, v.label]
+    : c ? ['none', 'No checks'] : [null, ''];
+  const notes = [];
+  if (v && v.label && v.detail) notes.push(span('rd-prs-detail', v.detail));
+  if (wst) {
+    const doing = hdPrWatchLabel(wst);
+    if (doing) notes.push(span(hdPrWatchTone(wst) === 'bad' ? 'is-bad' : 'is-run', doing));
+    // The fix run the watch started: its live page while it runs here, else its saved run.
+    if (HD_PR_WATCH_ACTIVE.has(wst.status) && wst.activePipelineId) {
+      const pid = wst.activePipelineId;
+      const a = document.createElement('a');
+      a.className = 'rd-prs-link';
+      a.href = `#history/${scope.projectKey}/${pid}`;
+      a.textContent = 'View fix run';
+      a.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        const live = [...runs.values()].find((x) => x.pipelineId === pid && !RD_TERMINAL.includes(x.status));
+        if (live) { e.preventDefault(); location.hash = `running/${live.runId}`; }
+      });
+      notes.push(a);
+    }
+    // Resolve: GitHub reports conflicts and no watch will fix them on its own (off, or waiting for a
+    // person). One fix run merges the base into the PR branch and pushes (POST /api/pr/resolve).
+    if (v?.tone === 'bad' && v.label === 'Merge conflicts' && !HD_PR_WATCH_ACTIVE.has(wst.status)
+      && (!wst.watching || wst.status === 'needs-person')) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rd-prs-link';
+      b.textContent = 'Resolve';
+      b.title = 'Merge the base branch into this pull request in a fix run, then push';
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        const k = prStatusKey(scope);
+        let patch;
+        try {
+          const r = await fetch('/api/pr/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(prScopeBody(scope)) });
+          const out = await safeJson(r);
+          if (!r.ok || !out) throw Object.assign(new Error(out?.error || `HTTP ${r.status}`), { watch: out?.watch });
+          patch = { watch: out, resolveError: null };
+        } catch (err) {
+          patch = { resolveError: err.message, ...(err.watch && typeof err.watch.watching === 'boolean' ? { watch: err.watch } : {}) };
+        }
+        const next = { ...(prStatusCache.get(k) || s), ...patch };
+        prStatusCache.set(k, next);
+        if (host.dataset.key === k) renderRdPrStatus(host, scope, next);
+      });
+      notes.push(b);
+      if (s.resolveError) notes.push(span('is-bad', s.resolveError));
+    }
+  }
+  const parts = [];
+  if (tone) {
+    const sum = document.createElement('span');
+    sum.className = 'rd-prs-sum';
+    sum.innerHTML = `<svg class="rd-prs-ico ${tone}" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PR_STATUS_ICONS[tone]}</svg>`;
+    sum.appendChild(span('rd-prs-text', text));
+    for (const n of notes) sum.append(span('rd-prs-sep', '·'), n);
+    parts.push(sum);
+  }
+  if (wst) {
+    const row = document.createElement('label');
+    row.className = 'rd-prs-watch';
+    row.dataset.minLevel = 'advanced';
+    row.title = HD_PR_WATCH_TIP;
+    const [word, sw] = prWatchSwitchFace(!!wst.watching);
+    sw.removeAttribute('aria-hidden');
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-checked', String(!!wst.watching));
+    sw.setAttribute('aria-label', 'Watch this pull request');
+    sw.tabIndex = 0;
+    row.append(word, sw);
+    const toggle = async () => {
+      if (sw.classList.contains('disabled')) return;
+      sw.classList.add('disabled');
+      try {
+        const r = await fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...prScopeBody(scope), watch: !wst.watching }) });
+        const nextWatch = await safeJson(r);
+        if (!r.ok || !nextWatch) throw new Error(nextWatch?.error || `HTTP ${r.status}`);
+        const next = { ...(prStatusCache.get(prStatusKey(scope)) || s), watch: nextWatch };
+        prStatusCache.set(prStatusKey(scope), next);
+        if (host.dataset.key === prStatusKey(scope)) renderRdPrStatus(host, scope, next);
+      } catch (err) {
+        sw.classList.remove('disabled');
+        row.title = `Could not change Watch: ${err.message}`;
+      }
+    };
+    row.addEventListener('click', (e) => { e.preventDefault(); void toggle(); });
+    sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); void toggle(); } });
+    parts.push(row);
+  }
+  host.replaceChildren(...parts);
+  host.hidden = !tone && !wst;
+}
+/** pr-watch-changed: re-read every status line showing that PR (a watch toggled elsewhere, a fix run). */
+function refreshRdPrStatus(projectKey, id, memberKey = '') {
+  const scope = { projectKey, id, ...(memberKey ? { memberKey } : {}) };
+  const key = prStatusKey(scope);
+  prStatusCache.delete(key);
+  for (const host of document.querySelectorAll('.rd-pr-status')) {
+    if (host.dataset.key !== key) continue;
+    if (host._prLoading) host._prAgain = true;
+    else void loadRdPrStatus(host, scope);
+  }
+}
+
+/** Overview tab: one row per open pull request under the review verdict (a workspace run: one per
+ *  member repo), each drawn by paintRdPrStatus. Rows are rebuilt only when the set of PRs changes. */
+function paintHdOvPrs(box, record) {
+  if (!box || !record) return;
+  const scopes = [];
+  if (record.target === 'workspace' && hasWsMembers(record)) {
+    for (const m of histWsMembers(record)) {
+      if (prLive(m.pr) && prStateOf(m.pr) === 'OPEN') scopes.push({ id: record.id, projectKey: record.projectKey, memberKey: m.memberKey, name: m.name || m.memberKey });
+    }
+  } else if (record.pr && typeof record.pr === 'object' && String(record.pr.state || '').toUpperCase() === 'OPEN' && record.pr.url) {
+    scopes.push({ id: record.id, projectKey: record.projectKey, name: '' });
+  }
+  const sig = JSON.stringify(scopes);
+  if (box.dataset.sig !== sig) {
+    box.dataset.sig = sig;
+    box.replaceChildren(...scopes.map((sc) => {
+      const row = document.createElement('div');
+      row.className = 'hd-ov-pr';
+      const label = document.createElement('span');
+      label.className = 'hd-ov-pr-label';
+      label.textContent = sc.name ? `Pull request · ${sc.name}` : 'Pull request';
+      const host = document.createElement('div');
+      host.className = 'rd-pr-status hd-ov-pr-status';
+      host.hidden = true;
+      row.append(label, host);
+      return row;
+    }));
+  }
+  const hosts = box.querySelectorAll('.hd-ov-pr-status');
+  scopes.forEach(({ name, ...scope }, i) => paintRdPrStatus(hosts[i], scope));
+}
+
 // The pull request button under the result, in its slot (paintPrCta). Same tri-state as
 // paintHdPr: an open or merged PR links, `null` (resolved, none) offers Create when
 // eligible, `undefined` (the lookup runs) and a History row not loaded yet hold the
@@ -30010,15 +30710,20 @@ function rdFilesChanged(r) {
 function paintRdPrCta(screen, r) {
   const slot = screen.querySelector('.rd-pr-slot');
   if (!slot) return;
+  const status = screen.querySelector('.rd-pr-status');
   const key = r.status === 'done' ? historyKeyForRun(r) : '';
-  if (!key) { paintPrCta(slot, { state: 'none' }); return; }
+  if (!key) { paintPrCta(slot, { state: 'none' }); paintRdPrStatus(status, null); return; }
   const record = rdHistoryRecord(r);
-  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); return; }
+  if (glancePrInput(record) === 'PENDING') { paintPrCta(slot, { state: 'pending' }); paintRdPrStatus(status, null); return; }
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
   const prState = pr ? String(pr.state || '').toUpperCase() : '';
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     paintPrCta(slot, { state: prState === 'MERGED' ? 'merged' : 'view', href: pr.url });
-  } else if (histPrEligible(record) && record.pr !== undefined) {
+    paintRdPrStatus(status, prState === 'OPEN' && record.target !== 'workspace' ? { id: r.pipelineId, projectKey: key } : null);
+    return;
+  }
+  paintRdPrStatus(status, null);
+  if (histPrEligible(record) && record.pr !== undefined) {
     paintPrCta(slot, {
       state: 'create', cls: 'rd-create-pr',
       onClick: () => {
@@ -30575,6 +31280,7 @@ function paintRdHeader(screen, r) {
     resumeAt.title = refused ? 'This run paused on a cost cap — continuing past it is a live decision and cannot be scheduled.' : '';
   }
   paintResumeEngineItems(screen.querySelector('.rd-resume-menu'), r.runEngine, { reason: r.pauseReason, limitEngine: r.limitEngine });
+  paintRdLimitItem(screen, r);
 
   // Away mode switch: any run that is not over (a paused run stores it in its resume point).
   const ns = screen.querySelector('.rd-night');
@@ -30619,7 +31325,7 @@ function runsNeedsCount() {
 function updateNavCounts() {
   const live = liveRuns().length;
   let waiting = 0;
-  for (const r of runs.values()) if (r.pendingQuestion != null) waiting += 1;
+  for (const r of runs.values()) if (r.pendingQuestion != null || pausedOnYou(r)) waiting += 1;
   alerts.updateBadge({ waitingRuns: waiting });
   const needs = runsNeedsCount();
   // One badge on Runs (D11): the amber Needs-you pill while anything needs you, else the live
@@ -31707,7 +32413,7 @@ function showView(name, param = '') {
       // No refetch on in-page hops (list <-> run <-> saved run): a reload re-runs PR
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
-      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) paintRunsList(); });
+      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
     }
     if (name === 'running') {
       routeRunDetail(param, { instant: entering });

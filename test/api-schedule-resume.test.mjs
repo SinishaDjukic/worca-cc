@@ -103,6 +103,15 @@ test('create refuses a non-paused run (409), an unknown pipeline (404) and a sec
   ]);
 });
 
+test('create: afterUsageLimit adds the "(after usage limit)" title suffix, nothing else', async () => {
+  const { id } = await pausedFixture({ pauseReason: 'usage_limit' });
+  const r = await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(2 * 3600_000), afterUsageLimit: true });
+  assert.equal(r.status, 202);
+  const made = await r.json();
+  const list = await (await fetch(`${base}/api/schedules?projectDir=${encodeURIComponent(dir)}`)).json();
+  assert.equal(list.tickets.find((x) => x.id === made.runId).title, 'Resume ‘Paused feat’ (after usage limit)');
+});
+
 test('create refuses every cap pause (clarify: team and personal caps always need a live decision)', async () => {
   for (const reason of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']) {
     const { id } = await pausedFixture({ pauseReason: reason, pauseDetail: 'cap hit' });

@@ -79,7 +79,7 @@ import {
 import { syncBaseForRun, ensureLocalBranch, fetchRemote, isSafeBranchName, runSyncOptions, INTERACTIVE_TIMEOUT_MS } from './git-sync.mjs';
 import { SYNC_EXECUTION_ID } from '../shared/graph/constants.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs'; // §9.4 disabled-plugin hint
-import { classifyError, rateLimitHint, brokerHint, freeDailyHint } from './recoverable-error.mjs';
+import { classifyError, rateLimitHint, brokerHint, freeDailyHint, limitResetAt } from './recoverable-error.mjs';
 import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.mjs';
 import { CURSOR_PROJECT_FILES, cursorOwns, excludeLine } from './engines/cursor.mjs';
 import { helperEngineFor } from './model-env.mjs';
@@ -895,6 +895,8 @@ export class RunHarness extends EventEmitter {
     this.pauseReason = null;                 // WHY the run paused: 'cost_pipeline'|'cost_total'|'error'|<usage-limit line>|null
     this.pauseDetail = null;                 // the human detail behind pauseReason ('error': the clipped message)
     this.limitEngine = null;                 // 'usage_limit' only: the engine whose own limit it is (_pauseFor)
+    this.limitResetAt = null;                // ISO: when the usage limit behind this pause resets (D3)
+    this._autoLimitResumes = 0;              // D7: automatic limit resumes in a row (reset by a manual resume or a finished step)
     // Team metrics (§4.4 interventions). Resume runs on a NEW instance, so the counters are
     // stamped into the persisted resume point at every pause and re-seeded in resume().
     // pausedMs: time the run spent parked (paused, or dead between a crash and its resume);
@@ -988,6 +990,7 @@ export class RunHarness extends EventEmitter {
       pauseReason: null,   // mirrors this.pauseReason so getState() (a deep clone of state) carries it live
       pauseDetail: null,   // mirrors this.pauseDetail
       limitEngine: null,   // mirrors this.limitEngine: the engine whose usage limit paused the run
+      limitResetAt: null,  // mirrors this.limitResetAt: when that usage limit resets (ISO)
       // Sub-agent lifecycle records (rides the existing `state` snapshot; mirrored to
       // the sub_agents table). Each: { id, label, nodeId, stepIndex, cycle, stepKey,
       // status, startedAt, finishedAt, durationMs?, tokens?, costUsd? };
@@ -1181,14 +1184,16 @@ export class RunHarness extends EventEmitter {
    * rule every _pauseFor site follows). Mirrored onto state so every
    * `state` event and getState() carry it. @returns {boolean} true when recorded
    */
-  _setPauseReason(reason, detail = null, limitEngine = null) {
+  _setPauseReason(reason, detail = null, limitEngine = null, limitResetAt = null) {
     if (this.pauseReason) return false;
     this.pauseReason = String(reason);
     this.pauseDetail = detail == null || detail === '' ? null : String(detail);
     this.limitEngine = limitEngine || null;
+    this.limitResetAt = limitResetAt || null;
     this.state.pauseReason = this.pauseReason;
     this.state.pauseDetail = this.pauseDetail;
     this.state.limitEngine = this.limitEngine;
+    this.state.limitResetAt = this.limitResetAt;
     return true;
   }
 
@@ -1196,9 +1201,11 @@ export class RunHarness extends EventEmitter {
     this.pauseReason = null;
     this.pauseDetail = null;
     this.limitEngine = null;
+    this.limitResetAt = null;
     this.state.pauseReason = null;
     this.state.pauseDetail = null;
     this.state.limitEngine = null;
+    this.state.limitResetAt = null;
   }
 
   /**
@@ -1246,7 +1253,15 @@ export class RunHarness extends EventEmitter {
     const conn = reason === REASON.USAGE_LIMIT && ctx && !freeDaily ? this._limitConnection(nc) : null;
     const limitEngine = conn?.kind === 'signin' ? (this.claude.engine || 'claude') : null;
     const limitText = conn && conn.kind !== 'signin' && !detail ? `${connectionLabel({ connection: conn })} limit — ${text}` : text;
-    this._setPauseReason(reason, limitText, limitEngine);
+    // D3/D11: when the limit comes back, read from the RAW message (`text` may be the OpenRouter
+    // hint or carry a connection label). Independent of limitEngine: a shell/setup-site limit has none.
+    const resetMs = reason === REASON.USAGE_LIMIT ? limitResetAt(err) : null;
+    const recorded = this._setPauseReason(reason, limitText, limitEngine,
+      resetMs != null ? new Date(resetMs).toISOString() : null);
+    // First writer wins: a sibling's unwind that lost the race logs nothing.
+    if (recorded && reason === REASON.USAGE_LIMIT && resetMs == null) {
+      this._log(where, 'info', 'usage-limit reset time not recognised', meta);
+    }
     let audit;
     if (reason === REASON.ERROR) {
       audit = ctx
@@ -1366,6 +1381,7 @@ export class RunHarness extends EventEmitter {
         title: this.opts.title,
         guardrailsId: this.guardrailsId,
         startedBy: this.opts.startedBy || null,
+        prWatchRunId: this.opts.prWatchRunId || null,
         ...(this.isWorkspace ? {
           workspaceKey: this.workspaceKey,
           workspaceId: this.workspace.id,
@@ -1773,6 +1789,9 @@ export class RunHarness extends EventEmitter {
       };
       // The saved point carries the pause that produced it; a resumed run is running.
       this._clearPauseReason();
+      // D7: only a resume the server made for a usage limit continues the streak.
+      const prevAuto = Number.isSafeInteger(rp.autoLimitResumes) ? rp.autoLimitResumes : 0;
+      this._autoLimitResumes = this.opts.autoLimitResume ? prevAuto + 1 : 0;
       this.state.lastAction = null;
       this._recordAction('resume', this.opts.resumedBy || null);
       // Rehydrate the run's selection BEFORE re-resolving so resume enforces the
@@ -4004,11 +4023,13 @@ export class RunHarness extends EventEmitter {
    * commit, and it does not survive teardown.
    *
    * Fail-safe — never throws. Skipped when: mock mode (keeps `npm run smoke`
-   * offline); no worktree was created; or the graphify binary is not on PATH.
-   * On build failure/timeout the run proceeds with no graph instruction.
+   * offline); the workflow opts out (codeGraph: false); no worktree was created; or
+   * the graphify binary is not on PATH. On build failure/timeout the run proceeds
+   * with no graph instruction.
    */
   async _buildWorktreeGraph() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    if (this._skipCodeGraph()) { this.toolInstruction = ''; return; }
     if (this.workDir === this.projectDir) {
       this._log('graph', 'debug', 'No worktree (workDir===projectDir); skipping in-worktree graph build.');
       return; // building "in the worktree" would write into main
@@ -4040,6 +4061,14 @@ export class RunHarness extends EventEmitter {
     }
   }
 
+  /** The run's workflow opted out of the code graph (`codeGraph: false` on the template, frozen
+   *  into the manifest, so a resume decides the same). Logs once per build site. */
+  _skipCodeGraph() {
+    if (this.state.stepper?.codeGraph !== false) return false;
+    this._log('graph', 'info', 'The workflow does not use a code graph; skipping the graphify build.');
+    return true;
+  }
+
   /**
    * Workspace graph builds (D4): build a graphify graph inside EACH member worktree
    * in parallel (cap 4), storing this.toolInstructions[projectKey]. Fail-safe per
@@ -4050,6 +4079,7 @@ export class RunHarness extends EventEmitter {
    */
   async _buildWorktreeGraphAll() {
     if (this.claude.mock) return; // mock runs never use the graph (intentionally silent)
+    if (this._skipCodeGraph()) { for (const m of this.members) this.toolInstructions.set(m.projectKey, ''); return; }
     const dirs = this.members.map((m) => resolve(m.projectDir));
     const toolsByDir = await detectToolsPerProject(dirs); // never throws
     await mapWithCap(this.members, 4, async (m) => {
@@ -7256,6 +7286,13 @@ export class RunHarness extends EventEmitter {
       // starter, pipelines.started_by), so the billing and attribution stay theirs.
       if (this.pauseReason === REASON.DRAIN && this._drainResumeAs) rp.resumeAs = this._drainResumeAs;
       else delete rp.resumeAs;
+      // D3/D7: only a usage-limit pause carries a reset time and the automatic-resume streak (like
+      // resumeAs for drain). Any other pause deletes both, so a point rebuilt from the consumed one
+      // (_pauseForFailure's ...source, the re-arm at :1903) never keeps a stale value.
+      if (this.pauseReason === REASON.USAGE_LIMIT && this.limitResetAt) rp.limitResetAt = this.limitResetAt;
+      else delete rp.limitResetAt;
+      if (this.pauseReason === REASON.USAGE_LIMIT && this._autoLimitResumes > 0) rp.autoLimitResumes = this._autoLimitResumes;
+      else delete rp.autoLimitResumes;
       // The token this pause is written with (_persist stamps it into the saved point as `pausedBy`).
       this._pauseToken ||= randomUUID();
     }
@@ -7285,6 +7322,7 @@ export class RunHarness extends EventEmitter {
       reason: this.pauseReason || null,
       detail: this.pauseDetail || null,
       limitEngine: this.limitEngine || null,
+      limitResetAt: this.limitResetAt || null,
     };
     this._emit('done', payload);
     return { ...payload };

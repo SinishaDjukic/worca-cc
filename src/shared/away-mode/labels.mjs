@@ -191,13 +191,14 @@ export const GRACE_NO_HOURS = Object.freeze({
   never: 'Never', neverHint: 'Marked runs wait for you, like every other run.',
 });
 
-/** Run page pill: `now` | `wait` | `after` | `never`. */
+/** Run page pill: `now` | `wait` | `after` | `never`. `wait` says who answers ("you answer"), never
+ *  "waiting for you": that is the wording of a run actually blocked on you (run glance, alerts). */
 export function pillText(state, minutes = 0) {
   switch (state) {
     case 'now': return 'answering';
     case 'after': return `answers after ${Math.max(1, Math.round(minutes))} min`;
     case 'never': return 'never';
-    default: return 'waiting for you';
+    default: return 'you answer';
   }
 }
 

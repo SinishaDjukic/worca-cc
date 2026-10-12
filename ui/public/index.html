@@ -738,6 +738,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu rd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="rd-resume-limit" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -798,7 +799,11 @@
                   <div class="rd-result" hidden></div>
                   <!-- The pull request button: one node for the screen's life, outside the result
                        (rebuilt), so its loading placeholder can morph into it (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- The Live view panel. The clip lets the narrow layout open its height while the
                      graph host keeps its final size (no fit chasing a growing box). It is `inert`:
@@ -890,6 +895,7 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
                     </button>
                     <div class="btn-split-menu hd-resume-menu" role="menu" hidden>
+                      <button type="button" role="menuitem" class="hd-resume-limit-item" hidden><b>Resume at</b><small>When the limit resets</small></button>
                       <button type="button" role="menuitem" class="resume-on-saved"><b>Resume</b><small>Where it left off</small></button>
                       <button type="button" role="menuitem" class="resume-on-other" hidden><b>Resume on another engine</b><small></small></button>
                       <button type="button" role="menuitem" class="resume-with-model" hidden><b>Resume with another model…</b><small>Every remaining step runs on the model you pick</small></button>
@@ -928,6 +934,7 @@
                       <div class="rd-now-text"><h2 class="rd-now-title"></h2><p class="rd-now-sub"></p></div>
                     </div>
                   </div>
+                  <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners">
                     <span class="badge hist-retained-badge" hidden>Work retained</span>
                     <div class="retained-banner" role="alert" hidden></div>
@@ -941,7 +948,11 @@
                   <div class="rd-result hd-result"></div>
                   <!-- The pull request button, mirrored from the Details header: one node, outside
                        the result paintHdGlance rebuilds on every paint (paintPrCta). -->
-                  <div class="rd-pr-slot" hidden></div>
+                  <div class="rd-pr-box">
+                    <div class="rd-pr-slot" hidden></div>
+                    <!-- The open PR's checks, conflicts and Watch PR, as the button's footer (paintRdPrStatus). -->
+                    <div class="rd-pr-status" hidden></div>
+                  </div>
                 </div>
                 <!-- What Away mode answered on this run (GET /api/night-decisions), as on the run page. -->
                 <section class="rd-night-sec hd-night-sec" hidden><h3 class="rd-night-h">Answered for you<span class="rd-night-count"></span></h3><div class="rd-night-asks"></div></section>
@@ -1774,6 +1785,12 @@
                 </div>
                 <input id="budgetHumanRate" data-setting="humanRateUsdPerHour" class="input" type="number" min="0" step="1" inputmode="decimal" placeholder="35" autocomplete="off" />
               </div>
+              <div class="field">
+                <div class="label-row">
+                  <label class="check-row" for="budgetLimitResume"><input id="budgetLimitResume" data-setting="resumeAfterUsageLimit" type="checkbox" /> Resume runs automatically when a usage limit resets</label>
+                  <button type="button" class="info-tip" aria-label="About resuming after a usage limit">i<span class="tip-content hidden">When a run pauses on a plan's session or weekly limit, Worca schedules its resume for 5 minutes after the reset, on the same engine, at most 3 times in a row. Cost caps still pause for you.</span></button>
+                </div>
+              </div>
               <div class="add-project-actions" style="margin-top:14px">
                 <button type="button" id="budgetReset" class="btn btn-ghost btn-mini">Clear limits</button>
                 <button type="button" id="budgetSave" class="btn btn-primary btn-mini">Save</button>
@@ -2527,6 +2544,7 @@
              "Will close" line names the run's GitHub issue source (GET /api/pr/remotes `issue`). -->
         <div class="shipit-draft">
           <label class="check-row" for="shipit-draft-input"><input id="shipit-draft-input" class="shipit-draft-input" type="checkbox" /> Open as draft</label>
+          <label class="check-row" for="shipit-watch-input"><input id="shipit-watch-input" class="shipit-watch-input" type="checkbox" /> Watch PR</label>
           <small class="shipit-closes hint" hidden></small>
         </div>
         <div class="shipit-try" hidden data-min-level="advanced" aria-label="Try it first"></div>

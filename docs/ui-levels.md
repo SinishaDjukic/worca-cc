@@ -167,12 +167,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner, retained-work banner | all |
+| Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
+| Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
+| Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
 | Run header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the Overview cost card's Away mode share | S |
 | "Answered for you": one group per ask (kind · time · model · cost of its review, or "review stopped" and its lower bound), the answers, Check; the heading's answer count and what the Away mode reviews cost | S |
 | Diff tab (live worktree while running, the final patch after) | A |
 | Live log pane (run page › Logs), log search / copy / auto-scroll | A |
+| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
@@ -188,12 +192,41 @@ The **Auto** workflow option is available for both targets — a project and a w
 | List, project filter, Refresh; Overview (verdict, findings, duration, cost, task); Clarify tab; Resume | S |
 | Header cost and its breakdown (agents, Away mode, Auto workflow, run title; stopped reviews and stopped agent turns apart); the glance and Overview cost's Away mode share | S |
 | "Answered for you", as on the run page | S |
+| History: usage-limit notice | S |
 | "Files changed" list on the Overview | S — the stand-in for the Diff tab |
 | Diff tab, diff pill, inline comments; Create PR / View PR; branch line; ⋯ menu (Archive, Restore, Report); Artifacts tab; Archived toggle in the Runs header (with Restore) | A |
 | Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
 | Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
+| Step log drawer under the Workflow graph, as on the run page | E — follows the Logs tab |
+
+An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
+(Draft, Merge conflicts, Changes requested, checks failed or running, Review
+required, Out of date, Blocked, Ready to merge) in two places: the footer of the
+run page's pull request button, and a "Pull request" row under the review verdict
+on the Overview tab (one row per repository for a workspace run). Both show at
+every level; the Watch switch in them is advanced.
+
+Watch PR is opt-in, also in Ship It. It supports github.com and Azure DevOps
+([how Azure maps](azure-devops.md#watch-pr)) and batches
+failed checks, merge conflicts and trusted author, owner, member or collaborator
+feedback into at most three automatic fix runs. Checks that also fail on the base
+branch are skipped, counted apart on the checks line ("· 2 also failing on dev")
+and named in the fix brief as not the PR's to fix. A failed GitHub Actions check is
+re-run (an Azure build policy re-queued) once per PR commit before any fix; a failure the base head has no result for
+yet waits up to 30 minutes for it; and when the PR is behind its base and the base
+head passes the failing check, the first fix run only merges the base in. Review
+text is untrusted code feedback. Each fix run is an unattended
+Implement ⇄ Review on the PR's own branch, run through the built-in PR fix
+workflow (`wf_pr_fix`, internal and not listed in the picker): it keeps the
+original run's guardrails and engine (and a mock run's mock flag), never asks a
+person, and uses the project's default agent models. A PR merged or closed while
+a fix ran is not pushed to. Turning the watch off stops new work;
+already-active work drains through publishing. Turning an idle watch off and on
+resets its run allowance. Worca replies to review threads without resolving them.
+With the watch off, or waiting for a person, Resolve on a conflicted PR merges the
+base branch in once.
 
 ### Workflows
 
@@ -234,7 +267,7 @@ inside the view.
 | Element | Level |
 |---|---|
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
-| Runs tab: Budget & cost limits | S |
+| Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Ask Worca tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
 | Guardrails tab (list, details); Memory tab (files) | A |
