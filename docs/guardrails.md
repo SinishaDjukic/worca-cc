@@ -362,7 +362,7 @@ enforces the set's latest definition.
   - **Log:** every call, refused ones included, is one JSON line in
     `~/.worca-cc/logs/ask-web.jsonl` (redacted, clipped URLs; never page text,
     queries or keys; rotated at 5 MB). The chat is denied `Read` on `logs/`.
-  **Agent mode (on by default, per chat).** The Agent switch in the Ask composer
+  **Agent mode (always on where the host allows it).** Every Ask chat
   lets the assistant run shell commands in Worca terminals (`run_command`,
   `read_output`, `wait_for`, `stop_command`, `list_blocks`): tests, builds, git
   status, and file changes through commands when you ask for them. The shell runs

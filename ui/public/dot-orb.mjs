@@ -3,7 +3,8 @@
 // while a turn runs: thinking (two bright points wander over it), a tool call (a bright patch sweeps across), writing
 // (it spins faster under a rolling wave). Phases ease into each other.
 // A factory, not module state: the caller hands in doc/win, so the jsdom suites drive it with no canvas backend
-// (no requestAnimationFrame there = no getContext call, only data-phase). thinking-orb.mjs stays the Ask panel's.
+// (no requestAnimationFrame there = no getContext call, only data-phase). Both chats use it: the Workflows chat dock
+// (workflows/chat-dock.mjs) and Ask Worca (ask-panel.mjs); thinking-orb.mjs stays only app.js's Auto-proposal page's.
 
 const TAU = Math.PI * 2;
 const TILT = 0.36;                 // seen a little from above
@@ -16,6 +17,17 @@ export const ORB_PHASES = Object.freeze({
   write: Object.freeze({ spin: 1.6, base: 0.92, twins: 0, spot: 0, wave: 1 }),
 });
 const KEYS = Object.keys(ORB_PHASES.rest);
+
+/** The live turn's orb phase: a tool or sub-agent still running = 'tool'; the answer streaming = 'write' (the server's
+ *  "Writing" label once a tool ran, or text before any tool); anything else = 'think'. `live` is the chat model's
+ *  live() ({label, text}), `blocks` the live message's blocks — Ask and the Workflows chat stream the same ones. */
+export function turnPhase(live, blocks = []) {
+  if (!live) return 'rest';
+  const acts = (Array.isArray(blocks) ? blocks : []).filter((b) => b && (b.kind === 'tool' || b.kind === 'agent'));
+  if (acts.some((b) => (b.status || 'running') === 'running')) return 'tool';
+  if (live.label === 'Writing' || (live.text && !acts.length)) return 'write';
+  return 'think';
+}
 
 /** Evenly spread points on a unit sphere (golden-angle spiral), flat [x, y, z, …]. */
 const spheres = new Map();
@@ -68,6 +80,9 @@ export function createDotOrbs({ doc, win }) {
     try { o.color = (win.getComputedStyle && win.getComputedStyle(o.el).color) || ''; } catch { o.color = ''; }
     if (!o.color) o.color = '#18181b';
   }
+  // An orb out of the loop misses every recolor(): it re-reads its colour once set() brings it back (Ask re-parents
+  // one canvas into each turn, so a theme switch between turns lands while it is out).
+  const drop = (o) => { all.delete(o); o.colored = false; };
 
   function draw(o) {
     if (!o.ctx) return;
@@ -115,7 +130,7 @@ export function createDotOrbs({ doc, win }) {
     for (const o of all) {
       if (o.idle) continue;
       // A rebuilt thread may re-attach an orb a frame later: give a detached one a moment before dropping it.
-      if (!o.el.isConnected) { if (o.gone++ > 120) all.delete(o); else busy = true; continue; }
+      if (!o.el.isConnected) { if (o.gone++ > 120) drop(o); else busy = true; continue; }
       o.gone = 0;
       const tg = ORB_PHASES[o.phase];
       if (!o.el.offsetParent) {                    // out of sight (the dock collapsed): no drawing, rest snaps
@@ -158,7 +173,7 @@ export function createDotOrbs({ doc, win }) {
 
   return {
     create(size = 22, cls = '') {
-      for (const o of all) if (o.idle && !o.el.isConnected) all.delete(o);   // a cleared chat's orbs; set() adds one back
+      for (const o of all) if (o.idle && !o.el.isConnected) drop(o);   // a cleared chat's orbs; set() adds one back
       const el = doc.createElement('canvas');
       el.className = `dot-orb${cls ? ` ${cls}` : ''}`;
       el.dataset.s = String(size);

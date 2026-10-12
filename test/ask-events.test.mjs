@@ -201,6 +201,14 @@ test('labelForTool: representative worca labels, Task/Agent → null, web tools 
       assert.equal(labelForTool('mcp__worca__get_run', {}), 'Reading run');
       assert.equal(labelForTool('mcp__worca__read_attachment', { id: 'a' }, { a: 'x.md' }), 'Reading x.md');
       assert.equal(labelForTool('mcp__worca__read_memory', { name: 'testing' }), 'Reading memory: testing');
+      assert.equal(labelForTool('mcp__worca__get_agent', { key: 'deckBuilder' }), 'Reading agent: deckBuilder');
+      assert.equal(labelForTool('mcp__worca__get_agent', {}), 'Reading an agent');
+      assert.equal(labelForTool('mcp__worca__get_workflow', { id: 'wf_1' }), 'Reading a workflow');
+      assert.equal(labelForTool('mcp__worca__read_file', { path: '/w/tree/src/app.mjs' }), 'Reading app.mjs');
+      assert.equal(labelForTool('mcp__worca__read_file', { path: 'C:\\w\\tree\\app.mjs' }), 'Reading app.mjs', 'Windows paths too');
+      assert.equal(labelForTool('mcp__worca__read_file', {}), 'Reading a file');
+      assert.equal(labelForTool('mcp__worca__grep', { pattern: 'x' }), 'Searching files');
+      assert.equal(labelForTool('mcp__worca__glob', { pattern: '**/*.mjs' }), 'Listing files');
 
       assert.equal(labelForTool('Task', {}), null);
       assert.equal(labelForTool('Agent', {}), null);

@@ -281,6 +281,39 @@ test('menu item: clicking it posts the same ticket as the button', async () => {
   assert.equal(ctx.server.posts[0].scheduledFor, iso(reset + 5 * MIN));
 });
 
+/** A usage-limit-paused run is open in the Chat run panel. Chat is the boot view: no Runs view loaded the schedules. */
+async function pausedPanel(ctx, { limitResetAt }) {
+  const { doc, recv, settle, go } = ctx;
+  recv({ type: 'hello', runs: [{ runId: 'r1', title: 'Feat', projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: 'pl_1' }] });
+  await settle();
+  recv({ type: 'done', runId: 'r1', status: 'paused', reason: 'usage_limit', detail: DETAIL_TEXT, limitEngine: 'claude', limitResetAt });
+  await settle(8);
+  assert.equal(ctx.fetchCalls.some((c) => c.url.split('?')[0].endsWith('/api/schedules')), false, 'nothing loaded the schedules yet');
+  go('chat/new/run/r1');
+  await settle(10);
+  const screen = doc.querySelector('[data-chat-panel] .crp-host > .rd');
+  assert.ok(screen, 'the run is open in the Chat panel');
+  return screen;
+}
+
+test('Chat panel: a resume already booked keeps "Resume at" out of the Resume menu once the schedules load', async () => {
+  const server = makeServer();
+  server.tickets = [ticket()];
+  const ctx = await boot({ level: 'advanced', server });
+  const screen = await pausedPanel(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
+  assert.equal(screen.querySelector('.rd-resume-limit').hidden, true, 'C: the booked ticket hides the item');
+});
+
+test('Chat panel: a schedules-changed frame repaints the open run\'s Resume menu B→C', async () => {
+  const ctx = await boot({ level: 'advanced' });
+  const screen = await pausedPanel(ctx, { limitResetAt: iso(Date.now() + 2 * 60 * MIN) });
+  assert.equal(screen.querySelector('.rd-resume-limit').hidden, false, 'B offers the item');
+  ctx.server.tickets = [ticket()];
+  ctx.recv({ type: 'schedules-changed' });
+  await ctx.settle(10);
+  assert.equal(screen.querySelector('.rd-resume-limit').hidden, true, 'C hides the item');
+});
+
 test('History: a paused saved run with state.limitResetAt shows .hd-limit-notice in B', async () => {
   const reset = Date.now() + 2 * 60 * MIN;
   const ctx = await bootDetail({

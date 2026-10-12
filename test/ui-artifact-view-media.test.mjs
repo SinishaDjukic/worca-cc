@@ -119,3 +119,48 @@ test('groupArtifactsByKind: first-appearance order, collapse strictly above thre
     } },
   ]);
 });
+
+test('audio and video play inline from the raw route; without a url they degrade to the download stub', async () => {
+  const a = mountIn();
+  await renderArtifact({ kind: 'deck-asset', relPath: 'deck/narration.mp3', url: '/x/n.mp3' }, a);
+  const audio = a.querySelector('audio');
+  assert.ok(audio, 'an <audio> player');
+  assert.equal(audio.getAttribute('src'), '/x/n.mp3');
+  assert.ok(audio.hasAttribute('controls'), 'the browser\'s own controls');
+  assert.equal(audio.getAttribute('preload'), 'metadata', 'never pulls the whole file up front');
+  assert.ok(a.classList.contains('kind-audio'));
+  const v = mountIn();
+  await renderArtifact({ kind: 'extra', relPath: 'clips/c.webm', url: '/x/c.webm' }, v);
+  const video = v.querySelector('video');
+  assert.ok(video && video.hasAttribute('controls') && video.hasAttribute('playsinline'));
+  assert.equal(video.getAttribute('src'), '/x/c.webm');
+  assert.ok(v.classList.contains('kind-video'));
+  const none = mountIn();
+  await renderArtifact({ kind: 'extra', relPath: 'clips/c.mp4' }, none);
+  assert.equal(none.querySelector('video'), null, 'never src=""');
+  assert.ok(none.querySelector('a[download]'));
+});
+
+test('the video player preloads metadata only too, and both players are named for assistive tech by the file name alone', async () => {
+  const v = mountIn();
+  await renderArtifact({ kind: 'extra', relPath: 'clips/c.webm', url: '/x/c.webm' }, v);
+  assert.equal(v.querySelector('video').getAttribute('preload'), 'metadata');
+  assert.equal(v.querySelector('video').getAttribute('aria-label'), 'c.webm');
+  const a = mountIn();
+  await renderArtifact({ kind: 'deck-asset', relPath: 'deck/narration.mp3', url: '/x/n.mp3' }, a);
+  assert.equal(a.querySelector('audio').getAttribute('aria-label'), 'narration.mp3');
+  const w = mountIn();
+  await renderArtifact({ kind: 'deck-asset', relPath: 'C:\\Users\\me\\run\\deck\\narration.mp3', url: '/x/n.mp3' }, w);
+  assert.equal(w.querySelector('audio').getAttribute('aria-label'), 'narration.mp3', 'a Windows path names the file, not the home directory');
+});
+
+test('a video player is named by the file alone on a Windows path; a path with no file name falls back to "audio" / "video"', async () => {
+  const w = mountIn();
+  await renderArtifact({ kind: 'clip', relPath: 'C:\\Users\\me\\run\\media\\c.webm', url: '/x/c.webm' }, w);
+  assert.equal(w.querySelector('video').getAttribute('aria-label'), 'c.webm');
+  const { renderAudio, renderVideo } = await import('../ui/public/artifact-view-media.mjs');
+  const a = mountIn();
+  assert.equal(renderAudio('/x/a', '', a).getAttribute('aria-label'), 'audio');
+  const v = mountIn();
+  assert.equal(renderVideo('/x/v', 'media/', v).getAttribute('aria-label'), 'video');
+});
