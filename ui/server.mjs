@@ -34,6 +34,7 @@ import {
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
+import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
 import { runCardResults, lastArtifactsWindow, RUN_CARD_ARTIFACTS, RUN_CARD_FINISHED } from '../src/core/ask/run-card-extras.mjs';
@@ -4453,20 +4454,29 @@ const ARTIFACT_RAW_MAX_BYTES = 25 * 1024 * 1024;   // the text route caps at 2 M
 const safeFilename = (rel) => String(rel).split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'artifact';
 
 /** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's
- *  indexed rows (never a filesystem path); a stored `..` row is unreachable. */
-async function sendArtifactRaw(res, row, rel) {
+ *  indexed rows (never a filesystem path); a stored `..` row is unreachable.
+ *  `download` (the routes' `?download=1`, the viewer's and the browser's Download)
+ *  is always an `attachment` under a Windows-safe name, takes any extension (no
+ *  known type -> application/octet-stream) and has no preview ceiling: sendFile
+ *  streams it, nothing is buffered. The preview form keeps its 415, and its 25 MB
+ *  413 for every kind EXCEPT audio/video: a player streams and seeks with HTTP
+ *  Range (send's default, on both forms), so a long video plays inline at any size
+ *  without the file ever being buffered. */
+async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   const hit = await resolveIndexedArtifactFileForRow(row, rel);
   if (!hit) return res.status(404).json({ error: 'artifact not found' });
   const mime = mimeForPath(hit.rel);
-  if (!mime) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
+  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
   let size;
   try { size = (await fsp.stat(hit.file)).size; } catch { return res.status(404).json({ error: 'artifact not found' }); }
-  if (size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
   const kind = viewerKindFor(hit.rel);
+  const anySize = download || kind === 'audio' || kind === 'video';
+  if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
   // Set Content-Type explicitly so express/send does not re-derive it from the ext.
-  res.set('Content-Type', mime);
+  res.set('Content-Type', mime || 'application/octet-stream');
   res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Content-Disposition', `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+  res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
+    : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
   res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
   // Defense in depth for scriptable markup: even opened in a top-level tab the
   // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
@@ -4491,6 +4501,13 @@ async function sendArtifactRaw(res, row, rel) {
   // not a header the caller chooses.
   res.sendFile(path.basename(hit.file), { root: path.dirname(hit.file), dotfiles: 'allow', cacheControl: false }, (err) => {
     if (!err || res.headersSent) return;
+    // A player's Range past the end (or any Range on an empty file) is send's 416: answer it as one, with the
+    // Content-Range send already set — never a 500. Other errors are JSON, not the artifact's type or name.
+    if (err.status === 416) return res.status(416).end();
+    res.removeHeader('Content-Disposition');
+    res.removeHeader('Content-Type');
+    // A conditional request send refuses (If-Match, If-Unmodified-Since) is a 412, not a server error.
+    if (err.status === 412) return res.status(412).end();
     if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'artifact not found' });
     res.status(500).json({ error: err.message || String(err) });
   });
@@ -4517,7 +4534,7 @@ app.get('/api/runs/:id/artifact-raw/*', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -5586,7 +5603,7 @@ app.get('/api/history/:key/:id/artifact-raw/*', async (req, res) => {
   try {
     const row = lookupPipelineRow(req.params.key, req.params.id);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -8118,7 +8135,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*', async (req, res) => {
   try {
     const row = lookupPipelineRow(`workspaces/${req.params.id}`, req.params.runId);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 

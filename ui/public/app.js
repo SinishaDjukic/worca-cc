@@ -173,12 +173,16 @@ import { renderAutoProposal, proposalBands } from './auto-proposal.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { indexByKey } from '../../src/shared/graph/agent-meta.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
-import { BINARY_KINDS, isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
+import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 // artifact-view-media.mjs re-exports artifact-view.mjs's whole surface and widens
 // dispatch to the byte kinds, so upstream's module stays byte-identical;
 // artifact-view-c4.mjs re-exports THAT and adds the `c4` kind (the <worca-c4> viewer).
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
+// The popup viewer every artifact opener uses (Chat P5).
+import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+import { createArtifactBrowser } from './artifacts/browser.mjs';
+import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
@@ -3364,10 +3368,11 @@ if (typeof window !== 'undefined') {
     artifactsByNodeCycle,
     viewerKindFor,
     renderArtifact,
-    renderRunArtifacts,
+    mountRunArtifacts,
     buildRdArtifacts,
     buildHdArtifacts,
-    showArtifactViewer,
+    openRunArtifactPopup,
+    downloadRunArtifact,
     attachNodeArtifactAffordances,
     buildNodeArtifactAffordance,
   });
@@ -26311,28 +26316,6 @@ function showViewer(title, text) {
   el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-/** Prepare the modal for a typed artifact render and return the mount host.
- *  Mounts a host div inside the <pre id="viewer">, exactly as upstream does, so
- *  upstream's DOM tests describe this path unchanged. The <pre>'s white-space is
- *  neutralised by `.artifact-view{white-space:normal}`, which is why an
- *  iframe/img/embed is safe in here.
- *  `title` is the FULL heading text, as it is for showViewer: callers pass
- *  their own "Saved: "/"Artifact: " prefix. */
-function showViewerHost(title) {
-  el.viewerFull.hidden = false;
-  el.viewerTitle.textContent = title || 'Saved pipeline';
-  const host = document.createElement('div');
-  host.className = 'artifact-view';
-  el.viewer.replaceChildren(host);
-  // The host mounts INSIDE <pre class="viewer">, whose 480px max-height would
-  // clamp .artifact-view's 80vh and the 70vh <embed> a PDF renders into —
-  // nested scrollbars and a PDF squeezed under half its intended height. The
-  // <pre>'s own typographic shell is for saved markdown, not for a typed viewer.
-  el.viewer.classList.add('holds-artifact');
-  el.viewerCard.classList.remove('hidden');
-  el.viewerCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  return host;
-}
 // Full screen for a typed artifact (a C4 diagram, a deck, a PDF, an image): the browser's own full
 // screen on the modal's card where the Fullscreen API is available, else the card fills the window.
 // Either way `.is-full` is the one class the CSS keys on, so the two paths look the same.
@@ -27273,55 +27256,19 @@ function scrollToQuestions(screen) {
   if (focusable && typeof focusable.focus === 'function') focusable.focus({ preventScroll: true });
 }
 
-/** End result chip -> the saved-artifact viewer, through the indexed routes:
- *  Running knows only the run's pipeline id (`/api/runs/:id/artifact`); History
- *  carries its record and takes the keyed project/workspace route. */
+/** A path someone clicked — the End result chip (graph and History header), a `.log-artifact` line — opens the popup
+ *  viewer. `srcKind` is the artifact KIND when the caller has one (a `.log-artifact` carries it in data-kind): an
+ *  extension-less plan/review/result resolves by kind only through it. The run's own row for that file, when the page
+ *  holds one, supplies its size, step and cycle. Running reads the by-id routes; History passes its record and reads
+ *  the keyed project/workspace routes. */
 async function openRunArtifact(ctx, path, srcKind) {
   const r = ctx && ctx.run;
-  if (!r || !path) return;
+  if (!r || !path) return null;
   const rel = String(path);
-  const name = rel.split('/').filter(Boolean).pop();
-  const pid = r.pipelineId || r.id || ctx.runId;
-  const base = ctx.record ? historyRunUrl(pid, ctx.record, '').replace(/\/$/, '') : `/api/runs/${encodeURIComponent(pid)}`;
-  // The artifact KIND when the caller has one. A `.log-artifact` anchor carries it
-  // in `data-kind` and the click handler used to drop it, so this always fell
-  // through to the extension table — and for a file with no extension
-  // viewerKindFor's kind fallback (plan/review -> markdown, result -> diff) could
-  // never fire from a log line, while the Artifacts tab rendered the same file
-  // correctly. Absent, the extension table decides, exactly as before.
-  //
-  // `view` picks the BRANCH; the SOURCE kind is what reaches renderArtifact,
-  // which resolves the view itself. Handing it the already-resolved value lost
-  // the mapping — viewerKindFor('markdown', 'PLAN') is 'text', because 'markdown'
-  // is not one of the plan/review/result kinds the extension-less fallback knows.
-  // showArtifactViewer always passed the source kind; that is the other half of
-  // why the Artifacts tab rendered these correctly and this path did not.
-  const view = viewerKindFor(srcKind || null, rel);
-  // Bytes the viewer frames/embeds/downloads go through the raw route; text kinds
-  // still fetch the JSON {rel,text} the existing route returns. The gate is kept
-  // byte-for-byte as it already was (BINARY_KINDS + 'html'); artifact-kinds.mjs
-  // also exports RAW_KINDS, the same set as one token, but switching is a
-  // gratuitous diff here.
-  if (BINARY_KINDS.has(view) || view === 'html') {
-    // The text branch below titles with the server's run-relative `rel`. Here there
-    // is no server round-trip to supply one, and a `.log-artifact` click hands us
-    // the artifact event's ABSOLUTE path — which put the user's home directory in
-    // the modal heading for a file the Artifacts tab titles `deck.html`. Keep an
-    // already-relative rel (`deck/deck.html` says more than the basename does).
-    const url = rawArtifactUrl(base, rel);
-    const err = await rawArtifactError(url);
-    if (err) { showViewer(`Saved: ${name}`, `Error: ${err}`); return; }
-    await renderArtifact({ kind: srcKind || null, relPath: rel, url },
-      showViewerHost(`Saved: ${isAbsoluteArtifactPath(rel) ? name : rel}`));
-    return;
-  }
-  try {
-    const res = await fetch(`${base}/artifact?rel=${encodeURIComponent(rel)}`);
-    const data = await safeJson(res);
-    if (!res.ok) { showViewer(`Saved: ${name}`, `Error: ${data.error || res.status}`); return; }
-    await renderArtifact({ kind: srcKind || null, relPath: rel, text: data.text || '' },
-      showViewerHost(`Saved: ${data.rel || name}`), artifactViewerDeps());
-  } catch (e) { showViewer(`Saved: ${name}`, `Error: ${e.message}`); }
+  const rows = Array.isArray(r.artifacts) ? r.artifacts : [];
+  const at = closestArtifactIndex(rows, rel);
+  const known = at >= 0 ? rows[at] : null;
+  return openRunArtifactPopup(ctx, { ...(known || {}), kind: srcKind || (known && known.kind) || null, relPath: rel });
 }
 
 // ── Per-step artifact viewers (Phase 3 UI) ──────────────────────────────────
@@ -27395,14 +27342,6 @@ function closestArtifactIndex(list, path, accept = null) {
   return best;
 }
 
-// Artifact paths reach the UI as BOTH shapes: indexed rows carry a run-relative
-// `relPath`, live WS events carry an absolute `path`. Anything a user should read
-// is run-relative, so callers that display one need to tell them apart. POSIX
-// root, a Windows drive, or a UNC share.
-function isAbsoluteArtifactPath(p) {
-  return /^(\/|\\\\|[A-Za-z]:[\\/])/.test(String(p || ''));
-}
-
 // Synthetic/transient markers reach the UI (as live WS artifact events and, for
 // 'pipeline'/'live-log', as index rows) but are NOT user-facing artifacts:
 // 'pipeline' is the run DIR itself (never on-disk-resolvable, so its viewer 404s),
@@ -27426,56 +27365,87 @@ function fmtArtifactBytes(n) {
   return `${(b / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Open one artifact in the shared viewer modal with the typed viewer. Resolved by
-// pipeline id ALONE — GET /api/runs/:id/artifact?rel= for the decoded text kinds,
-/** Probe a raw-artifact URL before framing it. The byte branches hand the URL
- *  straight to an <iframe>/<embed>/<img>, which render the route's JSON error
- *  body as a blank frame, an empty embed or a broken-image icon — so a file that
- *  went between listing and click (routine: the audit clears shots/ every cycle
- *  and the builder rewrites deck/), one with no previewable type (415) or one
- *  over the 25 MB ceiling (413) left the modal open on an empty shell saying
- *  nothing, while the text branch beside it has always shown `Error: …`.
- *  HEAD carries no body on the happy path — it does not pull a 25 MB PDF twice —
- *  and only a failure spends a second request reading the message. Returns null
- *  when the bytes are servable. */
-async function rawArtifactError(url) {
-  try {
-    const head = await fetch(url, { method: 'HEAD' });
-    if (head.ok) return null;
-    const body = await safeJson(await fetch(url));
-    return (body && body.error) || `HTTP ${head.status}`;
-  } catch (e) { return (e && e.message) || 'could not be loaded'; }
+// ── The popup viewer (Chat P5) ───────────────────────────────────────────────
+// Every artifact opener — the Artifacts tabs, the Agents tab's per-node rows, `.log-artifact` lines, the graph's End
+// result chip, the History header's result link and the Chat (chatDeps.openArtifact) — opens ONE popup
+// (./artifacts/viewer.mjs). #viewer-card keeps only the plain-text notices showViewer() writes.
+
+/** The live run, or the open History run's saved state, an artifact ctx names — for its step labels. */
+function artifactRunFor(ctx = {}) {
+  if (ctx.run) return ctx.run;
+  if (ctx.runId && runs.has(ctx.runId)) return runs.get(ctx.runId);
+  const pid = ctx.pipelineId || ctx.runId;
+  if (!pid) return null;
+  for (const r of runs.values()) if (r && (r.pipelineId === pid || r.id === pid)) return r;
+  const hs = histDetailState;
+  return hs && hs.id === pid && hs.data && hs.data.state ? hs.data.state : null;
 }
 
-// GET /api/runs/:id/artifact-raw/<segments> for the byte kinds — the same gates
-// openRunArtifact uses, so live and History share one path.
-async function showArtifactViewer(pid, artifact) {
+/** The artifact routes' base for a ctx ({pipelineId?, runId?, run?, record?}): a saved run's keyed project/workspace
+ *  family when the caller holds its History record, else the by-id family (/api/runs/:id resolves any store key,
+ *  workspace runs included). '' when nothing names a run. */
+function runArtifactBase(ctx = {}) {
+  const r = artifactRunFor(ctx);
+  const pid = ctx.pipelineId || (r && (r.pipelineId || r.id)) || ctx.runId || '';
+  if (!pid) return '';
+  return ctx.record ? historyRunUrl(pid, ctx.record, '').replace(/\/$/, '') : `/api/runs/${encodeURIComponent(pid)}`;
+}
+
+/** The three URLs the viewer reads one artifact through. */
+function runArtifactUrls(base) {
+  return {
+    text: (rel) => `${base}/artifact?rel=${encodeURIComponent(rel)}`,
+    raw: (rel) => rawArtifactUrl(base, rel),
+    download: (rel) => `${rawArtifactUrl(base, rel)}?download=1`,
+  };
+}
+
+/** The viewer's `<Step>` for a node id; no node = the unattributed "Run" folder. */
+function artifactStepLabel(ctx, nodeId) {
+  if (nodeId == null || nodeId === '') return 'Run';
+  if (typeof ctx.nodeLabel === 'function') return ctx.nodeLabel(nodeId);
+  const r = artifactRunFor(ctx);
+  return nodeLabelLookup(r && r.stepper)(nodeId);
+}
+
+/** Open one artifact in the popup viewer. `ctx` = {pipelineId?, runId?, run?, record?, nodeLabel?} — a Chat ref
+ *  {runId, pipelineId, projectKey, workspaceId} is one; `list` = the files ←/→ step through. Resolves, once the first
+ *  preview has rendered, to the viewer handle (null when ctx names no run). */
+function openRunArtifactPopup(ctx, artifact, list = null) {
+  const c = ctx || {};
+  const base = runArtifactBase(c);
+  if (!base || !artifact) return Promise.resolve(null);
+  const viewer = openArtifactViewer({
+    doc: document,
+    win: window,
+    fetch: (u, o) => fetch(u, o),
+    artifact,
+    list: Array.isArray(list) && list.length ? list : null,
+    urls: runArtifactUrls(base),
+    // A row that does not say which step made it (a log line, the End chip) shows no step rather than a wrong one.
+    metaFor: (a) => ({ step: a && a.nodeId !== undefined ? artifactStepLabel(c, a.nodeId) : null, cycle: a ? a.cycle : null }),
+    deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
+  });
+  return viewer.ready.then(() => viewer);
+}
+
+/** A row's Download (the browser's hover button): the viewer's probe-then-save; a failure is a toast, the row has no
+ *  room for it. */
+async function downloadRunArtifact(ctx, artifact) {
+  const base = runArtifactBase(ctx || {});
   const rel = artifactRelOf(artifact);
-  const name = rel.split('/').filter(Boolean).pop() || (artifact && artifact.kind) || 'artifact';
-  const srcKind = artifact && artifact.kind;
-  const view = viewerKindFor(srcKind, rel);
-  const base = `/api/runs/${encodeURIComponent(pid)}`;
-  const host = showViewerHost(`Artifact: ${name}`);
-  if (BINARY_KINDS.has(view) || view === 'html') {
-    const url = rawArtifactUrl(base, rel);
-    const err = await rawArtifactError(url);
-    if (err) { host.textContent = `Error: ${err}`; return; }
-    await renderArtifact({ kind: srcKind, relPath: rel, url }, host);
-    return;
-  }
-  host.textContent = 'Loading…';
-  try {
-    const res = await fetch(`${base}/artifact?rel=${encodeURIComponent(rel)}`);
-    const data = await safeJson(res);
-    if (!res.ok) { host.textContent = `Error: ${data.error || res.status}`; return; }
-    await renderArtifact({ kind: srcKind, relPath: rel, text: data.text || '' }, host, artifactViewerDeps());
-  } catch (e) {
-    host.textContent = `Error: ${e.message}`;
-  }
+  if (!base || !rel) return;
+  const r = await downloadArtifact({ doc: document, fetch: (u, o) => fetch(u, o), url: runArtifactUrls(base).download(rel), name: artifactBaseName(rel) });
+  if (!r.ok) notify({ tone: 'err', title: 'Download failed', detail: r.error });
 }
 
-// One clickable artifact row (kind chip · name · byte size) that opens the viewer.
-function buildArtifactRow(a, pid) {
+// Chat P5 (CONTRACT §3): the Chat opens artifacts in this same popup. ask-panel reads chatDeps.openArtifact at call
+// time; chatDeps is P1's, declared at the top of this file beside askPanel, so it exists when this statement runs.
+chatDeps.openArtifact = (ref, artifact) => { openRunArtifactPopup(ref || {}, artifact); };
+
+// One clickable artifact row (kind chip · name · byte size) for the Agents tab's per-node list. It opens the popup with
+// its node's rows as the ←/→ list.
+function buildArtifactRow(a, pid, siblings = null) {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = 'artifact-row';
@@ -27484,7 +27454,7 @@ function buildArtifactRow(a, pid) {
     `<span class="artifact-kind mono">${escapeHtml(a.kind || '')}</span>`
     + `<span class="artifact-name">${escapeHtml(name)}</span>`
     + (a.bytes != null ? `<span class="artifact-bytes mono">${escapeHtml(fmtArtifactBytes(a.bytes))}</span>` : '');
-  row.addEventListener('click', () => { showArtifactViewer(pid, a); });
+  row.addEventListener('click', () => { openRunArtifactPopup({ pipelineId: pid }, a, siblings); });
   return row;
 }
 
@@ -27496,11 +27466,11 @@ function buildArtifactRow(a, pid) {
 function appendArtifactRows(mount, list, pid, expanded = null, keyPrefix = '') {
   for (const g of groupArtifactsByKind(list)) {
     if (!g.collapsed) {
-      for (const a of g.items) mount.appendChild(buildArtifactRow(a, pid));
+      for (const a of g.items) mount.appendChild(buildArtifactRow(a, pid, list));
       continue;
     }
     // Which groups are open lives OUTSIDE the DOM: every state frame repaints
-    // this pane from scratch (renderRunArtifacts starts with innerHTML = ''),
+    // this pane from scratch (the Agents tab rebuilds its per-node affordances),
     // so DOM-held state would snap the group shut on the next frame — while the
     // run is live, which is the only time 43 screenshots are arriving.
     const stateKey = `${keyPrefix}\u0000${g.kind}`;
@@ -27514,7 +27484,7 @@ function appendArtifactRows(mount, list, pid, expanded = null, keyPrefix = '') {
       + `<span class="artifact-name">${g.items.length} files</span>`;
     const body = document.createElement('div');
     body.className = 'artifact-bulk-list';
-    const fill = () => { if (!body.childElementCount) for (const a of g.items) body.appendChild(buildArtifactRow(a, pid)); };
+    const fill = () => { if (!body.childElementCount) for (const a of g.items) body.appendChild(buildArtifactRow(a, pid, list)); };
     body.hidden = !open0;
     if (open0) { fill(); toggle.setAttribute('aria-expanded', 'true'); }
     toggle.addEventListener('click', () => {
@@ -27588,71 +27558,67 @@ function attachNodeArtifactAffordances(cardsByNode, artifacts, pid, host = null)
   }
 }
 
-// Run-level grouped artifact browser: one card per node (ordered to match the
-// Agents dropdown via subsGroupsForRender), each a step header + its artifact
-// rows, with a trailing "Run" bucket for legacy/unattributed artifacts
-// (nodeId == null -> the '__run__' bucket). Shared by the live Running detail and
-// History (which fetches the plural endpoint before calling this).
-function renderRunArtifacts(mount, artifacts, pid, stateLike = {}) {
-  mount.innerHTML = '';
-  const list = (Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact);
-  if (!list.length) {
-    const empty = document.createElement('div');
-    empty.className = 'hint artifact-empty';
-    empty.textContent = '(no artifacts recorded)';
-    mount.appendChild(empty);
-    return;
-  }
-  const groups = artifactsByNodeCycle(list);
-  const orderKeys = Object.keys(subsGroupsForRender(stateLike.subAgents, stateLike.steps, stateLike.stepper));
-  const ordered = [];
-  const seen = new Set();
-  for (const k of orderKeys) {
+// The Artifacts tab (Running + History): the folder browser (./artifacts/browser.mjs) — a folder per step in the
+// Agents tab's order (subsGroupsForRender), "Cycle N" subfolders for a step that ran more than once, a closed folder
+// for a burst of one kind, the unattributed "Run" folder last, and a header search. ONE browser per section, built on
+// first paint and updated in place, so open folders, the search, scroll and focus survive every live frame. A row
+// opens the popup viewer with the tab's files as its ←/→ list.
+
+/** Node ids in the run's step order (the Agents tab's group order). */
+function runArtifactOrder(stateLike = {}) {
+  const out = [];
+  for (const k of Object.keys(subsGroupsForRender(stateLike.subAgents, stateLike.steps, stateLike.stepper))) {
     const nid = artifactNodeIdOf(k);
-    if (groups.has(nid) && !seen.has(nid)) { ordered.push(nid); seen.add(nid); }
+    if (!out.includes(nid)) out.push(nid);
   }
-  for (const nid of groups.keys()) {
-    if (nid !== '__run__' && !seen.has(nid)) { ordered.push(nid); seen.add(nid); }
-  }
-  if (groups.has('__run__')) ordered.push('__run__');
-  const byId = nodeLabelLookup(stateLike.stepper);
-  for (const nid of ordered) {
-    const byCyc = groups.get(nid);
-    if (!byCyc) continue;
-    const card = document.createElement('div');
-    card.className = 'artifact-group';
-    const head = document.createElement('div');
-    head.className = 'artifact-group-head';
-    head.innerHTML = `<b>${escapeHtml(nid === '__run__' ? 'Run' : byId(nid))}</b>`;
-    card.appendChild(head);
-    const cycles = [...byCyc.keys()].sort((x, y) => x - y);
-    const multiCycle = cycles.length > 1;
-    for (const cyc of cycles) {
-      if (multiCycle) {
-        const cap = document.createElement('div');
-        cap.className = 'hint artifact-cycle';
-        cap.textContent = `cycle ${cyc}`;
-        card.appendChild(cap);
-      }
-      appendArtifactRows(card, byCyc.get(cyc), pid, expandedArtifactSet(mount), `${nid}:${cyc}`);
-    }
-    mount.appendChild(card);
-  }
+  return out;
 }
 
-// Running-detail Artifacts tab: live r.artifacts, repainted in place on every
-// frame (like Overview/Agents) so newly-attributed artifacts appear as they land.
+/** Paint `artifacts` into the section's browser — built here on first use, or again after something cleared the
+ *  section. `ctx` names the run for the viewer and the downloads; `stateLike` ({subAgents, steps, stepper}) is read
+ *  at render time. Whatever the caller appended around the browser on its last paint (a truncation notice) goes. */
+function mountRunArtifacts(sec, artifacts, ctx, stateLike = {}, { emptyText = 'No artifacts' } = {}) {
+  sec.__afbCtx = { ctx: ctx || {}, stateLike: stateLike || {} };
+  const list = (Array.isArray(artifacts) ? artifacts : []).filter(isDisplayableArtifact);
+  const host = sec.__afbHost;
+  if (sec.__afb && host && host.parentNode === sec) {
+    while (host.nextSibling) host.nextSibling.remove();
+    while (host.previousSibling) host.previousSibling.remove();
+    sec.__afb.update(list);
+    return sec.__afb;
+  }
+  if (sec.__afb) sec.__afb.destroy();
+  const fresh = document.createElement('div');
+  fresh.className = 'afb-host';
+  sec.replaceChildren(fresh);
+  const labelOf = (id) => nodeLabelLookup(sec.__afbCtx.stateLike.stepper)(id);
+  sec.__afbHost = fresh;
+  sec.__afb = createArtifactBrowser({
+    doc: document,
+    host: fresh,
+    artifacts: list,
+    emptyText,
+    nodeLabel: labelOf,
+    order: () => runArtifactOrder(sec.__afbCtx.stateLike),
+    onOpen: (a, siblings) => { openRunArtifactPopup({ ...sec.__afbCtx.ctx, nodeLabel: labelOf }, a, siblings); },
+    onDownload: (a) => { downloadRunArtifact(sec.__afbCtx.ctx, a); },
+  });
+  return sec.__afb;
+}
+
+// Running-detail Artifacts tab: live r.artifacts, painted on every frame (like Overview/Agents) so newly-attributed
+// artifacts appear as they land — into the same browser, which keeps what the reader opened.
 function buildRdArtifacts(sec, ctx) {
   const paint = (c) => {
     const r = c.run;
-    renderRunArtifacts(sec, r.artifacts, r.pipelineId || r.id,
-      { subAgents: r.subAgents, steps: r.steps, stepper: r.stepper });
+    mountRunArtifacts(sec, r.artifacts, { run: r, runId: r.id },
+      { subAgents: r.subAgents, steps: r.steps, stepper: r.stepper }, { emptyText: 'No artifacts yet' });
     // Seeding is attempted from the REPAINT, not once at build: the section is
     // built a single time, so a hydration that failed at that moment (a server
-    // hiccup) would never be retried and a reloaded run would read "(no
-    // artifacts recorded)" for the life of the page. hydrateRunArtifacts no-ops
-    // once it has succeeded and while a request is in flight, so this settles
-    // into nothing; a persistent failure costs one cheap GET per state frame.
+    // hiccup) would never be retried and a reloaded run would read "No artifacts
+    // yet" for the life of the page. hydrateRunArtifacts no-ops once it has
+    // succeeded and while a request is in flight, so this settles into nothing;
+    // a persistent failure costs one cheap GET per state frame.
     hydrateRunArtifacts(r).then((added) => { if (added) paint(c); });
     // Seeding stops at a page ceiling. Rows are oldest-first, so what is missing
     // is the NEWEST — say so rather than letting a capped list read as the run.
@@ -27790,10 +27756,10 @@ function buildHdArtifacts(sec, record, data) {
   const pid = record && record.id;
   const st = (data && data.state) || {};
   const stateLike = { subAgents: st.subAgents, steps: st.steps, stepper: st.stepper };
-  if (!pid) { renderRunArtifacts(sec, [], null, stateLike); return; }
-  // Accumulated across pages: renderRunArtifacts rebuilds the mount from one array
-  // (and clears it, which is what removes the control below), so a page is appended
-  // here and the whole set re-grouped.
+  if (!pid) { mountRunArtifacts(sec, [], {}, stateLike); return; }
+  // Accumulated across pages: mountRunArtifacts hands the browser the whole array
+  // (and drops what was appended after it, which is what removes the control below),
+  // so a page is appended here and the whole set re-grouped.
   const seen = [];
   const loadPage = (offset) => fetch(`/api/runs/${encodeURIComponent(pid)}/artifacts${offset ? `?offset=${offset}` : ''}`)
     .then((res) => (res.ok ? res.json() : null))
@@ -27822,7 +27788,7 @@ function buildHdArtifacts(sec, record, data) {
       }
       const arts = body && Array.isArray(body.artifacts) ? body.artifacts : [];
       for (const a of arts) seen.push(a);
-      renderRunArtifacts(sec, seen, pid, stateLike);
+      mountRunArtifacts(sec, seen, { pipelineId: pid }, stateLike);
       if (failed) {
         if (offset) {
           const retry = document.createElement('button');
@@ -27855,7 +27821,15 @@ function buildHdArtifacts(sec, record, data) {
         sec.appendChild(note);
       }
     })
-    .catch(() => { renderRunArtifacts(sec, seen, pid, stateLike); });
+    .catch(() => { mountRunArtifacts(sec, seen, { pipelineId: pid }, stateLike); })
+    // A later page is only asked for by its control, which this repaint removed (disabling it had already dropped the
+    // focus): the focus goes on to the next page's control, else the list — never <body>, where Tab starts over.
+    .then(() => {
+      const at = document.activeElement;
+      if (!offset || (at && at !== document.body) || !sec.isConnected) return;
+      const next = sec.querySelector('.artifact-truncated:not(:disabled)') || sec.querySelector('.afb-folder, .afb-main');
+      if (next) next.focus({ preventScroll: true });
+    });
   loadPage(0);
 }
 

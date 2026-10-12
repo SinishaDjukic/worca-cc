@@ -3,7 +3,7 @@
 //
 // artifact-view.mjs is owned upstream and is kept byte-identical to origin/dev, so
 // a merge in either direction touches none of its lines. Everything this branch
-// adds — the image/pdf/html/binary viewers and the raw-bytes URL helper — lives
+// adds — the image/pdf/html/audio/video/binary viewers and the raw-bytes URL helper — lives
 // here, in a file upstream does not have, which cannot conflict by construction.
 //
 // The module deliberately re-exports upstream's whole surface, so a consumer
@@ -12,7 +12,7 @@
 //     -import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view.mjs';
 //     +import { artifactsByNodeCycle, viewerKindFor, renderArtifact } from './artifact-view-media.mjs';
 //
-// Dispatch is a strict widening: the four byte kinds are handled here and every
+// Dispatch is a strict widening: the raw kinds (RAW_KINDS) are handled here and every
 // other kind is delegated to upstream's renderArtifact unchanged, so upstream's
 // own tests describe upstream's behaviour exactly as before.
 import {
@@ -103,6 +103,30 @@ export function renderHtml(url, relPath, mount) {
   return frame;
 }
 
+/** <audio controls> against the raw route — the browser's own player. Seeking rides HTTP Range, which the raw
+ *  route answers (express sendFile). preload=metadata: nothing past the header is fetched until Play. */
+export function renderAudio(url, relPath, mount) {
+  const el = mount.ownerDocument.createElement('audio');
+  el.setAttribute('controls', '');
+  el.setAttribute('preload', 'metadata');
+  el.setAttribute('aria-label', String(relPath).split(/[\\/]/).pop() || 'audio');
+  el.setAttribute('src', url);
+  mount.replaceChildren(el);
+  return el;
+}
+
+/** <video controls playsinline> against the raw route. */
+export function renderVideo(url, relPath, mount) {
+  const el = mount.ownerDocument.createElement('video');
+  el.setAttribute('controls', '');
+  el.setAttribute('preload', 'metadata');
+  el.setAttribute('playsinline', '');
+  el.setAttribute('aria-label', String(relPath).split(/[\\/]/).pop() || 'video');
+  el.setAttribute('src', url);
+  mount.replaceChildren(el);
+  return el;
+}
+
 /** No preview attempt — a download link only. */
 export function renderBinary(url, relPath, mount) {
   const doc = mount.ownerDocument;
@@ -122,7 +146,7 @@ export function renderBinary(url, relPath, mount) {
  * table, so viewer / raw route / Ask attachment typing cannot drift), otherwise
  * upstream's answer, unchanged — including its `kind` fallback for extensionless
  * paths. Upstream's own unit test still describes upstream's behaviour exactly.
- * @returns {'image'|'pdf'|'html'|'binary'|'markdown'|'diff'|'json'|'text'}
+ * @returns {'image'|'pdf'|'html'|'audio'|'video'|'binary'|'markdown'|'diff'|'json'|'text'}
  */
 export function viewerKindFor(kind, relPath = '') {
   const byExt = kindForPath(relPath);
@@ -152,6 +176,8 @@ export async function renderArtifact(artifact, mount, deps = {}) {
     if (view === 'image') return renderImage(url, relPath, mount);
     if (view === 'pdf') return renderPdf(url, mount);
     if (view === 'html') return renderHtml(url, relPath, mount);
+    if (view === 'audio') return renderAudio(url, relPath, mount);
+    if (view === 'video') return renderVideo(url, relPath, mount);
     return renderBinary(url, relPath, mount);
   }
   return renderUpstreamArtifact(artifact, mount, deps);

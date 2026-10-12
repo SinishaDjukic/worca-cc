@@ -146,7 +146,7 @@ test('getPageContext on Chat: { view: "chat" } alone (never the dropdown fallbac
   chat.setPanelContext(null);
 });
 
-test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipeline id, a live run by its run id, the tab as asked; openArtifact is its Artifacts tab; members are read at call time', async () => {
+test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipeline id, a live run by its run id, the tab as asked; openArtifact opens the artifact popup (P5)', async () => {
   const { window, chat, recv } = await boot();
   chat.deps.openRunPanel({ pipelineId: 'aaaa1111', projectKey: 'proj-0000beef' }, { tab: 'artifacts' });
   assert.equal(window.location.hash, '#chat/new/run/aaaa1111/artifacts');
@@ -158,14 +158,10 @@ test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipel
   await settle();
   chat.deps.openRunPanel({ pipelineId: 'cccc3333', projectKey: 'proj-0000beef' }, { tab: 'clarify' });
   assert.equal(window.location.hash, '#chat/new/run/r1/clarify', 'a live run opens by its run id; the live screen maps clarify to qa');
+  // P5 points openArtifact at the popup viewer (its test: ui-run-artifacts "the Chat opens an artifact…").
   chat.deps.openArtifact({ pipelineId: 'cccc3333' }, { relPath: 'plan.md' });
-  assert.equal(window.location.hash, '#chat/new/run/r1/artifacts');
-  const orig = chat.deps.openRunPanel;
-  const seen = [];
-  chat.deps.openRunPanel = (ref, opts) => seen.push([ref, opts]);       // what P4 does
-  chat.deps.openArtifact({ runId: 'r9' }, { relPath: 'x' });
-  assert.deepEqual(seen, [[{ runId: 'r9' }, { tab: 'artifacts' }]]);
-  chat.deps.openRunPanel = orig;
+  assert.equal(window.location.hash, '#chat/new/run/r1/clarify', 'openArtifact opens the popup, it does not navigate');
+  assert.ok(window.document.querySelector('.apv'), 'the popup viewer');
 });
 
 test('openChat routes to Chat and stacks text in the composer without sending; a thread id opens that chat', async () => {

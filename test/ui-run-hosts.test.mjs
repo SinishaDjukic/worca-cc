@@ -773,13 +773,19 @@ test('openRunArtifact reads the End chip through the by-id route on Running and 
       await np.openRunArtifact({ run: r, runId: 'r1' }, '/tmp/p/plan.md');
       await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'proj-alpha-00000001' } }, '/tmp/p/plan.md');
       await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'workspaces/wks-a-00000001', target: 'workspace' } }, '/tmp/p/plan.md');
+      // A path with no row behind it carries no size: the popup sizes it with a HEAD on the same family's download
+      // form before it pulls the text.
       assert.deepEqual(urls, [
+        '/api/runs/abcd1234/artifact-raw/tmp/p/plan.md?download=1',
         '/api/runs/abcd1234/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+        '/api/history/proj-alpha-00000001/p1/artifact-raw/tmp/p/plan.md?download=1',
         '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+        '/api/workspaces/wks-a-00000001/runs/p1/artifact-raw/tmp/p/plan.md?download=1',
         '/api/workspaces/wks-a-00000001/runs/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
       ]);
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: plan.md', 'the payload lands in the saved-artifact viewer');
-      assert.equal(window.document.querySelector('#viewer-card').classList.contains('hidden'), false);
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'plan.md', 'the payload lands in the popup viewer');
+      assert.equal(window.document.querySelectorAll('.apv').length, 1, 'one popup: each open replaced the last');
+      assert.equal(window.document.querySelector('#viewer-card').classList.contains('hidden'), true, '#viewer-card is for plain-text notices only');
     } },
     { name: 'openRunArtifact titles the raw viewer with the file, never the absolute run path', run: async () => {
       // The text branch titles the viewer with the server's run-relative `rel`; the raw
@@ -792,10 +798,12 @@ test('openRunArtifact reads the End chip through the by-id route on Running and 
       const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
       r.pipelineId = 'abcd1234';
       await np.openRunArtifact({ run: r, runId: 'r1' }, '/Users/me/.worca-cc/runs/proj-00000001/run1/deck/deck.html');
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: deck.html');
-      // An already-relative rel keeps its shape — that is the more informative title.
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').title, 'deck.html', 'not even the tooltip carries the home directory');
+      // An already-relative rel keeps its shape in the tooltip; the heading is the file name.
       await np.openRunArtifact({ run: r, runId: 'r1' }, 'deck/deck.html');
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: deck/deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').title, 'deck/deck.html');
     } },
   ]);
 });
@@ -912,7 +920,8 @@ test('History: the header meta carries the End chip and the Overview the counts 
   assert.equal(link.title, '/tmp/p/plan.md');
   link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
   await new Promise((res) => setTimeout(res, 0));
-  assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed route, through historyRunUrl');
+  assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact-raw/tmp/p/plan.md?download=1',
+    '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed routes, through historyRunUrl (a HEAD sizes the file first)');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: true, result: { type: 'void' } } });
   assert.equal(screen.querySelector('.hd-meta .hd-result').textContent, '— completed');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
