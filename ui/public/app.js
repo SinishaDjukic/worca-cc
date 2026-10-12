@@ -27474,6 +27474,7 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       nodeClicks: !decor.record,
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
+      modelLabel: graphModelLabel,
     });
     GRAPH_MOUNTS.set(host, slot);
   }
