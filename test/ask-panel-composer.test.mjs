@@ -69,7 +69,7 @@ test('ask-panel-composer: attach → chip; send posts base64 attachments and the
   assert.match(ctx.doc.querySelector('.ask-msg-user').textContent, /summarize the notes/);
   assert.equal(ctx.doc.querySelector('textarea.ask-input').value, '');
   assert.equal(ctx.doc.querySelector('.ask-chip'), null, 'chips cleared after send');
-  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Ask Worca',
+  assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat',
     'no provisional title from the prompt — the header waits for the ask-title frame');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), TID);
   assert.deepEqual(ctx.wsSends.at(-1), { type: 'subscribe', threadId: TID });

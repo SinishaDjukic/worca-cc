@@ -31,7 +31,7 @@ const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () =
 
 // Boot app.js in jsdom with a controllable fetch (mirrors newpipeline-config.test.mjs).
 async function boot(handlers) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/#new' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class {

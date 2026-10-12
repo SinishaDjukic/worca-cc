@@ -1,4 +1,4 @@
-// test/ui-terminal-layout.test.mjs — the pane coexists with the Ask dock and toasts; no colour literals (#573).
+// test/ui-terminal-layout.test.mjs — the pane coexists with the page and the toasts; no colour literals (#573).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -6,9 +6,8 @@ import { readFileSync } from 'node:fs';
 const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
 
-test('opening the pane moves the Ask dock and toasts left of it, and the page content with them', () => {
+test('opening the pane moves the toasts left of it, and the page content with them', () => {
   assert.ok(css.includes('body.term-open .app{margin-right:var(--term-w,460px);}'));
-  assert.ok(css.includes('body.term-open .ask-dock{right:var(--term-w,460px);}'));
   assert.ok(css.includes('body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}'));
   assert.match(css, /\.term-pane\{position:fixed;top:0;right:0;bottom:0;width:var\(--term-w,460px\);z-index:39;/);
 });
@@ -47,12 +46,6 @@ test('the Commands list is gone: no rules for it, or for its toggle, remain', ()
 test('the xterm host has no padding or border: the frame lives on .term-screen, outside what FitAddon measures', () => {
   assert.ok(css.includes('.term-host{flex:1;min-height:0;min-width:0;padding:0;border:0;}'));
   assert.match(css, /\.term-screen\{[^}]*display:flex;flex-direction:column;\}/);
-});
-
-test('phones: the Ask pill never covers the open terminal\'s input row', () => {
-  const at = css.indexOf('@media (max-width:760px){ body.term-open .app{margin-right:0;}');
-  const block = css.slice(at, css.indexOf('} }', at) + 3);
-  assert.ok(at > 0 && block.includes('body.term-open .ask-dock>.ask-pill{display:none;}'), block);
 });
 
 test('every one of xterm\'s 16 ANSI colours has a token, and the dark tones of the base eight differ per theme', () => {

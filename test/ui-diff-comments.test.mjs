@@ -662,7 +662,7 @@ test('a poke never destroys an open composer draft', async () => {
   assert.ok(doc.querySelector('[data-comment-id="dc_00000001"]'), 'and the new card still arrived');
 });
 
-test('workspace runs POST the member project from the rendered section and the page context names it', async () => {
+test('workspace runs POST the member project from the rendered section', async () => {
   const ctx = await bootWsComments();
   const { window } = ctx;
   const doc = window.document;
@@ -682,19 +682,6 @@ test('workspace runs POST the member project from the rendered section and the p
         { project: 'team-00000001', path: 'src/a.js', side: 'new', line: 2, body: 'member note' },
         'the member is explicit, taken from the section that was rendered — never inferred (D4)');
     } },
-    { name: 'the page context names the member project of the open workspace diff file', run: async () => {
-      assert.equal(doc.querySelector('#hist-detail .hd-diff-file').dataset.project, 'team-00000001');
-      click(window, doc.querySelector('.ask-pill'));
-      await settle(window, 8);
-      const input = doc.querySelector('textarea.ask-input');
-      input.value = 'what do you make of this file?';
-      doc.querySelector('[data-ask-send]').click();
-      await settle(window, 8);
-      const post = ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).pop();
-      assert.ok(post, 'the panel POSTed');
-      assert.equal(JSON.parse(post.opts.body).context.diffPath, 'src/a.js (member team-00000001)',
-        'add_diff_comment needs memberProjectKey and never guesses it');
-    } },
   ]);
 });
 
@@ -713,25 +700,30 @@ test('Ask Worca on a card appends the exact reference (and the reply count) and 
   const { window } = ctx;
   const doc = window.document;
   await checkRows([
-    { name: 'the card\'s Ask Worca button appends the exact reference and sends nothing', run: async () => {
+    { name: 'the card\'s Ask Worca button opens Chat with the exact reference and sends nothing', run: async () => {
       click(window, doc.querySelector('[data-comment-id="dc_00000001"] .hd-cmt-ask'));
       await settle(window, 6);
+      assert.equal(window.location.hash, '#chat', 'Ask Worca opens the Chat page');
       const ta = doc.querySelector('.ask-input');
       assert.ok(ta, 'the Ask panel is mounted by the app boot');
-      assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new)] "please add a test"');
+      assert.equal(ta.value, '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"', 'the run rides along: Chat has no run of its own');
+      await openDetail(ctx);                                            // back to the Diff tab for the next comment
+      await settle(window, 8);
       click(window, doc.querySelector('[data-comment-id="dc_00000002"] .hd-cmt-ask'));
       await settle(window, 6);
       assert.deepEqual(ta.value.split('\n'), [
-        '[diff comment dc_00000001 — src/a.js:2 (new)] "please add a test"',
-        '[diff comment dc_00000002 — src/a.js:3 (new)] "and this one"',
+        '[diff comment dc_00000001 — src/a.js:2 (new), run fcec04e8] "please add a test"',
+        '[diff comment dc_00000002 — src/a.js:3 (new), run fcec04e8] "and this one"',
       ], 'they stack, one per line, so the user can send several at once');
       assert.equal(ctx.calls.filter((c) => (c.opts.method || 'GET') === 'POST' && c.url.includes('/messages')).length, 0,
         'append never sends');
     } },
     { name: 'Ask Worca on a thread with replies tells the chat how many, so the model reads them first', run: async () => {
+      await openDetail(ctx);
+      await settle(window, 8);
       click(window, doc.querySelector('[data-comment-id="dc_00000005"] .hd-cmt-ask'));
       await settle(window, 6);
-      assert.equal(doc.querySelector('.ask-input').value.split('\n').at(-1), '[diff comment dc_00000005 — src/a.js:2 (new), 2 replies] "root"');
+      assert.equal(doc.querySelector('.ask-input').value.split('\n').at(-1), '[diff comment dc_00000005 — src/a.js:2 (new), 2 replies, run fcec04e8] "root"');
     } },
   ]);
 });

@@ -133,15 +133,13 @@ test('open while a run finishes and the route changes: the row leaves, the open 
   assert.equal(window.document.activeElement.dataset.key, 'live:r2');
 });
 
-test('a row routed while the Ask sheet is open closes the sheet first: the page it opens is not under the sheet', async () => {
+test('a row routed from the Chat page opens the run page in its place', async () => {
   const { window, $, recv } = await boot();
   const key = (s) => (typeof s === 'string' ? $(s) : s)
     .dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));   // Enter: a keyboard click, no press
   recv({ type: 'hello', runs: [live('r1')] });
   await settle();
-  $('.ask-pill').click();
-  await settle();
-  assert.equal($('.ask-sheet').hidden, false, 'precondition: the Ask sheet is open');
+  assert.equal(window.location.hash, '#chat', 'precondition: the boot page is Chat');
   key('#topnav-activity');
   await settle();
   assert.equal($('#activity-pop').hidden, false);
@@ -149,5 +147,6 @@ test('a row routed while the Ask sheet is open closes the sheet first: the page 
   await settle();
   assert.equal(window.location.hash, '#running/r1');
   assert.equal($('#activity-pop').hidden, true);
-  assert.equal($('.ask-sheet').hidden, true, 'after the route: the sheet is shut, so the run page shows');
+  assert.equal($('[data-view="chat"]').classList.contains('hidden'), true, 'the Chat page gave way');
+  assert.equal($('[data-view="runs"]').classList.contains('hidden'), false);
 });

@@ -874,10 +874,9 @@ const SHOTS = [
     prep: async () => { await until2("document.querySelector('#wfv-library .wfl-folder[data-folder=\"scripts/general\"]')", 'script folders');
       await ev("(()=>{const e=document.querySelector('#wfv-library .wfl-folder[data-folder=\"scripts/general\"]');if(e.getAttribute('aria-expanded')!=='true')e.click();return 1;})()");
       await until2("document.querySelectorAll('#wfv-library .wfl-fold[data-fold=\"scripts/general\"] .wfl-item[data-item^=\"script:\"]').length >= 5", 'script rows'); } },
-  // The sheet is drag-resizable and remembers its size; a tall one shows the whole chat.
-  { name: 'ask-worca', level: 'simple', hash: () => 'new',
-    before: `localStorage.setItem('worca-cc.ask.thread', ${JSON.stringify(askThread.id)});localStorage.setItem('worca-cc.ask.size', '{"w":960,"h":1090}')`,
-    prep: async () => { await click('.ask-pill'); await until2('document.querySelector(\'.ask-sheet:not([hidden]) .ask-card.ask-rc\')', 'ask run card'); await sleep(800); } },
+  // worca Chat: the chat is a page; its address opens the seeded chat.
+  { name: 'ask-worca', level: 'simple', hash: () => `chat/${askThread.id}`,
+    prep: async () => { await until2('document.querySelector(\'[data-chat-page] .ask-card.ask-rc\')', 'ask run card'); await sleep(800); } },
   // The Runs page reopens the last run it showed; name it, so the shot never depends on the order.
   { name: 'running', level: 'simple', live: true, hash: () => `history/${csvRun.projectKey}/${csvRun.pipelineId}`, before: "localStorage.removeItem('worca-cc.lingerRuns')",
     prep: () => until2("document.querySelectorAll('.runs-row-body').length >= 10", 'runs rows') },

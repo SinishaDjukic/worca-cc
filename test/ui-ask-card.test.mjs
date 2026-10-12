@@ -171,7 +171,8 @@ async function settle(window, n = 4) {
 }
 
 async function openSheet(window) {
-  window.document.querySelector('.ask-pill').click();
+  // worca Chat: the chat is a page and the boot page; route there only when the test left it.
+  if (!/^#chat(\/|$)/.test(window.location.hash)) window.location.hash = '#chat';
   await settle(window);
 }
 async function sendText(window, text) {
@@ -277,7 +278,7 @@ test('ui-ask-card: Open in New Pipeline prefills the form — project fields, or
       await settle(ctx.window, 8); // the async applier awaits workflows/guardrails/branches
       const doc = ctx.window.document;
       assert.equal(ctx.window.location.hash, '#new');
-      assert.equal(doc.querySelector('.ask-sheet').hidden, true, 'the sheet closed');
+      assert.equal(doc.querySelector('section[data-view="chat"]').classList.contains('hidden'), true, 'New run replaced the Chat page');
       assert.equal(doc.querySelector('#prompt').value, 'edited before handoff');
       assert.equal(doc.querySelector('#title').value, 'Fix login');
       assert.equal(doc.querySelector('#workflowSelect').value, 'wf_review');

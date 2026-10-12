@@ -474,7 +474,7 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, workspaceChanges: {}, actions: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, workspaceChanges: {}, actions: {}, chatActions: {} }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];

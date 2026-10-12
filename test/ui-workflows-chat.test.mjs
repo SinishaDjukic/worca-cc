@@ -1584,34 +1584,34 @@ test('turnPhase / activityLabel: what the orb and the live line say', async () =
   assert.equal(activityLabel('Done…'), 'Done…', 'never two ellipses');
 });
 
-test('the input-row orb: thinking from the send, a tool sweeps it, writing spins it, done stills it — collapsed too; no timer', async () => {
+test('the input-row orb and the line above it: thinking from the send, a tool sweeps it, writing spins it, done stills it — collapsed too; no timer', async () => {
   const g = gate();
   const f = fetchWith([['POST', /\/messages$/, () => [202, { userMessageId: 'msg_0000aaaa', assistantMessageId: 'msg_0000bbbb' }]]]);
   const held = async (url, opts = {}) => { if (opts.method === 'POST' && /\/messages$/.test(url)) await g.p; return f.fn(url, opts); };
   const s = await bootDock([], { fetch: held });
   const root = s.g('wfc');
   const orb = root.querySelector('.wfc-row .wfc-spark .wfc-orb');
-  const act = () => { const l = root.querySelector('.wfc-act-l'); return l ? l.textContent : null; };
-  assert.equal(orb.dataset.phase, 'rest', 'idle: still');
+  const line = root.querySelector('.wfc-foot > .wfc-act');
+  const act = () => (line.hidden ? null : line.querySelector('.wfc-act-l').textContent);
+  assert.equal(line.nextElementSibling, root.querySelector('.wfc-row'), 'the line sits right above the orb\'s row');
+  assert.deepEqual([orb.dataset.phase, act()], ['rest', null], 'idle: still, no line');
   typeEnter(s, 'Add Plan');
   await settle();
-  assert.ok(root.querySelector('.wfc-a.is-wait'), 'the POST is out: the reply\'s place shows already');
-  assert.deepEqual([orb.dataset.phase, act()], ['think', 'Thinking…']);
-  assert.equal(root.querySelector('.wfc-act').textContent, 'Thinking…', 'the line is the label alone: no timer');
+  assert.deepEqual([orb.dataset.phase, act()], ['think', 'Thinking…'], 'the POST is out: thinking already');
+  assert.equal(line.textContent, 'Thinking…', 'the line is the label alone: no timer');
+  assert.equal(root.querySelector('.wfc-thread .wfc-act'), null, 'the thread carries no live line');
   g.open();
   await settle();
-  assert.ok(root.querySelector('.wfc-a.is-wait'), '202 in, no frame yet: still waiting');
-  assert.equal(orb.dataset.phase, 'think');
+  assert.deepEqual([orb.dataset.phase, act()], ['think', 'Thinking…'], '202 in, no frame yet: still waiting');
   const T = THREAD.id; const M = 'msg_0000bbbb';
   s.dock.pushFrame({ type: 'ask-start', threadId: T, messageId: M, userMessageId: 'msg_0000aaaa', seq: 1 });
   await settle(2);
-  assert.equal(root.querySelector('.wfc-a.is-wait'), null);
   assert.equal(root.querySelector('.wfc-thread canvas'), null, 'the thread carries no orbs');
   s.dock.pushFrame({ type: 'ask-label', threadId: T, messageId: M, seq: 2, label: 'Reading the canvas' });
   s.dock.pushFrame({ type: 'ask-block', threadId: T, messageId: M, seq: 3, block: { kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'running' } });
   await settle(2);
   assert.deepEqual([orb.dataset.phase, act()], ['tool', 'Reading the canvas…']);
-  assert.equal(root.querySelector('.wfc-a').firstElementChild.className, 'wfc-act', 'the live line leads the reply');
+  assert.equal(root.querySelector('.wfc-foot > .wfc-act'), line, 'a tool frame rebuilds the thread, never the line');
   s.dock.pushFrame({ type: 'ask-block', threadId: T, messageId: M, seq: 4, block: { kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'done' } });
   await settle(2);
   assert.equal(orb.dataset.phase, 'think', 'the tool is back: thinking again');
@@ -1623,7 +1623,7 @@ test('the input-row orb: thinking from the send, a tool sweeps it, writing spins
   await settle(2);
   assert.equal(root.querySelector('.wfc-shell').dataset.open, 'false');
   assert.equal(root.querySelector('.wfc-row .wfc-orb'), orb, 'collapsed, the same orb stays in the pill');
-  assert.equal(orb.dataset.phase, 'write', 'and keeps moving');
+  assert.deepEqual([orb.dataset.phase, act()], ['write', 'Writing…'], 'and keeps moving, the line over the pill');
   s.dock.pushFrame({ type: 'ask-done', threadId: T, messageId: M, seq: 7, text: 'Added.', blocks: [{ kind: 'tool', id: 'toolu_01', name: 'mcp__worca__get_canvas', input: {}, status: 'done' }] });
   await settle(2);
   assert.deepEqual([orb.dataset.phase, act()], ['rest', null], 'done: still, and no live line');
@@ -1661,6 +1661,6 @@ test('a reopened thread: the hint is "Reply", the orb is still, no live line', a
   await settle();
   const root = s.g('wfc');
   assert.equal(root.querySelector('.wfc-row .wfc-orb').dataset.phase, 'rest');
-  assert.equal(root.querySelector('.wfc-act'), null);
+  assert.equal(root.querySelector('.wfc-act').hidden, true);
   assert.equal(root.querySelector('#wfc-input').placeholder, 'Reply');
 });

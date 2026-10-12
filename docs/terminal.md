@@ -133,11 +133,10 @@ time. Blocks and audit rows are kept. `GET /api/terminal/audit?runId=<id>` lists
 
 ## Ask Worca (agent mode)
 
-With the **Agent** switch on (in the Ask composer, on by default for every chat), Ask Worca can run shell
-commands in Worca terminals to check and finish work: tests, builds, linters, `git status`, and file
-changes through commands when you ask for them. It runs in a run's folder, a project's own folder, or the
-chat's pinned project. Turn the switch off and the next turn has no command tools; a command that is
-already running keeps running and still reports.
+Every Ask Worca chat is in agent mode wherever the host allows it (there is no per-chat switch): Ask Worca
+can run shell commands in Worca terminals to check and finish work: tests, builds, linters, `git status`,
+and file changes through commands when you ask for them. It runs in a run's folder, a project's own folder,
+or the chat's pinned project.
 
 - **A shared terminal.** Ask opens its own terminals, labeled `Ask · <chat title> · <folder>`, at most 3
   per chat. Their tabs show in this pane on every page, next to the page's own terminal, with the same
@@ -185,7 +184,7 @@ already running keeps running and still reports.
   `source: ask` on the block. Opening an Ask terminal on a run adds "Terminal opened by Ask Worca" to the
   run's audit.
 - **Where it is off.** On a hosted Worca, agent mode follows the terminal: off unless
-  `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off (and the switch is hidden): the
+  `WORCA_TERMINAL_REMOTE=1`. With agent isolation on, agent mode is off: the
   shell would run as the server user, not the agent user. Only bash and zsh record commands, so a terminal
   with another shell (sh, fish, cmd.exe) cannot run Ask's commands.
 
