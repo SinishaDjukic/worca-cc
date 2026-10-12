@@ -61,6 +61,18 @@ test('an open PR: no Resolve in a pipeline here (its Overview row has Resolve); 
   assert.equal(shown(btn(li, 'hd-base-terminal')), true);
 });
 
+test('a PR the live lookup finds after the line is painted hides Resolve in a pipeline then', async () => {
+  const { pr: _none, ...row } = ROW;
+  const ctx = await bootBase(CONFLICTS, { rows: [row] });
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-pipeline')), true);
+  const token = ctx.calls.filter((c) => c.url.endsWith('/api/history/pr') && c.opts.body).map((c) => JSON.parse(c.opts.body).token).at(-1);
+  const pr = { url: 'https://github.com/o/r/pull/1', number: 1, state: 'OPEN' };
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'history-pr', token, done: true, items: [{ projectKey: KEY, id: ROW.id, pr }] }) });
+  await settle(ctx.window, 4);
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-pipeline')), false);
+  assert.equal(shown(btn(items(ctx)[0], 'hd-base-terminal')), true);
+});
+
 test('quiet when nothing needs doing: up to date shows no line', async () => {
   const ctx = await bootBase(UP);
   assert.equal(box(ctx).hidden, true);
