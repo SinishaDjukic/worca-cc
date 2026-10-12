@@ -1,5 +1,6 @@
-// ui/public/thinking-orb.mjs — the dotted sphere that marks a live Ask turn.
-// A factory, not a custom element: the panel hands in doc/win (spec §10.1), so
+// ui/public/thinking-orb.mjs — the dotted sphere on the running Auto-proposal page (app.js). Ask Worca's live turn
+// uses dot-orb.mjs, as the Workflows chat does.
+// A factory, not a custom element: the caller hands in doc/win (spec §10.1), so
 // the jsdom suites drive it with no globals and no canvas backend. Geometry is
 // exported pure — the drawing loop is the only part a browser is needed for.
 
@@ -59,7 +60,7 @@ export function createThinkingOrb({ doc, win, size = 28.5, ink = '25,25,27' }) {
 
   // No rAF means nothing can ever animate, so skip the canvas entirely rather
   // than paint one still frame — that also keeps jsdom's "getContext without
-  // the canvas npm package" warning out of every ask-panel suite.
+  // the canvas npm package" warning out of every jsdom suite.
   let ctx = null;
   if (raf) {
     const dpr = Math.min(win.devicePixelRatio || 1, 2);

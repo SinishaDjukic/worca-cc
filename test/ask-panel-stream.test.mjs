@@ -85,6 +85,107 @@ test('ask-panel-stream: plain-text stream — dot, orb, growing answer, done sta
   assert.equal(ctx.doc.querySelector('.sr-only[aria-live="polite"]').textContent, 'answer finished');
 });
 
+test('ask-panel-stream: the live orb is the Workflows chat\'s dot orb — one canvas for the whole turn, its data-phase following it (think → tool → write → rest)', async () => {
+  // The phase is dot-orb.mjs turnPhase over the model's live(): its label, its text and the live message's blocks,
+  // whose tool/agent rows stream with status 'running' until they land (src/core/ask/events.mjs).
+  const phasesOf = async (fixture) => {
+    const ref = { body: snapBody() };
+    const ctx = await openWith(ref);
+    const { frames } = replayFixture(fixture, { threadId: TID, messageId: MID });
+    const seen = [];
+    let orb = null;
+    for (const f of frames) {
+      ctx.panel.pushServerFrame(f);
+      ctx.flush();
+      const cur = ctx.doc.querySelector('.ask-transcript .ask-thinking .ask-orb');
+      if (cur && !orb) orb = cur;
+      if (cur) assert.equal(cur, orb, `${f.type}: the one canvas is re-parented, never rebuilt`);
+      if (orb && seen.at(-1) !== orb.dataset.phase) seen.push(orb.dataset.phase);
+    }
+    return { orb, seen };
+  };
+  await checkRows([
+    { name: 'a tool call: tool while it runs, thinking again once it lands, writing under "Writing", rest when done', run: async () => {
+      const { orb, seen } = await phasesOf('tool-list-runs');
+      assert.equal(orb.tagName, 'CANVAS');
+      assert.ok(orb.classList.contains('dot-orb') && orb.classList.contains('ask-orb'), orb.className);
+      assert.equal(orb.style.width, '28px');
+      assert.deepEqual(seen, ['think', 'tool', 'think', 'write', 'rest']);
+      assert.equal(orb.isConnected, false, 'the finished turn dropped the orb row');
+      assert.equal(orb.classList.contains('is-live'), false);
+    } },
+    { name: 'a sub-agent counts as a tool while it runs', run: async () => {
+      const { seen } = await phasesOf('task-subagent');
+      assert.deepEqual(seen, ['think', 'tool', 'think', 'write', 'rest']);
+    } },
+    { name: 'plain text: thinking, then writing as the answer streams', run: async () => {
+      const { seen } = await phasesOf('plain-text');
+      assert.deepEqual(seen, ['think', 'write', 'rest']);
+    } },
+  ]);
+});
+
+test('ask-panel-stream: the orb loop winds down after the turn and destroy() cancels it mid-turn', async () => {
+  const start = stampFrames([{ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 'x' }], { threadId: TID, messageId: MID });
+  const pending = (ctx) => ctx.orbFrames.armed.filter((f) => !ctx.orbFrames.cancelled.has(f.id)).length;
+  await checkRows([
+    { name: 'ask-panel-stream: a finished turn leaves no orb frame running', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref, { orb: true });
+      ctx.panel.pushServerFrame(start[0]);
+      ctx.flush();
+      assert.equal(ctx.doc.querySelector('.ask-orb').dataset.phase, 'think');
+      assert.ok(pending(ctx) > 0, 'a thinking orb runs its frame loop');
+      ctx.panel.pushServerFrame({ type: 'ask-done', text: 'ok', threadId: TID, messageId: MID, seq: 2 });
+      ctx.flush();
+      for (let i = 0; i < 300 && pending(ctx); i += 1) ctx.orbFrames.run();
+      assert.equal(pending(ctx), 0, 'the detached orb dropped out of the loop');
+    } },
+    { name: 'ask-panel-stream: destroy() cancels a live orb\'s pending frame', run: async () => {
+      const ref = { body: snapBody() };
+      const ctx = await openWith(ref, { orb: true });
+      ctx.panel.pushServerFrame(start[0]);
+      ctx.flush();
+      assert.ok(pending(ctx) > 0);
+      ctx.panel.destroy();
+      assert.equal(pending(ctx), 0);
+    } },
+  ]);
+});
+
+test('ask-panel-stream: a theme switch between turns recolours the next turn\'s orb (the one canvas left the loop while detached)', async () => {
+  const ref = { body: snapBody() };
+  const ctx = await openWith(ref, { orb: true });
+  // The orb reads its ink from the canvas's computed colour once it is in the page; jsdom computes none, so serve it.
+  let ink = 'rgb(24, 24, 27)';
+  const real = ctx.window.getComputedStyle.bind(ctx.window);
+  ctx.window.getComputedStyle = (node, pseudo) => (node && node.classList && node.classList.contains('dot-orb') ? { color: ink } : real(node, pseudo));
+  const fills = [];
+  ctx.window.HTMLCanvasElement.prototype.getContext = () => ({ clearRect() {}, beginPath() {}, arc() {}, fill() { fills.push(this.fillStyle); }, fillStyle: '', globalAlpha: 1 });
+  const pending = () => ctx.orbFrames.armed.filter((f) => !ctx.orbFrames.cancelled.has(f.id)).length;
+  const turn = (messageId, seq) => {
+    ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: `u${seq}`, model: 'm', effort: 'high', startedAt: 'x', threadId: TID, messageId, seq });
+    ctx.flush();
+    const orb = ctx.doc.querySelector('.ask-transcript .ask-thinking .ask-orb');
+    assert.ok(orb && orb.isConnected, `${messageId}: the live row holds the orb`);
+    assert.equal(orb.dataset.phase, 'think');
+    return orb;
+  };
+  const first = turn(MID, 2);
+  assert.equal(fills.at(-1), 'rgb(24, 24, 27)');
+  ctx.panel.pushServerFrame({ type: 'ask-done', text: 'ok', threadId: TID, messageId: MID, seq: 3 });
+  ctx.flush();
+  assert.equal(first.isConnected, false, 'the finished turn dropped the orb row');
+  for (let i = 0; i < 300 && pending(); i += 1) ctx.orbFrames.run();
+  assert.equal(pending(), 0, 'the detached orb dropped out of the loop');
+  ink = 'rgb(236, 236, 233)';
+  ctx.doc.dispatchEvent(new ctx.window.Event('worca:theme'));
+  const next = turn('askm_00000002', 4);
+  assert.equal(next, first, 'the same canvas, re-parented');
+  assert.equal(fills.at(-1), 'rgb(236, 236, 233)', 'painted in the new theme\'s ink, not the last turn\'s');
+  ctx.panel.destroy();
+});
+
 test('ask-panel-stream: tool rows stream in with server labels; a sub-agent expands mid-stream and stays expanded', async () => {
   await checkRows([
     { name: 'ask-panel-stream: tool rows stream in with server labels', run: async () => {
@@ -347,15 +448,16 @@ test('ask-panel-stream: an adopted turn (no ask-start) gets the orb row and Stop
     { name: 'ask-panel-stream: an adopted turn with no ask-start still gets the orb row', run: async () => {
       // The ring buffer can evict the prefix; the model adopts the in-flight message
       // at whatever seq arrives, so afterFrame never sees ask-start and never calls
-      // startElapsed(). buildMessage's own el.orb.start() covers the loop — jsdom has
-      // no rAF, so only the row is observable here; the re-arm itself is pinned by
-      // thinking-orb's "start is idempotent and stop cancels the pending frame".
+      // startElapsed(). The orb needs no start: updateThinking() sets its phase on
+      // every flush, so the adopted turn's orb moves like any other.
       const ref = { body: snapBody({ inFlight: { messageId: MID } }) };
       const ctx = await openWith(ref);
       ctx.panel.pushServerFrame({ type: 'ask-delta', text: 'adopted', threadId: TID, messageId: MID, seq: 77 });
       ctx.flush();
       assert.match(ctx.doc.querySelector('.ask-answer').textContent, /adopted/);
-      assert.ok(ctx.doc.querySelector('.ask-transcript .ask-orb'), 'the orb mounted on the adopted turn');
+      const orb = ctx.doc.querySelector('.ask-transcript .ask-orb');
+      assert.ok(orb, 'the orb mounted on the adopted turn');
+      assert.equal(orb.dataset.phase, 'write', 'streaming text with no tool: writing');
       assert.ok(ctx.doc.querySelector('.ask-thinking'), 'and the row with it');
     } },
     // Review of PR #376: a delta that landed between the REST snapshot and the

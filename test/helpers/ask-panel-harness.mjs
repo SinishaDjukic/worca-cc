@@ -32,15 +32,16 @@ export function makePanel(overrides = {}) {
       disconnect() { this.targets = []; this.disconnected = true; }
     };
   }
-  // jsdom has no requestAnimationFrame, so every createThinkingOrb() stays
-  // inert (no canvas, no loop). `orb: true` installs, BEFORE the panel is
-  // built, a recording rAF pair, a stub 2d context that logs the arcs painted
-  // per canvas, and a visible document (draw() skips a hidden one) — so a suite
-  // can tell WHICH orb is looping: `orbFrames.run()` runs every armed-and-not-
-  // cancelled frame once and the paints land on the looping orbs' canvases.
-  // Only the orbs read window.requestAnimationFrame; the panel's own scheduling
-  // goes through the injected `raf` below. The orbs' clock (performance.now)
-  // becomes `orbFrames.t`, so a morph tween can be stepped by hand.
+  // jsdom has no requestAnimationFrame, so the panel's dot orb (createDotOrbs,
+  // dot-orb.mjs) never asks for a 2d context and runs no loop: its canvas only
+  // carries data-phase. `orb: true` installs, BEFORE the panel is built, a
+  // recording rAF pair, a stub 2d context that logs the arcs painted per canvas,
+  // and a visible document — so a suite can tell whether the orb loop is still
+  // armed: `orbFrames.run()` runs every armed-and-not-cancelled frame once.
+  // jsdom lays nothing out (offsetParent is null), so dot-orb treats a live orb
+  // as out of sight: it keeps the loop but draws nothing. Only the orbs read
+  // window.requestAnimationFrame; the panel's own scheduling goes through the
+  // injected `raf` below. performance.now becomes `orbFrames.t`.
   const orbFrames = { armed: [], cancelled: new Set(), paints: new Map(), t: 0, run: null };
   if (overrides.orb) {
     let id = 0;

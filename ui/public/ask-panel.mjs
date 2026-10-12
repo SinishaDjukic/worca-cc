@@ -10,7 +10,7 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
-import { createThinkingOrb } from './thinking-orb.mjs';
+import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
@@ -314,6 +314,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
+  const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
   /**
@@ -4877,9 +4878,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // and the sphere would visibly snap back mid-turn.
   function ensureThinking() {
     if (el.thinking) return el.thinking;
-    el.orb = createThinkingOrb({ doc, win, size: 28.5 });
+    el.orb = orbs.create(28, 'ask-orb');
     const wrap = make('div', 'ask-thinking');
-    wrap.appendChild(el.orb.el);
+    wrap.appendChild(el.orb);
     el.thinkingLabel = make('span', 'ask-thinking-label');
     wrap.appendChild(el.thinkingLabel);
     const meter = make('span', 'ask-thinking-meter');
@@ -4900,6 +4901,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // numbers move — this runs every flush instead (updateLiveElapsed).
     const rest = [fmtCtx(live.usage && live.usage.ctx), fmtUsd(live.costUsd)].filter(Boolean).join(' · ');
     el.thinkingUsage.textContent = rest ? ` · ${rest}` : '';
+    // Thinking · a tool or sub-agent running · writing, as in the Workflows chat. Only once the row is in the page:
+    // the orb reads its colour from the canvas's computed `color` (.dot-orb in style.css). A row renderTail builds
+    // detached gets its phase at the end of the same flush (updateLiveElapsed).
+    const row = rowOf(live.messageId);
+    if (el.orb.isConnected) orbs.set(el.orb, turnPhase(live, row && row.blocks));
   }
 
   function renderAnswerInto(div, row) {
@@ -5019,10 +5025,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (isLiveRow(cur)) {
           wrap.appendChild(ensureThinking());   // last child: the bottom of the message
           el.elapsed = el.thinkingElapsed;      // the ONE live elapsed node
-          // Idempotent, and the only re-arm on the adoption path: a thread whose
-          // ask-start the ring buffer already evicted goes live without ever
-          // passing through startElapsed(), and would otherwise show a dead orb.
-          el.orb.start();
+          // Also the adoption path: a thread whose ask-start the ring buffer
+          // already evicted goes live without ever passing through startElapsed();
+          // the orb's phase comes from the live turn here, not from a start call.
           updateThinking();
         }
       };
@@ -5190,15 +5195,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the event loop open for every turn a test leaves streaming.
     st.elapsedTimer = setInterval(() => scheduleFlush(), 1000);
     if (st.elapsedTimer && typeof st.elapsedTimer.unref === 'function') st.elapsedTimer.unref();
-    if (el.orb) el.orb.start();
   }
   function stopElapsed() {
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     st.elapsedStart = null;
     // The orb row is simply not rebuilt into a finished message, so the node is
-    // left detached — with no custom-element lifecycle to notice, the rAF loop
-    // has to be cut here or it paints an orphan for the rest of the session.
-    if (el.orb) el.orb.stop();
+    // left detached: back at rest here, the orb eases to a stop (a detached one
+    // soon drops out of dot-orb's shared loop) and the next turn picks it up.
+    if (el.orb) orbs.set(el.orb, 'rest');
   }
   function updateLiveElapsed() {
     if (st.elapsedStart != null && el.elapsed && st.model && st.model.live()) {
@@ -5532,7 +5536,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
     if (st.historySearchTimer) { clearTimeout(st.historySearchTimer); st.historySearchTimer = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
-    if (el.orb) el.orb.stop();
+    orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);

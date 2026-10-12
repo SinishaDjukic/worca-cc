@@ -7,7 +7,7 @@
 // while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and the running reply opens
 // with a shimmering line saying what it does.
 import { createComposerChatClient } from './chat-client.mjs';
-import { createDotOrbs } from '../dot-orb.mjs';
+import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
@@ -35,15 +35,8 @@ const ICON = {
   clip: '<path d="M20.5 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
 };
 
-/** The live turn's orb phase: a tool or sub-agent still running = 'tool'; the answer streaming = 'write' (the server's
- *  "Writing" label once a tool ran, or text before any tool); anything else = 'think'. */
-export function turnPhase(live, blocks = []) {
-  if (!live) return 'rest';
-  const acts = (Array.isArray(blocks) ? blocks : []).filter((b) => b && (b.kind === 'tool' || b.kind === 'agent'));
-  if (acts.some((b) => (b.status || 'running') === 'running')) return 'tool';
-  if (live.label === 'Writing' || (live.text && !acts.length)) return 'write';
-  return 'think';
-}
+/** The live turn's orb phase (rest | think | tool | write) — shared with Ask, so it lives in dot-orb.mjs. */
+export { turnPhase };
 /** "Reading the canvas…" from the server's label ("Thinking" when it has none yet). */
 export const activityLabel = (label) => { const l = String(label || 'Thinking'); return l.endsWith('…') ? l : `${l}…`; };
 /** The input's hint once the chat has a message: the rotating examples are for an empty chat. */
