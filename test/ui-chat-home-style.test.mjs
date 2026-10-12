@@ -12,7 +12,7 @@ const block = () => { const i = css.indexOf(BANNER); return i < 0 ? '' : css.sli
 test('the Chat home styles live in ONE appended P6 section', () => {
   assert.equal(css.split(BANNER).length - 1, 1);
   assert.ok(block().length > 4000, 'the section carries the home rules');
-  for (const sel of ['.chat-home-aurora', '.chat-home-title', '.chat-home-actions', '.chat-home-tab', '.chat-home-ink',
+  for (const sel of ['.chat-home-title', '.chat-home-actions', '.chat-home-tab', '.chat-home-ink',
     '.chat-run-tile', '.chat-home-chat', '.chat-home-wf', '.chat-home-promo', '.chat-intent']) {
     assert.ok(block().includes(`${sel}{`) || block().includes(`${sel},`) || block().includes(`${sel} `), sel);
   }
@@ -47,10 +47,9 @@ test('[hidden] beats the display rules of the elements the modules hide (the int
   assert.match(block(), /:is\(\.chat-home-act,\.chat-run-tile-answer,\.chat-home-tab-n,\.chat-run-tile-note\)\[hidden\]\{display:none;\}/);
 });
 
-test('reduced motion: the aurora is still, the underline and dots do not move', () => {
+test('reduced motion: the underline and dots do not move', () => {
   const m = block().match(/@media \(prefers-reduced-motion: reduce\)\{([\s\S]*?)\n\}/);
   assert.ok(m, 'a reduced-motion block');
-  assert.match(m[1], /\.chat-aurora-orb\{animation:none;\}/);
   assert.match(m[1], /\.chat-home-ink,\.chat-home-chev\{transition:none;\}/);
   assert.match(m[1], /\.chat-home-dot\.is-think\{animation:none;\}/);
 });
@@ -70,8 +69,7 @@ test('measured in Chrome (cycle 2): no stacking context on the home, AA text on 
   // The Ask tour (app.js gsHops 'ask') rings .ask-input and .ask-send in the hero slot with no `lift`: an isolated home
   // traps their .guide-target (z 45) under the fixed .guide-scrim (z 44) and Chrome sends every click to the scrim.
   assert.match(b, /\n\.chat-home\{position:relative;\}\n/, 'no isolation / z-index on the home');
-  assert.match(b, /\.chat-home > :not\(\.chat-home-aurora\)\{position:relative;\}/, 'the content paints over the aurora by tree order');
-  assert.doesNotMatch(b.match(/\n\.chat-home-aurora\{[^}]*\}/)[0], /z-index/);
+  assert.match(b, /\n\.chat-home > \*\{position:relative;\}\n/, 'the home children stay positioned (containing blocks unchanged)');
   assert.doesNotMatch(b.replace(/\/\*[\s\S]*?\*\//g, ''), /isolation:isolate/);
   // AA in light: the strong inks on the tinted washes (--X-ink on --X-bg reads 3.3–3.9:1).
   assert.match(b, /\.chat-home-tab-n\{[^}]*color:var\(--amber-ink-strong\);/);
@@ -86,4 +84,11 @@ test('measured in Chrome (cycle 2): no stacking context on the home, AA text on 
   assert.match(b, /\.chat-run-tile-head\{display:flex;flex-wrap:wrap;/, 'a long title pushes the pill to its own line');
   assert.match(b, /\.chat-run-tile-pill\{[^}]*max-width:100%;/);
   assert.match(b, /\.chat-hero-slot \.ask-input::placeholder\{white-space:nowrap;overflow:hidden;\}/);
+});
+
+test('a flat white Chat page: .chat-page paints --panel, and no aurora is styled or built', () => {
+  assert.match(css, /\.chat-page\{position:absolute;inset:0;[^}]*background:var\(--panel\);/);
+  assert.doesNotMatch(css, /chat-aurora|chat-home-aurora|chatAurora/);
+  const home = readFileSync(new URL('../ui/public/chat/home.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(home, /aurora/i);
 });

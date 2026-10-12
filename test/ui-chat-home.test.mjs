@@ -80,14 +80,12 @@ const settle = async (window, n = 4) => { for (let i = 0; i < n; i++) await new 
 const selected = (doc) => (doc.querySelector('.chat-home-tab[aria-selected="true"]') || { dataset: {} }).dataset.tab || null;
 const tab = (doc, t) => doc.querySelector(`.chat-home-tab[data-tab="${t}"]`);
 
-test('the hero wraps P1\'s hero slot: aurora, heading, the slot (composer untouched), then the home body', async () => {
+test('the hero wraps P1\'s hero slot: heading, the slot (composer untouched), then the home body — no aurora', async () => {
   const s = setup();
   await settle(s.window);
-  assert.deepEqual([...s.host.children].map((c) => c.className), ['chat-home-aurora', 'chat-home-title', 'chat-hero-slot', 'chat-home-body']);
+  assert.deepEqual([...s.host.children].map((c) => c.className), ['chat-home-title', 'chat-hero-slot', 'chat-home-body']);
   assert.equal(s.host.querySelector('h1.chat-home-title').textContent, 'What should worca do?');
-  const aurora = s.host.querySelector('.chat-home-aurora');
-  assert.equal(aurora.getAttribute('aria-hidden'), 'true');
-  assert.equal(aurora.querySelectorAll('.chat-aurora-orb').length, 3);
+  assert.equal(s.host.querySelector('.chat-home-aurora, .chat-aurora-orb, [class*="aurora"]'), null, 'a flat page: no aurora behind the hero');
   assert.ok(s.host.querySelector('[data-chat-hero-slot] > .ask-composer'), 'the composer stays where P1 put it');
   const body = s.host.querySelector('.chat-home-body');
   assert.deepEqual([...body.children].map((c) => c.className.split(' ')[0]), ['chat-home-actions', 'chat-home-tabs', 'chat-home-promos']);

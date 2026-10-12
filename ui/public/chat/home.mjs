@@ -1,5 +1,5 @@
 // ui/public/chat/home.mjs — the Chat home (worca Chat P6; CONTRACT §8): what the Chat page shows while the open chat
-// has no messages. The hero ("What should worca do?" over a CSS-only aurora) wraps P1's hero slot — the composer lives
+// has no messages. The hero ("What should worca do?" on the flat page) wraps P1's hero slot — the composer lives
 // there and P1 re-parents it; this module only animates the move (home-flip.mjs) — followed by the quick actions
 // (home-actions.mjs), the tabs Needs you · Running · Recent chats · Workflows (home-lists.mjs; run tiles
 // home-run-tile.mjs) and the "More you can do" promos. It works only while it is on screen: a VISIT starts when the
@@ -103,12 +103,8 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   };
 
   // ---- the hero, around P1's slot -------------------------------------------------------------------------
-  const aurora = h('div', 'chat-home-aurora');
-  aurora.setAttribute('aria-hidden', 'true');
-  for (const o of ['o1', 'o2', 'o3']) aurora.appendChild(h('span', `chat-aurora-orb ${o}`));
   const title = h('h1', 'chat-home-title', 'What should worca do?');
-  host.insertBefore(aurora, host.firstChild);
-  host.insertBefore(title, heroSlot && heroSlot.parentNode === host ? heroSlot : aurora.nextSibling);
+  host.insertBefore(title, heroSlot && heroSlot.parentNode === host ? heroSlot : host.firstChild);
 
   const actions = createQuickActions({ doc, deps, getRuns: pickRuns });
   const tabs = createHomeTabs({ doc, onSelect: (t) => selectTab(t, { user: true }) });
@@ -436,7 +432,6 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
       flip.destroy();
       actions.destroy();
       tabs.destroy();
-      aurora.remove();
       title.remove();
       body.remove();
     },

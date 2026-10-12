@@ -8234,7 +8234,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
-.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--bg);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
 .chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;}
@@ -8701,21 +8701,15 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 @media (prefers-reduced-motion:reduce){.afb-sbox,.afb-title,.afb-filter{transition:none;}}
 
 /* ===== Chat P6: home ===== */
-/* The Chat home (ui/public/chat/home*.mjs, intent.mjs): the heading over a CSS-only aurora, the quick actions, the
+/* The Chat home (ui/public/chat/home*.mjs, intent.mjs): the heading on the flat --panel page, the quick actions, the
    tabs (Needs you · Running · Recent chats · Workflows) with run tiles, the promos and the composer's intent chip.
    Tokens only — every colour token is light-dark(), so both themes follow; emphasis is a wash or a chip, never a
    coloured left edge; dots only behind graphs (the tile well, the workflow thumbnails). */
 /* No stacking context on the home (no isolation, no z-index): the Getting started "Ask Worca" tour rings .ask-input and
-   .ask-send in the hero slot, and its .guide-target (z 45) must reach above the fixed .guide-scrim (z 44). The aurora
-   is the first positioned child; every later child is positioned too, so it paints over the aurora in tree order. */
+   .ask-send in the hero slot, and its .guide-target (z 45) must reach above the fixed .guide-scrim (z 44). Every child
+   stays positioned (no z-index), so the containing blocks of their absolute descendants do not change. */
 .chat-home{position:relative;}
-.chat-home > :not(.chat-home-aurora){position:relative;}
-.chat-home-aurora{position:absolute;left:0;right:0;top:0;height:680px;overflow:hidden;pointer-events:none;-webkit-mask-image:linear-gradient(to bottom,currentColor 30%,transparent);mask-image:linear-gradient(to bottom,currentColor 30%,transparent);}
-.chat-aurora-orb{position:absolute;width:560px;height:560px;border-radius:50%;opacity:.55;animation:chatAurora 24s ease-in-out infinite alternate;}
-.chat-aurora-orb.o1{left:4%;top:-220px;background:radial-gradient(closest-side,color-mix(in srgb,var(--violet) 40%,transparent),transparent);}
-.chat-aurora-orb.o2{right:2%;top:-180px;background:radial-gradient(closest-side,color-mix(in srgb,var(--blue) 34%,transparent),transparent);animation-duration:28s;animation-delay:-7s;}
-.chat-aurora-orb.o3{left:32%;top:20px;background:radial-gradient(closest-side,color-mix(in srgb,var(--peach) 28%,transparent),transparent);animation-duration:32s;animation-delay:-14s;}
-@keyframes chatAurora{0%{transform:translate3d(0,0,0) scale(1);}50%{transform:translate3d(48px,26px,0) scale(1.08);}100%{transform:translate3d(-36px,12px,0) scale(.95);}}
+.chat-home > *{position:relative;}
 .chat-home-title{margin:0 0 18px;text-align:center;color:var(--ink);font:600 30px/1.2 var(--sans);letter-spacing:-.01em;}
 .chat-home-body{container:chat-home / inline-size;display:flex;flex-direction:column;gap:24px;width:100%;max-width:1040px;margin:20px auto 32px;box-sizing:border-box;}
 .chat-ic{display:inline-grid;place-items:center;flex:none;line-height:0;}
@@ -8816,9 +8810,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-hero-slot .ask-input::placeholder{white-space:nowrap;overflow:hidden;}
 @container chat-home (max-width:640px){.chat-home-actions{grid-template-columns:repeat(4,minmax(0,1fr));}.chat-home-promo-row{grid-template-columns:1fr;}}
 @container chat-home (max-width:440px){.chat-home-runs{grid-template-columns:1fr;}.chat-home-wfs{grid-template-columns:repeat(2,minmax(0,1fr));}.chat-home-act{min-height:64px;}}
-@media (max-width:760px){.chat-home-title{font-size:24px;margin-bottom:14px;}.chat-aurora-orb{width:380px;height:380px;}}
+@media (max-width:760px){.chat-home-title{font-size:24px;margin-bottom:14px;}}
 @media (prefers-reduced-motion: reduce){
-  .chat-aurora-orb{animation:none;}
   .chat-home-ink,.chat-home-chev{transition:none;}
   .chat-home-dot.is-think{animation:none;}
 }
