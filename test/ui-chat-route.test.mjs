@@ -1,6 +1,6 @@
 // test/ui-chat-route.test.mjs — worca Chat P1 routing inside the real app (app.js boots in jsdom): the Chat row leads the
 // sidebar, Chat is the boot page and the logo's target, #chat[/<thread>[/run/<run>[/<tab>]]] reaches enterChatView and
-// P4's chatPanelRouter, getPageContext on Chat carries only the panel's run, chatDeps' defaults open the run's own page,
+// P4's chatPanelRouter, getPageContext on Chat carries only the panel's run, chatDeps.openRunPanel opens P4's run panel,
 // and openChat routes to Chat and stacks text in the composer.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,20 +146,20 @@ test('getPageContext on Chat: { view: "chat" } alone (never the dropdown fallbac
   chat.setPanelContext(null);
 });
 
-test('chatDeps defaults: openRunPanel opens the run\'s own page (Running while this tab has it, else History), openArtifact is its Artifacts tab, members are read at call time', async () => {
+test('chatDeps.openRunPanel is the Chat run panel (P4): a saved run by its pipeline id, a live run by its run id, the tab as asked; openArtifact is its Artifacts tab; members are read at call time', async () => {
   const { window, chat, recv } = await boot();
   chat.deps.openRunPanel({ pipelineId: 'aaaa1111', projectKey: 'proj-0000beef' }, { tab: 'artifacts' });
-  assert.equal(window.location.hash, '#history/proj-0000beef/aaaa1111/details/artifacts');
+  assert.equal(window.location.hash, '#chat/new/run/aaaa1111/artifacts');
   chat.deps.openRunPanel({ pipelineId: 'aaaa1111', projectKey: 'proj-0000beef' }, { tab: 'qa' });
-  assert.equal(window.location.hash, '#history/proj-0000beef/aaaa1111/details/clarify', 'History calls its Q&A tab clarify');
+  assert.equal(window.location.hash, '#chat/new/run/aaaa1111/qa', 'the address keeps the key; the saved screen maps qa to clarify');
   chat.deps.openRunPanel({ pipelineId: 'bbbb2222', workspaceId: 'wks-team-0000abcd' }, {});
-  assert.equal(window.location.hash, '#history/workspaces/wks-team-0000abcd/bbbb2222');
+  assert.equal(window.location.hash, '#chat/new/run/bbbb2222');
   recv({ type: 'hello', runs: [{ runId: 'r1', title: 'a run', projectDir: '/repos/proj', status: 'running', startedAt: '10:00:00', kind: 'run', pipelineId: 'cccc3333', pendingQuestion: null, pauseReason: null }], ask: [] });
   await settle();
   chat.deps.openRunPanel({ pipelineId: 'cccc3333', projectKey: 'proj-0000beef' }, { tab: 'clarify' });
-  assert.equal(window.location.hash, '#running/r1/details/qa', 'the Running page calls it qa');
+  assert.equal(window.location.hash, '#chat/new/run/r1/clarify', 'a live run opens by its run id; the live screen maps clarify to qa');
   chat.deps.openArtifact({ pipelineId: 'cccc3333' }, { relPath: 'plan.md' });
-  assert.equal(window.location.hash, '#running/r1/details/artifacts');
+  assert.equal(window.location.hash, '#chat/new/run/r1/artifacts');
   const orig = chat.deps.openRunPanel;
   const seen = [];
   chat.deps.openRunPanel = (ref, opts) => seen.push([ref, opts]);       // what P4 does

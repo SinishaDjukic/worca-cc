@@ -215,6 +215,7 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { createFlyout } from './side-flyout.mjs';
+import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
@@ -1271,11 +1272,11 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
-    if (inRunsView()) loadHistoryView({ force: true });
+    if (inRunsView() || crpShowsRun()) loadHistoryView({ force: true });   // Chat P4: the run panel reads these rows too
     // The Archived feed, once loaded, goes stale on the same change: refetch it while
     // the Runs page is open, else drop it so the next Archived paint fetches afresh.
     if (state.historyArchived !== null) {
-      if (inRunsView()) void loadHistoryArchived(); else state.historyArchived = null;
+      if (inRunsView() || crpShowsRun()) void loadHistoryArchived(); else state.historyArchived = null;   // Chat P4: an archived run in the panel
     }
     if (currentView() === 'stats') loadStatsView();
     return;
@@ -1540,7 +1541,11 @@ function handleServerMessage(msg) {
   // `skipDetail` a single log line would rebuild `.rd-meta`, both banners, the
   // graph adapter and the question guard, which is exactly the jank the
   // incremental append exists to avoid.
-  if (inRunsView()) renderRunningView({ skipDetail: msg.type === 'log' });
+  // Chat P4: the Chat run panel shows a run screen too.
+  if (inRunsView() || crpShowsRun()) renderRunningView({ skipDetail: msg.type === 'log' });
+  // A panel route still waiting for (or not finding) this run resolves on the run's first frame: a run start sends
+  // no pipelines-changed, so no History paint would retry it.
+  if (crp.waiting && crp.want && msg.runId && (msg.runId === crp.want.id || (runs.get(msg.runId) || {}).pipelineId === crp.want.id)) crpRetryPending();
 }
 
 // hello greeting carries the server's authoritative run list. We upsert each
@@ -1636,11 +1641,13 @@ function onHello(msg) {
   refreshAllCounts();
   refreshBudget();
   const cur = currentView();
-  if (inRunsView(cur)) renderRunningView();
+  // Chat P4: the Chat run panel repaints, reloads and resolves a waiting route like the Runs page.
+  if (inRunsView(cur) || crpShowsRun()) renderRunningView();
+  crpRetryPending();
   // Background-load history on the first connect so the PR states populate even
   // when boot lands on another view (e.g. New pipeline). Reconnects
   // skip this; an open Runs view still re-loads to refresh its data.
-  if (inRunsView(cur) || !historyBooted) loadHistoryView();
+  if (inRunsView(cur) || crpShowsRun() || !historyBooted) loadHistoryView();
   historyBooted = true;
 }
 
@@ -6059,7 +6066,7 @@ function finishRun(r, status) {
   // is looking at it, force-refetch so the just-finished pipeline surfaces with no
   // stale-cache flash (and re-triggers Phase-2 PR enrichment). A paused run's History
   // row is deduped behind its live row, so refreshing is still correct.
-  if (inRunsView()) loadHistoryView({ force: true });
+  if (inRunsView() || crpShowsRun()) loadHistoryView({ force: true });   // Chat P4: the run panel hands off to this row
 
   // Evict heavy fields ONLY for non-lingerers AND non-paused; lingerers + paused
   // keep their logLines so the open page and Resume have the log context.
@@ -15476,8 +15483,9 @@ function stripHandlers(el) {
       await after();
     },
     onOpenTab: () => {
-      if (el.closest('.hd') && histDetailState) location.hash = hdHash(histDetailState, 'details', 'actions');
-      else if (el.closest('.rd') && runDetailState.runId) location.hash = rdHash(runDetailState.runId, 'details', 'actions');
+      // The screen's own host: the Runs page routes, the Chat run panel swaps in place (Chat P4).
+      if (el.closest('.hd') && histDetailState) hdGoDetails('actions');
+      else if (el.closest('.rd') && runDetailState.runId) rdGoDetails('actions');
     },
   };
 }
@@ -15595,18 +15603,17 @@ function paintRunningActions() {
 }
 /** The header pill and the Actions tab dot on whichever detail screens are open. */
 function paintActionsHeaders() {
+  // The pill opens the screen's Actions tab where the screen lives: the Runs page or the Chat run panel.
   const hdScreen = histDetailState && histDetailState.screen;
   if (hdScreen) {
-    const record = histDetailState.record || { projectKey: histDetailState.key, id: histDetailState.id };
     paintActionsHeader(hdScreen, '.hd-row1 .act-pill-slot', '.hd-tab[data-sec="actions"]', histDetailState.id,
-      () => { location.hash = hdHash({ projectKey: record.projectKey, id: record.id }, 'details', 'actions'); });
+      () => { hdGoDetails('actions'); });
   }
   const rdScreen = runDetailState && runDetailState.screen;
   if (rdScreen) {
     const r = runs.get(runDetailState.runId);
-    const runId = runDetailState.runId;
     paintActionsHeader(rdScreen, '.rd-row1 .act-pill-slot', '.rd-tab[data-sec="actions"]', r && r.pipelineId,
-      () => { location.hash = rdHash(runId, 'details', 'actions'); });
+      () => { rdGoDetails('actions'); });
   }
 }
 function paintActionsHeader(screen, slotSel, tabSel, runId, onClick) {
@@ -17649,7 +17656,8 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     runs.delete(runId);
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
-    if (navigate) location.hash = `running/${data.runId}`;   // land on the continuous live card
+    // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
+    landOnResumedRun(data.runId, { fromRunId: runId, pipelineId, navigate });
     renderRunningView();
   } catch (err) {
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
@@ -19316,17 +19324,20 @@ async function loadHistoryView({ force = false } = {}) {
     if (token !== historyLoadToken) return;
     if (!state.historyAll.length) renderHistoryError(e.message);  // else keep the stale paint
     setHistoryLoading(false);
+    crpHistoryAnswered();                                // Chat P4: History answered (with an error)
     return;
   }
   if (token !== historyLoadToken) return;                // a newer load won the race -> drop
   if (!res.ok) {
     if (!state.historyAll.length) renderHistoryError((data && data.error) || `HTTP ${res.status}`);
     setHistoryLoading(false);
+    crpHistoryAnswered();                                // Chat P4: History answered (with an error)
     return;
   }
   const pipelines = carryHistoryPr(Array.isArray(data.pipelines) ? data.pipelines : []);
   state.historyAll = pipelines;
   state.historyError = '';
+  crp.historySeen = true;   // Chat P4: a run panel id still unknown after this is missing, not pending
   state.ghAvailable = !!data.ghAvailable;
   state.adoAvailable = !!(data.prHosts && data.prHosts.azure);
   paintHistory();                                        // fresh skeleton repaint
@@ -19495,6 +19506,7 @@ function paintHistory() {
   refreshHdFromRow();      // an open saved run re-reads its row
   refreshProjOverview();   // the Projects page reads state.historyAll too
   rdHandOffOpen();         // a finished run on the Running page moves to its saved row
+  crpRetryPending();       // Chat P4: a run panel route that waited for these rows resolves now
 }
 
 // One row of the history empty/error state — a DIV (never an <li>).
@@ -19696,7 +19708,8 @@ function applyHistResumeGate(btn, pauseReason, budget, pauseDetail = '') {
 // unblocks it without a refetch. Detail-screen roots ONLY: Resume left the list card
 // with the accordion.
 function refreshHistResumeGating() {
-  const roots = el.histDetail ? [...el.histDetail.querySelectorAll('.hd')] : [];
+  // The Runs page's saved screen, or the Chat run panel's (Chat P4).
+  const roots = [el.histDetail, crpBuiltHost()].filter(Boolean).flatMap((h) => [...h.querySelectorAll('.hd')]);
   for (const root of roots) {
     const btn = root.querySelector('.hd-resume');
     if (!btn || btn.hidden) continue;
@@ -20088,6 +20101,23 @@ function hdHash(parsedOrState, mode = 'glance', tab = '') {
   return tab ? `${base}/details/${tab}` : `${base}/details`;
 }
 
+// The OPEN saved screen's address: its Runs page route, or the Chat run panel's (Chat P4).
+function hdScreenHash(mode = 'glance', tab = '') {
+  if (histDetailState && histDetailState.host === 'panel') return runPanel.chatPanelHash(crpThreadParam(), histDetailState.id, tab);
+  return hdHash(histDetailState, mode, tab);
+}
+// A Details-tab hop on the open saved screen (rdGoDetails' twin).
+function hdGoDetails(tab = '') {
+  if (!histDetailState) return;
+  const screen = histDetailState.screen;
+  if (histDetailState.host === 'panel') {
+    if (screen) setHdMode(screen, 'details', tab, { focus: false });
+    try { window.history.replaceState(null, '', `#${hdScreenHash('details', tab)}`); } catch { /* sandboxed */ }
+    return;
+  }
+  location.hash = hdHash(histDetailState, 'details', tab);
+}
+
 // Show the glance or the Details screen of the open History run (the Running page's
 // setRdMode, for the History screen). `tab` opens that tab when the level shows it.
 function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
@@ -20161,17 +20191,20 @@ function histRecordFor(parsed) {
     : { id: parsed.id, projectKey: parsed.projectKey };
 }
 
-function openHistDetail(parsed, { instant = false } = {}) {
-  const host = el.histDetail;
+// `host: 'panel'` mounts the screen in the Chat run panel instead of the Runs page (Chat P4).
+function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) {
+  const panel = where === 'panel';
+  const host = panel ? crpMountHost() : el.histDetail;
   const shell = el.histShell;
   if (!host || !shell) return;
   // A detail->detail hop never passes through closeHistDetail, so without this the
   // screen is swapped underneath an open ship-it modal whose confirm handler still
   // closes over the PREVIOUS record — one click would open a PR for the run the
-  // user just navigated away from. No-op when nothing is open.
-  closeShipItModal();
+  // user just navigated away from. No-op when nothing is open. Chat P4: in the run panel crpUnmount already closed
+  // the panel screen's own dialog; one a chat card opened for another run (openShipItFor) is not this screen's.
+  if (!panel) closeShipItModal();
   const record = histRecordFor(parsed);
-  histDetailState = { key: parsed.projectKey, id: parsed.id, record, data: null, screen: null };
+  histDetailState = { key: parsed.projectKey, id: parsed.id, record, data: null, screen: null, host: panel ? 'panel' : 'page' };
 
   destroyActionsIn(host);                   // the old screen's Actions controller stops following frames
   destroyGraphMounts(host);                 // a detail->detail hop never passes closeHistDetail
@@ -20180,12 +20213,13 @@ function openHistDetail(parsed, { instant = false } = {}) {
   const screen = $('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
   histDetailState.screen = screen;
-  watchPageTitle(screen, 'hd');
+  // The panel has no glance, so there is no page title to watch.
+  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
 
   screen.querySelector('.hd-back').addEventListener('click', () => { location.hash = 'runs'; });
   // Glance <-> Details are routes, so the browser's back and forward walk them.
-  const toDetails = (tab = '') => { if (histDetailState) location.hash = hdHash(histDetailState, 'details', tab); };
-  const toRun = () => { if (histDetailState) location.hash = hdHash(histDetailState); };
+  const toDetails = (tab = '') => { hdGoDetails(tab); };
+  const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
@@ -20195,23 +20229,26 @@ function openHistDetail(parsed, { instant = false } = {}) {
   screen.querySelector('.hd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.hd-tab');
     if (!btn || !histDetailState || screen.dataset.mode !== 'details') return;
-    const want = `#${hdHash(histDetailState, 'details', btn.dataset.sec)}`;
+    const want = `#${hdScreenHash('details', btn.dataset.sec)}`;
     if (location.hash !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
   });
   screen.querySelector('.hd-title').textContent = record.title || parsed.id;
   screen.querySelector('.hd-glance .rd-now-title').textContent = record.title || parsed.id;
   paintHistStatusIcon(screen.querySelector('.hd-sic'), record);
 
-  if (instant) holdRunsAnim();
-  shell.classList.add('detail-open');                  // #hist-shell: "the saved run is open"
-  host.setAttribute('aria-hidden', 'false');
-  host.removeAttribute('inert');
-  syncRunsPane();
-  if (runsLayout() === 'slide') screen.querySelector('.hd-back').focus({ preventScroll: true });
-  else keepPaneFocus(screen);
-  // The row to hand focus back to on a slide close (the list row, by its data stamps).
-  histReturnFocus = { id: parsed.id, projectKey: parsed.projectKey };
-  rememberRun({ runId: '', pipelineId: parsed.id, projectKey: parsed.projectKey });
+  // Chat P4: the run panel is not the Runs page — no pane to open, no focus hand-off, no remembered run.
+  if (!panel) {
+    if (instant) holdRunsAnim();
+    shell.classList.add('detail-open');                  // #hist-shell: "the saved run is open"
+    host.setAttribute('aria-hidden', 'false');
+    host.removeAttribute('inert');
+    syncRunsPane();
+    if (runsLayout() === 'slide') screen.querySelector('.hd-back').focus({ preventScroll: true });
+    else keepPaneFocus(screen);
+    // The row to hand focus back to on a slide close (the list row, by its data stamps).
+    histReturnFocus = { id: parsed.id, projectKey: parsed.projectKey };
+    rememberRun({ runId: '', pipelineId: parsed.id, projectKey: parsed.projectKey });
+  }
 
   // Consume the one-shot ship-it intent HERE, not inside the async loader, so a
   // failed detail fetch cannot strand it for a later, unrelated visit.
@@ -20230,6 +20267,7 @@ function rafSafe(fn) {
 }
 
 function closeHistDetail({ instant = false } = {}) {
+  if (histDetailState && histDetailState.host === 'panel') return;   // Chat P4: the panel owns the screen (closeChatRunPanel)
   closeShipItModal();   // no-op when nothing is open; the modal is a TOP-LEVEL
                         // overlay, so emptying #hist-detail would not dismiss it
   // Same class, same reason — and the detail->list hop inside History never reaches
@@ -20263,7 +20301,8 @@ function closeHistDetail({ instant = false } = {}) {
   // The slide: empty the screen once the pane has slid out (or after the fallback; jsdom and
   // reduced motion never fire transitionend). transitionend bubbles: guard target + property.
   const pane = el.runsPane;
-  const clear = () => { if (!histDetailState) { destroyGraphMounts(host); host.innerHTML = ''; } };
+  // Chat P4: a screen the run panel mounted meanwhile is not this host's, so the page host still empties.
+  const clear = () => { if (!histDetailState || histDetailState.host === 'panel') { destroyGraphMounts(host); host.innerHTML = ''; } };
   if (!pane) { clear(); return; }
   const onEnd = (e) => {
     if (e.target !== pane || e.propertyName !== 'transform') return;
@@ -20663,6 +20702,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal) return false;
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
+  modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
@@ -22009,7 +22049,8 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
     if (prior) runs.delete(prior.runId);   // drop the superseded paused run (no split/dup)
     hideViewer();
     updateNavCounts();
-    if (navigate) location.hash = `running/${data.runId}`;   // land on the continuous live card
+    // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
+    landOnResumedRun(data.runId, { fromRunId: prior ? prior.runId : '', pipelineId: p.id, navigate });
     renderRunningView();
   } catch (err) {
     // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
@@ -22418,7 +22459,7 @@ function setupHdActions(screen, record, data) {
         const m = readLastRun();
         if (m && m.pipelineId === r.id && (!m.projectKey || m.projectKey === r.projectKey)) forgetLastRun();
         paintHistory();
-        goRunsList();                               // the list itself: the archived run is gone
+        leaveSavedRun(screen);                      // the list itself (in Chat the run panel closes): the archived run is gone
         notify({ tone: 'ok', title: 'Run archived' });
       } catch (err) {
         // Cleared only on failure: the success path navigates back to the list and
@@ -22460,8 +22501,14 @@ function setupHdActions(screen, record, data) {
         state.historyArchived = (state.historyArchived || []).filter((x) => !(x && x.id === r.id && x.projectKey === r.projectKey));
         loadHistoryView({ force: true });
         // Back to the list under the SAME chip: from Archived, that is the rest of the
-        // archive (restoring several in a row), so the toast carries the way to the run.
-        goRunsList();
+        // archive (restoring several in a row), so the toast carries the way to the run. In Chat the run panel keeps
+        // the restored run open and re-reads it there, so its toast needs no way to it (Chat P4).
+        if (histDetailState && histDetailState.host === 'panel' && histDetailState.screen === screen) {
+          reloadHistDetail();
+          notify({ tone: 'ok', title: 'Run restored', key: `restore-${r.id}` });
+          return;
+        }
+        leaveSavedRun(screen);
         notify({ tone: 'ok', title: 'Run restored', key: `restore-${r.id}`,
           action: { label: 'Open', run: () => { location.hash = `history/${r.projectKey}/${r.id}`; } } });
       } catch (err) {
@@ -22531,10 +22578,11 @@ function setupHdActions(screen, record, data) {
 
 /** Close the header menu if it is open. @returns whether it actually closed one. */
 function closeHdMenu({ focusTrigger = false } = {}) {
-  const menu = document.querySelector('#hist-detail .hd-menu');
+  // The saved screen lives on the Runs page or in the Chat run panel (Chat P4); one at a time.
+  const menu = document.querySelector('#hist-detail .hd-menu, [data-chat-panel] .hd-menu');
   if (!menu || menu.hidden) return false;
   menu.hidden = true;
-  const trigger = document.querySelector('#hist-detail .hd-more');
+  const trigger = document.querySelector('#hist-detail .hd-more, [data-chat-panel] .hd-more');
   if (trigger) {
     trigger.setAttribute('aria-expanded', 'false');
     if (focusTrigger) trigger.focus();
@@ -22549,7 +22597,7 @@ function closeHdMenu({ focusTrigger = false } = {}) {
 // listener toggles, and closing here would make every second click a no-op.
 document.addEventListener('click', (e) => {
   const t = e.target;
-  if (t && typeof t.closest === 'function' && t.closest('#hist-detail .hd-more')) return;
+  if (t && typeof t.closest === 'function' && t.closest('#hist-detail .hd-more, [data-chat-panel] .hd-more')) return;
   closeHdMenu();
 }, true);
 
@@ -22710,16 +22758,29 @@ function refreshHdFromRow() {
 // Stop — and the bar, banners and tabs all read the loaded detail, which refreshHdFromRow keeps.
 function reloadHistDetail() {
   if (!histDetailState || !histDetailState.screen) return false;
-  const parsed = parseHistDetailParam(location.hash.replace(/^#history\//, ''));
+  // Chat P4: in the run panel the address is #chat/…/run/<id>[/<tab>]; the open state is the parse.
+  const where = histDetailState.host === 'panel' ? 'panel' : 'page';
+  const parsed = where === 'panel'
+    ? { projectKey: histDetailState.key, id: histDetailState.id, workspace: String(histDetailState.key).startsWith('workspaces/'),
+      mode: 'details', tab: runPagePart(histDetailState.screen, 'details') }
+    : parseHistDetailParam(location.hash.replace(/^#history\//, ''));
   if (!parsed || parsed.id !== histDetailState.id || parsed.projectKey !== histDetailState.key) return false;
   // A Stop dialog opened on this page asks about the run it was (another tab, the CLI or chat may have
-  // stopped it): it closes with the page, as leaving the page closes it (closeHistDetail).
-  closeStopModal();
+  // stopped it): it closes with the page, as leaving the page closes it (closeHistDetail). In the Chat run panel only
+  // a dialog about THIS run closes: one opened from another run's chat card stays up (crpCloseStopFor, Chat P4).
+  if (where === 'panel') crpCloseStopFor(histDetailState.id); else closeStopModal();
   // An open diff-comment draft lives only in this page: keep the page, whose bar still repaints from
   // the row (refreshHdFromRow). The next row refresh with no draft open re-reads it.
   if (histDetailState.screen.querySelector('.hd-cmt-thread[data-draft="1"], .hd-cmt-block[data-composer="1"]')) return false;
-  openHistDetail(parsed, { instant: true });
+  // Chat P4: the re-read replaces the screen. Focus that sat in it, or that its own dialog (Stop, Restore's confirm)
+  // dropped on closing, stays in the panel — never <body> (crpShow's rule). Focus elsewhere (the composer) stays put.
+  const lost = (a) => !a || a === document.body || !a.isConnected || !!(a.closest && a.closest('.viewer-modal.hidden'));
+  const had = document.activeElement;
+  const host = where === 'panel' ? crpBuiltHost() : null;
+  const keep = !!host && (lost(had) || host.contains(had));
+  openHistDetail(parsed, { instant: true, host: where });
   if (histDetailState && histDetailState.screen) setHdMode(histDetailState.screen, parsed.mode, parsed.tab, { focus: false });
+  if (keep && lost(document.activeElement)) document.querySelector('[data-chat-panel]')?.focus({ preventScroll: true });
   return true;
 }
 
@@ -25438,7 +25499,7 @@ function rdOvStateBanner(host, r) {
     btn.title = engineSwitchNote(other);
     btn.addEventListener('click', () => {
       // The toggle carries the busy state (the banner repaints on every frame).
-      const pauseBtn = document.querySelector('#run-detail .rd-pause');
+      const pauseBtn = rdOpenPauseBtn();
       if (pauseBtn && pauseBtn.disabled) return;
       resumeRunOnEngine(r.runId, pauseBtn || btn, other);
     });
@@ -25452,7 +25513,7 @@ function rdOvStateBanner(host, r) {
     btn.textContent = 'Resume with another model…';
     btn.title = 'Every remaining step runs on the model you pick';
     btn.addEventListener('click', async () => {
-      const pauseBtn = document.querySelector('#run-detail .rd-pause');
+      const pauseBtn = rdOpenPauseBtn();
       if (pauseBtn && pauseBtn.disabled) return;
       const model = await pickResumeModel(r.runEngine || 'claude', pause);
       if (model) resumeRunFromCard(r.runId, pauseBtn || btn, { model });
@@ -25707,7 +25768,9 @@ function buildRdAgents(sec, ctx) {
 // the live-repaint contract off exactly on the terminal frame D8 needs it for, and
 // mid-resume.
 function rdOpenRun() {
-  if (!el.runShell || !el.runShell.classList.contains('detail-open')) return null;
+  // Chat P4: a screen mounted in the Chat run panel is open for as long as it is mounted.
+  const inPanel = !!(runDetailState && runDetailState.host === 'panel' && runDetailState.screen);
+  if (!inPanel && (!el.runShell || !el.runShell.classList.contains('detail-open'))) return null;
   const id = runDetailState && runDetailState.runId;
   if (!id) return null;
   return runs.get(id) || null;
@@ -25853,11 +25916,16 @@ function paintRdTerminal(screen, r) {
 // hands over on the same glance or Details tab (the tab keys match). replaceRoute, so
 // Back skips the live page. '' while the run is live or paused, or before its row lands —
 // a row that is still `live` may not have the final state on disk yet.
-function rdSavedRoute(r, mode = 'glance', tab = '') {
-  if (!r || !RD_TERMINAL.includes(r.status) || !r.pipelineId) return '';
+// The finished History row a finished live run hands over to, or null (the Chat run panel shares it).
+function rdSavedRow(r) {
+  if (!r || !RD_TERMINAL.includes(r.status) || !r.pipelineId) return null;
   const row = (state.historyAll || []).find((p) => p && p.id === r.pipelineId && p.projectKey);
-  if (!row || row.live || !isTerminalStatus(row.status)) return '';
-  return hdHash({ projectKey: row.projectKey, id: r.pipelineId }, mode, tab);
+  if (!row || row.live || !isTerminalStatus(row.status)) return null;
+  return row;
+}
+function rdSavedRoute(r, mode = 'glance', tab = '') {
+  const row = rdSavedRow(r);
+  return row ? hdHash({ projectKey: row.projectKey, id: r.pipelineId }, mode, tab) : '';
 }
 function rdHandOffToSaved(r, mode, tab) {
   const to = rdSavedRoute(r, mode, tab);
@@ -25867,7 +25935,13 @@ function rdHandOffToSaved(r, mode, tab) {
   return true;
 }
 // The open Running page: called when its run finishes and whenever History's rows change.
+// Chat P4: in the run panel the hand-off stays in the panel (crpHandOff), on a microtask — this runs
+// inside paintRdTerminal, which openRunDetail calls while it is still mounting the screen.
 function rdHandOffOpen() {
+  if (runDetailState && runDetailState.host === 'panel') {
+    if (!crp.handOff) { crp.handOff = true; queueMicrotask(() => { crp.handOff = false; crpHandOff(); }); }
+    return;
+  }
   const [view, param] = parseHash();
   if (view !== 'running' || !runDetailState || !runDetailState.screen) return;
   const { runId, mode, tab } = runDetailParts(param);
@@ -27148,7 +27222,7 @@ function focusLogExecution(ctx, executionId, nodeId) {
     else cell.sec.__pendingLogFilter = patch;
     if (histDetailState.screen.dataset.mode !== 'details') setHdMode(histDetailState.screen, 'details', '', { focus: false });
     tabs.activate('logs');
-    try { window.history.replaceState(null, '', `#${hdHash(histDetailState, 'details', 'logs')}`); } catch { /* ignore */ }
+    try { window.history.replaceState(null, '', `#${hdScreenHash('details', 'logs')}`); } catch { /* ignore */ }
     cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
     return;
   }
@@ -27157,9 +27231,10 @@ function focusLogExecution(ctx, executionId, nodeId) {
   const tabs = screen ? detailTabsOf(screen) : null;
   if (!tabs || !tabs.cells.has('logs')) return;
   // A row clicked on the glance (or the Workflow tab) opens Details › Live log.
-  if (screen.dataset.mode !== 'details' || location.hash !== `#${rdHash(r.runId, 'details', 'logs')}`) {
+  const logsHash = `#${rdScreenHash('details', 'logs')}`;   // the Runs page's address, or the Chat run panel's
+  if (screen.dataset.mode !== 'details' || location.hash !== logsHash) {
     setRdMode(screen, 'details', 'logs', { focus: false });
-    try { window.history.replaceState(null, '', `#${rdHash(r.runId, 'details', 'logs')}`); } catch { /* ignore */ }
+    try { window.history.replaceState(null, '', logsHash); } catch { /* ignore */ }
   }
   tabs.activate('logs');                            // the builder reads r.logFilter
   const sec = screen.querySelector('.rd-sec-logs');
@@ -27173,7 +27248,8 @@ function focusQuestionPanel(ctx) {
   const panel = screen && screen.querySelector('.rd-questions');
   if (!panel) return;
   // The question lives on the glance: a gate pip clicked in Details › Workflow goes back to it.
-  if (screen && screen.dataset.mode === 'details' && screen.contains(panel)) {
+  // Not in the Chat run panel: it has no glance; the question sits under its Details header (Chat P4).
+  if (screen && screen.dataset.mode === 'details' && screen.dataset.presentation !== 'panel' && screen.contains(panel)) {
     setRdMode(screen, 'glance', '', { focus: false });
     try { window.history.replaceState(null, '', `#${rdHash(runDetailState.runId)}`); } catch { /* ignore */ }
   }
@@ -27807,7 +27883,7 @@ function repaintCostBanners() {
       if (screen && runDetailState.runId === r.runId) { paintRdBanners(screen, r); paintRdHeader(screen, r); }
     }
   }
-  if (inRunsView()) refreshHistResumeGating();
+  if (inRunsView() || crpShowsRun()) refreshHistResumeGating();
 }
 
 function questionCount(pq) {
@@ -28354,6 +28430,10 @@ function keepPaneFocus(screen) {
 // State lives HERE rather than in per-painter module globals: the screen element
 // is the identity every painter keys on.
 let runDetailState = { runId: '', screen: null };
+// Chat P4: the run panel's own state (see "Chat P4: the run panel" below). Declared here, beside the
+// screen state it shares, so it is initialised before anything that could paint a run screen runs.
+const crp = { open: false, kind: '', id: '', want: null, waiting: '', historySeen: false, closedHistory: false, opener: null, handOff: false, lastWidth: 0 };
+const crpHints = new Map();   // pipelineId -> projectKey, from openRunPanel refs: a saved run opens before History lists it
 
 // ── The remembered run (D6): a bare #runs reopens the run the pane showed last ──
 const RUNS_LAST_KEY = 'worca-cc.runs.last';   // {runId, pipelineId, projectKey}: the last run the pane showed
@@ -28415,6 +28495,24 @@ function goRunsList() {
   if (location.hash.slice(1) === 'runs') showView('runs');   // no hashchange would fire
   else location.hash = 'runs';
 }
+// After Archive (and a Restore on the Runs page) the saved screen is gone: the Runs list on the page; in Chat the
+// run panel closes instead (Chat P4). `screen` is the screen the action was pressed on: a panel screen the user
+// closed or swapped while the request was in flight leaves Chat where it is — never the Runs list, never another
+// run's panel.
+function leaveSavedRun(screen = null) {
+  const fromPanel = screen ? screen.dataset.presentation === 'panel' : !!(histDetailState && histDetailState.host === 'panel');
+  if (fromPanel) {
+    if (histDetailState && histDetailState.host === 'panel' && (!screen || histDetailState.screen === screen)) {
+      // Focus sits on the closed confirm (<body> in a browser) or in the panel: back to the opener, as Close does.
+      // Focus the user moved on while the request was in flight (the composer) stays put.
+      const a = document.activeElement;
+      const aside = document.querySelector('[data-chat-panel]');
+      closeChatRunPanelRoute({ restoreFocus: !a || a === document.body || (!!aside && aside.contains(a)) || !!(a.closest && a.closest('.viewer-modal.hidden')) });
+    }
+    return;
+  }
+  goRunsList();
+}
 // An open #running/<id> the server does not know (after hello): its saved page when the
 // memory knows it, else the list — the list itself, not whatever other run the memory
 // holds (D6). Never loops: the memory is dropped before `#runs`.
@@ -28448,6 +28546,24 @@ function runDetailParts(param) {
 function rdHash(runId, mode = 'glance', tab = '') {
   if (mode !== 'details') return `running/${runId}`;
   return tab ? `running/${runId}/details/${tab}` : `running/${runId}/details`;
+}
+
+// The OPEN live screen's address in `mode`/`tab`: its Runs page route, or — mounted in the Chat run
+// panel — the panel's, which is always Details (Chat P4).
+function rdScreenHash(mode = 'glance', tab = '') {
+  if (runDetailState.host === 'panel') return runPanel.chatPanelHash(crpThreadParam(), runDetailState.runId, tab);
+  return rdHash(runDetailState.runId, mode, tab);
+}
+// A Details-tab hop on the open live screen. The page routes it (Back walks glance <-> Details); the
+// panel has no glance, so it opens the tab and swaps its address in place.
+function rdGoDetails(tab = '') {
+  const screen = runDetailState.screen;
+  if (runDetailState.host === 'panel') {
+    if (screen) setRdMode(screen, 'details', tab, { focus: false });
+    try { window.history.replaceState(null, '', `#${rdScreenHash('details', tab)}`); } catch { /* sandboxed */ }
+    return;
+  }
+  location.hash = rdHash(runDetailState.runId, 'details', tab);
 }
 
 function routeRunDetail(param, { instant = false } = {}) {
@@ -28504,8 +28620,10 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   }
 }
 
-function openRunDetail(runId, { instant = false } = {}) {
-  const host = el.runDetail;
+// `host: 'panel'` mounts the screen in the Chat run panel instead of the Runs page (Chat P4).
+function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
+  const panel = where === 'panel';
+  const host = panel ? crpMountHost() : el.runDetail;
   const shell = el.runShell;
   if (!host || !shell) return;
 
@@ -28515,13 +28633,14 @@ function openRunDetail(runId, { instant = false } = {}) {
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#run-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
-  runDetailState = { runId, screen };
-  watchPageTitle(screen, 'rd');
+  runDetailState = { runId, screen, host: panel ? 'panel' : 'page' };
+  // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
+  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
 
   screen.querySelector('.rd-back').addEventListener('click', () => { location.hash = 'runs'; });
   // Glance <-> Details are routes, so the browser's own back and forward walk them.
-  const toDetails = (tab = '') => { location.hash = rdHash(runDetailState.runId, 'details', tab); };
-  const toRun = () => { location.hash = rdHash(runDetailState.runId); };
+  const toDetails = (tab = '') => { rdGoDetails(tab); };
+  const toRun = () => { if (runDetailState.host !== 'panel') location.hash = rdHash(runDetailState.runId); };
   screen.querySelector('.rd-to-run').addEventListener('click', toRun);
   // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
   const statusTop = screen.querySelector('.rd-now-top');
@@ -28548,7 +28667,7 @@ function openRunDetail(runId, { instant = false } = {}) {
   screen.querySelector('.rd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.rd-tab');
     if (!btn || screen.dataset.mode !== 'details') return;
-    const want = `#${rdHash(runDetailState.runId, 'details', btn.dataset.sec)}`;
+    const want = `#${rdScreenHash('details', btn.dataset.sec)}`;
     if (location.hash !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
   });
   screen.querySelector('.rd-branch-copy').addEventListener('click', () => {
@@ -28620,7 +28739,8 @@ function openRunDetail(runId, { instant = false } = {}) {
   // module state at CLICK time, so a detail->detail hop can never stop the run
   // that was open when the listener was bound.
   screen.querySelector('.rd-stop').addEventListener('click', () => {
-    openStopModal({ runId: runDetailState.runId });
+    // Chat P4: a Stop confirmed from the run panel hands focus back to the panel (crpAfterStop).
+    openStopModal({ runId: runDetailState.runId, ...(runDetailState.host === 'panel' ? { onStopped: crpAfterStop } : {}) });
   });
   // Away mode on this run (POST /api/run/night). Reads the run at CHANGE time, like Stop; the run id is
   // captured before the POST, since the user may open another run while it is in flight.
@@ -28666,6 +28786,8 @@ function openRunDetail(runId, { instant = false } = {}) {
   }
   if (r) loadNightDecisions(r);
 
+  // Chat P4: the run panel is not the Runs page — no pane to open, no focus hand-off, no remembered run.
+  if (panel) return;
   if (instant) holdRunsAnim();
   shell.classList.add('detail-open');                  // #run-shell: "the live detail is open"
   host.setAttribute('aria-hidden', 'false');
@@ -28679,6 +28801,7 @@ function openRunDetail(runId, { instant = false } = {}) {
 }
 
 function closeRunDetail({ instant = false } = {}) {
+  if (runDetailState.host === 'panel') return;   // Chat P4: the panel owns the screen (closeChatRunPanel)
   const shell = el.runShell;
   const host = el.runDetail;
   if (!shell || !host) return;
@@ -28710,7 +28833,8 @@ function closeRunDetail({ instant = false } = {}) {
   // The slide: empty the screen once the pane has slid out (or after the fallback; jsdom and
   // reduced motion never fire transitionend). transitionend bubbles: guard target + property.
   const pane = el.runsPane;
-  const clear = () => { if (!runDetailState.screen) { destroyGraphMounts(host); host.innerHTML = ''; } };
+  // Chat P4: a screen the run panel mounted meanwhile is not this host's, so the page host still empties.
+  const clear = () => { if (!runDetailState.screen || runDetailState.host === 'panel') { destroyGraphMounts(host); host.innerHTML = ''; } };
   if (!pane) { clear(); return; }
   const onEnd = (e) => {
     if (e.target !== pane || e.propertyName !== 'transform') return;
@@ -28879,6 +29003,524 @@ function paintAwayAnswers(sec, decisions, steps = []) {
     if (btn) btn.focus();
   }
 }
+
+// ── Chat P4: the run panel ──────────────────────────────────────────────────
+// The Chat page's right panel ([data-chat-panel], worca Chat P1) re-hosts the two run-detail screens
+// above — the live run (.rd, runDetailState) and the saved run (.hd, histDetailState) — in a `panel`
+// presentation: Details only, the bar on top. They stay singletons: the state object names its host
+// ('page' | 'panel'), every tab hop, hand-off and reload keeps to that host, and showView takes the
+// screen back from whichever side a route leaves. Address: #chat/<thread|new>/run/<runId|pipelineId>
+// [/<tab>]; tab hops replace it in place; Close and Escape step back to #chat/<thread>.
+
+// The thread half of the current #chat address ('new' for a chat with no thread yet).
+function crpThreadParam() {
+  const [view, param] = parseHash();
+  return view === 'chat' ? runPanel.panelThread(param) : 'new';
+}
+// The Chat view with its run panel open: live frames, History reloads and a waiting route reach the
+// panel the way they reach the Runs page.
+function crpShowsRun() { return currentShownView === 'chat' && crp.open; }
+
+/** The panel's elements, its shell built on first use (null before the Chat page exists). */
+function crpEls() {
+  const aside = document.querySelector('[data-chat-panel]');
+  if (!aside) return null;
+  let root = aside.querySelector(':scope > .crp');
+  if (!root) {
+    root = runPanel.buildPanelShell(document);
+    aside.appendChild(root);
+    // The live screen's delegated controls (answers, cost buttons), as on #run-detail.
+    root.querySelector('.crp-host').addEventListener('click', onRdDelegatedClick);
+    root.addEventListener('click', (e) => {
+      const b = e.target.closest && e.target.closest('.crp-close, .crp-full');
+      if (!b || !root.contains(b)) return;
+      if (b.classList.contains('crp-close')) closeChatRunPanelRoute({ restoreFocus: true });
+      else crpOpenFullPage();
+    });
+    // A browser blurs a focused control the moment it is disabled (Submit's busy state, Resume's, Pause's) — long
+    // before the hand-off or resume swap — and focus falls to <body>. Keep it in the panel (keepPaneFocus's rule on
+    // the Runs page); focus that moved on to another element is left alone.
+    root.addEventListener('focusout', (e) => {
+      if (!e.target || !e.target.disabled) return;
+      queueMicrotask(() => {
+        if (crp.open && (!document.activeElement || document.activeElement === document.body)) aside.focus({ preventScroll: true });
+      });
+    });
+  }
+  return { aside, page: aside.closest('[data-chat-page]'), root, host: root.querySelector('.crp-host') };
+}
+/** Where openRunDetail / openHistDetail mount a `host: 'panel'` screen (builds the shell). */
+function crpMountHost() { const els = crpEls(); return els ? els.host : null; }
+/** The panel's screen host when its shell exists — never builds it. */
+function crpBuiltHost() { return document.querySelector('[data-chat-panel] .crp-host'); }
+
+// The panel presentation of a run screen: Details only (no glance), with the panel's own Open full page
+// and Close at the end of its bar. The glance stays hidden, so the parts of it the panel needs move under
+// the Details header — the banners (a cost or error pause with its override, retained work, a stalled
+// graph), the facts row (Time · Cost · Changes) and, live, the waiting question, answerable from every tab.
+// Their painters find them through the screen (paintRdBanners / paintHdBanners, paintGlanceFacts,
+// paintRdQuestions). CSS dresses the rest (style.css "Chat P4: run panel").
+function presentRunScreenInPanel(screen) {
+  screen.dataset.presentation = 'panel';
+  const live = screen.classList.contains('rd');
+  const header = screen.querySelector(live ? '.rd-header' : '.hd-header');
+  if (header) {
+    const head = document.createElement('div');
+    head.className = 'crp-head';
+    const banners = screen.querySelector(live ? '.rd-banners' : '.hd-banners');
+    if (banners) head.appendChild(banners);
+    const facts = screen.querySelector('.rd-facts');
+    if (facts) head.appendChild(facts);
+    const ask = live ? screen.querySelector('.rd-questions') : null;
+    if (ask) head.appendChild(ask);
+    header.after(head);
+  }
+  const end = screen.querySelector('.rd-bar-end');
+  if (end) end.appendChild(runPanel.buildPanelBarButtons(document));
+  // Below a 560px panel the bar goes icon-only (style.css): Stop, the one bar button with neither a title nor an
+  // aria-label, keeps its own label as a tooltip.
+  for (const stop of screen.querySelectorAll('.rd-stop, .hd-stop')) if (!stop.title) stop.title = stop.textContent.trim();
+}
+
+// P1 owns the history column: askPanel.setHistoryOpen sets chat-page[data-history] (the source of truth), the
+// toggle and the scrim. persist:false — the panel's fold is not the user's choice.
+function crpSetHistory(open) {
+  if (askPanel) askPanel.setHistoryOpen(open, { persist: false });
+}
+
+// Show the panel frame (once per opening): the slot un-hides, the page says so, the history column folds
+// below PANEL_HISTORY_MIN (back on close; also when the window narrows past it while open), and focus moves in
+// (back to the opener on close).
+function crpOpenFrame(els) {
+  crp.waiting = '';
+  runPanel.setPanelNotice(els.root, '');
+  if (crp.open) return;
+  crp.open = true;
+  const a = document.activeElement;
+  crp.opener = a && a !== document.body ? a : null;
+  els.aside.hidden = false;
+  els.aside.setAttribute('aria-label', runPanel.PANEL_STRINGS.region);
+  els.aside.tabIndex = -1;
+  const page = els.page;
+  crp.lastWidth = window.innerWidth || 0;
+  if (page) {
+    page.dataset.panel = 'open';
+    if (crp.lastWidth < runPanel.PANEL_HISTORY_MIN) crpFoldHistory(page);
+  }
+  crpSyncSheet();   // a full-screen sheet: the page behind it goes inert
+  if (typeof els.aside.focus === 'function') els.aside.focus({ preventScroll: true });
+}
+
+// Fold an open history column beside the panel and remember to bring it back on close (closeChatRunPanel: never
+// below P1's overlay breakpoint).
+function crpFoldHistory(page) {
+  if (!page || page.dataset.history !== 'open') return;
+  crp.closedHistory = true;
+  crpSetHistory(false);
+  // The user re-opening the column beside the panel ends the fold: Close then leaves it as the user last set it.
+  const MO = window.MutationObserver;
+  if (!crp.historyMo && typeof MO === 'function') {
+    crp.historyMo = new MO(() => { if (crp.open && page.dataset.history === 'open') crp.closedHistory = false; });
+    crp.historyMo.observe(page, { attributes: true, attributeFilter: ['data-history'] });
+  }
+}
+// The window narrowing past PANEL_HISTORY_MIN with the panel open folds the column too — on the crossing only, so a
+// column the user re-opens beside the panel stays open.
+window.addEventListener('resize', () => {
+  if (!crp.open) return;
+  const was = crp.lastWidth;
+  crp.lastWidth = window.innerWidth || 0;
+  if (was >= runPanel.PANEL_HISTORY_MIN && crp.lastWidth < runPanel.PANEL_HISTORY_MIN) crpFoldHistory(crpEls()?.page);
+});
+
+// The Stop dialog asks about ONE run (openStopModal stamps dataset.runId or dataset.pipelineId). It closes with
+// the panel's screen only when it is about that screen's run: a dialog opened from another run's chat card
+// stays up, and its POST may be in flight.
+function crpCloseStopFor(pipelineId, runId = '') {
+  const m = document.getElementById('stop-modal');
+  if (!m || m.classList.contains('hidden')) return;
+  const rid = m.dataset.runId || '';
+  const pid = m.dataset.pipelineId || '';
+  const about = (!!runId && rid === runId)
+    || (!!pipelineId && (pid === pipelineId || (!!rid && ((runs.get(rid) || {}).pipelineId || '') === pipelineId)));
+  if (about) closeStopModal();
+}
+
+// Tear down whatever screen the panel holds: its own modals, its Actions controllers and graph mounts, and
+// the singleton state that pointed into it.
+function crpUnmount(els = crpEls()) {
+  if (runDetailState.host === 'panel') {
+    const r = runs.get(runDetailState.runId);
+    crpCloseStopFor((r && r.pipelineId) || '', runDetailState.runId);
+    runDetailState = { runId: '', screen: null };
+  }
+  if (histDetailState && histDetailState.host === 'panel') {
+    crpCloseShipItFor(histDetailState.id);
+    closeReportModal();
+    crpCloseStopFor(histDetailState.id);
+    histDetailState = null;
+    hdCommentState = null;
+  }
+  closeHdMenu();
+  closeCostPop();
+  const host = els && els.host;
+  if (host && host.firstChild) {
+    destroyActionsIn(host);
+    destroyGraphMounts(host);
+    host.replaceChildren();
+  }
+  crp.kind = '';
+  crp.id = '';
+}
+
+// Show `target` ({kind:'live', runId} | {kind:'saved', projectKey, id}) on `tab`. The same screen only
+// switches tab; another one replaces whatever the panel held. `replace` rewrites the address in place
+// (a finished run's saved id, a hand-off, a resume).
+function crpShow(target, tab = '', { replace = false } = {}) {
+  const els = crpEls();
+  if (!els) return;
+  // A swap removes the screen focus sat in (a hand-off, a resume follow): focus stays in the panel, never <body> —
+  // keepPaneFocus's rule on the Runs page.
+  const had = document.activeElement;
+  const focusIn = !!had && had !== document.body && els.host.contains(had);
+  const id = target.kind === 'saved' ? target.id : target.runId;
+  const key = runPanel.panelTabFor(target.kind, tab);
+  if (replace) { try { window.history.replaceState(null, '', `#${runPanel.chatPanelHash(crpThreadParam(), id, key)}`); } catch { /* sandboxed */ } }
+  crpOpenFrame(els);
+  if (target.kind === 'live') {
+    const same = runDetailState.host === 'panel' && !!runDetailState.screen && runDetailState.runId === id;
+    if (!same) { crpUnmount(els); openRunDetail(id, { host: 'panel' }); }
+    const screen = runDetailState.host === 'panel' ? runDetailState.screen : null;
+    if (screen) {
+      setRdMode(screen, 'details', key, { focus: false });
+      if (key === 'qa') scrollToQuestions(screen);   // "Answer": the waiting question, when there is one
+      else if (key) crpRevealTabs(screen);           // a routed tab (Expand → Workflow) under a waiting question
+    }
+  } else {
+    const same = !!histDetailState && histDetailState.host === 'panel' && histDetailState.key === target.projectKey && histDetailState.id === id;
+    if (!same) {
+      crpUnmount(els);
+      openHistDetail({ projectKey: target.projectKey, id, workspace: String(target.projectKey).startsWith('workspaces/'), mode: 'details', tab: key }, { host: 'panel' });
+    }
+    if (histDetailState && histDetailState.host === 'panel' && histDetailState.screen) setHdMode(histDetailState.screen, 'details', key, { focus: false });
+  }
+  if (focusIn && !had.isConnected && typeof els.aside.focus === 'function') els.aside.focus({ preventScroll: true });
+  crp.kind = target.kind;
+  crp.id = id;
+  // P1: the page context moved — a boot deep link resolving, a hand-off or a resume follow write no hash, so the
+  // composer's own hashchange refresh (its MCP preview) never runs for them.
+  if (askPanel && typeof askPanel.contextChanged === 'function') askPanel.contextChanged();
+}
+
+// A route the panel cannot show yet ('pending': before hello / History) or at all ('missing'): the frame
+// opens with a one-line notice and its own Close; crpRetryPending tries again as rows arrive.
+function crpWait(kind) {
+  const els = crpEls();
+  if (!els) return;
+  crpUnmount(els);
+  crpOpenFrame(els);
+  crp.waiting = kind;
+  runPanel.setPanelNotice(els.root, kind === 'pending' ? runPanel.PANEL_STRINGS.loading : runPanel.PANEL_STRINGS.missing);
+}
+
+// What a panel id names (routeRunDetail's rules, plus pipeline ids): a run this tab knows — its saved
+// run once finished and listed —, a live run of that pipeline, a History row (active or archived), a
+// row an openRunPanel ref vouched for, or nothing yet ('pending' until hello and History have answered).
+function crpResolve(id) {
+  const r = runs.get(id);
+  if (r) {
+    const row = rdSavedRow(r);
+    return row ? { kind: 'saved', projectKey: row.projectKey, id: r.pipelineId } : { kind: 'live', runId: id };
+  }
+  // The pipeline's current lineage (latestPipelineRun, D23): never a superseded paused copy the Map lists first, nor
+  // a run a restarted server no longer knows (its saved row offers the working Resume).
+  const best = latestPipelineRun(id, { currentBoot: true });
+  if (best && !RD_TERMINAL.includes(best.status)) return { kind: 'live', runId: best.runId };
+  const match = (p) => p && p.id === id && p.projectKey;
+  const row = (state.historyAll || []).find(match) || (state.historyArchived || []).find(match);
+  if (row) return { kind: 'saved', projectKey: row.projectKey, id };
+  if (crpHints.has(id)) return { kind: 'saved', projectKey: crpHints.get(id), id };
+  if (best) return { kind: 'live', runId: best.runId };   // finished here, its row not listed yet
+  return { kind: helloSeeded && crp.historySeen ? 'missing' : 'pending' };
+}
+
+// chatPanelRouter (P1 calls it from enterChatView): ['<id>', '<tab>'?] opens or re-tabs the panel; []
+// closes it. The id is a run id or a pipeline id; a route that resolves to another id (a finished run's
+// saved row) has its address replaced in place.
+function routeChatRunPanel(segments) {
+  const [id = '', tab = ''] = (Array.isArray(segments) ? segments : []).map((s) => String(s || ''));
+  if (!id) {
+    // Back or a bare #chat: a focus inside the panel (or lost with it) goes back to the opener, as Close does.
+    const a = document.activeElement;
+    const aside = document.querySelector('[data-chat-panel]');
+    closeChatRunPanel({ restoreFocus: !a || a === document.body || (!!aside && aside.contains(a)) });
+    return;
+  }
+  crp.want = { id, tab };
+  const target = crpResolve(id);
+  if (target.kind === 'live' || target.kind === 'saved') {
+    // A finished run opened here is acknowledged, as opening it on the Runs page is (showView 'running'): its result
+    // is on screen, so its live row gives way to its saved one and a failure leaves Needs you.
+    const seen = runs.get(target.kind === 'live' ? target.runId : id) || (target.kind === 'saved' ? latestPipelineRun(target.id, { currentBoot: true }) : null);
+    if (seen && !isPaused(seen) && (seen._finished || isTerminalStatus(seen.status))) acknowledgeRun(seen.runId);
+    const shown = target.kind === 'saved' ? target.id : target.runId;
+    crpShow(target, tab, { replace: shown !== id });
+    return;
+  }
+  crpWait(target.kind);
+}
+
+// Close the panel without touching the address: the router does this for #chat/<thread>, showView when a
+// route leaves Chat. closeChatRunPanelRoute (Close, Escape) also steps the address back to the thread.
+function closeChatRunPanel({ restoreFocus = false } = {}) {
+  crp.want = null;
+  crp.waiting = '';
+  const holds = runDetailState.host === 'panel' || (!!histDetailState && histDetailState.host === 'panel');
+  if (!crp.open && !holds) return;
+  const els = crpEls();
+  crpUnmount(els);
+  crp.open = false;
+  crpSyncSheet();   // the page behind a sheet takes focus again, before the hand-back below
+  if (els) {
+    runPanel.setPanelNotice(els.root, '');
+    els.aside.hidden = true;
+    const page = els.page;
+    if (page) {
+      page.dataset.panel = 'closed';
+      // Never below P1's overlay breakpoint: there the column is an overlay (with a scrim), which only the user opens.
+      if (crp.closedHistory && page.dataset.history === 'closed' && (window.innerWidth || 0) >= runPanel.PANEL_HISTORY_OVERLAY_BELOW) crpSetHistory(true);
+    }
+  }
+  crp.closedHistory = false;
+  const back = crp.opener;
+  crp.opener = null;
+  if (restoreFocus) {
+    // No opener to go back to (a route opened the panel, or it is gone): the chat's composer, never the hidden panel.
+    const to = back && back.isConnected ? back : document.querySelector('[data-chat-page] textarea.ask-input');
+    if (to && typeof to.focus === 'function') to.focus({ preventScroll: true });
+  }
+}
+function closeChatRunPanelRoute(opts = {}) {
+  const to = runPanel.chatThreadHash(crpThreadParam());
+  closeChatRunPanel(opts);
+  if (location.hash.slice(1) !== to) location.hash = to;
+}
+
+// "Open full page": the run's own page on the same tab — the live run's, else the saved run's. Leaving
+// Chat closes the panel first (showView), so the page takes the screen over.
+function crpOpenFullPage() {
+  if (runDetailState.host === 'panel' && runDetailState.screen) {
+    location.hash = rdHash(runDetailState.runId, 'details', runPagePart(runDetailState.screen, 'details'));
+    return;
+  }
+  if (histDetailState && histDetailState.host === 'panel' && histDetailState.screen) {
+    location.hash = hdHash(histDetailState, 'details', runPagePart(histDetailState.screen, 'details'));
+  }
+}
+
+// A panel route that waited for hello or History rows (crpWait) — or named a run not found then —
+// resolves again whenever they change.
+function crpRetryPending() {
+  if (!crp.waiting || !crp.want || !crpShowsRun()) return;
+  routeChatRunPanel([crp.want.id, crp.want.tab]);
+}
+// History answered with an error. paintHistory never runs on those exits, so a waiting route settles here:
+// an id still unknown is "Could not find this run", never a spinner forever.
+function crpHistoryAnswered() {
+  crp.historySeen = true;
+  crpRetryPending();
+}
+
+// The open live screen's Pause/Resume toggle — the busy-state carrier — wherever the screen lives.
+function rdOpenPauseBtn() {
+  return (runDetailState && runDetailState.screen && runDetailState.screen.querySelector('.rd-pause')) || null;
+}
+
+// A finished live run in the panel becomes its saved run there, on the same tab, its address replaced in
+// place — rdHandOffToSaved's rule, kept inside the panel.
+function crpHandOff() {
+  if (runDetailState.host !== 'panel' || !runDetailState.screen) return;
+  const r = runs.get(runDetailState.runId);
+  const row = rdSavedRow(r);
+  if (!row) return;
+  acknowledgeRun(r.runId);   // its result is on screen: the live row gives way to the saved one
+  crpShow({ kind: 'saved', projectKey: row.projectKey, id: r.pipelineId }, runPagePart(runDetailState.screen, 'details'), { replace: true });
+}
+
+// The Ship it dialog asks about ONE run (openShipItModal stamps dataset.pipelineId). It closes with the panel's saved
+// screen only when it is about that run: one a chat card opened for another run (openShipItFor) stays up.
+function crpCloseShipItFor(pipelineId) {
+  const m = document.getElementById('shipit-modal');
+  if (m && !m.classList.contains('hidden') && !!pipelineId && m.dataset.pipelineId === pipelineId) closeShipItModal();
+}
+
+// Where a resume lands. A run panel that held the resumed run follows it to the new run id — whoever pressed
+// Resume: its own buttons, or a chat run card (P3, navigate:false). Otherwise `navigate` (P3, default true)
+// hops to the Runs page, except on the Chat view, which never leaves for a resume.
+function landOnResumedRun(runId, { fromRunId = '', pipelineId = '', navigate = true } = {}) {
+  const live = !!fromRunId && runDetailState.host === 'panel' && runDetailState.runId === fromRunId;
+  const saved = !!pipelineId && !!histDetailState && histDetailState.host === 'panel' && histDetailState.id === pipelineId;
+  if (live || saved) {
+    const screen = live ? runDetailState.screen : histDetailState.screen;
+    crpShow({ kind: 'live', runId }, runPagePart(screen, 'details'), { replace: true });
+    return;
+  }
+  if (navigate && currentShownView !== 'chat') location.hash = `running/${runId}`;
+}
+
+// A Stop confirmed from the panel's own bar: its busy confirm lost the focus and its dialog hid, so focus sits on
+// <body> (a browser) or on the hidden button (jsdom). Bring it back to the panel the user was in.
+function crpAfterStop() {
+  if (!crpShowsRun()) return;
+  const a = document.activeElement;
+  const m = document.getElementById('stop-modal');
+  const aside = document.querySelector('[data-chat-panel]');
+  if (aside && (!a || a === document.body || (!!m && m.contains(a)))) aside.focus({ preventScroll: true });
+}
+
+// Escape closes the run panel — pressed inside it, or with focus nowhere — unless something on top owns
+// the key: a composer popover (askPanel.ownsKey first — P1 never claims a target inside the panel), a modal
+// or a running guide (the top-bar search's own test; P5's artifact popup is a .viewer-modal), an open split
+// or ⋯ menu, the cost breakdown, or a comment draft. DOCUMENT capture, like the run pages' own Escape arms —
+// never window capture: P5's popup listens in window capture, closes itself and stops the event, so it
+// always runs first.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !crpShowsRun()) return;
+  if (mobileNavOpen) return;                         // the phone nav drawer's own Escape listener closes it
+  if (askPanel && askPanel.ownsKey(e)) return;
+  const els = crpEls();
+  const t = e.target;
+  if (!els || (t && t !== document.body && t !== document.documentElement && !els.aside.contains(t))) return;
+  if (document.querySelector('.viewer-modal:not(.hidden), dialog[open], .guide-layer')) return;
+  // A field keeps its draft. Escape typed in an answer, a comment, a log search or a select — or on any control of a
+  // waiting question or a comment composer, whose draft lives beside it — never closes the panel (closing empties
+  // the screen and loses the text).
+  if (t && typeof t.closest === 'function' && (t.closest('.hd-cmt-composer, .qpanel')
+    || t.matches('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable="true"]'))) return;
+  // An open Resume split menu: its own Escape closes it when focus is inside it; from anywhere else in the panel,
+  // close it here (and only it).
+  const menu = els.aside.querySelector('.btn-split-menu:not([hidden])');
+  if (menu) {
+    if (t && menu.contains(t)) return;
+    menu.hidden = true;
+    const more = menu.parentElement && menu.parentElement.querySelector('.btn-split-more');
+    if (more) { more.setAttribute('aria-expanded', 'false'); more.focus({ preventScroll: true }); }
+    e.preventDefault();
+    return;
+  }
+  if (closeHdMenu({ focusTrigger: true })) return;
+  if (closeCostPop({ focusTrigger: true })) return;
+  e.preventDefault();
+  closeChatRunPanelRoute({ restoreFocus: true });
+}, true);
+
+// R4: the Chat page's context follows the run in the panel — P1's getPageContext spreads this into
+// {view:'chat'}; with no panel there is no run context.
+function chatRunPanelContext() {
+  if (!crpShowsRun()) return {};
+  if (runDetailState.host === 'panel' && runDetailState.screen) {
+    const r = runs.get(runDetailState.runId);
+    return r ? liveRunContext({}, r, runDetailState.screen, 'details') : {};
+  }
+  if (histDetailState && histDetailState.host === 'panel' && histDetailState.screen) {
+    const p = { projectKey: histDetailState.key, id: histDetailState.id, workspace: String(histDetailState.key).startsWith('workspaces/') };
+    return savedRunContext({}, p, histDetailState.screen, 'details');
+  }
+  return {};
+}
+
+// chatDeps.openRunPanel (CONTRACT §3/§6): ref = {runId?, pipelineId?, projectKey?, workspaceId?},
+// opts = {tab?}. A live run opens by its run id (a pipeline id finds its live run); anything else by its
+// pipeline id, whose project key is remembered so the saved run opens before History lists it.
+function openChatRunPanel(ref = {}, { tab = '' } = {}) {
+  // D23 first: a chat card's ref carries BOTH ids (run-card.mjs runRefOf), and its run id may be a superseded paused
+  // copy or a run a restarted server no longer knows. The pipeline id names the current lineage.
+  let id = '';
+  const best = ref && ref.pipelineId ? latestPipelineRun(ref.pipelineId, { currentBoot: true }) : null;
+  if (best && !RD_TERMINAL.includes(best.status)) id = best.runId;   // D23: the pipeline's going lineage
+  const r0 = !id && ref && ref.runId ? runs.get(ref.runId) : null;
+  if (r0 && !r0.staleBoot) id = r0.runId;                            // a run this server knows (a finished one hands off)
+  if (!id && ref && ref.pipelineId) id = ref.pipelineId;             // the saved run
+  if (!id && ref && ref.runId) id = ref.runId;   // not in this tab yet: the route waits for hello
+  if (!id) return;
+  // A card pressed while the panel already shows a run: Close and Escape hand focus back to THIS card, and focus
+  // moves into the panel again (crpOpenFrame does both only when the panel first opens).
+  const from = document.activeElement;
+  const open = crp.open ? crpEls() : null;
+  if (open && from && from !== document.body && !open.aside.contains(from)) {
+    crp.opener = from;
+    if (typeof open.aside.focus === 'function') open.aside.focus({ preventScroll: true });
+  }
+  const key = (ref && ref.projectKey) || (ref && ref.workspaceId ? `workspaces/${ref.workspaceId}` : '');
+  if (ref && ref.pipelineId && key) crpHints.set(ref.pipelineId, key);
+  // "Open run" (no tab) on the run the panel already shows: it stays on its tab, and the address gains no entry
+  // (a tab-less push would keep the screen as it is, so Back would step to it and change nothing).
+  if (!tab && crp.open && crp.id) {
+    const t = crpResolve(id);
+    if ((t.kind === 'saved' ? t.id : t.runId) === crp.id) return;
+  }
+  const hash = runPanel.chatPanelHash(crpThreadParam(), id, String(tab || ''));
+  if (location.hash.slice(1) === hash) { routeChatRunPanel(runPanel.panelSegments(hash.slice('chat/'.length))); return; }
+  location.hash = hash;
+}
+
+// In the panel the waiting question sits ABOVE the tabs (presentRunScreenInPanel), so a long one pushes a routed
+// tab's content out of view: Expand → Workflow showed the question, never the graph. Scroll the Details pane until
+// the tab row is at its top — only while a question shows (the row is sticky, so once stuck this is a no-op).
+function crpRevealTabs(screen) {
+  const ask = screen.querySelector('.crp-head > .rd-questions');
+  const pane = screen.querySelector('.rd-details');
+  const tabs = screen.querySelector('.rd-tabs');
+  if (!ask || ask.hidden || !pane || !tabs) return;
+  const by = tabs.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+  if (by > 0) pane.scrollTop += by;
+}
+
+// Below 900px the panel is a full-screen sheet (style.css). While it is open the page behind it is inert, so Tab
+// never walks the controls it covers — the phone drawer's rule (setMobileNavOpen). Only what this set made inert is
+// released. jsdom has no matchMedia: there the sheet never applies.
+const CRP_SHEET_QUERY = '(max-width:900px)';
+const CRP_BEHIND_SHEET = '#side-rail, #topnav, body > .term-pane, [data-chat-page] > :not([data-chat-panel])';
+function crpSheetOn() {
+  if (crp.sheetMq === undefined) {
+    let mq = null;
+    try { mq = typeof window.matchMedia === 'function' ? window.matchMedia(CRP_SHEET_QUERY) : null; } catch { mq = null; }
+    crp.sheetMq = mq;
+    if (mq && typeof mq.addEventListener === 'function') mq.addEventListener('change', crpSyncSheet);
+  }
+  return !!(crp.sheetMq && crp.sheetMq.matches);
+}
+function crpSyncSheet() {
+  const held = (crp.inerted ||= []);
+  if (crp.open && crpSheetOn()) {
+    const had = document.activeElement;
+    for (const n of document.querySelectorAll(CRP_BEHIND_SHEET)) {
+      if (n.hasAttribute('inert')) continue;
+      n.setAttribute('inert', '');
+      held.push(n);
+    }
+    // The window narrowed into the sheet while focus sat behind it (the composer): inert drops it to <body> in a
+    // browser, and typing goes nowhere. Keep it in the sheet.
+    const aside = document.querySelector('[data-chat-panel]');
+    if (had && had !== document.body && aside && !aside.contains(had) && held.some((n) => n.contains(had))) aside.focus({ preventScroll: true });
+    return;
+  }
+  for (const n of held.splice(0)) n.removeAttribute('inert');
+}
+
+// P1 declares the seams this panel fills (chatPanelRouter, chatPanelContext, chatDeps): wire them once
+// this module has finished evaluating — whatever order P1 put its declarations in — then route a boot
+// deep link (#chat/<thread>/run/<id>) the Chat view opened before the router existed.
+function installChatRunPanel() {
+  chatPanelRouter = routeChatRunPanel;
+  chatPanelContext = chatRunPanelContext;
+  chatDeps.openRunPanel = openChatRunPanel;
+  if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { routeChatRunPanel, closeChatRunPanel, chatRunPanelContext, openChatRunPanel });
+  const [view, param] = parseHash();
+  const segs = view === 'chat' && currentShownView === 'chat' ? runPanel.panelSegments(param) : [];
+  if (segs.length && !crp.open) routeChatRunPanel(segs);
+}
+queueMicrotask(installChatRunPanel);
 
 // ── The glance: status line, trail, sheet ───────────────────────────────────
 // Everything on it is derived from the run model on each frame (run-glance.mjs), so
@@ -29187,7 +29829,9 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
 // The facts row at the top of the sheet, in every state. Replaced only when its text
 // changes (the ticker rewrites the time in place between frames).
 function paintGlanceFacts(glance, opts) {
-  const host = glance && glance.querySelector('.rd-facts');
+  // Through the screen, not the glance: in the Chat run panel the facts row sits under the Details header.
+  const screen = glance && (glance.closest('.rd, .hd') || glance);
+  const host = screen && screen.querySelector('.rd-facts');
   if (!host) return;
   const tiles = glanceTiles(opts);
   const sig = `${opts.ticking ? 't' : ''}|${tiles ? tiles.textContent : ''}`;
@@ -29632,9 +30276,10 @@ function paintRdBanners(screen, r) {
 
 // Delegated controls on the rebuilt parts of the detail screen. #run-detail is a
 // static node, so one listener survives every repaint. The direct bindings in
-// openRunDetail cover only the template's OWN, never-replaced controls. C8b: this
-// is the ONLY delegated #run-detail listener — Task 10 must not add a second.
-el.runDetail?.addEventListener('click', (e) => {
+// openRunDetail cover only the template's OWN, never-replaced controls. C8b: ONE
+// delegated listener per host — #run-detail binds it below; the Chat run panel's
+// host binds the same function (crpEls, Chat P4).
+function onRdDelegatedClick(e) {
   const r = runs.get(runDetailState.runId);
   if (!r) return;
   const override = e.target.closest && e.target.closest('.cb-override');
@@ -29653,7 +30298,8 @@ el.runDetail?.addEventListener('click', (e) => {
   else if (qbtn.classList.contains('recovery-pause')) postAnswer(r, { decision: 'pause' });
   else if (qbtn.classList.contains('recovery-abort')) postAnswer(r, { decision: 'abort' });
   else submitAnswer(r, qbtn.closest('.qpanel'));
-});
+}
+el.runDetail?.addEventListener('click', onRdDelegatedClick);
 
 function paintRdGraph(screen, r) {
   const host = screen.querySelector('.rd-graph .run-flow');
@@ -31022,6 +31668,9 @@ function showView(name, param = '') {
     closeStopModal();
     closeRunDetail({ instant: name !== 'runs' });
   }
+  // Chat P4: the run panel may hold one of the two run-detail singletons. Any other view takes it back
+  // first, so a page route (#running/…, #history/…, "Open full page") never finds the panel's screen.
+  if (currentShownView === 'chat' && name !== 'chat') closeChatRunPanel();
   // Canonicalise the Settings param before the hash sync below: General is always
   // plain '#settings', and an unknown tab (#settings/bogus) falls back to it
   // rather than sticking a dead segment in the URL.
@@ -31521,6 +32170,51 @@ function runPagePart(screen, mode) {
   return 'overview';
 }
 
+// The run-page half of the page context for an open live screen: its ids, the part on screen and the
+// Diff file (#running/… and the Chat run panel share it, Chat P4).
+function liveRunContext(ctx, r, screen, mode) {
+  ctx.runId = r.runId;
+  if (r.pipelineId) ctx.pipelineId = r.pipelineId;
+  if (r.kind === 'workspace-run' && r.workspaceId) ctx.workspaceId = r.workspaceId;
+  else if (r.projectDir) ctx.projectDir = r.projectDir;
+  ctx.runPage = runPagePart(screen, mode);
+  // The file open in the (live) Diff tab, as on History below.
+  const diffSec = screen && screen.querySelector('.rd-sec[data-sec="diff"]:not([hidden])');
+  const selected = ctx.runPage === 'diff' && diffSec ? diffSec.querySelector('.rd-diff-row.active') : null;
+  if (selected && selected.dataset.path) {
+    ctx.diffPath = selected.dataset.project
+      ? `${selected.dataset.path} (member ${selected.dataset.project})`
+      : selected.dataset.path;
+  }
+  return ctx;
+}
+
+// The saved screen's twin; `p` = { projectKey, id, workspace } (parseHistDetailParam's shape).
+function savedRunContext(ctx, p, screen, mode) {
+  ctx.pipelineId = p.id;
+  if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
+  else ctx.projectKey = p.projectKey;
+  ctx.runPage = runPagePart(screen, mode);
+  // The file open in the Diff tab, so "this file" / "the comments here" resolve
+  // without the user naming a path. A repo-relative path is server-resolvable
+  // data — the "never a title, never a name" rule above holds.
+  // Scoped to the LIVE screen, not a global selector: getPageContext reads the
+  // hash, which can already name a detail that is mid-teardown.
+  // The VISIBLE Diff section only: initDetailTabs hides sections with
+  // `sec.hidden`, it never tears them down, so an unscoped query would report
+  // a file the user last looked at three tabs ago.
+  const diffSec = screen?.querySelector('.hd-sec[data-sec="diff"]:not([hidden])');
+  const selected = diffSec?.querySelector('.hd-diff-file.active');
+  if (selected && selected.dataset.path) {
+    // The member key rides along on a workspace run: add_diff_comment needs
+    // memberProjectKey and never guesses it, so a bare path is unusable.
+    ctx.diffPath = selected.dataset.project
+      ? `${selected.dataset.path} (member ${selected.dataset.project})`
+      : selected.dataset.path;
+  }
+  return ctx;
+}
+
 function getPageContext() {
   const [view, param] = parseHash();
   const ctx = { view: VIEW_NAMES.includes(view) ? view : 'chat' };
@@ -31535,50 +32229,13 @@ function getPageContext() {
     const parts = runDetailParts(param);   // `<id>` or `<id>/details/<tab>`
     const runId = parts.runId;
     const r = runs.get(runId);
-    if (r) {
-      ctx.runId = runId;
-      if (r.pipelineId) ctx.pipelineId = r.pipelineId;
-      if (r.kind === 'workspace-run' && r.workspaceId) ctx.workspaceId = r.workspaceId;
-      else if (r.projectDir) ctx.projectDir = r.projectDir;
-      const screen = runDetailState && runDetailState.screen;
-      ctx.runPage = runPagePart(screen, parts.mode);
-      // The file open in the (live) Diff tab, as on History below.
-      const diffSec = screen && screen.querySelector('.rd-sec[data-sec="diff"]:not([hidden])');
-      const selected = ctx.runPage === 'diff' && diffSec ? diffSec.querySelector('.rd-diff-row.active') : null;
-      if (selected && selected.dataset.path) {
-        ctx.diffPath = selected.dataset.project
-          ? `${selected.dataset.path} (member ${selected.dataset.project})`
-          : selected.dataset.path;
-      }
-      return ctx;
-    }
+    if (r) return liveRunContext(ctx, r, runDetailState && runDetailState.screen, parts.mode);
   }
   if (ctx.view === 'history' && param) {
     const p = parseHistDetailParam(param);
     if (p) {
       ctx.view = 'history-detail';
-      ctx.pipelineId = p.id;
-      if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
-      else ctx.projectKey = p.projectKey;
-      ctx.runPage = runPagePart(histDetailState && histDetailState.screen, p.mode);
-      // The file open in the Diff tab, so "this file" / "the comments here" resolve
-      // without the user naming a path. A repo-relative path is server-resolvable
-      // data — the "never a title, never a name" rule above holds.
-      // Scoped to the LIVE screen, not a global selector: getPageContext reads the
-      // hash, which can already name a detail that is mid-teardown.
-      // The VISIBLE Diff section only: initDetailTabs hides sections with
-      // `sec.hidden`, it never tears them down, so an unscoped query would report
-      // a file the user last looked at three tabs ago.
-      const diffSec = histDetailState?.screen?.querySelector('.hd-sec[data-sec="diff"]:not([hidden])');
-      const selected = diffSec?.querySelector('.hd-diff-file.active');
-      if (selected && selected.dataset.path) {
-        // The member key rides along on a workspace run: add_diff_comment needs
-        // memberProjectKey and never guesses it, so a bare path is unusable.
-        ctx.diffPath = selected.dataset.project
-          ? `${selected.dataset.path} (member ${selected.dataset.project})`
-          : selected.dataset.path;
-      }
-      return ctx;
+      return savedRunContext(ctx, p, histDetailState && histDetailState.screen, p.mode);
     }
   }
   // A project page names its project (spec D12): the context header carries it and the Ask memory

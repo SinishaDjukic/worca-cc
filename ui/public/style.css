@@ -8479,3 +8479,95 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-dir-err[hidden]{display:none;}
 .ask-composer.is-direction .ask-composer-box{box-shadow:0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
 .ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}
+
+/* ===== Chat P4: run panel ===== */
+/* The Chat page's right panel (app.js "Chat P4: the run panel"): the run pages' OWN screens (.rd live,
+   .hd saved) dressed by data-presentation="panel" — Details only, the bar on top, the header and tabs
+   scrolling under it with the tab row pinned. Plain backgrounds: the only dots in here are the Workflow
+   tab's own .run-flow-wrap (U8). Width max(440px, 44% of the Chat page, 700px); a full-screen sheet
+   below 900px. The waiting question is an amber wash, never an edge line. */
+.chat-page[data-panel="open"] .chat-panel{flex:none;display:flex;flex-direction:column;min-width:0;min-height:0;
+  width:max(440px,min(44%,700px));margin:8px;border:1px solid var(--line);border-radius:16px;
+  background:var(--bg);box-shadow:var(--shadow);overflow:hidden;animation:crp-in .24s cubic-bezier(.2,.7,.3,1) backwards;}
+/* Focus moves to the panel itself when it opens (tabindex -1): no ring around the whole panel. */
+.chat-page[data-panel="open"] .chat-panel:focus{outline:none;}
+@keyframes crp-in{from{opacity:0;transform:translateX(16px);}}
+@keyframes crp-up{from{opacity:0;transform:translateY(24px);}}
+.crp{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;container:crp / inline-size;}
+.crp-msg{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 8px 12px 16px;border-bottom:1px solid var(--line);}
+.crp-msg-text{margin:0;color:var(--ink-2);font-size:13.5px;}
+.crp-host{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;}
+.crp-host:empty{display:none;}
+.crp-host > :is(.rd,.hd)[data-presentation="panel"]{height:100%;display:flex;flex-direction:column;}
+.crp :is(.rd-bar,.hd-bar){position:static;flex:none;gap:8px;padding:8px 8px 8px 16px;}
+/* One row at every panel width: the bar's empty middle goes (the name is the Details header's), the controls take
+   the row, and the Away mode pill gives way (the select keeps its value; the full page shows the pill). */
+.crp :is(.rd-bar,.hd-bar) > .rd-bar-mid{display:none;}
+.crp .rd-bar-end{flex:1 1 auto;flex-wrap:nowrap;margin-left:auto;}
+.crp .rd-bar .rd-night-pill{display:none;}
+/* A paused run's Resume split is wider than Pause: the Away select gives way first (down to 72px; its aria-label
+   names it) rather than Open full page and Close dropping onto a second row. */
+.crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
+.crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
+.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
+.crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
+.crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
+.crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
+.crp :is(.rd-row1,.hd-row1){flex-wrap:wrap;gap:8px 10px;}
+.crp :is(.rd-title,.hd-title){flex:1 1 100%;font-size:18px;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
+.crp :is(.rd-body,.hd-body){padding:0 16px 24px;}
+.crp :is(.rd-tabs,.hd-tabs){top:0;gap:6px;padding:12px 0 10px;}
+.crp :is(.rd-tab,.hd-tab){gap:7px;padding:7px 12px;font-size:12.5px;}
+.crp .crp-head{display:flex;flex-direction:column;gap:12px;margin:12px 16px 0;}
+.crp .crp-head > :is(.rd-banners,.hd-banners){margin-top:0;}
+.crp .crp-head > :is(.rd-banners,.hd-banners):not(:has(> :not([hidden]))){display:none;}
+.crp .crp-head > .rd-questions{margin:0;padding:14px;border:1px solid var(--amber-line);border-radius:var(--r-card);background:var(--amber-wash-2);}
+.crp .crp-head > .rd-questions .qpanel-head{display:none;}
+.crp .rd-ask-head{font-size:15px;scroll-margin-top:12px;}
+.crp .rd-questions .qblock{grid-template-columns:minmax(0,1fr);grid-template-rows:none;column-gap:0;padding:16px;}
+.crp .rd-questions .qtext{grid-row:auto;margin-bottom:6px;}
+.crp .rd-questions :is(.qopts,.qblock > .qfree){grid-column:1;}
+.crp .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]){grid-template-columns:minmax(0,1fr);row-gap:16px;column-gap:0;}
+.crp .rd-questions .qpanel:is([data-kind="gate"],[data-kind="recovery"]) > :is(.issues,.issue-detail){grid-column:1;}
+/* Gate and recovery answers wrap inside the card (a long label is wider than a 440px panel), and an issue's
+   severity chip sits above its text. */
+.crp .rd-questions .gate-actions .btn{flex:0 1 auto;max-width:100%;white-space:normal;text-wrap:balance;}
+.crp .rd-questions .issue{grid-template-columns:minmax(0,1fr);}
+.crp .rd-questions .issue-sev{grid-row:auto;align-self:start;margin-bottom:4px;}
+.crp .rd-questions :is(.issue-title,.issue > .issue-detail,.issue-loc){grid-column:1;}
+.crp .rd-questions .qpanel-foot{flex-wrap:wrap;row-gap:8px;}
+.crp .hd-diff{grid-template-columns:minmax(0,1fr);}
+/* The Logs filter row wraps in the panel: kept on one row, a 451px panel cut its selects to "all sour", "all le". */
+.crp .log-filters{flex-wrap:wrap;row-gap:6px;}
+.crp .log-filters select.log-f{flex:0 0 auto;}
+.crp-bar-btns{display:inline-flex;align-items:center;gap:2px;}
+.crp :is(.crp-full,.crp-close){display:inline-grid;place-items:center;width:32px;height:32px;padding:0;border-radius:8px;}
+.crp :is(.crp-full,.crp-close):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* The panel leaves the conversation as little as ~385px (901-1100px windows, or 1500px with the history column open):
+   the composer row drops the same parts P1 drops on a phone, so Send stays in the box and the scope keeps its label. */
+.chat-page[data-panel="open"] .chat-convo{container:chat-convo / inline-size;}
+@container chat-convo (max-width:520px){
+  .chat-page .ask-meter-cost,.chat-page .ask-voice-caret,.chat-page .ask-model-btn-effort{display:none;}
+}
+@container chat-convo (max-width:420px){
+  .chat-page .ask-composer-row{gap:4px;}
+  .chat-page .ask-composer-row > .ask-meter{display:none;}
+}
+/* A narrow panel: the bar's buttons go icon-only (their words stay for screen readers), then the tab badges go. */
+@container crp (max-width:560px){
+  .crp :is(.rd-bar,.hd-bar) :is(.rd-btn-label,.hd-btn-label){position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+  .crp :is(.rd-tab,.hd-tab) > svg{display:none;}
+}
+@container crp (max-width:520px){
+  .crp :is(.rd-tab,.hd-tab){padding:6px 10px;}
+}
+@container crp (max-width:420px){
+  .crp :is(.rd-tab-badge,.hd-tab-badge){display:none;}
+  .crp .rd-bar-end{gap:4px;}
+}
+@media (max-width:900px){
+  .chat-page[data-panel="open"] .chat-panel{position:fixed;inset:0;z-index:44;width:auto;margin:0;border:0;border-radius:0;animation-name:crp-up;}
+}
+@media (prefers-reduced-motion:reduce){
+  .chat-page[data-panel="open"] .chat-panel{animation:none;}
+}
