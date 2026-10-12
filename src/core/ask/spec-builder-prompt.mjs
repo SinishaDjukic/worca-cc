@@ -1,10 +1,24 @@
 // src/core/ask/spec-builder-prompt.mjs
-// The first message of a Spec Builder thread (plans/spec-builder §3.5). Pure: the server passes the
-// normalized answers, the validated front-matter, the project's plans/ examples and today's date.
+// The first message of a Spec Builder thread (V5): Worca's own Clarify and Planner instructions, read from the SHIPPED
+// agent files at request time (never copied), plus the role section template, the worca: front-matter and, for
+// Reshape, the keep-everything rules. The only module that knows about these parts. `renderSpecBuilderPrompt` is
+// pure; `loadPlannerInstructions` reads the two files.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { DEFAULT_AGENTS_DIR } from '../agent-registry.mjs';
+import { stripFrontmatter } from '../frontmatter.mjs';
 import { renderWorcaFrontMatter } from '../../shared/spec-builder/front-matter.mjs';
 import { sectionsFor, roleByKey } from '../../shared/spec-builder/roles.mjs';
+import { SPEC_QUESTIONS_MAX } from './spec-proposal.mjs';
+import { SPEC_BUILDER_MARKER } from '../../shared/spec-builder/messages.mjs';
 
-export const SPEC_BUILDER_MARKER = '[worca spec-builder]';
+export { SPEC_BUILDER_MARKER };
+/** R1: the shipped planner has no CLARIFY mode — Clarify is its own agent. */
+export const PLANNER_SOURCES = Object.freeze({
+  clarify: Object.freeze({ file: 'worca-cc-clarify.md', headings: Object.freeze(['Cardinal rule: NEVER ASSUME, NEVER PAD', 'What to do']) }),
+  plan: Object.freeze({ file: 'worca-cc-planner.md', headings: Object.freeze(['Cardinal rule: NEVER ASSUME', 'PLAN']) }),
+});
+export const RESHAPE_RULES = "Reshape rules: keep every decision, name and constraint in the input; fill gaps; don't invent scope.";
 const SECTION_HINT = {
   problem: 'Product: the problem, the goal, who it is for, numbered success criteria.',
   decisions: 'Architect: a numbered decisions table (| # | Decision |).',
@@ -18,46 +32,74 @@ const SECTION_HINT = {
   openQuestions: 'Anything still undecided, numbered.',
 };
 
-function yamlAnswers(a) {
-  const lines = [`goal: ${JSON.stringify(a.goal)}`, `kind: ${a.kind}`, `size: ${a.size}`, `roles: [${a.roles.join(', ')}]`];
-  if (a.areas.length) lines.push('areas:', ...a.areas.map((p) => `  - ${JSON.stringify(p)}`));
-  if (a.flag) lines.push(`flag: { key: ${a.flag.key}, stage: ${a.flag.stage} }`);
-  if (a.levels) lines.push(`levels: ${a.levels}`);
-  return lines.join('\n');
+/** The `## heading` section of an agent file, up to the next `## ` heading OUTSIDE a code fence. */
+export function sectionOf(md, heading, file = 'the agent file') {
+  const lines = String(md).split(/\r?\n/);
+  const at = lines.findIndex((l) => l.trim() === `## ${heading}`);
+  if (at < 0) throw new Error(`${file} has no "## ${heading}" section; Spec Builder builds its drafting prompt from it`);
+  let fence = null;
+  let end = lines.length;
+  for (let i = at + 1; i < lines.length; i++) {
+    const f = /^[ \t]*(`{3,}|~{3,})/.exec(lines[i]);
+    if (fence) { if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null; continue; }
+    if (f) { fence = f[1]; continue; }
+    if (/^## /.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(at, end).join('\n').trim();
 }
 
+/** @returns {{clarify:string, plan:string}} @throws when a file or a heading is missing (the route answers 500) */
+export function loadPlannerInstructions(dir = DEFAULT_AGENTS_DIR) {
+  const pick = ({ file, headings }) => {
+    const md = stripFrontmatter(readFileSync(join(dir, file), 'utf8'));
+    return headings.map((h) => sectionOf(md, h, `agents/${file}`)).join('\n\n');
+  };
+  return { clarify: pick(PLANNER_SOURCES.clarify), plan: pick(PLANNER_SOURCES.plan) };
+}
+
+const fenceFor = (text) => '~'.repeat(Math.max(3, ...[...String(text).matchAll(/~+/g)].map((m) => m[0].length + 1)));
+
 /**
- * @param {{answers:object, fm:object, examples?:string[], projectName?:string, today:string}} p
- *   answers: normalizeAnswers(); fm: a validated front-matter; examples: plans/*.md paths in the project.
+ * @param {{answers:{idea:string, mode:'draft'|'reshape'}, fm:object, instructions:{clarify:string, plan:string},
+ *          examples?:string[], projectName?:string, today:string}} p
  */
-export function renderSpecBuilderPrompt({ answers, fm, examples = [], projectName = '', today }) {
+export function renderSpecBuilderPrompt({ answers, fm, instructions, examples = [], projectName = '', today }) {
   const sections = sectionsFor(fm.roles);
   const skeleton = [
-    renderWorcaFrontMatter(fm).trimEnd(),
-    `# ${answers.goal}`,
-    '',
-    `Date: ${today}. Base branch: <base>. Branch: <feat/...>. PR title: <title>.`,
-    '',
+    renderWorcaFrontMatter(fm).trimEnd(), '# <title: what this change does, in a few words>', '',
     ...sections.flatMap((s) => [`## ${s.n}. ${s.title}`, '', `<${SECTION_HINT[s.key]}>`, '']),
   ].join('\n');
   const roleNames = fm.roles.map((k) => roleByKey(k)?.label || k).join(', ');
+  const checklisted = fm.roles.map(roleByKey).filter((r) => r?.checklist);
+  const fence = fenceFor(answers.idea);
   return [
-    `${SPEC_BUILDER_MARKER} Write a Worca-ready spec${projectName ? ` for the project ${projectName}` : ''}.`,
-    '',
-    'The wizard answers:',
-    '```yaml', yamlAnswers(answers), '```',
+    `${SPEC_BUILDER_MARKER} ${answers.mode === 'reshape' ? 'Reshape the document below into' : 'Draft'} a Worca-ready spec${projectName ? ` for the project ${projectName}` : ''}. mode: ${answers.mode}. Today is ${today}.`,
+    '', 'The idea, verbatim:', `${fence}text`, answers.idea, fence, '',
+    ...(answers.mode === 'reshape' ? [RESHAPE_RULES, ''] : []),
+    "Work in two steps on this thread, following Worca's own Clarify and Planner instructions quoted at the end:",
+    `1. CLARIFY. Apply the Clarify agent's rules, but ask AT MOST ${SPEC_QUESTIONS_MAX} questions, only about what the repo cannot answer. Instead of writing clarify.json, call propose_spec with { questions: [{ id, text, why, options }] }, where why names what in the repo prompted the question. Then stop and wait for the answers. If nothing is unclear, skip to step 2.`,
+    "2. PLAN. Apply the Planner's PLAN rules to write the spec. Instead of writing a file, call propose_spec with { markdown, path }. The house format below overrides the PLAN structure: exactly the sections listed, decisions tables over prose, code snippets only where a decision needs one. When you asked questions, end with the Clarifications (Q&A) section the Planner describes.",
+    'Ignore the pipeline mechanics in the quoted instructions: ports, output paths, clarify.json, fan-out, memory and MOCK_ lines.',
     '',
     `Roles that shape it: ${roleNames}. The spec has exactly these sections, in this order:`,
     ...sections.map((s) => `${s.n}. ${s.title} — ${SECTION_HINT[s.key]}`),
     '',
+    ...(checklisted.length ? ['Role checklists (they travel with the run):',
+      ...checklisted.map((r) => `- ${r.label}: end its last section with "### Checklist" and 1–8 "- [ ] R-${r.checklist}-<n> <one verifiable statement>" items (${r.checklistHint}).`), ''] : []),
     'Start from this skeleton; keep the front-matter block exactly as it is:',
-    '```markdown', skeleton, '```',
-    '',
+    '```markdown', skeleton, '```', '',
     'Rules:',
-    '- Ground every path, function and test file in the real repo: open_worktree on the project (reuse one from list_worktrees), then Read, Grep and Glob under that path; the git tool\'s ls-files and grep help too. Never name a file you have not seen.',
-    '- Ask at most 3 questions, and only about what the repo cannot answer. Give each 2–4 suggested answers. If nothing is unclear, ask none.',
-    '- Prefer decisions tables to prose. Keep it concrete and short.',
-    '- Finish by calling propose_spec with the whole Markdown (and a path like plans/<slug>-design.md). If it returns errors, fix them and call it again.',
+    '- Ground the spec in the real repo: open_worktree on the project (reuse one from list_worktrees), then Read, Grep and Glob under that path. READ every file before you cite it; never name a file you have not read.',
+    '- Cite repo paths in backticks (`src/…`, `ui/…`, `test/…`, `docs/…`, optional `:line`). A file that does not exist yet gets "(new)" on the same line.',
+    '- Every Decisions row states one choice and cites a repo path or says (new).',
+    ...(fm.size === 'medium' || fm.size === 'large' ? ['- This is a feature-sized spec: cite at least 3 existing repo paths.'] : []),
+    '- Success criteria and QA checks are measurable: never only "works", "is fast", "is good", "should handle", "properly" or "as expected".',
+    '- Testing names test files, one covering each new code file in Code layout.',
+    '- No TODO, TBD, lorem or <…> placeholders outside Open questions.',
+    '- If propose_spec returns {ok:false, errors}, fix exactly those and call it again.',
     ...(examples.length ? [`- Existing specs in this project to match in tone and depth: ${examples.join(', ')}.`] : []),
+    '',
+    "--- The Clarify agent's instructions (agents/worca-cc-clarify.md) ---", instructions.clarify, '',
+    "--- The Planner's instructions (agents/worca-cc-planner.md) ---", instructions.plan,
   ].join('\n');
 }

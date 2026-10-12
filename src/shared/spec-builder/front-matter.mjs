@@ -9,9 +9,17 @@ export const SPEC_SIZES = Object.freeze(['small', 'medium', 'large']);
 export const SPEC_SIGNALS = Object.freeze(['risky']);
 export const SPEC_LEVELS = Object.freeze(['simple', 'advanced', 'expert', 'all']);
 export const SPEC_FLAG_STAGES = Object.freeze(['experimental', 'beta']);
-export const GENERATED_BY = 'spec-builder@1';
+export const GENERATED_BY = 'spec-builder@2';
+export const SPEC_MODES = Object.freeze(['draft', 'reshape']);
+/** The §3.4 shape check ids, in display order. Here (not in shape.mjs) so the validator can check waivers
+ *  without an import cycle (shape.mjs imports this module). */
+export const SHAPE_IDS = Object.freeze(['sections', 'testable', 'decisions', 'paths', 'tests', 'placeholders', 'checklists', 'grounded']);
+export const UNWAIVABLE_SHAPE_IDS = Object.freeze(['checklists']);
+export const WAIVER_REASON_MAX = 200;
+export const IDEA_MAX_CHARS = 32_000;
 const FLAG_KEY_RE = /^[a-z][a-zA-Z0-9]{2,40}$/;            // = src/shared/flags/registry.mjs FLAG_KEY_RE
 const GENERATED_RE = /^spec-builder@\d+$/;
+const WAIVER_RE = /^\{\s*id\s*:\s*([a-z]+)\s*,\s*reason\s*:\s*("(?:[^"\\]|\\.)*")\s*\}$/;
 const FENCE_RE = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 const unquote = (s) => {
@@ -40,12 +48,24 @@ function readBlock(inner) {
   const at = lines.findIndex((l) => /^worca:[ \t]*(?:#.*)?$/.test(l));
   if (at < 0) return null;
   const out = {};
+  let listKey = null;
   for (const line of lines.slice(at + 1)) {
     if (!/^[ \t]+\S/.test(line)) { if (line.trim()) break; continue; }   // the next top-level key ends the block
+    const item = /^[ \t]+-[ \t]+(.*)$/.exec(line);
+    if (item && listKey) { out[listKey].push(item[1].trim()); continue; }
     const m = /^[ \t]+([A-Za-z][\w-]*)[ \t]*:[ \t]*(.*)$/.exec(line);
-    if (m && !Object.hasOwn(out, m[1])) out[m[1]] = parseValue(m[2]);
+    if (!m || Object.hasOwn(out, m[1])) { listKey = null; continue; }
+    if (m[1] === 'shapeWaived' && stripComment(m[2]) === '') { out[m[1]] = []; listKey = m[1]; }   // only this key is a block list: an empty `levels:` stays ''
+    else { out[m[1]] = parseValue(m[2]); listKey = null; }
   }
   return out;
+}
+
+function parseWaiver(v) {
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v;     // an object fm (tests, the pane)
+  const m = WAIVER_RE.exec(String(v || '').trim());
+  if (!m) return null;
+  try { return { id: m[1], reason: JSON.parse(m[2]) }; } catch { return null; }
 }
 
 const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]).map((x) => String(x).trim()).filter(Boolean);
@@ -73,7 +93,21 @@ export function validateWorcaFrontMatter(raw) {
     if (SPEC_LEVELS.includes(src.levels)) fm.levels = src.levels; else errors.push(`worca.levels must be one of ${SPEC_LEVELS.join(', ')}`);
   }
   if (src.generatedBy != null && src.generatedBy !== '') {
-    if (GENERATED_RE.test(String(src.generatedBy))) fm.generatedBy = String(src.generatedBy); else errors.push('worca.generatedBy must look like spec-builder@1');
+    if (GENERATED_RE.test(String(src.generatedBy))) fm.generatedBy = String(src.generatedBy); else errors.push('worca.generatedBy must look like spec-builder@2');
+  }
+  if (src.mode != null && src.mode !== '') {
+    if (SPEC_MODES.includes(src.mode)) fm.mode = src.mode; else errors.push(`worca.mode must be one of ${SPEC_MODES.join(', ')}`);
+  }
+  if (src.shapeWaived != null && src.shapeWaived !== '') {
+    const raw = Array.isArray(src.shapeWaived) ? src.shapeWaived : [src.shapeWaived];
+    const waived = [];
+    for (const w of raw.map(parseWaiver)) {
+      const reason = clip(w?.reason, WAIVER_REASON_MAX);
+      if (!w || !SHAPE_IDS.includes(w.id) || !reason) { errors.push('worca.shapeWaived items must be { id: <shape check>, reason: "<one line>" }'); continue; }
+      if (UNWAIVABLE_SHAPE_IDS.includes(w.id)) { errors.push(`worca.shapeWaived: the ${w.id} check can't be waived`); continue; }
+      if (!waived.some((x) => x.id === w.id)) waived.push({ id: w.id, reason });
+    }
+    if (waived.length) fm.shapeWaived = waived;
   }
   return errors.length ? { ok: false, errors } : { ok: true, fm };
 }
@@ -101,6 +135,11 @@ export function renderWorcaFrontMatter(fm) {
   if (fm.flag) lines.push(`  flag: { key: ${fm.flag.key}, stage: ${fm.flag.stage} }`);
   if (fm.levels) lines.push(`  levels: ${fm.levels}`);
   if (fm.generatedBy) lines.push(`  generatedBy: ${fm.generatedBy}`);
+  if (fm.mode) lines.push(`  mode: ${fm.mode}`);
+  if (fm.shapeWaived?.length) {
+    lines.push('  shapeWaived:');
+    for (const w of fm.shapeWaived) lines.push(`    - { id: ${w.id}, reason: ${JSON.stringify(w.reason)} }`);
+  }
   lines.push('---', '');
   return lines.join('\n');
 }
@@ -112,13 +151,12 @@ export function normalizeAnswers(raw) {
   const a = raw && typeof raw === 'object' ? raw : {};
   const flag = a.flag && typeof a.flag === 'object' && a.flag.key ? { key: clip(a.flag.key, 41), stage: clip(a.flag.stage, 20) || 'beta' } : null;
   return {
-    goal: clip(a.goal, 300),
+    idea: String(a.idea ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' ').trim().slice(0, IDEA_MAX_CHARS),
+    mode: SPEC_MODES.includes(a.mode) ? a.mode : 'draft',
     kind: SPEC_KINDS.includes(a.kind) ? a.kind : 'feature',
     roles: ROLE_KEYS.filter((k) => k === 'product' || list(a.roles).includes(k)),
     size: SPEC_SIZES.includes(a.size) ? a.size : 'medium',
-    areas: list(a.areas).map((p) => clip(p, 300)).slice(0, 20),
     flag,
-    levels: SPEC_LEVELS.includes(a.levels) ? a.levels : '',
   };
 }
 
@@ -130,9 +168,20 @@ export function frontMatterFromAnswers(a) {
     ...(signals.length ? { signals } : {}),
     roles: [...a.roles],
     ...(a.flag ? { flag: { ...a.flag } } : {}),
-    ...(a.levels ? { levels: a.levels } : {}),
     generatedBy: GENERATED_BY,
+    mode: a.mode,
   };
+}
+
+/** The spec with `{ id, reason }` added to (or replacing the same id in) worca.shapeWaived (V18). A spec without a
+ *  valid worca: block comes back unchanged. */
+export function withWaiver(markdown, id, reason) {
+  const p = parseWorcaFrontMatter(markdown);
+  if (!p || !p.ok || UNWAIVABLE_SHAPE_IDS.includes(id) || !SHAPE_IDS.includes(id)) return markdown;
+  const r = clip(reason, WAIVER_REASON_MAX);
+  if (!r) return markdown;
+  const fm = { ...p.fm, shapeWaived: [...(p.fm.shapeWaived || []).filter((w) => w.id !== id), { id, reason: r }] };
+  return renderWorcaFrontMatter(fm) + p.body;
 }
 
 export { ROLES };

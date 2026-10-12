@@ -1,7 +1,7 @@
 // test/ui-spec-builder.test.mjs — the Spec Builder task source in the real shell (docs/spec-builder.md): with the
 // flag off the source switch and a Markdown submit are byte-identical to today; with it on, the Beta button,
-// the level gate, the wizard (goal, roles, estimate), Generate (a pinned Ask thread) and "Use this spec"
-// (an ordinary Markdown run under Auto, a saved workflow left alone).
+// the level gate, the one-page pane (idea, suggested roles, Draft spec = a pinned thread driven by frames) and
+// "Use as task" (an ordinary Markdown run under Auto, a saved workflow left alone).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -11,7 +11,8 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
-import { estimateSpec } from '../src/core/spec-builder/estimate.mjs';
+import { mockSpecMarkdown, MOCK_SPEC_QUESTIONS } from '../src/core/spec-builder/mock-spec.mjs';
+import { SUGGEST_DEBOUNCE_MS } from '../ui/public/spec-builder.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const html = readFileSync(fileURLToPath(new URL('../ui/public/index.html', import.meta.url)), 'utf8');
@@ -30,9 +31,15 @@ function gated(el) {
   return false;
 }
 
-const PROJECT = { name: 'app', path: '/repos/app', exists: true };
+const PROJECT = { key: 'app-0000abcd', name: 'app', path: '/repos/app', exists: true };
 const THREAD = { id: 'ask_00000009', title: 'New', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} };
-const SPEC = '---\nworca:\n  kind: feature\n  size: medium\n  roles: [product]\n  generatedBy: spec-builder@1\n---\n# Dark mode\n\n## 1. Problem and goal\n\nx\n';
+const SPEC = mockSpecMarkdown();
+const GROUND = [
+  { path: 'src/app.mjs', found: true, isNew: false }, { path: 'src/store.mjs', found: true, isNew: false }, { path: 'test/app.test.mjs', found: true, isNew: false },
+  { path: 'src/charts.mjs', found: false, isNew: true }, { path: 'test/charts.test.mjs', found: false, isNew: true },
+];
+const IDEA = 'Let people pin a chart from a question';
+const MSG_ID = 'askm_00000001';
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 0)); };
 const json = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body });
 
@@ -47,18 +54,21 @@ async function boot({ flag = false, level = 'advanced', workflow = 'wf_default' 
     addEventListener(t, fn) { (this._l[t] ||= []).push(fn); }
   };
   const posts = [];
+  const log = [];
   window.fetch = (u, opts = {}) => {
     const url = String(u);
     const path = url.split('?')[0];
     const method = (opts.method || 'GET').toUpperCase();
     const body = opts.body ? JSON.parse(opts.body) : null;
+    log.push(`${method} ${path}`);
     if (method === 'POST' || method === 'PATCH') posts.push({ path, body });
     if (path.endsWith('/api/run') && method === 'POST') return json({ runId: 'run-1' });
-    if (path.endsWith('/api/spec-builder/estimate')) return json({ estimate: estimateSpec(body.frontMatter) });
-    if (path.endsWith('/api/spec-builder/areas')) return json({ areas: ['src/a.js'] });
-    if (path.endsWith('/api/spec-builder/prompt')) return json({ text: '[worca spec-builder] Write a spec', projectKey: 'app-0000abcd', projectName: 'app' });
+    if (path.endsWith('/api/spec-builder/suggest')) return json({ roles: ['product', 'architect', 'qa', 'ux'], kind: 'feature', size: 'medium', reasons: {}, source: 'ai' });
+    if (path.endsWith('/api/spec-builder/prompt')) return json({ text: '[worca spec-builder] Write a spec', title: 'Spec: Charts from a question', projectKey: 'app-0000abcd', projectName: 'app' });
+    if (path.endsWith('/api/ask/models')) return json({ default: { model: 'm', effort: 'low' } });
     if (path === '/api/ask/threads' && method === 'POST') return json({ thread: THREAD }, 201);
-    if (path.endsWith('/messages') && method === 'POST') return json({ ok: true }, 202);
+    if (path.endsWith('/messages') && method === 'POST') return json({ userMessageId: 'askm_u0000001', assistantMessageId: MSG_ID }, 202);
+    if (path === `/api/ask/threads/${THREAD.id}` && method === 'GET') return json({ thread: THREAD, messages: [], attachments: [], runLinks: [], inFlight: null });
     if (path.endsWith('/api/flags')) return json({ flags: [{ key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'beta', on: flag, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }] });
     if (path.endsWith('/api/sources')) return json({ sources: [] });
     if (path.endsWith('/api/config')) return json({ config: { steps: {}, customModels: [], activeWorkflowId: workflow }, models: [], efforts: [] });
@@ -80,7 +90,7 @@ async function boot({ flag = false, level = 'advanced', workflow = 'wf_default' 
   const frame = (msg) => (ws._l.message || []).forEach((fn) => fn({ data: JSON.stringify(msg) }));
   const submit = async () => { doc.getElementById('run-form').dispatchEvent(new window.Event('submit', { cancelable: true })); await settle(); };
   const lastRun = () => posts.filter((p) => p.path.endsWith('/api/run')).at(-1)?.body;
-  return { window, doc, posts, frame, submit, lastRun, q: (s) => doc.querySelector(s) };
+  return { window, doc, posts, log, frame, submit, lastRun, q: (s) => doc.querySelector(s) };
 }
 
 async function markdownRun(ctx, md) {
@@ -90,12 +100,33 @@ async function markdownRun(ctx, md) {
   return ctx.lastRun();
 }
 
-async function openWizard(ctx, goal = 'Add dark mode') {
+/** Type the idea, then fire the debounced suggestion by hand: only the pane's own timer is captured. */
+async function typeIdea(ctx, text = IDEA) {
   ctx.q('#source-seg button[data-spec-builder]').click();
   await settle();
-  const g = ctx.q('[data-sb-goal]');
-  g.value = goal;
-  g.dispatchEvent(new ctx.window.Event('input'));
+  const real = globalThis.setTimeout;
+  const fired = [];
+  globalThis.setTimeout = (cb, ms, ...a) => (ms === SUGGEST_DEBOUNCE_MS ? (fired.push(cb), 0) : real(cb, ms, ...a));
+  try {
+    const idea = ctx.q('[data-sb-idea]');
+    idea.value = text;
+    idea.dispatchEvent(new ctx.window.Event('input'));
+  } finally { globalThis.setTimeout = real; }
+  for (const cb of fired) await cb();
+  await settle();
+}
+
+const frames = (ctx, bare) => { for (const f of stampFrames(bare, { threadId: THREAD.id, messageId: MSG_ID })) ctx.frame(f); };
+const cardBlock = (id, card) => ({ kind: 'card', id, state: 'proposed', card });
+const specCard = { type: 'spec', markdown: SPEC, path: 'plans/charts-design.md', grounding: GROUND, projectKey: 'app-0000abcd', projectName: 'app', projectDir: '/repos/app' };
+const questionsCard = { type: 'spec-questions', questions: MOCK_SPEC_QUESTIONS, projectKey: 'app-0000abcd', projectName: 'app', projectDir: '/repos/app' };
+const START = { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'low', startedAt: 't' };
+
+/** The turn ends with `card`: ask-start, the card frame, then an ask-done carrying the turn's blocks (as the server does). */
+async function finishTurn(ctx, id, card) {
+  const block = cardBlock(id, card);
+  frames(ctx, [START, { type: 'ask-card', block }, { type: 'ask-done', text: '', status: 'done', blocks: [block] }]);
+  await settle(10);
 }
 
 test('flag off: no button, a byte-identical source switch and the same Markdown submit body', async () => {
@@ -115,13 +146,12 @@ test('flag off: no button, a byte-identical source switch and the same Markdown 
   assert.deepEqual(bodyOn, bodyOff);
 });
 
-test('flag on: the Beta button after Markdown, never gated at Advanced, level-gated at Simple', async () => {
+test('flag on: the button after Markdown carries a Beta tag inside it, level-gated at Simple', async () => {
   const adv = await boot({ flag: true, level: 'advanced' });
   const b = adv.q('#source-seg button[data-spec-builder]');
   assert.equal(b.previousElementSibling.dataset.src, 'markdown');
-  const chip = b.nextElementSibling;
-  assert.ok(chip.matches('a.flag-chip.flag-chip-beta'));
-  assert.equal(chip.textContent, 'Beta');
+  assert.equal(b.querySelector('span.flag-chip.flag-chip-beta')?.textContent, 'Beta');
+  assert.equal(adv.q('#source-seg a.flag-chip'), null);
   assert.ok(!gated(b));
   const simple = await boot({ flag: true, level: 'simple' });
   const sb = simple.q('#source-seg button[data-spec-builder]');
@@ -129,98 +159,62 @@ test('flag on: the Beta button after Markdown, never gated at Advanced, level-ga
   assert.ok(gated(sb));
 });
 
-test('the wizard: empty goal, roles, the estimate, Generate', async () => {
+test('the pane through the shell: idea, suggested roles, Draft spec, live activity, the questions card', async () => {
   const ctx = await boot({ flag: true });
-  ctx.q('#source-seg button[data-spec-builder]').click();
-  await settle();
+  await typeIdea(ctx);
   await checkRows([
-    { name: 'an empty goal stays on step 1 with the inline error', run: async () => {
-      ctx.q('[data-sb-next]').click();
-      await settle();
-      assert.equal(ctx.q('[data-sb-error]').textContent, 'Describe the goal in one line.');
-      assert.ok(ctx.q('[data-sb-goal]'), 'still on What');
+    { name: 'the suggestion shows its chips', run: () => {
+      assert.ok(ctx.q('[data-sb-suggested]'));
+      assert.ok(ctx.q('[data-sb-role="ux"]'));
     } },
-    { name: 'Product is locked on; QA toggles', run: async () => {
-      const g = ctx.q('[data-sb-goal]');
-      g.value = 'Add dark mode'; g.dispatchEvent(new ctx.window.Event('input'));
-      ctx.q('[data-sb-next]').click(); await settle();
-      const product = ctx.q('[data-sb-role="product"]');
-      assert.ok(product.disabled);
-      assert.equal(product.getAttribute('aria-pressed'), 'true');
-      ctx.q('[data-sb-role="qa"]').click();
-      assert.equal(ctx.q('[data-sb-role="qa"]').getAttribute('aria-pressed'), 'true');
-      ctx.q('[data-sb-role="qa"]').click();
-      assert.equal(ctx.q('[data-sb-role="qa"]').getAttribute('aria-pressed'), 'false');
-    } },
-    { name: 'UX adds the web stages to the estimate', run: async () => {
-      ctx.q('[data-sb-role="ux"]').click();
-      ctx.q('[data-sb-next]').click(); await settle();
-      ctx.q('[data-sb-next]').click(); await settle();
-      const phases = [...ctx.doc.querySelectorAll('[data-sb-stage]')].map((e) => e.dataset.sbStage);
-      assert.ok(phases.includes('manualTestsChecklist') && phases.includes('manualWebUiTesting'), phases.join());
-    } },
-    { name: 'Security adds Refine, and the posted front-matter carries risky', run: async () => {
-      ctx.q('.sb-nav .btn-ghost').click(); await settle();        // Back to Scope
-      ctx.q('.sb-nav .btn-ghost').click(); await settle();        // Back to Roles
-      ctx.q('[data-sb-role="ux"]').click();
-      ctx.q('[data-sb-role="security"]').click();
-      ctx.q('[data-sb-next]').click(); await settle();
-      ctx.q('[data-sb-next]').click(); await settle();
-      assert.ok(ctx.q('[data-sb-stage="refiner"]'));
-      const est = ctx.posts.filter((p) => p.path.endsWith('/api/spec-builder/estimate')).at(-1);
-      assert.deepEqual(est.body.frontMatter.signals, ['risky']);
-    } },
-    { name: 'Generate: the prompt for the project, then a pinned Ask thread; the pane says drafting', run: async () => {
-      ctx.q('[data-sb-generate]').click(); await settle(10);
+    { name: 'Draft spec: the prompt, the thread, then a pinned message for the project', run: async () => {
+      ctx.q('[data-sb-draft]').click(); await settle(10);
+      const i = ctx.log.indexOf('POST /api/spec-builder/prompt');
+      const j = ctx.log.indexOf('POST /api/ask/threads');
+      const k = ctx.log.indexOf(`POST /api/ask/threads/${THREAD.id}/messages`);
+      assert.ok(i >= 0 && j > i && k > j, ctx.log.join('\n'));
       const prompt = ctx.posts.find((p) => p.path.endsWith('/api/spec-builder/prompt'));
       assert.equal(prompt.body.projectDir, '/repos/app');
-      const i = ctx.posts.findIndex((p) => p.path === '/api/ask/threads');
-      assert.ok(i > ctx.posts.indexOf(prompt));
-      const msg = ctx.posts.find((p) => p.path === `/api/ask/threads/${THREAD.id}/messages`);
+      assert.equal(prompt.body.idea, IDEA);
+      assert.match(ctx.posts.find((p) => p.path === '/api/ask/threads').body.title, /^Spec: /);
+      const msg = ctx.posts.find((p) => p.path.endsWith('/messages'));
       assert.equal(msg.body.text, '[worca spec-builder] Write a spec');
       assert.equal(msg.body.context.pinned, true);
       assert.equal(msg.body.context.projectKey, 'app-0000abcd');
-      assert.match(ctx.q('#plugin-source-pane').textContent, /Drafting in Ask Worca/);
+      assert.ok(ctx.q('[data-sb-progress]'));
     } },
-    { name: 'a Start while the wizard is the source runs nothing', run: async () => {
-      ctx.q('#source-seg button[data-spec-builder]').click(); await settle();
-      const before = ctx.posts.filter((p) => p.path.endsWith('/api/run')).length;
-      await ctx.submit();
-      assert.equal(ctx.posts.filter((p) => p.path.endsWith('/api/run')).length, before);
+    { name: 'a Read tool frame becomes the activity line', run: async () => {
+      frames(ctx, [START, { type: 'ask-block', block: { kind: 'tool', id: 't1', name: 'Read', input: { file_path: '/repos/app/src/store.mjs' }, status: 'running' } }]);
+      await settle();
+      assert.equal(ctx.q('[data-sb-activity]').textContent, 'Reading src/store.mjs…');
+    } },
+    { name: 'a questions card ends the turn: the question renders', run: async () => {
+      const block = cardBlock('card_00000002', questionsCard);
+      for (const f of stampFrames([{ type: 'ask-card', block }, { type: 'ask-done', text: '', status: 'done', blocks: [block] }], { threadId: THREAD.id, messageId: MSG_ID, seqStart: 3 })) ctx.frame(f);
+      await settle(10);
+      assert.ok(ctx.q('[data-sb-question="chart-storage"]'));
+    } },
+    { name: 'the same project again keeps the live thread: no re-fetch, the question stays', run: async () => {
+      const gets = () => ctx.log.filter((l) => l === `GET /api/ask/threads/${THREAD.id}`).length;
+      const before = gets();
+      const sel = ctx.q('#projectSelect');
+      sel.dispatchEvent(new ctx.window.Event('change'));
+      await settle(10);
+      assert.equal(gets(), before);
+      assert.ok(ctx.q('[data-sb-question="chart-storage"]'));
     } },
   ]);
 });
 
-/** Generate, then the spec card arrives on the thread and its "Use this spec" is clicked. */
-async function useSpec(ctx) {
-  await openWizard(ctx);
-  for (let i = 0; i < 3; i++) { ctx.q('[data-sb-next]').click(); await settle(); }
-  ctx.q('[data-sb-generate]').click(); await settle(10);
-  const card = { type: 'spec', title: 'Dark mode', summary: 'Spec: Dark mode', markdown: SPEC, path: null, frontMatter: {}, estimate: null,
-    projectKey: 'app-0000abcd', projectName: 'app', projectDir: '/repos/app' };
-  for (const f of stampFrames([
-    { type: 'ask-start', userMessageId: 'askm_u0000001', model: 'm', effort: 'high', startedAt: 't' },
-    { type: 'ask-card', block: { kind: 'card', id: 'card_00000002', state: 'proposed', card } },
-  ], { threadId: THREAD.id, messageId: 'askm_00000001' })) ctx.frame(f);
-  await settle(10);
-  const use = await waitFor(() => ctx.q('[data-ask-spec-use]'), 'the spec card');
-  use.click();
-  await settle(12);
-}
-async function waitFor(fn, what) {
-  const t0 = Date.now();
-  for (;;) {
-    const v = fn();
-    if (v) return v;
-    if (Date.now() - t0 > 3000) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
-test('Use this spec: an ordinary Markdown run under Auto, focused on Start', async () => {
+test('Use as task: a passing spec card becomes an ordinary Markdown run under Auto, focused on Start', async () => {
   const ctx = await boot({ flag: true });
   assert.equal(ctx.q('#workflowSelect').value, 'wf_default');
-  await useSpec(ctx);
+  await typeIdea(ctx);
+  ctx.q('[data-sb-draft]').click(); await settle(10);
+  await finishTurn(ctx, 'card_00000002', specCard);
+  assert.equal(ctx.q('[data-sb-shape]').getAttribute('data-sb-shape'), 'ok');
+  ctx.q('[data-sb-use]').click();
+  await settle(12);
   assert.equal(ctx.q('#promptMarkdown').value, SPEC);
   assert.ok(ctx.q('#source-seg button[data-src="markdown"]').classList.contains('on'));
   assert.ok(!ctx.q('#source-seg button[data-spec-builder]').classList.contains('on'));
@@ -232,10 +226,22 @@ test('Use this spec: an ordinary Markdown run under Auto, focused on Start', asy
   assert.deepEqual(await markdownRun(byHand, SPEC), fromSpec);
 });
 
-test('Use this spec leaves a saved workflow alone', async () => {
+test('Use as task leaves a saved workflow alone', async () => {
   const ctx = await boot({ flag: true, workflow: 'wf_a' });
   assert.equal(ctx.q('#workflowSelect').value, 'wf_a');
-  await useSpec(ctx);
+  await typeIdea(ctx);
+  ctx.q('[data-sb-draft]').click(); await settle(10);
+  await finishTurn(ctx, 'card_00000002', specCard);
+  ctx.q('[data-sb-use]').click();
+  await settle(12);
   assert.equal(ctx.q('#promptMarkdown').value, SPEC);
   assert.equal(ctx.q('#workflowSelect').value, 'wf_a');
+});
+
+test('a Start while the Spec Builder is the source runs nothing and says what to do', async () => {
+  const ctx = await boot({ flag: true });
+  ctx.q('#source-seg button[data-spec-builder]').click(); await settle();
+  await ctx.submit();
+  assert.equal(ctx.posts.filter((p) => p.path.endsWith('/api/run')).length, 0);
+  assert.match(ctx.q('#plugin-source-pane').parentElement.textContent, /Draft the spec, then press "Use as task"\./);
 });

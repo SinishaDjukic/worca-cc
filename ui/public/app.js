@@ -215,8 +215,9 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn, onFlagChange, chip } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { createSpecBuilder } from './spec-builder.mjs';
+import { createSpecThreadClient } from './spec-builder-thread.mjs';
 import { createFlagsView } from './flags-view.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -1251,6 +1252,7 @@ function handleServerMessage(msg) {
   if (typeof msg.type === 'string' && msg.type.startsWith('ask-')) {
     alerts.onAskFrame(msg);   // a card waiting for an OK, in any chat (the panel only applies the open one)
     askPanel?.pushServerFrame(msg);
+    specBuilder?.pushFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
@@ -1643,6 +1645,7 @@ function onHello(msg) {
 
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
+  specBuilder?.resync();
   wfvChat?.onHello();
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
@@ -6230,7 +6233,6 @@ function syncSpecBuilderButton() {
   const existing = el.sourceSeg.querySelector('button[data-spec-builder]');
   if (!flagOn('specBuilder')) {
     if (existing) {
-      if (existing.nextElementSibling?.classList.contains('flag-chip')) existing.nextElementSibling.remove();
       existing.remove();
       if (state.activeSpecBuilder) el.sourceSeg.querySelector('button[data-src="markdown"]').click();
     }
@@ -6242,11 +6244,14 @@ function syncSpecBuilderButton() {
   b.textContent = 'Spec Builder';
   b.setAttribute('data-spec-builder', '');
   b.setAttribute('data-flag', 'specBuilder');
-  b.setAttribute('data-flag-chip', '');
   b.setAttribute('aria-pressed', 'false');
   b.addEventListener('click', () => selectSpecBuilder(b));
+  const beta = document.createElement('span');
+  beta.className = 'flag-chip flag-chip-beta';
+  beta.textContent = 'Beta';
+  beta.title = 'Spec Builder is in beta. Its switch is in Settings › Experimental.';
+  b.append(' ', beta);
   el.sourceSeg.querySelector('button[data-src="markdown"]').after(b);
-  chip(b);
 }
 
 function selectSpecBuilder(btn) {
@@ -6257,38 +6262,67 @@ function selectSpecBuilder(btn) {
   mountSpecBuilderPane();
 }
 
+function selectedProject() {
+  const dir = selectedProjectPath();
+  return dir ? state.projects.find((p) => p && p.path === dir) || null : null;
+}
+
+async function specPost(url, payload) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `request failed (${r.status})`);
+  return j;
+}
+
+/** The pane's task browser: the source's own pane, picked task fetched through the connector. resolveSourceProfile answers
+ *  {profile} | {gate, ref} | null and throws on an HTTP failure (the pane's change handler catches that); only a resolved
+ *  profile gets a browser, a gate or no project → null → "Set up this source in its own pane first". */
+async function specTaskBrowser(key) {
+  const src = (state.pluginSources || []).find((s) => `${s.plugin}/${s.sourceId}` === key);
+  if (!src) return null;
+  const resolved = await resolveSourceProfile(src);
+  if (!resolved || resolved.gate) return null;
+  const call = sourceCall(src, resolved.profile);
+  void bindMarkdownReady();
+  const pane = renderSourcePane(src, { call, renderMarkdown: pageMarkdown });
+  return { el: pane, take: async () => {
+    const picked = collectSourcePane(pane);
+    if (picked.error || !picked.taskId) throw new Error(picked.error || 'Pick a task first.');
+    const t = await call('getTask', { id: picked.taskId });
+    if (!t) throw new Error('That task could not be loaded.');
+    return `# ${t.title || picked.taskId}\n\n${t.body || ''}`.trim();
+  } };
+}
+
 /** Same host as the plugin sources (X3); bumping gateRun makes any in-flight mountPluginSourcePane give up. */
 function mountSpecBuilderPane() {
   const host = el.pluginSourcePane;
   host.dataset.gateRun = String((Number(host.dataset.gateRun) || 0) + 1);
   specBuilder ??= createSpecBuilder({
     doc: document,
+    // Read lazily, like the storage seam: a missing or throwing localStorage surfaces inside the pane's try/catch, never at mount.
+    storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+    project: () => { const p = selectedProject(); return p ? { key: p.key, name: p.name, dir: p.path } : null; },
     api: {
-      estimate: async (frontMatter) => {
-        const r = await fetch('/api/spec-builder/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ frontMatter }) });
+      suggest: (idea) => specPost('/api/spec-builder/suggest', { idea }),
+      prompt: (answers) => specPost('/api/spec-builder/prompt', { projectDir: selectedProjectPath(), ...answers }),
+      save: async (b) => {
+        const r = await fetch('/api/spec-builder/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
         const j = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(j.error || `estimate failed (${r.status})`);
-        return j.estimate;
-      },
-      areas: async (q) => {
-        const dir = selectedProjectPath();
-        if (!dir) return [];
-        const r = await fetch(`/api/spec-builder/areas?projectDir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`);
-        return r.ok ? (await r.json()).areas || [] : [];
+        return r.ok ? { ok: true, path: j.path } : { ok: false, status: r.status, error: j.error, suggestion: j.suggestion || null };
       },
     },
-    onGenerate: async (answers) => {
-      const projectDir = selectedProjectPath();
-      if (!projectDir) throw new Error('Select a project first.');
-      const r = await fetch('/api/spec-builder/prompt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectDir, answers }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || `could not prepare the prompt (${r.status})`);
-      const sent = await askPanel.startThread({ text: j.text, scope: { projectKey: j.projectKey, label: j.projectName } });
-      if (sent === false) throw new Error('Ask Worca could not start the thread.');
-    },
-    onOpenAsk: () => askPanel.open(),
+    // app.js has no shared sendWs: createAskPanel gets an inline one too; this is the same three lines.
+    thread: createSpecThreadClient({ fetch: (...a) => fetch(...a), sendWs: (obj) => { const ws = state.ws; if (ws && state.wsReady) ws.send(JSON.stringify(obj)); } }),
+    renderMarkdown: pageMarkdown,
+    markdownReady: bindMarkdownReady,
+    taskSources: () => (state.pluginSources || []).map((s) => ({ key: `${s.plugin}/${s.sourceId}`, label: s.displayName || s.sourceId })),
+    taskBrowser: specTaskBrowser,
+    onUse: (spec) => applySpecPrefill(spec),
+    onContinue: (threadId) => askPanel?.openThread(threadId),
   });
   host.replaceChildren(specBuilder.el);
+  specBuilder.attach(selectedProject()?.key || null);
 }
 
 // Which project/workspace a binding hangs off, in the shape both binding routes
@@ -7137,6 +7171,7 @@ function onProjectChanged() {
   if (state.activePluginSource && state.activePluginSource.multiProfile) {
     mountPluginSourcePane(state.activePluginSource);
   }
+  if (state.activeSpecBuilder) specBuilder?.attach(selectedProject()?.key || null);   // a no-op for the key it already has
   if (path) {
     state.projectDir = path;
     localStorage.setItem(LAST_PROJECT_KEY, selectedProjectName());
@@ -13117,7 +13152,7 @@ el.form.addEventListener('submit', async (e) => {
       ? `Defragment the memory of project ${pn}.` : 'Defragment global memory.');
     if (!title) body.title = state.memoryScope === 'project' ? `Memory defragment: ${pn}` : 'Memory defragment (global)';
   } else if (state.activeSpecBuilder) {
-    return fieldError(el.pluginSourcePane, 'Generate the spec, then press "Use this spec" on its Ask card.');
+    return fieldError(el.pluginSourcePane, 'Draft the spec, then press "Use as task".');
   } else if (psrc) {
     const picked = collectSourcePane(el.pluginSourcePane);
     if (picked.error) return cardAlert(newFormCard(), { title: 'Run not started', detail: picked.error });

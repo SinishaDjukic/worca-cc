@@ -731,8 +731,14 @@ export function createAskTools(deps) {
     // Spec Builder (docs/spec-builder.md): listed only while the specBuilder flag is on (spec-deps.mjs).
     ...(deps.specs ? [
       { name: 'propose_spec',
-        description: 'Spec Builder: propose the finished spec as a card for the user — it never writes anything itself; the card offers "Use this spec" (fills the New run Markdown pane) and "Save to plans/". markdown: the WHOLE spec, starting with its ---/worca:/--- front-matter block, with every section its roles need. path: optional plans/<slug>-design.md to suggest for saving. The chat must be pinned to the project. Returns {ok:true, card} or {ok:false, errors} to fix and retry.',
-        inputSchema: SCHEMA.obj({ markdown: SCHEMA.s('the whole spec Markdown, at most 64 KB'), path: SCHEMA.s('optional: plans/<slug>-design.md') }, ['markdown']) },
+        description: 'Spec Builder: hand the user EITHER your clarifying questions OR the finished spec, never both. questions: at most 3, each { id (kebab-case), text, why (what in the repo prompted it), options (2–4 short answers; the user may also type their own) }; the answers come back as the next message. markdown: the WHOLE spec, starting with its ---/worca:/--- front-matter block, with every section its roles need. It is shape-checked (sections, testable criteria, decisions, repo paths, tests, placeholders, role checklists, grounding): {ok:false, errors} names what to fix — fix exactly that and call again. path: optional plans/<slug>-design.md. The chat must be pinned to the project. Returns {ok:true, card} or {ok:false, errors}.',
+        inputSchema: SCHEMA.obj({
+          questions: { type: 'array', minItems: 1, maxItems: 3, description: 'clarifying questions (instead of markdown)',
+            items: SCHEMA.obj({ id: SCHEMA.s('kebab-case id'), text: SCHEMA.s('the question'), why: SCHEMA.s('what in the repo prompted it'),
+              options: { type: 'array', minItems: 2, maxItems: 4, items: { type: 'string' }, description: '2–4 short answers' } }, ['id', 'text', 'why', 'options']) },
+          markdown: SCHEMA.s('the whole spec Markdown, at most 64 KB (instead of questions)'),
+          path: SCHEMA.s('optional: plans/<slug>-design.md'),
+        }) },
     ] : []),
     ...(deps.workspaceChanges ? [
       { name: 'propose_workspace_change',

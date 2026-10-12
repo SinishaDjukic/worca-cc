@@ -281,6 +281,11 @@ test('context header: the spec layout, exactly — plus the [pinned by the user]
       assert.ok(h.includes('\ncards: spec card "Dark mode" for app (proposed)\n'), h);
       assert.ok(!h.includes('undefined on'), h);
     } },
+    { name: 'a spec-questions card prints as "spec questions", not as the run-card line', run: async () => {
+      const h = buildContextHeader({ view: 'new', now: CTX.now, cards: [{ id: 'card_5bec0002', type: 'spec-questions', title: 'Questions about the spec', projectName: 'app', state: 'proposed' }] });
+      assert.ok(h.includes('\ncards: spec questions "Questions about the spec" for app (proposed)\n'), h);
+      assert.ok(!h.includes('undefined on'), h);
+    } },
     { name: '#397: a pinned scope renders the [pinned by the user] marker on the scope line only', run: async () => {
       const h = buildContextHeader({ ...CTX, pinned: true });
       assert.ok(h.includes('project: worca-cc (key worca-cc-551183d0) [pinned by the user]\n'), h);

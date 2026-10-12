@@ -1199,6 +1199,9 @@ test('propose_spec is listed only with the specs bundle, and passes the pinned p
   assert.equal(tools.list().some((d) => d.name === 'propose_spec'), true);
   await tools.call('propose_spec', { markdown: '# x' });
   assert.deepEqual(calls, [[{ markdown: '# x' }, { projectKey: 'app-0000abcd' }]]);
+  const schema = tools.list().find((d) => d.name === 'propose_spec').inputSchema;
+  assert.ok(schema.properties.questions && schema.properties.markdown, 'questions and markdown are both offered');
+  assert.equal(schema.required, undefined, 'questions xor markdown: neither is required at the top level');
 });
 
 test('defaultSpecDeps follows the flag', () => {

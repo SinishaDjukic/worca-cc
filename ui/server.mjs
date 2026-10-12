@@ -50,10 +50,10 @@ import { listProjects, addProject, addProjects, removeProject, normalizeProjectP
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { validateWorcaFrontMatter, normalizeAnswers, frontMatterFromAnswers } from '../src/shared/spec-builder/front-matter.mjs';
-import { estimateFromHistory } from '../src/core/spec-builder/history.mjs';
-import { suggestAreas } from '../src/core/spec-builder/areas.mjs';
+import { suggestRoles, SUGGEST_IDEA_MAX } from '../src/core/spec-builder/suggest.mjs';
 import { saveSpec, SpecSaveError } from '../src/core/spec-builder/save.mjs';
-import { renderSpecBuilderPrompt } from '../src/core/ask/spec-builder-prompt.mjs';
+import { renderSpecBuilderPrompt, loadPlannerInstructions } from '../src/core/ask/spec-builder-prompt.mjs';
+import { specThreadTitle } from '../src/shared/spec-builder/messages.mjs';
 import { SPEC_MAX_BYTES } from '../src/core/ask/spec-proposal.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -283,7 +283,7 @@ import {
 import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
-  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge, trackedFiles } from '../src/core/git-info.mjs';
+  prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef } from '../src/core/pr/azure.mjs';
@@ -8929,18 +8929,11 @@ app.patch('/api/flags', async (req, res) => {
   }
 });
 
-// ── Spec Builder (plans/spec-builder §3.4–§3.6) — all 404 while the specBuilder flag is off ─────────────
-app.post('/api/spec-builder/estimate', requireFlag('specBuilder'), syncRoute(async (req, res) => {
-  const v = validateWorcaFrontMatter(req.body?.frontMatter);
-  if (!v.ok) return badRequest(res, v.errors.join('; '));
-  res.json({ estimate: estimateFromHistory(v.fm) });
-}));
-
-app.get('/api/spec-builder/areas', requireFlag('specBuilder'), syncRoute(async (req, res) => {
-  const dir = resolveProjectDir(req.query.projectDir);
-  if (!dir) return badRequest(res, 'projectDir is required');
-  if (!(await registeredProjectForDir(dir))) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
-  res.json({ areas: suggestAreas(await trackedFiles(dir), String(req.query.q || '').slice(0, 300)) });
+// ── Spec Builder (docs/spec-builder.md) — all 404 while the specBuilder flag is off ─────────────
+app.post('/api/spec-builder/suggest', requireFlag('specBuilder'), syncRoute(async (req, res) => {
+  const idea = typeof req.body?.idea === 'string' ? req.body.idea.slice(0, SUGGEST_IDEA_MAX) : '';
+  if (!idea.trim()) return badRequest(res, 'idea is required');
+  res.json(await suggestRoles(idea));
 }));
 
 app.post('/api/spec-builder/prompt', requireFlag('specBuilder'), syncRoute(async (req, res) => {
@@ -8949,14 +8942,15 @@ app.post('/api/spec-builder/prompt', requireFlag('specBuilder'), syncRoute(async
   if (!dir) return badRequest(res, 'projectDir is required');
   const p = await registeredProjectForDir(dir);
   if (!p) return res.status(404).json({ error: 'project not found', code: 'NOT_FOUND' });
-  const answers = normalizeAnswers(body.answers);
-  if (!answers.goal) return badRequest(res, 'goal is required');
+  const answers = normalizeAnswers(body);
+  if (!answers.idea) return badRequest(res, 'idea is required');
   const v = validateWorcaFrontMatter(frontMatterFromAnswers(answers));
   if (!v.ok) return badRequest(res, v.errors.join('; '));
   const examples = await fsp.readdir(path.join(dir, 'plans')).then((names) => names.filter((n) => n.endsWith('-design.md')).sort().slice(0, 5).map((n) => `plans/${n}`), () => []);
+  const instructions = loadPlannerInstructions();          // throws → syncRoute's 500 with the message
   res.json({
-    text: renderSpecBuilderPrompt({ answers, fm: v.fm, examples, projectName: p.name, today: new Date().toISOString().slice(0, 10) }),
-    projectKey: p.key, projectName: p.name,
+    text: renderSpecBuilderPrompt({ answers, fm: v.fm, instructions, examples, projectName: p.name, today: new Date().toISOString().slice(0, 10) }),
+    title: specThreadTitle(answers.idea), projectKey: p.key, projectName: p.name,
   });
 }));
 
@@ -10735,9 +10729,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
           continue;
         }
-        // Spec Builder: a spec card names its title and project (never the run-card `workflowId on target` line).
-        if (b.card && b.card.type === 'spec') {
-          cards.push({ id: b.id, type: 'spec', state: b.state, title: b.card.title || '', projectKey: b.card.projectKey || null, projectName: b.card.projectName || null });
+        // Spec Builder: a spec (or spec-questions) card names its title and project (never the run-card `workflowId on target` line).
+        if (b.card && (b.card.type === 'spec' || b.card.type === 'spec-questions')) {
+          cards.push({ id: b.id, type: b.card.type, state: b.state, title: b.card.title || '', projectKey: b.card.projectKey || null, projectName: b.card.projectName || null });
           continue;
         }
         cards.push(wf

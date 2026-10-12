@@ -176,14 +176,6 @@ export async function untrackedFiles(projectDir, pathspecs = []) {
   return r.stdout.split('\0').filter(Boolean);
 }
 
-/** Tracked files (`ls-files -z`), capped. Read-only; never throws (an empty list on any failure). */
-export async function trackedFiles(projectDir, { max = 20_000 } = {}) {
-  if (!projectDir) return [];
-  const r = await _run('git', ['-c', 'core.quotePath=false', 'ls-files', '-z'], { cwd: projectDir, timeout: DIFF_TIMEOUT_MS });
-  if (!r.ok) return [];
-  return r.stdout.split('\0').filter(Boolean).slice(0, max);
-}
-
 /**
  * The creation patch of one untracked file (`git diff --no-index /dev/null <path>`), with the
  * same pinned header shape as diffPatch. `--no-index` exits 1 when the files differ, which is

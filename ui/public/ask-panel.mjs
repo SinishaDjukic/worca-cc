@@ -10,7 +10,8 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
-import { estimateSummary } from './spec-builder.mjs';
+import { estimateSummary, shapeSummary } from './spec-builder.mjs';
+import { checkShape } from '../../src/shared/spec-builder/shape.mjs';
 import { createThinkingOrb } from './thinking-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
@@ -3586,6 +3587,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       est.setAttribute('data-ask-spec-estimate', '');
       body.appendChild(est);
     }
+    // A pre-v2 card carries no `shape`: compute it from the markdown.
+    const shape = card.shape || checkShape(String(card.markdown || ''), { grounding: Array.isArray(card.grounding) ? card.grounding : null });
+    const shapeRow = make('div', 'ask-mcard-detail', shapeSummary(shape));
+    shapeRow.setAttribute('data-ask-spec-shape', shape.ok ? 'ok' : 'fail');
+    body.appendChild(shapeRow);
     rootEl.appendChild(body);
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
@@ -3621,6 +3627,29 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     });
     actions.append(make('span', 'ask-card-actions-spacer'), save, use);
     rootEl.appendChild(actions);
+    return { el: rootEl };
+  }
+
+  /** The `spec-questions` card: read-only, answered in the Spec Builder pane or by typing in the chat. */
+  function buildSpecQuestionsCard(block) {
+    const card = block.card || {};
+    const rootEl = make('div', 'ask-card ask-mcard ask-speccard is-proposed');
+    rootEl.setAttribute('data-ask-spec-questions', '');
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', card.title || 'Questions about the spec'));
+    head.appendChild(make('span', 'ask-mcard-kind', 'Spec'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    if (card.projectName || card.projectKey) body.appendChild(make('div', 'ask-mcard-summary', `For ${card.projectName || card.projectKey}`));
+    const list = make('ol', 'ask-spec-questions');
+    for (const q of Array.isArray(card.questions) ? card.questions : []) {
+      const li = make('li', null);
+      li.append(make('div', null, q.text), make('div', 'ask-mcard-detail', `Options: ${(q.options || []).join(' / ')}`),
+        make('div', 'ask-mcard-detail', `Why it's asking: ${q.why}`));
+      list.appendChild(li);
+    }
+    body.append(list, make('div', 'ask-mcard-detail', 'Answer in the chat, or in the Spec Builder pane.'));
+    rootEl.appendChild(body);
     return { el: rootEl };
   }
 
@@ -4485,7 +4514,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'spec') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'spec' || card.type === 'spec-questions') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -4502,9 +4531,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
     const isSpec = !!(block.card && block.card.type === 'spec');
+    const isSpecQuestions = !!(block.card && block.card.type === 'spec-questions');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isProgress = isProgressBlock(block);
-    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isSpec || isCommand || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && cached.state === block.state && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isWeb || isWorkspace || isActions || isAway || isSpec || isSpecQuestions || isCommand || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -4516,6 +4546,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
       : isSpec ? buildSpecCard(block)
+      : isSpecQuestions ? buildSpecQuestionsCard(block)
       : isCommand ? buildCommandCard(block)
       : isProgress ? buildProgressCard(block)
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };

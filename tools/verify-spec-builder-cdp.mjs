@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // tools/verify-spec-builder-cdp.mjs — headless-Chrome proof of Spec Builder (docs/spec-builder.md): the flag
-// turned on through the real PATCH /api/flags, the source button, the wizard, Generate (a real mock Ask turn
-// whose propose_spec card the parent mints), "Use this spec" (the Markdown pane, Auto) and a real mock run whose
-// Auto proposal honours the spec's worca: block (plan-complete-detailed, no clarify / planner stage).
+// turned on through the real PATCH /api/flags, the source button, the one-page pane (Reshape, a question, the
+// shape check and Fix all on a real mock Ask turn), the re-attach after a reload, light and dark screenshots, "Use as
+// task" (the Markdown pane, Auto) and a real mock run whose Auto proposal honours the spec's worca: block
+// (plan-complete-detailed, no clarify / planner stage).
 // NOT part of `npm test`: it needs Chrome and a live server.
 // Run: node tools/verify-spec-builder-cdp.mjs   (or: npm run verify:spec-builder)
 import { spawn, execFileSync } from 'node:child_process';
 import http from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -55,6 +56,11 @@ for (const a of [['init', '-q'], ['config', 'user.email', 'proof@worca.local'], 
   execFileSync('git', a, { cwd: proj });
 }
 await writeFile(path.join(proj, 'README.md'), '# spec builder proof\n');
+const { MOCK_SPEC_PATHS } = await import(new URL('../src/core/spec-builder/mock-spec.mjs', import.meta.url).href);
+for (const f of MOCK_SPEC_PATHS) {                         // the mock spec's paths exist, so its `grounded` mark reads 3
+  await mkdir(path.dirname(path.join(proj, f)), { recursive: true });
+  await writeFile(path.join(proj, f), `// ${f}\n`);
+}
 execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
 const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.url).href);
@@ -161,36 +167,71 @@ try {
   const flagRow = ((await patched.json()).flags || []).find((f) => f.key === 'specBuilder');
   check('1', 'PATCH /api/flags turns specBuilder on', patched.status === 200 && flagRow && flagRow.on === true, { status: patched.status, flagRow });
 
-  // ---- (2) the source button --------------------------------------------------
-  await cdp('Page.navigate', { url: `${base}/#new` });
-  await waitEvent('Page.loadEventFired');
-  await settle('load #new');
-  await until(`document.querySelector('#projectSelect') && [...document.querySelector('#projectSelect').options].some(o=>o.value===${JSON.stringify(proj)})`, 'the project option');
-  await ev(`(()=>{const s=document.querySelector('#projectSelect');s.value=${JSON.stringify(proj)};s.dispatchEvent(new Event('change'));return 1;})()`);
-  await until(`document.querySelector('#source-seg button[data-spec-builder]')`, 'the Spec Builder button');
-  const btn = await ev(`(()=>{const b=document.querySelector('#source-seg button[data-spec-builder]');return {prev:b.previousElementSibling.dataset.src,chip:b.nextElementSibling&&b.nextElementSibling.textContent,shown:b.offsetParent!==null};})()`);
-  check('2', 'the Spec Builder button sits after Markdown with its Beta chip, and shows', btn.prev === 'markdown' && btn.chip === 'Beta' && btn.shown, btn);
+  // ---- (2) the source button, with its Beta chip inside --------------------------
+  const openProject = async (reload = false) => {
+    // Navigating to the URL the page is already on is a same-document fragment navigation: no load event.
+    if (reload) await cdp('Page.reload'); else await cdp('Page.navigate', { url: `${base}/#new` });
+    await waitEvent('Page.loadEventFired');
+    await settle('load #new');
+    await until(`document.querySelector('#projectSelect') && [...document.querySelector('#projectSelect').options].some(o=>o.value===${JSON.stringify(proj)})`, 'the project option');
+    await ev(`(()=>{const s=document.querySelector('#projectSelect');s.value=${JSON.stringify(proj)};s.dispatchEvent(new Event('change'));return 1;})()`);
+    await until(`document.querySelector('#source-seg button[data-spec-builder]')`, 'the Spec Builder button');
+  };
+  await openProject();
+  const btn = await ev(`(()=>{const b=document.querySelector('#source-seg button[data-spec-builder]');const c=b.querySelector('span.flag-chip');return {prev:b.previousElementSibling.dataset.src,chip:c&&c.textContent,shown:b.offsetParent!==null};})()`);
+  check('2', 'the Spec Builder button sits after Markdown with its Beta chip inside, and shows', btn.prev === 'markdown' && btn.chip === 'Beta' && btn.shown, btn);
 
-  // ---- (3) the wizard and Generate --------------------------------------------
+  // ---- (3) rough notes become a Reshape, with a suggested role ------------------
   await click('#source-seg button[data-spec-builder]');
-  await until(`document.querySelector('[data-sb-goal]')`, 'the wizard');
-  await ev(`(()=>{const g=document.querySelector('[data-sb-goal]');g.value='Add a dark mode toggle';g.dispatchEvent(new Event('input'));return 1;})()`);
-  for (let i = 0; i < 3; i += 1) { await click('[data-sb-next]'); await settle('next'); }
-  await until(`document.querySelector('[data-sb-summary]')`, 'the estimate');
-  const summary = await ev(`document.querySelector('[data-sb-summary]').textContent`);
-  check('3', 'the Estimate step shows a priced summary', /Rough estimate|past runs/.test(summary), summary);
-  await click('[data-sb-generate]');
-  await until(`/Drafting in Ask Worca/.test(document.querySelector('#plugin-source-pane').textContent)`, 'the drafting state');
+  await until(`document.querySelector('[data-sb-idea]')`, 'the pane');
+  await ev(`(()=>{const g=document.querySelector('[data-sb-idea]');g.value='# Charts\\n- ask in plain words\\n- pin under Stats';g.dispatchEvent(new Event('input'));return 1;})()`);
+  await until(`document.querySelector('[data-sb-suggested]')`, 'the suggested roles');
+  const draftLabel = await ev(`document.querySelector('[data-sb-draft]').textContent.trim()`);
+  check('3', 'rough notes read "✦ Reshape into spec" and the suggested roles appear', draftLabel === '✦ Reshape into spec', draftLabel);
 
-  // ---- (4) the spec card, then Use this spec ----------------------------------
-  await until(`document.querySelector('[data-ask-spec-use]')`, 'the spec card', 200);
-  await click('[data-ask-spec-use]');
+  // ---- (4) the question, answered in the pane ------------------------------------
+  await click('[data-sb-draft]');
+  await until(`document.querySelector('[data-sb-question="chart-storage"]')`, 'the chart-storage question', 200);
+  await click('[data-sb-question="chart-storage"] [data-sb-option]');
+  await click('[data-sb-send-answers]');
+
+  // ---- (5) the shape check: 7 of 8, then Fix all -> 8 of 8 -----------------------
+  await until(`/7 of 8/.test((document.querySelector('[data-sb-shape="fail"]')||{}).textContent||'')`, 'the failing shape (7 of 8)', 200);
+  const useLabel = await ev(`document.querySelector('[data-sb-use]').textContent.trim()`);
+  check('4', 'the first draft fails 7 of 8 and the button reads "Use anyway"', useLabel === 'Use anyway', useLabel);
+  await click('[data-sb-fix-all]');
+  await until(`/Shape ✓ 8 of 8/.test((document.querySelector('[data-sb-shape="ok"]')||{}).textContent||'') && document.querySelector('[data-sb-grounded="3"]')`, 'the fixed shape (8 of 8, 3 grounded)', 200);
+  check('5', 'Fix all reaches "Shape ✓ 8 of 8" with 3 grounded paths', true);
+
+  // ---- (6) a reload re-attaches the output (V19) ---------------------------------
+  await openProject(true);
+  await click('#source-seg button[data-spec-builder]');
+  await until(`/8 of 8/.test((document.querySelector('[data-sb-shape]')||{}).textContent||'')`, 'the re-attached output');
+  check('6', 'after a reload the output re-attaches with "8 of 8"', true);
+
+  // ---- (7) light and dark screenshots of the pane --------------------------------
+  const shotDir = process.env.SCREENSHOT_DIR || home;
+  await mkdir(shotDir, { recursive: true });
+  for (const theme of ['light', 'dark']) {
+    await cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+    await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+    await settle(`theme ${theme}`);
+    await sleep(300);                                         // colours transition over ~.15 s
+    const shot = await cdp('Page.captureScreenshot', { format: 'png' }, 30000);
+    const file = path.join(shotDir, `spec-builder-${theme}.png`);
+    await writeFile(file, Buffer.from(shot.data, 'base64'));
+    log(`screenshot ${file}`);
+  }
+  check('7', 'light and dark screenshots of the pane saved', true);
+
+  // ---- (8) Use as task fills the Markdown pane, Auto ------------------------------
+  await click('[data-sb-use]');
   await until(`document.querySelector('#promptMarkdown').value.startsWith('---\\nworca:')`, 'the Markdown pane filled');
   await until(`document.querySelector('#workflowSelect').value === 'wf_auto'`, 'Auto picked');
-  const form = await ev(`({md:document.querySelector('#source-seg button[data-src="markdown"]').classList.contains('on'),wf:document.querySelector('#workflowSelect').value})`);
-  check('4', 'Use this spec fills the Markdown pane with the worca: spec, Markdown on, workflow Auto', form.md && form.wf === 'wf_auto', form);
+  const form = await ev(`({md:document.querySelector('#source-seg button[data-src="markdown"]').classList.contains('on'),wf:document.querySelector('#workflowSelect').value,gen:document.querySelector('#promptMarkdown').value.includes('generatedBy: spec-builder@2')})`);
+  check('8', 'Use as task fills the Markdown pane with the spec-builder@2 spec, Markdown on, workflow Auto', form.md && form.wf === 'wf_auto' && form.gen, form);
 
-  // ---- (5) Start, and the Auto proposal ---------------------------------------
+  // ---- (9) Start, and the Auto proposal ---------------------------------------
   const before = new Set(runs.keys());
   await click('#start-btn');
   let q = null;
@@ -201,7 +242,7 @@ try {
   }
   if (!q) throw new Error('no Auto proposal on the new run');
   const agents = (q.order || []).map((id) => q.nodes[id] && q.nodes[id].key);
-  check('5', 'the run\'s Auto proposal is plan-complete-detailed with no clarify / planner stage',
+  check('9', 'the run\'s Auto proposal is plan-complete-detailed with no clarify / planner stage',
     q.taskKind === 'plan-complete-detailed' && !agents.some((a) => a === 'clarify' || a === 'planner'), { taskKind: q.taskKind, agents });
 
   check('console', 'no page errors or exceptions', errors.length === 0, errors.slice(0, 5));

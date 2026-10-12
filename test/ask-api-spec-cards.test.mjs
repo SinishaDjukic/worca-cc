@@ -1,15 +1,17 @@
 // test/ask-api-spec-cards.test.mjs
-// The Spec Builder card end to end over WORCA_MOCK + WORCA_FLAGS=specBuilder (docs/spec-builder.md): the wizard's
-// POST /api/spec-builder/prompt text opens a thread pinned to the project → the mock's propose_spec fills the
-// skeleton → the parent re-validates the input and mints a `spec` card with its front-matter and estimate.
+// The Spec Builder end to end over WORCA_MOCK + WORCA_FLAGS=specBuilder (docs/spec-builder.md), three turns on one
+// thread pinned to the project: the POST /api/spec-builder/prompt text → a `spec-questions` card; the answers → a
+// `spec` card that fails the `testable` shape check; the fix message → the same card at 8 of 8.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { WebSocket } from 'ws';
+import { answersMessage, fixMessage } from '../src/shared/spec-builder/messages.mjs';
+import { MOCK_SPEC_PATHS, MOCK_SPEC_QUESTIONS } from '../src/core/spec-builder/mock-spec.mjs';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
@@ -46,6 +48,10 @@ before(async () => {
   wsBase = `ws://127.0.0.1:${srv.address().port}/ws`;
   projectDir = mkdtempSync(join(tmpdir(), 'worca-cc-askspec-proj-'));
   gitInit(projectDir);
+  for (const rel of MOCK_SPEC_PATHS) {
+    mkdirSync(dirname(join(projectDir, rel)), { recursive: true });
+    writeFileSync(join(projectDir, rel), 'export {};\n');
+  }
   const { addProject, listProjects } = await import('../src/core/projects.mjs');
   await addProject({ name: 'demo', path: projectDir });
   projectKey = (await listProjects()).find((p) => p.path === projectDir).key;
@@ -97,30 +103,49 @@ function waitFor(pred, timeoutMs = WAIT_FOR_MS) {
 }
 const frames = (msgs, threadId, type) => msgs.filter((m) => m.threadId === threadId && m.type === type);
 
-test('the wizard prompt drafts a spec in Ask: the mock proposes it, the parent re-validates and mints a spec card priced roughly on an empty history', async () => {
-  const pr = await post('/api/spec-builder/prompt', { projectDir, answers: { goal: 'Add dark mode', roles: ['qa'] } });
+test('three turns: questions card → spec card failing `testable` → fixed to 8 of 8', async () => {
+  const pr = await post('/api/spec-builder/prompt', { projectDir, idea: 'Charts from a question' });
   assert.equal(pr.status, 200);
-  const { text, projectKey: key } = await pr.json();
+  const { text, title, projectKey: key } = await pr.json();
   assert.equal(key, projectKey);
+  assert.equal(title, 'Spec: Charts from a question');
   const t = await newThread();
   const w = openWs(`?threadId=${t.id}`);
   await w.opened;
-  const r = await post(`/api/ask/threads/${t.id}/messages`, { text, ...MODEL, context: { pinned: true, projectKey } });
-  assert.equal(r.status, 202);
-  const proposed = await waitFor(() => frames(w.msgs, t.id, 'ask-card').find((f) => f.block.state === 'proposed'));
-  await waitFor(() => frames(w.msgs, t.id, 'ask-done').length >= 1);
-  w.ws.close();
-  const card = proposed.block.card;
-  assert.equal(card.type, 'spec');
-  assert.equal(card.title, 'Add dark mode');
-  assert.equal(card.frontMatter.generatedBy, 'spec-builder@1');
-  assert.deepEqual(card.frontMatter.roles, ['product', 'qa']);
-  assert.equal(card.estimate.basis, 'rough');
-  assert.equal(card.projectKey, projectKey);
-  assert.equal(card.projectDir, projectDir);
-  assert.equal(card.path, 'plans/mock-spec-design.md');
-  const s = await snapshot(t.id);
-  const cards = s.messages.flatMap((m) => m.blocks || []).filter((b) => b.kind === 'card');
-  assert.equal(cards.length, 1);
-  assert.equal(cards[0].card.type, 'spec');
+  // One turn: send, then wait for the turn it started (the nth ask-done) to end.
+  let done = 0;
+  const turn = async (body) => {
+    const r = await post(`/api/ask/threads/${t.id}/messages`, { text: body, ...MODEL, context: { pinned: true, projectKey } });
+    assert.equal(r.status, 202);
+    done += 1;
+    await waitFor(() => frames(w.msgs, t.id, 'ask-done').length >= done);
+    const cards = (await snapshot(t.id)).messages.flatMap((m) => m.blocks || []).filter((b) => b.kind === 'card');
+    return cards;
+  };
+  try {
+    // Turn 1: the first message → one question.
+    let cards = await turn(text);
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].card.type, 'spec-questions');
+    assert.deepEqual(cards[0].card.questions.map((q) => q.id), MOCK_SPEC_QUESTIONS.map((q) => q.id));
+    const header = await mod._testing.resolveAskContext(t.id, { pinned: true, projectKey }, []);
+    assert.equal(header.cards.find((c) => c.id === cards[0].id)?.type, 'spec-questions');
+
+    // Turn 2: the answers → a spec card with one failing shape check.
+    cards = await turn(answersMessage(MOCK_SPEC_QUESTIONS, { 'chart-storage': 'Per project' }));
+    let spec = cards.filter((b) => b.card.type === 'spec').at(-1).card;
+    assert.equal(spec.shape.ok, false);
+    assert.equal(spec.shape.items.find((i) => i.id === 'testable').pass, false);
+    assert.equal(spec.frontMatter.generatedBy, 'spec-builder@2');
+    for (const f of MOCK_SPEC_PATHS) assert.equal(spec.grounding.find((g) => g.path === f)?.found, true, f);
+    assert.equal(spec.grounding.find((g) => g.path === 'src/charts.mjs').isNew, true);
+    assert.equal(spec.projectKey, projectKey);
+
+    // Turn 3: the fix message → 8 of 8.
+    const failing = spec.shape.items.filter((i) => !i.pass && !i.waived);
+    cards = await turn(fixMessage(failing));
+    spec = cards.filter((b) => b.card.type === 'spec').at(-1).card;
+    assert.equal(spec.shape.ok, true);
+    assert.equal(spec.shape.passed, 8);
+  } finally { w.ws.close(); }
 });

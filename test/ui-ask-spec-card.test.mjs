@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { checkShape } from '../src/shared/spec-builder/shape.mjs';
+import { mockSpecMarkdown, MOCK_SPEC_PATHS } from '../src/core/spec-builder/mock-spec.mjs';
 
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
@@ -87,6 +89,60 @@ test('the spec card: renders, Use this spec, Save with the 409 suggestion', asyn
       assert.equal(save.textContent, 'Saved to plans/dark-mode-design-v2.md');
       assert.ok(save.disabled);
       assert.equal(card.querySelector('.ask-card-err').textContent, '');
+    } },
+  ]);
+});
+
+const GROUNDING = MOCK_SPEC_PATHS.map((path) => ({ path, found: true }));
+const v2Card = (failing) => {
+  const markdown = mockSpecMarkdown({ failing });
+  return { ...CARD, markdown, shape: checkShape(markdown, { grounding: GROUNDING }), grounding: GROUNDING };
+};
+
+test('the spec card: the shape row (V12)', async () => {
+  const recorder = { saves: [], used: [] };
+  const failing = await openWith({ kind: 'card', id: CARD_ID, state: 'proposed', card: v2Card('testable') }, recorder);
+  const passing = await openWith({ kind: 'card', id: CARD_ID, state: 'proposed', card: v2Card(null) }, recorder);
+  const legacy = await openWith({ kind: 'card', id: CARD_ID, state: 'proposed', card: CARD }, recorder);
+  await checkRows([
+    { name: 'a failing shape lists what to fix', run: () => {
+      const row = failing.doc.querySelector('[data-ask-spec-shape]');
+      assert.equal(row.getAttribute('data-ask-spec-shape'), 'fail');
+      assert.equal(row.textContent, 'Shape 7 of 8 · to fix: Success criteria must be testable');
+    } },
+    { name: 'a passing shape reads Shape ✓ 8 of 8', run: () => {
+      const row = passing.doc.querySelector('[data-ask-spec-shape]');
+      assert.equal(row.getAttribute('data-ask-spec-shape'), 'ok');
+      assert.equal(row.textContent, 'Shape ✓ 8 of 8');
+    } },
+    { name: 'a card without shape still shows a row, computed on the fly', run: () => {
+      assert.equal('shape' in CARD, false);
+      assert.ok(legacy.doc.querySelector('[data-ask-spec-shape]'));
+    } },
+    { name: 'the Use button keeps its label', run: () => {
+      assert.equal(failing.doc.querySelector('[data-ask-spec-use]').textContent, 'Use this spec');
+    } },
+  ]);
+});
+
+test('the spec-questions card: read-only list, no action buttons', async () => {
+  const card = { type: 'spec-questions', title: 'Questions about the spec', projectKey: 'app-0000abcd', projectName: 'app',
+    questions: [{ id: 'chart-storage', text: 'Where should pinned charts be stored?', why: '`src/store.mjs` keeps per-project state only.', options: ['Per project', 'Per user'] }] };
+  const ctx = await openWith({ kind: 'card', id: CARD_ID, state: 'proposed', card }, { saves: [], used: [] });
+  const el = ctx.doc.querySelector('[data-ask-spec-questions]');
+  await checkRows([
+    { name: 'renders one li with the text, the options and the reason', run: () => {
+      assert.ok(el);
+      const items = el.querySelectorAll('li');
+      assert.equal(items.length, 1);
+      assert.match(items[0].textContent, /Where should pinned charts be stored\?/);
+      assert.match(items[0].textContent, /Options: Per project \/ Per user/);
+      assert.match(items[0].textContent, /Why it's asking: /);
+    } },
+    { name: 'has no Use, Save or Approve button', run: () => {
+      assert.equal(el.querySelectorAll('button').length, 0);
+      assert.equal(ctx.doc.querySelector('[data-ask-spec-use]'), null);
+      assert.equal(ctx.doc.querySelector('[data-ask-spec-save]'), null);
     } },
   ]);
 });

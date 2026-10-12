@@ -2329,21 +2329,40 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 .bench-pane .bench-raw{margin-bottom:8px;}
 .bench-open-full{display:inline-block;margin-top:8px;font-size:12px;color:var(--blue-ink-strong);}
 .bench-msg{min-height:0;}
-/* Spec Builder wizard (plans/spec-builder) — reuses .wz-track/.wz-step-pill and .rt tiles */
+/* Spec Builder (docs/spec-builder.md): one pane, five views (idea form, drafting, questions, output, failed) */
 .sb-pane{margin-top:11px;display:flex;flex-direction:column;gap:12px}
-.sb-step{display:flex;flex-direction:column;gap:8px}
-.sb-label{font-size:12px;color:var(--ink-3)}
-.sb-roles{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
-/* .rt / .rt.sel are scoped under .wz (below); the pane is not a .wz, so the tile is styled here */
-.sb-role{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:10px 12px;border:2px solid transparent;border-radius:10px;background:var(--panel);box-shadow:var(--shadow);color:inherit;font:inherit;cursor:pointer}
-.sb-role[disabled]{opacity:.85;cursor:default}
-.sb-role.sel{border-color:var(--ink)}
-.sb-role-icon{font:600 11px var(--mono);color:var(--ink-2)}
-.sb-stages{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
-.sb-stage{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
-.sb-summary{margin:0;color:var(--ink-2)}
-.sb-nav{display:flex;gap:8px;justify-content:flex-end}
-.sb-drafting{display:flex;align-items:center;gap:8px;color:var(--ink-2)}
+/* label and tools share the first row; everything else spans it. The label stays `.field-compact > label` (§6.7). */
+.sb-idea{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:center}
+.sb-idea>:not(label):not(.sb-idea-tools){grid-column:1/-1}
+.sb-idea-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}
+.sb-idea-input{min-height:0;resize:vertical}
+.sb-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.sb-chip.on{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+.sb-locked{cursor:default}
+.sb-suggested{margin:0 4px 0 0}
+.sb-line{display:flex;align-items:center;gap:6px;margin-top:8px;color:var(--ink-2);font-size:12.5px}
+.sb-change{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}
+.sb-change .seg{display:inline-flex;width:auto}
+.sb-actions{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap}
+.sb-collapsed-idea{margin:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--ink-2)}
+.sb-progress{border:1px solid var(--line);border-radius:var(--r-card);padding:12px 14px;background:var(--panel)}
+.sb-activity{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+.sb-bar{height:2px;margin-top:10px;background:linear-gradient(90deg,transparent,var(--ink-3),transparent);background-size:40% 100%;background-repeat:no-repeat;animation:sb-bar 1.4s linear infinite}
+@keyframes sb-bar{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){.sb-bar{animation:none;background:var(--line)}}
+.sb-q{border:1px solid var(--line);border-radius:var(--r-card);padding:10px 14px;margin:0}
+.sb-q legend{font-weight:600;font-size:13px;padding:0 4px}
+.sb-out-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sb-shape,.sb-sum{border:1px solid var(--line);border-radius:var(--r-card);padding:10px 14px;background:var(--panel);display:flex;flex-direction:column;gap:6px}
+.sb-shape:not(.ok){border-color:var(--amber)}
+.sb-shape-item{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.sb-sum-line{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12.5px}
+.sb-sec{border-radius:var(--r-ctrl);padding:2px 6px;margin:0 -6px}
+.sb-sec-fail{outline:2px solid var(--amber);outline-offset:2px}
+.sb-role-tag{margin-left:8px;vertical-align:middle;font-size:11px}
+.sb-ground{margin-left:4px;font-size:11px;color:var(--green-ink)}
+.sb-ground.miss{color:var(--red-ink)}
+.sb-md{white-space:pre-wrap;font-family:var(--mono);font-size:12.5px}
 .ask-spec-preview{max-height:320px;overflow:auto;border:1px solid var(--line-2);border-radius:6px;padding:8px}
 /* the Spec Builder source button's Beta chip sits inside the .seg flex row: centre it, do not stretch it */
 .seg .flag-chip{align-self:center;margin-left:4px}
