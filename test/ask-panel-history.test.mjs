@@ -5,6 +5,7 @@
 // and refreshes that wait while Chat is hidden.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { makePanel, key } from './helpers/ask-panel-harness.mjs';
 
 const NOW = Date.parse('2026-10-11T12:00:00');   // local noon: the groups follow the browser's own day
@@ -562,4 +563,254 @@ test('a refresh that reorders the rows keeps keyboard focus on the same chat', a
   await ticks(ctx);
   assert.equal(ctx.doc.querySelector('.ask-thread-row').dataset.threadId, LA_C, 'precondition: C leads now');
   assert.equal(ctx.doc.activeElement, pickOf(LA_C));
+});
+
+// ── the column's search (the Workflows Library's expanding search) ─────────────────────────────────────────────────
+// ?q= reaches the server (title OR message text, owner filter kept — test/ask-store.test.mjs); the fake answers the
+// matches with total = the hits and all = every chat, and a text hit carries its excerpt as match.snippet.
+const SEARCH_HITS = {
+  threads: [
+    row('ask_00000001', 'Fix the login bug', iso(NOW - 3600e3)),
+    row('ask_00000002', 'Offline sync banner', iso(NOW - 26 * 3600e3), { match: { snippet: '…the <b>login</b> token expired…' } }),
+  ],
+  total: 2,
+  all: 3,
+};
+function searchApi(rec) {
+  const base = api({});
+  return (url, opts) => {
+    if (!url.startsWith('/api/ask/threads?')) return base(url, opts);
+    rec.lists.push(url);
+    const q = new URLSearchParams(url.slice(url.indexOf('?') + 1)).get('q');
+    const body = q == null ? LIST : q === 'login' ? SEARCH_HITS : { threads: [], total: 0, all: 3 };
+    return { ok: true, status: 200, json: async () => body };
+  };
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const DEBOUNCED = 260;                                                   // past the ~200 ms typing debounce
+function typeInto(ctx, input, text) {
+  input.value = text;
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+}
+function searchHead(ctx) {
+  const head = ctx.doc.querySelector('[data-chat-history] .chat-history-head');
+  return {
+    head,
+    meter: head.querySelector('.chat-history-meter'),
+    box: head.querySelector('.chat-history-sbox'),
+    btn: head.querySelector('button.chat-history-search-btn'),
+    input: head.querySelector('input.chat-history-search-input'),
+  };
+}
+const titles = (ctx) => [...ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-title')].map((t) => t.textContent);
+
+test('the search button sits right of the meter; a click unfolds the field (is-searching, aria-expanded, focus, no longer inert); the glyph on an empty field folds it, with text it only refocuses', async () => {
+  const ctx = makePanel({ fetchHandler: api({}), innerWidth: 1700 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const { head, meter, box, btn, input } = searchHead(ctx);
+  assert.deepEqual([...head.children].map((c) => c.className), ['chat-history-title', 'chat-history-meter', 'chat-history-sbox']);
+  assert.equal(meter.nextElementSibling, box, 'the search box follows the meter');
+  assert.equal(box.firstElementChild, btn, 'the box leads with its button');
+  assert.equal(btn.getAttribute('aria-label'), 'Search chats');
+  assert.equal(btn.getAttribute('aria-controls'), input.id);
+  assert.equal(btn.getAttribute('aria-expanded'), 'false');
+  assert.ok(btn.querySelector('svg'), 'the search glyph');
+  assert.equal(input.type, 'search');
+  assert.equal(input.placeholder, 'Search chats…');
+  assert.equal(input.getAttribute('aria-label'), 'Search chats');
+  assert.equal(input.hasAttribute('inert'), true, 'the folded field takes no focus and no Tab stop');
+  assert.equal(head.classList.contains('is-searching'), false);
+
+  btn.click();
+  assert.equal(head.classList.contains('is-searching'), true);
+  assert.equal(btn.getAttribute('aria-expanded'), 'true');
+  assert.equal(input.hasAttribute('inert'), false);
+  assert.equal(ctx.doc.activeElement, input);
+  assert.equal(meter.parentElement, box, 'open, the meter rides at the end of the field (the box slides over its resting place)');
+
+  btn.click();
+  assert.equal(head.classList.contains('is-searching'), false, 'the glyph on an empty field folds it');
+  assert.equal(btn.getAttribute('aria-expanded'), 'false');
+  assert.equal(input.hasAttribute('inert'), true);
+  assert.equal(ctx.doc.activeElement, btn, 'the focus goes to the button, never <body>');
+  assert.equal(meter.nextElementSibling, box, 'folded, the meter is back beside the button');
+
+  btn.click();
+  typeInto(ctx, input, 'login');
+  btn.focus();
+  btn.click();
+  assert.equal(head.classList.contains('is-searching'), true, 'a field with text stays open');
+  assert.equal(ctx.doc.activeElement, input);
+  assert.equal(input.value, 'login');
+});
+
+test('typing searches the server (debounced, trimmed ?q=): the matches render grouped, "n of N chats", a text hit shows its excerpt as plain text; a refresh keeps the query; no hit says "No chats match."', async () => {
+  const rec = { lists: [] };
+  const ctx = makePanel({ fetchHandler: searchApi(rec), now: () => NOW, innerWidth: 1700 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const { meter, btn, input } = searchHead(ctx);
+  assert.deepEqual(rec.lists, ['/api/ask/threads?limit=50']);
+  btn.click();
+  typeInto(ctx, input, 'l');
+  typeInto(ctx, input, 'lo');
+  typeInto(ctx, input, ' login ');
+  await ticks(ctx);
+  assert.equal(rec.lists.length, 1, 'nothing before the debounce');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.deepEqual(rec.lists.slice(1), ['/api/ask/threads?limit=50&q=login'], 'one request, the trimmed text');
+  assert.deepEqual(titles(ctx), ['Fix the login bug', 'Offline sync banner']);
+  assert.deepEqual([...ctx.doc.querySelectorAll('[data-chat-history] .chat-history-group')].map((g) => g.dataset.group), ['today', 'yesterday']);
+  assert.equal(meter.textContent, '2 of 3 chats');
+  const rowOf = (id) => ctx.doc.querySelector(`[data-chat-history] .ask-thread-row[data-thread-id="${id}"]`);
+  const excerpt = rowOf('ask_00000002').querySelector('.ask-thread-match');
+  assert.equal(excerpt.textContent, '…the <b>login</b> token expired…', 'the excerpt under the title, as text');
+  assert.equal(excerpt.querySelector('b'), null, 'never parsed as HTML');
+  assert.equal(excerpt.previousElementSibling.className, 'ask-thread-title');
+  assert.equal(rowOf('ask_00000001').querySelector('.ask-thread-match'), null, 'a title hit shows no excerpt');
+  assert.equal(ctx.doc.activeElement, input, 'typing kept the field (the head is never rebuilt)');
+  assert.equal(searchHead(ctx).input, input);
+
+  ctx.panel.pushServerFrame({ type: 'ask-title', threadId: 'ask_00000002', title: 'Renamed' });
+  await wait(320);                                                         // past THREADS_REFRESH_MS
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50&q=login', 'the debounced refresh keeps the query');
+  assert.equal(meter.textContent, '2 of 3 chats');
+
+  typeInto(ctx, input, 'zzz');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50&q=zzz');
+  assert.equal(ctx.doc.querySelector('[data-chat-history] .chat-history-empty').textContent, 'No chats match.');
+  assert.equal(meter.textContent, '0 of 3 chats');
+  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-row').length, 0);
+  ctx.panel.destroy();
+});
+
+test('Escape clears the text first (the full list returns at once), then folds the field and focuses the button; folding with a search shown restores the list', async () => {
+  const rec = { lists: [] };
+  const ctx = makePanel({ fetchHandler: searchApi(rec), now: () => NOW, innerWidth: 1700 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const { head, meter, btn, input } = searchHead(ctx);
+  btn.click();
+  typeInto(ctx, input, 'login');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.deepEqual(titles(ctx), ['Fix the login bug', 'Offline sync banner']);
+
+  const first = key(ctx.window, input, 'Escape');
+  assert.equal(first.defaultPrevented, true);
+  assert.equal(input.value, '', 'the first Escape clears the text');
+  assert.equal(head.classList.contains('is-searching'), true, 'and keeps the field open');
+  assert.equal(ctx.doc.activeElement, input);
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50', 'the full list at once, no debounce');
+  assert.deepEqual(titles(ctx), ['Fix the login bug', 'Offline sync banner', 'Build the header']);
+  assert.equal(meter.textContent, '3 chats');
+
+  const second = key(ctx.window, input, 'Escape');
+  assert.equal(second.defaultPrevented, true);
+  assert.equal(head.classList.contains('is-searching'), false, 'the second Escape folds it');
+  assert.equal(input.hasAttribute('inert'), true);
+  assert.equal(ctx.doc.activeElement, btn);
+  const fetched = rec.lists.length;
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(rec.lists.length, fetched, 'nothing left to fetch');
+
+  // Text cleared by hand, then folded inside the debounce: the full list comes back at once, once.
+  btn.click();
+  typeInto(ctx, input, 'login');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(meter.textContent, '2 of 3 chats');
+  typeInto(ctx, input, '');
+  btn.click();
+  assert.equal(head.classList.contains('is-searching'), false);
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50');
+  assert.equal(meter.textContent, '3 chats');
+  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-row').length, 3, 'folding restored the list');
+  const after = rec.lists.length;
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(rec.lists.length, after, 'the pending debounce went with the fold');
+  ctx.panel.destroy();
+});
+
+test('below 1100px Escape in the search field clears and folds it before it closes the overlay', async () => {
+  const rec = { lists: [] };
+  const ctx = makePanel({ fetchHandler: searchApi(rec), now: () => NOW, innerWidth: 900 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const page = ctx.panel.root;
+  const toggle = ctx.doc.querySelector('[data-ask-threads-btn]');
+  toggle.click();
+  await ticks(ctx);
+  const { head, btn, input } = searchHead(ctx);
+  btn.click();
+  typeInto(ctx, input, 'login');
+  key(ctx.window, input, 'Escape');
+  assert.equal(input.value, '');
+  assert.equal(page.dataset.history, 'open', 'the field took the first Escape');
+  key(ctx.window, input, 'Escape');
+  assert.equal(head.classList.contains('is-searching'), false);
+  assert.equal(page.dataset.history, 'open', 'and the second');
+  assert.equal(ctx.doc.activeElement, btn);
+  key(ctx.window, btn, 'Escape');
+  assert.equal(page.dataset.history, 'closed', 'the third closes the overlay');
+  assert.equal(ctx.doc.activeElement, toggle);
+  ctx.panel.destroy();
+});
+
+test('a failed search fetch asks again: the same text typed again retries, and a fold whose fetch failed restores the list on the next fold', async () => {
+  const rec = { lists: [] };
+  const fail = { q: true, full: false };
+  const inner = searchApi(rec);
+  const handler = (url, opts) => {
+    if (url.startsWith('/api/ask/threads?') && (url.includes('&q=') ? fail.q : fail.full)) {
+      rec.lists.push(url);
+      return { ok: false, status: 500, json: async () => ({}) };
+    }
+    return inner(url, opts);
+  };
+  const ctx = makePanel({ fetchHandler: handler, now: () => NOW, innerWidth: 1700 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const { meter, btn, input } = searchHead(ctx);
+  btn.click();
+  typeInto(ctx, input, 'login');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50&q=login');
+  assert.equal(meter.textContent, '3 chats', 'the failed search left the full list');
+  fail.q = false;
+  typeInto(ctx, input, 'login');
+  await wait(DEBOUNCED);
+  await ticks(ctx);
+  assert.equal(rec.lists.filter((u) => u.endsWith('&q=login')).length, 2, 'the same text asked again');
+  assert.equal(meter.textContent, '2 of 3 chats');
+
+  fail.full = true;
+  key(ctx.window, input, 'Escape');
+  await ticks(ctx);
+  assert.equal(rec.lists.at(-1), '/api/ask/threads?limit=50');
+  assert.equal(meter.textContent, '2 of 3 chats', 'the failed clear left the matches');
+  fail.full = false;
+  key(ctx.window, input, 'Escape');
+  await ticks(ctx);
+  assert.equal(ctx.doc.activeElement, btn);
+  assert.equal(meter.textContent, '3 chats', 'the fold asked for the full list again');
+  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-row').length, 3);
+  ctx.panel.destroy();
+});
+
+test('the search field\'s placeholder uses the Workflows Library\'s rendered colour (--ink-2), not the lighter --ink-3', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = css.match(/\.chat-history-search-input::placeholder\{([^}]*)\}/);
+  assert.ok(rule, 'the placeholder rule');
+  assert.equal(rule[1], 'color:var(--ink-2);');
 });

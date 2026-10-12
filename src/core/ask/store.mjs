@@ -106,34 +106,73 @@ export function getThread(id) {
   return r ? rowToThread(r) : null;
 }
 
+/** The History search as a LIKE operand: a substring match where `%`, `_` and `\` in the user's text match themselves
+ *  (every LIKE here says ESCAPE '\'). */
+const likeContains = (q) => `%${q.replace(/[\\%_]/g, '\\$&')}%`;
+const searchText = (query) => (typeof query === 'string' ? query.trim() : '');
+/** The search reads only messages the person sees as text: a synthetic event row (a card action, a terminal exit) keeps
+ *  the model-facing `[worca event] …` line as its `text` and shows a notice block instead. `blocks` is JSON.stringify'd, so
+ *  the bare `"synthetic":true` can only be that flag (a string value escapes its quotes); COALESCE keeps rows with no
+ *  blocks (a NULL here would drop every plain user message). */
+const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%')`;
+
 /** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9). `mode: 'any'` (the History
- *  "Delete all" count, which deletes composer chats too) skips the surface filter. */
-function listWhere(visibleTo, mode, alias = '') {
+ *  "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
+ *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
+ *  `alias` must name the threads table: the message subquery has an `id` of its own. */
+function listWhere(visibleTo, mode, alias, query) {
   const where = [];
   const args = [];
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
   if (mode !== 'any') where.push(mode === 'composer' ? `${alias}mode = 'composer'` : `(${alias}mode IS NULL OR ${alias}mode <> 'composer')`);
+  const q = searchText(query);
+  if (q) {
+    where.push(`(${alias}title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = ${alias}id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE}))`);
+    args.push(likeContains(q), likeContains(q));
+  }
   return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', args };
 }
 
-export function listThreads({ limit = 50, visibleTo = null, mode = null } = {}) {
-  getDb();
-  const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
-  const w = listWhere(visibleTo, mode, 't.');
-  const rows = prepare(`
-    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
-           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees
-    FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
-  `).all(...w.args, n);
-  // A list row never carries the composer canvas (up to 256 KB each): getThread does.
-  return rows.map((r) => { const { composer: _canvas, ...t } = rowToThread(r); return { ...t, runLinks: r.run_links, worktrees: r.worktrees }; });
+const EXCERPT_BEFORE = 30;
+const EXCERPT_CHARS = 90;
+/** One line of `text` around the first hit of `q` (whitespace collapsed, … where it was cut): the History row shows it
+ *  under the title of a chat that matched on a message, not on its title. Plain text — the client sets textContent. */
+function excerptAround(text, q) {
+  const flat = String(text ?? '').replace(/\s+/g, ' ').trim();
+  const at = flat.toLowerCase().indexOf(q.replace(/\s+/g, ' ').toLowerCase());
+  const from = Math.max(0, Math.min(at < 0 ? 0 : at - EXCERPT_BEFORE, flat.length - EXCERPT_CHARS));
+  const to = Math.min(flat.length, from + EXCERPT_CHARS);
+  return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
-/** Total saved chats — the History popover shows this, not the capped page listThreads returns. */
-export function countThreads({ visibleTo = null, mode = null } = {}) {
+export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
   getDb();
-  const w = listWhere(visibleTo, mode);
-  const row = prepare(`SELECT count(*) AS n FROM ask_threads${w.sql}`).get(...w.args);
+  const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  const q = searchText(query);
+  const w = listWhere(visibleTo, mode, 't.', q);
+  // A search also reads whether the title holds the text and, if not, the first message that does (its excerpt).
+  const hit = q ? `,
+           (t.title LIKE ? ESCAPE '\\') AS title_hit,
+           (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text` : '';
+  const rows = prepare(`
+    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees${hit}
+    FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
+  `).all(...(q ? [likeContains(q), likeContains(q)] : []), ...w.args, n);
+  // A list row never carries the composer canvas (up to 256 KB each): getThread does.
+  return rows.map((r) => {
+    const { composer: _canvas, ...t } = rowToThread(r);
+    const match = q && !r.title_hit && r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
+    return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+  });
+}
+
+/** Total saved chats — the History popover shows this, not the capped page listThreads returns. With a `query`, the
+ *  chats the search matches (same filter as listThreads). */
+export function countThreads({ visibleTo = null, mode = null, query = '' } = {}) {
+  getDb();
+  const w = listWhere(visibleTo, mode, 't.', query);
+  const row = prepare(`SELECT count(*) AS n FROM ask_threads t${w.sql}`).get(...w.args);
   return row ? Number(row.n) : 0;
 }
 

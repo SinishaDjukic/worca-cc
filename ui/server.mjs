@@ -10033,12 +10033,16 @@ app.get('/api/ask/threads', (req, res) => {
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
     const mode = req.query.mode === 'composer' ? 'composer' : null;
-    const threads = askListThreads({ limit, visibleTo, mode }).map((t) => {
+    // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
       return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
     });
-    // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads({ visibleTo, mode }) });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
+    // the search matches, with all = every saved chat ("3 of 54 chats").
+    const total = askCountThreads({ visibleTo, mode, query });
+    res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

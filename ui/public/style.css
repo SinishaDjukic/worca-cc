@@ -8309,9 +8309,30 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-history:focus{outline:none;}
 /* A row is a list item, not a menu item: keyboard focus draws a ring (inside: the column body is a scroller), not the hover wash. */
 .chat-history .ask-thread-pick:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.chat-history-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
-.chat-history-title{font-weight:600;font-size:13px;color:var(--ink);}
+.chat-history-head{position:relative;flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 44px 0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
+.chat-history-title{font-weight:600;font-size:13px;color:var(--ink);transition:opacity .16s,visibility .16s;}
+.chat-history-head.is-searching .chat-history-title{opacity:0;visibility:hidden;}
 .chat-history-meter{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+/* The search (buildHistorySearch), the Workflows Library's look: folded, the box is just its button right of the meter;
+   open, its left edge slides over the title and the meter's resting place, the field fills it and the meter rides at
+   its end. */
+.chat-history-sbox{position:absolute;top:calc(50% - 15px);right:8px;left:calc(100% - 38px);height:30px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
+.chat-history-head.is-searching .chat-history-sbox{left:8px;}
+.chat-history-search-btn{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:9px;background:none;color:var(--ink-2);cursor:pointer;}
+.chat-history-search-btn svg{width:16px;height:16px;}
+.chat-history-search-btn:hover{background:var(--hover);color:var(--ink);}
+.chat-history-search-btn[aria-expanded="true"]:not(:hover){background:none;color:var(--ink);}
+/* Inside: the box clips (overflow:hidden) a ring drawn outside the button. */
+.chat-history-search-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.chat-history-search-input{flex:1 1 auto;min-width:0;height:30px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
+.chat-history-head.is-searching .chat-history-search-input{opacity:1;}
+.chat-history-search-input:focus{outline:none;}
+.chat-history-search-input::placeholder{color:var(--ink-2);}
+.chat-history-search-input::-webkit-search-cancel-button{display:none;}
+.chat-history-sbox .chat-history-meter{flex:none;margin-left:0;padding-right:4px;}
+@media (prefers-reduced-motion:reduce){.chat-history-sbox,.chat-history-title,.chat-history-search-input{transition:none;}}
+/* A search hit in a message: the server's excerpt under the title. */
+.chat-history .ask-thread-match{font-size:11.5px;color:var(--ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}
 .chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
 .chat-history-group + .chat-history-group{margin-top:6px;}
 .chat-history-group-label{padding:8px 10px 4px;font-weight:600;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);}

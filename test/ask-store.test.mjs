@@ -119,6 +119,97 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
   ]);
 });
 
+// The History column's search (GET /api/ask/threads?q=): the title OR any message's text, case-insensitive, with `%`,
+// `_` and `\` taken literally; the owner and surface filters still apply and the count is the filtered list's. The
+// file shares one home, so every row carries a word no other test writes.
+test('listThreads / countThreads query: title or message text, wildcards literal, owner and mode filters kept, count = the list', async () => {
+  const tag = `zq${newAskId('x').slice(2)}`;
+  const ids = (list) => list.map((x) => x.id).sort();
+  await checkRows([
+    { name: 'a title match, case-insensitive; the query is trimmed; a title hit carries no excerpt', run: () => {
+      const a = createThread({ title: `Fix the ${tag}Login bug` });
+      appendMessage(a.id, { role: 'user', text: `the ${tag}login page fails` });
+      const list = listThreads({ query: `  ${tag}LOGIN ` });
+      assert.deepEqual(ids(list), [a.id]);
+      assert.equal(list[0].match, undefined, 'the title shows the hit itself, even when a message holds it too');
+      assert.equal(countThreads({ query: `${tag}login` }), 1);
+    } },
+    { name: 'a message-text match (user or assistant) lists the chat with one plain excerpt around the first hit', run: () => {
+      const b = createThread({ title: 'Offline sync banner' });
+      appendMessage(b.id, { role: 'user', text: 'nothing here' });
+      appendMessage(b.id, { role: 'assistant', text: `${'a'.repeat(200)}\n\nthe ${tag}Needle   lives here ${'b'.repeat(200)}` });
+      appendMessage(b.id, { role: 'user', text: `again ${tag}needle` });
+      const c = createThread({ title: 'Another' });
+      appendMessage(c.id, { role: 'user', text: `ask about ${tag}needle once` });
+      const list = listThreads({ query: `${tag}needle` });
+      assert.deepEqual(ids(list), [b.id, c.id].sort());
+      const snip = list.find((x) => x.id === b.id).match.snippet;
+      assert.ok(snip.includes(`the ${tag}Needle lives here`), `around the first hit, whitespace collapsed: ${snip}`);
+      assert.ok(snip.startsWith('…') && snip.endsWith('…'), 'cut on both sides');
+      assert.ok(snip.length <= 100, `short: ${snip.length}`);
+      assert.equal(list.find((x) => x.id === c.id).match.snippet, `ask about ${tag}needle once`, 'a short message whole');
+      assert.equal(countThreads({ query: `${tag}needle` }), 2, 'the count runs the same message filter');
+      assert.equal(listThreads({ query: `${tag}nothing` }).length, 0);
+      assert.equal(countThreads({ query: `${tag}nothing` }), 0);
+      assert.equal(listThreads().find((x) => x.id === b.id).match, undefined, 'no query, no excerpt');
+    } },
+    { name: 'a synthetic event row (a card action: its text is the model-facing [worca event] line, never shown) is not searched', run: () => {
+      const word = `${tag}event`;
+      const event = (id) => appendMessage(id, { role: 'user', text: `[worca event] workflow card card_0000ab01 saved as wf_123 "Release flow"; thenRun=false; project=${word}`,
+        blocks: [{ kind: 'notice', synthetic: true, text: 'Saved "Release flow".' }] });
+      const only = createThread({ title: 'Release work' });
+      event(only.id);
+      const both = createThread({ title: 'Release talk' });
+      event(both.id);
+      appendMessage(both.id, { role: 'assistant', text: `Saved it under ${word} for you` });
+      const attached = createThread({ title: 'Notes' });
+      appendMessage(attached.id, { role: 'user', text: `read ${word} notes`,
+        blocks: [{ kind: 'attachment', id: 'att_1', name: '"synthetic":true.txt', bytes: 3, attKind: 'text', mime: 'text/plain' }] });
+      const list = listThreads({ query: word });
+      assert.deepEqual(ids(list), [both.id, attached.id].sort(), 'the event line alone matches nothing; a typed row with blocks still does');
+      assert.equal(list.find((x) => x.id === both.id).match.snippet, `Saved it under ${word} for you`, 'the excerpt comes from a message the person can read');
+      assert.equal(countThreads({ query: word }), 2);
+      assert.equal(listThreads({ query: '[worca event] workflow card card_0000ab01' }).length, 0);
+    } },
+    { name: '%, _ and \\ in the query match themselves, never as LIKE wildcards', run: () => {
+      const lit = createThread({ title: `100% ${tag}_done\\path` });
+      const near = createThread({ title: `100x ${tag}xdone path` });
+      assert.deepEqual(ids(listThreads({ query: `0% ${tag}` })), [lit.id], '% is a percent sign');
+      assert.deepEqual(ids(listThreads({ query: `${tag}_d` })), [lit.id], '_ is an underscore');
+      assert.deepEqual(ids(listThreads({ query: `${tag}_done\\p` })), [lit.id], '\\ is a backslash');
+      assert.equal(countThreads({ query: `0% ${tag}` }), 1);
+      assert.ok(near.id);
+    } },
+    { name: 'the owner filter still applies: a search never shows another person\'s chat on a shared sign-in', run: () => {
+      const word = `${tag}own`;
+      const alice = createThread({ title: 'Alice', createdBy: 'alice@example.com' });
+      const bob = createThread({ title: `Bob ${word}`, createdBy: 'bob@example.com' });
+      const anyone = createThread({ title: 'Ownerless' });
+      appendMessage(alice.id, { role: 'user', text: `see ${word}` });
+      appendMessage(bob.id, { role: 'user', text: `see ${word}` });
+      appendMessage(anyone.id, { role: 'user', text: `see ${word}` });
+      assert.deepEqual(ids(listThreads({ query: word, visibleTo: 'alice@example.com' })), [alice.id, anyone.id].sort());
+      assert.equal(countThreads({ query: word, visibleTo: 'alice@example.com' }), 2);
+      assert.deepEqual(ids(listThreads({ query: word })), [alice.id, bob.id, anyone.id].sort(), 'no viewer (local): all');
+    } },
+    { name: 'the surface filter still applies: composer chats only with mode composer', run: () => {
+      const word = `${tag}mode`;
+      const ask = createThread({ title: `Ask ${word}` });
+      const comp = createThread({ title: `Composer ${word}`, mode: 'composer' });
+      assert.deepEqual(ids(listThreads({ query: word })), [ask.id]);
+      assert.deepEqual(ids(listThreads({ query: word, mode: 'composer' })), [comp.id]);
+      assert.equal(countThreads({ query: word, mode: 'composer' }), 1);
+    } },
+    { name: 'the count is the filtered list\'s; an empty or blank query is no search', run: () => {
+      for (const q of [tag, `${tag}needle`, `${tag}own`, `${tag}_`, `${tag}LOGIN`, `${tag}event`]) {
+        assert.equal(countThreads({ query: q }), listThreads({ query: q, limit: 200 }).length, q);
+      }
+      assert.equal(countThreads({ query: '   ' }), countThreads());
+      assert.deepEqual(ids(listThreads({ query: '', limit: 200 })), ids(listThreads({ limit: 200 })));
+    } },
+  ]);
+});
+
 // db.mjs:44 designs for a second writing process (the CLI running a pipeline, a
 // second UI). appendMessage reads MAX(seq) before it writes, so under a deferred
 // BEGIN its transaction started as a WAL read snapshot and had to UPGRADE to a

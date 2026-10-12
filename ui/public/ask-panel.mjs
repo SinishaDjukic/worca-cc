@@ -50,6 +50,7 @@ const ICONS = {
   voiceTalk: ['M7.9 20A9 9 0 1 0 4 16.1L2 22z', 'M8 10h8M8 14h5'],           // chat bubble with text lines: speak in, read the reply
   voiceHandsFree: ['M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4'],               // waveform: a live conversation
   pin: ['M12 17v5', 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'],
+  search: ['M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M20 20l-4.5-4.5'],    // the Workflows Library's search glyph
 };
 // One icon per voice mode; the mic button and the ▾ menu both draw from this.
 const VOICE_MODE_ICONS = { dictate: ICONS.mic, talk: ICONS.voiceTalk, handsfree: ICONS.voiceHandsFree };
@@ -235,6 +236,8 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']];
+/** The column's search waits this long after the last keystroke before it asks the server. */
+const HISTORY_SEARCH_MS = 200;
 
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
@@ -275,6 +278,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     historyLoaded: false,     // rows (or the empty line) have been painted once
     historyGen: 0,            // drops a stale list response
     historyAsPush: false,     // the column was opened as a push column: narrowing the window below 1100px closes it
+    historySearchOpen: false, // the column's search field is unfolded (the head's .is-searching)
+    historyQuery: '',         // the search field's text; loadHistory sends it trimmed as ?q=
+    historyListQuery: '',     // the trimmed query the last list request carried ('' = the full list, null = it failed)
+    historySearchTimer: null, // the typing debounce (HISTORY_SEARCH_MS)
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
@@ -1223,6 +1230,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function ownsKey(e) {
     if (e.key !== 'Escape' || e.defaultPrevented || st.destroyed || !st.open || modalUp() || el.page.closest('[inert]')) return false;
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane, [data-chat-panel]')) return false;
+    if (e.target === el.historySearchInput) return false;   // the History search clears, then folds, before the overlay closes
     return !!st.popover || historyOverlayOpen();
   }
 
@@ -1355,6 +1363,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function fmtChats(n) {
     return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
   }
+  /** History meter while searching: "3 of 54 chats" (the matches of every saved chat). */
+  function fmtMatches(n, all) {
+    return Number.isInteger(all) && all > 0 ? `${n} of ${all} chat${all === 1 ? '' : 's'}` : fmtChats(n);
+  }
 
   // CONTRACT §1 aside.chat-history: every saved chat, newest first, grouped Today / Yesterday / Earlier by its last
   // activity; a row opens the chat, its trash deletes it (confirm). A 264px push column, an overlay with a scrim below
@@ -1372,14 +1384,87 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal'))) return;
       setHistoryOpen(false, { persist: false });
     });
+    // The head is built once and kept across repaints (renderHistory touches only the meter's text and the body), so the
+    // search box's slide (style.css .is-searching) runs and typing never loses the caret. Folded: "Chats  54 chats 🔍".
+    // Open: "🔍 Search chats…  3 of 54 chats" — the box's left edge slides over the title and the meter's resting place
+    // (the Workflows Library's search), and the meter rides at the end of the field.
     const head = make('div', 'chat-history-head');
+    el.historyHead = head;
     head.appendChild(make('span', 'chat-history-title', 'Chats'));
     el.historyMeter = make('span', 'chat-history-meter', '');
     head.appendChild(el.historyMeter);
+    head.appendChild(buildHistorySearch());
     aside.appendChild(head);
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
+    syncHistorySearch();
     return aside;
+  }
+
+  /** The search box: its button (aria-controls the field) and the field. The server searches titles and message text
+   *  (GET /api/ask/threads?q=); the field only holds the text. */
+  function buildHistorySearch() {
+    const box = make('div', 'chat-history-sbox');
+    const input = make('input', 'chat-history-search-input');
+    input.id = 'chat-history-search';
+    input.type = 'search';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = 'Search chats…';
+    input.setAttribute('aria-label', 'Search chats');
+    const btn = iconButton('chat-history-search-btn', 'Search chats', ICONS.search, () => {
+      if (!st.historySearchOpen) { st.historySearchOpen = true; syncHistorySearch(); input.focus(); return; }
+      if (st.historyQuery) { input.focus(); return; }            // a field with text stays open
+      closeHistorySearch(btn);
+    });
+    btn.id = 'chat-history-search-btn';
+    btn.setAttribute('aria-controls', input.id);
+    // Typing waits for a pause, then fetches: only the body repaints, so the caret and an IME composition survive.
+    input.addEventListener('input', () => {
+      st.historyQuery = input.value;
+      clearTimeout(st.historySearchTimer);
+      st.historySearchTimer = setTimeout(searchHistoryNow, HISTORY_SEARCH_MS);
+      if (st.historySearchTimer && typeof st.historySearchTimer.unref === 'function') st.historySearchTimer.unref();
+    });
+    // Escape clears the text first, then folds the field (ownsKey leaves it to the field, even over the overlay).
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (st.historyQuery) { st.historyQuery = ''; input.value = ''; searchHistoryNow(); } else closeHistorySearch(btn);
+    });
+    box.append(btn, input);
+    el.historySearch = box;
+    el.historySearchBtn = btn;
+    el.historySearchInput = input;
+    return box;
+  }
+  /** The head follows the search state: the slide, aria-expanded, the folded field inert (no focus, no Tab stop), and
+   *  the meter beside the button (folded) or at the end of the open field. */
+  function syncHistorySearch() {
+    const open = st.historySearchOpen;
+    el.historyHead.classList.toggle('is-searching', open);
+    el.historySearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    el.historySearchInput.toggleAttribute('inert', !open);
+    if (el.historySearchInput.value !== st.historyQuery) el.historySearchInput.value = st.historyQuery;
+    if (open) el.historySearch.appendChild(el.historyMeter);
+    else el.historyHead.insertBefore(el.historyMeter, el.historySearch);
+  }
+  /** Fold the search and drop its text; `focusEl` takes the focus (the field goes inert — never leave it on <body>). */
+  function closeHistorySearch(focusEl) {
+    st.historyQuery = '';
+    st.historySearchOpen = false;
+    syncHistorySearch();
+    searchHistoryNow();
+    if (focusEl) focusEl.focus();
+  }
+  /** Run the search for the field's text now (the debounce ended, or Escape / a fold cleared it): fetch only when the
+   *  list shows something else, so a fold with nothing searched fetches nothing. */
+  function searchHistoryNow() {
+    clearTimeout(st.historySearchTimer);
+    st.historySearchTimer = null;
+    if (st.destroyed) return;
+    if (st.historyQuery.trim() !== st.historyListQuery) loadHistory();
   }
   function overlayMode() { return (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
   function historyOpen() { return !!el.page && el.page.dataset.history === 'open'; }
@@ -1417,22 +1502,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   /** Fetch the list and paint it. A failed refresh keeps the rows already shown and marks the list stale, so the next
-   *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). */
+   *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
+   *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
   function loadHistory() {
     st.historyStale = false;
     const gen = ++st.historyGen;
+    const query = st.historyQuery.trim();
+    st.historyListQuery = query;
     Promise.resolve()
-      .then(() => fetch('/api/ask/threads?limit=50'))
+      .then(() => fetch(query ? `/api/ask/threads?limit=50&q=${encodeURIComponent(query)}` : '/api/ask/threads?limit=50'))
       .then((r) => (r && r.ok ? r.json() : null))
       .catch(() => null)
       .then((body) => {
         if (st.destroyed || gen !== st.historyGen) return;
         if (!body || !Array.isArray(body.threads)) {
           st.historyStale = true;
+          st.historyListQuery = null;            // the list still shows the last good answer: any text asks again
           if (!st.historyLoaded) renderHistory([], 0);
           return;
         }
-        renderHistory(body.threads, body.total);
+        renderHistory(body.threads, body.total, query ? { query, all: body.all } : {});
       });
   }
 
@@ -1478,6 +1567,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const col = make('span', 'ask-thread-col');
     // A null title = the haiku title has not landed yet; "New chat" is the label the turn falls back to.
     col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
+    // A search hit in a message (not in the title): the server's excerpt around it, as text.
+    const snippet = t.match && typeof t.match.snippet === 'string' ? t.match.snippet : '';
+    if (snippet) col.appendChild(make('span', 'ask-thread-match', snippet));
     col.appendChild(threadMeter(t));
     pick.appendChild(col);
     const status = [t.inFlight ? 'Replying' : '', t.waiting ? 'Needs you' : (t.tracking ? 'Following a run' : '')].filter(Boolean).join(', ');
@@ -1494,11 +1586,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return rowEl;
   }
 
-  /** Paint the list (rows replaced in place; keyboard focus inside the column stays on the same chat's button). */
-  function renderHistory(threads, total) {
+  /** Paint the list (rows replaced in place; keyboard focus inside the column stays on the same chat's button). A
+   *  `query` = these are its matches: the meter reads "n of N chats" (`all` = every saved chat), none = "No chats match." */
+  function renderHistory(threads, total, { query = '', all = null } = {}) {
     if (!el.historyBody) return;
     st.historyLoaded = true;
-    el.historyMeter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : threads.length);
+    const n = Number.isInteger(total) && total >= 0 ? total : threads.length;
+    el.historyMeter.textContent = query ? fmtMatches(n, all) : fmtChats(n);
     const buttons = () => [...el.historyBody.querySelectorAll('button')];
     const focusAt = el.historyBody.contains(doc.activeElement) ? buttons().indexOf(doc.activeElement) : -1;
     // A refresh can reorder the rows: focus follows the chat; a row that is gone (deleted) falls back to the index.
@@ -1507,7 +1601,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const focusSel = focusRow && doc.activeElement.classList.contains('ask-thread-trash') ? '.ask-thread-trash' : '.ask-thread-pick';
     el.historyBody.replaceChildren();
     if (!threads.length) {
-      el.historyBody.appendChild(make('div', 'chat-history-empty', 'No saved chats.'));
+      el.historyBody.appendChild(make('div', 'chat-history-empty', query ? 'No chats match.' : 'No saved chats.'));
       // The focused row went with the list (the last chat deleted): the column keeps the focus, never <body>.
       if (focusAt >= 0) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
       return;
@@ -5436,6 +5530,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.destroyed = true;
     closePopover({ focusTrigger: false });
     if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
+    if (st.historySearchTimer) { clearTimeout(st.historySearchTimer); st.historySearchTimer = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     if (el.orb) el.orb.stop();
     doc.removeEventListener('keydown', onDocKeydown, true);
