@@ -146,11 +146,11 @@ test('flag off: no button, a byte-identical source switch and the same Markdown 
   assert.deepEqual(bodyOn, bodyOff);
 });
 
-test('flag on: the button after Markdown carries a Beta tag inside it, level-gated at Simple', async () => {
+test('flag on: the button after Markdown carries its stage tag (Experimental) inside it, level-gated at Simple', async () => {
   const adv = await boot({ flag: true, level: 'advanced' });
   const b = adv.q('#source-seg button[data-spec-builder]');
   assert.equal(b.previousElementSibling.dataset.src, 'markdown');
-  assert.equal(b.querySelector('span.flag-chip.flag-chip-beta')?.textContent, 'Beta');
+  assert.equal(b.querySelector('span.flag-chip.flag-chip-experimental')?.textContent, 'Experimental');
   assert.equal(adv.q('#source-seg a.flag-chip'), null);
   assert.ok(!gated(b));
   const simple = await boot({ flag: true, level: 'simple' });

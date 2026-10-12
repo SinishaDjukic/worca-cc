@@ -6,7 +6,7 @@ checks its shape. **Use as task** turns it into an ordinary Markdown run.
 
 ## Turn it on
 
-Spec Builder is behind the `specBuilder` [feature flag](feature-flags.md) (stage `beta`, off by
+Spec Builder is behind the `specBuilder` [feature flag](feature-flags.md) (stage `experimental`, off by
 default). Turn it on in **Settings › Experimental**, or start the server with
 `WORCA_FLAGS=specBuilder`. While the flag is off:
 

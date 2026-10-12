@@ -215,7 +215,8 @@ import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdow
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
-import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { applyFlags, decorateFlagChips, flagOn, onFlagChange, STAGE_LABEL } from './flags.mjs';
+import { flagByKey } from '../../src/shared/flags/registry.mjs';
 import { createSpecBuilder } from './spec-builder.mjs';
 import { createSpecThreadClient } from './spec-builder-thread.mjs';
 import { createFlagsView } from './flags-view.mjs';
@@ -6246,11 +6247,13 @@ function syncSpecBuilderButton() {
   b.setAttribute('data-flag', 'specBuilder');
   b.setAttribute('aria-pressed', 'false');
   b.addEventListener('click', () => selectSpecBuilder(b));
-  const beta = document.createElement('span');
-  beta.className = 'flag-chip flag-chip-beta';
-  beta.textContent = 'Beta';
-  beta.title = 'Spec Builder is in beta. Its switch is in Settings › Experimental.';
-  b.append(' ', beta);
+  // The tag follows the registry's stage, so moving the flag between stages is one registry edit.
+  const stage = flagByKey('specBuilder')?.stage || 'experimental';
+  const tag = document.createElement('span');
+  tag.className = `flag-chip flag-chip-${stage}`;
+  tag.textContent = STAGE_LABEL[stage] || stage;
+  tag.title = `Spec Builder is ${stage === 'beta' ? 'in beta' : 'experimental'}. Its switch is in Settings › Experimental.`;
+  b.append(' ', tag);
   el.sourceSeg.querySelector('button[data-src="markdown"]').after(b);
 }
 

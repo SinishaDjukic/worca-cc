@@ -31,7 +31,7 @@ export const FLAGS = Object.freeze([
     key: 'specBuilder',
     title: 'Spec Builder',
     description: 'A third task source: a short wizard plus Ask Worca writes a Worca-ready spec and shows what the run will likely cost.',
-    stage: 'beta',
+    stage: 'experimental',
     default: false,
     owner: 'e-angelov',
     since: '1.11.0',

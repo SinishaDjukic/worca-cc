@@ -167,7 +167,7 @@ try {
   const flagRow = ((await patched.json()).flags || []).find((f) => f.key === 'specBuilder');
   check('1', 'PATCH /api/flags turns specBuilder on', patched.status === 200 && flagRow && flagRow.on === true, { status: patched.status, flagRow });
 
-  // ---- (2) the source button, with its Beta chip inside --------------------------
+  // ---- (2) the source button, with its stage chip (Experimental) inside --------------------------
   const openProject = async (reload = false) => {
     // Navigating to the URL the page is already on is a same-document fragment navigation: no load event.
     if (reload) await cdp('Page.reload'); else await cdp('Page.navigate', { url: `${base}/#new` });
@@ -179,7 +179,7 @@ try {
   };
   await openProject();
   const btn = await ev(`(()=>{const b=document.querySelector('#source-seg button[data-spec-builder]');const c=b.querySelector('span.flag-chip');return {prev:b.previousElementSibling.dataset.src,chip:c&&c.textContent,shown:b.offsetParent!==null};})()`);
-  check('2', 'the Spec Builder button sits after Markdown with its Beta chip inside, and shows', btn.prev === 'markdown' && btn.chip === 'Beta' && btn.shown, btn);
+  check('2', 'the Spec Builder button sits after Markdown with its Experimental chip inside, and shows', btn.prev === 'markdown' && btn.chip === 'Experimental' && btn.shown, btn);
 
   // ---- (3) rough notes become a Reshape, with a suggested role ------------------
   await click('#source-seg button[data-spec-builder]');

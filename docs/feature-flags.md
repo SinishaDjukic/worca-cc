@@ -24,7 +24,7 @@ remote flags.
 | Key | Stage | What it gates |
 |---|---|---|
 | `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
-| `specBuilder` | beta, default off | The Spec Builder task source on New pipeline ([spec-builder.md](spec-builder.md)). |
+| `specBuilder` | experimental, default off | The Spec Builder task source on New pipeline ([spec-builder.md](spec-builder.md)). |
 
 ## Add a flag
 
