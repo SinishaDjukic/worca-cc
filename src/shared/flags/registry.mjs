@@ -27,6 +27,18 @@ export const FLAGS = Object.freeze([
     added: '2026-10-11',
     reviewBy: '2027-01-09',
   }),
+  entry({
+    key: 'keepAwake',
+    title: 'Keep awake',
+    description: 'Stops the computer from sleeping on its idle timer while agents are working. The display may still turn off.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-12',
+    reviewBy: '2027-01-10',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

@@ -50,7 +50,8 @@ import {
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
-import { allFlags, listFlags, setFlags, checkFlags, flagEvents, FlagError } from '../src/core/flags.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError } from '../src/core/flags.mjs';
+import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
   rawProjectsRoot, defaultProjectsRoot, runRootMode, getProjectsRoot,
@@ -537,6 +538,15 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
+// Experimental keepAwake flag (docs/feature-flags.md): one OS child holds off idle system sleep while
+// any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
+// run's status or pendingQuestion changes, and when the flag flips.
+const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
+const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
+function syncKeepAwake() {
+  try { keepAwake.update(flagEnabled('keepAwake') ? countWorking(runs.values()) : 0); }
+  catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
+}
 const SEEN_SIGN_INS = new Set();
 const SIGN_IN_HINT = REMOTE_ACCESS.identity?.provider === 'issuer'
   ? 'unauthorized: sign in through the identity proxy (your sign-in has expired or is missing)'
@@ -870,7 +880,7 @@ metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.ac
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
+flagEvents.on('changed', (flags) => { broadcast({ type: 'flags', flags }); syncKeepAwake(); });
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -925,6 +935,7 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
   broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  syncKeepAwake();
   return true;
 }
 
@@ -1182,8 +1193,12 @@ function wireRun(entry) {
       }
 
       record(event);
+      // Only the events that can change status or pendingQuestion; log/token frames are far too
+      // frequent for a flag check (it reads settings.json synchronously).
+      if (KEEP_AWAKE_EVENTS.has(name)) syncKeepAwake();
     });
   }
+  syncKeepAwake();
 }
 
 // ---------------------------------------------------------------------------
@@ -2482,6 +2497,7 @@ const startRunHandler = async (req, res) => {
       const stillOwn = internal && still && still.block.state === 'scheduled' && still.block.runId === runId;
       if (!still || (still.block.state !== 'proposed' && !stillOwn)) {
         runs.delete(runId);
+        syncKeepAwake();
         return res.status(409).json({ error: `card is no longer proposed (${still ? still.block.state : 'gone'})` });
       }
       try {
@@ -2526,6 +2542,7 @@ const startRunHandler = async (req, res) => {
         entry.status = 'error';
         entry.events.push(event);
         broadcast(event);
+        syncKeepAwake();
       })
       .finally(() => { entry.settled = true; });
 
@@ -3714,6 +3731,7 @@ async function stopRun(runId, by = 'local') {
   entry.status = 'stopped';
   if (entry.pipelineId) cancelScheduledResumes(entry.pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
   resolvePending(entry, { reason: 'stopped' });
+  syncKeepAwake();
   return { ok: true };
 }
 function pauseRun(runId, by = 'local') {
@@ -3724,6 +3742,7 @@ function pauseRun(runId, by = 'local') {
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
   entry.status = 'pausing';
   resolvePending(entry, { reason: 'paused' });
+  syncKeepAwake();
 }
 
 /** In-process stops in flight, by pipeline id. A second click, tab or chat command for the same
@@ -3837,6 +3856,7 @@ function settleStaleParked(pipelineId) {
     broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
     broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
   }
+  syncKeepAwake();
 }
 
 /** The paused entries this server holds whose rows another process settled meanwhile (`worca stop`
@@ -4314,6 +4334,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.status = 'error';
       entry.events.push(event);
       broadcast(event);
+      syncKeepAwake();
     })
     .finally(() => { entry.settled = true; });
 
@@ -8754,6 +8775,7 @@ function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
             pausedIds.add(e.id);
             e.status = 'pausing';
             resolvePending(e, { reason: 'paused' });
+            syncKeepAwake();
           }
         } catch (err) { console.error(`[worca-ui] drain: could not pause ${e.pipelineId || e.id}: ${err?.message || err}`); }
       }
@@ -14169,7 +14191,7 @@ if (isMain) {
     // B2: pause the active runs first (bounded), so they come back paused with a resume point.
     drainServer({ reason: signal })
       .then(() => settleShutdownSteps({ chat: () => channelHost.stop(), actions: () => actions.stopAll(), terminals: () => terminals.closeAll(), prWatch: () => prWatcher.runner.stop() }))
-      .finally(() => { clearTimeout(hardExit); process.exit(exitCodeFor(signal)); });
+      .finally(() => { clearTimeout(hardExit); keepAwake.stop(); process.exit(exitCodeFor(signal)); });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
