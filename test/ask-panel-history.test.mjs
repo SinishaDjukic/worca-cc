@@ -77,6 +77,9 @@ test('the toggle opens and closes the column (aria-pressed, data-history), remem
   assert.equal(page.dataset.history, 'closed', '1280px and nothing stored: closed');
   assert.equal(btn.getAttribute('aria-pressed'), 'false');
   assert.equal(btn.getAttribute('aria-controls'), 'chat-history');
+  assert.ok(btn.classList.contains('chat-history-toggle'), 'the menu toggle\'s look (style.css)');
+  assert.equal(btn.querySelectorAll('svg > path').length, 5, 'the page-of-text glyph: page, fold, three lines');
+  assert.equal(btn.querySelector('svg > rect'), null, 'no panel glyph');
   btn.click();
   assert.equal(page.dataset.history, 'open');
   assert.equal(btn.getAttribute('aria-pressed'), 'true');

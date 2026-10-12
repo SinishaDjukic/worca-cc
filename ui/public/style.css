@@ -79,6 +79,9 @@
   --card-glass-line:light-dark(rgba(24,24,27,.10),rgba(255,255,255,.09));
   --glass:light-dark(rgba(255,255,255,.55),rgba(34,34,32,.55));
   --glass-line:light-dark(rgba(24,24,27,.08),rgba(255,255,255,.08));
+  /* worca Chat (mockup 2026-10-10): a card's lift off the white page, and the glass composer's float. */
+  --shadow-card:0 1px 2px light-dark(rgba(24,24,27,.04),rgba(0,0,0,.3)),0 2px 8px light-dark(rgba(24,24,27,.05),rgba(0,0,0,.25));
+  --shadow-glass:0 2px 6px light-dark(rgba(24,24,27,.05),rgba(0,0,0,.3)),0 12px 32px light-dark(rgba(24,24,27,.10),rgba(0,0,0,.4));
 
   /* Question/ask amber wash (design §9, C3). --amber-bg is the SOLID amber; this
      is the pale field it sits on, with its line and the radio ring. */
@@ -8242,18 +8245,37 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-head .ask-title{font-size:13.5px;}
 .chat-head-spacer{flex:1 1 auto;}
 .chat-head-btn{flex:none;}
-.chat-head-btn[aria-pressed="true"]{background:var(--hover);color:var(--ink);}
+/* History: the menu toggle's 32px square (.side-toggle) with a page-of-text glyph; the open column keeps the wash. */
+.chat-head-btn.chat-history-toggle{width:32px;height:32px;border-radius:8px;}
+.chat-history-toggle > svg{width:20px;height:20px;flex:none;}
+.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]{background:var(--field);color:var(--ink);}
 .chat-page[data-view="home"] .chat-head [data-ask-new-btn]{visibility:hidden;}
 .chat-home{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding:clamp(32px,16vh,160px) 16px 32px;}
 .chat-hero-slot{width:100%;max-width:var(--chat-text-max);}
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
 .chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
+/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript scrolls under the glass composer
+   to the page's bottom edge and keeps the dock's height as bottom clearance (ask-panel.mjs mirrors it into
+   --chat-dock-h). Only the composer's own parts take the pointer, so the transcript beside the box stays usable; a
+   short fade under the box keeps text from running into the page edge. No z-index: a stacking context here would
+   trap a Getting started ring (.guide-target) under the guide scrim. */
+.chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}
+.chat-dock::before{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) 72%);pointer-events:none;}
+.chat-dock > .ask-composer{pointer-events:none;}
+.chat-dock > .ask-jump,.chat-dock > .ask-composer > *{pointer-events:auto;}
 /* The jump pill rides the dock's top edge (ask-panel.mjs puts it in the dock): it never covers a draft that grew. */
-.chat-dock{flex:none;position:relative;}
 .chat-dock > .ask-jump{bottom:calc(100% - 1px);}
-/* Cards may be wider than the 760px text column: up to 1040px, centred on it (the transcript's container width). */
-.chat-convo .ask-transcript{container-type:inline-size;}
+/* Cards may be wider than the 760px text column: up to 1040px, centred on it (the transcript's container width).
+   The transcript is its own stacking context, so a card's raised parts (the graph's expand button) scroll under the
+   dock, not over it. */
+.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);}
+/* The composer is frosted glass (mockup .cp-pill): a translucent fill that blurs what scrolls under it, a hairline and
+   a soft float. A Getting started step that rings a control in it drops the blur: a backdrop filter makes a stacking
+   context, and the ring (.guide-target, z 45) must reach above the guide scrim (z 44). */
+.chat-page .ask-composer-box{border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);}
+.chat-hero-slot .ask-composer-box{border-radius:24px;}
+.chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
    home, and never sized against the composer's own height. */
@@ -8339,7 +8361,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
    .run-flow-wrap > .run-flow host, so the run monitor's status rings, pips, ants and their reduced-motion rules
    (.run-flow.gv-host …) apply unchanged — no status rule is restated here. Dots only behind the graph (U8). Tokens
    only, so light and dark both work; no coloured left-edge lines (emphasis is a wash or a chip). */
-.ask-card.chat-rc{gap:0;}
+/* A white card lifted off the white page by a soft shadow (worca Chat mockup 2026-10-10: .cd). */
+.ask-card.chat-rc{gap:0;border-radius:16px;box-shadow:var(--shadow-card);}
 .chat-rc .ask-rc-sub{display:flex;align-items:center;gap:8px;min-width:0;}
 .chat-rc-where{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .chat-rc-auto{flex:0 0 auto;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:999px;background:var(--violet-bg);color:var(--violet-ink);font-family:var(--sans);font-size:10.5px;font-weight:600;}
@@ -8464,7 +8487,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-dir-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .chat-dir-err{font-size:11.5px;color:var(--red-ink);}
 .chat-dir-err[hidden]{display:none;}
-.ask-composer.is-direction .ask-composer-box{box-shadow:0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
+.ask-composer.is-direction .ask-composer-box{box-shadow:var(--shadow-glass),0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent);}
 .ask-composer.is-direction textarea.ask-input::placeholder{white-space:nowrap;overflow:hidden;}
 
 /* ===== Chat P4: run panel ===== */

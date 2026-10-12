@@ -55,7 +55,7 @@ test('composer popovers ride the composer: upward in the dock, downward on home,
 });
 
 test('the docked composer keeps its room: the jump pill rides the dock, toasts clear it, the head buttons never shrink, phones keep Send in the box', () => {
-  assert.match(css, /\n\.chat-dock\{flex:none;position:relative;\}/, 'the base rule (ruleBody would find the home rule\'s " .chat-dock{" first)');
+  assert.match(css, /\n\.chat-dock\{position:absolute;left:0;right:0;bottom:0;pointer-events:none;\}/, 'the base rule (ruleBody would find the home rule\'s " .chat-dock{" first): it floats over the transcript, no z-index');
   assert.equal(ruleBody('.chat-dock > .ask-jump'), 'bottom:calc(100% - 1px);');
   assert.equal(ruleBody('body.view-chat .toasts'), 'bottom:calc(136px + env(safe-area-inset-bottom,0px));');
   assert.equal(ruleBody('.chat-head-btn'), 'flex:none;');
@@ -86,10 +86,25 @@ test('the Chat row dot rides the rail corner; the logo links show a focus ring',
 test('the composer buttons keep their size, the run panel slot hides, cards measure the transcript, the empty lead row takes no room, the rail dot', () => {
   assert.equal(ruleBody('.chat-page .ask-composer-row > :is(.ask-icon-btn,.ask-meter,.ask-model-btn,.ask-voice)'), 'flex:none;', 'Send never shrinks out of the box (v2)');
   assert.equal(ruleBody('.chat-panel[hidden]'), 'display:none;', '.chat-panel{display:flex} would beat [hidden]: an empty bordered slot');
-  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;', '100cqi = the transcript width');
+  assert.equal(ruleBody('.chat-convo .ask-transcript'), 'container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);', '100cqi = the transcript width; the floating dock\'s height is its bottom clearance');
   assert.match(ruleBody('.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub)'), /^width:min\(var\(--chat-card-max\),100cqi\);/);
   assert.equal(ruleBody('.chat-composer-lead:empty'), 'display:none;');
   assert.equal(ruleBody('.sidebar.collapsed .nav-count.nav-dot'), 'top:6px;right:8px;');
+});
+
+test('the mockup look (2026-10-10): the composer is frosted glass the transcript scrolls under, the run card a white card with a soft shadow, History toggles like the menu', () => {
+  assert.equal(ruleBody('.chat-page .ask-composer-box'), 'border-color:var(--glass-line);border-radius:22px;background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-glass);');
+  assert.equal(ruleBody('.chat-hero-slot .ask-composer-box'), 'border-radius:24px;');
+  assert.equal(ruleBody('.chat-page .ask-composer-box:has(.guide-target)'), '-webkit-backdrop-filter:none;backdrop-filter:none;', 'a Getting started ring escapes the blur\'s stacking context');
+  assert.equal(ruleBody('.chat-dock > .ask-composer'), 'pointer-events:none;');
+  assert.equal(ruleBody('.chat-dock > .ask-jump,.chat-dock > .ask-composer > *'), 'pointer-events:auto;', 'only the composer\'s own parts take the pointer');
+  assert.match(ruleBody('.chat-dock::before'), /^content:"";position:absolute;left:0;right:0;bottom:0;height:56px;/);
+  assert.equal(ruleBody('.ask-card.chat-rc'), 'gap:0;border-radius:16px;box-shadow:var(--shadow-card);');
+  assert.match(ruleBody(':root'), /--shadow-card:0 1px 2px light-dark\(/);
+  assert.match(ruleBody(':root'), /--shadow-glass:0 2px 6px light-dark\(/);
+  assert.equal(ruleBody('.chat-head-btn.chat-history-toggle'), 'width:32px;height:32px;border-radius:8px;', 'the menu toggle\'s square (.side-toggle)');
+  assert.equal(ruleBody('.chat-history-toggle:hover,.chat-history-toggle[aria-pressed="true"]'), 'background:var(--field);color:var(--ink);', 'open: the wash marks the state');
+  assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });
 
 test('History: a 264px push column that turns into an overlay with a scrim below 1100px; the threads popover rule is gone', () => {

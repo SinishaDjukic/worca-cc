@@ -42,7 +42,6 @@ const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5-5', effort: 'high' }
 const INPUT_PLACEHOLDER = 'Ask about any run, agent, or project…';
 
 const ICONS = {
-  threads: 'M4 6h16M4 12h16M4 18h9',
   plus: 'M12 5v14M5 12h14',
   chevronDown: 'M6 9l6 6 6-6',
   send: 'M12 19V5M6 11l6-6 6 6',
@@ -425,9 +424,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.type = 'button';
     b.title = title;
     b.setAttribute('aria-label', title);
-    b.appendChild(svgIcon(icon));
+    b.appendChild(icon && icon.nodeType ? icon : svgIcon(icon));
     b.addEventListener('click', onClick);
     return b;
+  }
+  /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
+  function historyIcon() {
+    return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
+      'M9 9h2', 'M9 13h6', 'M9 17h6'], 20, 1.5);
   }
 
   // ---- shell: the Chat page (worca Chat P1, CONTRACT §1) ---------------------
@@ -455,7 +459,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
-    const threadsBtn = iconButton('ask-icon-btn chat-head-btn', 'History', ICONS.threads, () => toggleHistory());
+    const threadsBtn = iconButton('ask-icon-btn chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
     el.historyBtn = threadsBtn;
@@ -5411,10 +5415,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // too: a card that grows after the flush that pinned it (a graph laying out, P3's card answering the run store)
   // must not leave a pinned transcript short of the bottom.
   let dockRo = null;
+  // The docked composer floats over the transcript (style.css .chat-dock): its height is the transcript's bottom
+  // clearance, re-read whenever a draft, a chip row or an attachment grows or shrinks it.
+  let clearRo = null;
   if (typeof win.ResizeObserver === 'function') {
     dockRo = new win.ResizeObserver(onWinResize);
     dockRo.observe(el.sheet);
     dockRo.observe(el.transcriptCol);
+    clearRo = new win.ResizeObserver(paintDockClearance);
+    clearRo.observe(el.chatDock);
+  }
+  function paintDockClearance() {
+    if (st.destroyed) return;
+    const h = el.chatDock.offsetHeight;
+    if (h > 0) { el.sheet.style.setProperty('--chat-dock-h', `${h}px`); applyPin(); }   // 0: home hides the dock
   }
 
   function destroy() {
@@ -5429,6 +5443,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
+    if (clearRo) { clearRo.disconnect(); clearRo = null; }
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
