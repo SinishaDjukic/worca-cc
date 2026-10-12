@@ -31507,6 +31507,12 @@ function rewriteHash([view, param]) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
+if (typeof window !== 'undefined') {
+  window.__np = Object.assign(window.__np || {}, {
+    flags: { set: (key, on) => mcpApi('PATCH', '/api/flags', { [key]: on }) },
+  });
+}
 // The Settings tab currently painted, so the leave-guards below can fire on a
 // TAB transition and not only on a view transition.
 let currentSettingsTab = null;

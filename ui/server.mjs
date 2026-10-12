@@ -48,7 +48,7 @@ import {
 } from '../src/core/diff-comments.mjs';
 import { listProjects, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome } from '../src/core/projects.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/core/index-html.mjs';
-import { allFlags, listFlags, setFlags, flagEvents, FlagError, requireFlag } from '../src/core/flags.mjs';
+import { allFlags, listFlags, setFlags, checkFlags, flagEvents, FlagError, requireFlag } from '../src/core/flags.mjs';
 import { validateWorcaFrontMatter, normalizeAnswers, frontMatterFromAnswers } from '../src/shared/spec-builder/front-matter.mjs';
 import { estimateFromHistory } from '../src/core/spec-builder/history.mjs';
 import { suggestAreas } from '../src/core/spec-builder/areas.mjs';
@@ -8362,6 +8362,7 @@ const settingsState = () => ({
   schedule: scheduleDefaults(),                           // defaults a NEW schedule inherits
   sync: syncDefaults(),                                   // sync before run (#527): instance defaults
   uiLevel: effectiveUiLevel(),                            // simple | advanced | expert (docs/ui-levels.md)
+  flags: allFlags(),                                      // { key: bool } resolved (docs/feature-flags.md)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: the built-in's own model
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
@@ -8741,6 +8742,7 @@ app.post('/api/settings', async (req, res) => {
   const hasHideBuiltinKey = has('hideBuiltinModels');
   const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
+  const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
   const hasNightKey = has('nightMode') || has('nightModeToggle');
   const autoModels = hasAutoKey ? await listModels('') : null;
@@ -8848,6 +8850,7 @@ app.post('/api/settings', async (req, res) => {
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
+    if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
     // Root first: it is the one key whose setter can still fail AFTER the asserts
     // above (an unusable path), so every other key's write must come after it or
     // a mixed POST would answer 400 with those keys already applied on disk.
@@ -8873,6 +8876,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
+    if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });

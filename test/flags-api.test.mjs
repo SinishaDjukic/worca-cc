@@ -1,5 +1,5 @@
 // test/flags-api.test.mjs — the flag service: createFlags with an injected env and store (D12, part 1),
-// then the real routes and the `flags` frame over HTTP (part 2).
+// then the real routes, the `flags` frame and POST /api/settings {flags} over HTTP (part 2).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
@@ -95,8 +95,8 @@ test('createFlags: set validates, cascades requires, stores only non-defaults, e
   ]);
 });
 
-// Part 2 — GET/PATCH /api/flags, the `flags` frame and `flags` in hello.
-// HOME is sandboxed (settings.json lives under it).
+// Part 2 — GET/PATCH /api/flags, POST /api/settings {flags}, the `flags` frame, `flags` in hello and
+// GET /api/settings. HOME is sandboxed (settings.json lives under it).
 let home, srv, base, prev, settingsFile;
 before(async () => {
   home = await mkdtemp(join(tmpdir(), 'worca-cc-flags-'));
@@ -122,7 +122,7 @@ const patch = (body) => fetch(`${base}/api/flags`, { method: 'PATCH', headers: {
 const stored = async () => { try { return JSON.parse(await readFile(settingsFile(), 'utf8')).flags; } catch { return undefined; } };
 const waitFor = async (pred, ms = 5000) => { const t0 = Date.now(); while (!pred()) { if (Date.now() - t0 > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 15)); } };
 
-test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame and hello carry flags', async () => {
+test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello and settings carry flags', async () => {
   const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
   const msgs = [];
   ws.on('message', (d) => { try { msgs.push(JSON.parse(String(d))); } catch {} });
@@ -131,32 +131,33 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame and hello
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { specBuilder: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
-        const row = j.flags.find((f) => f.key === 'specBuilder');
+        const row = j.flags.find((f) => f.key === 'flagsDemo');
         assert.deepEqual(Object.keys(row).sort(), ['description', 'docs', 'docsUrl', 'key', 'locked', 'on', 'requires', 'source', 'stage', 'title']);
         assert.deepEqual([row.on, row.source, row.locked], [false, 'default', false]);
       } },
       { name: 'PATCH true stores it, answers the GET shape and broadcasts one flags frame', run: async () => {
-        const r = await patch({ specBuilder: true });
+        const r = await patch({ flagsDemo: true });
         assert.equal(r.status, 200);
-        assert.equal((await r.json()).flags.find((f) => f.key === 'specBuilder').on, true);
-        assert.deepEqual(await stored(), { specBuilder: true });
+        assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
+        assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { specBuilder: true } });
-        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="specBuilder"/);
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true } });
+        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo"/);
+        assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },
       { name: 'PATCH false and null both leave nothing stored (default false)', run: async () => {
-        assert.equal((await patch({ specBuilder: false })).status, 200);
+        assert.equal((await patch({ flagsDemo: false })).status, 200);
         assert.equal(await stored(), undefined);
-        await patch({ specBuilder: true });
-        assert.equal((await patch({ specBuilder: null })).status, 200);
+        await patch({ flagsDemo: true });
+        assert.equal((await patch({ flagsDemo: null })).status, 200);
         assert.equal(await stored(), undefined);
       } },
       { name: '400 for an unknown key or a non-boolean value; nothing written', run: async () => {
-        for (const body of [{ ghostFlag: true }, { specBuilder: 'on' }]) {
+        for (const body of [{ ghostFlag: true }, { flagsDemo: 'on' }]) {
           const r = await patch(body);
           assert.equal(r.status, 400);
           assert.match((await r.json()).error, /unknown flag|must be true, false or null/);
@@ -164,14 +165,34 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame and hello
         assert.equal(await stored(), undefined);
       } },
       { name: '409 { code: "locked" } for a WORCA_FLAGS key; GET shows it locked', run: async () => {
-        process.env.WORCA_FLAGS = 'specBuilder';
+        process.env.WORCA_FLAGS = 'flagsDemo';
         try {
-          const r = await patch({ specBuilder: false });
+          const r = await patch({ flagsDemo: false });
           assert.equal(r.status, 409);
           assert.equal((await r.json()).code, 'locked');
           const row = (await (await fetch(`${base}/api/flags`)).json()).flags[0];
           assert.deepEqual([row.on, row.source, row.locked], [true, 'env', true]);
         } finally { delete process.env.WORCA_FLAGS; }
+      } },
+      { name: 'POST /api/settings {flags} goes through the same setter (and a bad key is a 400 on field flags)', run: async () => {
+        const post = (b) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) });
+        assert.equal((await post({ flags: { flagsDemo: true } })).status, 200);
+        assert.deepEqual(await stored(), { flagsDemo: true });
+        const bad = await post({ flags: { ghostFlag: true } });
+        assert.equal(bad.status, 400);
+        assert.equal((await bad.json()).field, 'flags');
+        assert.deepEqual(await stored(), { flagsDemo: true }, 'the bad body wrote nothing');
+        const mixed = await post({ uiLevel: 'advanced', flags: { flagsDemo: 'yes' } });
+        assert.equal(mixed.status, 400);
+        assert.equal(JSON.parse(await readFile(settingsFile(), 'utf8')).uiLevel, undefined, 'pre-asserted: uiLevel was not half-applied');
+        await patch({ flagsDemo: null });
+      } },
+      { name: 'POST /api/settings {flags: {}} is a no-op: no frame, root kept', run: async () => {
+        const n = msgs.filter((m) => m.type === 'flags').length;
+        const r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ flags: {} }) });
+        assert.equal(r.status, 200);
+        await new Promise((res) => setTimeout(res, 100));
+        assert.equal(msgs.filter((m) => m.type === 'flags').length, n);
       } },
     ]);
   } finally { ws.close(); }

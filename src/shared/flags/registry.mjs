@@ -15,6 +15,18 @@ export const FLAG_REVIEW_DAYS = 90;
 const entry = (f) => Object.freeze({ ...f, requires: Object.freeze([...(f.requires || [])]) });
 
 export const FLAGS = Object.freeze([
+  // Proves the system end to end until a real feature uses it; the first real flag's PR removes it.
+  entry({
+    key: 'flagsDemo',
+    title: 'Flags demo',
+    description: 'Shows a note on this tab. It proves experimental switches work; the first real experimental feature replaces it.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.11.0',
+    added: '2026-10-11',
+    reviewBy: '2027-01-09',
+  }),
   entry({
     key: 'specBuilder',
     title: 'Spec Builder',

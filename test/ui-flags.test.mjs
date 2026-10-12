@@ -29,49 +29,37 @@ function gated(el) {
   }
   return false;
 }
-/** A flagged fixture note in the Experimental card (the shell itself carries no static flagged markup). */
-function addNote(doc) {
-  const p = doc.createElement('p');
-  p.id = 'flags-demo-note';
-  p.dataset.flag = 'specBuilder';
-  p.setAttribute('data-flag-chip', '');
-  p.textContent = 'Flagged note.';
-  doc.getElementById('flags-settings-card').appendChild(p);
-}
-const page = ({ level = 'expert', flags = { specBuilder: false } } = {}) => {
-  const { window } = trackDom(new JSDOM(renderIndexHtml(html, 'system', level, flags), { url: 'http://localhost:4320/' }));
-  addNote(window.document);
-  return window;
-};
+const page = ({ level = 'expert', flags = { flagsDemo: false } } = {}) =>
+  trackDom(new JSDOM(renderIndexHtml(html, 'system', level, flags), { url: 'http://localhost:4320/' })).window;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test('first paint, live flip, events, and flags × levels', async () => {
   await checkRows([
     { name: 'off: the demo note is gated from the first paint; on: it is not', run: () => {
       assert.ok(gated(page().document.getElementById('flags-demo-note')));
-      assert.ok(!gated(page({ flags: { specBuilder: true } }).document.getElementById('flags-demo-note')));
+      assert.ok(!gated(page({ flags: { flagsDemo: true } }).document.getElementById('flags-demo-note')));
     } },
     { name: 'applyFlags (what a flags frame does) flips it without a reload; onFlagChange + worca:flags fire once per change', run: () => {
       const { document: doc } = page();
       const seen = []; const events = [];
-      const off = onFlagChange('specBuilder', (on) => seen.push(on));
+      const off = onFlagChange('flagsDemo', (on) => seen.push(on));
       doc.addEventListener('worca:flags', (e) => events.push(e.detail.changed));
-      applyFlags({ specBuilder: true }, doc);
-      applyFlags({ specBuilder: true }, doc);
-      assert.ok(flagOn('specBuilder', doc));
-      assert.equal(doc.documentElement.dataset.flags, 'specBuilder');
+      applyFlags({ flagsDemo: true }, doc);
+      applyFlags({ flagsDemo: true }, doc);
+      assert.ok(flagOn('flagsDemo', doc));
+      assert.equal(doc.documentElement.dataset.flags, 'flagsDemo');
       assert.ok(!gated(doc.getElementById('flags-demo-note')));
-      applyFlags({ specBuilder: false, ghostFlag: true }, doc);
+      applyFlags({ flagsDemo: false, ghostFlag: true }, doc);
       assert.ok(gated(doc.getElementById('flags-demo-note')));
       assert.deepEqual(seen, [true, false]);
-      assert.deepEqual(events, [['specBuilder'], ['specBuilder']]);
+      assert.deepEqual(events, [['flagsDemo'], ['flagsDemo']]);
       off();
     } },
     { name: 'data-flag with data-min-level needs both', run: () => {
       for (const [level, on, hidden] of [['simple', true, true], ['expert', true, false], ['expert', false, true]]) {
-        const { document: doc } = page({ level, flags: { specBuilder: on } });
+        const { document: doc } = page({ level, flags: { flagsDemo: on } });
         const el = doc.createElement('div');
-        el.dataset.flag = 'specBuilder'; el.dataset.minLevel = 'advanced';
+        el.dataset.flag = 'flagsDemo'; el.dataset.minLevel = 'advanced';
         doc.body.appendChild(el);
         assert.equal(gated(el), hidden, `${level} / ${on}`);
       }
@@ -81,14 +69,14 @@ test('first paint, live flip, events, and flags × levels', async () => {
       decorateFlagChips(doc);
       const note = doc.getElementById('flags-demo-note');
       const a = note.querySelector('a.flag-chip');
-      assert.equal(a.getAttribute('href'), '#settings/experimental/specBuilder');
-      assert.equal(a.textContent, 'Beta');
-      assert.equal(a.dataset.flag, 'specBuilder');
+      assert.equal(a.getAttribute('href'), '#settings/experimental/flagsDemo');
+      assert.equal(a.textContent, 'Experimental');
+      assert.equal(a.dataset.flag, 'flagsDemo');
       decorateFlagChips(doc);
       assert.equal(note.querySelectorAll('a.flag-chip').length, 1);
-      const b = doc.createElement('button'); b.dataset.flag = 'specBuilder'; doc.body.appendChild(b);
+      const b = doc.createElement('button'); b.dataset.flag = 'flagsDemo'; doc.body.appendChild(b);
       chip(b);
-      assert.equal(b.nextElementSibling.className, 'flag-chip flag-chip-beta');
+      assert.equal(b.nextElementSibling.className, 'flag-chip flag-chip-experimental');
     } },
   ]);
 });
@@ -97,7 +85,7 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
   const { document: doc } = page();
   const host = doc.getElementById('flags-host');
   const calls = []; const confirms = [];
-  let state = [{ key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
+  let state = [{ key: 'flagsDemo', title: 'Flags demo', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
   const api = async (method, body) => {
     calls.push([method, body]);
     if (method === 'PATCH') state = state.map((f) => (f.key in body ? { ...f, on: body[f.key] === true, source: body[f.key] === null ? 'default' : 'settings' } : f));
@@ -108,34 +96,34 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
   await checkRows([
     { name: 'load lists the flag with its stage badge and an off switch', run: async () => {
       await view.load();
-      const row = host.querySelector('[data-flag-row="specBuilder"]');
+      const row = host.querySelector('[data-flag-row="flagsDemo"]');
       assert.equal(row.querySelector('.flag-stage').textContent, 'Experimental');
       assert.equal(row.querySelector('[role="switch"]').getAttribute('aria-checked'), 'false');
       assert.ok(doc.getElementById('flags-reset').disabled, 'nothing stored: nothing to reset');
     } },
     { name: 'a click PATCHes { key: true }, repaints on and applies the flag to the page', run: async () => {
-      host.querySelector('[data-flag-switch="specBuilder"]').click();
+      host.querySelector('[data-flag-switch="flagsDemo"]').click();
       await tick(); await tick();
-      assert.deepEqual(calls.at(-1), ['PATCH', { specBuilder: true }]);
-      assert.equal(host.querySelector('[data-flag-switch="specBuilder"]').getAttribute('aria-checked'), 'true');
+      assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: true }]);
+      assert.equal(host.querySelector('[data-flag-switch="flagsDemo"]').getAttribute('aria-checked'), 'true');
       assert.ok(!gated(doc.getElementById('flags-demo-note')));
-      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder', 'focus survives the repaint');
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'flagsDemo', 'focus survives the repaint');
     } },
     { name: 'Reset all confirms, then PATCHes null for every unlocked flag', run: async () => {
       doc.getElementById('flags-reset').click();
       await tick(); await tick();
       assert.equal(confirms.at(-1), 'Reset all experimental features?');
-      assert.deepEqual(calls.at(-1), ['PATCH', { specBuilder: null }]);
+      assert.deepEqual(calls.at(-1), ['PATCH', { flagsDemo: null }]);
     } },
     { name: 'a repaint (what a flags frame triggers) keeps focus on the switch', run: async () => {
-      host.querySelector('[data-flag-switch="specBuilder"]').focus();
+      host.querySelector('[data-flag-switch="flagsDemo"]').focus();
       await view.load();
-      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder');
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'flagsDemo');
     } },
     { name: 'a locked row: disabled switch, the note, and a click does nothing', run: async () => {
       state = [{ ...state[0], on: true, source: 'env', locked: true }];
       await view.load();
-      const sw = host.querySelector('[data-flag-switch="specBuilder"]');
+      const sw = host.querySelector('[data-flag-switch="flagsDemo"]');
       assert.ok(sw.classList.contains('disabled'));
       assert.equal(sw.getAttribute('aria-disabled'), 'true');
       assert.match(host.textContent, /Locked by WORCA_FLAGS/);
@@ -145,8 +133,8 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
     } },
     { name: 'turning on a flag with an off prerequisite asks first, naming it', run: async () => {
       state = [
-        { key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] },
-        { key: 'childFlag', title: 'Child', description: 'D', stage: 'beta', on: false, source: 'default', locked: false, docs: null, docsUrl: 'https://x/blob/dev/docs/c.md', requires: ['specBuilder'] },
+        { key: 'flagsDemo', title: 'Flags demo', description: 'D', stage: 'experimental', on: false, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] },
+        { key: 'childFlag', title: 'Child', description: 'D', stage: 'beta', on: false, source: 'default', locked: false, docs: null, docsUrl: 'https://x/blob/dev/docs/c.md', requires: ['flagsDemo'] },
       ];
       await view.load();
       assert.equal(host.querySelector('[data-flag-row="childFlag"] .flag-row-docs').getAttribute('href'), 'https://x/blob/dev/docs/c.md');
@@ -160,11 +148,10 @@ test('Settings › Experimental view: rows, toggle PATCH body, locked row, requi
 async function bootApp({ level, flags }) {
   const window = trackDom(new JSDOM(renderIndexHtml(html, 'system', level, flags), { url: 'http://localhost:4320/#settings/experimental' })).window;
   window.Element.prototype.scrollIntoView = function () {};
-  addNote(window.document);
   class WSStub { constructor() { this.readyState = 1; WSStub.last = this; this._l = {}; } send() {} close() {}
     addEventListener(t, fn) { (this._l[t] = this._l[t] || []).push(fn); } emit(t, e) { (this._l[t] || []).forEach((fn) => fn(e)); } }
   window.WebSocket = WSStub;
-  const list = [{ key: 'specBuilder', title: 'Spec Builder', description: 'D', stage: 'experimental', on: !!flags.specBuilder, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
+  const list = [{ key: 'flagsDemo', title: 'Flags demo', description: 'D', stage: 'experimental', on: !!flags.flagsDemo, source: 'default', locked: false, docs: null, docsUrl: null, requires: [] }];
   window.fetch = (u) => {
     const s = String(u);
     const body = s.startsWith('/api/flags') ? { flags: list } : s.startsWith('/api/settings') ? { root: '/tmp/x', default: '/tmp/x', flags } : { config: { steps: {}, customModels: [] }, models: [], efforts: [], projects: 0, pipelines: 0 };
@@ -185,7 +172,7 @@ test('app: the Experimental tab shows at every level; a flags frame flips the pa
   await checkRows([
     { name: 'the tab button is level simple and never gated, at simple, advanced and expert', run: async () => {
       for (const level of ['simple', 'advanced', 'expert']) {
-        const { doc } = await bootApp({ level, flags: { specBuilder: false } });
+        const { doc } = await bootApp({ level, flags: { flagsDemo: false } });
         const b = doc.querySelector('#settings-tabs button[data-tab="experimental"]');
         assert.equal(b.dataset.minLevel, 'simple');
         assert.ok(!gated(b), level);
@@ -193,21 +180,22 @@ test('app: the Experimental tab shows at every level; a flags frame flips the pa
       }
     } },
     { name: 'a flags frame shows the demo note without a reload; hello carries flags too', run: async () => {
-      const { doc, frame } = await bootApp({ level: 'simple', flags: { specBuilder: false } });
+      const { doc, frame } = await bootApp({ level: 'simple', flags: { flagsDemo: false } });
       assert.ok(gated(doc.getElementById('flags-demo-note')));
-      frame({ type: 'flags', flags: { specBuilder: true } });
+      frame({ type: 'flags', flags: { flagsDemo: true } });
       assert.ok(!gated(doc.getElementById('flags-demo-note')));
-      frame({ type: 'hello', bootId: 'b', runs: [], flags: { specBuilder: false } });
+      frame({ type: 'hello', bootId: 'b', runs: [], flags: { flagsDemo: false } });
       assert.ok(gated(doc.getElementById('flags-demo-note')));
     } },
-    { name: 'the chip deep-links to and focuses the row', run: async () => {
-      const { window, doc } = await bootApp({ level: 'expert', flags: { specBuilder: true } });
+    { name: 'window.__np.flags.set exists; the chip deep-links to and focuses the row', run: async () => {
+      const { window, doc } = await bootApp({ level: 'expert', flags: { flagsDemo: true } });
+      assert.equal(typeof window.__np.flags.set, 'function');
       const a = doc.querySelector('#flags-demo-note a.flag-chip');
       window.location.hash = a.getAttribute('href').slice(1);
       window.dispatchEvent(new window.HashChangeEvent('hashchange'));
       for (let i = 0; i < 6; i++) await tick();
-      assert.ok(doc.getElementById('flag-row-specBuilder').classList.contains('flag-row-target'));
-      assert.equal(doc.activeElement.dataset.flagSwitch, 'specBuilder');
+      assert.ok(doc.getElementById('flag-row-flagsDemo').classList.contains('flag-row-target'));
+      assert.equal(doc.activeElement.dataset.flagSwitch, 'flagsDemo');
     } },
   ]);
 });

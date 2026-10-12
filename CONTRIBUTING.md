@@ -160,6 +160,14 @@ permission), how to tag an element, and the catalogue to update.
 `test/ui-levels.test.mjs` fails on a nav item, Settings tab or card, or detail
 tab with no level.
 
+## Feature flags
+
+New experimental UI ships behind a flag, off by default: one entry in
+`src/shared/flags/registry.mjs`, then `data-flag="key"` in markup or `flagOn('key')` in code, and
+`requireFlag('key')` on its routes. Every flag has an owner and a review date at most 90 days out;
+CI fails when a flag is past it or when code names a flag the registry does not have. How to add,
+graduate and remove one: [`docs/feature-flags.md`](docs/feature-flags.md).
+
 ## Pull request workflow
 
 - Branch from `dev`, open the PR with **base `dev`**.

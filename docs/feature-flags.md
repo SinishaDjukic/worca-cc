@@ -23,6 +23,7 @@ remote flags.
 
 | Key | Stage | What it gates |
 |---|---|---|
+| `flagsDemo` | experimental, default off | A note in Settings › Experimental that proves the system end to end. |
 | `specBuilder` | beta, default off | The Spec Builder task source on New pipeline ([spec-builder.md](spec-builder.md)). |
 
 ## Add a flag
@@ -90,13 +91,24 @@ looks exactly like an absent one. Always write the key as a literal, so the usag
 
 ## Turn one on
 
-Two ways:
+Three ways:
 
 - **Settings › Experimental**, at every interface mode. A switch applies at once, in every open
   tab. **Reset all** puts every unlocked flag back to its default.
+- **`worca flags`** on the command line:
+
+  ```sh
+  worca flags                 # list: key, on/off, stage, where the value comes from
+  worca flags on <key>
+  worca flags off <key>
+  worca flags reset [<key>]   # back to the default; no key = every unlocked flag
+  ```
+
+  The CLI writes `settings.json`, so the server sees the change on its next check. Open tabs pick
+  it up on their next load or reconnect (the CLI is a different process and does not broadcast).
 - **`WORCA_FLAGS`** in the server's environment: `WORCA_FLAGS="customDashboard,-autoCostChips"`.
   A key turns a flag on, `-key` turns it off. A flag set this way is **locked**: Settings shows
-  its switch disabled, and the API refuses to change it.
+  its switch disabled, and the API and the CLI refuse to change it.
 
 ## Resolution
 
@@ -146,8 +158,8 @@ What CI checks:
   call.
 - **jsdom**: render the shell with the flag on or off:
   `renderIndexHtml(html, theme, level, { key: true })` (`src/core/index-html.mjs`).
-- **CDP**: `PATCH /api/flags { key: true }` flips a flag through the real API. See
-  `tools/verify-spec-builder-cdp.mjs`.
+- **CDP**: `window.__np.flags.set(key, on)` flips a flag through the real API. See
+  `tools/verify-flags-cdp.mjs`.
 
 The suite never sees your own flags: `tools/test.mjs` drops `WORCA_FLAGS`, and under the test
 runner `settings.json` flags read as empty unless the test sandboxes `HOME` and sets
