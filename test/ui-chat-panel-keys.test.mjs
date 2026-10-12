@@ -12,6 +12,12 @@ const FORM_ASK = { type: 'question', runId: 'r1', id: 'questions-x:n_plan:2-r1',
     { widget: 'textarea', field: 'notes', label: 'What should change?', when: { verdict: 'changes' } }],
   answerSchema: { type: 'object', required: ['verdict'], properties: { verdict: { type: 'string', enum: ['approve', 'changes'] }, notes: { type: 'string', maxLength: 4000 } } },
   files: [] };
+// A two-node v2 graph for the Workflow tab (ui-chat-panel.test.mjs's).
+const agent = (id, key) => ({ id, kind: 'agent', key, x: 0, y: 0, label: key, color: 'violet',
+  ports: { inputs: [{ id: 'task', type: 'md', loop: false }], outputs: [{ id: 'out', type: 'md', when: 'always' }], await: true } });
+const STEPPER = { version: 2, template: { id: 'wf_k', name: 'K' }, graph: {
+  nodes: [agent('n_plan', 'planner'), { id: 'n_end', kind: 'end', key: null, x: 0, y: 0, label: 'End', color: '', ports: { inputs: [{ id: 'result', type: 'any' }], outputs: [], await: false } }],
+  wires: [{ id: 'w1', from: { node: 'n_plan', port: 'out' }, to: { node: 'n_end', port: 'result' }, loop: false }] } };
 // Phone width for the nav drawer: only app.js's PHONE_NAV_QUERY matches.
 const phoneMedia = (q) => ({ media: q, matches: q === '(max-width:760px)', addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
 
@@ -231,6 +237,25 @@ test('Escape typed in the Logs search keeps the panel', async () => {
   await ctx.settle();
   assert.equal(panelOf(ctx).hidden, false);
   assert.equal(ctx.window.location.hash, '#chat/new/run/r1/logs');
+});
+
+test("Escape in the Workflow tab's step log drawer closes the drawer only; the panel stays", async () => {
+  const ctx = await bootLive();
+  ctx.dispatch({ type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STEPPER, active: [{ nodeId: 'n_plan', executionId: 'x:n_plan:1' }],
+    steps: [{ key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1, status: 'running', activeMs: 0 }] });
+  await ctx.settle();
+  const screen = await openPanel(ctx, 'r1/workflow');
+  const drawer = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
+  assert.ok(drawer, 'the Workflow tab carries the drawer');
+  screen.querySelector('.rd-graph [data-node-id="n_plan"]').click();
+  assert.equal(drawer.hidden, false, 'a card click opened the drawer');
+  const body = drawer.querySelector('.wf-log-body');
+  body.focus();
+  esc(ctx, body);
+  await ctx.settle();
+  assert.equal(drawer.hidden, true, 'the drawer closed');
+  assert.equal(panelOf(ctx).hidden, false, 'the panel stays');
+  assert.equal(ctx.window.location.hash, '#chat/new/run/r1/workflow');
 });
 
 test('Escape in a contenteditable field keeps the panel', async () => {

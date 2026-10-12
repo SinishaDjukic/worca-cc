@@ -1314,7 +1314,8 @@ function handleServerMessage(msg) {
   if (msg.type === 'schedules-changed') {
     refreshAllCounts();
     activityMenu?.schedulesChanged();   // an open Activity refetches its Scheduled tab; a closed one forgets it
-    if (currentView() === 'schedules' || inRunsView()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
+    // Chat P4: a paused run in the panel offers "Resume at" off the same tickets.
+    if (currentView() === 'schedules' || inRunsView() || crpShowsRun()) void schedulesView.load().then(() => { if (inRunsView()) paintRunsList(); repaintLimitNotices(); });
     return;
   }
   if (msg.type === 'notification' || msg.type === 'notifications-changed') {
@@ -25706,7 +25707,8 @@ function ensureLimitTick() {
 
 /** Repaint the open run page's Overview banner and the open History detail (a ticket arrived or left, or a minute boundary passed). */
 function repaintLimitNotices() {
-  const screen = document.querySelector('#run-detail');
+  // The open run screen, on the Runs page or in the Chat run panel.
+  const screen = runDetailState.screen?.isConnected ? runDetailState.screen : document.querySelector('#run-detail');
   const host = screen && screen.querySelector('.rd-ov-state');
   const r = host && runs.get(runDetailState.runId);
   if (r) { rdOvStateBanner(host, r); paintRdLimitItem(screen, r); }
@@ -29674,6 +29676,9 @@ function crpShow(target, tab = '', { replace = false } = {}) {
   if (focusIn && !had.isConnected && typeof els.aside.focus === 'function') els.aside.focus({ preventScroll: true });
   crp.kind = target.kind;
   crp.id = id;
+  // A usage-limit pause's "Resume at" reads the resume tickets, which only the Runs views and Schedules load: Chat
+  // boots without them, and a second resume for a run that already has one booked is refused.
+  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => repaintLimitNotices());
   // P1: the page context moved — a boot deep link resolving, a hand-off or a resume follow write no hash, so the
   // composer's own hashchange refresh (its MCP preview) never runs for them.
   if (askPanel && typeof askPanel.contextChanged === 'function') askPanel.contextChanged();
@@ -29861,8 +29866,8 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.viewer-modal:not(.hidden), dialog[open], .guide-layer')) return;
   // A field keeps its draft. Escape typed in an answer, a comment, a log search or a select — or on any control of a
   // waiting question or a comment composer, whose draft lives beside it — never closes the panel (closing empties
-  // the screen and loses the text).
-  if (t && typeof t.closest === 'function' && (t.closest('.hd-cmt-composer, .qpanel')
+  // the screen and loses the text). The Workflow tab's step log drawer owns its Escape too (it closes itself).
+  if (t && typeof t.closest === 'function' && (t.closest('.hd-cmt-composer, .qpanel, .wf-log-drawer')
     || t.matches('input:not([type=checkbox]):not([type=radio]), textarea, select, [contenteditable="true"]'))) return;
   // An open Resume split menu: its own Escape closes it when focus is inside it; from anywhere else in the panel,
   // close it here (and only it).
