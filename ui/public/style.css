@@ -54,6 +54,7 @@
   --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
   --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
+  --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on a --field panel (the account menu's spend card): 5.3:1 (--red-ink is 4.45:1) */
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
@@ -3195,40 +3196,46 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
-   popups' --panel, so it stands off the grey sidebar) whose sections — the spend card, the
-   identity card and each .msect run of rows — sit flat on it, a 1px --line hairline between
-   each shown section and the next; it scrolls on a short window. Small grey text is --ink-2;
-   a row's hover is --hover. */
-.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:0;}
-.acct-menu > :not([hidden]) ~ :not([hidden]){border-top:1px solid var(--line);}
+   popups' --panel, so it stands off the grey sidebar) with 12px corners and 6px of padding
+   round its sections. The spend card and the identity card are inset --field panels with 10px
+   corners; each .msect run of rows sits on the sheet, its 32px rows led by a 16px --ink-2 icon.
+   Between each shown section and the next: 4px, a 1px --line hairline that stops 6px short of
+   the content on both sides, 4px (a card straight after the spend card gets a 6px gap instead).
+   Appearance is one row: its label left, a compact segmented control right. The menu scrolls
+   on a short window. Small grey text is --ink-2; amber and red figures on a card take the
+   -strong inks (--amber-ink and --red-ink fall under 4.5:1 on --field); a row's hover is --hover. */
+.nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:6px;}
+.acct-menu > :not([hidden]) ~ :not([hidden]){position:relative;margin-top:9px;}
+.acct-menu > :not([hidden]) ~ :not([hidden])::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden]){margin-top:6px;}
+.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden])::before{content:none;}
 .nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
-.mcard{display:flex;flex-direction:column;padding:12px 15px 13px;}
-.mc-head{display:flex;align-items:center;gap:8px;min-height:26px;margin-bottom:8px;}
+.mcard{display:flex;flex-direction:column;padding:10px 12px;border-radius:10px;background:var(--field);}
+.mc-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:8px;}
 .mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
 .mini-ring circle{fill:none;stroke-width:2.6;}
 .mini-ring .trk{stroke:var(--line-2);}
 .mini-ring .arc{stroke:var(--ink);stroke-linecap:round;}
 .spend-card[data-spend="warn"] .mini-ring .arc{stroke:var(--amber);}
 .spend-card[data-spend="over"] .mini-ring .arc{stroke:var(--red);stroke-linecap:butt;}
-.mc-title{flex:1;min-width:0;font:500 13px/1.2 var(--sans);color:var(--ink);}
-.mc-btn{flex:none;height:26px;padding:0 10px;border:1px solid var(--line-2);border-radius:7px;background:var(--panel);
+.mc-title{flex:1;min-width:0;font:600 12.5px/1.2 var(--sans);color:var(--ink);}
+.mc-btn{flex:none;height:24px;padding:0 10px;border:1px solid var(--line-2);border-radius:999px;background:var(--surface);
   color:var(--ink);font:500 11.5px/1 var(--sans);cursor:pointer;}
 .mc-btn:hover{border-color:var(--ink-3);}
 .mc-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .mc-btn.solid{background:var(--ink);border-color:var(--ink);color:var(--on-ink);}
-.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:5px 12px;}
-.mc-rows dt{font:400 12px/1.3 var(--sans);color:var(--ink-2);}
-.mc-rows dd{margin:0;text-align:right;font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
-.mc-rows dd.pos{color:var(--green-ink-strong);}
-.mc-rows dd.warn{color:var(--amber-ink);}
-.mc-rows dd.over{color:var(--red-ink);}
-.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink);}
+.mc-rows{margin:0;display:grid;grid-template-columns:1fr auto;gap:0 12px;}
+.mc-rows dt{font:400 12px/22px var(--sans);color:var(--ink-2);}
+.mc-rows dd{margin:0;text-align:right;font:600 13px/22px var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.mc-rows dd.warn{color:var(--amber-ink-strong);}
+.mc-rows dd.over{color:var(--red-ink-strong);}
+.mc-note{margin:8px 0 0;font:400 11px/1.35 var(--sans);color:var(--red-ink-strong);}
 .mc-k{margin-bottom:4px;font:400 11px/1.3 var(--sans);color:var(--ink-2);}
-.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 12.5px/1.3 var(--sans);color:var(--ink);}
+.id-card b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 12.5px/1.3 var(--sans);color:var(--ink);}
 .id-card small{font:400 11px/1.35 var(--sans);color:var(--ink-2);}
-.msect{display:flex;flex:none;flex-direction:column;gap:1px;padding:5px;}
-.mi{display:flex;flex:none;align-items:center;gap:9px;width:100%;height:31px;padding:0 10px;border:0;border-radius:8px;background:transparent;
-  color:var(--ink);font:400 12.5px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
+.msect{display:flex;flex:none;flex-direction:column;}
+.mi{display:flex;flex:none;align-items:center;gap:10px;width:100%;height:32px;padding:0 9px;border:0;border-radius:8px;background:transparent;
+  color:var(--ink);font:400 13px/1 var(--sans);text-align:left;cursor:pointer;white-space:nowrap;}
 .mi:hover,.mi[aria-expanded="true"]{background:var(--hover);}
 .mi:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .mi[aria-current="page"]{font-weight:500;}
@@ -3237,27 +3244,33 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
    clip them at the row's line-height:1 (the .nav label rule does the same). */
 .mi-lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;line-height:1.4;}
 .mi-val{flex:none;font:400 12px/1 var(--sans);color:var(--ink-2);}
-.mi-chev{width:14px;height:14px;flex:none;margin-right:-2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi-chev{width:14px;height:14px;flex:none;margin-left:2px;fill:none;stroke:var(--ink-2);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
 .mi-ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+.mi .mi-ic{color:var(--ink-2);}
 .mi-hint{flex:none;font:400 11px/1 var(--sans);color:var(--ink-2);}
 .away-item[data-state="away"]{background:var(--violet-bg);color:var(--violet-ink);font-weight:500;}
-.away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
-/* Appearance at the foot of the menu: three icon segments (System · Light · Dark) on one --field
-   track, the picked one raised like .seg button.on. */
-.msect.theme-sect{padding:8px 10px 10px;}
-.theme-seg{display:flex;gap:2px;padding:3px;border-radius:9px;background:var(--field);}
-.theme-ic{display:flex;flex:1;align-items:center;justify-content:center;height:26px;padding:0;border:0;border-radius:7px;
+.away-item[data-state="away"] .mi-ic,.away-item[data-state="away"] .mi-hint{color:var(--violet-ink);}
+/* Appearance at the foot of the menu, one 40px row: the label in the icons' column, then three
+   30px icon segments (System · Light · Dark) on a compact --field track, the picked one raised. */
+.msect.theme-sect{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;height:40px;padding:0 4px 0 9px;}
+.theme-k{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/1.4 var(--sans);color:var(--ink);}
+.theme-seg{display:flex;flex:none;padding:2px;border-radius:9px;background:var(--field);}
+.theme-ic{display:flex;flex:none;align-items:center;justify-content:center;width:30px;height:26px;padding:0;border:0;border-radius:7px;
   background:transparent;color:var(--ink-2);cursor:pointer;}
+.theme-ic .mi-ic{width:14px;height:14px;}
 .theme-ic:hover{color:var(--ink);}
-.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-soft);}
+.theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
 .theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line);border-radius:0;}
+/* The free-request row closes the spend card: a --line-2 rule (--line fades on the --field panel),
+   then the label and the count in the Spent row's type. Alone in the card it needs no rule. */
+.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line-2);border-radius:0;}
+.mc-free:first-child{margin-top:0;padding-top:0;border-top:0;}
 .mc-free:hover{background:transparent;}
 .mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}
 .mc-free:hover .mi-lbl{color:var(--ink);}
-.mc-free .mi-val{font:500 12px/1.3 var(--mono);color:var(--ink);font-variant-numeric:tabular-nums;}
-.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink);}
-.mc-free[data-tone="over"] .mi-val{color:var(--red-ink);}
+.mc-free .mi-val{font:600 13px/1.3 var(--sans);color:var(--ink);font-variant-numeric:tabular-nums;}
+.mc-free[data-tone="warn"] .mi-val{color:var(--amber-ink-strong);}
+.mc-free[data-tone="over"] .mi-val{color:var(--red-ink-strong);}
 .lv-opt{display:grid;grid-template-columns:18px 1fr 16px;gap:2px 9px;align-items:start;width:100%;padding:8px 9px;border:0;border-radius:8px;
   background:transparent;color:var(--ink-2);font-family:inherit;text-align:left;cursor:pointer;}
 .lv-opt:hover{background:var(--field);}
