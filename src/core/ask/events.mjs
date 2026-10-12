@@ -152,6 +152,11 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'build_workflow': return 'Assembling the graph';
     case 'draft_agent': return 'Drafting an agent';
     case 'draft_script': return 'Drafting a script';
+    case 'get_agent': return input?.key ? `Reading agent: ${String(input.key).slice(0, 60)}` : 'Reading an agent';
+    case 'get_workflow': return 'Reading a workflow';
+    case 'read_file': { const base = String(input?.path ?? '').split(/[\\/]/).filter(Boolean).pop(); return base ? `Reading ${base.slice(0, 60)}` : 'Reading a file'; }
+    case 'grep': return 'Searching files';
+    case 'glob': return 'Listing files';
     case 'propose_metrics_change': return 'Proposing a metrics change';
     case 'get_team_metrics': return 'Reading team metrics';
     case 'list_team_metrics_runs': return 'Listing team runs';
