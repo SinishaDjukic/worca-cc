@@ -10,18 +10,46 @@ const require = createRequire(import.meta.url);
 const OFF = /^(0|false|no|off)$/i;
 let cached = null;
 
+/** Where node-pty keeps spawn-helper: the prebuild for this platform, then a local build. */
+function spawnHelperCandidates(pkgDir, platform, arch) {
+  return [join('prebuilds', `${platform}-${arch}`, 'spawn-helper'), join('build', 'Release', 'spawn-helper')]
+    .map((rel) => join(pkgDir, rel));
+}
+
+/**
+ * The spawn-helper files node-pty ships for this platform and whether each is executable
+ * (all three exec bits, the same bar ensureSpawnHelper sets). Read-only: `worca doctor`
+ * reports with it. [] when none is shipped (Windows, or Linux without a build).
+ * @returns {{ path: string, executable: boolean }[]}
+ */
+export function spawnHelperStatus(pkgDir, { platform = process.platform, arch = process.arch } = {}) {
+  const found = [];
+  for (const file of spawnHelperCandidates(pkgDir, platform, arch)) {
+    let st;
+    try { st = statSync(file); } catch { continue; }                 // not shipped for this platform
+    found.push({ path: file, executable: (st.mode & 0o111) === 0o111 });
+  }
+  return found;
+}
+
+/** One `worca doctor` line for spawnHelperStatus(): ok, nothing to check, or the exact chmod fix. */
+export function spawnHelperDoctorLine(status) {
+  if (!status.length) return 'node-pty spawn-helper: none for this platform (nothing to check)';
+  const bad = status.filter((s) => !s.executable);
+  if (!bad.length) return `node-pty spawn-helper: ok (${status.map((s) => s.path).join(', ')})`;
+  const quoted = bad.map((s) => `'${s.path.replace(/'/g, `'\\''`)}'`).join(' ');
+  return `node-pty spawn-helper: NOT executable — fix with: chmod +x ${quoted}`;
+}
+
 /**
  * node-pty 1.1.0's npm tarball ships `prebuilds/darwin-*\/spawn-helper` as mode 0644, and every
  * pty.spawn then throws "posix_spawnp failed." (D14). Set the exec bit where it is missing. Returns
  * null when the helper is usable (or absent), else why it is not.
  */
 export function ensureSpawnHelper(pkgDir, { platform = process.platform, arch = process.arch } = {}) {
-  for (const rel of [join('prebuilds', `${platform}-${arch}`, 'spawn-helper'), join('build', 'Release', 'spawn-helper')]) {
-    const file = join(pkgDir, rel);
-    let st;
-    try { st = statSync(file); } catch { continue; }                 // not shipped for this platform
-    if ((st.mode & 0o111) === 0o111) continue;
-    try { chmodSync(file, st.mode | 0o755); } catch (e) {
+  for (const { path: file, executable } of spawnHelperStatus(pkgDir, { platform, arch })) {
+    if (executable) continue;
+    try { chmodSync(file, statSync(file).mode | 0o755); } catch (e) {
       return `node-pty's spawn-helper is not executable and could not be fixed (${e?.code || e?.message || e})`;
     }
   }
