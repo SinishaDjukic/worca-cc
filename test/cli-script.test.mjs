@@ -321,6 +321,43 @@ test('script test: --case refuses the value flags; --all with no saved cases is 
   assert.match(unknown.stderr, /worca script test: unknown script "ghostScript"/);
 });
 
+test('script test --all names a case the cases file drops and fails, instead of running fewer cases green', async () => {
+  writeProbeScript('probeDropped');
+  const file = join(userScriptsDir(), 'probeDropped.tests.json');
+  writeFileSync(file, JSON.stringify({ version: 1, cases: [
+    { id: 'ok', expect: { verdict: 'clean' } },
+    { id: 'tooLong', name: 'n'.repeat(81), expect: { verdict: 'clean' } },
+  ] }));
+  const r = await run(['script', 'test', 'probeDropped', '--all']);
+  assert.equal(r.code, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stdout, /^✓ probeDropped\/ok\t/m, 'the valid case still runs');
+  assert.match(r.stderr, /probeDropped\.tests\.json: case "tooLong": name must be 80 characters or fewer/);
+  assert.match(r.stdout, /^1 passed, 0 failed, 0 unchecked; 1 problem in the cases file$/m);
+  const j = await run(['script', 'test', 'probeDropped', '--all', '--json']);
+  assert.equal(j.code, 1);
+  assert.deepEqual(JSON.parse(j.stdout).problems, ['probeDropped.tests.json: case "tooLong": name must be 80 characters or fewer']);
+  // --case on the dropped id: the reason comes before "not found".
+  const one = await run(['script', 'test', 'probeDropped', '--case', 'tooLong']);
+  assert.equal(one.code, 2);
+  assert.match(one.stderr, /name must be 80 characters or fewer[\s\S]*case "tooLong" not found/);
+  rmSync(file);
+});
+
+test('script test --all with every case dropped is a failure, not "no saved cases"', async () => {
+  writeProbeScript('probeAllDropped');
+  const file = join(userScriptsDir(), 'probeAllDropped.tests.json');
+  writeFileSync(file, '{ "version": 1, "cases": [ { "id": "x", "name": 5 } ] }');
+  const r = await run(['script', 'test', 'probeAllDropped', '--all']);
+  assert.equal(r.code, 1, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /probeAllDropped\.tests\.json: case "x": name must be a string/);
+  assert.doesNotMatch(r.stderr, /no saved cases/);
+  writeFileSync(file, '{ broken');
+  const bad = await run(['script', 'test', 'probeAllDropped', '--all']);
+  assert.equal(bad.code, 1);
+  assert.match(bad.stderr, /probeAllDropped\.tests\.json: invalid JSON/);
+  rmSync(file);
+});
+
 test('script test --json survives a PIPE: a result past the 64 KiB pipe buffer parses', async () => {
   const dir = userScriptsDir();
   mkdirSync(dir, { recursive: true });
