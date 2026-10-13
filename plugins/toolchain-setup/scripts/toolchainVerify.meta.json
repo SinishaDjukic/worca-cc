@@ -1,0 +1,33 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainVerify",
+  "displayName": "Toolchain: verify",
+  "description": "Probes every installed toolchain (java -version, node -v, go version, ...) through mise exec with the exact locked version. Pass or fail per tool; never builds the project.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainVerify.mjs",
+  "command": null,
+  "timeoutMs": 1800000,
+  "params": [],
+  "portSummary": "Reads state; produces verify.",
+  "inputs": [
+    {
+      "id": "state",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "verify",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-verify.json",
+      "store": "run",
+      "artifactKind": "verify"
+    }
+  ]
+}

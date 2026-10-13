@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "emptyRepo",
+      "name": "empty repo yields no facts",
+      "params": {},
+      "ports": null,
+      "inputs": {
+        "task": {
+          "text": "Android app"
+        }
+      },
+      "cwd": {
+        "kind": "scratch"
+      },
+      "timeoutMs": null,
+      "expect": {
+        "summaryIncludes": "0 version facts"
+      }
+    }
+  ]
+}
