@@ -10,6 +10,7 @@ import { mkdtemp, mkdir, rm, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
+import { _testing as dialogTesting } from '../src/core/folder-dialog.mjs';
 import { TEAM, AUD, CERTS_URL, makeAccessKey, signAccessJwt, certsFetch } from './helpers/access-jwt.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -125,6 +126,14 @@ test('remote mode: the folder browser lists only inside Worca\'s folders', async
       const r = await remote('POST', '/api/fs/pick-folder', { purpose: 'project' });
       assert.equal(r.status, 200);
       assert.equal(r.body.status, 'unsupported');
+    } },
+    { name: 'no native dialog is offered, even where the server could open one (it would open on the server)', run: async () => {
+      dialogTesting.set({ platform: 'darwin', env: {} });
+      try {
+        const r = await remote('GET', '/api/fs/pick-folder');
+        assert.equal(r.status, 200);
+        assert.deepEqual(r.body, { available: false });
+      } finally { dialogTesting.reset(); }
     } },
   ]);
 });

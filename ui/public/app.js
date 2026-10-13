@@ -99,6 +99,7 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningAct
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
@@ -183,6 +184,10 @@ import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewer
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 // The popup viewer every artifact opener uses (Chat P5).
 import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+// Pinpoint (#669): act on selected text in the chat, run artifacts and the Diff tab.
+import { createPinpoint } from './pinpoint.mjs';
+import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
+import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
@@ -280,6 +285,11 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Ask Worca panel — assigned by the boot mount; every seam uses askPanel?.
+// Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
+// the artifact viewer's (added when a popup opens).
+const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
+/** Pinpoint's "to the chat" from outside it: the quote chip and the text in the composer, not sent (R3). */
+const pinpointDraft = (quote, text) => openChat({ text, quote });
 // worca Chat (CONTRACT §3): the run panel's hooks P4 assigns, and the ONE mutable deps object the Chat page's cards read
 // at call time (P4 swaps openRunPanel, P5 openArtifact, P2 adds openShipIt). Up here, above every caller (TDZ).
 let chatPanelRouter = null;    // (segments: ['<runId>', '<tab>'?]) => void — [] closes the panel
@@ -345,6 +355,8 @@ const el = {
   title: $('#title'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  sameAsSource: $('#sameAsSource'),
+  sameAsSourceHint: $('#sameAsSourceHint'),
   sourceRadios: $$('input[name="source"]'),
   promptPane: $('#prompt-pane'),
   markdownPane: $('#markdown-pane'),
@@ -357,6 +369,8 @@ const el = {
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
   extrasPills: $('#extrasPills'),
+  reuseTask: $('#reuse-task'),
+  reuseTaskBtn: $('#reuse-task-btn'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
   startMore: $('#start-more'),
@@ -6503,6 +6517,10 @@ el.mdFile.addEventListener('change', async () => {
 // read-only, and both per-file removal and re-picking the same file after a
 // removal need mutable state. The input is only the OS picker trigger.
 let extrasFiles = [];
+// The files ride base64 in the POST /api/run body, whose JSON window (ui/server.mjs) is sized for one
+// chat message's attachments; a pick past it is refused here with a clear note, not the parser's bare 413.
+const EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
+let extrasRefusal = '';   // the last pick's refusal, shown in the note until the list changes again
 
 function renderExtrasPills() {
   el.extrasPills.textContent = '';
@@ -6526,23 +6544,73 @@ function renderExtrasPills() {
     pill.append(name, x);
     el.extrasPills.appendChild(pill);
   }
-  el.extrasNote.textContent = extrasFiles.length
+  el.extrasNote.textContent = extrasRefusal || (extrasFiles.length
     ? `${extrasFiles.length} file(s) will be uploaded and copied into the pipeline's extras/ folder.`
-    : 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
+    : 'Leave empty and the run gets no extra files.'); // must match index.html's initial state
+  extrasRefusal = '';
   rebuildMentionIndex();
   refreshMentionHighlights();
 }
 
 el.extras.addEventListener('change', () => {
   const picked = el.extras.files ? [...el.extras.files] : [];
+  const refused = [];
   for (const f of picked) {
     const at = extrasFiles.findIndex((e) => e.name === f.name);
+    const othersBytes = extrasFiles.reduce((n, e, i) => (i === at ? n : n + e.size), 0);
+    if (othersBytes + f.size > EXTRAS_MAX_BYTES) { refused.push(f.name); continue; }
     if (at >= 0) extrasFiles[at] = f; // same name re-picked: newest wins
     else extrasFiles.push(f);
   }
+  if (refused.length) extrasRefusal = `Not added: ${refused.join(', ')}. Extra files are limited to ${EXTRAS_MAX_BYTES / (1024 * 1024)} MB in total.`;
   el.extras.value = ''; // so picking the same file again still fires `change`
   renderExtrasPills();
 });
+
+// #687: a started (or scheduled) run takes its TASK with it — title, prompt, markdown, the loaded
+// .md name, extra files — so the form never looks ready to start the same task twice. The CHOICES
+// (project, workflow, source, branches, models) stay. Reuse last task puts the task back.
+let lastTask = null;
+function snapshotTask() {
+  return {
+    source: (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt',
+    title: el.title.value, prompt: el.prompt.value, markdown: el.promptMarkdown.value,
+    mdFileName: el.mdFileName.textContent, extras: [...extrasFiles],
+    // Run on the source branch goes with the task: a cleared form never silently commits the next run onto its source.
+    sameAsSource: !!el.sameAsSource?.checked,
+  };
+}
+const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
+  && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
+function setTask(t) {
+  el.title.value = t.title;
+  el.prompt.value = t.prompt;
+  el.promptMarkdown.value = t.markdown;
+  el.mdFileName.textContent = t.mdFileName;
+  el.mdFile.value = '';
+  extrasFiles = [...t.extras];
+  renderExtrasPills();
+  if (el.sameAsSource && el.sameAsSource.checked !== !!t.sameAsSource) { el.sameAsSource.checked = !!t.sameAsSource; paintSameAsSource(); }
+  scheduleMentionHighlight(el.prompt);
+  scheduleMentionHighlight(el.promptMarkdown);
+}
+/** After a start: clear the submitted task — unless something new was typed while it started. */
+function clearTask(submitted) {
+  if (!sameTask(snapshotTask(), submitted)) return;
+  lastTask = submitted;
+  setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
+  el.reuseTask.hidden = false;
+}
+el.reuseTaskBtn.addEventListener('click', () => {
+  const t = lastTask;
+  if (!t) return;
+  lastTask = null;
+  el.reuseTask.hidden = true;
+  if (t.source === 'prompt' || t.source === 'markdown') $(`#source-seg button[data-src="${t.source}"]`)?.click();
+  setTask(t);
+});
+// Typing a new task retires the offer, so Reuse can never overwrite it.
+for (const f of [el.title, el.prompt, el.promptMarkdown]) f.addEventListener('input', () => { el.reuseTask.hidden = true; });
 
 // ---------------------------------------------------------------------------
 // @-mention autocomplete: typing "@" in a prompt textarea pops up the attached
@@ -7335,6 +7403,7 @@ function projectOutcome() {
 /** New branch hint: the real names the run creates — one per project in a workspace, suffixed. */
 function paintFeatureHint() {
   if (!el.featureBranchHint) return;
+  if (el.sameAsSource && el.sameAsSource.checked) { el.featureBranchHint.textContent = ''; return; }   // #sameAsSourceHint says what happens
   const f = el.featureBranch ? el.featureBranch.value.trim() : '';
   const ws = state.runTarget === 'workspace' ? state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId) : null;
   const paths = ws && Array.isArray(ws.projectPaths) ? ws.projectPaths : [];
@@ -7575,6 +7644,51 @@ if (el.sourceBranch) {
     void refreshSyncStatusQuiet();
   });
 }
+
+// "Run on the source branch" (branch.sameAsSource): the feature input is disabled and names what the run
+// commits onto; a committed feature name equal to the source switches the toggle on (the ONLY place the
+// mode is inferred — the server never does).
+function sameSourceLabel() {
+  if (state.runTarget === 'workspace') return 'each project’s source branch';
+  if (el.sourceBranch && el.sourceBranch.value === PREVIOUS_BRANCH) return 'the branch of the run before it';
+  return effectiveBase() || 'the source branch';   // HEAD's name is unknown until /api/branches answers
+}
+function paintSameAsSource() {
+  if (!el.sameAsSource || !el.featureBranch) return;
+  const on = el.sameAsSource.checked;
+  if (on && !el.featureBranch.disabled) {
+    // Kept for switching off again — but never the name that collides with the source.
+    const v = el.featureBranch.value;
+    el.featureBranch.dataset.typed = v.trim() === effectiveBase() ? '' : v;
+  }
+  if (!on && el.featureBranch.disabled) {
+    el.featureBranch.value = el.featureBranch.dataset.typed || '';
+    delete el.featureBranch.dataset.typed;
+  }
+  el.featureBranch.disabled = on;
+  if (on) el.featureBranch.value = sameSourceLabel();
+  if (el.sameAsSourceHint) el.sameAsSourceHint.hidden = !on;
+  // Programmatic callers (Ask prefill, the "run before it" option) fire no form event, and Simple mode keeps
+  // #branch-fields visible only while the feature input is non-empty: re-run it so a checked toggle stays seen.
+  paintHiddenSettings();
+  paintFeatureHint();   // the "Creates <name>." hint must never name the source
+}
+// On a COMMITTED name (change / a source change / submit), never per keystroke: `input` would switch on at
+// the prefix of any name that starts with the source (dev → develop), and that name could never be typed.
+function autoSameAsSource() {
+  if (!el.sameAsSource || !el.featureBranch || el.sameAsSource.checked || el.featureBranch.disabled) return;
+  if (state.runTarget === 'workspace') return;
+  // effectiveBase() answers HEAD's branch for "the run before it" too, which is not that run's branch.
+  if (el.sourceBranch && el.sourceBranch.value === PREVIOUS_BRANCH) return;
+  const typed = el.featureBranch.value.trim();
+  if (typed && typed === effectiveBase()) { el.sameAsSource.checked = true; paintSameAsSource(); }
+}
+el.sameAsSource?.addEventListener('change', paintSameAsSource);
+el.featureBranch?.addEventListener('change', autoSameAsSource);
+el.sourceBranch?.addEventListener('change', () => { autoSameAsSource(); paintSameAsSource(); });
+// The auto source's label is HEAD's name: the first branch fetch sets it with no event; this event
+// follows the second, fresh fetch, so the label catches up then.
+el.sourceBranch?.addEventListener('branches-fresh', paintSameAsSource);
 /** After an accepted start: "Use branches from" was a choice for that run only. */
 function resetSyncChoice() {
   state.sync.autoSync = null;
@@ -9177,7 +9291,7 @@ function openWsAddMembers(id) {
     body.appendChild(row);
   }
   // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
-  // leads to the Projects page and starts its own Add project flow (folder picker / clone).
+  // leads to the Projects page and opens its Add project dialog (a folder or a clone).
   const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
@@ -10829,7 +10943,7 @@ if (typeof window !== 'undefined') {
 
 // ---------------------------------------------------------------------------
 // Projects management view (sidebar peer of Workspaces / Agents).
-// Read-only list of {name, path, exists}; add via native picker, delete via a
+// Read-only list of {name, path, exists}; add via the Add project dialog, delete via a
 // custom confirm modal. Shares state.projects with the New-pipeline dropdown.
 // ---------------------------------------------------------------------------
 
@@ -10858,6 +10972,18 @@ async function pickFolder(purpose = 'project', { multiple = false } = {}) {
     return await safeJson(res); // {status:'picked',path,paths?} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
   } catch {
     return { status: 'unsupported' };
+  }
+}
+
+// Whether a native folder picker can open for this viewer, asked without opening one; never throws
+// (no answer counts as no picker).
+async function folderPickerAvailable() {
+  try {
+    const res = await fetch('/api/fs/pick-folder');
+    const data = await safeJson(res);
+    return res.ok && !!data && data.available === true;
+  } catch {
+    return false;
   }
 }
 
@@ -12252,7 +12378,7 @@ async function deleteProject(p, errEl = null) {
   }
 }
 
-// ---- Add project (native picker first, manual fallback in the modal) --------
+// ---- Add project (the dialog first: a folder, picked or typed, or a clone) --------
 // NOTE: kind may be 'err' (maps to the existing .hint.err rule) or omitted.
 // There is no .hint.warn rule, so informational hints pass NO kind (default
 // neutral .hint styling) — do not pass 'warn'.
@@ -12275,10 +12401,7 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
   setProjAddMode(mode);
   // A clone still in flight from an earlier open keeps its progress line.
   if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
-  // Informational hint only when there is no path (manual-entry fallback);
-  // neutral default .hint styling (no .hint.warn class exists).
   if (mode === 'folder') {
-    setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
     el.projAddName.focus();
     el.projAddName.select();
   }
@@ -12389,18 +12512,11 @@ function closeProjectAddModal() {
   el.projectAddModal.classList.add('hidden');
 }
 
+// The dialog first (#649): its Folder tab's Choose folder… opens the native picker, and Clone from URL
+// needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
 async function addProjectFlow() {
   setProjectsMsg('');
-  const data = await pickFolder('project', { multiple: true });
-  if (data && data.status === 'picked') {
-    const paths = pickedPaths(data);
-    if (paths.length) { projectsViewPicks(paths); return; }   // one -> Add dialog, several -> review
-  }
-  if (data && data.status === 'canceled') return;                 // respect the cancel
-  if (data && data.status === 'busy') { setProjectsMsg('A folder dialog is already open — finish or cancel it first.', 'err'); return; }
-  // No folder picker at all (a container or hosted worca): the repository is the way in.
-  if (data && data.status === 'unsupported') { openProjectAddModal('', { mode: 'clone' }); return; }
-  openProjectAddModal('');                                        // error -> manual entry
+  openProjectAddModal('', { mode: (await folderPickerAvailable()) ? 'folder' : 'clone' });
 }
 
 async function saveProjectAdd() {
@@ -13000,6 +13116,7 @@ el.form.addEventListener('submit', async (e) => {
   // guardrails the API wrappers use unless the user deliberately picked another set.
   const isDefragRun = state.workflowId === MEMORY_DEFRAG_WORKFLOW_ID;
 
+  autoSameAsSource();   // Enter-to-submit, or a click before the feature input's `change`, must not skip the switch
   const body = {
     title: title || undefined,
     workflowId: state.workflowId || 'wf_default',
@@ -13029,6 +13146,8 @@ el.form.addEventListener('submit', async (e) => {
     engine: state.engine !== 'claude' ? state.engine : (state.runDefaults?.engine?.value === 'claude' ? undefined : 'claude'),
     allowUnguardedEngine: state.engine !== 'claude' && el.engineAllowUnguarded && el.engineAllowUnguarded.checked ? true : undefined,
   };
+  // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
+  if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
     // Per-project source branches: { [projectKey]: branch }. Omit empties (the
@@ -13104,6 +13223,7 @@ el.form.addEventListener('submit', async (e) => {
     cardAlert(newFormCard(), { title: scheduling ? 'Not scheduled' : 'Run not started', detail });
     return { ok: false };
   };
+  const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -13175,6 +13295,7 @@ el.form.addEventListener('submit', async (e) => {
         setPendingSchedule(null);   // the form is a plain Start run form again
         resetSyncChoice();
         showEngineRefusal(null);
+        clearTask(submittedTask);
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
         notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
@@ -13190,6 +13311,7 @@ el.form.addEventListener('submit', async (e) => {
       startSubmitInFlight = false;
       resetSyncChoice();
       showEngineRefusal(null);
+      clearTask(submittedTask);
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
       notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });
@@ -13326,6 +13448,7 @@ function syncPreviousBranchEverywhere() {
   // member re-renders and target switches, and the FRESH member selects follow whichever it is — every
   // renderWorkspaceSourceBranches() rebuilds them enabled, so this is the one place that re-applies it.
   if (el.wsSourcePrevious) setWsSourcePrevious(wsPick && el.wsSourcePrevious.dataset.off !== '1');
+  paintSameAsSource();
 }
 function setWsSourcePrevious(on) {
   if (!el.wsSourcePrevious) return;
@@ -19579,6 +19702,73 @@ function shellSingleQuote(value) {
   return `'${String(value == null ? '' : value).replaceAll("'", "'\"'\"'")}'`;
 }
 
+// Run on the source branch (branch.sameAsSource): which members' hidden branch could NOT be fast-forwarded
+// into their source, why, and the commands to merge by hand. textContent only: git stderr and branch
+// names are data, never markup.
+function renderMergeBack(node, p) {
+  const banner = node.querySelector('.merge-back-banner');
+  if (!banner) return;
+  const failed = (Array.isArray(p?.mergeBack?.members) ? p.mergeBack.members : []).filter((m) => m && m.merged === false);
+  banner.hidden = !failed.length;
+  banner.innerHTML = '';
+  if (!failed.length) return;
+  const title = document.createElement('h4');
+  title.textContent = 'Not merged back into the source branch';
+  const intro = document.createElement('p');
+  intro.textContent = 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:';
+  const list = document.createElement('ul');
+  for (const m of failed) {
+    const li = document.createElement('li');
+    const label = document.createElement('strong');
+    // A person reads the project's name, not its store key (<name>-<8 hex>).
+    label.textContent = m.name || (p.target !== 'workspace' && p.projectName)
+      || String(m.projectKey || '').replace(/-[0-9a-f]{8}$/, '') || m.source || 'Project';
+    const detail = document.createElement('span');
+    detail.textContent = ` — ${m.reason || 'the fast-forward was not possible'}. The work is on ${m.branch}.`;
+    const { lead, cmd } = mergeBackRecipe(m, p);
+    const how = document.createElement('p');
+    how.textContent = lead;
+    li.append(label, detail, how);
+    if (cmd) { const command = document.createElement('code'); command.textContent = cmd; li.append(command); }
+    list.appendChild(li);
+  }
+  banner.append(title, intro, list);
+}
+
+// What to run by hand for one member that was not merged back, by why it was refused. Every line is
+// chained with && (a failed step stops the rest: a failed `git switch` must never merge into whatever
+// is checked out), starts in the right directory, and keeps worca's own safety: fast-forward only,
+// never overwriting an ignored file. Only a source with new commits needs a real merge.
+function mergeBackRecipe(m, p) {
+  const q = shellSingleQuote;
+  const src = q(m.source), br = q(m.branch);
+  const dir = m.projectDir || (p && p.target !== 'workspace' ? p.projectDir : null);
+  const cd = dir ? `cd ${q(dir)} && ` : '';
+  const ff = `git merge --ff-only --no-overwrite-ignore ${br}`;
+  const del = `git branch -d ${br}`;
+  const inSource = `${cd}git switch ${src} && ${ff} && ${del}`;
+  switch (m.kind) {
+    case 'commit-failed':
+      return { lead: 'The run’s last changes were never committed, so nothing could be merged. Recover them first (see the saved-work notice).', cmd: '' };
+    case 'in-use': {
+      const wt = Array.isArray(m.paths) && m.paths[0];
+      return wt
+        ? { lead: `${m.source} is checked out in another worktree. Merge it there:`, cmd: `cd ${q(wt)} && ${ff} && ${del}` }
+        : { lead: `Finish or abort what is using ${m.source} (a rebase, a bisect or another worktree), then:`, cmd: inSource };
+    }
+    case 'missing':
+      return { lead: `${m.source} no longer exists. Create it from the run’s work:`, cmd: `${cd}git branch ${src} ${br} && ${del}` };
+    case 'dirty':
+      return { lead: `Commit or stash your changes in ${m.source} first (or move the file in the way), then:`, cmd: inSource };
+    case 'diverged':
+      return { lead: `${m.source} has new commits, so it needs a real merge (or open a pull request instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
+    case 'not-done':
+      return { lead: 'The run did not finish. Check its work in Diff before you merge it:', cmd: inSource };
+    default:
+      return { lead: 'Merge it by hand:', cmd: inSource };
+  }
+}
+
 // Paint both the collapsed warning badge and the expanded manual-recovery
 // instructions. Every value is assigned through textContent: git stderr and
 // repository paths are data, never markup.
@@ -20188,6 +20378,7 @@ let histDetailState = null; // { key, id, record, data, screen } while open
 // `reload` refetches the comments and repaints CARDS ONLY — never the diff, never
 // the patch (D18).
 let hdCommentState = null; // { key, id, reload }
+let hdPinpoint = null;      // the open Diff tab's Pinpoint (#669): { paint(comments), off() }
 // One-shot "open the Ship it? modal on arrival" intent, consumed by
 // openHistDetail unconditionally so it can never strand across visits.
 let pendingShipIt = null;   // { id, projectKey, memberPrs? } | null — memberPrs: workspace click-time { [memberKey]: pr|null }
@@ -21373,6 +21564,9 @@ function wsRollupPr(p) {
 // takes that member's `memberKey`. A single-project run keeps its three clauses.
 function histPrEligible(p) {
   if (!(prHostAvailable() && p)) return false;
+  // Merged back (or still settling): the work is ON the source (head == base) and ships by Push (paintHdPush).
+  // Not merged back: the work stays on its own branch, so a PR is the way to land it.
+  if (p.sameAsSource && p.mergeBack?.merged !== false) return false;
   if (p.target === 'workspace') return histWsShippable(p).length > 0;
   return !!(p.survived && p.branch && p.sourceBranch);
 }
@@ -21385,6 +21579,50 @@ function histCanShip(p) {
   if (!p) return false;
   if (p.target === 'workspace' && hasWsMembers(p)) return !wsPrPending(p) && histPrEligible(p);
   return !p.pr && histPrEligible(p);
+}
+
+// Run on the source branch (branch.sameAsSource): no PR. Once the work was merged back, the one shipping
+// action pushes the source to its remote (POST /api/push). Returns true for such a run, so paintHdPr
+// skips the PR controls; workspace runs have no ship action (the banner names the commands).
+function paintHdPush(screen, record) {
+  const btn = screen.querySelector('.hd-push');
+  if (btn) btn.hidden = true;
+  if (!record || !record.sameAsSource) return false;
+  if (record.mergeBack?.merged === false) return false;   // not merged back: the work is on its own branch, a PR lands it
+  if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
+  btn.hidden = false;
+  btn.disabled = false;
+  btn.textContent = `Push ${record.sourceBranch}`;
+  // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
+  const mirror = (label, disabled) => {
+    const g = screen.querySelector('.hd-g-push');
+    if (!g) return;
+    g.disabled = disabled;
+    setCtaContent(g, PR_CTA_LOOK.push.icon, label);
+  };
+  btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
+    btn.disabled = true;
+    btn.textContent = 'Pushing…';
+    mirror('Pushing…', true);
+    try {
+      const res = await fetch('/api/push', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // The ship-it modal's own payload shape (:18052). projectKey/projectDir come from listAllPipelines'
+        // project tag (artifacts.mjs:2108), not rowToHistoryEntry.
+        body: JSON.stringify({ projectKey: record.projectKey, projectDir: record.projectDir || null, id: record.id }),
+      });
+      const dd = await safeJson(res);
+      if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
+      btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+      mirror(btn.textContent, true);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = `Push ${record.sourceBranch}`;
+      btn.title = err && err.message ? err.message : String(err);
+      mirror(`Push failed: ${btn.title}`, false);
+    }
+  };
+  return true;
 }
 
 // Keep the OPEN detail's PR control in step with the two PR-resolution paths
@@ -21452,8 +21690,10 @@ function paintHdGlance(screen, record, data) {
   // (paintPrCta, outside the host rebuilt above): visible exactly when it is, so at most one
   // button, coloured by the PR's state. While the lookup runs (and the control's level shows
   // it), the slot holds the placeholder that morphs into whichever button the answer brings.
+  // A run on its source branch ships by Push (paintHdPush): the slot mirrors that button instead.
   const shown = (src) => !!src && levelAtLeast(src.dataset.minLevel || 'simple');
   const createBtn = screen.querySelector('.hd-pr');
+  const pushBtn = screen.querySelector('.hd-push');
   const link = screen.querySelector('.hd-pr-link');
   const slot = glance.querySelector('.rd-pr-slot');
   const linked = shown(link) && !link.hidden;
@@ -21464,6 +21704,8 @@ function paintHdGlance(screen, record, data) {
   } else if (shown(createBtn) && !createBtn.hidden) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
     paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
+  } else if (shown(pushBtn) && !pushBtn.hidden) {
+    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
   } else if (pr === 'PENDING' && shown(createBtn)) {
     paintPrCta(slot, { state: 'pending' });
   } else {
@@ -21664,6 +21906,7 @@ function paintHdPr(screen, record, data) {
   link.hidden = true;
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
+  if (paintHdPush(screen, record)) return;   // a run on its source branch ships by Push, never a PR
   // Legacy workspace rows / minimal deep-link records (no members) keep the single path.
   if (record.target === 'workspace' && hasWsMembers(record)) { paintHdWsPr(record, data, btn, repos); return; }
   const pr = record.pr && typeof record.pr === 'object' ? record.pr : null;
@@ -21768,6 +22011,8 @@ async function paintHdPublish(screen, record, data) {
   note.hidden = true;
   const status = String((data && data.state && data.state.status) || record.status || '').toLowerCase();
   if (!PUBLISH_FINISHED.has(status) || !record.id) return;
+  // Merged back into its source: the run's branch is gone and Push ships the work (paintHdPush).
+  if ((record.sameAsSource && record.mergeBack?.merged === true) || data?.state?.branch?.mergeBack?.merged === true) return;
   let members;
   try {
     const res = await fetch(`/api/runs/${encodeURIComponent(record.id)}/publish?${new URLSearchParams(publishScope(record))}`);
@@ -22059,11 +22304,16 @@ function paintHdHeaderMeta(screen, record, data) {
   // A workspace member this run never changed has its branch dropped at teardown
   // (run-harness _dropUnchangedMemberBranch): never offer a name that no longer exists.
   const dropped = !!br.branchDeleted;
-  base.textContent = dropped ? 'No branch — no changes in this project' : (source ? `${source} →` : '');
+  // ← : the run's branch flows INTO the source — unless the merge back was refused (its work stays on its branch: →).
+  const same = (br.sameAsSource === true || record.sameAsSource === true) && (br.mergeBack || record.mergeBack)?.merged !== false;
+  // Merged back: the hidden branch was fast-forwarded into the source and deleted, so never offer its name.
+  const mergedBack = same && (br.mergeBack || record.mergeBack)?.merged === true;
+  base.textContent = dropped ? 'No branch — no changes in this project'
+    : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
-  copyBtn.hidden = dropped || !feature;
-  paintPageBranch(screen.querySelector('.hd-glance'), feature);
-  if (feature && !dropped) {
+  copyBtn.hidden = dropped || mergedBack || !feature;
+  paintPageBranch(screen.querySelector('.hd-glance'), mergedBack ? source : feature);
+  if (feature && !dropped && !mergedBack) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
       copyBtn.dataset.bound = '1';
@@ -22386,6 +22636,7 @@ function paintHdBanners(screen, record, data) {
   // renderRetainedWork only READS `p.retainedWork`, so a provisional paint may use
   // a throwaway carrier; every MUTATING helper below is handed `record` itself.
   renderRetainedWork(screen, provisional ? { ...record, retainedWork: retained } : record);
+  renderMergeBack(screen, record);
   let dbtn = screen.querySelector('.hist-discard');
   if (retained && !provisional) {
     // Keyed on BOTH screen and record: a new visit builds a fresh screen from the
@@ -24104,6 +24355,8 @@ function buildHdDiff(sec, record, data) {
   // another file while the patch is still downloading (without it both selects
   // resume after the await and append two bodies to the same pane).
   const pstate = { index: null, patchPromise: null, error: null, selEpoch: 0 };
+  // Pinpoint (#669): selection actions on the diff (registered below, once the comment layer exists).
+  let pp = null;
 
   // ---- the comment layer ---------------------------------------------------
   const cstate = { comments: [], byFile: new Map(), patchAvailable: false, treeSig: null,
@@ -24265,6 +24518,13 @@ function buildHdDiff(sec, record, data) {
     },
     toAsk(comment) { askAboutDiffComment(comment, ctx.replyCountOf(comment), record.id); },
   };
+  hdPinpoint?.off();
+  pp = decorateDiff({
+    pinpoint, doc: document, win: window, pane, trayHost: sec, ctx, runId: record.id, finished: hdRunFinished(data),
+    draft: pinpointDraft,
+    send: (text) => { openChat(); askPanel?.sendQuoted({ quote: null, text }); },
+  });
+  hdPinpoint = pp;
 
   // A comment can name a path the patch does not contain (or the patch may be gone
   // entirely). Such a path gets a SYNTHETIC file row so it is reachable and counts
@@ -24397,6 +24657,7 @@ function buildHdDiff(sec, record, data) {
       if (b.dataset.composer !== '1' && !b.childElementCount) b.remove();
     }
     paintDetached(body, orphans);
+    pp?.paint(cstate.comments);   // Pinpoint: the quoted code's highlights and the fix-run tray
   }
 
   // A thread whose root anchor is not renderable still shows — at the BOTTOM of the
@@ -27673,6 +27934,7 @@ function paintGraphFor(host, stepper, decor, legacySteps) {
       nodeClicks: !decor.record,
       onGateClick: () => focusQuestionPanel(slot.ctx),
       onResultClick: (path) => openRunArtifact(slot.ctx, path),
+      modelLabel: graphModelLabel,
     });
     GRAPH_MOUNTS.set(host, slot);
   }
@@ -28110,8 +28372,46 @@ function openRunArtifactPopup(ctx, artifact, list = null) {
     // A row that does not say which step made it (a log line, the End chip) shows no step rather than a wrong one.
     metaFor: (a) => ({ step: a && a.nodeId !== undefined ? artifactStepLabel(c, a.nodeId) : null, cycle: a ? a.cycle : null }),
     deps: { ...artifactViewerDeps(), hljsLoader: diffHljsLoader },
+    decorate: (o) => pinpointArtifact(c, base, o),
   });
   return viewer.ready.then(() => viewer);
+}
+
+/** Run states a direction is never read in (src/core/directions.mjs DIRECTIONS_CLOSED). */
+const PINPOINT_CLOSED = new Set(['done', 'error', 'stopped']);
+/** Pinpoint (#669) on a markdown artifact in the popup: the selection actions, and — while the run can still take a
+ *  direction — the tray that sends Disagree / Note / Use this back as one. */
+function pinpointArtifact(ctx, base, { artifact, stage, body, root }) {
+  const rel = artifactRelOf(artifact);
+  if (!rel || !/\.(md|markdown)$/i.test(rel)) return null;
+  const run = artifactRunFor(ctx);
+  const pid = ctx.pipelineId || (run && (run.pipelineId || run.id)) || ctx.runId || '';
+  if (!pid) return null;
+  const file = artifactBaseName(rel);
+  const live = () => {
+    const r = artifactRunFor(ctx);
+    const status = String((r && r.status) || '').toLowerCase();
+    return !!status && !PINPOINT_CLOSED.has(status);
+  };
+  return decorateArtifact({
+    pinpoint, doc: document, win: window, stage, body, root, file, key: pinpointTrayKey(pid, rel),
+    storage: (() => { try { return window.localStorage; } catch { return null; } })(),
+    live,
+    // A plan artifact (kind 'plan', saved under plans/), or a file named plan*.md.
+    plan: artifact.kind === 'plan' || /(^|\/)plans?(\/|[^/]*\.md$)/i.test(rel),
+    async sendBack(text) {
+      try {
+        const res = await fetch(`/api/runs/${encodeURIComponent(pid)}/directions`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+        });
+        if (res.status === 201) return null;
+        let m = `could not send (${res.status})`;
+        try { const b = await res.json(); if (b && b.error) m = b.error; } catch { /* keep the fallback */ }
+        return m;
+      } catch { return 'network error — nothing was sent'; }
+    },
+    draft: pinpointDraft,
+  });
 }
 
 /** A row's Download (the browser's hover button): the viewer's probe-then-save; a failure is a toast, the row has no
@@ -30524,6 +30824,7 @@ function glancePrInput(record) {
   const pr = record && record.pr;
   if (pr && typeof pr === 'object') return String(pr.state || '').toUpperCase() || 'UNAVAILABLE';
   if (!record) return 'PENDING';
+  if (record.sameAsSource && record.mergeBack?.merged !== false) return 'UNAVAILABLE';   // on the source (head == base): no PR, no "checking" placeholder
   if (!prHostAvailable()) return 'UNAVAILABLE';
   if (pr === undefined) return 'PENDING';
   return histPrEligible(record) ? 'NONE' : 'UNAVAILABLE';
@@ -30559,6 +30860,7 @@ const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: 'Create pull request' },
+  push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
   view: { look: 'pr-view', icon: 'external', label: 'View pull request' },
   merged: { look: 'pr-merged', icon: 'merged', label: 'View pull request' },
 };
@@ -30605,7 +30907,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' 
 
   const { look, icon, label } = PR_CTA_LOOK[state];
   let ctl;
-  if (state === 'create') {
+  if (state === 'create' || state === 'push') {
     ctl = document.createElement('button');
     ctl.type = 'button';
     ctl.addEventListener('click', () => { if (slot._prClick) slot._prClick(); });
@@ -31387,7 +31689,7 @@ function paintRdHeader(screen, r) {
   const source = br.source || '';
   const base = screen.querySelector('.rd-base');
   // #527: the start commit rides inside the existing span (no new themed element).
-  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} →` : '';
+  base.textContent = source ? `${source}${br.baseSha ? ` @ ${String(br.baseSha).slice(0, 7)}` : ''} ${br.sameAsSource && br.mergeBack?.merged !== false ? '←' : '→'}` : '';
   base.title = br.baseSha ? `Started from ${br.baseSha}${br.startRef ? ' (the remote tip; the local branch was left untouched)' : ''}` : '';
   base.hidden = !source;
   const syncBtn = screen.querySelector('.rd-sync');
@@ -31992,14 +32294,14 @@ function gsHops(step, g) {
   switch (step) {
     case 'project':
       return [
-        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: a folder chooser opens — pick the project’s folder. Files on disk are never touched.'),
+        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: the Add project dialog opens — give it the project’s folder. Files on disk are never touched.'),
         { id: 'row', info: true, nextLabel: 'Done', target: '#projects-list .pl-item',
           text: 'Your project. Runs happen inside this folder; open the row for its settings, memory and history.' },
       ];
     case 'run':
-      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, true)];
+      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, true)];
     case 'realRun':
-      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, false)];
+      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, false)];
     case 'ask': {
       // worca Chat: Ask Worca is the Chat page — its sidebar row first (a nav hop: the user's own click routes, so the
       // composer is never ringed on a page where it is not on screen), then the composer.
@@ -32068,7 +32370,7 @@ function gsHops(step, g) {
     case 'workspace': {
       const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
       return [
-        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: pick its folder in the chooser that opens.') : []),
+        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: give the dialog that opens its folder.') : []),
         NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
         { id: 'create', target: '#ws-create-btn', skipWhenMet: true, met: () => onView('workspace-create'),
           text: 'A workspace runs one task across several projects at once. Create one.' },
@@ -32086,7 +32388,7 @@ function gsHops(step, g) {
       // chip): first the row, then the tab pill, then the block — or, for a project with no origin
       // remote, the block that explains why, so the tour never lights nothing. The plan is re-derived
       // after every hop, so each readiness check looks at what is on screen now.
-      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: give the dialog that opens its folder.');
       const nav = NAV('projects', 'Team metrics is switched on per project, from its page here.');
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');
@@ -32127,7 +32429,7 @@ function gsHops(step, g) {
       // set. A project pointed at another home stays on its page, and the closing stop is the block
       // that now says so. `g.enabled` (the submit's click) carries the walk past the page hops,
       // because the routing leaves the page — and the checks that read it — behind.
-      const pre = needProject('A team policy is set per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const pre = needProject('A team policy is set per project.', 'Add one here first: give the dialog that opens its folder.');
       const nav = NAV('projects', 'A team policy is switched on per project, from its page here.', ['team-policy']);   // the new home's page is where it ends
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');
@@ -32990,7 +33292,7 @@ for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) 
 }
 /** Every Ask entry point outside the chat (R3): go to Chat — home, or that chat — then add `text` to the composer
  *  WITHOUT sending, so several can stack and the user presses send once. */
-function openChat({ text = '', threadId = null } = {}) {
+function openChat({ text = '', threadId = null, quote = null } = {}) {
   const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
   // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
   if (!(currentShownView === 'chat' && !id)) {
@@ -32999,9 +33301,11 @@ function openChat({ text = '', threadId = null } = {}) {
     if (location.hash.slice(1) === target) showView('chat', id);   // no hashchange fires for the same address
     else location.hash = target;
   }
+  // Pinpoint (#669): a quoted span rides above the composer as a chip and goes with the next message.
+  if (quote) askPanel?.setQuote(quote);
   const add = String(text ?? '').trim();
   if (add) askPanel?.appendToComposer(add);
-  else if (currentShownView === 'chat') document.querySelector('[data-chat-page] textarea.ask-input')?.focus();
+  else if (currentShownView === 'chat' || quote) document.querySelector('[data-chat-page] textarea.ask-input')?.focus();
 }
 /** chatDeps.openRunPanel's P1 default (P4 swaps in the panel): the run's own page — Running while this tab has the
  *  run, else its History page. `opts.tab` opens that Details tab (Running calls Q&A `qa`, History `clarify`). */
@@ -33241,6 +33545,7 @@ async function applyAskPrefill() {
   await loadWorkflowsInto(p.workflowId);
   await loadGuardrailsInto(p.guardrailsId);
   if (el.advancedConfig) el.advancedConfig.open = true;
+  if (el.sameAsSource && el.sameAsSource.checked) { el.sameAsSource.checked = false; paintSameAsSource(); }
   if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
   if (p.target === 'workspace') {
     // the per-member selects are rebuilt asynchronously on the change above
@@ -33264,6 +33569,7 @@ async function applyAskPrefill() {
       el.sourceBranch.value = p.sourceBranch;
     }
   }
+  if (p.sameAsSource && el.sameAsSource) { el.sameAsSource.checked = true; paintSameAsSource(); }
 }
 
 // ---- Away mode on the run page and New run --------------------------------
@@ -33586,6 +33892,24 @@ askPanel = createAskPanel({
   onUnread: paintChatUnread,
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
+pinpoint.addSurface(askPanel.root, {
+  kind: 'chat',
+  unit: (el) => el.closest('.ask-msg-assistant .ask-answer.ask-md'),
+  container: () => askPanel.root.querySelector('.ask-transcript') || askPanel.root,
+  bounds() {
+    const t = (askPanel.root.querySelector('.ask-transcript') || askPanel.root).getBoundingClientRect();
+    const box = askPanel.root.querySelector('.ask-composer-box');
+    const top = box ? box.getBoundingClientRect().top - 8 : t.bottom;
+    return { left: t.left, right: t.right, top: t.top, bottom: Math.min(t.bottom, top > t.top ? top : t.bottom) };
+  },
+  draft(quote, text) {
+    askPanel.setQuote(quote);
+    if (text) askPanel.appendToComposer(text);
+    else askPanel.root.querySelector('textarea.ask-input')?.focus();
+  },
+  send: (quote, text) => askPanel.sendQuoted({ quote, text }),
+});
 // The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();

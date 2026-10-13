@@ -94,6 +94,13 @@ Every finished run keeps its full record, one tab each in **Runs**: **Overview**
   `worca-cc/…` branch, so agents never edit your checkout and parallel runs
   don't collide. When a run ends, its work is committed to that branch and the
   worktree is removed; the branch stays.
+- **Run on the source branch** — switch it on under the feature branch (or
+  `--on-source-branch`) and the run still works on a hidden branch, but when it
+  finishes `done` its source branch is fast-forwarded onto that work and the
+  hidden branch is deleted; the run's page then offers **Push <source>** instead
+  of a pull request. Only ever a fast-forward: a source that moved meanwhile, a
+  dirty checkout of it, or a run that did not finish leaves the work on its own
+  branch, with the commands to merge it by hand.
 - **Live cockpit** — **Runs** in the sidebar lists every run, live and
   finished, with **All / Live / Finished / Needs you** tabs, search, and
   grouping by project or date. A live run's page shows its state and current

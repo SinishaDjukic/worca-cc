@@ -178,6 +178,7 @@ test('start form: nightMode is sent only when the checkbox is ticked', async () 
   assert.ok(first, 'the run was posted');
   assert.equal('nightMode' in first.body, false);
   doc.getElementById('nightMode').checked = true;
+  doc.getElementById('prompt').value = 'demo task';   // #687: a started run clears the task
   doc.getElementById('run-form').dispatchEvent(new ctx.window.Event('submit', { cancelable: true }));
   await settle();
   assert.equal(ctx.posts.filter((p) => p.path.endsWith('/api/run')).at(-1).body.nightMode, true);

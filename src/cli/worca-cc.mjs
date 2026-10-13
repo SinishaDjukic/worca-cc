@@ -122,6 +122,7 @@ function parseArgs(argv) {
     install: null,
     sourceBranch: undefined,
     featureBranch: undefined,
+    onSourceBranch: false,
     memoryScope: undefined,
     after: undefined,
     afterAny: false,
@@ -204,6 +205,7 @@ function parseArgs(argv) {
     }
     if (arg === '--after-any') { out.afterAny = true; continue; }
     if (arg === '--source-from-previous') { out.sourceFromPrevious = true; continue; }
+    if (arg === '--on-source-branch') { out.onSourceBranch = true; continue; }
 
     let inlineValue;
     const eq = arg.indexOf('=');
@@ -242,6 +244,10 @@ function parseArgs(argv) {
       fail(`Unknown flag: ${arg}`);
     }
     out._.push(arg);
+  }
+  if (out.onSourceBranch && out.featureBranch) fail('--on-source-branch and --branch cannot both be given');
+  if (!out.onSourceBranch && out.featureBranch && out.sourceBranch && out.featureBranch === out.sourceBranch) {
+    fail(`--branch and --source-branch are both "${out.sourceBranch}": add --on-source-branch (without --branch) to commit onto it, or pick another --branch`);
   }
   return out;
 }
@@ -331,6 +337,8 @@ Options:
                            run restructures (--workflow wf_memory_defrag needs it; no --prompt needed)
   --source-branch <name>   Branch to fork the per-run worktree from (default: current HEAD)
   --branch <name>          Feature branch name (default: claude proposes one)
+  --on-source-branch       Commit onto the source branch itself: the run works on a hidden branch and
+                           fast-forwards the source to it when it finishes (not with --branch)
   --mock                   Offline mock mode (no claude, no tokens)
   --at <when>              Run ONCE, later: "02:00", "tomorrow 02:00", "+90m", "2026-09-19 02:00",
                            or ISO 8601 with an offset. Needs a Worca server up at that time — or --wait
@@ -3350,7 +3358,7 @@ async function main() {
     workflowId: flags.workflow || undefined,
     template: row,
     memoryScope: flags.memoryScope || undefined,
-    branch: { source: flags.sourceBranch, feature: flags.featureBranch },
+    branch: { source: flags.sourceBranch, feature: flags.featureBranch, ...(flags.onSourceBranch ? { sameAsSource: true } : {}) },
     claude: {
       permissionMode: flags.permissionMode,
       model: flags.model,

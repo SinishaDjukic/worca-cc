@@ -106,7 +106,7 @@ test('the first send creates the chat — onRoute(id, { replace: true }) — and
   ctx.panel.open({ threadId: TID2 });                                 // an echo of that address: no reload
   await ticks(ctx);
   assert.equal(gets(rec, TID2), 0);
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.deepEqual(routes.at(-1), [null, { replace: false }]);
   ctx.flush();
   assert.equal(page.dataset.view, 'home');
@@ -346,9 +346,9 @@ test('unread across chats: a reply in another chat this tab asked in lights the 
     ctx.flush();
   };
   await send('first');                                                // chat a
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await send('second');                                               // chat b
-  ctx.doc.querySelector('[data-ask-new-btn]').click();                // home: neither chat is open
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();                // home: neither chat is open
   ctx.panel.close();
   const done = (threadId) => ({ type: 'ask-done', threadId, messageId: `askm_${threadId.slice(4)}`, seq: 3 });
   ctx.panel.pushServerFrame(done('ask_0000000a'));
@@ -466,7 +466,7 @@ test('a reply in another chat this tab asked in lights nothing while Chat is on 
   ctx.doc.querySelector('[data-ask-send]').click();
   await ticks(ctx, 5);
   ctx.flush();
-  ctx.doc.querySelector('[data-ask-new-btn]').click();                // home: chat a is not the open chat
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();                // home: chat a is not the open chat
   ctx.panel.pushServerFrame({ type: 'ask-done', threadId: 'ask_0000000a', messageId: 'askm_0000000a', seq: 3 });
   assert.deepEqual(calls, [], 'Chat is on screen: nothing unread');
   assert.equal(ctx.panel.unreadThreadId(), null);
@@ -489,7 +489,7 @@ test('an error that ends a reply in another chat this tab asked in lights the do
   ctx.doc.querySelector('[data-ask-send]').click();
   await ticks(ctx, 5);
   ctx.flush();
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   ctx.panel.close();
   ctx.panel.pushServerFrame({ type: 'ask-error', threadId: 'ask_0000000a', messageId: 'askm_0000000a', seq: 3, error: 'boom' });
   assert.deepEqual(calls, [true]);
@@ -832,9 +832,9 @@ test('"Delete all chat history" puts out a Chat row dot lit by a chat it removed
     ctx.flush();
   };
   await send('first');                                                // chat a
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await send('second');                                               // chat b
-  ctx.doc.querySelector('[data-ask-new-btn]').click();                // home: neither chat is open
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();                // home: neither chat is open
   ctx.panel.close();
   const done = (threadId) => ({ type: 'ask-done', threadId, messageId: `askm_${threadId.slice(4)}`, seq: 3 });
   ctx.panel.pushServerFrame(done('ask_0000000a'));

@@ -508,7 +508,7 @@ test('ask-panel-card v2: the lane follows the run engine — Codex models only o
   ]);
 });
 
-test('ask-panel-card v2: nothing starts when the config write fails or the extras are refused (over 5 MB / unreadable) — refused before any config write', async () => {
+test('ask-panel-card v2: nothing starts when the config write fails or the extras are refused (over 100 MB / unreadable) — refused before any config write', async () => {
   await checkRows([
     { name: 'ask-panel-card v2: a failed config write shows inline and the run is NOT started', run: async () => {
       const rec = { configResponse: { ok: false, status: 400, json: async () => ({ error: 'model "claude-haiku-4-5" does not support effort "max"' }) } };
@@ -523,16 +523,16 @@ test('ask-panel-card v2: nothing starts when the config write fails or the extra
       assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'could not save Plan: model "claude-haiku-4-5" does not support effort "max"');
       assert.equal(ctx.doc.querySelector('[data-ask-card-start]').disabled, false);
     } },
-    { name: 'ask-panel-card v2: extras over 5 MB refuse inline BEFORE any config write; an unreadable attachment refuses inline', run: async () => {
+    { name: 'ask-panel-card v2: extras over 100 MB refuse inline BEFORE any config write; an unreadable attachment refuses inline', run: async () => {
       const rec = {};
-      const ctx = await openWithCard({ ...PROJECT_CARD, attachments: [{ id: 'att_00000001', name: 'big.md', bytes: 6 * 1024 * 1024, kind: 'text' }] }, rec);
+      const ctx = await openWithCard({ ...PROJECT_CARD, attachments: [{ id: 'att_00000001', name: 'big.pdf', bytes: 100 * 1024 * 1024 + 1, kind: 'binary' }] }, rec);
       const lane = await laneOf(ctx);
       const sel = lane.querySelector('.ask-rp-tile[data-node-id="n_plan"] .ask-rp-model');
       sel.value = 'claude-haiku-4-5';
       sel.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
-      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 5 MB — remove one');
+      assert.equal(ctx.doc.querySelector('.ask-card-err').textContent, 'attachments exceed 100 MB — remove one');
       assert.equal(rec.runBodies, undefined);
       assert.equal(rec.configWrites, undefined, 'the extras check runs first, so a refusal persists nothing');
       const rec2 = {};
@@ -639,7 +639,7 @@ test('workflow card: openComposer receives the workflowId; dropping the card (ne
   assert.deepEqual(opened, ['wf_x']);
   const graphObservers = ctx.resizeObservers.filter((o) => o.targets.some((t) => t.classList && t.classList.contains('ask-wfcard-graph')));
   assert.equal(graphObservers.length, 1, 'mountStaticGraph observed the graph host');
-  ctx.doc.querySelector('[data-ask-new-btn]').click();
+  ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   ctx.flush();
   assert.ok(graphObservers[0].disconnected, 'newThread pruned the card and destroyed the mount');
 });

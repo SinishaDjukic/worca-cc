@@ -72,7 +72,7 @@ const nodeSig = (stepper) => manifestNodes(stepper).map((n) => n.id).join(',');
 
 export function mountRunGraph(hostEl, opts = {}) {
   const { mode = 'monitor', doc = hostEl.ownerDocument, raf = null, viewport = null,
-    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, now = () => Date.now() } = opts;
+    onRowClick = null, onGateClick = null, onResultClick = null, nodeClicks = false, modelLabel = null, now = () => Date.now() } = opts;
   const wrap = hostEl.closest('.run-flow-wrap') || hostEl.parentElement || hostEl;
   const win = doc.defaultView || globalThis;
   const isStatic = mode === 'static', isFocus = mode === 'focus', isCard = mode === 'card';
@@ -280,7 +280,11 @@ export function mountRunGraph(hostEl, opts = {}) {
     // A focus host renders its cards as the static one does: look, don't touch. A card host is a pannable stage:
     // the view's monitor mode (cards take pointer events; the nav binds drag + ⌘/ctrl-wheel zoom).
     view = createGraphView(hostEl, { mode: isFocus ? 'static' : isCard ? 'monitor' : mode, doc, raf, viewport,
-      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax });
+      portsFn: manifestPortsFn(stepper), agents: manifestAgents(stepper), zoomMin, zoomMax,
+      // The label row names the model the step RAN with: the manifest cell's resolved `model`
+      // (project node pick > team default > authored), not the template's authored config.model.
+      modelOf: (node) => (manifestNodes(stepper).find((n) => n.id === node.id) || {}).model || (node.config && node.config.model) || '',
+      modelLabel });
     // The view never auto-binds a nav: monitor hosts ask for one. There is no
     // engagement state any more — a plain wheel is always the page's (D2) — and
     // onTransform is how a wheel zoom or a drag repaints the cluster.

@@ -86,6 +86,7 @@ import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
+import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -1400,14 +1401,18 @@ app.use('/api/ask/threads/:id', (req, res, next) => {
 });
 
 // Ask attachments ride base64 inside the message JSON (§7.3), and a binary
-// attachment (#398) may legitimately be 32 MB — far past the app-wide 8mb cap
+// attachment (#398) may legitimately be 100 MB — far past the app-wide 8mb cap
 // below. Registered BEFORE the global parser on the ONE route that carries
 // uploads (a body parsed here is skipped there): every other ask route reads a
 // string field or nothing and keeps the 8mb window. The window is
 // maxBytesPerMessage at base64's 4/3 inflation plus 1 MiB for the text and
 // context, so any upload the composer lets through reaches the route's OWN
 // clear 400/413, not a raw parser error.
-app.post('/api/ask/threads/:id/messages', express.json({ limit: Math.ceil(ASK_LIMITS.attachment.maxBytesPerMessage * 4 / 3) + 1024 * 1024 }));
+const ASK_UPLOAD_JSON_LIMIT = Math.ceil(ASK_LIMITS.attachment.maxBytesPerMessage * 4 / 3) + 1024 * 1024;
+app.post('/api/ask/threads/:id/messages', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
+// A run's extra files ride base64 in /api/run too: the chat run card sends up to a message's worth of
+// attachments (ask-panel.mjs RP_EXTRAS_MAX_BYTES), and the New Pipeline form uploads its extras the same way.
+app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 // A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
 // spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
@@ -2017,6 +2022,17 @@ const startRunHandler = async (req, res) => {
       askLink = { threadId: body.askThreadId, cardId: body.askCardId };
     }
 
+    // Run on the source branch: an explicit boolean, validated before a schedule stores it.
+    if (body.sameAsSource !== undefined && body.sameAsSource !== null && typeof body.sameAsSource !== 'boolean') {
+      return badRequest(res, 'sameAsSource must be true or false');
+    }
+    // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
+    // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
+    // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
+    if (body.sameAsSource !== true && typeof body.featureBranch === 'string' && typeof body.sourceBranch === 'string'
+      && body.featureBranch.trim() && body.featureBranch.trim() === body.sourceBranch.trim()) {
+      return badRequest(res, `the new branch and the source branch are both "${body.sourceBranch.trim()}": to commit onto it, set sameAsSource (Run on the source branch); otherwise name another branch`);
+    }
     // Scheduled runs: `scheduledFor` (one-shot) and/or `repeat` (recurring) turn this
     // request into a TICKET instead of a run. Parsed here so a bad time is a clean 400
     // before anything else; everything below still validates the request, so a schedule
@@ -2177,12 +2193,17 @@ const startRunHandler = async (req, res) => {
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
+    // Run on the source branch (explicit flag — never inferred from feature === source): the run
+    // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
+    // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
+    const sameAsSource = body.sameAsSource === true && !scanTarget && !memoryScope;
     const branch = {
       source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
         ? body.sourceBranch.trim() : null,
-      feature: typeof body.featureBranch === 'string' && body.featureBranch.trim()
+      feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
+      ...(sameAsSource ? { sameAsSource: true } : {}),
     };
     const syncBody = {
       before: typeof body.syncBeforeStart === 'boolean' ? body.syncBeforeStart : null,         // null = project default
@@ -2529,7 +2550,7 @@ const startRunHandler = async (req, res) => {
         broadcast(event);
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); });
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -2992,6 +3013,8 @@ async function fireTicket(ticket) {
     if (p.state === 'waiting' && !ticket.forced) return { ok: false, error: 'the run before it is still going', transient: true };
     if (ticket.sourceFromPrevious) {
       const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      // Backstop only: the gate already waits for a merge back (pipelineGate). A FORCED ticket skips the gate.
+      if (prev && prev.pending) return { ok: false, error: 'the run before it is still merging its work back', transient: true };
       if (!prev) return { ok: false, error: 'the run before it left no branch to start from', transient: false };
       if (prev.sourceBranch) {
         if (!(await isValidSourceRef(ticket.projectDir, prev.sourceBranch))) return { ok: false, error: `branch ${prev.sourceBranch} no longer exists`, transient: false };
@@ -3011,8 +3034,9 @@ async function fireTicket(ticket) {
       Object.assign(body, prev);
     }
   }
-  // Every occurrence of a series needs its own feature branch.
-  if (ticket.scheduleId && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
+  // Every occurrence of a series needs its own feature branch — except a run on its source branch,
+  // which has none of its own (the server ignores featureBranch for it).
+  if (ticket.scheduleId && body.sameAsSource !== true && typeof body.featureBranch === 'string' && body.featureBranch.trim()) {
     const s = getSchedule(ticket.scheduleId);
     const day = (s && s.tz ? localDate(Date.parse(ticket.runAt), s.tz) : ticket.runAt.slice(0, 10)).replace(/-/g, '');
     body.featureBranch = `${body.featureBranch.trim()}-${day}`;
@@ -3032,6 +3056,18 @@ async function fireTicket(ticket) {
 function liveProbe({ id, pipelineId }) {
   const e = liveRunEntry(id) || (pipelineId ? liveRunEntry(pipelineId) : null);
   return !!e && !SETTLED_RUN.has(String(e.status || ''));
+}
+
+// Run on the source branch: the merge back happens in teardown, AFTER `done` — the history row a client
+// fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
+// orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
+const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
+function afterRunSettled(orch) {
+  try {
+    if (!ranMergeBack(orch.getState())) return;
+    emitChanged('pipelines-changed', 'updated');
+    setTimeout(() => { void schedulerTick(); }, 0);
+  } catch { /* a refresh hint only */ }
 }
 
 let _schedulerBusy = false;
@@ -3415,7 +3451,11 @@ async function scheduleVerb(verb, id, body = {}, { by = null } = {}) {
   if (verb === 'run-now') {
     if (found.kind === 'once' && found.item.after && found.item.sourceFromPrevious) {
       const p = predecessorState(found.item.after, { policy: found.item.after.policy, isLive: liveProbe });
-      if (!p.pipelineId || !previousBranchesOf(p.pipelineId)) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+      const prev = p.pipelineId ? previousBranchesOf(p.pipelineId) : null;
+      if (!prev) return out(409, { error: `Start ‘${p.title || 'the run before it'}’ first, or change its source branch` });
+      // A run on its source branch is still merging back: a forced ticket would skip the gate and hit fireTicket's
+      // transient backstop, i.e. a retry_at of ≥ 1 min. Say so now instead.
+      if (prev.pending) return out(409, { error: `‘${p.title || 'the run before it'}’ is still merging its work back — try again in a moment` });
     }
     const ticket = found.kind === 'recurring' ? runScheduleNow(found.item.id, { by: by || undefined }) : requestRunNow(found.item.id, { by: by || undefined });
     if (!ticket) return out(409, { error: `this ${found.kind === 'recurring' ? 'schedule' : 'run'} is ${found.item.status} and cannot be started` });
@@ -4317,7 +4357,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       entry.events.push(event);
       broadcast(event);
     })
-    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); });   // #620, as /api/run's
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }
@@ -6983,6 +7023,15 @@ app.post('/api/pr', async (req, res) => {
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
   const { id, state } = resolved;
+  // A run on its source branch that merged back has no PR: its work is ON the base (head == base) and
+  // ships with Push. One that did NOT merge back keeps its work on its own branch: that opens a PR
+  // like any other run (prTargetFor: hidden branch → source). Still settling (no outcome yet): wait.
+  const sameBr = (body.memberKey && state.branches && state.branches[body.memberKey]) || state.branch;
+  if (sameBr && sameBr.sameAsSource === true && sameBr.mergeBack?.merged !== false) {
+    return res.status(409).json({ error: sameBr.mergeBack?.merged === true
+      ? 'this run\'s work is already on its source branch — push the source instead of opening a pull request'
+      : 'this run is still merging its work back into the source branch — try again in a moment' });
+  }
 
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
@@ -7267,6 +7316,33 @@ app.post('/api/runs/:id/publish', async (req, res) => {
   }
   emitChanged('pipelines-changed', 'updated');
   res.json({ ok: true, remote: pushRemote, branch: feature, sha: tips.local, upToDate, ...(memberKey ? { memberKey } : {}) });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/push { projectKey | projectDir, id } -> { ok, remote, branch }
+// The shipping action of a run on its source branch (branch.sameAsSource): no PR (head == base), so
+// push the source — which the run fast-forwarded onto its work — to the remote it syncs from.
+// Single-project runs only (a workspace run's state.branch is just its primary member).
+app.post('/api/push', async (req, res) => {
+  const resolved = await resolvePrPipeline(req.body || {}, res);
+  if (!resolved) return;
+  const { id, state } = resolved;
+  const b = state.branch || {};
+  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here — open a pull request instead' });
+  if (state.target === 'workspace') return res.status(409).json({ error: 'a workspace run is pushed per project by hand (see its merge-back banner)' });
+  // isSafeBranchName: setup already refused any other source; this keeps an edited record out of git's argv.
+  if (!state.projectDir || !b.source || !isSafeBranchName(b.source)) return badRequest(res, 'pipeline has no branch info to push');
+  if (!(b.mergeBack && b.mergeBack.merged === true)) {
+    return res.status(409).json({ error: `the run's work is not on ${b.source} (not merged back) — merge it by hand first` });
+  }
+  // The run's sync remote — validated like the branch (the record's value ends up in git's argv).
+  const remote = isSafeRemoteName(b.sync?.remote) ? b.sync.remote
+    : (effectiveSyncSettings(projectKey(state.projectDir)).remote || 'origin');
+  const pushed = await pushBranch(state.projectDir, b.source, remote);
+  if (!pushed.ok) return res.status(500).json({ error: `git push failed: ${pushed.stderr}` });
+  const by = actorOf(req);
+  appendAuditById(state.id || id, `Pushed \`${b.source}\` to \`${remote}\`${byActor(by)}.`, { actor: by });
+  res.json({ ok: true, remote, branch: b.source });
 });
 
 // ---------------------------------------------------------------------------
@@ -8006,6 +8082,12 @@ async function requireFsAllowed(req, res, paths) {
   }
   return true;
 }
+// GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
+// one: the Add project dialog opens on Clone from URL when not. Never on a hosted worca (the dialog
+// would open on the server, not on the viewer's screen).
+app.get('/api/fs/pick-folder', (req, res) => {
+  res.json({ available: !REMOTE_MODE && nativeDialogAvailable() });
+});
 app.post('/api/fs/pick-folder', async (req, res) => {
   try {
     // Limited: a native dialog would open on the server with the whole disk in it; the UI
@@ -11221,7 +11303,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
     // The decoded binary bodies are on disk now. `files` is captured by this
     // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
-    // turn plus jobGraceMs, so up to 48 MB of dead Buffers would otherwise stay
+    // turn plus jobGraceMs, so up to 100 MB of dead Buffers would otherwise stay
     // reachable per running thread.
     for (const f of files) f.data = null;
     echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));
@@ -11537,6 +11619,70 @@ app.post('/api/ask/threads/:id/stop', (req, res) => {
     try { job.turn.stop(); } catch { /* best-effort */ }
   }
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pinpoint  -> Pinpoint (#669): Explain / Alternatives on a selected span.
+// Body {action:'explain'|'alternatives', quote, context?, surface?, source?}. 200 is NDJSON, one object per line:
+// {type:'delta', text} (Explain, streamed) · {type:'alternatives', alternatives} · {type:'done'} · {type:'error', error}.
+// A one-shot, no-tools call on the Ask slot's Claude model; the request closing aborts it. Nothing is stored.
+// ---------------------------------------------------------------------------
+const PINPOINT_MAX_IN_FLIGHT = 4;
+let pinpointInFlight = 0;
+const PINPOINT_MOCK = {
+  explain: 'This is a mock explanation: with WORCA_MOCK set no model is called. In a real session this popover streams a short answer about the selected text.',
+  alternatives: [
+    { title: 'Narrow it', detail: 'Do only the part the rest depends on now, and follow up with the rest.', tradeoffs: [{ tone: 'ok', text: 'Smaller change' }, { tone: 'warn', text: 'Follow-up needed' }] },
+    { title: 'Drop it', detail: 'Leave it out and see whether anyone misses it.', tradeoffs: [{ tone: 'ok', text: 'Least work' }, { tone: 'bad', text: 'May come back' }] },
+    { title: 'Put it behind a flag', detail: 'Keep it, but off by default behind a setting.', tradeoffs: [{ tone: 'ok', text: 'Easy to undo' }, { tone: 'warn', text: 'One more setting' }] },
+  ],
+};
+app.post('/api/pinpoint', async (req, res) => {
+  const v = validatePinpointInput(req.body);
+  if (!v.ok) return badRequest(res, v.error);
+  const budget = budgetStatus();
+  if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
+  if (pinpointInFlight >= PINPOINT_MAX_IN_FLIGHT) return res.status(429).json({ error: `at most ${PINPOINT_MAX_IN_FLIGHT} Pinpoint answers may run at once` });
+  const mock = mockEnabled({});
+  let model;
+  try { model = resolveSetting('models.claude.ask').value?.model || undefined; } catch { model = undefined; }
+  if (!mock) {
+    const refusal = await brokerStartRefusal(req, [String(model || '')]);
+    if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
+  }
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  const send = (o) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
+  if (mock) {
+    if (v.value.action === 'explain') send({ type: 'delta', text: PINPOINT_MOCK.explain });
+    else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
+    send({ type: 'done' });
+    return res.end();
+  }
+  const ac = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) ac.abort(); });
+  pinpointInFlight += 1;
+  try {
+    const out = await runPinpoint(v.value, {
+      cwd: pinpointCwd(worcaHome()),
+      model,
+      signal: ac.signal,
+      onDelta: (text) => send({ type: 'delta', text }),
+    });
+    if (out.alternatives) send({ type: 'alternatives', alternatives: out.alternatives });
+    send({ type: 'done' });
+  } catch (err) {
+    if (!ac.signal.aborted) {
+      const msg = err && err.message ? err.message : String(err);
+      send({ type: 'error', error: await failedBecauseSignedOut({ message: msg }) ? CLAUDE_SIGNED_OUT_MESSAGE : msg });
+    }
+  } finally {
+    pinpointInFlight -= 1;
+    if (!res.writableEnded) res.end();
+  }
 });
 
 // Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows

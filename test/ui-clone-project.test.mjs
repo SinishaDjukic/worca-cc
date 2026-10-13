@@ -26,7 +26,9 @@ class WSStub {
 
 const json = (status, body) => Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body });
 
-async function boot({ pick = 'unsupported', clone } = {}) {
+// `picker`: GET /api/fs/pick-folder's answer (can a native dialog open here); `pick`: what the dialog
+// itself answers when Choose folder… opens it (POST).
+async function boot({ picker = false, pick = 'unsupported', clone } = {}) {
   let projects = [{ name: 'alpha', path: '/data/projects/alpha', exists: true, key: 'alpha-00000001' }];
   const calls = [];
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4321/' }));
@@ -38,7 +40,10 @@ async function boot({ pick = 'unsupported', clone } = {}) {
   window.fetch = (url, opts = {}) => {
     const u = String(url);
     calls.push({ u, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null });
-    if (u.includes('/api/fs/pick-folder')) return json(200, { status: pick });
+    if (u.includes('/api/fs/pick-folder')) {
+      if ((opts.method || 'GET') === 'GET') return json(200, { available: picker });
+      return json(200, pick === 'picked' ? { status: 'picked', path: '/Users/me/dev/cool' } : { status: pick });
+    }
     if (u.includes('/api/projects/clone')) {
       const r = clone && clone(u, opts, { setProjects: (p) => { projects = p; } });
       if (r) return r;
@@ -70,24 +75,29 @@ async function openAdd(window, doc) {
   await tick(); await tick();
 }
 
-test('Add project opens on Clone without a folder picker, on Folder with a picked path, and the tabs switch panes', async () => {
+const pickerOpens = (calls) => calls.filter((c) => c.u.includes('/api/fs/pick-folder') && c.method === 'POST').length;
+
+test('Add project opens the dialog first: Clone without a folder picker, Folder with one, and the tabs switch panes (#649)', async () => {
   await checkRows([
     { name: 'no folder picker (container/hosted): Add project opens on Clone from URL', run: async () => {
-      const { window, doc } = await boot({ pick: 'unsupported' });
+      const { window, doc, calls } = await boot({ picker: false });
       await openAdd(window, doc);
       assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false);
       assert.equal(selected(doc), 'clone');
       assert.equal($(doc, '#proj-add-clone-pane').hidden, false);
       assert.equal($(doc, '#proj-add-folder-pane').hidden, true);
       assert.equal($(doc, '#proj-add-save').textContent, 'Clone and add');
+      assert.equal(pickerOpens(calls), 0);
     } },
-    { name: 'a picked folder opens on the Folder tab, and the tabs switch panes', run: async () => {
-      const { window, doc } = await boot({ pick: 'picked' });
-      window.fetch = ((orig) => (u, o) => (String(u).includes('pick-folder') ? json(200, { status: 'picked', path: '/Users/me/dev/cool' }) : orig(u, o)))(window.fetch);
-      globalThis.fetch = window.fetch;
+    { name: 'a folder picker here: the dialog opens on Folder without opening the picker, and the tabs switch panes', run: async () => {
+      const { window, doc, calls } = await boot({ picker: true, pick: 'picked' });
       await openAdd(window, doc);
+      assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false);
+      assert.equal(pickerOpens(calls), 0, 'the OS folder picker waits for Choose folder…');
       assert.equal(selected(doc), 'folder');
-      assert.equal($(doc, '#proj-add-path').value, '/Users/me/dev/cool');
+      assert.equal($(doc, '#proj-add-path').value, '');
+      assert.equal($(doc, '#proj-add-msg').textContent, '', 'no "picker unavailable" hint where one exists');
+      assert.equal($(doc, '#proj-add-tab-clone').disabled, false);
       click(window, $(doc, '#proj-add-tab-clone'));
       assert.equal(selected(doc), 'clone');
       assert.equal($(doc, '#proj-add-folder-pane').hidden, true);
@@ -95,7 +105,40 @@ test('Add project opens on Clone without a folder picker, on Folder with a picke
       assert.equal(selected(doc), 'folder');
       assert.equal($(doc, '#proj-add-save').textContent, 'Add project');
     } },
+    { name: 'Choose folder… opens the picker and fills the folder and the name', run: async () => {
+      const { window, doc, calls } = await boot({ picker: true, pick: 'picked' });
+      await openAdd(window, doc);
+      click(window, $(doc, '#proj-add-browse'));
+      await tick(); await tick();
+      assert.equal(pickerOpens(calls), 1);
+      assert.equal($(doc, '#proj-add-path').value, '/Users/me/dev/cool');
+      assert.equal($(doc, '#proj-add-name').value, 'cool');
+      assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false);
+    } },
   ]);
+});
+
+test('cancelling the folder picker keeps the dialog open, and the repository can still be cloned without a folder (#649)', async () => {
+  const { window, doc, calls, ws } = await boot({
+    picker: true, pick: 'canceled',
+    clone: (u, o) => (o.method === 'POST' ? json(202, { jobId: 'cln_00000003', job: { id: 'cln_00000003', state: 'running' } }) : json(200, { job: { id: 'cln_00000003', state: 'running' } })),
+  });
+  await openAdd(window, doc);
+  click(window, $(doc, '#proj-add-browse'));
+  await tick(); await tick();
+  assert.equal(pickerOpens(calls), 1);
+  assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), false, 'a cancel closes only the picker');
+  assert.equal($(doc, '#proj-add-path').value, '');
+  click(window, $(doc, '#proj-add-tab-clone'));
+  type(window, $(doc, '#proj-clone-url'), 'https://github.com/acme/api');
+  click(window, $(doc, '#proj-add-save'));
+  await tick(); await tick();
+  const post = calls.find((c) => c.u.endsWith('/api/projects/clone') && c.method === 'POST');
+  assert.deepEqual(post && post.body, { url: 'https://github.com/acme/api' });
+  assert.match($(doc, '#proj-add-msg').textContent, /^Cloning https:\/\/github\.com\/acme\/api …$/);
+  ws._msg({ type: 'clone-changed', job: { id: 'cln_00000003', state: 'done', project: { name: 'api', path: '/data/projects/api' } } });
+  await tick(); await tick();
+  assert.equal($(doc, '#project-add-modal').classList.contains('hidden'), true, 'the clone lands and the dialog closes');
 });
 
 test('clone form: host-neutral credential copy; the folder placeholder is the folder planClone will create (n9)', async () => {

@@ -27,7 +27,8 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
-import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
+import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 
@@ -285,6 +286,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
+    quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
     subscribedFor: null,
     elapsedTimer: null,
@@ -436,6 +438,23 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
+  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
+   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
+   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
+   *  room and newThread() can focus its composer. */
+  function newChatButton(className) {
+    const b = make('button', `ask-icon-btn chat-new-btn ${className}`);
+    b.type = 'button';
+    b.setAttribute('data-ask-new-btn', '');
+    b.appendChild(svgIcon(ICONS.plus, 14, 2));
+    b.appendChild(make('span', null, 'New chat'));
+    b.addEventListener('click', () => {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();
+      route(null);
+    });
+    return b;
+  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -475,9 +494,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    const newBtn = iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, () => { newThread(); route(null); });
-    newBtn.setAttribute('data-ask-new-btn', '');
-    head.appendChild(newBtn);
+    head.appendChild(newChatButton('chat-head-btn'));
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -538,7 +555,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function renderChips() {
     el.chips.replaceChildren();
-    el.chips.hidden = !st.pendingFiles.length;
+    el.chips.hidden = !st.pendingFiles.length && !st.quote;
+    if (st.quote) el.chips.appendChild(buildQuoteChip(st.quote));
     for (const f of st.pendingFiles) {
       const chip = make('span', 'ask-chip');
       if (f.attKind === 'image' && f.dataBase64) {
@@ -561,6 +579,45 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       chip.appendChild(x);
       el.chips.appendChild(chip);
     }
+  }
+
+  /** Pinpoint (#669): the quote the next message carries — a card above the attachments, removable. */
+  function buildQuoteChip(q) {
+    const chip = make('div', 'ask-chip ask-chip-quote');
+    chip.setAttribute('role', 'group');
+    chip.setAttribute('aria-label', 'Quoted text');
+    const m = make('div', 'ask-chip-quote-m');
+    m.append(make('div', 'ask-chip-quote-k', q.src ? `From ${q.src}` : 'Quoting'), make('div', `ask-chip-quote-t${q.code ? ' mono' : ''}`, q.text));
+    const x = make('button', 'ask-chip-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Remove quote');
+    x.addEventListener('click', () => { setQuote(null); focusComposer(); });
+    chip.append(m, x);
+    return chip;
+  }
+
+  /** Set (or clear, with null) the quote the next message carries. */
+  function setQuote(q) {
+    if (st.destroyed) return false;
+    const text = q && typeof q.text === 'string' ? q.text.trim() : '';
+    st.quote = text ? { text, ...(q.src ? { src: String(q.src) } : {}), ...(q.code ? { code: true } : {}) } : null;
+    renderChips();
+    return !!st.quote;
+  }
+
+  /**
+   * Pinpoint's chat actions (Disagree, Use this, Go deeper): quote `quote` and send `text` at once. A draft already in
+   * the composer is never sent along — the quote and the text are added to it instead and wait for the user.
+   */
+  function sendQuoted({ quote, text }) {
+    const add = String(text ?? '').trim();
+    if (!add || st.destroyed) return false;
+    setQuote(quote);
+    if (el.input.value.trim() || (st.model && st.model.live())) { appendToComposer(add); return false; }
+    el.input.value = add;
+    fitInput();
+    Promise.resolve().then(() => sendMessage()).catch(() => false).then((ok) => { if (!ok) focusComposer(); });
+    return true;
   }
 
   async function addFiles(fileList) {
@@ -834,6 +891,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.sending || st.destroyed) return false;
     let text = el.input.value.trim();
     if (!text) return false;
+    // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
+    const quoted = st.quote;
+    if (quoted) text = formatQuotedMessage(quoted, text);
     // A chat is still loading (a History pick, Back to a chat): the send would land in the chat being left — or, from
     // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
     // the add-ons (a direction would reach the run of the chat being left).
@@ -849,6 +909,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.destroyed) return false;
       if (taken === 'keep') { updateSendStop(); return true; }
       if (taken) {
+        if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
         updateSendStop();
@@ -936,6 +997,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.input.value = '';
       fitInput();                                    // a programmatic clear fires no input event
       st.pendingFiles = [];
+      if (st.quote === quoted) st.quote = null;
       renderChips();
       subscribe(id);
       st.pinned = true;
@@ -1396,6 +1458,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(el.historyMeter);
     head.appendChild(buildHistorySearch());
     aside.appendChild(head);
+    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
+    aside.appendChild(newChatButton('chat-history-new'));
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
     syncHistorySearch();
@@ -2812,12 +2876,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return null;
   }
   const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
-  const RP_EXTRAS_MAX_BYTES = 5 * 1024 * 1024;   // D3: the JSON body cap is 8 MB and base64 grows by a third
+  // D3: as much as one message may carry; /api/run's JSON window (ui/server.mjs) is sized for it at base64's 4/3
+  const RP_EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
   /** The pills as /api/run extras. {extras} or {error}. */
   async function collectCardExtras(local) {
     const pills = local.pills || [];
     if (!pills.length) return { extras: [] };
-    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: 'attachments exceed 5 MB — remove one' };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB — remove one` };
     const extras = [];
     for (const p of pills) {
       let res = null;
@@ -3969,6 +4034,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
 
+    // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
+    const sameSrc = doc.createElement('input');
+    sameSrc.type = 'checkbox';
+    sameSrc.className = 'ask-card-same-source';
+    sameSrc.checked = card.sameAsSource === true;
+    sameSrc.setAttribute('aria-label', 'Run on the source branch');
+    feature.disabled = sameSrc.checked;
+    // updateTargetSub is a function declaration further down in this same scope (hoisted).
+    sameSrc.addEventListener('change', () => { feature.disabled = sameSrc.checked; updateTargetSub(); });
+    // The card header names the feature branch: never a typed name the run will ignore.
+    const featureWord = () => (sameSrc.checked ? 'none (source branch)' : (feature.value.trim() || 'auto'));
+
     const err = make('div', 'ask-card-err');
     rootEl.appendChild(err);
 
@@ -4056,12 +4133,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const projSel = rootEl.querySelector('.ask-card-project-select');
         const srcSel = rootEl.querySelector('.ask-card-source');
         const name = projSel && projSel.selectedOptions[0] ? projSel.selectedOptions[0].textContent : (card.projectName || '');
-        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${name} · branch ${(srcSel && srcSel.value) || 'current'} · feature ${featureWord()}`;
       } else {
         const wsSel = rootEl.querySelector('.ask-card-workspace-select');
         const row = opts && wsSel && opts.workspaces.find((w) => w && w.id === wsSel.value);
         const n = row && Array.isArray(row.projectKeys) ? row.projectKeys.length : (Array.isArray(card.members) ? card.members.length : 0);
-        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${feature.value.trim() || 'auto'}`;
+        targetSub.textContent = `${(row && row.name) || card.workspaceName || 'workspace'} · ${n} member${n === 1 ? '' : 's'} · feature ${featureWord()}`;
       }
     }
     feature.addEventListener('input', updateTargetSub);
@@ -4088,7 +4165,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           updateTargetSub();
         });
         grid.append(rpField('Project', projSel), lvTag(srcField, 'advanced', !!card.sourceBranch),
-          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch));
+          lvTag(rpField('Feature branch', feature, 'created for the run'), 'advanced', !!card.featureBranch),
+          lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
         targetHost.appendChild(grid);
         updateTargetSub();
         return;
@@ -4129,7 +4207,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const wsField = rpField('Workspace', wsSel);
       wsField.appendChild(members);
       grid.append(wsField, lvTag(rpField('Source branch', srcInput, 'default for members'), 'advanced', !!card.sourceBranch),
-        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch));
+        lvTag(rpField('Feature branch', feature), 'advanced', !!card.featureBranch),
+        lvTag(rpField('Run on the source branch', sameSrc, 'commits onto the source branch'), 'advanced', !!card.sameAsSource));
       targetHost.appendChild(grid);      // attach BEFORE filling: renderMembers → updateTargetSub finds the select through rootEl
       targetHost.appendChild(details);
       if (opts) {
@@ -4219,7 +4298,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       };
     }
     const feature = rootEl.querySelector('.ask-card-feature').value.trim();
-    if (feature) body.featureBranch = feature;
+    const same = rootEl.querySelector('.ask-card-same-source');
+    if (same && same.checked) body.sameAsSource = true;   // the run auto-names its hidden branch
+    else if (feature) body.featureBranch = feature;
     if (local.target === 'workspace') {
       body.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -4345,6 +4426,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       memoryScope: card.memoryScope || null,
       engine: (rootEl.querySelector('.ask-card-engine') || {}).value || null,
     };
+    if ((rootEl.querySelector('.ask-card-same-source') || {}).checked) p.sameAsSource = true;
     if (local.target === 'workspace') {
       p.workspaceId = rootEl.querySelector('.ask-card-workspace-select').value;
       const src = rootEl.querySelector('.ask-card-source-input');
@@ -4970,8 +5052,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (synthetic.length) {
         for (const b of synthetic) wrap.appendChild(buildNotice(b));
       } else {
-        const bubble = make('div', 'ask-user-bubble', row.text || '');
-        wrap.appendChild(bubble);
+        // Pinpoint (#669): a message that opens with a blockquote shows it as a quote card above the bubble.
+        const { quote, rest } = parseQuotedMessage(row.text || '');
+        if (quote) {
+          const card = make('div', 'ask-user-quote');
+          card.append(make('div', 'ask-user-quote-h', quote.src ? `From ${quote.src}` : 'Quoted'), make('div', 'ask-user-quote-t', quote.text));
+          wrap.appendChild(card);
+        }
+        if (!quote || rest) wrap.appendChild(make('div', 'ask-user-bubble', quote ? rest : (row.text || '')));
         const atts = (row.blocks || []).filter((b) => b && b.kind === 'attachment');
         if (atts.length) {
           const pills = make('div', 'extras-pills ask-user-pills');
@@ -5562,6 +5650,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     unreadThreadId: () => (st.unread ? st.unreadThread : null),
     contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
     appendToComposer,
+    setQuote,
+    sendQuoted,
     pushServerFrame,
     onHello,
     ownsKey,
