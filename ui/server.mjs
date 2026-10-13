@@ -7861,6 +7861,12 @@ async function requireFsAllowed(req, res, paths) {
   }
   return true;
 }
+// GET answers whether "Choose folder…" can open a native dialog for the viewer, without opening
+// one: the Add project dialog opens on Clone from URL when not. Never on a hosted worca (the dialog
+// would open on the server, not on the viewer's screen).
+app.get('/api/fs/pick-folder', (req, res) => {
+  res.json({ available: !REMOTE_MODE && nativeDialogAvailable() });
+});
 app.post('/api/fs/pick-folder', async (req, res) => {
   try {
     // Limited: a native dialog would open on the server with the whole disk in it; the UI

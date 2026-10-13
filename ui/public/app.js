@@ -9290,7 +9290,7 @@ function openWsAddMembers(id) {
     body.appendChild(row);
   }
   // The header's Close is the way out; the one action adds the picks, or — with nothing to pick —
-  // leads to the Projects page and starts its own Add project flow (folder picker / clone).
+  // leads to the Projects page and opens its Add project dialog (a folder or a clone).
   const actions = candidates.length ? [['Add', 'btn btn-primary btn-mini', async () => {
     if (!chosen.size) return;
     const r = await postWsMembers(id, { add: [...chosen] });
@@ -10942,7 +10942,7 @@ if (typeof window !== 'undefined') {
 
 // ---------------------------------------------------------------------------
 // Projects management view (sidebar peer of Workspaces / Agents).
-// Read-only list of {name, path, exists}; add via native picker, delete via a
+// Read-only list of {name, path, exists}; add via the Add project dialog, delete via a
 // custom confirm modal. Shares state.projects with the New-pipeline dropdown.
 // ---------------------------------------------------------------------------
 
@@ -10971,6 +10971,18 @@ async function pickFolder(purpose = 'project', { multiple = false } = {}) {
     return await safeJson(res); // {status:'picked',path,paths?} | {status:'canceled'} | {status:'unsupported'} | {status:'busy'}
   } catch {
     return { status: 'unsupported' };
+  }
+}
+
+// Whether a native folder picker can open for this viewer, asked without opening one; never throws
+// (no answer counts as no picker).
+async function folderPickerAvailable() {
+  try {
+    const res = await fetch('/api/fs/pick-folder');
+    const data = await safeJson(res);
+    return res.ok && !!data && data.available === true;
+  } catch {
+    return false;
   }
 }
 
@@ -12365,7 +12377,7 @@ async function deleteProject(p, errEl = null) {
   }
 }
 
-// ---- Add project (native picker first, manual fallback in the modal) --------
+// ---- Add project (the dialog first: a folder, picked or typed, or a clone) --------
 // NOTE: kind may be 'err' (maps to the existing .hint.err rule) or omitted.
 // There is no .hint.warn rule, so informational hints pass NO kind (default
 // neutral .hint styling) — do not pass 'warn'.
@@ -12388,10 +12400,7 @@ function openProjectAddModal(path, { mode = 'folder' } = {}) {
   setProjAddMode(mode);
   // A clone still in flight from an earlier open keeps its progress line.
   if (cloneFollow) { setProjAddMode('clone'); setProjAddMsg(`Cloning ${cloneFollow.url} …`); lockCloneForm(true); return; }
-  // Informational hint only when there is no path (manual-entry fallback);
-  // neutral default .hint styling (no .hint.warn class exists).
   if (mode === 'folder') {
-    setProjAddMsg(path ? '' : 'Native folder picker unavailable — enter the project folder path, or browse with Choose folder….');
     el.projAddName.focus();
     el.projAddName.select();
   }
@@ -12502,18 +12511,11 @@ function closeProjectAddModal() {
   el.projectAddModal.classList.add('hidden');
 }
 
+// The dialog first (#649): its Folder tab's Choose folder… opens the native picker, and Clone from URL
+// needs no folder at all. No folder picker here (a container or hosted worca): the repository is the way in.
 async function addProjectFlow() {
   setProjectsMsg('');
-  const data = await pickFolder('project', { multiple: true });
-  if (data && data.status === 'picked') {
-    const paths = pickedPaths(data);
-    if (paths.length) { projectsViewPicks(paths); return; }   // one -> Add dialog, several -> review
-  }
-  if (data && data.status === 'canceled') return;                 // respect the cancel
-  if (data && data.status === 'busy') { setProjectsMsg('A folder dialog is already open — finish or cancel it first.', 'err'); return; }
-  // No folder picker at all (a container or hosted worca): the repository is the way in.
-  if (data && data.status === 'unsupported') { openProjectAddModal('', { mode: 'clone' }); return; }
-  openProjectAddModal('');                                        // error -> manual entry
+  openProjectAddModal('', { mode: (await folderPickerAvailable()) ? 'folder' : 'clone' });
 }
 
 async function saveProjectAdd() {
@@ -32092,14 +32094,14 @@ function gsHops(step, g) {
   switch (step) {
     case 'project':
       return [
-        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: a folder chooser opens — pick the project’s folder. Files on disk are never touched.'),
+        ...gsAddProjectHops(g, 'Projects live here: every run happens inside one of these folders.', 'Register a folder: the Add project dialog opens — give it the project’s folder. Files on disk are never touched.'),
         { id: 'row', info: true, nextLabel: 'Done', target: '#projects-list .pl-item',
           text: 'Your project. Runs happen inside this folder; open the row for its settings, memory and history.' },
       ];
     case 'run':
-      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, true)];
+      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, true)];
     case 'realRun':
-      return [...needProject('A run needs a project first.', 'Add one here: pick its folder in the chooser that opens.'), ...gsRunHops(g, false)];
+      return [...needProject('A run needs a project first.', 'Add one here: give the dialog that opens its folder.'), ...gsRunHops(g, false)];
     case 'ask': {
       // worca Chat: Ask Worca is the Chat page — its sidebar row first (a nav hop: the user's own click routes, so the
       // composer is never ringed on a page where it is not on screen), then the composer.
@@ -32168,7 +32170,7 @@ function gsHops(step, g) {
     case 'workspace': {
       const checked = () => document.querySelectorAll('#wiz-projects input:checked').length;
       return [
-        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: pick its folder in the chooser that opens.') : []),
+        ...(projects < 2 ? gsAddProjectHops(g, 'A workspace needs at least two projects.', 'Add another one here: give the dialog that opens its folder.') : []),
         NAV('workspaces', 'Workspaces live here.', ['workspace-create']),   // the wizard is part of the way
         { id: 'create', target: '#ws-create-btn', skipWhenMet: true, met: () => onView('workspace-create'),
           text: 'A workspace runs one task across several projects at once. Create one.' },
@@ -32186,7 +32188,7 @@ function gsHops(step, g) {
       // chip): first the row, then the tab pill, then the block — or, for a project with no origin
       // remote, the block that explains why, so the tour never lights nothing. The plan is re-derived
       // after every hop, so each readiness check looks at what is on screen now.
-      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const pre = needProject('Team metrics is enabled per project.', 'Add one here first: give the dialog that opens its folder.');
       const nav = NAV('projects', 'Team metrics is switched on per project, from its page here.');
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');
@@ -32227,7 +32229,7 @@ function gsHops(step, g) {
       // set. A project pointed at another home stays on its page, and the closing stop is the block
       // that now says so. `g.enabled` (the submit's click) carries the walk past the page hops,
       // because the routing leaves the page — and the checks that read it — behind.
-      const pre = needProject('A team policy is set per project.', 'Add one here first: pick its folder in the chooser that opens.');
+      const pre = needProject('A team policy is set per project.', 'Add one here first: give the dialog that opens its folder.');
       const nav = NAV('projects', 'A team policy is switched on per project, from its page here.', ['team-policy']);   // the new home's page is where it ends
       const pageOpen = () => !!projDetail;
       const teamTab = () => document.getElementById('pd-tab-team');

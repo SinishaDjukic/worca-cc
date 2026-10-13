@@ -108,3 +108,28 @@ test('POST /api/fs/pick-folder: multiple:true returns every path; a non-boolean 
     } },
   ]);
 });
+
+test('GET /api/fs/pick-folder says whether a native dialog can open here, and never opens one', async () => {
+  let opened = 0;
+  const runner = async () => { opened += 1; return { ok: true, stdout: `${fixture}\n`, stderr: '', code: 0, timedOut: false }; };
+  const available = async () => {
+    const r = await fetch(`${base}/api/fs/pick-folder`);
+    assert.equal(r.status, 200);
+    return r.json();
+  };
+  await checkRows([
+    { name: 'a desktop OS answers available', run: async () => {
+      dialogTesting.set({ platform: 'darwin', env: {}, runner });
+      assert.deepEqual(await available(), { available: true });
+    } },
+    { name: 'Linux without a display answers unavailable', run: async () => {
+      dialogTesting.set({ platform: 'linux', env: {}, runner });
+      assert.deepEqual(await available(), { available: false });
+    } },
+    { name: 'WORCA_NO_NATIVE_DIALOG=1 answers unavailable', run: async () => {
+      dialogTesting.set({ platform: 'darwin', env: { WORCA_NO_NATIVE_DIALOG: '1' }, runner });
+      assert.deepEqual(await available(), { available: false });
+    } },
+  ]);
+  assert.equal(opened, 0, 'asking never opens the dialog');
+});
