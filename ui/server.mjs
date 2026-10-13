@@ -86,6 +86,7 @@ import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
 import { describeTitleModel } from '../src/core/title.mjs';
+import { validatePinpointInput, runPinpoint, pinpointCwd } from '../src/core/pinpoint.mjs';
 import { effectiveHumanRateUsd } from '../src/core/human-rate.mjs';
 import {
   ASK_ID_RE, createThread as askCreateThread, getThread as askGetThread,
@@ -11316,6 +11317,70 @@ app.post('/api/ask/threads/:id/stop', (req, res) => {
     try { job.turn.stop(); } catch { /* best-effort */ }
   }
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/pinpoint  -> Pinpoint (#669): Explain / Alternatives on a selected span.
+// Body {action:'explain'|'alternatives', quote, context?, surface?, source?}. 200 is NDJSON, one object per line:
+// {type:'delta', text} (Explain, streamed) · {type:'alternatives', alternatives} · {type:'done'} · {type:'error', error}.
+// A one-shot, no-tools call on the Ask slot's Claude model; the request closing aborts it. Nothing is stored.
+// ---------------------------------------------------------------------------
+const PINPOINT_MAX_IN_FLIGHT = 4;
+let pinpointInFlight = 0;
+const PINPOINT_MOCK = {
+  explain: 'This is a mock explanation: with WORCA_MOCK set no model is called. In a real session this popover streams a short answer about the selected text.',
+  alternatives: [
+    { title: 'Narrow it', detail: 'Do only the part the rest depends on now, and follow up with the rest.', tradeoffs: [{ tone: 'ok', text: 'Smaller change' }, { tone: 'warn', text: 'Follow-up needed' }] },
+    { title: 'Drop it', detail: 'Leave it out and see whether anyone misses it.', tradeoffs: [{ tone: 'ok', text: 'Least work' }, { tone: 'bad', text: 'May come back' }] },
+    { title: 'Put it behind a flag', detail: 'Keep it, but off by default behind a setting.', tradeoffs: [{ tone: 'ok', text: 'Easy to undo' }, { tone: 'warn', text: 'One more setting' }] },
+  ],
+};
+app.post('/api/pinpoint', async (req, res) => {
+  const v = validatePinpointInput(req.body);
+  if (!v.ok) return badRequest(res, v.error);
+  const budget = budgetStatus();
+  if (budget.blocked) return res.status(403).json({ error: 'total cost limit reached', budget });
+  if (pinpointInFlight >= PINPOINT_MAX_IN_FLIGHT) return res.status(429).json({ error: `at most ${PINPOINT_MAX_IN_FLIGHT} Pinpoint answers may run at once` });
+  const mock = mockEnabled({});
+  let model;
+  try { model = resolveSetting('models.claude.ask').value?.model || undefined; } catch { model = undefined; }
+  if (!mock) {
+    const refusal = await brokerStartRefusal(req, [String(model || '')]);
+    if (refusal) return res.status(409).json({ error: refusal, code: 'credential-missing' });
+  }
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  const send = (o) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
+  if (mock) {
+    if (v.value.action === 'explain') send({ type: 'delta', text: PINPOINT_MOCK.explain });
+    else send({ type: 'alternatives', alternatives: PINPOINT_MOCK.alternatives });
+    send({ type: 'done' });
+    return res.end();
+  }
+  const ac = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) ac.abort(); });
+  pinpointInFlight += 1;
+  try {
+    const out = await runPinpoint(v.value, {
+      cwd: pinpointCwd(worcaHome()),
+      model,
+      signal: ac.signal,
+      onDelta: (text) => send({ type: 'delta', text }),
+    });
+    if (out.alternatives) send({ type: 'alternatives', alternatives: out.alternatives });
+    send({ type: 'done' });
+  } catch (err) {
+    if (!ac.signal.aborted) {
+      const msg = err && err.message ? err.message : String(err);
+      send({ type: 'error', error: await failedBecauseSignedOut({ message: msg }) ? CLAUDE_SIGNED_OUT_MESSAGE : msg });
+    }
+  } finally {
+    pinpointInFlight -= 1;
+    if (!res.writableEnded) res.end();
+  }
 });
 
 // Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows
