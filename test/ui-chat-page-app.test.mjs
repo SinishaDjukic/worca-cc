@@ -110,7 +110,7 @@ test('the address follows the chat: a first send replaces #chat with #chat/<id>;
   await settle();
   assert.equal(window.location.hash, `#chat/${TID}`, 'the chat you left');
   assert.ok(doc.querySelector('.nav button[data-nav="chat"]').classList.contains('active'));
-  doc.querySelector('[data-ask-new-btn]').click();
+  doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await settle();
   assert.equal(window.location.hash, '#chat');
   assert.equal(doc.querySelector('.chat-page').dataset.view, 'home');
@@ -176,7 +176,7 @@ test('the Chat row with the unread dot opens the chat whose reply is unread, not
   const B = 'ask_00000002';
   const done = (threadId) => ({ type: 'ask-done', text: 'ok', blocks: [], usage: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0 }, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {}, threadId, messageId: `askm_${threadId.slice(4)}`, seq: 3 });
   await send(doc, 'first');                                             // chat A
-  doc.querySelector('[data-ask-new-btn]').click();
+  doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await settle();
   await send(doc, 'second');                                            // chat B, the one Chat shows
   assert.equal(window.location.hash, `#chat/${B}`);
@@ -237,7 +237,7 @@ test('the first send SWAPS the address (no new history entry): Back never lands 
   await send(doc, 'hello');
   assert.equal(window.location.hash, `#chat/${TID}`);
   assert.equal(window.history.length, before, 'replaced, not pushed');
-  doc.querySelector('[data-ask-new-btn]').click();                      // New chat is pushed
+  doc.querySelector('.chat-head [data-ask-new-btn]').click();                      // New chat is pushed
   await settle();
   assert.equal(window.history.length, before + 1);
 });
@@ -260,7 +260,7 @@ test('Workflows Back returns to the chat the address was swapped to, even when a
     // B08: the first send's swap (#chat → #chat/<B>) moves Back's target
     const { window, doc, recv } = await boot();
     await send(doc, 'first');                                           // chat A
-    doc.querySelector('[data-ask-new-btn]').click();
+    doc.querySelector('.chat-head [data-ask-new-btn]').click();
     await settle();
     await send(doc, 'second');                                          // chat B, swapped in
     assert.equal(window.location.hash, `#chat/${B}`);
@@ -276,7 +276,7 @@ test('Workflows Back returns to the chat the address was swapped to, even when a
     // B06: the Chat row's restore (#chat → #chat/<B>) moves Back's target
     const { window, doc, recv } = await boot();
     await send(doc, 'first');                                           // chat A
-    doc.querySelector('[data-ask-new-btn]').click();
+    doc.querySelector('.chat-head [data-ask-new-btn]').click();
     await settle();
     await send(doc, 'second');                                          // chat B
     window.location.hash = '#runs';
@@ -298,7 +298,7 @@ test('a PUSHED move (New chat) under an open run panel drops the panel tail; onl
   const { window, doc } = await boot({ hash: '#chat/new/run/aaaa1111/logs' });
   await send(doc, 'hello');
   assert.equal(window.location.hash, `#chat/${TID}/run/aaaa1111/logs`, 'the swap kept the tail');
-  doc.querySelector('[data-ask-new-btn]').click();
+  doc.querySelector('.chat-head [data-ask-new-btn]').click();
   await settle();
   assert.equal(window.location.hash, '#chat', 'New chat is home: no run panel route');
 });

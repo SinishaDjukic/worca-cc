@@ -31,7 +31,13 @@ test('ask-panel: shell — the Chat page, open/close as show/hide, ⌘K/Ctrl+K l
       const head = page.querySelector(':scope > .chat-convo > header.chat-head');
       assert.ok(head.querySelector('button[data-ask-threads-btn][aria-label="History"]'));
       assert.equal(head.querySelector('.ask-title').textContent, 'New chat');
-      assert.ok(head.querySelector('button[data-ask-new-btn][aria-label="New chat"]'));
+      const newBtn = head.querySelector('button[data-ask-new-btn]');
+      assert.ok(newBtn, 'New chat sits in the head');
+      assert.equal(newBtn.type, 'button');
+      assert.equal(newBtn.textContent, 'New chat', 'a labelled button, not an icon');
+      assert.equal(newBtn.getAttribute('aria-label'), null, 'the visible label is its name');
+      assert.equal(newBtn.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the plus glyph is decoration');
+      assert.ok(newBtn.classList.contains('chat-head-btn') && newBtn.classList.contains('chat-new-btn'));
       assert.ok(page.querySelector('[data-chat-home] > [data-chat-hero-slot] > .ask-composer > .ask-composer-box > [data-chat-composer-lead]:first-child'));
       assert.ok(page.querySelector('.chat-convo > .ask-transcript[data-ask-scroll]'));
       assert.ok(page.querySelector('.chat-convo > [data-chat-dock]'));
@@ -236,7 +242,7 @@ test('ask-panel: New chat clicked while a send is in flight neither throws nor t
     ctx.doc.querySelector('[data-ask-send]').click();
     for (let i = 0; i < 4; i++) await ctx.tick();                     // thread created, POST in flight
     assert.ok(releasePost, 'the message POST is in flight');
-    [...ctx.panel.root.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === 'New chat').click();
+    ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
     ctx.doc.querySelector('textarea.ask-input').value = 'draft for the new chat';
     releasePost();
     for (let i = 0; i < 4; i++) await ctx.tick();

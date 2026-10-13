@@ -280,6 +280,17 @@ test('an intent riding a send in flight never follows the logo to a new chat: th
   assert.deepEqual(sent, ['Propose a pipeline run for this task.\n\nfix the upload test', 'what time is it']);
 });
 
+test('the History column\'s New chat is a trip to a new chat, as the head\'s is: an intent set on the home is dropped', async () => {
+  const ctx = await bootChat();
+  const doc = ctx.window.document;
+  doc.querySelector('.chat-home-act[data-intent="run"]').click();
+  assert.ok(doc.querySelector('[data-chat-page] .chat-intent'), 'armed');
+  doc.querySelector('[data-chat-page] [data-chat-history] [data-ask-new-btn]').click();
+  await ctx.settle(4);
+  assert.equal(doc.querySelector('[data-chat-page] .chat-intent'), null, 'the intent add-on\'s capture listener saw [data-ask-new-btn]');
+  assert.equal(ctx.window.location.hash, '#chat');
+});
+
 test('Answer opens the chat that follows the run when there is one (findFollowingThread over GET /api/ask/threads)', async () => {
   _resetChatExtensions();
   const row = { id: 'ask_000000f1', title: 'Fix it', createdAt: '2026-10-11T00:00:00Z', updatedAt: '2026-10-11T00:00:00Z', runLinks: 1, waiting: true };

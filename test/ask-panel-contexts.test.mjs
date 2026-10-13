@@ -98,7 +98,7 @@ test('topics: the 202 contexts, ask-done contexts and New chat repaint an open p
       await ctx.tick(); await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelector('.ask-pop-ctx'), pop, 'still open, same node');
       assert.deepEqual(topics(pop, 'asked').map((r) => r.querySelector('.ask-ctx-topic-name').textContent), ['Team policy']);
-      ctx.doc.querySelector('[data-ask-new-btn]').click();
+      ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
       const p3 = ctx.doc.querySelector('.ask-pop-ctx') || openCtx(ctx);
       assert.equal(p3.querySelectorAll('.ask-ctx-topic').length, 0, 'New chat starts with no topics');
       ctx.panel.destroy();
