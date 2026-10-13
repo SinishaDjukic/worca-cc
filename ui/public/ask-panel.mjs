@@ -42,6 +42,7 @@ import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5-5', effort: 'high' });
 /** The composer's resting placeholder; an add-on's setPlaceholder(null) comes back to it (worca Chat CONTRACT §2). */
 const INPUT_PLACEHOLDER = 'Ask about any run, agent, or project…';
+const QUEUE_MAX = 3;            // messages a chat may stack while a reply runs (client-side: the server runs one turn per chat)
 
 const ICONS = {
   plus: 'M12 5v14M5 12h14',
@@ -296,7 +297,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     firstOpenDone: false,
     destroyed: false,
     voice: null,              // the voice controller (ask-voice.mjs), made on first mic use — docs/speech.md
-    voicePendingSend: false,  // a hands-free transcript waiting for the live turn to end (barge-in)
     voiceLongPress: null,     // the mic's long-press timer
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
@@ -313,6 +313,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     runUnsub: null,
     runPoked: false,
     addons: [],               // worca Chat CONTRACT §2: the mounted composer add-ons, [{ id, handle }] in registration order
+    queues: new Map(),        // threadId → {items:[{key,text,quote,files}], paused, draining}: messages sent while a reply ran
+    stopBy: null,             // who asked the live turn to stop: 'button' pauses the queue, 'voice' (barge-in) lets it send
+    hist: { idx: -1, draft: '' },   // ArrowUp history walk: idx into historyEntries(), -1 = not walking; the draft it replaced
+    basePlaceholder: INPUT_PLACEHOLDER,   // the add-ons' placeholder (addonCtx.setPlaceholder); a suggestion shows only over the default
+    suggestion: null,         // the suggestion on screen ({messageId, text}) — what Tab accepts
+    suggestDismissed: null,   // the reply id whose suggestion the user typed over (or accepted): never shown again
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
@@ -690,11 +696,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     addFiles(namePastedFiles(files));
   }
 
+  /** A reply is running in the open chat — streaming, or loaded but not yet adopted (inFlight). */
+  function turnBusy() { return !!(st.model && (st.model.live() || st.model.inFlight())); }
+  function queueOf(id) { return id ? st.queues.get(id) || null : null; }
+  function motionOk() {
+    try { return !(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch { return true; }
+  }
+
   function updateSendStop() {
     if (!el.send) return;
     const streaming = !!(st.model && st.model.live());
-    el.send.hidden = streaming;
+    const busy = turnBusy();
+    const q = queueOf(st.threadId);
+    const full = busy && !!q && q.items.length >= QUEUE_MAX;
+    // While a reply streams, Send stands beside Stop as soon as there is something to queue.
+    el.send.hidden = streaming && !el.input.value.trim();
     el.stop.hidden = !streaming;
+    el.send.disabled = full;
+    el.send.setAttribute('aria-label', !busy ? 'Send' : (full ? 'Queue full' : 'Add to queue'));
+    updateSuggestion();
   }
 
   /** The open chat's context fill and window: the streaming call's while live, else the last turn's.
@@ -820,7 +840,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.voice = createVoice({
         onState: paintVoice,
         onTranscript: voiceTranscript,
-        onBargeIn: () => { if (st.model && st.model.live()) stopTurn(); },
+        onBargeIn: () => { if (st.model && st.model.live()) { st.stopBy = 'voice'; stopTurn(); } },
         onNotice: (msg) => setComposerMsg(msg),
       });
     }
@@ -850,7 +870,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voice().start(mode);
   }
   function toggleHandsFree() { const v = voice(); if (v.active() && v.mode() === 'handsfree') stopVoice(); else startVoice('handsfree'); }
-  function stopVoice() { st.voicePendingSend = false; if (st.voice && st.voice.active()) st.voice.stop(); }
+  function stopVoice() { if (st.voice && st.voice.active()) st.voice.stop(); }
 
   function paintVoice(state, { mode, detail } = {}) {
     if (!el.mic) return;
@@ -863,7 +883,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.voiceStatus.hidden = state === 'off';
     el.voiceStatus.dataset.state = state;
     el.voiceStatus.textContent = (state === 'loading' && detail) || VOICE_LABELS[state] || '';
-    if (state === 'error') { setComposerMsg(detail || 'voice stopped'); st.voicePendingSend = false; }
+    if (state === 'error') setComposerMsg(detail || 'voice stopped');
     if (state === 'listening' || state === 'speaking' || state === 'error') announce(VOICE_LABELS[state]);
     if (state === 'listening' && !voiceUsedBefore()) { try { storage.setItem(VOICE_USED_KEY, '1'); } catch { /* preload is a nicety */ } }
   }
@@ -873,8 +893,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
     if (!autoSend) { focusComposer(); return; }
-    // A live (or loaded-but-not-yet-adopted, inFlight) turn: send once it ends. This covers barge-in.
-    if (st.sending || (st.model && (st.model.live() || st.model.inFlight()))) { st.voicePendingSend = true; return; }
+    // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
   }
 
@@ -887,12 +906,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       });
   }
 
-  async function sendMessage() {
+  /**
+   * Send the composer's message — or `queued`, an item the queue drains ({text, quote, files}). While a reply runs the
+   * composer's message joins this chat's queue instead ('queued'); a queued item that meets a running turn answers
+   * 'busy' and stays first. true = sent, false = not sent (the reason is on the composer line).
+   * @returns {Promise<boolean|'queued'|'busy'>}
+   */
+  async function sendMessage(queued = null) {
     if (st.sending || st.destroyed) return false;
-    let text = el.input.value.trim();
+    const draft = queued || { text: el.input.value.trim(), quote: st.quote, files: st.pendingFiles };
+    let text = draft.text;
     if (!text) return false;
     // Pinpoint (#669): the quote chip rides as a blockquote above the text — for an add-on's direction too.
-    const quoted = st.quote;
+    const quoted = draft.quote;
     if (quoted) text = formatQuotedMessage(quoted, text);
     // A chat is still loading (a History pick, Back to a chat): the send would land in the chat being left — or, from
     // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
@@ -902,7 +928,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // streams, since it never starts an Ask turn: true = handled, the input cleared; 'keep' = handled, the input kept
     // (the server refused it). Not taken: the add-ons may reword it (transformSend, e.g. P6's intent prefix) — that
     // text is what is sent and shown. The reword runs only for a send that goes ahead (never under a streaming reply).
-    if (st.addons.length) {
+    // A queued item already passed this when it was sent to the queue.
+    if (!queued && st.addons.length) {
       st.sending = true;
       let taken = false;
       try { taken = await addonsTakeSend(text); } finally { st.sending = false; }
@@ -916,7 +943,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         return true;
       }
     }
-    if (st.model && st.model.live()) return false; // a turn is streaming — the stop button is showing
+    // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
+    if (turnBusy()) return queued ? 'busy' : enqueueDraft(draft);
     // …or one the user started while an add-on decided (the same check, above the add-ons).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
     if (st.addons.length) text = addonsTransform(text);
@@ -963,20 +991,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
-        ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
+        ...(draft.files.length ? { attachments: draft.files.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
       let res = null;
       try {
         res = await fetch(`/api/ask/threads/${id}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       } catch { setComposerMsg('network error — the message was not sent'); return false; }
+      const accepted = !!res && res.status === 202;
       // The user may have clicked New chat or switched threads during the POST: the
       // message is on the server and arrives with its thread; touching the composer
-      // or the (now different or null) model here would be wrong (review of PR #376).
-      if (st.destroyed || st.model !== model || st.threadId !== id) return false;
-      if (!res || res.status !== 202) {
+      // or the (now different or null) model here would be wrong (review of PR #376) —
+      // but a queued message the server took is sent, and must leave its queue (else it is sent twice).
+      if (st.destroyed || st.model !== model || st.threadId !== id) return !!queued && accepted;
+      if (!accepted) {
         let msg = `request failed (${res ? res.status : 'network'})`;
-        try { const b = await res.json(); if (b && b.error) msg = b.error; } catch { /* keep the fallback */ }
+        let body = null;
+        try { body = await res.json(); if (body && body.error) msg = body.error; } catch { /* keep the fallback */ }
+        // Another turn (an event turn started at settle) got the chat first: the message waits for it.
+        if (res && res.status === 409 && body && body.error === 'turn in flight') return queued ? 'busy' : enqueueDraft(draft);
         setComposerMsg(msg);
         return false;
       }
@@ -989,16 +1022,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // files are the fallback for a server that predates the field.
       const echoAtts = Array.isArray(stored)
         ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
-        : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
+        : draft.files.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
       st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
       st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
       // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
-      el.input.value = '';
-      fitInput();                                    // a programmatic clear fires no input event
-      st.pendingFiles = [];
-      if (st.quote === quoted) st.quote = null;
-      renderChips();
+      // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
+      if (!queued) {
+        el.input.value = '';
+        fitInput();                                    // a programmatic clear fires no input event
+        st.pendingFiles = [];
+        if (st.quote === quoted) st.quote = null;
+        renderChips();
+        st.hist = { idx: -1, draft: '' };
+      }
       subscribe(id);
       st.pinned = true;
       scheduleFlush();
@@ -1009,6 +1046,332 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
+  // ---- the queue (messages sent while a reply runs; max 3, oldest first, per chat) --------------------------------
+  /** The composer's draft joins the open chat's queue: text, quote and files are snapshotted and the composer clears. */
+  function enqueueDraft(draft) {
+    const id = st.threadId;
+    if (!id) return false;
+    let q = st.queues.get(id);
+    if (!q) { q = { items: [], paused: false, draining: false }; st.queues.set(id, q); }
+    if (q.items.length >= QUEUE_MAX) {
+      announce(`Queue full — ${QUEUE_MAX} messages wait for this reply`);
+      renderQueue();
+      return false;
+    }
+    const item = { key: `q${++queueSeq}`, text: draft.text, quote: draft.quote || null, files: draft.files.slice() };
+    q.items.push(item);
+    el.input.value = '';
+    fitInput();                                      // a programmatic clear fires no input event
+    st.pendingFiles = [];
+    if (st.quote === draft.quote) st.quote = null;
+    renderChips();
+    st.hist = { idx: -1, draft: '' };
+    renderQueue();
+    announce(`Queued — ${q.items.length} of ${QUEUE_MAX}, sends when the reply finishes`);
+    return 'queued';
+  }
+
+  /** Send the oldest item of the open chat's queue (one per finished reply). */
+  async function drainQueue() {
+    const id = st.threadId;
+    const q = queueOf(id);
+    if (!q) return;
+    // A finish seen while an item's POST is out (its turn ran and ended before the 202): drain again after it.
+    if (q.draining) { q.again = true; return; }
+    if (q.paused || !q.items.length || st.destroyed) return;
+    if (st.sending || turnBusy()) return;            // the next ask-done drains
+    const item = q.items[0];
+    q.draining = true;
+    q.again = false;
+    renderQueue();
+    announce('Sending the next queued message');
+    let r = false;
+    try { r = await sendMessage(item); } catch { r = false; }
+    q.draining = false;
+    if (st.destroyed) return;
+    if (r === true) {
+      removeQueued(id, item, { sent: true });
+      if (q.again && id === st.threadId) { q.again = false; drainQueue(); }
+    } else if (r !== 'busy' && q.items.includes(item)) pauseQueue(id);   // the composer line says why
+    else if (id === st.threadId) renderQueue();
+  }
+
+  function pauseQueue(id = st.threadId) {
+    const q = queueOf(id);
+    if (!q || !q.items.length || q.paused) return;
+    q.paused = true;
+    if (id === st.threadId) { renderQueue(); announce('Queue paused'); }
+  }
+
+  function resumeQueue() {
+    const q = queueOf(st.threadId);
+    if (!q) return;
+    q.paused = false;
+    const hadFocus = doc.activeElement === el.queueResume;
+    renderQueue();
+    if (hadFocus) focusComposer();                    // the button hides itself: focus must not fall to the page
+    announce('Queue resumed');
+    drainQueue();                                     // sends now when idle; else the next clean finish sends
+  }
+
+  function removeQueued(id, item, { sent = false, silent = false } = {}) {
+    const q = queueOf(id);
+    if (!q) return;
+    const i = q.items.indexOf(item);
+    if (i < 0) return;
+    q.items.splice(i, 1);
+    if (!q.items.length) st.queues.delete(id);
+    if (id === st.threadId) renderQueue({ leaving: item.key, sent });
+    if (!silent && id === st.threadId) announce(sent ? 'Queued message sent' : 'Removed from the queue');
+  }
+
+  /** A card's text: the item goes back to the composer for editing and leaves the queue. */
+  function editQueued(item) {
+    const id = st.threadId;
+    const q = queueOf(id);
+    if (!q || (q.draining && q.items[0] === item)) return;
+    const blank = !el.input.value.trim() && !st.pendingFiles.length && !st.quote;
+    removeQueued(id, item, { silent: true });
+    if (blank) {
+      st.pendingFiles = item.files.slice();
+      st.quote = item.quote;
+      renderChips();
+      showHistory(item.text);
+      focusComposer();
+    } else {
+      appendToComposer(item.text);
+      const names = new Set(st.pendingFiles.map((f) => f.name));
+      st.pendingFiles = [...st.pendingFiles, ...item.files.filter((f) => !names.has(f.name))];
+      if (!st.quote && item.quote) st.quote = item.quote;
+      renderChips();
+    }
+    st.hist = { idx: -1, draft: '' };
+    updateSendStop();
+    announce('Queued message moved to the input');
+  }
+
+  function queueExcerpt(text) { const line = String(text).split('\n').find((l) => l.trim()) || ''; return line.trim(); }
+
+  /** A new card: its parts are built once (an item never changes); fillQueueCard keeps position and state current.
+   *  Only a new card plays the entry animation — a kept card must not, or it hides the FLIP shift. */
+  function queueCard(item) {
+    const li = make('li', 'ask-queue-item is-entering');
+    li.dataset.key = item.key;
+    li.setAttribute('data-ask-queue-item', '');
+    li.addEventListener('animationend', () => li.classList.remove('is-entering'), { once: true });
+    const txt = make('button', 'ask-queue-text', queueExcerpt(item.text));
+    txt.type = 'button';
+    txt.title = 'Edit this message';
+    txt.addEventListener('click', () => editQueued(item));
+    li.appendChild(txt);
+    const extras = [];
+    if (item.files.length) extras.push(`${item.files.length} file${item.files.length === 1 ? '' : 's'}`);
+    if (item.quote) extras.push('quote');
+    if (extras.length) li.appendChild(make('span', 'ask-queue-meta', extras.join(' · ')));
+    const x = make('button', 'ask-queue-x', '×');
+    x.type = 'button';
+    x.addEventListener('click', () => removeQueuedByUser(item));
+    li.appendChild(x);
+    return li;
+  }
+
+  function fillQueueCard(li, item, pos, total, q) {
+    const sending = q.draining && q.items[0] === item;
+    li.classList.toggle('is-sending', sending);
+    const txt = li.querySelector('.ask-queue-text');
+    const x = li.querySelector('.ask-queue-x');
+    txt.disabled = sending;
+    x.disabled = sending;
+    txt.setAttribute('aria-label', `Queued message ${pos} of ${total}${pos === 1 ? ', sends next' : ''}: ${queueExcerpt(item.text)}. Edit`);
+    x.setAttribute('aria-label', `Remove queued message ${pos}`);
+  }
+
+  /** × on a card: the item leaves and focus goes to a neighbour card (or the input), not to the page body. */
+  function removeQueuedByUser(item) {
+    const shown = [...el.queueList.children];
+    const at = shown.findIndex((li) => li.dataset.key === item.key);
+    removeQueued(st.threadId, item);
+    const left = [...el.queueList.children];
+    const next = left[Math.min(at, left.length - 1)];
+    if (next) next.querySelector('.ask-queue-text').focus();
+    else focusComposer();
+  }
+
+  /** Repaint the open chat's queue, keyed by item: shown cards are kept and updated, new ones created. `leaving`: the
+   *  key of a card just sent or removed — its clone slides out while the rest shift (FLIP). Motion is skipped under
+   *  prefers-reduced-motion; the data is already final either way. */
+  function renderQueue({ leaving = null, sent = false } = {}) {
+    if (!el.queue) return;
+    const q = queueOf(st.threadId);
+    const items = q ? q.items : [];
+    const shown = [...el.queueList.children];
+    const motion = motionOk() && shown.length > 0;
+    const before = motion ? new Map(shown.map((li) => [li.dataset.key, li.getBoundingClientRect()])) : null;
+    if (motion && leaving) {
+      const old = shown.find((li) => li.dataset.key === leaving);
+      if (old) spawnQueueGhost(old, sent);
+    }
+    const kept = new Map(shown.map((li) => [li.dataset.key, li]));
+    // Newest on top, oldest last — next to the input box it will be sent from.
+    const want = items.map((it, i) => {
+      const li = kept.get(it.key) || queueCard(it);
+      fillQueueCard(li, it, i + 1, items.length, q);
+      return li;
+    }).reverse();
+    for (const li of shown) if (!want.includes(li)) li.remove();
+    // Insert only what is not already in place: moving a kept card would restart its animations and drop its focus.
+    want.forEach((li, i) => { if (el.queueList.children[i] !== li) el.queueList.insertBefore(li, el.queueList.children[i] || null); });
+    el.queue.hidden = !items.length;
+    const paused = !!q && q.paused;
+    el.queueResume.hidden = !paused;
+    el.queueNote.textContent = paused ? 'Queue paused'
+      : items.length >= QUEUE_MAX ? 'Queue full — sends when the reply finishes'
+        : 'Sends when the reply finishes';
+    if (before) {
+      for (const li of el.queueList.children) {
+        const was = before.get(li.dataset.key);
+        if (!was) continue;
+        const dy = was.top - li.getBoundingClientRect().top;
+        if (!dy) continue;
+        li.style.transition = 'none';
+        li.style.transform = `translateY(${dy}px)`;
+        void li.offsetHeight;                        // commit the start position before the transition runs
+        li.style.transition = '';
+        li.style.transform = '';
+      }
+    }
+    updateSendStop();
+  }
+
+  function spawnQueueGhost(li, sent) {
+    const host = el.queue.parentNode;
+    if (!host) return;
+    const box = host.getBoundingClientRect();
+    const r = li.getBoundingClientRect();
+    const ghost = li.cloneNode(true);
+    ghost.classList.remove('is-entering');           // its entry animation would outrank the exit one
+    ghost.classList.add('ask-queue-ghost');
+    if (sent) ghost.classList.add('is-sent');
+    ghost.removeAttribute('data-ask-queue-item');
+    ghost.setAttribute('data-ask-queue-ghost', '');
+    ghost.setAttribute('aria-hidden', 'true');
+    ghost.inert = true;
+    ghost.style.top = `${r.top - box.top}px`;
+    ghost.style.left = `${r.left - box.left}px`;
+    ghost.style.width = `${r.width}px`;
+    host.appendChild(ghost);
+    const done = () => ghost.remove();
+    ghost.addEventListener('animationend', done, { once: true });
+    const t = setTimeout(done, 400);                 // backstop: no animationend (hidden tab, reduced motion set late)
+    if (t && typeof t.unref === 'function') t.unref();
+  }
+
+  // ---- composer keys: Enter sends, Tab takes the suggestion, ArrowUp/Down walk this chat's history --------------
+  function onComposerKeydown(e) {
+    if (e.isComposing) return;
+    const plain = !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); return; }
+    // Ghost text: only Tab takes it (Enter on the empty input sends nothing); no suggestion → native focus move.
+    if (e.key === 'Tab' && plain && st.suggestion && !el.input.value) { e.preventDefault(); acceptSuggestion(); return; }
+    if (e.key === 'ArrowUp' && plain && historyUp()) { e.preventDefault(); return; }
+    if (e.key === 'ArrowDown' && plain && historyDown()) { e.preventDefault(); return; }
+    if (e.key === 'Escape' && st.hist.idx >= 0) { e.preventDefault(); e.stopPropagation(); historyCancel(); }
+  }
+
+  function onComposerInput() {
+    fitInput();
+    // An edit ends a history walk: the edited text is the draft now.
+    if (st.hist.idx >= 0) st.hist = { idx: -1, draft: '' };
+    // Anything typed after a reply retires that reply's suggestion — also one still being written.
+    if (el.input.value) st.suggestDismissed = newestAssistantId();
+    updateSendStop();
+  }
+
+  function newestAssistantId() {
+    const rows = st.model ? st.model.messages() : [];
+    for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i] && rows[i].role === 'assistant') return rows[i].id;
+    return null;
+  }
+
+  // ---- ArrowUp history (this chat's sent messages, as stored) ---------------------------------------------------
+  function historyEntries() {
+    const out = [];
+    for (const r of st.model ? st.model.messages() : []) {
+      if (!r || r.role !== 'user' || typeof r.text !== 'string' || !r.text.trim()) continue;
+      if (Array.isArray(r.blocks) && r.blocks.some((b) => b && b.synthetic)) continue;   // an event turn's row: nobody typed it
+      if (out[out.length - 1] !== r.text) out.push(r.text);
+    }
+    return out;
+  }
+  function caretOnFirstLine() {
+    const { selectionStart: a, selectionEnd: b, value } = el.input;
+    return a === b && !value.slice(0, a).includes('\n');
+  }
+  // A walk starts only from an empty input or a caret at the very start: a typed newline is not the only line break —
+  // a long paragraph wraps in the narrow dock, and ArrowUp there must move the caret, not replace the draft.
+  // (On a one-line draft the native ArrowUp takes the caret to the start, so a second press starts the walk.)
+  function canStartHistory() {
+    const { selectionStart: a, selectionEnd: b, value } = el.input;
+    return !value || (a === 0 && b === 0);
+  }
+  function caretOnLastLine() {
+    const { selectionStart: a, selectionEnd: b, value } = el.input;
+    return a === b && !value.slice(b).includes('\n');
+  }
+  function showHistory(text) {
+    el.input.value = text;
+    fitInput();                                      // a programmatic write fires no input event
+    try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
+    updateSendStop();
+  }
+  function historyUp() {
+    if (st.hist.idx < 0 ? !canStartHistory() : !caretOnFirstLine()) return false;
+    const list = historyEntries();
+    if (!list.length) return false;
+    if (st.hist.idx < 0) st.hist = { idx: list.length, draft: el.input.value };
+    const next = Math.min(st.hist.idx, list.length) - 1;
+    if (next < 0) return true;                       // on the oldest: stay there
+    st.hist.idx = next;
+    showHistory(list[next]);
+    return true;
+  }
+  function historyDown() {
+    if (st.hist.idx < 0 || !caretOnLastLine()) return false;
+    const list = historyEntries();
+    const next = st.hist.idx + 1;
+    if (next >= list.length) { const { draft } = st.hist; st.hist = { idx: -1, draft: '' }; showHistory(draft); }
+    else { st.hist.idx = next; showHistory(list[next]); }
+    return true;
+  }
+  function historyCancel() {
+    const { draft } = st.hist;
+    st.hist = { idx: -1, draft: '' };
+    showHistory(draft);
+  }
+
+  // ---- ghost-text suggestion (ask-suggestion, live-only) --------------------------------------------------------
+  function updateSuggestion() {
+    if (!el.input || !el.suggestHint) return;
+    const s = st.model && st.model.suggestion ? st.model.suggestion() : null;
+    const q = queueOf(st.threadId);
+    const show = !!s && !el.input.value && st.basePlaceholder === INPUT_PLACEHOLDER
+      && st.suggestDismissed !== s.messageId && !turnBusy() && !st.sending
+      && !(q && q.items.length) && st.hist.idx < 0;
+    st.suggestion = show ? s : null;
+    el.input.placeholder = show ? s.text : st.basePlaceholder;
+    el.input.classList.toggle('is-suggesting', show);
+    el.suggestHint.textContent = show ? `Suggestion: ${s.text}. Press Tab to use it.` : '';
+    if (show) el.input.setAttribute('aria-describedby', el.suggestHint.id);
+    else el.input.removeAttribute('aria-describedby');
+  }
+  function acceptSuggestion() {
+    const s = st.suggestion;
+    if (!s) return;
+    st.suggestDismissed = s.messageId;
+    showHistory(s.text);                             // fills, fits, caret at the end, repaints (the suggestion hides)
+    announce('Suggestion added');
+  }
+
   function buildComposer() {
     const wrap = make('div', 'ask-composer');
     // The band is the padded outer strip; the rounded, bordered box inside it
@@ -1016,6 +1379,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // (style.css .ask-composer-box), so both centre together in a wide sheet.
     const box = make('div', 'ask-composer-box');
     el.composerBox = box;
+    // The queue (messages sent while a reply runs): directly above the box, oldest card nearest the input.
+    el.queue = make('div', 'ask-queue');
+    el.queue.setAttribute('data-ask-queue', '');
+    el.queue.hidden = true;
+    const qbar = make('div', 'ask-queue-bar');
+    el.queueNote = make('span', 'ask-queue-note');
+    el.queueResume = make('button', 'ask-queue-resume', 'Resume queue');
+    el.queueResume.type = 'button';
+    el.queueResume.setAttribute('data-ask-queue-resume', '');
+    el.queueResume.hidden = true;
+    el.queueResume.addEventListener('click', resumeQueue);
+    qbar.append(el.queueNote, el.queueResume);
+    el.queueList = make('ol', 'ask-queue-list');
+    el.queueList.setAttribute('aria-label', 'Queued messages');
+    el.queue.append(qbar, el.queueList);
+    wrap.appendChild(el.queue);
     wrap.appendChild(box);
 
     // worca Chat CONTRACT §2: the add-ons' lead row (an intent chip, a direction chip…) above the attachments.
@@ -1031,12 +1410,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input.className = 'ask-input';
     el.input.rows = 1;
     el.input.placeholder = INPUT_PLACEHOLDER;
-    el.input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
-    });
-    el.input.addEventListener('input', fitInput);
+    el.input.setAttribute('aria-label', 'Message Ask Worca');   // fixed: the placeholder may hold a suggestion
+    el.input.addEventListener('keydown', onComposerKeydown);
+    el.input.addEventListener('input', onComposerInput);
     el.input.addEventListener('paste', onComposerPaste);
     box.appendChild(el.input);
+
+    // The suggestion's words for screen readers (aria-describedby while it shows; the placeholder alone is not enough).
+    el.suggestHint = make('span', 'sr-only');
+    el.suggestHint.id = `ask-suggest-${Math.random().toString(36).slice(2, 10)}`;
+    box.appendChild(el.suggestHint);
 
     el.composerMsg = make('div', 'ask-composer-msg');
     el.composerMsg.hidden = true;
@@ -1125,7 +1508,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.send.setAttribute('data-ask-send', '');
     el.send.setAttribute('aria-label', 'Send');
     el.send.appendChild(svgIcon(ICONS.send, 15, 2.2));
-    el.send.addEventListener('click', sendMessage);
+    el.send.addEventListener('click', () => sendMessage());   // the click event must never reach sendMessage(queued)
     if (createVoice) row.appendChild(buildVoiceControls());
     row.appendChild(el.send);
 
@@ -1146,7 +1529,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     rect.setAttribute('rx', '2');
     stopRect.appendChild(rect);
     el.stop.appendChild(stopRect);
-    el.stop.addEventListener('click', stopTurn);
+    el.stop.addEventListener('click', () => { st.stopBy = 'button'; stopTurn(); });
     row.appendChild(el.stop);
 
     box.appendChild(row);
@@ -2586,6 +2969,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.threadId = null;
     st.wantThread = null;               // home: a new chat
     st.model = null;
+    st.hist = { idx: -1, draft: '' };
+    st.suggestDismissed = null;
     st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
@@ -2600,6 +2985,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     renderTranscript();
     updateMeters();
     setWorktrees([]);
+    renderQueue();                      // the open chat is none: no cards (the other chats keep theirs)
     updateSendStop();
     setComposerMsg(null);
     updateAddons();                     // CONTRACT §2: the add-ons see the new (empty) chat
@@ -2624,6 +3010,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!(await deleteOrReport(`/api/ask/threads/${t.id}`, 'Could not delete the chat', `ask-thread-del-${t.id}`))) { back(); return; }
     if (readStoredThread() === t.id) storeThread(null);
     st.askedIn.delete(t.id);                         // a stopped turn's late reply never lights the Chat row for it
+    st.queues.delete(t.id);                          // its queued messages go with it (newThread below repaints)
     loadHistory();                                   // the column drops the row
     // The chat shown — or the one still loading (its GET may answer after the delete) — goes home; an overlay closes,
     // as after a pick, so the new chat has its room.
@@ -5209,6 +5596,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // LAST used to win unconditionally, so a slow old thread load overwrote a newer
   // switch (review of PR #376). A load whose generation is stale returns null.
   let loadGen = 0;
+  let queueSeq = 0;   // the queue items' keys (a card's identity across repaints, for its exit and FLIP shift)
   async function loadThread(id) {
     const gen = ++loadGen;
     let res = null;
@@ -5234,6 +5622,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.threadId = id;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
+    if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
+    // A queue whose reply ended while this chat was not open (or while frames were missed) waits for Resume queue.
+    const q = queueOf(id);
+    if (q && q.items.length && !snap.inFlight && !q.draining) q.paused = true;
+    renderQueue();
     el.title.textContent = (snap.thread && snap.thread.title) || 'New chat';
     applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
     setContexts(snap.thread && snap.thread.contexts);
@@ -5339,8 +5732,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   function afterFrame(frame) {
-    if (frame.type === 'ask-start') { startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
-    else if (typeof frame.seq === 'number' && frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.send && !el.send.hidden) {
+    if (frame.type === 'ask-start') { st.stopBy = null; startElapsed(Date.parse(frame.startedAt)); updateSendStop(); }
+    // Stop still hidden is the "not adopted yet" signal: Send may stand beside Stop mid-reply (the queue).
+    else if (typeof frame.seq === 'number' && frame.type !== 'ask-done' && frame.type !== 'ask-error' && st.model && st.model.live() && el.stop && el.stop.hidden) {
       // A JOB frame ADOPTED mid-turn (no ask-start seen — the ring buffer evicted
       // it, or a broadcast delta beat the subscribe replay): the turn is live now,
       // so the composer must show Stop and the timer must run (review of PR #376).
@@ -5357,7 +5751,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // NOT live in updateSendStop() — that also runs from loadThread, so a
       // running→idle latch there fires a SECOND snapshot GET on every resync.
       refreshWorktrees();
-      if (st.voicePendingSend) { st.voicePendingSend = false; if (st.voice && st.voice.active()) voiceSend(); }
+      // The queue: a clean finish sends the next message; an error or a Stop pauses it (a voice barge-in's stop
+      // does not — the utterance queued behind it is meant to go now).
+      const q = queueOf(st.threadId);
+      if (q && q.items.length) {
+        const status = frame.status || 'done';
+        const clean = frame.type === 'ask-done' && (status === 'done' || (status === 'stopped' && st.stopBy === 'voice'));
+        if (clean) drainQueue(); else pauseQueue();
+      }
+      st.stopBy = null;
     }
     else if (frame.type === 'ask-message' && frame.message && typeof frame.message.text === 'string'
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
@@ -5381,6 +5783,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // of them goes out: the Chat row never routes to a deleted chat.
       const gone = Array.isArray(frame.threadIds) ? frame.threadIds : [...st.askedIn];
       for (const id of gone) st.askedIn.delete(id);
+      // …and so do their queues (every one when it names none).
+      if (Array.isArray(frame.threadIds)) for (const id of frame.threadIds) st.queues.delete(id);
+      else st.queues.clear();
       if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
@@ -5398,6 +5803,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // landed) ended while Chat was hidden. The open chat's own reply is afterFrame's.
     if ((frame.type === 'ask-done' || frame.type === 'ask-error') && !st.open && typeof frame.threadId === 'string'
       && frame.threadId !== st.threadId && st.askedIn.has(frame.threadId)) setUnread(true, frame.threadId);
+    // A reply in a chat that is not open ended: its queue waits for the user (Resume queue) instead of sending unseen.
+    if ((frame.type === 'ask-done' || frame.type === 'ask-error') && typeof frame.threadId === 'string' && frame.threadId !== st.threadId) {
+      const q = queueOf(frame.threadId);
+      if (q && q.items.length) q.paused = true;
+    }
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
@@ -5459,6 +5869,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else { const row = rowOf(rid); if (row) refreshRow(row); }
     }
     const d = st.model.takeDirty();
+    if (d.suggestion) updateSuggestion();
     if (d.title) el.title.textContent = st.model.thread().title || 'New chat';
     if (d.structure) {
       renderTranscript();
@@ -5584,7 +5995,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     threadId: () => st.threadId,
     thread: () => threadSnapshot(),
     runStore,
-    setPlaceholder: (text) => { el.input.placeholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; },
+    setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
   };
@@ -5687,6 +6098,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
     destroyAddons();
+    st.queues.clear();
     clearTimeout(st.voiceLongPress);
     if (st.voice) { const v = st.voice; st.voice = null; Promise.resolve(v.destroy()).catch(() => {}); }
     root.remove();

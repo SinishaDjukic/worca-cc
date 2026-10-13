@@ -5896,6 +5896,29 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-msg{font-size:11.5px;color:var(--red-ink);padding:0 6px;}
 .ask-composer-msg[hidden]{display:none;}
 .ask-composer-row{display:flex;align-items:center;gap:8px;position:relative;}
+/* The queue: messages sent while a reply runs, stacked above the box, oldest card nearest the input. */
+.ask-queue{width:100%;max-width:var(--ask-col-max);margin:0 auto 6px;display:flex;flex-direction:column;gap:4px;}
+.ask-queue[hidden]{display:none;}
+.ask-queue-bar{display:flex;align-items:center;gap:8px;padding:0 6px;font-size:11.5px;color:var(--ink-3);}
+.ask-queue-resume{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--ink);font:inherit;font-size:11.5px;padding:2px 10px;cursor:pointer;transition:.15s;}
+.ask-queue-resume:hover{border-color:var(--hover-outline);}
+.ask-queue-resume[hidden]{display:none;}
+.ask-queue-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;}
+.ask-queue-item{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink-2);font-size:12.5px;transition:transform .2s cubic-bezier(.65,.02,.28,1),opacity .15s;}
+.ask-queue-item.is-entering{animation:ask-queue-in .16s ease-out backwards;}
+.ask-queue-item.is-sending{opacity:.55;}
+.ask-queue-text{flex:1 1 auto;min-width:0;padding:2px 0;border:0;background:transparent;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;}
+.ask-queue-text:disabled{cursor:default;}
+.ask-queue-meta{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);}
+.ask-queue-x{flex:none;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;transition:.15s;}
+.ask-queue-x:hover{color:var(--ink);background:var(--hover);}
+.ask-queue-x:disabled{visibility:hidden;}
+.ask-queue-ghost{position:absolute;margin:0;pointer-events:none;animation:ask-queue-out .2s cubic-bezier(.65,.02,.28,1) both;}
+.ask-composer :is(.ask-queue-text,.ask-queue-x,.ask-queue-resume):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-send:disabled,.ask-send:disabled:hover{opacity:.4;cursor:default;box-shadow:none;}
+@keyframes ask-queue-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
+@keyframes ask-queue-out{from{opacity:1;transform:none;}to{opacity:0;transform:translateY(-18px);}}
+@media (prefers-reduced-motion: reduce){.ask-queue-item,.ask-queue-item.is-entering,.ask-queue-ghost{animation:none;transition:none;}}
 .ask-meter{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
   color:var(--ink-3);white-space:nowrap;}
 .ask-meter-cost{color:var(--ink-2);}

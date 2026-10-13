@@ -130,7 +130,7 @@ import {
   renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
   renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList,
 } from './plugins-view.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
@@ -14292,6 +14292,8 @@ function paintAskSettings(data) {
   // the GET and from every save response without a second fetch.
   const scriptHost = document.getElementById('ask-script-tools-host');
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -14341,8 +14343,13 @@ function saveAskLimits(e) {
   const scriptHost = document.getElementById('ask-script-tools-host');
   const webHost = document.getElementById('ask-web-host');
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
+  const suggestHost = document.getElementById('ask-suggestions-host');
+  const chat = {
+    ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
+    ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
+  };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
-    ...(scriptHost ? { chat: collectScriptToolsToggle(scriptHost) } : {}),
+    ...(Object.keys(chat).length ? { chat } : {}),
     ...(askWebBody ? { askWeb: askWebBody } : {}) }, { button: e?.currentTarget || null });
 }
 document.getElementById('askLimitsSave')?.addEventListener('click', saveAskLimits);
