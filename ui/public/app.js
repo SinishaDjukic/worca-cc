@@ -356,6 +356,8 @@ const el = {
   extras: $('#extras'),
   extrasNote: $('#extrasNote'),
   extrasPills: $('#extrasPills'),
+  reuseTask: $('#reuse-task'),
+  reuseTaskBtn: $('#reuse-task-btn'),
   mock: $('#mock'),
   startBtn: $('#start-btn'),
   startMore: $('#start-more'),
@@ -6542,6 +6544,48 @@ el.extras.addEventListener('change', () => {
   el.extras.value = ''; // so picking the same file again still fires `change`
   renderExtrasPills();
 });
+
+// #687: a started (or scheduled) run takes its TASK with it — title, prompt, markdown, the loaded
+// .md name, extra files — so the form never looks ready to start the same task twice. The CHOICES
+// (project, workflow, source, branches, models) stay. Reuse last task puts the task back.
+let lastTask = null;
+function snapshotTask() {
+  return {
+    source: (el.sourceRadios.find((r) => r.checked) || {}).value || 'prompt',
+    title: el.title.value, prompt: el.prompt.value, markdown: el.promptMarkdown.value,
+    mdFileName: el.mdFileName.textContent, extras: [...extrasFiles],
+  };
+}
+const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
+  && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
+function setTask(t) {
+  el.title.value = t.title;
+  el.prompt.value = t.prompt;
+  el.promptMarkdown.value = t.markdown;
+  el.mdFileName.textContent = t.mdFileName;
+  el.mdFile.value = '';
+  extrasFiles = [...t.extras];
+  renderExtrasPills();
+  scheduleMentionHighlight(el.prompt);
+  scheduleMentionHighlight(el.promptMarkdown);
+}
+/** After a start: clear the submitted task — unless something new was typed while it started. */
+function clearTask(submitted) {
+  if (!sameTask(snapshotTask(), submitted)) return;
+  lastTask = submitted;
+  setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
+  el.reuseTask.hidden = false;
+}
+el.reuseTaskBtn.addEventListener('click', () => {
+  const t = lastTask;
+  if (!t) return;
+  lastTask = null;
+  el.reuseTask.hidden = true;
+  if (t.source === 'prompt' || t.source === 'markdown') $(`#source-seg button[data-src="${t.source}"]`)?.click();
+  setTask(t);
+});
+// Typing a new task retires the offer, so Reuse can never overwrite it.
+for (const f of [el.title, el.prompt, el.promptMarkdown]) f.addEventListener('input', () => { el.reuseTask.hidden = true; });
 
 // ---------------------------------------------------------------------------
 // @-mention autocomplete: typing "@" in a prompt textarea pops up the attached
@@ -13103,6 +13147,7 @@ el.form.addEventListener('submit', async (e) => {
     cardAlert(newFormCard(), { title: scheduling ? 'Not scheduled' : 'Run not started', detail });
     return { ok: false };
   };
+  const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -13174,6 +13219,7 @@ el.form.addEventListener('submit', async (e) => {
         setPendingSchedule(null);   // the form is a plain Start run form again
         resetSyncChoice();
         showEngineRefusal(null);
+        clearTask(submittedTask);
         // Keep the warn tone when the server attached a budget warning. showView('schedules')
         // already shows the ticket, so the toast needs no Open action.
         notify({ tone: data.budgetWarning ? 'warn' : 'ok', title: 'Scheduled', detail: data.budgetWarning || title || '' });
@@ -13189,6 +13235,7 @@ el.form.addEventListener('submit', async (e) => {
       startSubmitInFlight = false;
       resetSyncChoice();
       showEngineRefusal(null);
+      clearTask(submittedTask);
       // D6: the user is on the run's page now, so the result is a toast, not a #form-msg line.
       notify({ tone: 'ok', title: 'Run started', detail: title || '', key: `run-${data.runId}`,
         action: { label: 'Open run', run: () => { location.hash = rdHash(data.runId); } } });

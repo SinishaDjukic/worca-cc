@@ -419,6 +419,8 @@
                     </div>
                   </div>
                   <div id="plugin-source-pane" class="source-pane hidden"></div>
+                  <!-- #687: a started run takes its task with it; this puts it back (app.js#clearTask). -->
+                  <p id="reuse-task" class="reuse-task" hidden><button type="button" class="link-btn" id="reuse-task-btn">Reuse last task</button></p>
                 </div>
 
                 <!-- Config-load failure hint; app.js#setConfigError paints/clears it.

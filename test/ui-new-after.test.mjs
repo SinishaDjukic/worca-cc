@@ -302,9 +302,11 @@ test('a started run toasts "Run started" with Open run, and repeated Starts each
     { name: 'a second Start while the first still reads "Started" posts again and never leaves the form stuck', run: async () => {
       // The first Start is the row above's click.
       assert.equal(btn.dataset.fbState, 'done');
+      doc.getElementById('prompt').value = 'Add more tests';   // #687: a started run clears the task
       doc.getElementById('run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
       await settle(doc);
       assert.equal(runBodies.length, 2, 'the second submit was not skipped');
+      doc.getElementById('prompt').value = 'And more';
       doc.getElementById('run-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
       await settle(doc);
       assert.equal(runBodies.length, 3, 'nor the third');
