@@ -31,8 +31,8 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'PDFs need a Claude chat: spec.pdf');
   assert.equal(checkAttachment({ name: 'shot.png', size: 1 }, { engine: 'codex' }).ok, true);
-  assert.equal(checkAttachment({ name: 'big.md', size: 524_289 }).error, 'attachment over 524288 bytes: big.md');
-  assert.equal(checkAttachment({ name: 'big.md', size: 524_288 }).ok, true);
+  assert.equal(checkAttachment({ name: 'big.md', size: 25 * 1024 * 1024 + 1 }).error, 'attachment over 26214400 bytes: big.md');
+  assert.equal(checkAttachment({ name: 'big.md', size: 25 * 1024 * 1024 }).ok, true);
   assert.equal(checkAttachment({ name: 'big.png', size: 33_554_433 }).error, 'attachment over 33554432 bytes: big.png');
   const eight = Array.from({ length: 8 }, (_, i) => ({ name: `f${i}.md`, bytes: 1 }));
   assert.equal(checkAttachment({ name: 'f8.md', size: 1 }, { pending: eight }).error, 'at most 8 attachments per message');

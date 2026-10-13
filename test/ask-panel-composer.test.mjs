@@ -93,9 +93,9 @@ test('ask-panel-composer: attachment chips — dedupe by name (newest wins), bad
       await ctx.tick(); await ctx.tick();
       assert.equal(ctx.doc.querySelector('.ask-chip'), null);
       assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment type not allowed: evil\.exe/);
-      injectFiles(ctx, [mkFile(ctx, 'big.md', 'x'.repeat(524_289))]);
+      injectFiles(ctx, [mkFile(ctx, 'big.md', 'x'.repeat(25 * 1024 * 1024 + 1))]);
       await ctx.tick(); await ctx.tick();
-      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 524288 bytes: big\.md/);
+      assert.match(ctx.doc.querySelector('.ask-composer-msg').textContent, /attachment over 26214400 bytes: big\.md/);
       injectFiles(ctx, [mkFile(ctx, 'ok.md', 'fine')]);
       await ctx.tick(); await ctx.tick();
       assert.ok(ctx.doc.querySelector('.ask-chip'));

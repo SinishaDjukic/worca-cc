@@ -740,7 +740,7 @@ test('read_attachment as="text": converted, redacted and paged; the converter\'s
       assert.equal(r.truncated, false, 'paging truncation is separate');
       assert.equal(r.title, null);
       assert.equal(seen[0].baseUrl, null, 'no base URL: an attachment has no origin');
-      assert.ok(seen[0].opts.maxChars >= ASK_LIMITS.attachment.maxBytesPerFile, 'maxChars covers a full 512 KB text attachment');
+      assert.ok(seen[0].opts.maxChars >= ASK_LIMITS.attachment.maxBytesPerFile, 'maxChars covers a full 25 MB text attachment');
     } },
   ]);
 });
