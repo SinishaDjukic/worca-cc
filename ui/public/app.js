@@ -99,6 +99,7 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningAct
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards } from './chat/action-cards.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
@@ -6513,6 +6514,10 @@ el.mdFile.addEventListener('change', async () => {
 // read-only, and both per-file removal and re-picking the same file after a
 // removal need mutable state. The input is only the OS picker trigger.
 let extrasFiles = [];
+// The files ride base64 in the POST /api/run body, whose JSON window (ui/server.mjs) is sized for one
+// chat message's attachments; a pick past it is refused here with a clear note, not the parser's bare 413.
+const EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
+let extrasRefusal = '';   // the last pick's refusal, shown in the note until the list changes again
 
 function renderExtrasPills() {
   el.extrasPills.textContent = '';
@@ -6536,20 +6541,25 @@ function renderExtrasPills() {
     pill.append(name, x);
     el.extrasPills.appendChild(pill);
   }
-  el.extrasNote.textContent = extrasFiles.length
+  el.extrasNote.textContent = extrasRefusal || (extrasFiles.length
     ? `${extrasFiles.length} file(s) will be uploaded and copied into the pipeline's extras/ folder.`
-    : 'Leave empty and the run gets no extra files.'; // must match index.html's initial state
+    : 'Leave empty and the run gets no extra files.'); // must match index.html's initial state
+  extrasRefusal = '';
   rebuildMentionIndex();
   refreshMentionHighlights();
 }
 
 el.extras.addEventListener('change', () => {
   const picked = el.extras.files ? [...el.extras.files] : [];
+  const refused = [];
   for (const f of picked) {
     const at = extrasFiles.findIndex((e) => e.name === f.name);
+    const othersBytes = extrasFiles.reduce((n, e, i) => (i === at ? n : n + e.size), 0);
+    if (othersBytes + f.size > EXTRAS_MAX_BYTES) { refused.push(f.name); continue; }
     if (at >= 0) extrasFiles[at] = f; // same name re-picked: newest wins
     else extrasFiles.push(f);
   }
+  if (refused.length) extrasRefusal = `Not added: ${refused.join(', ')}. Extra files are limited to ${EXTRAS_MAX_BYTES / (1024 * 1024)} MB in total.`;
   el.extras.value = ''; // so picking the same file again still fires `change`
   renderExtrasPills();
 });
