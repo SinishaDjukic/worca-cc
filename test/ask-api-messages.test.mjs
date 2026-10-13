@@ -279,7 +279,7 @@ test('attachments: stored + block on the user message; caps enforced', async () 
   const send = (atts) => post(`/api/ask/threads/${t2.id}/messages`, { text: 'x', ...MODEL, attachments: atts, context: { view: 'history' } });
   const before = (await snapshot(t2.id)).thread;
   assert.equal((await send([{ name: 'evil.exe', dataBase64: b64('x') }])).status, 400);
-  assert.equal((await send([{ name: 'big.md', dataBase64: Buffer.alloc(25 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413);
+  assert.equal((await send([{ name: 'big.md', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413);
   assert.equal((await send([{ name: 'bad.md', dataBase64: Buffer.from([0xff, 0xfe, 0xfd]).toString('base64') }])).status, 400);
   assert.equal((await send([{ name: 'nul.md', dataBase64: Buffer.from('a\u0000b', 'utf8').toString('base64') }])).status, 400);
   assert.equal((await send(Array.from({ length: 9 }, (_, i) => ({ name: `f${i}.md`, dataBase64: b64('x') })))).status, 400);
@@ -324,7 +324,7 @@ test('HTML attachments: .html / .htm accepted as TEXT, stored as .txt, served ba
   assert.equal(latin1.status, 400);
   assert.match((await latin1.json()).error, /not valid UTF-8: legacy\.html/);
   assert.equal((await send([{ name: 'nul.htm', dataBase64: Buffer.from('<p>a\u0000b</p>', 'utf8').toString('base64') }])).status, 400);
-  assert.equal((await send([{ name: 'big.html', dataBase64: Buffer.alloc(25 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413, 'the 25 MB text cap applies');
+  assert.equal((await send([{ name: 'big.html', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1, 97).toString('base64') }])).status, 413, 'the 100 MB text cap applies');
   const after2 = await snapshot(t2.id);
   assert.deepEqual(after2.messages, [], 'no message rows written');
   assert.deepEqual(after2.attachments, [], 'no attachment rows written');
@@ -391,29 +391,29 @@ test('binary attachments (#398): png + pdf stored with kind/mime, served with th
   const spoof = await send([{ name: 'spoof.png', dataBase64: Buffer.from('plain text, not a png').toString('base64') }]);
   assert.equal(spoof.status, 400);
   assert.match((await spoof.json()).error, /does not match its extension/);
-  const big = await send([{ name: 'big.png', dataBase64: Buffer.alloc(32 * 1024 * 1024 + 1).toString('base64') }]);
+  const big = await send([{ name: 'big.png', dataBase64: Buffer.alloc(100 * 1024 * 1024 + 1).toString('base64') }]);
   assert.equal(big.status, 413);
-  assert.match((await big.json()).error, /attachment over 33554432 bytes: big\.png/, 'the route, not the parser, answered');
+  assert.match((await big.json()).error, /attachment over 104857600 bytes: big\.png/, 'the route, not the parser, answered');
   assert.equal((await send([{ name: 'vector.svg', dataBase64: Buffer.from('<svg/>').toString('base64') }])).status, 400, 'svg stays off the allowlist');
-  // The ~65 MB JSON window belongs to THIS route only: two in-cap images one
-  // byte over the 48 MB message total (~64 MB of base64) reach the route's own
+  // The ~134 MB JSON window belongs to THIS route only: two in-cap images one
+  // byte over the 100 MB message total (~133 MB of base64) reach the route's own
   // per-message 413 …
   const fill = (n) => Buffer.concat([png, Buffer.alloc(n - png.length)]).toString('base64');
   const twoBig = await send([
-    { name: 'a.png', dataBase64: fill(24 * 1024 * 1024) },
-    { name: 'b.png', dataBase64: fill(24 * 1024 * 1024 + 1) },
+    { name: 'a.png', dataBase64: fill(50 * 1024 * 1024) },
+    { name: 'b.png', dataBase64: fill(50 * 1024 * 1024 + 1) },
   ]);
   assert.equal(twoBig.status, 413);
-  assert.match((await twoBig.json()).error, /attachments over 50331648 bytes per message/, 'the route, not the parser, answered');
+  assert.match((await twoBig.json()).error, /attachments over 104857600 bytes per message/, 'the route, not the parser, answered');
   // … while the sibling routes keep the app-wide 8mb parser (a 9 MB PATCH dies
   // in body-parser, never reaching the handler's string-field read)
   const fat = await fetch(`${base}/api/ask/threads/${t2.id}`, { method: 'PATCH', headers: JSONH, body: JSON.stringify({ title: 'x'.repeat(9 * 1024 * 1024) }) });
   assert.equal(fat.status, 413);
   assert.equal((await snapshot(t2.id)).thread.title, null, 'the fat PATCH changed nothing');
-  // /api/run shares the window: the run card's extras (up to one message's 48 MB) pass the parser
+  // /api/run shares the window: the run card's extras (up to one message's 100 MB) pass the parser
   // and reach the handler, whose own validation answers this target-less body
-  const fatRun = await post('/api/run', { extras: [{ name: 'big.pdf', dataBase64: Buffer.alloc(25 * 1024 * 1024).toString('base64') }] });
-  assert.notEqual(fatRun.status, 413, 'a 25 MB run extra is not refused by the body parser');
+  const fatRun = await post('/api/run', { extras: [{ name: 'big.pdf', dataBase64: Buffer.alloc(100 * 1024 * 1024).toString('base64') }] });
+  assert.notEqual(fatRun.status, 413, 'a 100 MB run extra is not refused by the body parser');
   const after2 = await snapshot(t2.id);
   assert.deepEqual(after2.messages, [], 'no message rows written');
   assert.deepEqual(after2.attachments, [], 'no attachment rows written');

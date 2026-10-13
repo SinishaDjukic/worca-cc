@@ -96,7 +96,7 @@ test('extra files render as removable pills: picks append, a re-pick never dupli
   ]);
 });
 
-test('extra files are capped at 48 MB in total: a pick past it is refused with a note, a same-name re-pick counts once', async () => {
+test('extra files are capped at 100 MB in total: a pick past it is refused with a note, a same-name re-pick counts once', async () => {
   const { window } = await boot();
   const MB = 1024 * 1024;
   // Content-free Files with a claimed size: the cap reads File.size only.
@@ -111,12 +111,12 @@ test('extra files are capped at 48 MB in total: a pick past it is refused with a
     input.dispatchEvent(new window.Event('change', { bubbles: true }));
   };
   const note = () => window.document.querySelector('#extrasNote').textContent;
-  pickSized([['a.pdf', 25 * MB], ['b.pdf', 23 * MB]]);
-  assert.deepEqual(pillNames(window), ['a.pdf', 'b.pdf'], 'exactly 48 MB fits');
+  pickSized([['a.pdf', 50 * MB], ['b.pdf', 50 * MB]]);
+  assert.deepEqual(pillNames(window), ['a.pdf', 'b.pdf'], 'exactly 100 MB fits');
   pickSized([['c.md', 1]]);
   assert.deepEqual(pillNames(window), ['a.pdf', 'b.pdf'], 'one byte past the cap is not added');
-  assert.equal(note(), 'Not added: c.md. Extra files are limited to 48 MB in total.');
-  pickSized([['b.pdf', 23 * MB]]);
+  assert.equal(note(), 'Not added: c.md. Extra files are limited to 100 MB in total.');
+  pickSized([['b.pdf', 50 * MB]]);
   assert.deepEqual(pillNames(window), ['a.pdf', 'b.pdf'], 'a same-name re-pick replaces, so its old size does not count twice');
   assert.match(note(), /2 file\(s\)/, 'the refusal note clears on the next change');
 });

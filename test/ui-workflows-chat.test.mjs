@@ -1232,7 +1232,7 @@ test('the picker closing (a choice or Cancel) never leaves the focus on <body>',
 
 test('Enter sends the chips as base64 with the text; a refused send keeps them, a 202 clears them and the message shows its files', async () => {
   let status = 413;
-  const f = fetchWith([['POST', /\/messages$/, () => (status === 202 ? [202, { userMessageId: 'msg_0000aaaa' }] : [413, { error: 'attachments over 50331648 bytes per message' }])]]);
+  const f = fetchWith([['POST', /\/messages$/, () => (status === 202 ? [202, { userMessageId: 'msg_0000aaaa' }] : [413, { error: 'attachments over 104857600 bytes per message' }])]]);
   const s = await bootDock([], { fetch: f.fn });
   const root = s.g('wfc');
   const input = root.querySelector('#wfc-input');
@@ -1252,7 +1252,7 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     { name: 'flow.png', dataBase64: 'iVBORw==' },
   ]);
   assert.deepEqual(chipNames(root), ['spec.md', 'flow.png'], 'refused: the chips stay for the retry');
-  assert.equal(root.querySelector('.wfc-err').textContent, 'attachments over 50331648 bytes per message');
+  assert.equal(root.querySelector('.wfc-err').textContent, 'attachments over 104857600 bytes per message');
   status = 202;
   await enter('Build a workflow from this spec');
   assert.equal(sent().length, 2);
@@ -1262,7 +1262,7 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
 });
 
-test('Ask\'s early checks and messages in the dock: type, 25 MB text, 8 files; a Codex chat refuses PDFs', async () => {
+test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; a Codex chat refuses PDFs', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   const note = () => root.querySelector('.wfc-note');
@@ -1272,9 +1272,9 @@ test('Ask\'s early checks and messages in the dock: type, 25 MB text, 8 files; a
   assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
   assert.equal(note().hidden, false);
   assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
-  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(25 * 1024 * 1024 + 1))]);
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(100 * 1024 * 1024 + 1))]);
   await settle();
-  assert.equal(note().textContent, 'attachment over 26214400 bytes: big.md');
+  assert.equal(note().textContent, 'attachment over 104857600 bytes: big.md');
   pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
   await settle();
   assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
