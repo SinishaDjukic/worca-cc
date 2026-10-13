@@ -1,4 +1,4 @@
-// ui/public/ask-panel.mjs — the Ask Worca floating sheet (spec §10). One
+// ui/public/ask-panel.mjs — the Chat page (worca Chat P1; once the Ask Worca floating sheet, spec §10). One
 // factory, everything in the closure: the module is evaluated once per test
 // file even though app.js is re-imported with a cache-buster, so module scope
 // holds no state. All markup is built with DOM APIs and textContent — no
@@ -10,7 +10,7 @@ import { formatInstant, describeRule } from '../../src/shared/schedule/recurrenc
 import { createThreadModel } from './ask-model.mjs';
 import { credentialBadge } from './credential-badges.mjs';
 import { createMarkdownRenderer } from './ask-markdown.mjs';
-import { createThinkingOrb } from './thinking-orb.mjs';
+import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
@@ -29,6 +29,7 @@ import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
 import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
+import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 
 /**
  * Cold-start pick, used ONLY until GET /api/ask/models resolves — and afterwards
@@ -37,9 +38,10 @@ import { notify } from './feedback.mjs';
  * and already validated against the live catalog by src/core/ask/models.mjs.
  */
 const FALLBACK_PICK = Object.freeze({ model: 'claude-opus-5-5', effort: 'high' });
+/** The composer's resting placeholder; an add-on's setPlaceholder(null) comes back to it (worca Chat CONTRACT §2). */
+const INPUT_PLACEHOLDER = 'Ask about any run, agent, or project…';
 
 const ICONS = {
-  threads: 'M4 6h16M4 12h16M4 18h9',
   plus: 'M12 5v14M5 12h14',
   chevronDown: 'M6 9l6 6 6-6',
   send: 'M12 19V5M6 11l6-6 6 6',
@@ -48,6 +50,7 @@ const ICONS = {
   voiceTalk: ['M7.9 20A9 9 0 1 0 4 16.1L2 22z', 'M8 10h8M8 14h5'],           // chat bubble with text lines: speak in, read the reply
   voiceHandsFree: ['M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4'],               // waveform: a live conversation
   pin: ['M12 17v5', 'M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z'],
+  search: ['M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M20 20l-4.5-4.5'],    // the Workflows Library's search glyph
 };
 // One icon per voice mode; the mic button and the ▾ menu both draw from this.
 const VOICE_MODE_ICONS = { dictate: ICONS.mic, talk: ICONS.voiceTalk, handsfree: ICONS.voiceHandsFree };
@@ -204,20 +207,6 @@ export function scriptToolLine(short, block = {}) {
 }
 
 /**
- * Sheet geometry shared with style.css: .ask-dock{padding:0 28px 26px} and
- * .ask-sheet{width:min(821px,100%);height:min(669px,calc(100% - 20px))}. The
- * user's size is clamped to [minW×minH, dock inner box]. The floor IS the
- * stylesheet default: the sheet grows from what it always was and never shrinks
- * below it, so every layout the fixed-size sheet was designed around (the
- * non-wrapping composer row, the popovers written in 100vh terms) still holds.
- * Border-box px throughout — the sheet has no padding.
- */
-export const ASK_SHEET_SIZE = Object.freeze({
-  defaultW: 821, defaultH: 669,
-  minW: 821, minH: 669,
-  dockPadX: 28, dockPadBottom: 26, topGap: 20,
-});
-/**
  * Where the chip picker's panel sits inside the sheet (sheet-relative px, from
  * sheet-relative chip edges). Every other .ask-pop is CSS-anchored (the header
  * corner, or the composer box's inset — style.css --ask-col-inset); a band chip
@@ -236,24 +225,21 @@ export function chipPickerTop({ top, bottom, panelH, sheetH, gap = 6 }) {
   return Math.max(0, t);
 }
 
-const SIZE_KEY = 'worca-cc.ask.size';
 /** Out-of-turn / other-thread frames that can move a History row's dots: a run a
  *  chat follows changed (tracking) or a turn started/ended there (thinking). */
-const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error']);
+// worca Chat: a followed run's question notice (ask-message) can turn a dot amber; a new title renames a row.
+const THREADS_REFRESH_FRAMES = new Set(['ask-run-status', 'ask-start', 'ask-done', 'ask-error', 'ask-message', 'ask-title']);
 const THREADS_REFRESH_MS = 250;
-/** The pill's mark ↔ orb morph: the canvas tween (thinking-orb morphTo) runs on
- *  the same clocks as the CSS transitions on the two layers — .52s in, .8s out
- *  (style.css .ask-pill-mark rules). The settle fallback outlives the fade-out,
- *  for the case the transitionend never arrives. */
-const PILL_MORPH_IN_MS = 520;
-const PILL_MORPH_OUT_MS = 800;
-const PILL_SETTLE_FALLBACK_MS = PILL_MORPH_OUT_MS + 150;
-const PILL_NAME = 'Ask Worca';
-const PILL_NAME_UNREAD = 'Ask Worca, new reply';
-/** Hover has to rest on the button this long before its tooltip shows. */
-const PILL_TIP_DELAY_MS = 400;
+/** The History column (worca Chat P1): the user's open/closed choice, the width it starts open from, and the width
+ *  below which it is an overlay with a scrim (style.css @media (max-width:1099px)). */
+const HISTORY_KEY = 'worca-cc.chat.history';
+const HISTORY_OPEN_MIN_W = 1600;
+const HISTORY_OVERLAY_BELOW = 1100;
+const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']];
+/** The column's search waits this long after the last keystroke before it asks the server. */
+const HISTORY_SEARCH_MS = 200;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500 }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -282,24 +268,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the last POST /api/ask/mcp-preview body and whether it failed; gen drops a stale response, render repaints
     // an open picker, saving chains the PATCHes so they land in toggle order.
     mcp: { off: { sets: [], members: [] }, preview: null, failed: false, gen: 0, queued: false, render: null, saving: Promise.resolve() },
-    // Agent mode (#574): the chat's switch (sent with every message, PATCHed like mcpOff); `available` comes from
-    // GET /api/ask/commands/status once at first open — false hides the switch and nothing is sent.
-    agent: { on: true, saving: Promise.resolve(), available: false },
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsShown: new Set(), // blockIds whose start already showed their terminal tab (shared terminal)
     pinned: true,
-    prevFocus: null,
-    size: readStoredSize(),   // {w,h} the user's persisted sheet size (hoisted reader); null = stylesheet default
-    applied: null,            // {w,h} the inline size currently on the sheet (clamped); null = default
-    drag: null,               // the active resize gesture — see startResize()
+    wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
+    unread: false,            // what onUnread was last told (the Chat row's dot)
+    historyStale: true,       // the History rows need a fetch at the next show (a refresh frame landed while hidden)
+    historyLoaded: false,     // rows (or the empty line) have been painted once
+    historyGen: 0,            // drops a stale list response
+    historyAsPush: false,     // the column was opened as a push column: narrowing the window below 1100px closes it
+    historySearchOpen: false, // the column's search field is unfolded (the head's .is-searching)
+    historyQuery: '',         // the search field's text; loadHistory sends it trimmed as ?q=
+    historyListQuery: '',     // the trimmed query the last list request carried ('' = the full list, null = it failed)
+    historySearchTimer: null, // the typing debounce (HISTORY_SEARCH_MS)
+    unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
+    askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
     sending: false,
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
-    pillOrbLive: false,       // what the pill orb was last told — see syncPillOrb()
-    pillOrbSettle: null,      // the morph-back's fallback timer, while one runs
     flushArmed: false,
     resyncing: false,
     firstOpenDone: false,
@@ -321,9 +310,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     runTick: null,
     runUnsub: null,
     runPoked: false,
+    addons: [],               // worca Chat CONTRACT §2: the mounted composer add-ons, [{ id, handle }] in registration order
   };
   const el = {}; // element refs, filled by the builders
   const renderer = createMarkdownRenderer({ doc, load: loadMarkdown, hljsLoader });
+  const orbs = createDotOrbs({ doc, win });   // the live turn's orb (ensureThinking), the Workflows chat's dot sphere
 
   // ---- storage --------------------------------------------------------------
   /**
@@ -372,21 +363,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     try {
       if (id) storage.setItem('worca-cc.ask.thread', id);
       else storage.removeItem('worca-cc.ask.thread');
-    } catch { /* ignore */ }
-  }
-  /** The persisted sheet size, or null when nothing usable is stored. Clamped later, against a live dock. */
-  function readStoredSize() {
-    try {
-      const raw = storage.getItem(SIZE_KEY);
-      const v = raw ? JSON.parse(raw) : null;
-      if (v && Number.isFinite(v.w) && Number.isFinite(v.h)) return { w: Math.round(v.w), h: Math.round(v.h) };
-    } catch { /* storage unavailable */ }
-    return null;
-  }
-  function storeSize(size) {
-    try {
-      if (size) storage.setItem(SIZE_KEY, JSON.stringify({ w: size.w, h: size.h }));
-      else storage.removeItem(SIZE_KEY);
     } catch { /* ignore */ }
   }
 
@@ -456,104 +432,79 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.type = 'button';
     b.title = title;
     b.setAttribute('aria-label', title);
-    b.appendChild(svgIcon(icon));
+    b.appendChild(icon && icon.nodeType ? icon : svgIcon(icon));
     b.addEventListener('click', onClick);
     return b;
   }
+  /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
+  function historyIcon() {
+    return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
+      'M9 9h2', 'M9 13h6', 'M9 17h6'], 20, 1.5);
+  }
 
-  // ---- shell ----------------------------------------------------------------
+  // ---- shell: the Chat page (worca Chat P1, CONTRACT §1) ---------------------
+  // div.chat-page = the history column · its overlay scrim · the conversation column (head · home with the hero
+  // slot · transcript · dock) · the run panel slot P4 fills. The composer is ONE element that syncView() moves
+  // between the hero slot (home) and the dock (thread).
   function buildRoot() {
-    const dock = make('div', 'ask-dock');
+    const page = make('div', 'chat-page');
+    page.setAttribute('data-chat-page', '');
+    page.dataset.view = 'home';
+    page.dataset.panel = 'closed';
+    st.historyAsPush = initialHistoryOpen();          // never below 1100px: there a load starts closed
+    page.dataset.history = st.historyAsPush ? 'open' : 'closed';
 
-    const pill = make('button', 'ask-pill');
-    pill.type = 'button';
-    pill.setAttribute('aria-label', PILL_NAME);
-    // The mark slot: the masked logo and the pill's OWN thinking orb stacked in
-    // one 26px host (a CSS mask clips children, so the orb cannot live under
-    // the masked span). Both exist from birth — .is-live morphs one into the
-    // other in CSS and syncPillOrb() runs the canvas only while there is
-    // something to paint. Its own instance on purpose: the transcript's orb
-    // (ensureThinking) is re-parented into each live row and cannot be shared.
-    const mark = make('span', 'ask-pill-mark');
-    mark.setAttribute('aria-hidden', 'true');
-    const pillLogo = make('span', 'ask-pill-logo');
-    pillLogo.setAttribute('aria-hidden', 'true');
-    mark.appendChild(pillLogo);
-    el.pillOrb = createThinkingOrb({ doc, win, size: 26 });
-    el.pillOrb.stop();                 // the factory arms its loop; nothing is lit yet
-    el.pillOrb.morphTo(0, 0);          // the dots wait on the centre for the first morph-in
-    // The morph-back ends when the orb layer's opacity fade does (the transform
-    // fade shares the clock, so one of the two is enough); a late event from a
-    // fade that a new turn aborted must not cut a live loop — hence the guard.
-    el.pillOrb.el.addEventListener('transitionend', (e) => {
-      if (e.target === el.pillOrb.el && e.propertyName === 'opacity' && !st.pillOrbLive) settlePillOrb();
+    el.history = buildHistory();
+    page.appendChild(el.history);
+    el.scrim = make('div', 'chat-scrim');
+    el.scrim.setAttribute('data-chat-scrim', '');
+    el.scrim.hidden = true;
+    el.scrim.addEventListener('click', () => {
+      setHistoryOpen(false, { persist: false });
+      try { el.historyBtn.focus(); } catch { /* detached */ }   // as Escape does
     });
-    mark.appendChild(el.pillOrb.el);
-    pill.appendChild(mark);
-    pill.appendChild(make('span', 'ask-pill-label', 'Ask Worca'));
-    pill.addEventListener('click', openSheet);
+    page.appendChild(el.scrim);
 
-    // The tooltip is a sibling of the button (a button's face holds no other widget); style.css .ask-tip
-    // places it to the left. It only names the round button, which aria-label already does for assistive
-    // tech, so nothing points at it. ⌘K / Ctrl K belongs to the top bar's search.
-    const tip = make('div', 'ask-tip');
-    tip.id = 'ask-pill-tip';
-    tip.setAttribute('role', 'tooltip');
-    tip.appendChild(make('span', null, 'Ask Worca'));
-    pill.addEventListener('pointerenter', () => {
-      clearTipTimer();
-      st.tipTimer = setTimeout(showTip, PILL_TIP_DELAY_MS);
-      if (st.tipTimer && typeof st.tipTimer.unref === 'function') st.tipTimer.unref();
-    });
-    pill.addEventListener('pointerleave', hideTip);
-    pill.addEventListener('blur', hideTip);
-    pill.addEventListener('focus', () => {
-      // A mouse click focuses the button too; only keyboard focus earns the tooltip at once.
-      let visible = true;
-      try { visible = pill.matches(':focus-visible'); } catch { /* no :focus-visible: treat as keyboard */ }
-      if (visible) showTip();
-    });
-
-    const sheet = make('section', 'ask-sheet');
-    sheet.hidden = true;
-    sheet.setAttribute('data-ask-sheet', '');
-    sheet.setAttribute('role', 'dialog');
-    sheet.setAttribute('aria-label', 'Ask Worca');
-
-    const header = make('header', 'ask-header');
-    const logo = make('span', 'ask-header-logo');
-    logo.setAttribute('aria-hidden', 'true');
-    header.appendChild(logo);
-    el.title = make('div', 'ask-title', 'Ask Worca');
-    // Header is logo → title → spacer → icon buttons. The #397 scope selector
-    // used to sit here; it now lives in the composer's bottom row next to the
-    // "+" attach button (see buildComposer). A long haiku title still ellipsizes.
-    header.appendChild(el.title);
-    header.appendChild(make('span', 'ask-header-spacer'));
-    const threadsBtn = iconButton('ask-icon-btn', 'History', ICONS.threads, () => toggleThreadsPopover(threadsBtn));
+    const convo = make('div', 'chat-convo');
+    const head = make('header', 'chat-head');
+    const threadsBtn = iconButton('ask-icon-btn chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
-    header.appendChild(threadsBtn);
-    const newBtn = iconButton('ask-icon-btn', 'New chat', ICONS.plus, () => newThread());
+    threadsBtn.setAttribute('aria-controls', 'chat-history');
+    el.historyBtn = threadsBtn;
+    head.appendChild(threadsBtn);
+    el.title = make('div', 'ask-title', 'New chat');
+    head.appendChild(el.title);
+    head.appendChild(make('span', 'chat-head-spacer'));
+    const newBtn = iconButton('ask-icon-btn chat-head-btn', 'New chat', ICONS.plus, () => { newThread(); route(null); });
     newBtn.setAttribute('data-ask-new-btn', '');
-    header.appendChild(newBtn);
-    header.appendChild(iconButton('ask-icon-btn', 'Close', ICONS.chevronDown, closeSheet));
-    sheet.appendChild(header);
+    head.appendChild(newBtn);
+    convo.appendChild(head);
+
+    el.home = make('div', 'chat-home');
+    el.home.setAttribute('data-chat-home', '');
+    el.heroSlot = make('div', 'chat-hero-slot');
+    el.heroSlot.setAttribute('data-chat-hero-slot', '');
+    el.home.appendChild(el.heroSlot);
+    convo.appendChild(el.home);
 
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
     el.transcript.addEventListener('scroll', updatePinFromScroll);
-    // The transcript is only the scrollport; every row lands in this column,
-    // which style.css caps (--ask-col-max) and centres once the sheet is
-    // dragged wider than the cap. Scroll/pin logic keeps reading el.transcript.
+    // The transcript is only the scrollport; every row lands in this column, which style.css caps
+    // (--ask-col-max) and centres. Scroll/pin logic keeps reading el.transcript.
     el.transcriptCol = make('div', 'ask-transcript-col');
     el.transcript.appendChild(el.transcriptCol);
-    sheet.appendChild(el.transcript);
+    convo.appendChild(el.transcript);
 
-    sheet.appendChild(buildComposer());
+    el.chatDock = make('div', 'chat-dock');
+    el.chatDock.setAttribute('data-chat-dock', '');
+    convo.appendChild(el.chatDock);
+    el.composer = buildComposer();
+    el.heroSlot.appendChild(el.composer);              // a new chat starts on home; syncView() moves it
 
     el.live = make('div', 'sr-only');
     el.live.setAttribute('aria-live', 'polite');
-    sheet.appendChild(el.live);
+    convo.appendChild(el.live);
 
     el.jump = make('button', 'ask-jump');
     el.jump.type = 'button';
@@ -561,17 +512,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.jump.appendChild(make('span', null, 'Jump to latest'));
     el.jump.hidden = true;
     el.jump.addEventListener('click', jumpToLatest);
-    sheet.appendChild(el.jump);
-    for (const edge of ['n', 'e', 'w', 'ne', 'nw']) sheet.appendChild(buildResizeHandle(edge));
-    sheet.appendChild(buildDropTarget(sheet));
-    dock.appendChild(sheet);
-    dock.appendChild(pill);
-    dock.appendChild(tip);
-    el.pill = pill;
-    el.tip = tip;
-    el.sheet = sheet;
-    el.dock = dock;           // measured by dockInner(); `root` is TDZ here
-    return dock;
+    el.chatDock.appendChild(el.jump);                  // rides the dock's top edge, however tall the draft grows (style.css)
+    convo.appendChild(buildDropTarget(convo));
+    page.appendChild(convo);
+
+    el.panelSlot = make('aside', 'chat-panel');
+    el.panelSlot.setAttribute('data-chat-panel', '');
+    el.panelSlot.hidden = true;
+    page.appendChild(el.panelSlot);
+
+    el.sheet = convo;         // the popover host outside the composer — the floating sheet's role, its name kept
+    el.page = page;
+    paintHistory();
+    return page;
   }
 
   // The type tables, caps and early checks (#398, D16) live in attach-files.mjs, shared with the Workflows chat
@@ -685,50 +638,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const streaming = !!(st.model && st.model.live());
     el.send.hidden = streaming;
     el.stop.hidden = !streaming;
-    // The collapsed launcher pill mirrors "Ask Worca is working": a live turn, a
-    // snapshot that reports one in flight (load() nulls live until a frame is
-    // adopted, so Stop alone would stay dark on a collapsed reload), or the
-    // POST→ask-start window (st.sending). The thinking ring and the mark↔orb
-    // morph are pure CSS on this class (.ask-pill.is-live::before and
-    // .ask-pill.is-live .ask-pill-mark), so a boundary costs one classList
-    // write plus syncPillOrb() — local rAF bookkeeping for the pill's canvas,
-    // idle when nothing changed. Keep every OTHER side effect out of here, see
-    // afterFrame()'s refreshWorktrees() note.
-    const inFlight = !!(st.model && st.model.inFlight && st.model.inFlight());
-    if (el.pill) { el.pill.classList.toggle('is-live', streaming || inFlight || !!st.sending); syncPillOrb(); }
-  }
-
-  /**
-   * The pill's mark ↔ orb morph, canvas half. CSS cross-fades and scales the
-   * two layers off .is-live; this runs the orb's rAF loop only while there is
-   * something to paint — live AND the pill visible — and drives the canvas
-   * tween (dots grow out of the centre on lighting, sink back on rest) on the
-   * same clocks. Hidden behind the open sheet the layers snap (display:none
-   * skips transitions), so the factor snaps with them: nothing replays when
-   * closeSheet() shows the pill again. The morph-back keeps painting until the
-   * opacity transitionend (fallback: a timer), then the loop is cut.
-   */
-  function syncPillOrb() {
-    if (!el.pillOrb) return;
-    const live = el.pill.classList.contains('is-live');
-    if (live !== st.pillOrbLive) {
-      st.pillOrbLive = live;
-      clearPillOrbSettle();
-      el.pillOrb.morphTo(live ? 1 : 0, el.pill.hidden ? 0 : (live ? PILL_MORPH_IN_MS : PILL_MORPH_OUT_MS));
-      if (!live && !el.pill.hidden) {
-        st.pillOrbSettle = setTimeout(settlePillOrb, PILL_SETTLE_FALLBACK_MS);
-        if (st.pillOrbSettle && typeof st.pillOrbSettle.unref === 'function') st.pillOrbSettle.unref();
-      }
-    }
-    if (!el.pill.hidden && (live || st.pillOrbSettle)) el.pillOrb.start();
-    else settlePillOrb();
-  }
-  function clearPillOrbSettle() {
-    if (st.pillOrbSettle) { clearTimeout(st.pillOrbSettle); st.pillOrbSettle = null; }
-  }
-  function settlePillOrb() {
-    clearPillOrbSettle();
-    if (el.pillOrb) el.pillOrb.stop();
   }
 
   /** The open chat's context fill and window: the streaming call's while live, else the last turn's.
@@ -923,12 +832,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   async function sendMessage() {
     if (st.sending || st.destroyed) return false;
-    if (st.model && st.model.live()) return false; // a turn is streaming — the stop button is showing
-    const text = el.input.value.trim();
+    let text = el.input.value.trim();
     if (!text) return false;
+    // A chat is still loading (a History pick, Back to a chat): the send would land in the chat being left — or, from
+    // home, in a brand-new chat — while the address already names the loading one. The draft waits for it, and so do
+    // the add-ons (a direction would reach the run of the chat being left).
+    if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
+    // worca Chat CONTRACT §2: an add-on may take the send first (P3's direction to a live run) — even while a reply
+    // streams, since it never starts an Ask turn: true = handled, the input cleared; 'keep' = handled, the input kept
+    // (the server refused it). Not taken: the add-ons may reword it (transformSend, e.g. P6's intent prefix) — that
+    // text is what is sent and shown. The reword runs only for a send that goes ahead (never under a streaming reply).
+    if (st.addons.length) {
+      st.sending = true;
+      let taken = false;
+      try { taken = await addonsTakeSend(text); } finally { st.sending = false; }
+      if (st.destroyed) return false;
+      if (taken === 'keep') { updateSendStop(); return true; }
+      if (taken) {
+        el.input.value = '';
+        fitInput();                                  // a programmatic clear fires no input event
+        updateSendStop();
+        return true;
+      }
+    }
+    if (st.model && st.model.live()) return false; // a turn is streaming — the stop button is showing
+    // …or one the user started while an add-on decided (the same check, above the add-ons).
+    if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
+    if (st.addons.length) text = addonsTransform(text);
     st.sending = true;
     setComposerMsg(null);
-    updateSendStop();      // the pill lights the moment the user sends; Send/Stop do not move (nothing streams yet)
+    updateSendStop();      // Send/Stop do not move yet (nothing streams)
     try {
       let id = st.threadId;
       if (!id) {
@@ -938,6 +871,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         } catch { r = null; }
         if (!r || (r.status !== 201 && !r.ok)) { setComposerMsg('could not create the thread'); return false; }
         const body = await r.json();
+        // The user moved while the chat was being created (Back to a chat, a History pick): nothing is sent, the draft
+        // stays — the swap below would otherwise drop that load and rewrite its address. The chat just made stays
+        // empty and unseen: it is deleted, or History would list a "New chat" the user never started.
+        if (st.destroyed || st.threadId || typeof st.wantThread === 'string') {
+          const orphan = body && body.thread && body.thread.id;
+          if (orphan && !st.destroyed) {
+            Promise.resolve().then(() => fetch(`/api/ask/threads/${orphan}`, { method: 'DELETE' })).catch(() => { /* an empty leftover is harmless */ });
+          }
+          return false;
+        }
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
@@ -946,9 +889,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         setContexts(body.thread && body.thread.contexts);
         renderTranscript();
         storeThread(id);
+        st.wantThread = id;
+        route(id, { replace: true });          // #chat → #chat/<id>, swapped: Back never lands on an empty new chat
       }
       const sentOff = st.mcp.off;
-      const sentAgent = st.agent.on;
       const payload = {
         text,
         model: st.picker.model,
@@ -958,8 +902,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // MCP registry §9.4: every message carries the picker's choices, so each turn runs what the picker shows —
         // a refused first message (429/403/400, network) or a PATCH still in flight would leave the stored ones behind.
         mcpOff: sentOff,
-        // Agent mode (#574): like mcpOff, every message carries the switch (only where agent mode exists).
-        ...(st.agent.available ? { agentMode: sentAgent } : {}),
         ...(st.pendingFiles.length ? { attachments: st.pendingFiles.map((f) => ({ name: f.name, dataBase64: f.dataBase64 })) } : {}),
       };
       const model = st.model;
@@ -979,7 +921,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       // A toggle made while this POST was out PATCHed a value the route then overwrote with sentOff: re-send the latest.
       if (st.mcp.off !== sentOff) patchMcpOff(id, st.mcp.off);
-      if (st.agent.available && st.agent.on !== sentAgent) patchAgentMode(id, st.agent.on);
       const { userMessageId, attachments: stored, contexts } = await res.json();
       if (Array.isArray(contexts)) setContexts(contexts);   // an older server omits it: keep what is shown
       // Prefer the server's rows: they carry the store-minted ids that key the
@@ -989,7 +930,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         ? stored.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind ?? 'text', mime: a.mime ?? null }))
         : st.pendingFiles.map((f) => ({ name: f.name, bytes: f.bytes, attKind: f.attKind, mime: f.mime }));
       st.model.noteLocalUserMessage({ id: userMessageId, text, attachments: echoAtts });
-      // No provisional title from the prompt: the header keeps "Ask Worca" until
+      st.askedIn.add(id);                            // its replies may light the Chat row's dot, even after a switch
+      // No provisional title from the prompt: the header keeps "New chat" until
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       el.input.value = '';
       fitInput();                                    // a programmatic clear fires no input event
@@ -1014,6 +956,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.composerBox = box;
     wrap.appendChild(box);
 
+    // worca Chat CONTRACT §2: the add-ons' lead row (an intent chip, a direction chip…) above the attachments.
+    el.lead = make('div', 'chat-composer-lead');
+    el.lead.setAttribute('data-chat-composer-lead', '');
+    box.appendChild(el.lead);
+
     el.chips = make('div', 'ask-chips');
     el.chips.hidden = true;
     box.appendChild(el.chips);
@@ -1021,7 +968,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.input = doc.createElement('textarea');
     el.input.className = 'ask-input';
     el.input.rows = 1;
-    el.input.placeholder = 'Ask about any run, agent, or project…';
+    el.input.placeholder = INPUT_PLACEHOLDER;
     el.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
     });
@@ -1077,21 +1024,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     mcpBtn.addEventListener('click', () => openMcpPopover(mcpBtn));
     el.mcpBtn = mcpBtn;
     row.appendChild(mcpBtn);
-
-    // Agent mode (#574): Ask may run commands in a Worca terminal. A safety control, so it shows at every interface
-    // level; hidden where agent mode cannot work (GET /api/ask/commands/status).
-    const agentBtn = make('button', 'ask-scope-btn ask-agent-btn');
-    agentBtn.type = 'button';
-    agentBtn.setAttribute('data-ask-agent-btn', '');
-    agentBtn.title = 'Agent mode: Ask can run commands in a Worca terminal';
-    agentBtn.hidden = true;
-    agentBtn.appendChild(make('span', 'ask-scope-label', 'Agent'));
-    el.agentSwitch = make('span', 'switch on');
-    el.agentSwitch.setAttribute('aria-hidden', 'true');
-    agentBtn.appendChild(el.agentSwitch);
-    agentBtn.addEventListener('click', () => setAgentMode(!st.agent.on));
-    el.agentBtn = agentBtn;
-    row.appendChild(agentBtn);
 
     row.appendChild(make('span', 'ask-composer-spacer'));
 
@@ -1161,293 +1093,166 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function announce(text) { el.live.textContent = text; }
 
+  /** Never under a dialog: the welcome (app.js shows it on Chat BEFORE the route opens the page) or a confirm keeps its
+   *  focus. */
   function focusComposer() {
+    // …nor under the History overlay (below 1100px): closing it hands the focus on (a pick, a delete, Escape).
+    if (historyOverlayOpen() || doc.querySelector('.viewer-modal:not(.hidden), dialog[open]')) return;
     try { el.input.focus({ preventScroll: true }); } catch { try { el.input.focus(); } catch { /* detached */ } }
   }
 
-  function showTip() {
-    clearTipTimer();
-    if (el.tip && !st.open) el.tip.classList.add('is-shown');
-  }
-  function hideTip() {
-    clearTipTimer();
-    if (el.tip) el.tip.classList.remove('is-shown');
-  }
-  function clearTipTimer() {
-    if (st.tipTimer) { clearTimeout(st.tipTimer); st.tipTimer = null; }
+  /** The Chat row's dot (app.js paints it through onUnread): a reply ended while the page was hidden — in the open
+   *  chat, or in another chat this tab asked in. `threadId` = that chat; the most recent one wins. Off clears it. */
+  function setUnread(on, threadId = null) {
+    if (on && threadId) st.unreadThread = threadId;
+    if (!on) st.unreadThread = null;
+    if (st.unread === on) return;
+    st.unread = on;
+    if (typeof onUnread === 'function') { try { onUnread(on); } catch { /* the dot is a nicety */ } }
   }
 
-  /** The unread dot: a turn ended while the sheet was closed. Memory only — a reload clears it. */
-  function setUnread(on) {
-    if (!el.pill) return;
-    el.pill.classList.toggle('has-unread', on);
-    el.pill.setAttribute('aria-label', on ? PILL_NAME_UNREAD : PILL_NAME);
+  /**
+   * The page became visible (app.js: the #chat route) — or, with `req`, is routed: `{ threadId: null }` = home
+   * (a new chat; the draft stays), `{ threadId }` = that chat. Every hidden → shown step re-pins the transcript,
+   * repaints the run cards and re-previews the Sets; the FIRST one also loads the model catalog and — only for a
+   * bare open() with no route — the stored chat. (`req`, not `route`: route() is the address callback below.)
+   */
+  function openPage(req) {
+    if (st.destroyed) return;
+    const routed = !!(req && typeof req === 'object' && Object.prototype.hasOwnProperty.call(req, 'threadId'));
+    const showing = !st.open;
+    if (showing) {
+      st.open = true;
+      setUnread(false);
+      st.pinned = true;
+      ensureFirstOpen({ restore: !routed });
+      scheduleFlush();
+      repaintProgressCards({ hydrate: true });
+      scheduleMcpRefresh();                          // the page may have changed while Chat was hidden
+      if (st.historyStale) loadHistory();            // the first show, or a refresh frame landed while hidden
+      if (createVoice && voiceUsedBefore()) voice().preload();   // the mic is ready by the time it is clicked
+    }
+    if (routed) showThread(req.threadId);
+    // Text appended while the page was hidden (openChat from another page) was measured at 0px under display:none:
+    // size the textarea again now that it has a box.
+    if (showing) { fitInput(); focusComposer(); }
   }
 
-  function openSheet() {
-    if (st.open || st.destroyed) return;
-    st.open = true;
-    st.prevFocus = doc.activeElement;
-    hideTip();
-    setUnread(false);
-    el.pill.hidden = true;
-    syncPillOrb();                                 // nothing to paint behind the sheet
-    el.sheet.hidden = false;
-    restoreSize();                                 // the sheet has a box now — clamp the stored size to the dock
-    st.pinned = true;
-    ensureFirstOpen();
-    focusComposer();
-    scheduleFlush();
-    repaintProgressCards({ hydrate: true });
-    scheduleMcpRefresh();                          // the page may have changed while the sheet was closed
-    if (createVoice && voiceUsedBefore()) voice().preload();   // the mic is ready by the time it is clicked
+  /** Show chat `id` (null = home). A no-op for the chat already shown or loading, so the address echo of onRoute
+   *  (hashchange → app.js enterChatView → open) never loads it twice. */
+  function showThread(id) {
+    const want = typeof id === 'string' && id ? id : null;
+    if (st.wantThread === want) return;
+    if (want) switchThread(want);
+    else newThread();
+  }
+
+  /** The panel moved to another chat: app.js points the address at it (pushed, or swapped with `replace`). */
+  function route(threadId, { replace = false } = {}) {
+    if (typeof onRoute !== 'function') return;
+    try { onRoute(threadId || null, { replace }); } catch { /* the address is a nicety */ }
   }
 
   /**
    * Append a plain-text reference to the composer WITHOUT sending, so several can
-   * stack and the user presses send once. Opens the sheet if it is closed and
-   * focuses the composer either way. Returns false when there is nothing to add.
+   * stack and the user presses send once. The caller routes to Chat first (app.js
+   * openChat); a hidden page keeps the text for its next show. Returns false when
+   * there is nothing to add.
    */
   function appendToComposer(text) {
     const add = String(text ?? '').trim();
     if (!add || st.destroyed) return false;
-    openSheet();                                   // no-op when already open…
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
-    // …so the autosize and the focus have to be driven here.
-    fitInput();
+    fitInput();                                    // a programmatic write fires no input event
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
   }
 
-  function closeSheet() {
+  /** The page was hidden (app.js: another route). Voice stops and popovers close; focus belongs to the next page. */
+  function closePage() {
     if (!st.open) return;
     stopVoice();
     closePopover({ focusTrigger: false });
+    if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
     st.open = false;
-    el.sheet.hidden = true;
-    el.pill.hidden = false;
-    syncPillOrb();                                 // still live? the orb loop comes back, whole
-    const prev = st.prevFocus;
-    st.prevFocus = null;
-    if (prev && prev.isConnected && typeof prev.focus === 'function') { try { prev.focus(); return; } catch { /* fall through */ } }
-    try { el.pill.focus(); } catch { /* ignore */ }
   }
 
-  function toggleSheet() { (st.open ? closeSheet : openSheet)(); }
-
-  // ---- resize ---------------------------------------------------------------
-  // The sheet is a bottom-anchored, horizontally centred flex child of the dock,
-  // so a top-edge drag is a pure height change and a side drag grows the width
-  // symmetrically about the centre (each edge moves half the delta, which keeps
-  // the grabbed edge under the cursor). Sizes are border-box px applied as
-  // inline width/height, so the stylesheet's default rule stays byte-identical
-  // and its max-width/max-height backstop still bounds a stale inline size.
-  //
-  // A gesture ends on pointerup/pointercancel, and — like graph/composer.mjs —
-  // on window blur, lostpointercapture (the sheet was hidden, the capture was
-  // taken) and a pointermove that reports no button held (the release landed
-  // outside the window and never reached us). All of those COMMIT: a half-done
-  // resize is still a size the user chose, unlike a half-drawn wire. Escape is
-  // the one CANCEL: the pre-drag size comes back and nothing is stored. Only a
-  // gesture that actually moved persists, and only the axis it dragged — the
-  // other axis keeps the stored preference, so a click on a dock-clamped sheet
-  // can never write the clamp back over a larger preference.
-  function buildResizeHandle(edge) {
-    const h = make('div', `ask-resize ask-resize-${edge}`);
-    h.setAttribute('data-ask-resize', edge);
-    h.setAttribute('aria-hidden', 'true');
-    h.addEventListener('pointerdown', (e) => startResize(e, edge, h));
-    h.addEventListener('lostpointercapture', () => { if (st.drag && st.drag.handle === h) finishResize(); });
-    h.addEventListener('dblclick', (e) => { e.preventDefault(); resetSize(); });
-    return h;
-  }
-
-  /** The dock's content box in px; zeros when there is no layout (hidden, detached, jsdom). */
-  function dockInner() {
-    const d = el.dock;
-    const w = d ? d.clientWidth : 0;
-    const h = d ? d.clientHeight : 0;
-    return {
-      w: w > 0 ? w - 2 * ASK_SHEET_SIZE.dockPadX : 0,
-      h: h > 0 ? h - ASK_SHEET_SIZE.dockPadBottom - ASK_SHEET_SIZE.topGap : 0,
-    };
-  }
-
-  /** Clamp to [min, dock inner]. The dock bound wins when the two conflict (a narrow viewport). */
-  function clampSize(size) {
-    const inner = dockInner();
-    const maxW = inner.w > 0 ? inner.w : Infinity;
-    const maxH = inner.h > 0 ? inner.h : Infinity;
-    return {
-      w: Math.round(Math.min(Math.max(size.w, ASK_SHEET_SIZE.minW), maxW)),
-      h: Math.round(Math.min(Math.max(size.h, ASK_SHEET_SIZE.minH), maxH)),
-    };
-  }
-
-  /** Write the inline size, or clear it (null) so min(821px,100%) rules again. */
-  function applySize(size) {
-    if (size) {
-      el.sheet.style.width = `${size.w}px`;
-      el.sheet.style.height = `${size.h}px`;
-    } else {
-      el.sheet.style.removeProperty('width');
-      el.sheet.style.removeProperty('height');
+  /** Home (no message yet) or thread — CONTRACT §1 `chat-page[data-view]` — and the ONE composer follows: the hero
+   *  slot on home, the dock on a thread. A chat still loading (a routed open from home, Back to a chat) is a thread
+   *  already: home never flashes before it, and P6's home never starts a visit for it. No animation here (P6 adds
+   *  the FLIP); keyboard focus survives the move. */
+  function syncView() {
+    if (!el.page) return;
+    const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
+    const home = !loading && (!st.model || st.model.messages().length === 0);
+    const view = home ? 'home' : 'thread';
+    if (el.page.dataset.view !== view) el.page.dataset.view = view;
+    const slot = home ? el.heroSlot : el.chatDock;
+    if (el.composer.parentNode !== slot) {
+      const hadFocus = el.composer.contains(doc.activeElement);
+      slot.appendChild(el.composer);
+      if (hadFocus) focusComposer();
     }
-    st.applied = size;
+    paintHistoryCurrent();
   }
 
-  /** Re-apply the persisted preference against the current dock — on open and on window resize. */
-  function restoreSize() {
-    applySize(st.size ? clampSize(st.size) : null);
-  }
-
-  /** The sheet's live border-box size; the applied/default size when there is no layout. */
-  function currentSize() {
-    const w = el.sheet.offsetWidth;
-    const h = el.sheet.offsetHeight;
-    if (w > 0 && h > 0) return { w, h };
-    return st.applied ? { w: st.applied.w, h: st.applied.h } : { w: ASK_SHEET_SIZE.defaultW, h: ASK_SHEET_SIZE.defaultH };
-  }
-
-  function startResize(e, edge, handle) {
-    if (st.drag || st.destroyed || (e.button != null && e.button !== 0)) return;
-    const start = currentSize();
-    st.drag = {
-      edge, handle, pointerId: e.pointerId, x: e.clientX, y: e.clientY, w: start.w, h: start.h,
-      moved: false,                                  // set by the first pointermove that applies a size
-      before: st.applied ? { w: st.applied.w, h: st.applied.h } : null,   // what Escape restores
-    };
-    handle.classList.add('is-active');
-    el.sheet.classList.add('is-resizing');
-    // Capture is a bonus, never a precondition (Chrome throws for a synthetic
-    // pointerId; jsdom has no such method) — the document listeners carry the
-    // gesture either way, exactly like graph/composer.mjs.
-    try { handle.setPointerCapture?.(e.pointerId); } catch { /* synthetic pointer */ }
-    doc.addEventListener('pointermove', onResizeMove);
-    doc.addEventListener('pointerup', onResizeEnd);
-    doc.addEventListener('pointercancel', onResizeEnd);
-    win.addEventListener('blur', onResizeBlur);
-    e.preventDefault();                              // no text selection / focus steal mid-drag
-  }
-
-  function samePointer(g, e) {
-    return g.pointerId == null || e.pointerId == null || e.pointerId === g.pointerId;
-  }
-
-  function onResizeMove(e) {
-    const g = st.drag;
-    if (!g || !samePointer(g, e)) return;
-    if (e.buttons === 0) { finishResize(); return; }   // the release never reached us
-    g.moved = true;
-    const dx = e.clientX - g.x;
-    const dy = e.clientY - g.y;
-    let w = g.w;
-    let h = g.h;
-    if (g.edge === 'w' || g.edge === 'nw') w = g.w - 2 * dx;                  // left edge: leftwards grows
-    if (g.edge === 'e' || g.edge === 'ne') w = g.w + 2 * dx;                  // right edge: rightwards grows
-    if (g.edge === 'n' || g.edge === 'ne' || g.edge === 'nw') h = g.h - dy;   // top edge: upwards grows
-    applySize(clampSize({ w, h }));
-  }
-
-  function onResizeEnd(e) {
-    const g = st.drag;
-    if (!g || !samePointer(g, e)) return;
-    finishResize();
-  }
-
-  function onResizeBlur() { finishResize(); }
-
-  /** Idempotent; also run from destroy() so a mid-drag unmount leaves no document listeners. */
-  function finishResize() {
-    const g = endResize();
-    if (!g || !g.moved || !st.applied) return;
-    // Persist the dragged axis only; the other keeps the stored preference (or,
-    // with none stored, the size it had) — the clamp is never written back.
-    const movesW = g.edge !== 'n';
-    const movesH = g.edge !== 'e' && g.edge !== 'w';
-    const prev = st.size;
-    st.size = {
-      w: movesW || !prev ? st.applied.w : prev.w,
-      h: movesH || !prev ? st.applied.h : prev.h,
-    };
-    storeSize(st.size);
-  }
-
-  /** Escape: the pre-drag size comes back and nothing is stored. */
-  function cancelResize() {
-    const g = endResize();
-    if (!g) return;
-    applySize(g.before);
-  }
-
-  /** Tear the gesture down (listeners, classes, capture) and hand it back; null when none. */
-  function endResize() {
-    const g = st.drag;
-    if (!g) return null;
-    st.drag = null;
-    doc.removeEventListener('pointermove', onResizeMove);
-    doc.removeEventListener('pointerup', onResizeEnd);
-    doc.removeEventListener('pointercancel', onResizeEnd);
-    win.removeEventListener('blur', onResizeBlur);
-    g.handle.classList.remove('is-active');
-    el.sheet.classList.remove('is-resizing');
-    try { if (g.handle.hasPointerCapture?.(g.pointerId)) g.handle.releasePointerCapture(g.pointerId); } catch { /* already gone */ }
-    return g;
-  }
-
-  /** Double-click on any grip: back to the stylesheet default and forget the stored size. */
-  function resetSize() {
-    finishResize();
-    st.size = null;
-    applySize(null);
-    storeSize(null);
-  }
-
-  /** Window resize or dock resize (the rail toggling, the dock's slide): re-clamp — never under a held pointer.
-   *  A card graph re-measures on EVERY such change, not only when a stored size is being re-clamped. */
+  // ---- layout changes ---------------------------------------------------------
+  /** A window resize, the conversation column changing width with none (the rail, the history column, the run
+   *  panel), or the transcript column growing with no frame (a card's graph or a registered card that grows from
+   *  the run store — the ResizeObservers at the mount): card graphs re-measure, a pinned transcript stays at the
+   *  bottom and an open context popover re-anchors. */
   function onWinResize() {
-    if (st.destroyed || !st.open || st.drag) return;
-    if (st.size) restoreSize();
+    if (st.destroyed || !st.open) return;
+    // Narrowed past 1100px with the push column open: as an overlay it would cover the chat (and the focused composer).
+    // Close it, as a load at that width does (initialHistoryOpen); the stored choice is kept.
+    if (st.historyAsPush && overlayMode() && historyOpen()) setHistoryOpen(false, { persist: false });
+    // Widened past 1100px with the overlay open: a push column now — narrowing again closes it too.
+    if (historyOpen() && !overlayMode()) st.historyAsPush = true;
+    paintHistory();                                  // crossing 1100px turns the column into an overlay, or back
     relayoutCards();
+    applyPin();
     if (st.popover && st.popover.trigger === el.ctxBtn) anchorCtxPopover(st.popover.panel, el.ctxBtn);
   }
 
   // ---- keyboard + pointer routing ------------------------------------------
   function containsNode(rootEl, t) { return !!(t && t.nodeType && rootEl.contains(t)); }
 
+  /** A dialog over the page (confirmModal, the stop modal, a viewer…) or a running tour owns Escape. */
+  function modalUp() {
+    return !!doc.querySelector('.viewer-modal:not(.hidden), .guide-layer');
+  }
+
+  /** Escape is the page's only while something of it is open: a popover. app.js's capture-phase Escape arms ask
+   *  this BEFORE onDocKeydown closes anything. Never under a dialog, never from the terminal pane (vim, less), never
+   *  from inside the run panel (P4 owns its keys), never one another handler already took (P4's panel close: one
+   *  Escape closes one thing), never while the page is inert (the phone drawer is open over it). */
   function ownsKey(e) {
-    return e.key === 'Escape' && st.open
-      && (containsNode(root, e.target) || containsNode(root, doc.activeElement));
+    if (e.key !== 'Escape' || e.defaultPrevented || st.destroyed || !st.open || modalUp() || el.page.closest('[inert]')) return false;
+    if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane, [data-chat-panel]')) return false;
+    if (e.target === el.historySearchInput) return false;   // the History search clears, then folds, before the overlay closes
+    return !!st.popover || historyOverlayOpen();
   }
 
   function onDocKeydown(e) {
-    if (st.destroyed) return;
-    if (e.key === 'Escape' && el.tip && el.tip.classList.contains('is-shown')) hideTip();   // the tooltip yields, the key carries on
-    if (st.drag && e.key === 'Escape') { e.preventDefault(); cancelResize(); return; }
-    if (e.key === 'Escape' && ownsKey(e) && st.popover) closePopover({ focusTrigger: true });
-    // Escape with nothing open is an owned no-op — app.js's handlers already
-    // returned via ownsKey(); the sheet itself never closes on Escape (§10.4).
+    if (!ownsKey(e)) return;
+    e.preventDefault();
+    if (st.popover) { closePopover({ focusTrigger: true }); return; }
+    setHistoryOpen(false, { persist: false });       // the overlay (below 1100px) closes; focus back on its toggle
+    try { el.historyBtn.focus(); } catch { /* detached */ }
   }
 
+  /** A press outside the open popover (and its trigger) closes it. The page itself never closes on a press — the
+   *  router owns it. A dialog (a confirm opened from a popover), the diff comment card, the shared terminal and the
+   *  top bar search keep the popover. */
   function onDocPointerdown(e) {
-    if (st.destroyed || !st.open) return;
+    if (st.destroyed || !st.open || !st.popover) return;
     const t = e.target;
     if (!t || typeof t.closest !== 'function') return;
-    if (t.closest('[data-ask-sheet]')) {
-      if (st.popover && !st.popover.panel.contains(t) && !st.popover.trigger.contains(t)) {
-        closePopover({ focusTrigger: false });
-      }
-      return;
-    }
-    // `.hd-cmt-card` joins the allowlist: its "Ask Worca" button appends to the
-    // composer, and pointerdown lands BEFORE the click that would open the sheet.
-    // `.term-pane` too: Ask's terminal is shared, so the user clicks and types there while the chat stays open.
-    // `.tsearch` (the top bar search) too: its listbox opens over the sheet, and a close here would move focus
-    // out of its input mid-press, closing it before the pressed row gets its click.
+    if (st.popover.panel.contains(t) || st.popover.trigger.contains(t)) return;
     if (t.closest('.viewer-modal, #confirm-modal, .info-bubble, .mention-popup, .hd-cmt-card, .term-pane, .tsearch')) return;
-    closeSheet();
+    closePopover({ focusTrigger: false });
   }
 
   // ---- popover primitive (spec §10.6 .ask-pop) ------------------------------
@@ -1455,7 +1260,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const p = st.popover;
     if (!p) return;
     st.popover = null;
-    if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
     p.panel.remove();
     if (p.onClose) { try { p.onClose(); } catch { /* ignore */ } }
     if (focusTrigger) { try { p.trigger.focus(); } catch { /* ignore */ } }
@@ -1484,7 +1288,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     panel.setAttribute('role', 'menu');
     panel.addEventListener('keydown', onPopKeydown);
     build(panel);
-    el.sheet.appendChild(panel);
+    // The composer's own popovers ride the composer (it moves between the hero slot and the dock); every other one
+    // (a card's chip picker, the @-popover, the History popover) is anchored to the conversation column.
+    (el.composer && el.composer.contains(trigger) ? el.composer : el.sheet).appendChild(panel);
     // refreshOn(dirty) → true re-runs build() on that flush (flushExtra), so an
     // OPEN popover follows the live meters / worktrees instead of freezing at open.
     // refresh(panel) is the server-fed twin: scheduleThreadsRefresh calls it
@@ -1516,7 +1322,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return b;
   }
 
-  // ---- threads popover (list; switching/delete land in Task 7) -------------
+  // ---- the History column (worca Chat P1) -----------------------------------
   /** History-row topics: the first one's name plus "+N", every name in the hover. Display-only — the row is the click target. */
   function threadTopics(t) {
     const list = validContexts(t.contexts);
@@ -1558,102 +1364,284 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function fmtChats(n) {
     return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
   }
-
-  function toggleThreadsPopover(trigger) {
-    let meter = null;
-    const panel = openPopover({
-      panelClass: 'ask-pop-threads',
-      trigger,
-      build: (p) => {
-        // Same caption-row pattern as the agents popover: the row paints at once,
-        // the meter fills once the list lands (the popover opens synchronously).
-        const head = make('div', 'ask-pop-caption-row');
-        head.appendChild(make('span', 'ask-pop-caption', 'History'));
-        meter = make('span', 'ask-pop-caption-meter', '');
-        head.appendChild(meter);
-        p.appendChild(head);
-      },
-      refresh: (p) => loadThreadRows(p, meter),
-    });
-    if (!panel) return;
-    loadThreadRows(panel, meter);
+  /** History meter while searching: "3 of 54 chats" (the matches of every saved chat). */
+  function fmtMatches(n, all) {
+    return Number.isInteger(all) && all > 0 ? `${n} of ${all} chat${all === 1 ? '' : 's'}` : fmtChats(n);
   }
 
-  /** Fetch the list and (re)render the rows under the pinned caption. On a
-   *  refresh the old rows are replaced in place — same panel node, the focused
-   *  row keeps focus by index — so the dots follow the server while it is open. */
-  function loadThreadRows(panel, meter) {
+  // CONTRACT §1 aside.chat-history: every saved chat, newest first, grouped Today / Yesterday / Earlier by its last
+  // activity; a row opens the chat, its trash deletes it (confirm). A 264px push column, an overlay with a scrim below
+  // 1100px (style.css). The page's data-history attribute is the truth (setHistoryOpen, P4 reads and sets it).
+  function buildHistory() {
+    const aside = make('aside', 'chat-history');
+    aside.setAttribute('data-chat-history', '');
+    aside.id = 'chat-history';
+    aside.setAttribute('aria-label', 'Chats');
+    aside.tabIndex = -1;                             // the overlay takes focus when it opens (toggleHistory)
+    // Below 1100px the column is an overlay over the chat: focus leaving it (Tab past the last row, Shift+Tab out)
+    // closes it, so the keyboard never walks the controls hidden under it. A dialog it opened (delete) keeps it.
+    aside.addEventListener('focusout', (e) => {
+      const to = e.relatedTarget;
+      if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal'))) return;
+      setHistoryOpen(false, { persist: false });
+    });
+    // The head is built once and kept across repaints (renderHistory touches only the meter's text and the body), so the
+    // search box's slide (style.css .is-searching) runs and typing never loses the caret. Folded: "Chats  54 chats 🔍".
+    // Open: "🔍 Search chats…  3 of 54 chats" — the box's left edge slides over the title and the meter's resting place
+    // (the Workflows Library's search), and the meter rides at the end of the field.
+    const head = make('div', 'chat-history-head');
+    el.historyHead = head;
+    head.appendChild(make('span', 'chat-history-title', 'Chats'));
+    el.historyMeter = make('span', 'chat-history-meter', '');
+    head.appendChild(el.historyMeter);
+    head.appendChild(buildHistorySearch());
+    aside.appendChild(head);
+    el.historyBody = make('div', 'chat-history-body');
+    aside.appendChild(el.historyBody);
+    syncHistorySearch();
+    return aside;
+  }
+
+  /** The search box: its button (aria-controls the field) and the field. The server searches titles and message text
+   *  (GET /api/ask/threads?q=); the field only holds the text. */
+  function buildHistorySearch() {
+    const box = make('div', 'chat-history-sbox');
+    const input = make('input', 'chat-history-search-input');
+    input.id = 'chat-history-search';
+    input.type = 'search';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = 'Search chats…';
+    input.setAttribute('aria-label', 'Search chats');
+    const btn = iconButton('chat-history-search-btn', 'Search chats', ICONS.search, () => {
+      if (!st.historySearchOpen) { st.historySearchOpen = true; syncHistorySearch(); input.focus(); return; }
+      if (st.historyQuery) { input.focus(); return; }            // a field with text stays open
+      closeHistorySearch(btn);
+    });
+    btn.id = 'chat-history-search-btn';
+    btn.setAttribute('aria-controls', input.id);
+    // Typing waits for a pause, then fetches: only the body repaints, so the caret and an IME composition survive.
+    input.addEventListener('input', () => {
+      st.historyQuery = input.value;
+      clearTimeout(st.historySearchTimer);
+      st.historySearchTimer = setTimeout(searchHistoryNow, HISTORY_SEARCH_MS);
+      if (st.historySearchTimer && typeof st.historySearchTimer.unref === 'function') st.historySearchTimer.unref();
+    });
+    // Escape clears the text first, then folds the field (ownsKey leaves it to the field, even over the overlay).
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (st.historyQuery) { st.historyQuery = ''; input.value = ''; searchHistoryNow(); } else closeHistorySearch(btn);
+    });
+    box.append(btn, input);
+    el.historySearch = box;
+    el.historySearchBtn = btn;
+    el.historySearchInput = input;
+    return box;
+  }
+  /** The head follows the search state: the slide, aria-expanded, the folded field inert (no focus, no Tab stop), and
+   *  the meter beside the button (folded) or at the end of the open field. */
+  function syncHistorySearch() {
+    const open = st.historySearchOpen;
+    el.historyHead.classList.toggle('is-searching', open);
+    el.historySearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    el.historySearchInput.toggleAttribute('inert', !open);
+    if (el.historySearchInput.value !== st.historyQuery) el.historySearchInput.value = st.historyQuery;
+    if (open) el.historySearch.appendChild(el.historyMeter);
+    else el.historyHead.insertBefore(el.historyMeter, el.historySearch);
+  }
+  /** Fold the search and drop its text; `focusEl` takes the focus (the field goes inert — never leave it on <body>). */
+  function closeHistorySearch(focusEl) {
+    st.historyQuery = '';
+    st.historySearchOpen = false;
+    syncHistorySearch();
+    searchHistoryNow();
+    if (focusEl) focusEl.focus();
+  }
+  /** Run the search for the field's text now (the debounce ended, or Escape / a fold cleared it): fetch only when the
+   *  list shows something else, so a fold with nothing searched fetches nothing. */
+  function searchHistoryNow() {
+    clearTimeout(st.historySearchTimer);
+    st.historySearchTimer = null;
+    if (st.destroyed) return;
+    if (st.historyQuery.trim() !== st.historyListQuery) loadHistory();
+  }
+  function overlayMode() { return (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
+  function historyOpen() { return !!el.page && el.page.dataset.history === 'open'; }
+  function historyOverlayOpen() { return historyOpen() && overlayMode(); }
+  /** Closed under an overlay width; else the stored choice; else open from 1600px. */
+  function initialHistoryOpen() {
+    if (overlayMode()) return false;
+    let stored = null;
+    try { stored = storage.getItem(HISTORY_KEY); } catch { stored = null; }
+    if (stored === 'open' || stored === 'closed') return stored === 'open';
+    return (win.innerWidth || 0) >= HISTORY_OPEN_MIN_W;
+  }
+  /** Open or close the column — synchronously, on the page's data-history. persist:false keeps the stored choice
+   *  (an overlay's open/close, P4's auto-close beside the run panel). */
+  function setHistoryOpen(open, { persist = true } = {}) {
+    if (!el.page) return;
+    el.page.dataset.history = open ? 'open' : 'closed';
+    st.historyAsPush = !!open && !overlayMode();
+    paintHistory();
+    if (persist) { try { storage.setItem(HISTORY_KEY, open ? 'open' : 'closed'); } catch { /* a remembered choice is a nicety */ } }
+  }
+  function toggleHistory() {
+    const opening = !historyOpen();
+    setHistoryOpen(opening, { persist: !overlayMode() });
+    if (opening && st.open) loadHistory();          // fresh rows whenever the column opens
+    // The overlay sits before the chat in the DOM: keyboard users land in it, not behind it.
+    if (opening && overlayMode()) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
+  }
+  /** The toggle's pressed state and the overlay's scrim follow the column. */
+  function paintHistory() {
+    if (!el.page) return;
+    const open = historyOpen();
+    if (el.historyBtn) el.historyBtn.setAttribute('aria-pressed', String(open));
+    if (el.scrim) el.scrim.hidden = !(open && overlayMode());
+  }
+
+  /** Fetch the list and paint it. A failed refresh keeps the rows already shown and marks the list stale, so the next
+   *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
+   *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
+  function loadHistory() {
+    st.historyStale = false;
+    const gen = ++st.historyGen;
+    const query = st.historyQuery.trim();
+    st.historyListQuery = query;
     Promise.resolve()
-      .then(() => fetch('/api/ask/threads?limit=50'))
-      .then((r) => (r && r.ok ? r.json() : { threads: [] }))
-      .catch(() => ({ threads: [] }))
-      .then(({ threads, total }) => {
-        if (st.popover === null || st.popover.panel !== panel) return; // closed meanwhile
-        const rows = Array.isArray(threads) ? threads : [];
-        // `total` is EVERY saved chat (the route caps rows at limit); an older
-        // server without it degrades to the page size.
-        if (meter) meter.textContent = fmtChats(Number.isInteger(total) && total >= 0 ? total : rows.length);
-        const stale = panel.querySelectorAll(':scope > .ask-threads-list, :scope > .ask-pop-empty');
-        const refreshing = stale.length > 0;
-        // First load focuses the first row (menu semantics). A refresh keeps the
-        // focused row by index, and leaves focus alone when it sits elsewhere.
-        let focusIndex = 0;
-        if (refreshing) focusIndex = panel.contains(doc.activeElement) ? Math.max(0, menuItems(panel).indexOf(doc.activeElement)) : null;
-        for (const n of stale) n.remove();
-        renderThreadRows(panel, rows, focusIndex);
+      .then(() => fetch(query ? `/api/ask/threads?limit=50&q=${encodeURIComponent(query)}` : '/api/ask/threads?limit=50'))
+      .then((r) => (r && r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((body) => {
+        if (st.destroyed || gen !== st.historyGen) return;
+        if (!body || !Array.isArray(body.threads)) {
+          st.historyStale = true;
+          st.historyListQuery = null;            // the list still shows the last good answer: any text asks again
+          if (!st.historyLoaded) renderHistory([], 0);
+          return;
+        }
+        renderHistory(body.threads, body.total, query ? { query, all: body.all } : {});
       });
   }
 
-  /** The History popover is open and a run some chat follows just moved: refetch
-   *  the list (debounced — a run transition fans out one frame per linked thread,
-   *  and a chat may follow several runs, so a single terminal status never flips a
-   *  dot directly). Sits BEFORE pushServerFrame's threadId filter: the frame is
-   *  usually for ANOTHER chat. A turn starting/ending elsewhere arms the thinking
-   *  dot the same way. */
+  /** A refresh frame landed (a run some chat follows moved, a turn started or ended, a question notice, a title):
+   *  refetch the list, debounced — a run transition fans out one frame per linked chat. Sits BEFORE
+   *  pushServerFrame's threadId filter: the frame is usually for ANOTHER chat. While Chat is hidden it only marks the
+   *  list stale; the next show fetches it. */
   function scheduleThreadsRefresh() {
-    const pop = st.popover;
-    if (!pop || typeof pop.refresh !== 'function' || st.threadsRefresh) return;
+    if (st.destroyed) return;
+    if (!st.open) { st.historyStale = true; return; }
+    if (st.threadsRefresh) return;
     st.threadsRefresh = setTimeout(() => {
       st.threadsRefresh = null;
-      if (st.popover === pop) pop.refresh(pop.panel);
+      if (st.destroyed) return;
+      if (st.open) loadHistory();
+      else st.historyStale = true;                   // Chat was left inside the debounce: the next show fetches it
     }, THREADS_REFRESH_MS);
+    if (st.threadsRefresh && typeof st.threadsRefresh.unref === 'function') st.threadsRefresh.unref();
   }
 
-  /** @param {number|null} focusIndex row to focus after the render; null leaves focus alone */
-  function renderThreadRows(panel, threads, focusIndex = 0) {
+  /** Today / Yesterday / Earlier by the chat's last activity in the browser's own day; an unreadable date is Earlier. */
+  function historyGroupOf(t, nowMs) {
+    const ms = Date.parse((t && (t.updatedAt || t.createdAt)) || '');
+    if (!Number.isFinite(ms)) return 'earlier';
+    const day = new Date(nowMs);
+    day.setHours(0, 0, 0, 0);
+    if (ms >= day.getTime()) return 'today';
+    const prev = new Date(day);
+    prev.setDate(prev.getDate() - 1);
+    return ms >= prev.getTime() ? 'yesterday' : 'earlier';
+  }
+
+  /** One row: the dots lead the title (green = this chat's turn is thinking; amber = a run it follows waits on you,
+   *  else violet = a run it follows is running), the meter line under it, the trash on hover. */
+  function historyRow(t) {
+    const rowEl = make('div', 'ask-thread-row');
+    rowEl.setAttribute('role', 'listitem');
+    rowEl.dataset.threadId = t.id;
+    const pick = make('button', 'ask-pop-item ask-thread-pick');
+    pick.type = 'button';
+    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
+    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.waiting ? ' ask-dot-wait' : t.tracking ? ' ask-dot-track' : ''}`));
+    const col = make('span', 'ask-thread-col');
+    // A null title = the haiku title has not landed yet; "New chat" is the label the turn falls back to.
+    col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
+    // A search hit in a message (not in the title): the server's excerpt around it, as text.
+    const snippet = t.match && typeof t.match.snippet === 'string' ? t.match.snippet : '';
+    if (snippet) col.appendChild(make('span', 'ask-thread-match', snippet));
+    col.appendChild(threadMeter(t));
+    pick.appendChild(col);
+    const status = [t.inFlight ? 'Replying' : '', t.waiting ? 'Needs you' : (t.tracking ? 'Following a run' : '')].filter(Boolean).join(', ');
+    if (status) pick.appendChild(make('span', 'sr-only', status));
+    pick.addEventListener('click', () => {
+      const overlay = historyOverlayOpen();
+      if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
+      showThread(t.id);
+      route(t.id);
+      if (overlay) focusComposer();                  // the picked row is hidden now: focus goes to the chat
+    });
+    rowEl.appendChild(pick);
+    rowEl.appendChild(buildThreadTrash(t));
+    return rowEl;
+  }
+
+  /** Paint the list (rows replaced in place; keyboard focus inside the column stays on the same chat's button). A
+   *  `query` = these are its matches: the meter reads "n of N chats" (`all` = every saved chat), none = "No chats match." */
+  function renderHistory(threads, total, { query = '', all = null } = {}) {
+    if (!el.historyBody) return;
+    st.historyLoaded = true;
+    const n = Number.isInteger(total) && total >= 0 ? total : threads.length;
+    el.historyMeter.textContent = query ? fmtMatches(n, all) : fmtChats(n);
+    const buttons = () => [...el.historyBody.querySelectorAll('button')];
+    const focusAt = el.historyBody.contains(doc.activeElement) ? buttons().indexOf(doc.activeElement) : -1;
+    // A refresh can reorder the rows: focus follows the chat; a row that is gone (deleted) falls back to the index.
+    const focusRow = focusAt >= 0 ? doc.activeElement.closest('.ask-thread-row') : null;
+    const focusId = focusRow ? focusRow.dataset.threadId : null;
+    const focusSel = focusRow && doc.activeElement.classList.contains('ask-thread-trash') ? '.ask-thread-trash' : '.ask-thread-pick';
+    el.historyBody.replaceChildren();
     if (!threads.length) {
-      panel.appendChild(make('div', 'ask-pop-empty', 'No saved chats.'));
+      el.historyBody.appendChild(make('div', 'chat-history-empty', query ? 'No chats match.' : 'No saved chats.'));
+      // The focused row went with the list (the last chat deleted): the column keeps the focus, never <body>.
+      if (focusAt >= 0) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
       return;
     }
-    // The rows scroll inside a capped list so 50 threads cannot run past the
-    // sheet; the caption stays a direct child of the panel, hence pinned. The
-    // list itself stays inside the panel: menuItems() reads the whole panel.
-    const list = make('div', 'ask-threads-list');
-    for (const t of threads) {
-      const row = make('div', 'ask-thread-row');
-      const pick = menuItem('ask-thread-pick', () => { closePopover({ focusTrigger: false }); switchThread(t.id); });
-      // Two dots lead the row, sitting against the title: green = the chat's own
-      // turn is thinking, violet = the chat follows a live run. Each span is
-      // always emitted and .ask-thread-dot collapses it (display:none) unless
-      // its arm joins it, so an idle row leaves no empty gutter and its title
-      // starts at the left edge. The date rides the meter line under the title.
-      pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
-      pick.appendChild(make('span', `ask-dot ask-thread-dot${t.tracking ? ' ask-dot-track' : ''}`));
-      const col = make('span', 'ask-thread-col');
-      // A null title = the haiku title has not landed yet (the message route
-      // stamps nothing); "New chat" is the same label the turn falls back to.
-      col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
-      col.appendChild(threadMeter(t));
-      pick.appendChild(col);
-      row.appendChild(pick);
-      row.appendChild(buildThreadTrash(t));
-      list.appendChild(row);
+    const t0 = now();
+    for (const [key, label] of HISTORY_GROUPS) {
+      const rows = threads.filter((t) => t && t.id && historyGroupOf(t, t0) === key);
+      if (!rows.length) continue;
+      const group = make('div', 'chat-history-group');
+      group.dataset.group = key;
+      const cap = make('div', 'chat-history-group-label', label);
+      cap.id = `chat-history-${key}`;
+      group.appendChild(cap);
+      const list = make('div', 'ask-threads-list');
+      list.setAttribute('role', 'list');
+      list.setAttribute('aria-labelledby', cap.id);
+      for (const t of rows) list.appendChild(historyRow(t));
+      group.appendChild(list);
+      el.historyBody.appendChild(group);
     }
-    panel.appendChild(list);
-    if (focusIndex === null) return;
-    const items = menuItems(panel);
-    const target = items[Math.min(focusIndex, items.length - 1)];
-    if (target) { target.tabIndex = 0; try { target.focus(); } catch { /* ignore */ } }
+    paintHistoryCurrent();
+    if (focusAt >= 0) {
+      const same = focusId ? [...el.historyBody.querySelectorAll('.ask-thread-row')].find((r) => r.dataset.threadId === focusId) : null;
+      const b = (same && same.querySelector(focusSel)) || buttons()[Math.min(focusAt, buttons().length - 1)];
+      if (b) { try { b.focus(); } catch { /* ignore */ } }
+    }
+  }
+
+  /** Mark the chat the page shows (or is loading). */
+  function paintHistoryCurrent() {
+    if (!el.historyBody) return;
+    const cur = typeof st.wantThread === 'string' ? st.wantThread : st.threadId;
+    for (const rowEl of el.historyBody.querySelectorAll('.ask-thread-row')) {
+      const on = !!cur && rowEl.dataset.threadId === cur;
+      rowEl.classList.toggle('is-current', on);
+      const pick = rowEl.querySelector('.ask-thread-pick');
+      if (on) pick.setAttribute('aria-current', 'true');
+      else pick.removeAttribute('aria-current');
+    }
   }
 
   // ---- catalog + picker (D8) ------------------------------------------------
@@ -1781,12 +1769,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return st.catalogLoading;
   }
 
-  function ensureFirstOpen() {
+  /** restore: false when the route names the chat (app.js always routes) — the stored pointer is for a bare open(). */
+  function ensureFirstOpen({ restore = true } = {}) {
     if (st.firstOpenDone) return;
     st.firstOpenDone = true;
     loadCatalog();
-    loadAgentStatus();
-    const stored = readStoredThread();
+    const stored = restore ? readStoredThread() : null;
     if (stored && !st.threadId) switchThread(stored);
   }
 
@@ -2010,37 +1998,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   const toggle = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-  // ---- Agent mode switch (#574) -------------------------------------------------
-  /** Whether agent mode can work here at all (not hosted-off, not agent isolation): once, at first open. */
-  async function loadAgentStatus() {
-    let data = null;
-    try {
-      const r = await fetch('/api/ask/commands/status');
-      data = r && r.ok ? await r.json() : null;
-    } catch { data = null; }
-    if (st.destroyed) return;
-    st.agent.available = !!(data && data.enabled === true);
-    paintAgent();
-  }
-  function paintAgent() {
-    if (!el.agentBtn) return;
-    el.agentBtn.hidden = !st.agent.available;
-    el.agentBtn.setAttribute('aria-pressed', String(st.agent.on));
-    el.agentSwitch.classList.toggle('on', st.agent.on);
-  }
-  /** Same chain as patchMcpOff: one PATCH at a time, in click order. */
-  function patchAgentMode(tid, value) {
-    const body = JSON.stringify({ agentMode: value });
-    st.agent.saving = st.agent.saving
-      .then(() => fetch(`/api/ask/threads/${tid}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body }))
-      .catch(() => { /* the switch keeps the choice; the next message carries it */ });
-  }
-  function setAgentMode(on) {
-    st.agent.on = on;
-    if (st.threadId) patchAgentMode(st.threadId, on);
-    paintAgent();
-  }
-
   function mcpSwitch(on, label, onToggle, focusKey) {
     const b = make('button', `switch ask-mcp-switch${on ? ' on' : ''}`);
     b.dataset.mcpKey = focusKey;
@@ -2055,7 +2012,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function mcpManageItem(text, hash) {
     const item = menuItem('ask-mcp-manage', () => {
-      closeSheet();                                 // the progress card's precedent: close, then route
+      closePopover({ focusTrigger: false });        // the route hides the page; the picker goes first
       if (win.location.hash !== hash) win.location.hash = hash.slice(1);
     });
     item.dataset.mcpKey = 'manage';                 // a re-render keeps focus on the footer too
@@ -2449,7 +2406,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const mentioned = c.source === 'chat';                       // only a page topic is ever pinned
     const pinned = c.pinned && !mentioned;
     const row = href
-      ? menuItem('ask-ctx-topic', () => { closeSheet(); if (win.location.hash !== href) win.location.hash = href.slice(1); })
+      ? menuItem('ask-ctx-topic', () => { closePopover({ focusTrigger: false }); if (win.location.hash !== href) win.location.hash = href.slice(1); })
       : make('div', 'ask-ctx-topic');
     if (mentioned) row.classList.add('is-mentioned');
     if (pinned) row.classList.add('is-pinned');
@@ -2550,9 +2507,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   /** Right edge flush with the trigger: the meter moves with the interface level and the controls
-   *  beside it, so a fixed CSS offset would miss it. Kept 6px inside the sheet; re-run on window resize. */
+   *  beside it, so a fixed CSS offset would miss it. Kept 6px inside its host (the composer); re-run on resize. */
   function anchorCtxPopover(panel, trigger) {
-    const sr = el.sheet.getBoundingClientRect();
+    const host = panel.parentElement || el.sheet;
+    const sr = host.getBoundingClientRect();
     const tr = trigger.getBoundingClientRect();
     if (sr.width > 0) panel.style.right = `${Math.max(0, Math.min(sr.right - tr.right, sr.width - CTX_POP_WIDTH - 6))}px`;
   }
@@ -2562,18 +2520,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     stopVoice();
     loadGen += 1;                       // a load still in flight must not resurrect the old thread
     st.threadId = null;
+    st.wantThread = null;               // home: a new chat
     st.model = null;
     st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
     storeThread(null);
-    el.title.textContent = 'Ask Worca';
+    el.title.textContent = 'New chat';
     applyThreadScope(null);             // #397: a brand-new chat starts on Auto
     setContexts([]);
     restoreBrowserPick();               // …and on the browser-level pick, not the last chat's
     st.mcp.off = { sets: [], members: [] };   // …and with every MCP server on
-    st.agent.on = true;                       // …and with Agent mode on (#574)
-    paintAgent();
     scheduleMcpRefresh();
     pruneCardEls();                     // st.model is already null — renderTranscript's keep set cannot see the old ids
     renderTranscript();
@@ -2581,22 +2538,36 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setWorktrees([]);
     updateSendStop();
     setComposerMsg(null);
+    updateAddons();                     // CONTRACT §2: the add-ons see the new (empty) chat
     focusComposer();
   }
 
   async function deleteThread(t) {
     closePopover({ focusTrigger: false });
+    // A trash in the History column keeps the focus in the column (below 1100px the composer sits under the overlay).
+    const from = el.history && el.history.contains(doc.activeElement) ? doc.activeElement : null;
+    const back = () => {
+      if (!from) { focusComposer(); return; }
+      try { (from.isConnected ? from : el.history).focus({ preventScroll: true }); } catch { /* detached */ }
+    };
     const ok = await confirm({
       title: 'Delete this chat?',
       message: `“${t.title || 'New chat'}” and its transcript are removed${t.worktrees ? ` along with ${t.worktrees} worktree${t.worktrees === 1 ? '' : 's'}` : ''}. This cannot be undone.`,
       confirmLabel: 'Delete',
       danger: true,
     });
-    if (!ok) { focusComposer(); return; }
-    if (!(await deleteOrReport(`/api/ask/threads/${t.id}`, 'Could not delete the chat', `ask-thread-del-${t.id}`))) { focusComposer(); return; }
+    if (!ok) { back(); return; }
+    if (!(await deleteOrReport(`/api/ask/threads/${t.id}`, 'Could not delete the chat', `ask-thread-del-${t.id}`))) { back(); return; }
     if (readStoredThread() === t.id) storeThread(null);
-    if (st.threadId === t.id) newThread(); // clears + focuses the textarea (D14)
-    else focusComposer();
+    st.askedIn.delete(t.id);                         // a stopped turn's late reply never lights the Chat row for it
+    loadHistory();                                   // the column drops the row
+    // The chat shown — or the one still loading (its GET may answer after the delete) — goes home; an overlay closes,
+    // as after a pick, so the new chat has its room.
+    if (st.threadId === t.id || st.wantThread === t.id) {
+      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+      newThread();                                   // clears + focuses the textarea (D14)
+      route(null, { replace: true });
+    } else back();
   }
 
   function buildThreadTrash(t) {
@@ -4417,15 +4388,111 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** A block that renders as the live run progress card: a track_run card, or a run proposal the user started.
    *  A `failed` proposal WITH a runId is a run that errored after launch — still the card; without one it is a
    *  rejected proposal and stays the stub. */
+  // ---- extension cards (worca Chat CONTRACT §2, ui/public/chat/extensions.mjs) --------------------------------
+  /** Call a chatDeps member at CALL time: app.js passes one mutable object and later plans reassign its members
+   *  (P4 openRunPanel, P5 openArtifact, P2 openShipIt), so a card built before a swap reaches the new function. */
+  function chatDep(name, ...args) {
+    const fn = chatDeps && typeof chatDeps[name] === 'function' ? chatDeps[name] : null;
+    return fn ? fn(...args) : undefined;
+  }
+  /** ctx.postCard: POST the card route; resolves with the parsed body, throws an Error with .status and .body on a
+   *  refusal (status 0 and body null when there is no chat or the network failed). */
+  async function postCardJson(block, body) {
+    const id = st.threadId;
+    if (!id || !block || !block.id) {
+      const e = new Error('no chat to post to');
+      e.status = 0;
+      e.body = null;
+      throw e;
+    }
+    let res = null;
+    try {
+      res = await fetch(`/api/ask/threads/${id}/cards/${block.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    } catch {
+      const e = new Error('network error');          // the built-in cards' word for it, never the browser's TypeError
+      e.status = 0;
+      e.body = null;
+      throw e;
+    }
+    let out = null;
+    try { out = await res.json(); } catch { out = null; }
+    if (!res.ok) {
+      const e = new Error((out && out.error) || `request failed (${res.status})`);
+      e.status = res.status;
+      e.body = out;
+      throw e;
+    }
+    return out;
+  }
+  /** The open chat's run link for a card / pipeline / run — pipeline id first, then the card id, then the run id
+   *  (the order refreshProgressIdent always used; it calls this now) — as { runId, pipelineId }, or null. */
+  function runLinkFor({ cardId = null, pipelineId = null, runId = null } = {}) {
+    if (!st.model) return null;
+    const link = (pipelineId && st.model.runLinkByPipeline(pipelineId)) || st.model.runLinkForCard(cardId)
+      || (runId ? (() => { const l = st.model.runLinks().get(runId); return l ? { runId, ...l } : null; })() : null);
+    return link ? { runId: link.runId || null, pipelineId: link.pipelineId || null } : null;
+  }
+  /** The ONE ctx every registered card builder gets (CONTRACT §2, plus openShipIt for P2 and runLinkFor for P3). */
+  const cardCtx = {
+    doc, win, fetch,
+    threadId: () => st.threadId,
+    postCard: (block, body) => postCardJson(block, body),
+    confirm,
+    runStore,
+    openRunPanel: (ref, opts) => chatDep('openRunPanel', ref, opts),
+    openArtifact: (ref, artifact) => chatDep('openArtifact', ref, artifact),
+    openShipIt: (ref, link) => chatDep('openShipIt', ref, link),
+    runLinkFor: (ref) => runLinkFor(ref || {}),
+    appendToComposer: (text) => appendToComposer(text),
+    announce: (text) => announce(text),
+  };
+  /** The registered builder a block renders with, or null. The key (lead ruling, P3): every block the built-in
+   *  progress card would take — a track_run card AND a typeless run proposal that started (or failed with a runId) —
+   *  looks up `progress`; anything else its own type. A registered type is never a progress block (below). */
+  function registeredCardBuilder(block) {
+    const key = isProgressBlock(block) ? PROGRESS_CARD_TYPE : (block.card && block.card.type);
+    return typeof key === 'string' && key ? chatCardBuilder(key) : null;
+  }
+  /** A registered card's payload revision (its `card` object): buildCard and tailSignature compare it, so a change
+   *  that keeps the state (a result filled in) still reaches the card. */
+  function cardRev(block) {
+    try { return JSON.stringify((block && block.card) ?? null); } catch { return ''; }
+  }
+
   function isProgressBlock(block) {
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) return true;
+    if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
+    // CONTRACT §2: a registered builder wins. The built-ins' cache rule: reused while the state holds, rebuilt (the old
+    // entry disposed) when it changes. A registered card's payload may also change while its state holds (P2's
+    // pull-request card fills `card.result`): the handle's blockChanged(block) absorbs it when the handle has one, else
+    // the card is rebuilt. A builder that throws falls back to the built-in card; the entry keeps the builder
+    // (`custom`) and the payload (`rev`), so the fallback is not retried on every render.
+    const custom = registeredCardBuilder(block);
+    const rev = custom ? cardRev(block) : '';
+    if (custom && cached && cached.custom === custom && cached.state === block.state) {
+      if (cached.rev === rev) return cached.el;
+      if (cached.handle && typeof cached.handle.blockChanged === 'function') {
+        let kept = false;
+        try { cached.handle.blockChanged(block); kept = true; } catch (err) { console.warn('[worca] a chat card update failed', err); }
+        if (kept) { cached.rev = rev; return cached.el; }
+      }
+    }
+    if (custom) {
+      let made = null;
+      try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
+      if (made && made.el) {
+        if (cached) disposeCardEntry(cached);
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
+        return made.el;
+      }
+    }
     const isWorkflow = !!(block.card && block.card.type === 'workflow');
     // A policy card is a metrics card with different words (buildMetricsCard branches on the type).
     const isMetrics = !!(block.card && (block.card.type === 'metrics' || block.card.type === 'policy'));
@@ -4451,8 +4518,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isAway ? buildAwayCard(block)
       : isCommand ? buildCommandCard(block)
       : isProgress ? buildProgressCard(block)
+        : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1 });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -4475,11 +4543,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!st.cardEls) return;
     for (const c of st.cardEls.values()) {
       if (!c.handle || !c.el.isConnected) continue;
-      const w = (c.handle.parts.graph && c.handle.parts.graph.clientWidth) || 0;
+      // A built-in handle measures its graph host; an extension card's handle (CONTRACT §2) has no `parts` — its element then.
+      const w = (c.handle.parts ? (c.handle.parts.graph && c.handle.parts.graph.clientWidth) : c.el.clientWidth) || 0;
       if (w !== c.lastW) {
         if (c.cancelAnim) { try { c.cancelAnim(); } catch { /* ignore */ } c.cancelAnim = null; }
         c.lastW = w;
-        c.handle.relayout(w);
+        if (typeof c.handle.relayout === 'function') c.handle.relayout(w);
       }
       if (c.animate) { c.animate = false; c.cancelAnim = playAssembly(c.handle, { win, onDone: () => { c.cancelAnim = null; } }); }
     }
@@ -4537,9 +4606,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   /** Fold the thread's run links into the identity: the first `state` reveals the pipeline id; a resume moves the runId. */
   function refreshProgressIdent(ident) {
-    if (!st.model) return;
-    const link = (ident.pipelineId && st.model.runLinkByPipeline(ident.pipelineId)) || st.model.runLinkForCard(ident.cardId)
-      || (ident.runId ? (() => { const l = st.model.runLinks().get(ident.runId); return l ? { runId: ident.runId, ...l } : null; })() : null);
+    const link = runLinkFor(ident);
     if (!link) return;
     if (link.pipelineId) ident.pipelineId = link.pipelineId;
     if (link.runId && !PIPELINE_ID_RE.test(link.runId)) ident.runId = link.runId;   // a pipeline-id-keyed link has no live UUID (D5)
@@ -4563,7 +4630,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (!st.progress) st.progress = new Map();
     const ident = progressIdent(block);
     const handle = createRunProgressCard({ doc, ident, onOpen: (href) => {
-      closeSheet();                                            // openNewPipeline precedent: close, then route
+      // The route hides the Chat page (app.js showView); nothing to close here.
       if (href && href.startsWith('#') && win.location.hash !== href) win.location.hash = href.slice(1);
     } });
     const entry = { ident, handle, rest: null, hydrating: false, nextHydrateAt: 0 };
@@ -4811,9 +4878,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // and the sphere would visibly snap back mid-turn.
   function ensureThinking() {
     if (el.thinking) return el.thinking;
-    el.orb = createThinkingOrb({ doc, win, size: 28.5 });
+    el.orb = orbs.create(28, 'ask-orb');
     const wrap = make('div', 'ask-thinking');
-    wrap.appendChild(el.orb.el);
+    wrap.appendChild(el.orb);
     el.thinkingLabel = make('span', 'ask-thinking-label');
     wrap.appendChild(el.thinkingLabel);
     const meter = make('span', 'ask-thinking-meter');
@@ -4834,6 +4901,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // numbers move — this runs every flush instead (updateLiveElapsed).
     const rest = [fmtCtx(live.usage && live.usage.ctx), fmtUsd(live.costUsd)].filter(Boolean).join(' · ');
     el.thinkingUsage.textContent = rest ? ` · ${rest}` : '';
+    // Thinking · a tool or sub-agent running · writing, as in the Workflows chat. Only once the row is in the page:
+    // the orb reads its colour from the canvas's computed `color` (.dot-orb in style.css). A row renderTail builds
+    // detached gets its phase at the end of the same flush (updateLiveElapsed).
+    const row = rowOf(live.messageId);
+    if (el.orb.isConnected) orbs.set(el.orb, turnPhase(live, row && row.blocks));
   }
 
   function renderAnswerInto(div, row) {
@@ -4879,7 +4951,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     for (const b of row.blocks || []) {
       if (!b) continue;
       if (b.kind === 'notice') parts.push(`n:${b.id ?? ''}:${b.text || ''}:${b.href || ''}`);
-      else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}`);
+      else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}:${registeredCardBuilder(b) ? cardRev(b) : ''}`);
     }
     parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${row.errorCode || ''}:${isLiveRow(row) ? 1 : 0}`);
     return parts.join('|');
@@ -4953,10 +5025,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (isLiveRow(cur)) {
           wrap.appendChild(ensureThinking());   // last child: the bottom of the message
           el.elapsed = el.thinkingElapsed;      // the ONE live elapsed node
-          // Idempotent, and the only re-arm on the adoption path: a thread whose
-          // ask-start the ring buffer already evicted goes live without ever
-          // passing through startElapsed(), and would otherwise show a dead orb.
-          el.orb.start();
+          // Also the adoption path: a thread whose ask-start the ring buffer
+          // already evicted goes live without ever passing through startElapsed();
+          // the orb's phase comes from the live turn here, not from a start call.
           updateThinking();
         }
       };
@@ -4992,7 +5063,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pruneCardEls(keep);
     st.rowEls = new Map();
     el.transcriptCol.replaceChildren();
-    if (!st.model) return;
+    if (!st.model) { syncView(); return; }
     for (const row of st.model.messages()) {
       const entry = buildMessage(row);
       // The entry animation belongs to a message this transcript has never shown.
@@ -5004,6 +5075,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       st.rowEls.set(row.id, entry);
       el.transcriptCol.appendChild(entry.el);
     }
+    syncView();                                      // home ↔ thread: the composer follows the first message
   }
 
   // Bumped by every loadThread()/newThread()/thread creation: whichever GET resolves
@@ -5013,14 +5085,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   async function loadThread(id) {
     const gen = ++loadGen;
     let res = null;
-    try { res = await fetch(`/api/ask/threads/${id}`); } catch { return null; }
+    try { res = await fetch(`/api/ask/threads/${id}`); } catch { if (gen === loadGen) abandonWant(id); return null; }
     if (gen !== loadGen || st.destroyed) return null;
     if (!res || !res.ok) {
       if (res && res.status === 404 && readStoredThread() === id) storeThread(null);
+      // A routed chat that is gone (a stale link, deleted elsewhere): home, and the address says so. Any other
+      // failure (a 500, a proxy error) keeps the chat on screen and gives the want back (abandonWant).
+      if (res && res.status === 404 && st.wantThread === id) { newThread(); route(null, { replace: true }); }
+      else abandonWant(id);
       return null;
     }
     let snap = null;
-    try { snap = await res.json(); } catch { return null; }
+    try { snap = await res.json(); } catch { if (gen === loadGen) abandonWant(id); return null; }
     if (gen !== loadGen || st.destroyed) return null;
     // A SWITCH starts a fresh ledger, so the new chat rises in. A resync or a
     // reconnect re-loads the SAME thread and must keep it: those repaint rows the
@@ -5031,14 +5107,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.threadId = id;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
-    el.title.textContent = (snap.thread && snap.thread.title) || 'Ask Worca';
+    el.title.textContent = (snap.thread && snap.thread.title) || 'New chat';
     applyThreadScope(snap.thread && snap.thread.context);   // #397: restore the pin
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
     if (switched) applyThreadPick(snap.thread);
     if (switched) st.mcp.off = mcpOffOf(snap.thread && snap.thread.mcpOff);   // §9.4: the chat's own choices
-    if (switched) { st.agent.on = snap.thread?.agentMode !== false; paintAgent(); }   // #574: a resync keeps an unsaved click
     scheduleMcpRefresh();
     renderTranscript();
     updateMeters();
@@ -5057,16 +5132,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function switchThread(id) {
     if (!id) return Promise.resolve(null);
+    st.wantThread = id;
     storeThread(id);
+    syncView();                                      // a chat that loads is a thread already: no home flash
     return loadThread(id);
   }
-  /** Open the sheet on chat `id` (an Alerts notification click). A first open loads the stored chat itself. */
-  function openThread(id) {
-    if (st.destroyed) return;
-    const firstOpenLoads = !st.firstOpenDone && !st.threadId;
-    if (id) storeThread(id);
-    openSheet();
-    if (id && !firstOpenLoads && st.threadId !== id) switchThread(id);
+  /** A switch to `id` failed for a reason other than "gone" (offline, a 500): the page still shows the chat it showed,
+   *  so the want, the stored pointer and the address go back to it — and a later pick of `id` tries again (showThread
+   *  would otherwise skip it as "already loading"). */
+  function abandonWant(id) {
+    if (st.destroyed || st.wantThread !== id || st.threadId === id) return;
+    st.wantThread = st.threadId;                     // null = home
+    storeThread(st.threadId);
+    syncView();
+    route(st.threadId, { replace: true });
+    // A reconnect or a seq gap during the switch skipped this chat's resync — or started one whose load the switch
+    // then dropped as stale (loadGen): that one runs again once it settles.
+    if (st.resyncing) st.resyncAgain = true;
+    else resync();
   }
   // ---- live streaming (spec §10.8) -----------------------------------------
   function rowOf(id) {
@@ -5112,15 +5195,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // the event loop open for every turn a test leaves streaming.
     st.elapsedTimer = setInterval(() => scheduleFlush(), 1000);
     if (st.elapsedTimer && typeof st.elapsedTimer.unref === 'function') st.elapsedTimer.unref();
-    if (el.orb) el.orb.start();
   }
   function stopElapsed() {
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     st.elapsedStart = null;
     // The orb row is simply not rebuilt into a finished message, so the node is
-    // left detached — with no custom-element lifecycle to notice, the rAF loop
-    // has to be cut here or it paints an orphan for the rest of the session.
-    if (el.orb) el.orb.stop();
+    // left detached: back at rest here, the orb eases to a stop (a detached one
+    // soon drops out of dot-orb's shared loop) and the next turn picks it up.
+    if (el.orb) orbs.set(el.orb, 'rest');
   }
   function updateLiveElapsed() {
     if (st.elapsedStart != null && el.elapsed && st.model && st.model.live()) {
@@ -5141,7 +5223,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     if (frame.type === 'ask-done' || frame.type === 'ask-error') {
       stopElapsed(); updateSendStop(); announce('answer finished');
-      if (!st.open) setUnread(true);
+      if (!st.open) setUnread(true, st.threadId);
       // Conversation chips: the turn's resolved list rides ask-done (an older server omits it: keep what is shown).
       if (frame.type === 'ask-done' && Array.isArray(frame.contexts)) setContexts(frame.contexts);
       // P4: a finished turn may have created/removed/navigated worktrees. This must
@@ -5157,17 +5239,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
   // row is gone server-side, so a tab still holding st.threadId would keep a dead
   // chat in memory until its next fetch 404s. Reset exactly like the "+" button.
-  function onHistoryCleared() {
+  function onHistoryCleared({ scoped = false } = {}) {
     closePopover({ focusTrigger: false });
-    if (st.threadId) newThread();
+    // Every row is gone server-side: no fetch. A shared clear removed only the caller's chats: refetch the rest.
+    if (scoped) scheduleThreadsRefresh();
+    else renderHistory([], 0);
+    if (st.threadId) { newThread(); route(null, { replace: true }); }
   }
 
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
     if (frame.type === 'ask-history-cleared') {
+      // The chats it removed (every one when it names none) leave the "asked in" set, and a Chat row dot lit for one
+      // of them goes out: the Chat row never routes to a deleted chat.
+      const gone = Array.isArray(frame.threadIds) ? frame.threadIds : [...st.askedIn];
+      for (const id of gone) st.askedIn.delete(id);
+      if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
-      onHistoryCleared();
+      onHistoryCleared({ scoped: Array.isArray(frame.threadIds) });
       return;
     }
     if (frame.type === 'ask-command') {                         // #574: a command card's live state, this chat only
@@ -5184,6 +5274,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     if (THREADS_REFRESH_FRAMES.has(frame.type)) scheduleThreadsRefresh();
+    // The Chat row's dot (worca Chat): a reply in ANOTHER chat this tab asked in (the user switched chats before it
+    // landed) ended while Chat was hidden. The open chat's own reply is afterFrame's.
+    if ((frame.type === 'ask-done' || frame.type === 'ask-error') && !st.open && typeof frame.threadId === 'string'
+      && frame.threadId !== st.threadId && st.askedIn.has(frame.threadId)) setUnread(true, frame.threadId);
     // Defence-in-depth: the model's own threadId filter is the real router — this early return only saves an apply() call and cannot be observed from tests (the model would drop the frame identically).
     if (!st.model || frame.threadId !== st.threadId) return;
     const r = st.model.apply(frame);
@@ -5209,13 +5303,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // dedupe/adoption absorb it). Latched: one resync at a time.
   function resync() {
     if (st.resyncing || !st.threadId || st.destroyed) return;
+    // A switch is loading: its own load brings fresh state, and re-loading the chat being left would bump loadGen and
+    // drop the switch (the page would keep the old chat while the address names the new one).
+    if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return;
     st.resyncing = true;
     const id = st.threadId;
     Promise.resolve()
       .then(() => loadThread(id))
       .then((snap) => { if (snap && snap.inFlight) subscribe(id, { force: true }); })
       .catch(() => { /* the thread may be gone; loadThread handled storage */ })
-      .then(() => { st.resyncing = false; });
+      .then(() => {
+        st.resyncing = false;
+        if (st.resyncAgain) { st.resyncAgain = false; resync(); }   // abandonWant asked while this one was out
+      });
   }
 
   function onHello(list) {
@@ -5239,7 +5339,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else { const row = rowOf(rid); if (row) refreshRow(row); }
     }
     const d = st.model.takeDirty();
-    if (d.title) el.title.textContent = st.model.thread().title || 'Ask Worca';
+    if (d.title) el.title.textContent = st.model.thread().title || 'New chat';
     if (d.structure) {
       renderTranscript();
     } else {
@@ -5286,6 +5386,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.runPoked) repaintProgressCards();
     relayoutCards();
     applyPin();
+    updateAddons();                                  // CONTRACT §2: every render hands the add-ons the open chat
     // A row counts as SHOWN once a flush ends with it in the column. Marking it
     // inside renderTranscript() would be too early: loadThread paints once and the
     // structural flush behind it repaints immediately, and the browser only ever
@@ -5295,6 +5396,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function updatePinFromScroll() {
     const t = el.transcript;
+    // The scroll event of our OWN pin write (applyPin, jumpToLatest) can arrive after the column grew again (a card's
+    // graph laying out): that is not the user leaving the bottom — stay pinned and follow. A user scroll up from
+    // there reads below the written position and unpins as before.
+    if (st.pinned && st.pinWrite != null && t.scrollTop >= st.pinWrite) {
+      st.pinWrite = null;
+      applyPin();
+      return;
+    }
+    st.pinWrite = null;
     st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
     if (el.jump) el.jump.hidden = st.pinned;
   }
@@ -5307,7 +5417,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
       const max = t.scrollHeight - t.clientHeight;
-      if (max > 0 && t.scrollTop < max) t.scrollTop = t.scrollHeight;
+      if (max > 0 && t.scrollTop < max) { t.scrollTop = t.scrollHeight; st.pinWrite = t.scrollTop; }
     }
     if (el.jump) el.jump.hidden = st.pinned;
   }
@@ -5315,42 +5425,128 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function jumpToLatest() {
     st.pinned = true;
     el.transcript.scrollTop = el.transcript.scrollHeight;
+    st.pinWrite = el.transcript.scrollTop;
     if (el.jump) el.jump.hidden = true;
+  }
+
+  // ---- composer add-ons (worca Chat CONTRACT §2) ----------------------------
+  /** Addon ctx.thread(): the open chat as plain data, or null before the chat has a row. */
+  function threadSnapshot() {
+    if (!st.model) return null;
+    const t = st.model.thread() || {};
+    return {
+      ...t,
+      id: st.threadId,
+      live: !!st.model.live(),
+      inFlight: !!st.model.inFlight(),
+      messages: st.model.messages(),
+      runLinks: [...st.model.runLinks()].map(([runId, l]) => ({ runId, ...l })),
+    };
+  }
+  const addonCtx = {
+    doc, fetch,
+    threadId: () => st.threadId,
+    thread: () => threadSnapshot(),
+    runStore,
+    setPlaceholder: (text) => { el.input.placeholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; },
+    focus: () => focusComposer(),
+    announce: (text) => announce(text),
+  };
+  function mountAddons() {
+    for (const addon of composerAddons()) {
+      try {
+        const handle = addon.mount(el.lead, addonCtx);
+        st.addons.push({ id: addon.id, handle: handle && typeof handle === 'object' ? handle : {} });
+      } catch (err) { console.warn(`[worca] composer add-on "${addon.id}" failed to mount`, err); }
+    }
+  }
+  function updateAddons() {
+    if (!st.addons.length) return;
+    const thread = threadSnapshot();
+    for (const a of st.addons) {
+      if (typeof a.handle.update !== 'function') continue;
+      try { a.handle.update(thread); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" update failed`, err); }
+    }
+  }
+  /** Whether an add-on took the send, in registration order: true (clear the input), 'keep' (keep it), or false.
+   *  Any other return, and a throwing hook, counts as not taken. */
+  async function addonsTakeSend(text) {
+    for (const a of st.addons) {
+      if (typeof a.handle.beforeSend !== 'function') continue;
+      let r = false;
+      try { r = await a.handle.beforeSend(text); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" beforeSend failed`, err); }
+      if (r === true) return true;
+      if (r === 'keep') return 'keep';
+    }
+    return false;
+  }
+  /** CONTRACT §2 (lead amendment): fold transformSend over the add-ons in registration order. A throw, a non-string
+   *  or an empty result keeps the text it was given (the server refuses an empty message). */
+  function addonsTransform(text) {
+    let out = text;
+    for (const a of st.addons) {
+      if (typeof a.handle.transformSend !== 'function') continue;
+      try {
+        const next = a.handle.transformSend(out);
+        if (typeof next === 'string' && next.trim()) out = next;
+      } catch (err) { console.warn(`[worca] composer add-on "${a.id}" transformSend failed`, err); }
+    }
+    return out;
+  }
+  function destroyAddons() {
+    for (const a of st.addons.splice(0)) {
+      if (typeof a.handle.destroy === 'function') { try { a.handle.destroy(); } catch { /* a dead add-on never blocks teardown */ } }
+    }
   }
 
   // ---- mount ----------------------------------------------------------------
   const root = buildRoot();
+  mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   win.addEventListener('resize', onWinResize);
   // MCP registry §9.4: in Auto the page is the scope, so a route change re-previews the picker.
   const onHashChange = () => { if (!st.scope.pinned) scheduleMcpRefresh(); };
   win.addEventListener('hashchange', onHashChange);
-  // The rail collapsing changes the dock width by 222px with no window resize;
-  // observe the dock itself (guarded: jsdom has no ResizeObserver — P5's idiom).
+  // The rail, the history column and the run panel change the conversation column's width with no window
+  // resize; observe the column itself (guarded: jsdom has no ResizeObserver — P5's idiom). The transcript column
+  // too: a card that grows after the flush that pinned it (a graph laying out, P3's card answering the run store)
+  // must not leave a pinned transcript short of the bottom.
   let dockRo = null;
+  // The docked composer floats over the transcript (style.css .chat-dock): its height is the transcript's bottom
+  // clearance, re-read whenever a draft, a chip row or an attachment grows or shrinks it.
+  let clearRo = null;
   if (typeof win.ResizeObserver === 'function') {
     dockRo = new win.ResizeObserver(onWinResize);
-    dockRo.observe(el.dock);
+    dockRo.observe(el.sheet);
+    dockRo.observe(el.transcriptCol);
+    clearRo = new win.ResizeObserver(paintDockClearance);
+    clearRo.observe(el.chatDock);
+  }
+  function paintDockClearance() {
+    if (st.destroyed) return;
+    const h = el.chatDock.offsetHeight;
+    if (h > 0) { el.sheet.style.setProperty('--chat-dock-h', `${h}px`); applyPin(); }   // 0: home hides the dock
   }
 
   function destroy() {
     if (st.destroyed) return;
     st.destroyed = true;
-    finishResize();                                  // a mid-drag unmount leaves no document listeners
     closePopover({ focusTrigger: false });
+    if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
+    if (st.historySearchTimer) { clearTimeout(st.historySearchTimer); st.historySearchTimer = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
-    if (el.orb) el.orb.stop();
-    settlePillOrb();
-    clearTipTimer();
+    orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
+    if (clearRo) { clearRo.disconnect(); clearRo = null; }
     if (st.runTick) { clearInterval(st.runTick); st.runTick = null; }
     if (st.runUnsub) { try { st.runUnsub(); } catch { /* ignore */ } st.runUnsub = null; }
     pruneCardEls();                                  // every card graph mount and its ResizeObserver goes with the sheet
+    destroyAddons();
     clearTimeout(st.voiceLongPress);
     if (st.voice) { const v = st.voice; st.voice = null; Promise.resolve(v.destroy()).catch(() => {}); }
     root.remove();
@@ -5358,11 +5554,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   return Object.freeze({
     root,
-    open: openSheet,
-    openThread,
-    close: closeSheet,
-    toggle: toggleSheet,
+    open: openPage,
+    close: closePage,
     isOpen: () => st.open,
+    threadId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId) || null,
+    setHistoryOpen: (open, opts) => setHistoryOpen(open, opts),
+    unreadThreadId: () => (st.unread ? st.unreadThread : null),
+    contextChanged: () => onHashChange(),           // P4: the run panel's run changed with no hashchange (replaceState)
     appendToComposer,
     pushServerFrame,
     onHello,

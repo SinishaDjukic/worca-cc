@@ -50,5 +50,5 @@ test('app.js boots without throwing and finds 14 views', async () => {
     threw = e;
   }
   assert.equal(threw, null, threw && threw.stack);
-  assert.equal(window.document.querySelectorAll('[data-view]').length, 16);   // + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent
+  assert.equal(window.document.querySelectorAll('section.view[data-view]').length, 17);   // + getting-started + schedules + team-policy (team-policy design §11); Running + History merged into Runs; + the four Add-ons pages; Workflows replaced Composer, Agents, Scripts and Create agent; + chat (worca Chat — its page root's data-view="home|thread" is no routed view)
 });

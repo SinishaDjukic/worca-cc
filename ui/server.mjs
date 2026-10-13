@@ -36,8 +36,10 @@ import {
   checkoutRecordsFor, retainedWorkFor, runEngineOfRow,
 } from '../src/core/artifacts.mjs';
 import { mimeForPath, viewerKindFor } from '../src/shared/artifact-kinds.mjs';
+import { attachmentDisposition } from '../src/core/download-filename.mjs';
 import { appendDirection, DIRECTION_MAX_CHARS, DIRECTIONS_KIND, DIRECTIONS_FILE, DIRECTIONS_CLOSED } from '../src/core/directions.mjs';
 import { DIFF_PATCH_FILE } from '../src/core/results.mjs';
+import { runCardResults, lastArtifactsWindow, RUN_CARD_ARTIFACTS, RUN_CARD_FINISHED } from '../src/core/ask/run-card-extras.mjs';
 import { readAskFileEntry, ASK_FILE_MIMES } from '../src/core/ask-files.mjs';
 import { ASK_FILES_DIR } from '../src/core/ask-forms.mjs';
 import { protectedSectionKeys } from '../src/core/diff-anchor.mjs';
@@ -242,6 +244,11 @@ import { applyMetricsChange } from '../src/core/ask/metrics-deps.mjs';
 import { metricsEventPrompt, metricsNoticeText } from '../src/core/ask/metrics-proposal.mjs';
 import { applyPolicyChange } from '../src/core/ask/policy-deps.mjs';
 import { createAwaySwitch, applyAwayChange } from '../src/core/ask/away-deps.mjs';
+import { createChatActionHost } from '../src/core/ask/action-deps.mjs';
+import { askActorFor, chatActionSummary, prCardLinkRefusal, prCardResult } from '../src/core/ask/receipt.mjs';
+import { describeAwayMode } from '../src/shared/away-mode/describe.mjs';
+import { createSettingsRegistry, createWriteQueue } from '../src/core/ask/settings-registry.mjs';
+import { defaultSettingsRegistryDeps } from '../src/core/ask/chat-action-deps.mjs';
 import { awayEventPrompt, awayNoticeText } from '../src/core/ask/away-proposal.mjs';
 import { policyEventPrompt, policyNoticeText } from '../src/core/ask/policy-proposal.mjs';
 import { scheduleEventPrompt, scheduleNoticeText } from '../src/core/ask/schedule-spec.mjs';
@@ -4503,20 +4510,29 @@ const ARTIFACT_RAW_MAX_BYTES = 25 * 1024 * 1024;   // the text route caps at 2 M
 const safeFilename = (rel) => String(rel).split('/').pop().replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120) || 'artifact';
 
 /** Stream one indexed artifact's bytes. `rel` only SELECTS among the run's
- *  indexed rows (never a filesystem path); a stored `..` row is unreachable. */
-async function sendArtifactRaw(res, row, rel) {
+ *  indexed rows (never a filesystem path); a stored `..` row is unreachable.
+ *  `download` (the routes' `?download=1`, the viewer's and the browser's Download)
+ *  is always an `attachment` under a Windows-safe name, takes any extension (no
+ *  known type -> application/octet-stream) and has no preview ceiling: sendFile
+ *  streams it, nothing is buffered. The preview form keeps its 415, and its 25 MB
+ *  413 for every kind EXCEPT audio/video: a player streams and seeks with HTTP
+ *  Range (send's default, on both forms), so a long video plays inline at any size
+ *  without the file ever being buffered. */
+async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   const hit = await resolveIndexedArtifactFileForRow(row, rel);
   if (!hit) return res.status(404).json({ error: 'artifact not found' });
   const mime = mimeForPath(hit.rel);
-  if (!mime) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
+  if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
   let size;
   try { size = (await fsp.stat(hit.file)).size; } catch { return res.status(404).json({ error: 'artifact not found' }); }
-  if (size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
   const kind = viewerKindFor(hit.rel);
+  const anySize = download || kind === 'audio' || kind === 'video';
+  if (!anySize && size > ARTIFACT_RAW_MAX_BYTES) return res.status(413).json({ error: 'artifact too large to preview', rel: hit.rel, size });
   // Set Content-Type explicitly so express/send does not re-derive it from the ext.
-  res.set('Content-Type', mime);
+  res.set('Content-Type', mime || 'application/octet-stream');
   res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Content-Disposition', `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
+  res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
+    : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
   res.set('Cache-Control', 'no-store');                       // artifacts are mutable while a run is live
   // Defense in depth for scriptable markup: even opened in a top-level tab the
   // document runs in an opaque origin. The viewer's <iframe sandbox> is the primary guard.
@@ -4541,6 +4557,13 @@ async function sendArtifactRaw(res, row, rel) {
   // not a header the caller chooses.
   res.sendFile(path.basename(hit.file), { root: path.dirname(hit.file), dotfiles: 'allow', cacheControl: false }, (err) => {
     if (!err || res.headersSent) return;
+    // A player's Range past the end (or any Range on an empty file) is send's 416: answer it as one, with the
+    // Content-Range send already set — never a 500. Other errors are JSON, not the artifact's type or name.
+    if (err.status === 416) return res.status(416).end();
+    res.removeHeader('Content-Disposition');
+    res.removeHeader('Content-Type');
+    // A conditional request send refuses (If-Match, If-Unmodified-Since) is a 412, not a server error.
+    if (err.status === 412) return res.status(412).end();
     if (err.code === 'ENOENT' || err.status === 404) return res.status(404).json({ error: 'artifact not found' });
     res.status(500).json({ error: err.message || String(err) });
   });
@@ -4567,7 +4590,7 @@ app.get('/api/runs/:id/artifact-raw/*', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
     if (!row) return res.status(404).json({ error: 'pipeline not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -5255,15 +5278,20 @@ app.get('/api/projects/:key/settings', async (req, res) => {
 });
 app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
-  try {
-    const roles = agentSteps().map(({ key }) => key);
-    const items = assertProjectSettingsPatch(req.body, { roles });
-    await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
-    writeProjectSettings({ projectDir: project.path }, req.body, { roles });
-    emitChanged('settings-changed');
-    res.json(projectSettingsState(project.path));
-  } catch (error) { badRequest(res, error?.message || String(error)); }
+  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { badRequest(res, error?.message || String(error)); }
 });
+
+/** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
+ *  transaction, broadcast, return the new projectSettingsState. Shared with Ask's change_setting and its Revert.
+ *  @throws {Error} a refused patch (status 400) */
+async function applyProjectSettingsPatch(project, patch) {
+  const roles = agentSteps().map(({ key }) => key);
+  const items = assertProjectSettingsPatch(patch, { roles });
+  await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
+  writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  emitChanged('settings-changed');
+  return projectSettingsState(project.path);
+}
 
 app.get('/api/sync/projects', syncRoute(async (_req, res) => {
   const ps = (await listProjects()).filter((p) => p.exists);
@@ -5631,7 +5659,7 @@ app.get('/api/history/:key/:id/artifact-raw/*', async (req, res) => {
   try {
     const row = lookupPipelineRow(req.params.key, req.params.id);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -6911,6 +6939,20 @@ app.post('/api/pr', async (req, res) => {
   }
   if (!(body.watch === undefined || body.watch === true || body.watch === false)) return badRequest(res, 'watch must be a boolean');
   const draft = body.draft === true;
+  // worca Chat P2 (R9): the chat's pull-request card this Ship it dialog was opened from — both or neither, checked
+  // BEFORE anything is pushed; applied below only when the PR is really open (on failure it stays proposed).
+  const hasAskThread = body.askThreadId !== undefined && body.askThreadId !== null;
+  const hasAskCard = body.askCardId !== undefined && body.askCardId !== null;
+  let askPrLink = null;
+  if (hasAskThread || hasAskCard) {
+    if (!hasAskThread || !hasAskCard) return badRequest(res, 'askThreadId and askCardId must be provided together');
+    if (typeof body.askThreadId !== 'string' || !ASK_ID_RE.test(body.askThreadId)
+      || typeof body.askCardId !== 'string' || !ASK_ID_RE.test(body.askCardId)) return badRequest(res, 'invalid askThreadId or askCardId');
+    // Another person's thread on a shared sign-in reads as unknown, as /api/ask/threads/:id answers it (askThreadVisible).
+    const askThread = askGetThread(body.askThreadId);
+    if (!askThread || !askThreadVisible(askThread, req)) return badRequest(res, 'unknown askThreadId');
+    askPrLink = { threadId: body.askThreadId, cardId: body.askCardId };   // the card itself is checked once the target is known
+  }
   if (!(await anyPrHost())) {
     return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
   }
@@ -6921,6 +6963,13 @@ app.post('/api/pr', async (req, res) => {
   const target = prTargetFor(state, body.memberKey);
   if (target.error) return badRequest(res, target.error);
   const { repoDir, feature, source, memberKey } = target;
+  if (askPrLink) {
+    // The card rule reads the RESOLVED member (prTargetFor drops a memberKey a project run does not have), so a project
+    // card already applied is never opened again by naming a member. Still before anything is pushed.
+    const found = askFindCard(askPrLink.threadId, askPrLink.cardId);
+    const refusal = found ? prCardLinkRefusal(found.block, { id, memberKey: memberKey || null }) : { status: 400, error: 'unknown askCardId' };
+    if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+  }
   if (!repoDir || !feature || !source) {
     return badRequest(res, 'pipeline has no branch info to open a PR');
   }
@@ -6996,6 +7045,14 @@ app.post('/api/pr', async (req, res) => {
     try { await setPrRemotePrefs(repoDir, { pushRemote, baseRemote }); } catch { /* best-effort */ }
   }
 
+  if (askPrLink) {
+    // Re-read: a workspace's earlier member PR may have applied the card a moment ago (prCardResult adds to its members).
+    const cur = askFindCard(askPrLink.threadId, askPrLink.cardId);
+    if (cur) {
+      try { flipCard(askPrLink.threadId, askPrLink.cardId, { state: 'applied', card: { result: prCardResult(cur.block, { url: pr.url, draft: newDraft, existed: !!pr.existed, memberKey }) } }); }
+      catch (err) { console.error(`[worca-ui] pull-request card flip failed: ${err && err.message ? err.message : err}`); }   // the PR stands
+    }
+  }
   const mergeable = await prMergeable({ projectDir: repoDir, head: feature, repo, headOwner, prUrl: pr.url || null, baseRemote: baseR });
   let watching;
   if (body.watch === true) {
@@ -8303,7 +8360,7 @@ app.get('/api/workspaces/:id/runs/:runId/artifact-raw/*', async (req, res) => {
   try {
     const row = lookupPipelineRow(`workspaces/${req.params.id}`, req.params.runId);
     if (!row) return res.status(404).json({ error: 'artifact not found' });
-    await sendArtifactRaw(res, row, req.params[0]);
+    await sendArtifactRaw(res, row, req.params[0], { download: req.query.download === '1' });
   } catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
@@ -8479,6 +8536,90 @@ const askAwaySwitchFor = (person) => (awayPerPerson() && person && person !== 'l
     readToggle: () => nightModeToggleFor(person), readHereSince: () => nightModeHereSinceFor(person),
   })
   : askAwaySwitch;
+
+// worca Chat P2 (U1, U4, R6–R10): the settings the chat may change, and the parent's half of its act-then-undo
+// tools — the same in-process functions the HTTP routes call (applySettingsPatch, applyProjectSettingsPatch,
+// pauseRun, resumeRun, stopRun, stopPausedPipeline, postDirection, scheduleVerb, the Away switch). Never a loopback.
+const askSettingsQueue = createWriteQueue();
+const askChatSettings = createSettingsRegistry({
+  ...defaultSettingsRegistryDeps(),
+  serial: askSettingsQueue,
+  applyUser: (body) => applySettingsPatch(body),
+  applyProject: (project, patch) => applyProjectSettingsPatch(project, patch),
+});
+const askChatActions = createChatActionHost({
+  settings: askChatSettings,
+  liveRun: (id) => liveRunEntry(id),
+  findRow: (id) => findPipelineRowById(id),
+  pauseRun: async (runId, by) => pauseRun(runId, by),
+  // POST /api/resume's wording for an engine refusal (the run's own text names a CLI flag).
+  resumeRun: async (pipelineId, opts) => {
+    try { return await resumeRun(pipelineId, opts); } catch (err) {
+      if (err && err.body && err.body.code === 'engine-refused') err.body = { ...err.body, error: engineRefusalFor(err.body.error, 'ui') };
+      throw err;
+    }
+  },
+  stopRun: (runId, by) => stopRun(runId, by),
+  stopPausedPipeline: (pipelineId, by) => stopPausedPipeline(pipelineId, by),
+  postDirection: (pipelineId, text, source) => postDirection(pipelineId, text, source),
+  scheduleVerb: (verb, id, body, o) => scheduleVerb(verb, id, body, o),
+  getSchedule: (id) => { const f = findScheduleItem(id); return f && f.kind === 'recurring' ? f.item : null; },
+  awaySwitchFor: (person) => askAwaySwitchFor(person),
+  awayStatusFor: (person) => askAwayStatusFor(person),
+  prState: (id) => readPrState(id),
+  prCardFacts: (row) => askPrCardFacts(row),
+  serial: askSettingsQueue,
+});
+
+/** One turn's chat-action deps (startAskTurn): set_away_now / set_run_away_mode — the parent applies what the MCP child
+ *  validated and hands back a revertible receipt when the status changed, on the asking person's own switch — and
+ *  change_setting, pause_run, resume_run, propose_stop_run, send_direction, propose_pull_request plus the receipts of
+ *  pause_schedule / resume_schedule, recorded as "<person> via worca chat". Named so a test pins the actor and person. */
+function askChatTurnDeps(turnReader) {
+  return {
+    awaySwitch: (req) => askChatActions.awaySwitch(req, { actor: turnReader || 'local', person: turnReader }),
+    chatAction: (req) => askChatActions.apply(req, { actor: askActorFor(turnReader) }),
+  };
+}
+
+/** The Away status a receipt shows for this person: the stored switch, or 'here' while an "I'm back" still counts.
+ *  'here' is an input, not a stored status: "I'm back" = auto with hereSince set (settings.mjs setNightModeToggle), and
+ *  hereSince stays stored after its away stretch ends — it counts only inside the stretch it was said in (describe.mjs
+ *  'here-now'), so a stale one reads as 'auto'. */
+function askAwayStatusFor(person) {
+  const toggle = nightModeToggleFor(person);
+  if (toggle !== 'auto') return toggle;
+  const hereSince = nightModeHereSinceFor(person);
+  if (hereSince == null) return 'auto';
+  const { config } = resolveNightConfig({ user: nightModeSettings() || {} });
+  return describeAwayMode({ config, toggle: 'auto', hereSince, now: Date.now() }).status === 'here-now' ? 'here' : 'auto';
+}
+
+/** The pull-request card's facts (CONTRACT §4) for a finished run's row: the branches, and the results summary's
+ *  file and line counts when the run saved one (the numbers the Ship it dialog shows). path.join: Windows-safe. */
+async function askPrCardFacts(row) {
+  const isWs = row.target === 'workspace';
+  const parse = (v) => { try { const o = JSON.parse(v || 'null'); return o && typeof o === 'object' ? o : null; } catch { return null; } };
+  const branch = isWs
+    ? Object.values((parse(row.workspace_meta) || {}).branches || {}).find((b) => b && b.feature) || {}
+    : parse(row.branch) || {};
+  let summary = null;
+  try {
+    const dir = await runDirForRow(row);
+    const res = dir ? JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')) : null;
+    summary = res && res.summary && typeof res.summary === 'object' ? res.summary : null;
+  } catch { summary = null; }
+  return {
+    pipelineId: row.id,
+    projectKey: isWs ? `workspaces/${row.workspace_key}` : row.project_key,
+    ...(isWs && row.workspace_key ? { workspaceId: row.workspace_key } : {}),
+    title: row.title || row.id,
+    branch: branch.feature || null,
+    ...(!isWs && branch.source ? { base: branch.source } : {}),
+    ...(summary ? { filesChanged: (Number(summary.filesNew) || 0) + (Number(summary.filesChanged) || 0),
+      additions: Number(summary.linesAdded) || 0, deletions: Number(summary.linesRemoved) || 0 } : {}),
+  };
+}
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
@@ -8726,6 +8867,34 @@ function refuseNonClaudeUtilityModel(key, value) {
 app.post('/api/settings', async (req, res) => {
   const body = req.body || {};
   const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
+  if (has('actions') && agentMayBeCaller(req)) return refuseAgentCaller(res);
+  // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
+  // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
+  if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
+    has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
+  try {
+    const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
+      ...(actionsWarnings ? { actionsWarnings } : {}) });
+  } catch (err) {
+    // 400 with the user's words and, when known, the body path of the bad field (#555).
+    const { error, field } = settingsErrorReply(err, err && err.settingsCtx);
+    return res.status(400).json({ error, ...(field ? { field } : {}) });
+  }
+});
+
+/**
+ * POST /api/settings' body without the request: validate every present key before any write, write them (root
+ * first), then the broadcasts. Shared with Ask's change_setting and its Revert (worca Chat P2), which send ONE known
+ * key — never an empty body: a body naming no known key clears root (the legacy contract below).
+ * @param {object} body  the partial settings patch
+ * @param {{person?: string|null}} [o]  B4: whose own Away switch nightModeToggle writes (null = the instance switch)
+ * @returns {Promise<{actionsWarnings: object|null}>}
+ * @throws {Error} the first refused value (err.settingsCtx names the field)
+ */
+async function applySettingsPatch(body, { person = null } = {}) {
+  const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
   const hasBudgetKey = has('pipelineCostLimitUsd') || has('totalCostLimitUsd') || has('costLimitResetPeriod');
   const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
@@ -8753,12 +8922,6 @@ app.post('/api/settings', async (req, res) => {
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
   const hasActionsKey = has('actions');
-  // D4: actions.editor / actions.terminal are command paths the built-ins route spawns as the server user.
-  if (hasActionsKey && agentMayBeCaller(req)) return refuseAgentCaller(res);
-  // Hosted with browsing limited: the Worca root and projects root move only within Worca's own
-  // folders (both widen what can be browsed, and the setters probe the path). Clearing is fine.
-  if (!(await requireFsAllowed(req, res, [has('root') ? normalizeProjectPath(body.root) : null,
-    has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
   // #422: the title model is a SELECT over the catalog, so an id that is not a
   // catalog member is a client bug (or a stale option) — refuse it here rather
@@ -8781,7 +8944,7 @@ app.post('/api/settings', async (req, res) => {
   const ask = {};
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
-  try {
+  {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
     for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'workspaceScan']) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
@@ -8882,7 +9045,7 @@ app.post('/api/settings', async (req, res) => {
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
-    if (has('nightModeToggle') && !(await setPersonNightModeToggle(awayPersonOf(req), body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
+    if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
     if (has('sync')) await setSyncDefaults(body.sync);
     // Live runs re-evaluate their open question against the new night settings.
     if (hasNightKey) for (const e of runs.values()) e.orch?.nightConfigChanged?.();
@@ -8890,18 +9053,13 @@ app.post('/api/settings', async (req, res) => {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), chat: chatPrefs(),
-      ...(actionsWarnings ? { actionsWarnings } : {}) });
-  } catch (err) {
-    // 400 with the user's words and, when known, the body path of the bad field (#555).
-    const { error, field } = settingsErrorReply(err, err && err.settingsCtx);
-    return res.status(400).json({ error, ...(field ? { field } : {}) });
+    return { actionsWarnings };
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Feature flags (docs/feature-flags.md). GET lists every non-retiring flag; PATCH takes
@@ -10033,6 +10191,20 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
+ *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
+function askWaitingCount(threadId) {
+  const set = askFollowers.get(threadId);
+  if (!set) return 0;
+  let n = 0;
+  for (const f of set) {
+    if (f.detached) continue;
+    const entry = liveRunEntry(f.runId);
+    if (entry && !SETTLED_RUN.has(String(entry.status || '')) && entry.pendingQuestion) n += 1;
+  }
+  return n;
+}
+
 function askRunningCount() {
   let n = 0;
   for (const job of askJobs.values()) if (job.status === 'running') n += 1;
@@ -10115,12 +10287,16 @@ app.get('/api/ask/threads', (req, res) => {
     const limit = Number.isInteger(raw) && raw > 0 ? Math.min(raw, 200) : 50;
     const visibleTo = askViewer(req);
     const mode = req.query.mode === 'composer' ? 'composer' : null;
-    const threads = askListThreads({ limit, visibleTo, mode }).map((t) => {
+    // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns };
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
     });
-    // total = EVERY saved chat (the History popover's meter), not the capped page above.
-    res.json({ threads, total: askCountThreads({ visibleTo, mode }) });
+    // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
+    // the search matches, with all = every saved chat ("3 of 54 chats").
+    const total = askCountThreads({ visibleTo, mode, query });
+    res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10218,16 +10394,41 @@ app.get('/api/ask/threads/:id', (req, res) => {
   }
 });
 
+/** Chat P3 (CONTRACT §5): what the chat run card's result region shows for a FINISHED run (done/stopped/error) —
+ *  results.json's counts and top files by churn, the LAST artifacts (the newest outputs), the PR. Null for a run
+ *  that is not over (results.json is written at the end) or a row that is gone. Every read is best-effort: a missing
+ *  piece is null / [] (a stop or error with no changes writes no results.json). */
+async function askRunCardExtras(row) {
+  if (!row || !RUN_CARD_FINISHED.has(String(row.status || ''))) return null;
+  let results = null;
+  try {
+    const dir = await runDirForRow(row);
+    results = runCardResults(JSON.parse(await fsp.readFile(path.join(dir, 'results.json'), 'utf8')));
+  } catch { results = null; }            // no results.json, a reclaimed run folder, or junk JSON
+  let artifacts = [];
+  let moreArtifacts = false;
+  try {
+    // Count on the cheap index rows (no stat), then read (and stat) only the last page.
+    const { total, offset } = lastArtifactsWindow(await listArtifacts(row.id), RUN_CARD_ARTIFACTS);
+    const rows = total ? await listRunArtifacts(row.id, { limit: RUN_CARD_ARTIFACTS, offset, browsableOnly: true }) : [];
+    artifacts = rows.map((a) => ({ kind: a.kind, relPath: a.relPath, bytes: a.bytes, nodeId: a.nodeId, cycle: a.cycle }));
+    moreArtifacts = total > RUN_CARD_ARTIFACTS;
+  } catch { /* the artifact index is best-effort here */ }
+  return { results, artifacts, moreArtifacts, pr: readPrState(row.id) };
+}
+
 // Ask Worca progress card hydration (plan D9): the run's detail state by pipeline id OR live run id, no store key.
+// Chat P3: plus `extras` (askRunCardExtras) for the chat run card's result region.
 const ASK_RUN_REF_RE = /^(?:[0-9a-f]{8}|[0-9a-zA-Z-]{9,64})$/;
-app.get('/api/ask/runs/:id', (req, res) => {
+app.get('/api/ask/runs/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!ASK_RUN_REF_RE.test(id)) return res.status(400).json({ error: 'invalid run id' });
   try {
     const entry = liveRunEntry(id);
     const state = readPipelineStateById(entry && entry.pipelineId ? entry.pipelineId : id);
     if (!state) return res.status(404).json({ error: 'run not found' });
-    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null });
+    const extras = await askRunCardExtras(findPipelineRowById(state.id));
+    res.json({ state, live: entry ? { runId: entry.id, status: entry.status } : null, extras });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -10682,6 +10883,11 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
           cards.push({ id: b.id, type: 'schedule', state: b.state, summary: b.card.summary || '' });
           continue;
         }
+        // worca Chat P2: a receipt, a stop warning or a pull-request offer in one line — the next turn sees a revert.
+        if (b.card && (b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request')) {
+          cards.push({ id: b.id, type: b.card.type, state: b.state, summary: chatActionSummary(b.card) });
+          continue;
+        }
         cards.push(wf
           ? {
             id: b.id, type: 'workflow', state: b.state, name: (b.card && b.card.name) || '',
@@ -10867,8 +11073,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
-    // Agent mode (#574): this chat's switch, where agent mode exists at all; a message's own value wins.
-    const agentOn = !composerMode && askCommandsEnabled() && (agentMode !== undefined ? agentMode : thread.agentMode) !== false;
+    // Agent mode (#574; worca Chat R5): an Ask chat is ALWAYS in agent mode where the host allows commands at all.
+    // The thread's agentMode column and a message's agentMode are still validated and stored — never read here.
+    const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
       : await askSystemPromptFor(catalog, { web, mcp: engine === 'codex' ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
@@ -10934,8 +11141,8 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
-        // set_away_now / set_run_away_mode: the parent applies what the MCP child validated.
-        awaySwitch: (req) => askAwaySwitchFor(turnReader)(req, { actor: turnReader || 'local' }),
+        // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
+        ...askChatTurnDeps(turnReader),
         resolveMentions: resolveAskMentions,
         // pause / resume / skip / mark-read in the MCP child: the Schedules page and the badges repaint.
         onScheduleMutation: () => { emitChanged('schedules-changed', 'ask'); emitChanged('notifications-changed'); },
@@ -11140,6 +11347,60 @@ app.post('/api/ask/threads/:id/stop', (req, res) => {
   res.json({ ok: true });
 });
 
+// Chat P3 (R10): a direction from the chat composer's "→ run" chip. The run must be one this thread follows
+// (ask_run_links: by its run_id — a live UUID, or the 8-hex id track_run stores — or its pipeline_id). The text goes
+// through the SAME in-process post as POST /api/runs/:id/directions; then the thread keeps it as a user row carrying
+// a `direction` block, plus a system notice, both broadcast like the follower's notices (no model turn, no cost).
+// A refusal appends nothing.
+app.post('/api/ask/threads/:id/directions', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  const { runId, text } = req.body || {};
+  if (typeof runId !== 'string' || !runId) return badRequest(res, 'runId is required');
+  if (text === undefined || text === null || text === '') return badRequest(res, 'text is required');
+  if (typeof text !== 'string') return badRequest(res, 'text must be a string');
+  if (!text.trim()) return badRequest(res, 'text is required');
+  if (text.length > DIRECTION_MAX_CHARS) return badRequest(res, `text must be at most ${DIRECTION_MAX_CHARS} characters`);
+  try {
+    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    const links = askListRunLinks(id);
+    // A proposal launch links the live UUID and learns the pipeline id from the follower's first `state`; the chip names
+    // the run by its pipeline id, so a link not (yet) filled in matches through its live entry.
+    const link = links.find((l) => l.runId === runId || l.pipelineId === runId)
+      || links.find((l) => !l.pipelineId && (liveRunEntry(l.runId) || {}).pipelineId === runId) || null;
+    if (!link) return res.status(404).json({ error: 'this chat does not follow that run' });
+    const entry = liveRunEntry(link.runId) || (link.pipelineId ? liveRunEntry(link.pipelineId) : null);
+    const pipelineId = link.pipelineId || (entry && entry.pipelineId) || (/^[0-9a-f]{8}$/.test(link.runId) ? link.runId : null);
+    if (!pipelineId) return res.status(409).json({ error: 'the run has not started yet', code: 'NOT_STARTED' });
+    const body = text.trim();
+    const rec = await postDirection(pipelineId, body, 'chat');        // directions.mjs source: 'ui' | 'cli' | 'chat…'
+    if (!rec) return res.status(404).json({ error: 'pipeline not found' });
+    const row = findPipelineRowById(pipelineId);
+    const title = (row && row.title) || (entry && entry.title) || 'run';
+    // The row text carries the label: the bubble reads "Direction to #<id>: …", and a restored session
+    // (buildRestoredPrompt replays user rows as "User: <text>") never mistakes it for a question to Ask.
+    const label = `Direction to #${pipelineId}`;
+    // The run HAS the direction now: a thread write that fails (the chat deleted mid-post, a busy DB) must not come back
+    // as an error the chip shows as "Not sent" — a resend would post it to the run twice.
+    let message = null, notice = null;
+    try {
+      message = askAppendMessage(id, { role: 'user', text: `${label}: ${body}`,
+        blocks: [{ kind: 'direction', id: rec.id, runId: link.runId, pipelineId, title, label }] });
+      broadcast({ type: 'ask-message', threadId: id, message });
+      const noticeText = `Direction sent to “${title}” · the next step reads it`;
+      notice = askAppendMessage(id, { role: 'system', text: noticeText, blocks: [{ kind: 'notice', text: noticeText }] });
+      broadcast({ type: 'ask-message', threadId: id, message: notice });
+    } catch (err) {
+      console.error(`[worca-ui] direction ${rec.id} reached the run but not the chat: ${err && err.message ? err.message : err}`);
+    }
+    res.status(201).json({ id: rec.id, message, notice });
+  } catch (err) {
+    if (err && err.code === 'RUN_FINISHED') return res.status(409).json({ error: err.message, code: 'RUN_FINISHED' });
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 /** R-B dual update. Flip in the STORE and, when the owning thread's turn is
  *  still streaming, in the LIVE reducer (updateBlock re-emits the stamped
  *  ask-card job frame) — otherwise finishMessage at turn end reverts the flip
@@ -11339,6 +11600,63 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       const next = composerCardPatch(found.block.card, found.block.state, body);
       if (!next.ok) return res.status(next.status).json({ error: next.error });
       const block = flipCard(id, cardId, next.patch);
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'receipt') {
+      // worca Chat P2 (R6): a receipt is applied already — its one verb is Revert, through the path the change took
+      // (askChatActions.revert re-reads first). No event turn: a system notice says it, at no cost.
+      if (body.state !== 'reverted') return badRequest(res, 'state must be "reverted"');
+      if (found.block.state === 'reverted') return res.status(409).json({ error: 'Already reverted', code: 'ALREADY_REVERTED' });
+      if (found.block.state !== 'applied') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (found.block.card.revertible !== true) return res.status(409).json({ error: 'This change cannot be reverted', code: 'NOT_REVERTIBLE' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      let r;
+      try { r = await askChatActions.revert(found.block.card, { actor: actorOf(req), viewer: askViewer(req) }); }
+      catch (err) { r = { ok: false, code: 'REVERT_FAILED', error: err && err.message ? err.message : String(err) }; }
+      finally { askCardBusy.delete(cardId); }
+      if (!r || !r.ok) {
+        const code = (r && r.code) || 'REVERT_FAILED';
+        // Changed since: the card keeps Revert disabled with that note, across reloads too.
+        if (code === 'CHANGED_SINCE') flipCard(id, cardId, { card: { result: { code, error: r.error } } });
+        return res.status(409).json({ error: (r && r.error) || 'not reverted', code });
+      }
+      const block = flipCard(id, cardId, { state: 'reverted', card: { result: { revertedAt: new Date().toISOString() } } });
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      postAskSystemNotice(id, r.notice);
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'run-stop') {
+      // worca Chat P2 (R7): the card IS the stop warning — "Stop pipeline" stops in-process (askChatActions.stop makes
+      // POST /api/stop's split); an interrupted run is refused. No event turn: like a run card, the run's own frames
+      // and the card say what happened.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        return res.json({ block });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let r;
+        try { r = await askChatActions.stop(found.block.card, { actor: actorOf(req) }); }
+        catch (err) { r = { ok: false, code: 'ERROR', error: err && err.message ? err.message : String(err) }; }
+        block = flipCard(id, cardId, r.ok ? { state: 'applied', card: { result: { ok: true } } }
+          : { state: 'failed', error: r.error, card: { result: { ok: false, code: r.code, error: r.error } } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      return res.json({ block });
+    }
+    if (found.block.card && found.block.card.type === 'pull-request') {
+      // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
+      // the card to applied through its ask link.
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined" — a pull request is opened from the Ship it dialog');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
       return res.json({ block });
     }
@@ -13936,5 +14254,6 @@ export const _testing = {
   validateResumeTarget, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askCommands, askCommandsEnabled, drainAskDeferred, terminals, prWatcher, liveRunOnBranch, prWatchOrigin, prWatchFrame,
+  applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps,
   setAutoRescan(on) { autoRescanOn = on !== false; },
 };

@@ -1,8 +1,8 @@
-// test/ask-panel-commands.test.mjs — Ask agent mode in the sheet (#574): the command card (hydration over
-// GET …/commands/:blockId, live ask-command frames, Stop) and the composer's Agent switch.
+// test/ask-panel-commands.test.mjs — Ask agent mode in the Chat page (#574; worca Chat R5: always on): the command card
+// (hydration over GET …/commands/:blockId, live ask-command frames, Stop) and the absence of any Agent switch.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel, pointerdown } from './helpers/ask-panel-harness.mjs';
+import { makePanel } from './helpers/ask-panel-harness.mjs';
 
 const TID = 'ask_00000001', MID = 'askm_00000001', BID = 't-0000000001:1';
 const CMD = { kind: 'card', id: 'card_00000001', state: 'command',
@@ -83,44 +83,17 @@ test('a stale "running" reload reply never overwrites the final frame (no live S
   ctx.panel.destroy();
 });
 
-test('the Agent switch: on by default, a click PATCHes agentMode:false, the next message carries it; a stored false restores', async () => {
-  const { state, ctx } = setup();
+test('always agent: no Agent switch, no message carries agentMode, nothing PATCHes it, /api/ask/commands/status is never fetched', async () => {
+  const { state, ctx } = setup({ stored: false });
   ctx.panel.open();
   await settle(ctx);
-  const b = ctx.doc.querySelector('[data-ask-agent-btn]');
-  assert.ok(b && !b.hidden, 'shown where agent mode can work');
-  assert.equal(b.getAttribute('aria-pressed'), 'true');
-  assert.equal(b.dataset.minLevel, undefined, 'a safety control: shown in Simple mode too');
-  b.click();
-  await settle(ctx);
-  assert.deepEqual(state.patches.at(-1), { agentMode: false });
-  assert.equal(b.getAttribute('aria-pressed'), 'false');
-  ctx.doc.querySelector('textarea.ask-input').value = 'hello';
-  ctx.doc.querySelector('[data-ask-send]').click();
-  await settle(ctx);
-  assert.equal(state.bodies.at(-1).agentMode, false);
-  ctx.panel.destroy();
-
-  const again = setup({ threadOver: { agentMode: false } });
-  again.ctx.panel.open();
-  await settle(again.ctx);
-  assert.equal(again.ctx.doc.querySelector('[data-ask-agent-btn]').getAttribute('aria-pressed'), 'false');
-  again.ctx.doc.querySelector('[data-ask-new-btn]').click();
-  await settle(again.ctx);
-  assert.equal(again.ctx.doc.querySelector('[data-ask-agent-btn]').getAttribute('aria-pressed'), 'true', 'New chat starts with Agent on');
-  again.ctx.panel.destroy();
-});
-
-test('where agent mode cannot work the switch is not shown and no agentMode is sent', async () => {
-  const { state, ctx } = setup({ enabled: false, stored: false });
-  ctx.panel.open();
-  await settle(ctx);
-  const b = ctx.doc.querySelector('[data-ask-agent-btn]');
-  assert.ok(!b || b.hidden);
+  assert.equal(ctx.doc.querySelector('[data-ask-agent-btn], .ask-agent-btn'), null);
   ctx.doc.querySelector('textarea.ask-input').value = 'hello';
   ctx.doc.querySelector('[data-ask-send]').click();
   await settle(ctx);
   assert.ok(!('agentMode' in state.bodies.at(-1)));
+  assert.ok(!state.patches.some((p) => 'agentMode' in p));
+  assert.ok(!ctx.fetchCalls.some((c) => c.url === '/api/ask/commands/status'));
   ctx.panel.destroy();
 });
 
@@ -141,19 +114,4 @@ test('shared terminal: a new command in the open chat shows its tab (auto, once 
   ctx.doc.querySelector('.ask-card.ask-cmd .ask-cmd-folder').click();
   assert.deepEqual(shows.at(-1), ['t-0000000001', { auto: false }]);
   ctx.panel.destroy();
-});
-
-test('shared terminal: clicking or typing in the terminal pane keeps the Ask sheet open', async () => {
-  const { panel, doc, window } = makePanel();
-  panel.open();
-  const pane = doc.createElement('aside');
-  pane.className = 'term-pane';
-  const host = doc.createElement('div');
-  pane.appendChild(host);
-  doc.body.appendChild(pane);
-  pointerdown(window, host);
-  assert.equal(panel.isOpen(), true);
-  pointerdown(window, doc.body);                             // elsewhere still closes it
-  assert.equal(panel.isOpen(), false);
-  panel.destroy();
 });

@@ -773,13 +773,19 @@ test('openRunArtifact reads the End chip through the by-id route on Running and 
       await np.openRunArtifact({ run: r, runId: 'r1' }, '/tmp/p/plan.md');
       await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'proj-alpha-00000001' } }, '/tmp/p/plan.md');
       await np.openRunArtifact({ run: { id: 'p1' }, runId: 'p1', record: { projectKey: 'workspaces/wks-a-00000001', target: 'workspace' } }, '/tmp/p/plan.md');
+      // A path with no row behind it carries no size: the popup sizes it with a HEAD on the same family's download
+      // form before it pulls the text.
       assert.deepEqual(urls, [
+        '/api/runs/abcd1234/artifact-raw/tmp/p/plan.md?download=1',
         '/api/runs/abcd1234/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+        '/api/history/proj-alpha-00000001/p1/artifact-raw/tmp/p/plan.md?download=1',
         '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
+        '/api/workspaces/wks-a-00000001/runs/p1/artifact-raw/tmp/p/plan.md?download=1',
         '/api/workspaces/wks-a-00000001/runs/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md',
       ]);
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: plan.md', 'the payload lands in the saved-artifact viewer');
-      assert.equal(window.document.querySelector('#viewer-card').classList.contains('hidden'), false);
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'plan.md', 'the payload lands in the popup viewer');
+      assert.equal(window.document.querySelectorAll('.apv').length, 1, 'one popup: each open replaced the last');
+      assert.equal(window.document.querySelector('#viewer-card').classList.contains('hidden'), true, '#viewer-card is for plain-text notices only');
     } },
     { name: 'openRunArtifact titles the raw viewer with the file, never the absolute run path', run: async () => {
       // The text branch titles the viewer with the server's run-relative `rel`; the raw
@@ -792,10 +798,12 @@ test('openRunArtifact reads the End chip through the by-id route on Running and 
       const r = np.makeRun({ runId: 'r1', title: 't', projectDir: '/p', status: 'running' });
       r.pipelineId = 'abcd1234';
       await np.openRunArtifact({ run: r, runId: 'r1' }, '/Users/me/.worca-cc/runs/proj-00000001/run1/deck/deck.html');
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: deck.html');
-      // An already-relative rel keeps its shape — that is the more informative title.
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').title, 'deck.html', 'not even the tooltip carries the home directory');
+      // An already-relative rel keeps its shape in the tooltip; the heading is the file name.
       await np.openRunArtifact({ run: r, runId: 'r1' }, 'deck/deck.html');
-      assert.equal(window.document.querySelector('#viewer-title').textContent, 'Saved: deck/deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').textContent, 'deck.html');
+      assert.equal(window.document.querySelector('.apv .apv-title').title, 'deck/deck.html');
     } },
   ]);
 });
@@ -980,7 +988,8 @@ test('History: the header meta carries the End chip and the Overview the counts 
   assert.equal(link.title, '/tmp/p/plan.md');
   link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
   await new Promise((res) => setTimeout(res, 0));
-  assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed route, through historyRunUrl');
+  assert.deepEqual(urls, ['/api/history/proj-alpha-00000001/p1/artifact-raw/tmp/p/plan.md?download=1',
+    '/api/history/proj-alpha-00000001/p1/artifact?rel=%2Ftmp%2Fp%2Fplan.md'], 'the keyed routes, through historyRunUrl (a HEAD sizes the file first)');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: true, result: { type: 'void' } } });
   assert.equal(screen.querySelector('.hd-meta .hd-result').textContent, '— completed');
   np.paintHdHeaderMeta(screen, record, { state: { ...base, endReached: false, result: { type: 'md', path: '/tmp/p/plan.md' } } });
@@ -1165,4 +1174,281 @@ test('focusNodeIds: running steps first, then a paused or stopped step, then the
   const between = d({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done' }] });
   assert.deepEqual(focusNodeIds(between, ['n_a']), ['n_a'], 'between two steps the camera stays put');
   assert.deepEqual(focusNodeIds(between), [], 'nothing to follow yet → the whole graph');
+});
+
+// The label row above a run card names the model the step RAN with: the manifest cell's
+// `model` (the run's resolved pick — project node selection > team default > authored),
+// never the template's authored `config.model`, and through the catalog label like the composer.
+test('a run card labels the run-resolved model (manifest cell), mapped through the catalog, with the full name as a tooltip', () => {
+  const CATALOG = { 'claude-opus-5-5': 'Opus 5.5', 'discretestack-stable': 'discretestack-stable-max' };
+  const ran = { ...MANIFEST, graph: { ...MANIFEST.graph, nodes: [
+    { ...MANIFEST.graph.nodes[0], config: { model: 'discretestack-stable' }, model: 'claude-opus-5-5' },
+    MANIFEST.graph.nodes[1],
+  ] } };
+  const { m, host } = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
+  m.update('run1', ran, decorFromState(RUN({ stepper: ran })));
+  const lm = host.querySelector('[data-node-id="n_a"] .nlabel .lm');
+  assert.equal(lm.textContent, 'Opus 5.5', 'the resolved model, not the authored discretestack-stable');
+  assert.equal(lm.title, 'Opus 5.5', 'an ellipsised model keeps its full name as a tooltip');
+
+  // A manifest cell with no resolved model falls back to the authored config, still through the catalog.
+  const authored = { ...ran, graph: { ...ran.graph, nodes: [{ ...ran.graph.nodes[0], model: '' }, ran.graph.nodes[1]] } };
+  const h2 = mountHost('monitor', 800, { modelLabel: (id) => CATALOG[id] || id });
+  h2.m.update('run2', authored, decorFromState(RUN({ stepper: authored })));
+  assert.equal(h2.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'discretestack-stable-max');
+
+  // No catalog handed in: the raw resolved id.
+  const h3 = mountHost('monitor');
+  h3.m.update('run3', ran, decorFromState(RUN({ stepper: ran })));
+  assert.equal(h3.host.querySelector('[data-node-id="n_a"] .nlabel .lm').textContent, 'claude-opus-5-5');
+});
+
+// ── Chat P3: the `card` host (the chat run card's graph well) ───────────────
+import { CARD_ZOOM, CARD_ZOOM_NARROW, CARD_MIN_H, CARD_MAX_H, CARD_PAD, CARD_FOLLOW_IDLE_MS, FOCUS_PAD } from '../ui/public/graph/run-hosts.mjs';
+
+test('card host: the Workflows rendering in a chat-card well — width-led zoom 0.5–0.74, well height 200–480 on the wrap, centred when it fits, framed on the running node when it does not', async () => {
+  await checkRows([
+    { name: 'a graph that fits is drawn at CARD_ZOOM and centred; the wrap carries gv-wrap-card and --run-host-h; no cluster, no hint', run: async () => {
+      calls = [];
+      const { m, host, wrap } = mountHost('card', 700);
+      m.update('run1', MANIFEST, decorFromState(RUN()));
+      const t = xform(host.querySelector('.gv-world'));
+      const b = m.view.bounds(CARD_PAD);
+      near(t.z, CARD_ZOOM, 'z');
+      const hostH = Math.min(CARD_MAX_H, Math.max(CARD_MIN_H, Math.round(b.h * CARD_ZOOM)));
+      assert.equal(wrap.style.getPropertyValue('--run-host-h'), `${hostH}px`);
+      near(t.x, (700 - b.w * CARD_ZOOM) / 2 - b.x * CARD_ZOOM, 'x centred');
+      near(t.y, (hostH - b.h * CARD_ZOOM) / 2 - b.y * CARD_ZOOM, 'y centred in the well');
+      assert.deepEqual([...wrap.classList], ['run-flow-wrap', 'gv-wrap', 'gv-wrap-card']);
+      assert.equal(wrap.querySelector('.gv-nav'), null, 'no zoom cluster in a card');
+      assert.equal(wrap.querySelector('.rg-hint'), null, 'no hint chip in a card');
+      assert.ok(m.view.stage.classList.contains('gv-monitor'), 'a pannable stage (cards take pointer events)');
+      assert.equal(m.view.stage.getAttribute('tabindex'), '-1', 'no dead tab stops: Expand is the card\'s keyboard way in');
+      assert.equal(host.querySelectorAll('[tabindex="0"]').length, 0, 'nor on the cards');
+    } },
+    { name: 'a tall graph clamps the well at CARD_MAX_H and starts at its top edge', run: async () => {
+      calls = [];
+      const TALLER = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 0, y: 1400 }], wires: MANIFEST.graph.wires } };
+      const { m, host, wrap } = mountHost('card', 700);
+      m.update('run1', TALLER, decorFromState(RUN({ stepper: TALLER })));
+      assert.equal(wrap.style.getPropertyValue('--run-host-h'), `${CARD_MAX_H}px`);
+      const b = m.view.bounds(CARD_PAD);
+      const t = xform(host.querySelector('.gv-world'));
+      near(t.y, -b.y * t.z, 'nothing to follow: the top edge');
+    } },
+    { name: 'a wide graph pans at the 0.5 floor and frames the running node, clamped to the graph ends', run: async () => {
+      calls = [];
+      const { m, host } = mountHost('card', 400);
+      m.update('run1', LINE, decorFromState(lineRun(running('n_c'))));
+      const t = xform(host.querySelector('.gv-world'));
+      near(t.z, 0.5, 'the floor');
+      const f = m.view.bounds(FOCUS_PAD, ['n_c']);
+      near(t.x, 200 - (f.x + f.w / 2) * 0.5, 'n_c at the centre');
+      m.update('run2', LINE, decorFromState(lineRun(running('n_a'))));
+      const b = m.view.bounds(CARD_PAD);
+      near(xform(host.querySelector('.gv-world')).x, -b.x * 0.5, 'the first node is clamped to the start edge, never past it');
+    } },
+  ]);
+});
+
+test('card host: a plain wheel stays the chat\'s scroll, shift/horizontal wheel pans, and the camera follows the running node unless the user panned in the last 5 s', () => {
+  calls = [];
+  const clock = { t: 1000 };
+  const { m, host, window } = mountHost('card', 400, { now: () => clock.t });
+  const world = () => host.querySelector('.gv-world');
+  m.update('run1', LINE, decorFromState(lineRun(running('n_b'))));
+  const stage = m.view.stage;
+  const plain = new window.WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true });
+  stage.dispatchEvent(plain);
+  assert.equal(plain.defaultPrevented, false, 'a vertical wheel scrolls the chat');
+  const x0 = xform(world()).x;
+  const shifted = new window.WheelEvent('wheel', { deltaY: 100, shiftKey: true, bubbles: true, cancelable: true });
+  stage.dispatchEvent(shifted);
+  assert.equal(shifted.defaultPrevented, true);
+  near(xform(world()).x, x0 - 100, 'shift+wheel pans along the graph');
+  const sideways = new window.WheelEvent('wheel', { deltaX: 40, deltaY: 5, bubbles: true, cancelable: true });
+  stage.dispatchEvent(sideways);
+  assert.equal(sideways.defaultPrevented, true);
+  near(xform(world()).x, x0 - 140, 'a mostly horizontal (trackpad) wheel pans too');
+  const x1 = xform(world()).x;
+  clock.t += 1000;
+  m.update('run1', LINE, decorFromState(lineRun(running('n_c'))));
+  near(xform(world()).x, x1, 'the user is looking: no follow inside the idle window');
+  clock.t += CARD_FOLLOW_IDLE_MS;
+  m.update('run1', LINE, decorFromState(lineRun(running('n_d'))));
+  const f = m.view.bounds(FOCUS_PAD, ['n_d']);
+  const b = m.view.bounds(CARD_PAD);
+  near(xform(world()).x, Math.max(400 - (b.x * 0.5 + b.w * 0.5), 200 - (f.x + f.w / 2) * 0.5), 'follows n_d again, clamped at the end');
+  // a drag pan pauses the follow too (the nav's onTransform stamps it)
+  stage.dispatchEvent(new window.PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 100, clientY: 40, bubbles: true }));
+  window.document.dispatchEvent(new window.PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: 160, clientY: 40, bubbles: true }));
+  window.document.dispatchEvent(new window.PointerEvent('pointerup', { pointerId: 1, clientX: 160, clientY: 40, bubbles: true }));
+  const x2 = xform(world()).x;
+  clock.t += 1000;
+  m.update('run1', LINE, decorFromState(lineRun(running('n_a'))));
+  near(xform(world()).x, x2, 'a drag counts as looking around');
+});
+
+test('card host: a move seen while the user was looking around is followed once they stop — even when the running node has not moved again', () => {
+  calls = [];
+  const clock = { t: 1000 };
+  const { m, host, window } = mountHost('card', 400, { now: () => clock.t });
+  const world = () => host.querySelector('.gv-world');
+  m.update('run1', LINE, decorFromState(lineRun(running('n_a'))));
+  const pan = new window.WheelEvent('wheel', { deltaY: 300, shiftKey: true, bubbles: true, cancelable: true });
+  m.view.stage.dispatchEvent(pan);                         // the user pans away
+  const looked = xform(world()).x;
+  clock.t += 1000;
+  const bagC = decorFromState(lineRun(running('n_c')));
+  m.update('run1', LINE, bagC);                           // the run moves on inside the idle window
+  near(xform(world()).x, looked, 'no follow while the user is looking');
+  clock.t += CARD_FOLLOW_IDLE_MS;
+  m.update('run1', LINE, bagC);                           // the SAME bag: nothing moved since
+  const f = m.view.bounds(FOCUS_PAD, ['n_c']);
+  near(xform(world()).x, 200 - (f.x + f.w / 2) * 0.5, 'the camera catches up with n_c');
+  clock.t += 1000;
+  m.update('run1', LINE, bagC);
+  near(xform(world()).x, 200 - (f.x + f.w / 2) * 0.5, 'and then holds (the pending follow was spent)');
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -200, shiftKey: true, bubbles: true, cancelable: true }));   // the user looks around again
+  const again = xform(world()).x;
+  clock.t += CARD_FOLLOW_IDLE_MS + 1000;
+  m.update('run1', LINE, bagC);                           // nothing moved since
+  near(xform(world()).x, again, 'nothing pending: the camera stays where the user left it');
+});
+
+test('card host: the gate pip reports out, and destroy() gives the wrap back (classes, --run-host-h, the wheel listener)', () => {
+  calls = [];
+  const { m, wrap, host, window } = mountHost('card', 700);
+  m.update('run1', MANIFEST, decorFromState(RUN({ gate: { wireId: 'w1', fromNode: 'n_a', askId: 'g1' } })));
+  host.querySelector('.ngate').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert.deepEqual(calls, [['gate', 'w1']]);
+  m.destroy();
+  assert.deepEqual([...wrap.classList], ['run-flow-wrap']);
+  assert.equal(wrap.style.getPropertyValue('--run-host-h'), '');
+  const wheel = new window.WheelEvent('wheel', { deltaY: 100, shiftKey: true, bubbles: true, cancelable: true });
+  host.dispatchEvent(wheel);
+  assert.equal(wheel.defaultPrevented, false, 'the pan listener on the host is gone');
+});
+
+test('card host: a user pan never takes the graph out of the well, and a graph that fits stays centred', () => {
+  calls = [];
+  const { m, host, window } = mountHost('card', 400);
+  m.update('run1', LINE, decorFromState(lineRun(running('n_a'))));
+  const stage = m.view.stage;
+  const b = m.view.bounds(CARD_PAD);
+  stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 5000, shiftKey: true, bubbles: true, cancelable: true }));
+  near(xform(host.querySelector('.gv-world')).x, 400 - (b.x * 0.5 + b.w * 0.5), 'stops at the graph\'s far end');
+  stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -9000, shiftKey: true, bubbles: true, cancelable: true }));
+  near(xform(host.querySelector('.gv-world')).x, -b.x * 0.5, 'and at its start');
+  const fits = mountHost('card', 700);
+  fits.m.update('run1', MANIFEST, decorFromState(RUN()));
+  const x0 = xform(fits.host.querySelector('.gv-world')).x;
+  fits.m.view.stage.dispatchEvent(new fits.window.WheelEvent('wheel', { deltaY: 300, shiftKey: true, bubbles: true, cancelable: true }));
+  near(xform(fits.host.querySelector('.gv-world')).x, x0, 'a graph that fits has nowhere to go');
+});
+
+test('card host: a well narrower than CARD_NARROW_W tops out at CARD_ZOOM_NARROW', () => {
+  calls = [];
+  const { m, host } = mountHost('card', 500);
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  const b = m.view.bounds(CARD_PAD);
+  assert.ok(500 / b.w > CARD_ZOOM_NARROW, `precondition: the graph would fit higher (${500 / b.w})`);
+  near(xform(host.querySelector('.gv-world')).z, CARD_ZOOM_NARROW, 'z');
+});
+
+test('card host: ⌘/ctrl+wheel zooms through the nav but never past CARD_ZOOM', () => {
+  calls = [];
+  const { m, host, window } = mountHost('card', 700);
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  const z = () => xform(host.querySelector('.gv-world')).z;
+  near(z(), CARD_ZOOM, 'fit');
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: -400, ctrlKey: true, clientX: 300, clientY: 100, bubbles: true, cancelable: true }));
+  assert.ok(z() <= CARD_ZOOM + 1e-9, `capped at CARD_ZOOM (${z()})`);
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 400, ctrlKey: true, clientX: 300, clientY: 100, bubbles: true, cancelable: true }));
+  assert.ok(z() < CARD_ZOOM, `the nav zooms at all (${z()})`);
+});
+
+test('card host: a resize re-fits only once the user stopped looking around', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><div class="run-flow-wrap"><div class="run-flow"></div></div>'));
+  const { window } = dom;
+  const ros = [];
+  window.ResizeObserver = class { constructor(cb) { ros.push(cb); } observe() {} unobserve() {} disconnect() {} };
+  let w = 400;
+  const clock = { t: 1000 };
+  const host = window.document.querySelector('.run-flow');
+  const m = mountRunGraph(host, { mode: 'card', doc: window.document, raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: w, height: 520 }), now: () => clock.t });
+  m.update('run1', LINE, decorFromState(lineRun(running('n_b'))));
+  assert.equal(ros.length, 1, 'a card host observes its wrap');
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 100, shiftKey: true, bubbles: true, cancelable: true }));
+  const looked = xform(host.querySelector('.gv-world')).x;
+  w = 600;
+  ros[0]([]);
+  near(xform(host.querySelector('.gv-world')).x, looked, 'no re-fit while the user looks around');
+  clock.t += CARD_FOLLOW_IDLE_MS;
+  ros[0]([]);
+  assert.ok(Math.abs(xform(host.querySelector('.gv-world')).x - looked) > 1, 'idle: the resize re-fits');
+  m.destroy();
+});
+
+test('card host: the footer strips are no tab stops either — the card binds no accordion — after every paint', () => {
+  const { m, host } = mountHost('card', 700);
+  const st = RUN({ steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 1000, costUsd: 0.1, trigger: { wireIds: [], freshPorts: ['task'] } }] });
+  m.update('run1', MANIFEST, decorFromState(st));
+  const stops = () => [...host.querySelectorAll('button, a[href], [tabindex]')].filter((n) => n.getAttribute('tabindex') !== '-1');
+  assert.ok(host.querySelector('.xtoggle'), 'the run has a footer strip');
+  assert.deepEqual(stops(), []);
+  m.repaint();                                     // a repaint (the card's relayout, a mode change) rebuilds the footers
+  assert.deepEqual(stops(), []);
+});
+
+test('card host: a ⌘/ctrl+wheel zoom (the nav) keeps a graph that fits centred on both axes, like a pan', () => {
+  calls = [];
+  const { m, host, window } = mountHost('card', 700);
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  const world = () => xform(host.querySelector('.gv-world'));
+  const centred = (msg) => {
+    const t = world();
+    const b = m.view.bounds(CARD_PAD);
+    const r = m.view.readRect();
+    assert.ok(t.z < CARD_ZOOM, `${msg}: zoomed out (${t.z})`);
+    near(t.x, (r.width - b.w * t.z) / 2 - b.x * t.z, `${msg}: x centred`);
+    near(t.y, (r.height - b.h * t.z) / 2 - b.y * t.z, `${msg}: y centred`);
+  };
+  // zoomAbout keeps the pointer's point fixed: about a corner both axes leave the centre ...
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 400, ctrlKey: true, clientX: 650, clientY: 20, bubbles: true, cancelable: true }));
+  centred('about the top-right corner');
+  // ... about the middle of the right edge only x does
+  m.view.stage.dispatchEvent(new window.WheelEvent('wheel', { deltaY: 400, ctrlKey: true, clientX: 650, clientY: m.view.readRect().height / 2, bubbles: true, cancelable: true }));
+  centred('about the right edge');
+});
+
+test('card host: a node\'s footer toggle (its second execution) is no tab stop either — a card binds no footer', () => {
+  calls = [];
+  const { m, host } = mountHost('card', 700);
+  m.update('run1', MANIFEST, decorFromState(RUN()));
+  m.update('run1', MANIFEST, decorFromState(RUN({ steps: [
+    { key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 1000, costUsd: 0.1, trigger: { wireIds: [], freshPorts: ['task'] } },
+    { key: 'x:n_a:2', executionId: 'x:n_a:2', nodeId: 'n_a', ordinal: 2, kind: 'cycle', status: 'start', activeMs: 0, costUsd: 0, trigger: { wireIds: ['w1'], freshPorts: [] } }],
+  active: [{ nodeId: 'n_a', executionId: 'x:n_a:2' }] })));                 // a second cycle: a non-structural update
+  const toggle = host.querySelector('.xtoggle');
+  assert.ok(toggle, 'precondition: the footer strip is painted');
+  assert.equal(toggle.getAttribute('tabindex'), '-1');
+});
+
+test('card host: a finished run\'s End result link is no tab stop either; a monitor host (the run page) keeps its footer toggle and result link in the tab order', () => {
+  const finished = () => decorFromState(RUN({ status: 'done', endReached: true, result: { type: 'md', path: '/tmp/p/plan.md' },
+    steps: [{ key: 'x:n_a:1', executionId: 'x:n_a:1', nodeId: 'n_a', ordinal: 1, kind: 'cycle', status: 'done', activeMs: 1000, costUsd: 0.1, trigger: { wireIds: [], freshPorts: ['task'] } },
+      { key: 'x:n_end:1', executionId: 'x:n_end:1', nodeId: 'n_end', ordinal: 1, status: 'done' }] }));
+  const card = mountHost('card', 700);
+  card.m.update('run1', MANIFEST, finished());
+  assert.ok(card.host.querySelector('.xresult a'), 'precondition: the End result link is painted');
+  assert.equal(card.host.querySelector('.xresult a').getAttribute('tabindex'), '-1');
+  const mon = mountHost('monitor', 700);
+  mon.m.update('run1', MANIFEST, finished());
+  assert.ok(mon.host.querySelector('.xtoggle') && mon.host.querySelector('.xresult a'), 'precondition: the run page paints both');
+  assert.notEqual(mon.host.querySelector('.xtoggle').getAttribute('tabindex'), '-1', 'the run page footer accordion stays reachable');
+  assert.notEqual(mon.host.querySelector('.xresult a').getAttribute('tabindex'), '-1', 'the run page result link stays reachable');
+  card.m.destroy();
+  mon.m.destroy();
 });

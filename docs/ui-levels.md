@@ -137,7 +137,7 @@ be skipped by forgetting it.
 | New pipeline, Getting started, Runs, Projects | S |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
 | Runs counts: the amber Needs-you pill, else the live count as a grey number | S — each hidden at zero |
-| Ask Worca button | S |
+| Chat (the first sidebar row; the app's home) | S |
 | The account corner and its menu: Interface mode, Settings, the away row, "Signed in as" (a shared identity) | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
@@ -150,7 +150,7 @@ be skipped by forgetting it.
 
 | Element | Level |
 |---|---|
-| Project, prompt, title, extra files, Start run | S |
+| Project, prompt, title, extra files, Start run; "Reuse last task" after a run starts (#687) | S |
 | Start run's caret menu (Schedule…) | A |
 | Workflow picker | S — lists Auto and Default only; the selected workflow always stays listed |
 | Mock mode | S — sits beside Start run, outside the Advanced disclosure |
@@ -303,6 +303,10 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
 | Required-plugins strip and setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card, proposal title / project / workflow / brief / Start | S |
+| Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
+| Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
+| Ask: the run card's agent model label, its artifact chips and "All artifacts", Create pull request / View pull request | A — as on the run page |
+| Ask: the run card's agent "cycle N" label | E — a loop badge |
 | Ask: a proposal's own schedule (the "Schedule" action and its time), schedule-change cards | S — the answer the user asked for |
 | Ask: a proposal's tracker task (id, title, link) in place of the brief; the "Auto" workflow option when Ask proposed it | S |
 | Ask: "Schedule…" on a plain run proposal | A |
@@ -312,4 +316,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Ask: the context ring and its popover's window fill and topics | S |
 | Ask: model picker, scope, cost meter, tool rows, branches, guardrails, "Open in New Pipeline" | A |
 | Ask: per-agent lane, the context popover's Agents and Worktrees sections, sub-agent logs | E |
+| Chat home: heading, composer, the New run / Build workflow / Track a run / Write a script / Clone a repo tiles, More (Step away), the four tabs and their run tiles, the Workflows and Away mode promos | S |
+| Chat home: the Schedule a run and Explain a diff tiles; More › New workspace, Remember something, Find tasks; the Schedules promo | A — with the page or surface that owns each feature |
+| Chat home: More › Team metrics, Add a model | E — with the Team metrics and Models pages |
 | Getting started: all nine tiles show at every level, ordered Simple → Advanced → Expert; steps 6 and 7 wear "Advanced", steps 8 and 9 "Expert" | S |

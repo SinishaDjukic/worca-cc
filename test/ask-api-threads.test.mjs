@@ -426,6 +426,24 @@ test('list: ?limit clamps the page; total counts every saved chat', async () => 
   ]);
 });
 
+test('list ?q= (the History search): title or message text; total = the matches, all = every saved chat; a blank q is no search', async () => {
+  const store = await import('../src/core/ask/store.mjs');
+  const word = `zq${store.newAskId('x').slice(2)}`;
+  const byTitle = store.createThread({ title: `About ${word}` });
+  const byText = store.createThread({ title: 'Something else' });
+  store.appendMessage(byText.id, { role: 'user', text: `please look at ${word} today` });
+  const j = await (await fetch(`${base}/api/ask/threads?limit=50&q=${encodeURIComponent(` ${word.toUpperCase()} `)}`)).json();
+  assert.deepEqual(j.threads.map((t) => t.id).sort(), [byTitle.id, byText.id].sort());
+  assert.equal(j.total, 2);
+  assert.equal(j.all, store.countThreads(), 'the unfiltered count rides along for "2 of N chats"');
+  assert.equal(j.threads.find((t) => t.id === byTitle.id).match, undefined);
+  assert.deepEqual(j.threads.find((t) => t.id === byText.id).match, { snippet: `please look at ${word} today` });
+  assert.equal(j.threads.find((t) => t.id === byText.id).inFlight, false, 'search rows keep the live flags');
+  const blank = await (await fetch(`${base}/api/ask/threads?q=%20%20`)).json();
+  assert.equal(blank.total, store.countThreads());
+  assert.equal('all' in blank, false);
+});
+
 test('GET /api/ask/history counts threads, worktrees, attachments and in-flight jobs', async () => {
   const store = await import('../src/core/ask/store.mjs');
   const thread = store.createThread();

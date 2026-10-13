@@ -105,6 +105,7 @@ export function createGraphView(host, {
   order = null,          // flow only: agent ids in dispatch order (a host may pass the proposal's `order[]`)
   describe = mode === 'edit', // the agent/script description footer (edit hosts; run cards keep their run footer)
   modelLabel = null,          // (modelId) => display label for the label row's meta ('' hides it)
+  modelOf = null,             // (node) => the model id the label row names (default: the authored node.config.model)
   onTransform = null,         // called after EVERY transform write (the composer re-tiles its dot grid off it)
 } = {}) {
   const win = doc.defaultView || globalThis;
@@ -233,8 +234,8 @@ export function createGraphView(host, {
     if (KEYED_KINDS.includes(node.kind)) {
       const meta = agents[node.key] || null;                // the MERGED key -> meta index (agents + scripts)
       const script = node.kind === 'script';
-      const model = !script && !hasBand && node.config && node.config.model
-        ? String((modelLabel && modelLabel(node.config.model)) || node.config.model) : '';
+      const id = script || hasBand ? '' : (modelOf ? modelOf(node) : node.config && node.config.model) || '';
+      const model = id ? String((modelLabel && modelLabel(id)) || id) : '';
       return {
         fam: (meta && meta.color) || (script ? 'amber' : 'blue'),
         title: (meta && meta.displayName) || node.key || node.id,
@@ -494,7 +495,11 @@ export function createGraphView(host, {
     const tt = h('span', 'tt', l.title);
     tt.title = l.title;                                   // an ellipsised name keeps its tooltip
     const kids = [tile, tt];
-    if (l.meta) kids.push(h('span', l.mono ? 'lm mono' : 'lm', l.meta));
+    if (l.meta) {
+      const lm = h('span', l.mono ? 'lm mono' : 'lm', l.meta);
+      lm.title = l.meta;                                  // an ellipsised model keeps its full name too
+      kids.push(lm);
+    }
     const run = lab.querySelector(':scope > .nrun');      // a run's dur · cost (setNodeChrome) survives a repaint
     lab.replaceChildren(...kids, ...(run ? [run] : []));
   }

@@ -25,7 +25,7 @@ function paste(ctx, target, data) {
 }
 
 const fileDrag = (files) => ({ types: ['Files'], files });
-const sheetOf = (ctx) => ctx.doc.querySelector('[data-ask-sheet]');
+const sheetOf = (ctx) => ctx.doc.querySelector('.chat-convo');
 test('ask-panel-drop: a file drop on the sheet attaches chips through the "+" validation and cancels the browser default', async () => {
   await checkRows([
     { name: 'ask-panel-drop: a file drop on the sheet attaches chips and cancels the browser default', run: async () => {

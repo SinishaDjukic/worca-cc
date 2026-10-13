@@ -2303,16 +2303,27 @@ export function scheduleDefaults() {
 }
 
 /**
- * Persist any subset of the schedule defaults; '' / null clears a key back to its
- * default. The whole patch is validated before anything is written.
+ * Validate a schedule-defaults patch ('' / null clear a key). The setter and Ask's change_setting (worca Chat P2)
+ * share it, so both refuse with the same words.
  * @throws {Error} on the first invalid value
  */
-export async function setScheduleDefaults(patch = {}) {
+export function assertScheduleDefaultsInput(patch = {}) {
   const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
   const clear = (v) => v === '' || v === null || v === undefined;
   if (has('graceMin') && !clear(patch.graceMin) && !isGraceMin(patch.graceMin)) throw new Error('scheduleGraceMin must be a whole number of minutes from 0 to 10080');
   if (has('ifMissed') && !clear(patch.ifMissed) && !SCHEDULE_IF_MISSED.includes(patch.ifMissed)) throw new Error(`scheduleIfMissed must be one of ${SCHEDULE_IF_MISSED.join(' | ')}`);
   if (has('maxFailures') && !clear(patch.maxFailures) && !isMaxFailures(patch.maxFailures)) throw new Error('scheduleMaxFailures must be a whole number from 0 to 100');
+}
+
+/**
+ * Persist any subset of the schedule defaults; '' / null clears a key back to its
+ * default. The whole patch is validated before anything is written.
+ * @throws {Error} on the first invalid value
+ */
+export async function setScheduleDefaults(patch = {}) {
+  assertScheduleDefaultsInput(patch);
+  const has = (k) => Object.prototype.hasOwnProperty.call(patch, k);
+  const clear = (v) => v === '' || v === null || v === undefined;
   const settings = readSettings();
   const put = (key, v) => { if (clear(v)) delete settings[key]; else settings[key] = v; };
   if (has('graceMin')) put('scheduleGraceMin', patch.graceMin);

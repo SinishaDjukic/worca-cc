@@ -75,5 +75,5 @@ test('the HTTP bridge sends op, input and the token header', async () => {
 
 test('without the bundle a command tool call is refused, not a crash', async () => {
   const t = createAskTools({ ...fake, ...base });
-  await assert.rejects(t.call('run_command', { command: 'ls' }), /agent mode is off/);
+  await assert.rejects(t.call('run_command', { command: 'ls' }), (e) => /agent mode is off/.test(e.message) && !/switch/i.test(e.message));
 });

@@ -72,7 +72,7 @@ function makeServer({ stored, pick = null }) {
 }
 
 async function boot(srv) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/' }));
+  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4319/#new' }));
   const { window } = dom;
   window.document.documentElement.dataset.level = 'expert';
   window.Element.prototype.scrollIntoView = function () {};

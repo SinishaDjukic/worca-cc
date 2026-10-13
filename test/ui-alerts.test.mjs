@@ -166,17 +166,19 @@ test('a page that loads hidden notifies what is already waiting; one that loads 
 test('an Ask Worca card waiting for an OK notifies; a click opens that chat; applying it closes the notification', async () => {
   const { window, N, tick, recv } = await boot();
   recv(HELLO([]));
-  recv({ type: 'ask-card', threadId: 't1', messageId: 'm1', seq: 3, block: { kind: 'card', id: 'c1', state: 'proposed', card: { workflowId: 'wf_default', brief: 'SECRET brief' } } });
+  recv({ type: 'ask-card', threadId: 'ask_0000abcd', messageId: 'm1', seq: 3, block: { kind: 'card', id: 'c1', state: 'proposed', card: { workflowId: 'wf_default', brief: 'SECRET brief' } } });
   await tick();
   assert.equal(N.shown.length, 1);
   assert.equal(N.shown[0].title, 'Worca: Ask Worca: run to approve');
   assert.equal(N.shown[0].body, 'Open the chat to review it.');
   N.shown[0].onclick({ preventDefault() {} });
   await tick();
-  assert.equal(window.document.querySelector('[data-ask-sheet]').hidden, false, 'the click opens the Ask sheet');
-  assert.equal(window.localStorage.getItem('worca-cc.ask.thread'), 't1', 'on that chat');
-  recv({ type: 'ask-card', threadId: 't1', block: { kind: 'card', id: 'c2', state: 'proposed', card: { type: 'web' } } });
-  recv({ type: 'ask-message', threadId: 't1', message: { id: 'm1', blocks: [{ kind: 'card', id: 'c2', state: 'applied', card: { type: 'web' } }] } });
+  await tick();
+  assert.equal(window.location.hash, '#chat/ask_0000abcd', 'the click opens that chat on the Chat page');
+  assert.ok(window.document.body.classList.contains('view-chat'), 'the Chat page shows');
+  assert.equal(window.localStorage.getItem('worca-cc.ask.thread'), 'ask_0000abcd', 'on that chat');
+  recv({ type: 'ask-card', threadId: 'ask_0000abcd', block: { kind: 'card', id: 'c2', state: 'proposed', card: { type: 'web' } } });
+  recv({ type: 'ask-message', threadId: 'ask_0000abcd', message: { id: 'm1', blocks: [{ kind: 'card', id: 'c2', state: 'applied', card: { type: 'web' } }] } });
   await tick();
   assert.equal(N.shown[1].closed, true);
 });

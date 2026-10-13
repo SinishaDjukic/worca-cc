@@ -9,7 +9,8 @@ import { viewerKindFor as mediaViewerKindFor, renderArtifact as renderMediaArtif
 
 export {
   escapeHtml, artifactsByNodeCycle, renderText, renderJson, renderDiff, renderMarkdown,
-  BULK_KIND_THRESHOLD, groupArtifactsByKind, rawArtifactUrl, renderImage, renderPdf, renderHtml, renderBinary,
+  BULK_KIND_THRESHOLD, groupArtifactsByKind, rawArtifactUrl, renderImage, renderPdf, renderHtml, renderAudio, renderVideo,
+  renderBinary,
 } from './artifact-view-media.mjs';
 
 const C4_EXT = /\.(c4|likec4)$/i;

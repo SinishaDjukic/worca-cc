@@ -4,10 +4,10 @@
 // attachments as in Ask (the paperclip, a drop on the dock, a paste; attach-files.mjs). It runs on Ask Worca as a
 // composer thread (chat-client.mjs); its cards change the open canvas (chat-cards.mjs). Everything inside carries
 // data-canvas-keys="off" (on #wfc), so typing never edits the graph. The worca orb (dot-orb.mjs) leads the input row: still
-// while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and the running reply opens
-// with a shimmering line saying what it does.
+// while idle, moving while a reply runs (thinking · a tool call · writing) — collapsed too — and right above it a
+// shimmering line says what the reply does (a chip over the pill while collapsed).
 import { createComposerChatClient } from './chat-client.mjs';
-import { createDotOrbs } from '../dot-orb.mjs';
+import { createDotOrbs, turnPhase } from '../dot-orb.mjs';
 import { ATTACH_ACCEPT, bytesToBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from '../attach-files.mjs';
 import { createCardController } from './chat-cards.mjs';
 import { toggleMenu, closeMenus } from './menu.mjs';
@@ -35,15 +35,8 @@ const ICON = {
   clip: '<path d="M20.5 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
 };
 
-/** The live turn's orb phase: a tool or sub-agent still running = 'tool'; the answer streaming = 'write' (the server's
- *  "Writing" label once a tool ran, or text before any tool); anything else = 'think'. */
-export function turnPhase(live, blocks = []) {
-  if (!live) return 'rest';
-  const acts = (Array.isArray(blocks) ? blocks : []).filter((b) => b && (b.kind === 'tool' || b.kind === 'agent'));
-  if (acts.some((b) => (b.status || 'running') === 'running')) return 'tool';
-  if (live.label === 'Writing' || (live.text && !acts.length)) return 'write';
-  return 'think';
-}
+/** The live turn's orb phase (rest | think | tool | write) — shared with Ask, so it lives in dot-orb.mjs. */
+export { turnPhase };
 /** "Reading the canvas…" from the server's label ("Thinking" when it has none yet). */
 export const activityLabel = (label) => { const l = String(label || 'Thinking'); return l.endsWith('…') ? l : `${l}…`; };
 /** The input's hint once the chat has a message: the rotating examples are for an empty chat. */
@@ -163,8 +156,14 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   fileRow.hidden = true;
   const noteEl = h('p', 'wfc-note');
   noteEl.hidden = true;
+  // What the running reply does, right above the orb: a line over the input row while open, a chip floating over the
+  // pill while collapsed — so a turn reads from the dock itself, not only from the orb's motion.
+  const liveEl = h('div', 'wfc-act');
+  liveEl.hidden = true;
+  const liveLabelEl = h('span', 'wfc-act-l');
+  liveEl.appendChild(liveLabelEl);
   const foot = h('div', 'wfc-foot');
-  foot.append(fileRow, noteEl, row);
+  foot.append(fileRow, noteEl, liveEl, row);
   const dropEl = h('div', 'wfc-drop');
   dropEl.setAttribute('aria-hidden', 'true');
   dropEl.hidden = true;
@@ -178,7 +177,8 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
   /** The chat never grows past the stage (the Library takes 324 px of the window), and the Auto-layout + zoom bars
    *  step up clear of the dock whenever the two meet — the open chat covers them below ≈1380 px. Only the bars'
    *  left/right are read: their `bottom` transitions, so a measured top would flap. Both sit on the stage's
-   *  bottom edge, so meeting side to side IS an overlap. */
+   *  bottom edge, so meeting side to side IS an overlap. The collapsed pill's live chip floats above it: the bars clear
+   *  that too. */
   function place() {
     const W = stage ? stage.clientWidth : 0;
     if (W) shell.style.setProperty('--wfc-avail', `${Math.max(150, W - 24 - (plus && plus.offsetWidth ? plus.offsetWidth + 8 : 0))}px`);
@@ -186,8 +186,10 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const a = cluster.getBoundingClientRect();
     const b = host.getBoundingClientRect();
     const meet = a.width > 0 && b.width > 0 && a.left < b.right + 10 && a.right > b.left - 10;
+    const chip = !liveEl.hidden && !isOpen() ? liveEl.getBoundingClientRect() : null;
+    const top = chip && chip.height > 0 ? Math.min(b.top, chip.top) : b.top;
     cluster.classList.toggle('is-up', meet);
-    if (meet && stage) cluster.style.bottom = `${Math.round(stage.getBoundingClientRect().bottom - b.top + 12)}px`;
+    if (meet && stage) cluster.style.bottom = `${Math.round(stage.getBoundingClientRect().bottom - top + 12)}px`;
     else cluster.style.removeProperty('bottom');
   }
   // The open/close width and height transitions, a growing input or thread, the Library toggle and a window resize
@@ -512,12 +514,12 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     return a ? a.name : '';
   }
   let liveAnswerEl = null;      // the streaming answer's element: a text-only frame rewrites just this node
-  let liveLabelEl = null;       // the live line's label: a label frame rewrites just this node
-  function activityLine(label) {
-    const line = h('div', 'wfc-act');
-    liveLabelEl = h('span', 'wfc-act-l', activityLabel(label));
-    line.appendChild(liveLabelEl);
-    return line;
+  /** The line above the orb: the live turn's label ("Thinking…" while a sent message waits for its first frame), hidden
+   *  between turns. Collapsed it floats over the pill, so the bars re-place when it comes or goes. */
+  function paintLive(label, on) {
+    const text = on ? activityLabel(label) : '';
+    if (liveLabelEl.textContent !== text) { liveLabelEl.textContent = text; liveEl.title = text; }
+    if (liveEl.hidden === on) { liveEl.hidden = !on; place(); }
   }
   /** The empty chat rotates its examples; once a message is in, the hint is "Reply". */
   const replying = () => { const m = client.model(); return Boolean(m && m.messages().length); };
@@ -598,14 +600,13 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
     const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 24;
     if (textOnly) {
       if (d.answer.size) { if (renderMarkdown) renderMarkdown(live.text || '', liveAnswerEl); else liveAnswerEl.textContent = live.text || ''; }
-      if (liveLabelEl) liveLabelEl.textContent = activityLabel(live.label);
+      paintLive(live.label, true);
       const msg = m.messages().find((x) => x && x.id === live.messageId);
       orbs.set(orb, turnPhase(live, msg && msg.blocks));
       if (atBottom) thread.scrollTop = thread.scrollHeight;          // a reader at the bottom follows the stream
       return;
     }
     liveAnswerEl = null;
-    liveLabelEl = null;
     // Moving a reused card into the new thread blurs a focused button in it (a keyboard user's Save): refocus it below.
     const focused = thread.contains(doc.activeElement) ? doc.activeElement : null;
     const kids = [];
@@ -620,7 +621,6 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       }
       const isLive = Boolean(live && live.messageId === msg.id);
       const wrap = h('div', 'wfc-msg wfc-a');
-      if (isLive) wrap.appendChild(activityLine(live.label));
       for (const b of msg.blocks || []) {
         if (!b) continue;
         if (b.kind === 'tool') wrap.appendChild(toolLine(b));
@@ -645,10 +645,10 @@ export function createChatDock({ doc, host, composer, sessionId, fetch: fetchFn,
       if (msg.status === 'error') wrap.appendChild(h('p', 'wfc-err', msg.errorMessage || msg.reason || 'The reply failed.'));
       kids.push(wrap);
     }
-    // Sent, not started (the POST, then the wait for the first frame — a cold engine takes seconds): the reply's place
-    // shows already, thinking.
+    // Sent, not started (the POST, then the wait for the first frame — a cold engine takes seconds): the line above the
+    // orb says it is thinking already.
     const waiting = !live && (pending || client.busy());
-    if (waiting) { const wrap = h('div', 'wfc-msg wfc-a is-wait'); wrap.appendChild(activityLine(null)); kids.push(wrap); }
+    paintLive(live ? live.label : null, Boolean(live) || waiting);
     if (error) kids.push(h('p', 'wfc-err', error));
     if (!msgs.length && !pending && isOpen()) kids.push(suggestions());
     thread.replaceChildren(...kids);

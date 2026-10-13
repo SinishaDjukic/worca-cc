@@ -125,9 +125,8 @@ function handlerFor(ref) {
 }
 
 async function openThread(ctx, index = 0) {
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick();
-  ctx.doc.querySelectorAll('.ask-pop [role="menuitem"]')[index].click();
+  await ctx.tick();                                    // the History column has its rows (the first show loaded them)
+  ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[index].click();
   await ctx.tick();
   await ctx.tick();
   ctx.flush();
