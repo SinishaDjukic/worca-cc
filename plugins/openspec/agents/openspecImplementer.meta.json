@@ -1,0 +1,39 @@
+{
+  "metaVersion": 2,
+  "domain": "coding",
+  "key": "openspecImplementer",
+  "displayName": "OpenSpec: Apply",
+  "description": "Implements the change task by task from tasks.md and ticks each checkbox as it lands. In fix mode, addresses only what the verifier flagged.",
+  "color": "peach",
+  "agentFile": "openspecImplementer.md",
+  "runnerType": "producer",
+  "sideEffect": "code",
+  "promptHints": "Work inside the project directory (your cwd). Commit nothing; just edit files, tests and tasks.md.",
+  "inputs": [
+    {
+      "id": "fix",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "Address EVERY critical and major issue in the verification review below, re-run the tests, and keep tasks.md checkboxes truthful."
+    },
+    {
+      "id": "change",
+      "type": "md",
+      "directive": "Apply the OpenSpec change: implement the unchecked tasks in tasks.md in order, test-first, ticking each box as it lands."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "void"
+    }
+  ],
+  "requiresSkills": [
+    "ospec-format",
+    "ospec-workspace",
+    "ospec-apply"
+  ],
+  "order": 915
+}

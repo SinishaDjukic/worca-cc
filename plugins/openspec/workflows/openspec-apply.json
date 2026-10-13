@@ -1,0 +1,127 @@
+{
+  "version": 2,
+  "name": "OpenSpec: Apply existing change",
+  "domain": "coding",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_apply",
+      "kind": "agent",
+      "key": "openspecImplementer",
+      "x": 320,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_verify",
+      "kind": "agent",
+      "key": "openspecVerifier",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_archive",
+      "kind": "agent",
+      "key": "openspecArchiver",
+      "x": 880,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 1160,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_apply",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_verify",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_apply",
+        "port": "done"
+      },
+      "to": {
+        "node": "n_verify",
+        "port": "done"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_verify",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_apply",
+        "port": "fix"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_archive",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_verify",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_archive",
+        "port": "await"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_archive",
+        "port": "archived"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}

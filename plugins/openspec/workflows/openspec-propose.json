@@ -1,0 +1,154 @@
+{
+  "version": 2,
+  "name": "OpenSpec: Propose",
+  "domain": "coding",
+  "nodes": [
+    {
+      "id": "n_task",
+      "kind": "task",
+      "x": 40,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_clarify",
+      "kind": "agent",
+      "key": "clarify",
+      "x": 320,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_propose",
+      "kind": "agent",
+      "key": "openspecProposer",
+      "x": 600,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_specs",
+      "kind": "agent",
+      "key": "openspecSpecWriter",
+      "x": 880,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_tasks",
+      "kind": "agent",
+      "key": "openspecTaskPlanner",
+      "x": 1160,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_validate",
+      "kind": "agent",
+      "key": "openspecValidator",
+      "x": 1440,
+      "y": 200,
+      "config": {}
+    },
+    {
+      "id": "n_end",
+      "kind": "end",
+      "x": 1720,
+      "y": 200,
+      "config": {}
+    }
+  ],
+  "wires": [
+    {
+      "id": "w1",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_clarify",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w2",
+      "from": {
+        "node": "n_task",
+        "port": "task"
+      },
+      "to": {
+        "node": "n_propose",
+        "port": "task"
+      }
+    },
+    {
+      "id": "w3",
+      "from": {
+        "node": "n_clarify",
+        "port": "answers"
+      },
+      "to": {
+        "node": "n_propose",
+        "port": "answers"
+      }
+    },
+    {
+      "id": "w4",
+      "from": {
+        "node": "n_propose",
+        "port": "change"
+      },
+      "to": {
+        "node": "n_specs",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w5",
+      "from": {
+        "node": "n_specs",
+        "port": "change"
+      },
+      "to": {
+        "node": "n_tasks",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w6",
+      "from": {
+        "node": "n_tasks",
+        "port": "change"
+      },
+      "to": {
+        "node": "n_validate",
+        "port": "change"
+      }
+    },
+    {
+      "id": "w7",
+      "from": {
+        "node": "n_validate",
+        "port": "review"
+      },
+      "to": {
+        "node": "n_propose",
+        "port": "revise"
+      },
+      "config": {
+        "maxCycles": 3
+      }
+    },
+    {
+      "id": "w8",
+      "from": {
+        "node": "n_validate",
+        "port": "pass"
+      },
+      "to": {
+        "node": "n_end",
+        "port": "result"
+      }
+    }
+  ]
+}
