@@ -826,6 +826,31 @@ level and has no **Diff**, **Changes** or **Actions**.
 npm install -g @worca/app     # puts `worca` on your PATH
 ```
 
+Install with the npm of the Node that is first on your `PATH` in a **new**
+terminal. A global package lands under the Node that ran `npm install -g`: if
+nvm was active then, but a new terminal starts with the system or Homebrew
+Node, `worca` is not found there. Check in a fresh terminal:
+
+```bash
+command -v worca    # prints the path of the worca binary; nothing means it is not on PATH
+```
+
+**npm install scripts.** Newer npm versions warn about, or skip, the install
+scripts of dependencies you have not approved. Approve the two Worca needs:
+
+```bash
+npm install -g @worca/app --allow-scripts=node-pty,protobufjs
+```
+
+`node-pty` is optional and is used only by the web UI's terminal pane (and the
+commands Ask Worca runs in it); pipelines, mock or real, never load it. On
+Linux its install script compiles it, so without it the terminal falls back
+to plain pipes. On macOS the prebuilt `spawn-helper` can lack the execute bit;
+Worca sets it the first time a terminal opens, and `worca doctor` prints the
+exact `chmod +x <path>` when it cannot (prefix `sudo` for a root-owned global
+install). `protobufjs`'s script only prints a version warning. See
+[Without node-pty](docs/terminal.md#without-node-pty).
+
 Requirements:
 
 - **Node.js >= 22.13.0** — the store is the built-in `node:sqlite`; on an older
@@ -997,11 +1022,12 @@ worca flags                     # list them
 worca flags on smartRunNaming   # a Labs feature, off by default
 ```
 
-Run `worca --help` for every subcommand — projects (`add`, `list`,
-`remove`), `ui`, `resume`, `runs`, `logs`, `stop`, `pause`, `schedule`,
-`workflow`, `script`, `plugin`, `marketplace`, `models`, `config`, `flags`,
-`metrics`, `policy`, `container`, `broker`, `extension`, `doctor` — and flag;
-most have their own `worca <subcommand> help`.
+Run `worca --help` for every subcommand — the project registry (`add`,
+`list`, `remove`, top-level: `worca list`, not `worca projects list`), `ui`,
+`resume`, `runs`, `logs`, `stop`, `pause`, `schedule`, `workflow`, `script`,
+`plugin`, `marketplace`, `models`, `config`, `flags`, `metrics`, `policy`,
+`container`, `broker`, `extension`, `doctor` — and flag; most have their own
+`worca <subcommand> help`.
 
 Exit codes, for scripts and CI wrappers: `0` the run finished (or an
 interactive run paused and you can resume it); `1` a hard error, a stop, or an
@@ -1019,8 +1045,18 @@ worca --install /path/to/your/project
 ```
 
 This copies Worca's agents and the `/worca` skill into the project's
-`.claude/` folder (files already there are kept). Then open Claude Code in
-that project and run:
+`.claude/` folder (files already there are kept; `--force` overwrites them).
+To have `/worca` in every project, install into your home folder instead:
+
+```bash
+worca --install ~
+```
+
+Claude Code loads `~/.claude/agents/` and `~/.claude/skills/` in every
+project, so the agents and the skill are then available everywhere. Add
+`--force` to overwrite copies from an older Worca version.
+
+Then open Claude Code in a project and run:
 
 ```
 /worca Add a /search endpoint with pagination
