@@ -1262,7 +1262,7 @@ test('Enter sends the chips as base64 with the text; a refused send keeps them, 
     [['wfc-upill', 'spec.md'], ['wfc-upill', 'flow.png']], 'this stub 202 returns no rows: the echo has no ids, so the image is a name pill');
 });
 
-test('Ask\'s early checks and messages in the dock: type, 512 KB text, 8 files; a Codex chat refuses PDFs', async () => {
+test('Ask\'s early checks and messages in the dock: type, 25 MB text, 8 files; a Codex chat refuses PDFs', async () => {
   const s = await bootDock();
   const root = s.g('wfc');
   const note = () => root.querySelector('.wfc-note');
@@ -1272,9 +1272,9 @@ test('Ask\'s early checks and messages in the dock: type, 512 KB text, 8 files; 
   assert.equal(note().textContent, 'attachment type not allowed: evil.exe');
   assert.equal(note().hidden, false);
   assert.match(root.querySelector('.wfc-sr').textContent, /attachment type not allowed: evil\.exe/, 'said once to a screen reader');
-  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(524_289))]);
+  pickFiles(s, [mkFile(s, 'big.md', 'x'.repeat(25 * 1024 * 1024 + 1))]);
   await settle();
-  assert.equal(note().textContent, 'attachment over 524288 bytes: big.md');
+  assert.equal(note().textContent, 'attachment over 26214400 bytes: big.md');
   pickFiles(s, [mkFile(s, 'spec.pdf', '%PDF-1.7', 'application/pdf')]);
   await settle();
   assert.deepEqual(chipNames(root), ['spec.pdf'], 'a Claude chat takes a PDF');
