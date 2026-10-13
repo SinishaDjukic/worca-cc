@@ -27,7 +27,7 @@ import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
 import { engineOfEntry, chatEngineOf, pickerGroups } from './ask-engine.mjs';
-import { ATTACH_ACCEPT, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
+import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 
@@ -2812,12 +2812,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return null;
   }
   const lanePending = (local) => !!(local.lane && local.lane.editable && laneEditedRows(local.lane).length);
-  const RP_EXTRAS_MAX_BYTES = 5 * 1024 * 1024;   // D3: the JSON body cap is 8 MB and base64 grows by a third
+  // D3: as much as one message may carry; /api/run's JSON window (ui/server.mjs) is sized for it at base64's 4/3
+  const RP_EXTRAS_MAX_BYTES = ATTACH_MAX_MESSAGE_BYTES;
   /** The pills as /api/run extras. {extras} or {error}. */
   async function collectCardExtras(local) {
     const pills = local.pills || [];
     if (!pills.length) return { extras: [] };
-    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: 'attachments exceed 5 MB — remove one' };
+    if (pills.reduce((n, p) => n + (p.bytes || 0), 0) > RP_EXTRAS_MAX_BYTES) return { error: `attachments exceed ${RP_EXTRAS_MAX_BYTES / (1024 * 1024)} MB — remove one` };
     const extras = [];
     for (const p of pills) {
       let res = null;

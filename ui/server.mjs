@@ -1397,14 +1397,18 @@ app.use('/api/ask/threads/:id', (req, res, next) => {
 });
 
 // Ask attachments ride base64 inside the message JSON (§7.3), and a binary
-// attachment (#398) may legitimately be 32 MB — far past the app-wide 8mb cap
+// attachment (#398) may legitimately be 100 MB — far past the app-wide 8mb cap
 // below. Registered BEFORE the global parser on the ONE route that carries
 // uploads (a body parsed here is skipped there): every other ask route reads a
 // string field or nothing and keeps the 8mb window. The window is
 // maxBytesPerMessage at base64's 4/3 inflation plus 1 MiB for the text and
 // context, so any upload the composer lets through reaches the route's OWN
 // clear 400/413, not a raw parser error.
-app.post('/api/ask/threads/:id/messages', express.json({ limit: Math.ceil(ASK_LIMITS.attachment.maxBytesPerMessage * 4 / 3) + 1024 * 1024 }));
+const ASK_UPLOAD_JSON_LIMIT = Math.ceil(ASK_LIMITS.attachment.maxBytesPerMessage * 4 / 3) + 1024 * 1024;
+app.post('/api/ask/threads/:id/messages', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
+// A run's extra files ride base64 in /api/run too: the chat run card sends up to a message's worth of
+// attachments (ask-panel.mjs RP_EXTRAS_MAX_BYTES), and the New Pipeline form uploads its extras the same way.
+app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 // A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
 // spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
@@ -11000,7 +11004,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
     // The decoded binary bodies are on disk now. `files` is captured by this
     // scope's closures (settleJob, the turn listeners, onOutOfTurn) for the whole
-    // turn plus jobGraceMs, so up to 48 MB of dead Buffers would otherwise stay
+    // turn plus jobGraceMs, so up to 100 MB of dead Buffers would otherwise stay
     // reachable per running thread.
     for (const f of files) f.data = null;
     echoAttachments = attRows.map((a) => ({ id: a.id, name: a.name, bytes: a.bytes, kind: a.kind, mime: a.mime }));

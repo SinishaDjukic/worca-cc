@@ -16,9 +16,9 @@ export const ASK_LIMITS = Object.freeze({
   emptyThreadSweepMs: 24 * 60 * 60 * 1000, // empty threads older than this are swept at boot
   attachment: Object.freeze({
     maxFiles: 8,                           // per message
-    maxBytesPerFile: 512 * 1024,           // text kinds — they are inlined/paged into prompts
-    maxBytesPerBinaryFile: 32 * 1024 * 1024, // image/pdf kinds — read from disk, never inlined (#398); the API's PDF request cap
-    maxBytesPerMessage: 48 * 1024 * 1024,  // ACROSS kinds, one POST — base64 (×4/3) keeps it inside the route's JSON window
+    maxBytesPerFile: 100 * 1024 * 1024,    // text kinds — paged into prompts by read_attachment, only small ones inlined
+    maxBytesPerBinaryFile: 100 * 1024 * 1024, // image/pdf kinds — read from disk, never inlined (#398); past 32 MB (the API's PDF request cap) the model may need to read a PDF a few pages at a time
+    maxBytesPerMessage: 100 * 1024 * 1024, // ACROSS kinds, one POST — base64 (×4/3) keeps it inside the route's JSON window
     extensions: TEXT_EXTENSIONS,           // attachment-kind.mjs owns both tables
     binaryExtensions: BINARY_EXTENSIONS,
   }),
