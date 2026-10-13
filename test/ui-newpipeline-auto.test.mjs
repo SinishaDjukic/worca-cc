@@ -130,6 +130,7 @@ test('the switch persists humanInLoop and the run body carries it under Auto onl
   assert.equal(runBodies.at(-1).workflowId, 'wf_auto'); assert.equal(runBodies.at(-1).humanInLoop, false);
   const sel = window.document.getElementById('workflowSelect');
   sel.value = 'wf_default'; sel.dispatchEvent(new window.Event('change')); await settle(window);
+  window.document.getElementById('prompt').value = 'demo task';   // #687: a started run clears the task
   window.document.getElementById('run-form').dispatchEvent(new window.Event('submit', { cancelable: true })); await settle(window);
   assert.equal('humanInLoop' in runBodies.at(-1), false, 'a saved workflow sends no humanInLoop');
 });

@@ -6680,6 +6680,8 @@ html{scrollbar-color:var(--line-2) transparent;scrollbar-width:thin;}
 .new-sched{margin-right:auto;padding:9px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
 .new-sched[hidden]{display:none;}
 .new-sched .link-btn{font-size:12px;}
+.reuse-task{margin:8px 0 0;}
+.reuse-task .link-btn{font-size:12px;}
 #start-btn-clock[hidden],#start-btn-play[hidden]{display:none;}
 /* a proposal Ask Worca scheduled (propose_run when / every): the line above the footer */
 .ask-card-sched-proposed{margin:0 18px 12px;padding:10px 12px;border-radius:12px;background:var(--canvas-2);border:1px solid var(--line);}
