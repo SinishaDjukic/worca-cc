@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
 import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { applyLevel } from '../ui/public/ui-level.mjs';
 
 const TID = 'ask_00000001';
 
@@ -64,7 +65,7 @@ test('ask-panel-render (#398): an image attachment block renders as a thumbnail 
   assert.ok(pill && /spec\.pdf/.test(pill.textContent), 'pdf keeps the name pill');
 });
 
-test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, activity head (dot, elapsed, meter; stopped keeps its label)', async () => {
+test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, activity head (one dot-separated line; stopped keeps its label)', async () => {
   await checkRows([
     { name: 'ask-panel-render: user bubble + attachment pills, assistant answer plain fallback', run: async () => {
       const snap = snapBody([
@@ -85,7 +86,7 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
       assert.match(answer.textContent, /the answer/);
       assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'My thread', 'header shows the thread title');
     } },
-    { name: 'ask-panel-render: activity head — dot, elapsed, meter; stopped keeps its label', run: async () => {
+    { name: 'ask-panel-render: activity head — one dot-separated line, the meter beside it; stopped keeps its label', run: async () => {
       const snap = snapBody([
         asstRow('askm_00000001', 1),
         asstRow('askm_00000002', 2, { status: 'stopped', reason: 'max_turns', durationMs: 72000, blocks: [{ kind: 'notice', text: 'Stopped: reached the 40-turn limit (Settings → Ask Worca)' }] }),
@@ -93,17 +94,17 @@ test('ask-panel-render: user bubble + attachment pills, plain-fallback answer, a
       const ctx = makePanel({ fetchHandler: handlerFor(snap) });
       await openThread(ctx);
       const heads = [...ctx.doc.querySelectorAll('.ask-activity-head')];
-      assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is Done, a grey dot and its numbers');
+      assert.ok(!/Worked for/.test(heads[0].textContent), 'a clean turn is Done and its numbers');
       assert.equal(heads[0].querySelector('.ask-activity-label').textContent, 'Done');
-      assert.equal(heads[0].firstElementChild.className, 'ask-activity-label', 'the word leads, the dot follows');
-      assert.match(heads[0].textContent, /6\.4s/);
-      assert.match(heads[0].textContent, /2\.0k ctx/, 'the turn meter shows the turn-end context fill');
-      assert.ok(!/tok/.test(heads[0].textContent), 'no cumulative token figure');
-      assert.match(heads[0].textContent, /\$0\.14/);
-      assert.ok(heads[0].querySelector('.ask-dot-done'));
-      assert.match(heads[1].textContent, /Stopped after/);
-      assert.ok(!/Done/.test(heads[1].textContent), 'a stopped turn keeps only its own word');
-      assert.match(heads[1].textContent, /1m 12s/);
+      assert.equal(heads[0].firstElementChild.className, 'ask-activity-label', 'the word leads');
+      // Done · elapsed · the turn-end context fill · cost: no cumulative token figure, no status dot, no spacer
+      // pushing the meter to the far edge.
+      assert.equal(heads[0].textContent, 'Done · 6.4s · 2.0k ctx · $0.14');
+      assert.equal(heads[0].querySelector('.ask-dot, .ask-activity-spacer'), null);
+      assert.equal(heads[0].tagName, 'DIV', 'no tool or agent rows: nothing to open, no button');
+      assert.equal(heads[0].querySelector('.ask-activity-chev'), null, 'no chevron');
+      assert.equal(heads[0].hasAttribute('aria-expanded'), false);
+      assert.equal(heads[1].textContent, 'Stopped after 1m 12s · 2.0k ctx · $0.14', 'a stopped turn keeps only its own word');
       assert.match(ctx.doc.querySelectorAll('.ask-notice')[0].textContent, /Stopped: reached the 40-turn limit/);
     } },
   ]);
@@ -162,6 +163,151 @@ test('ask-panel-render: agent row — name · model · tokens · ≈$ · status,
       assert.match(ctx.doc.querySelector('.ask-ctx-agents .ask-runinfo-sub').textContent, /160\.0k \/ 200k ctx/);
     } },
   ]);
+});
+
+const TOOLS = [
+  { kind: 'tool', id: 'toolu_t1', name: 'mcp__worca__list_projects', input: {}, status: 'done', durationMs: 300 },
+  { kind: 'tool', id: 'toolu_t2', name: 'mcp__worca__propose_run', input: { title: 'Show a Conflict Banner When Offline Sync Fails', workflowId: 'wf_default', prompt: 'p'.repeat(90) }, status: 'done', durationMs: 500 },
+];
+const AGENT = { kind: 'agent', id: 'toolu_a1', label: 'count runs', type: 'general-purpose', model: 'claude-haiku-4-5', tokens: 5321, costUsd: 0.0017, status: 'done', durationMs: 2861, log: [{ t: 0, text: '→ list_runs {}' }] };
+const resync = async (ctx) => { ctx.panel.onHello([]); await ctx.tick(); await ctx.tick(); ctx.flush(); };
+
+test('ask-panel-render: the activity is collapsed by default; its head is a button whose chevron opens the tool rows and the sub-agents, and the choice survives a repaint', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [...TOOLS, AGENT] }), asstRow('askm_00000002', 2)]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const acts = () => [...ctx.doc.querySelectorAll('.ask-activity')];
+  const first = acts()[0];
+  const head = first.querySelector('.ask-activity-head');
+  const body = first.querySelector('.ask-activity-body');
+  assert.equal(head.tagName, 'BUTTON');
+  assert.equal(head.type, 'button');
+  assert.equal(head.getAttribute('aria-expanded'), 'false', 'collapsed by default');
+  const chev = head.querySelector('.ask-activity-chev');
+  assert.equal(chev.textContent, '›');
+  assert.equal(chev.getAttribute('aria-hidden'), 'true');
+  assert.equal(head.textContent, 'Done · 6.4s · 2.0k ctx · $0.14›', 'the inline head, the chevron last');
+  assert.equal(body.hidden, true, 'only the head shows');
+  assert.equal(body.querySelectorAll('.ask-tool-row').length, 2, 'the body holds the tool rows…');
+  assert.ok(body.querySelector('.ask-agents .ask-agent-row'), '…and the sub-agent section');
+  head.click();
+  assert.equal(head.getAttribute('aria-expanded'), 'true');
+  assert.equal(body.hidden, false, 'the click opens it');
+  await resync(ctx);                                   // a structural repaint rebuilds every message
+  assert.notEqual(acts()[0], first, 'rebuilt');
+  assert.equal(acts()[0].querySelector('.ask-activity-head').getAttribute('aria-expanded'), 'true', 'still open after a repaint');
+  assert.equal(acts()[0].querySelector('.ask-activity-body').hidden, false);
+  assert.equal(acts()[1].querySelector('.ask-activity-head').tagName, 'DIV', 'the plain turn stays a line with no chevron');
+  acts()[0].querySelector('.ask-activity-head').click();
+  assert.equal(acts()[0].querySelector('.ask-activity-body').hidden, true, 'a second click closes it');
+  await resync(ctx);
+  assert.equal(acts()[0].querySelector('.ask-activity-head').getAttribute('aria-expanded'), 'false', 'and it stays closed');
+  assert.equal(acts()[0].querySelector('.ask-activity-body').hidden, true);
+});
+
+test('ask-panel-render: opening an activity body while the transcript is pinned to its end keeps the head where it was (the pin does not follow the click); closing it there re-pins', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [...TOOLS] })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const t = ctx.doc.querySelector('.ask-transcript');
+  const head = ctx.doc.querySelector('.ask-activity-head');
+  const body = ctx.doc.querySelector('.ask-activity-body');
+  const jump = ctx.doc.querySelector('.ask-jump');
+  // A laid-out column: 1000px in a 200px scrollport, the head 850px down (50px below the top at the end); the open
+  // body adds 219px below the head.
+  Object.defineProperty(t, 'scrollHeight', { get: () => 1000 + (body.hidden ? 0 : 219), configurable: true });
+  Object.defineProperty(t, 'clientHeight', { value: 200, configurable: true });
+  head.getBoundingClientRect = () => ({ top: 850 - t.scrollTop, bottom: 868 - t.scrollTop, left: 0, right: 300, width: 300, height: 18 });
+  t.scrollTop = 800;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  assert.equal(jump.hidden, true, 'at the end: pinned');
+  head.click();
+  ctx.flush();                                                  // every frame re-pins a pinned transcript…
+  ctx.window.dispatchEvent(new ctx.window.Event('resize'));     // …and so does the column growing (onWinResize)
+  assert.equal(body.hidden, false, 'opened');
+  assert.equal(t.scrollTop, 800, 'the transcript did not snap to the new end');
+  assert.equal(head.getBoundingClientRect().top, 50, 'the head stays under the pointer');
+  assert.equal(jump.hidden, false, 'the end is below the fold now: the jump pill offers it');
+  head.click();
+  ctx.flush();
+  assert.equal(body.hidden, true, 'closed');
+  assert.equal(jump.hidden, true, 'back at the end: pinned again');
+  t.scrollTop = 600;                                            // a turn landing grows the column: the pin follows it
+  ctx.flush();
+  assert.equal(t.scrollTop, 1000);
+  // Scrolled up, a toggle that moves its own control (the browser anchoring on content below it) scrolls it back.
+  t.scrollTop = 300;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+  head.getBoundingClientRect = () => ({ top: 850 + (body.hidden ? 0 : 30) - t.scrollTop, bottom: 0, left: 0, right: 300, width: 300, height: 18 });
+  head.click();
+  assert.equal(body.hidden, false);
+  assert.equal(head.getBoundingClientRect().top, 550, 'the head is back where it was clicked');
+  assert.equal(t.scrollTop, 330);
+});
+
+test('ask-panel-render: a tool row is a dot, the tool name, its args (never cut at 60 chars; CSS clamps two lines) and the duration; the full text is its hover', async () => {
+  const grep = { pattern: 'export function renderSpendCard|Spend in|Saved|Developer rate|budgetHumanRate', path: '/Users/someone/Develop/worca-cc/ui/public' };
+  const preview = `{"file_path":"/Users/someone/.worca-cc/ask/ask_4e9a05/${'a'.repeat(300)}`;
+  const blocks = [
+    TOOLS[0],
+    { kind: 'tool', id: 'toolu_t3', name: 'Grep', input: grep, status: 'done', durationMs: 40 },
+    { kind: 'tool', id: 'toolu_t4', name: 'Read', input: { _truncated: true, preview }, status: 'running', durationMs: null },
+    { kind: 'tool', id: 'toolu_t5', name: 'mcp__github__create_issue', input: { title: 'Bug' }, status: 'error', durationMs: 10 },
+    { kind: 'tool', id: 'toolu_t6', name: 'mcp__worca__test_script', input: { key: 'runTests', code: 'x'.repeat(50) }, script: { key: 'runTests', status: 'blocking', exitCode: 1 }, status: 'done', durationMs: 2000 },
+  ];
+  const snap = snapBody([asstRow('askm_00000001', 1, { blocks })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  await openThread(ctx);
+  const rows = [...ctx.doc.querySelectorAll('.ask-activity-body .ask-tool-row')];
+  const cells = rows.map((r) => [r.querySelector('.ask-tool-name').textContent, r.querySelector('.ask-tool-args')?.textContent ?? null, r.querySelector('.ask-tool-note').textContent]);
+  assert.deepEqual(cells, [
+    ['list_projects', '{}', '0.3s'],                                 // mcp__worca__ stripped
+    ['Grep', JSON.stringify(grep), '0.0s'],                          // a built-in as it is, its whole input
+    ['Read', preview, '…'],                                          // a clipped input shows its preview
+    ['github · create_issue', '{"title":"Bug"}', 'error'],           // a third-party MCP tool: server · tool
+    ['test_script', 'runTests → blocking, exit 1', '2.0s'],          // a script tool: the key and outcome, not the program
+  ]);
+  assert.ok(JSON.stringify(grep).length > 60 && !cells[1][1].endsWith('…'), 'no 60-char cut');
+  for (const [i, r] of rows.entries()) {
+    assert.equal(r.dataset.minLevel, 'advanced');
+    assert.ok(r.querySelector('.ask-tool-dot'), 'each row has its dot');
+    assert.equal(r.querySelector('.ask-tool-op'), null, 'no fixed-width op cell');
+    assert.equal(r.querySelector('.ask-tool-target').title, `${cells[i][0]} ${cells[i][1]}`, 'the full text on hover');
+  }
+  assert.ok(rows[2].querySelector('.ask-tool-dot').classList.contains('is-running'));
+  assert.ok(rows[3].querySelector('.ask-tool-dot').classList.contains('is-error'));
+  assert.ok(rows[3].querySelector('.ask-tool-name').classList.contains('ask-tool-mcp'));
+  const css = (await import('node:fs')).readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const target = css.match(/\n\.ask-tool-target\{([^}]*)\}/)[1];
+  for (const decl of ['display:-webkit-box', '-webkit-line-clamp:2', '-webkit-box-orient:vertical', 'overflow:hidden', 'white-space:normal', 'overflow-wrap:anywhere']) {
+    assert.ok(target.includes(decl), `.ask-tool-target has ${decl}`);
+  }
+  assert.doesNotMatch(css, /\.ask-tool-op\b|\.ask-activity-spacer\b/, 'the old op cell and the head spacer are gone');
+});
+
+test('ask-panel-render: below the level its rows need, the head has no chevron (a Simple user never gets a toggle that opens nothing); a mode change repaints it', async () => {
+  const snap = snapBody([asstRow('askm_00000001', 1, { blocks: [...TOOLS] }), asstRow('askm_00000002', 2, { blocks: [AGENT] })]);
+  const ctx = makePanel({ fetchHandler: handlerFor(snap) });
+  applyLevel('simple', ctx.doc);
+  await openThread(ctx);
+  const heads = () => [...ctx.doc.querySelectorAll('.ask-activity-head')].map((h) => [h.tagName, !!h.querySelector('.ask-activity-chev')]);
+  const bodies = () => [...ctx.doc.querySelectorAll('.ask-activity-body')].map((b) => b.hidden);
+  assert.deepEqual(heads(), [['DIV', false], ['DIV', false]], 'Simple: tool rows (Advanced) and sub-agents (Expert) are hidden, so no toggle');
+  applyLevel('advanced', ctx.doc);
+  assert.deepEqual(heads(), [['BUTTON', true], ['DIV', false]], 'Advanced: the tool rows open; the sub-agents alone still do not');
+  applyLevel('expert', ctx.doc);
+  assert.deepEqual(heads(), [['BUTTON', true], ['BUTTON', true]]);
+  ctx.doc.querySelectorAll('.ask-activity-head')[1].click();
+  assert.deepEqual(bodies(), [true, false]);
+  applyLevel('advanced', ctx.doc);
+  assert.deepEqual(heads(), [['BUTTON', true], ['DIV', false]]);
+  assert.deepEqual(bodies(), [true, true], 'an open body whose rows the mode hides closes with its toggle');
+  applyLevel('expert', ctx.doc);
+  assert.deepEqual(bodies(), [true, false], 'and comes back open');
+  const act = ctx.doc.querySelector('.ask-activity');
+  ctx.panel.destroy();
+  applyLevel('simple', ctx.doc);
+  assert.equal(act.querySelector('.ask-activity-head').tagName, 'BUTTON', 'destroy unbinds the mode listener: nothing repaints a dead panel');
 });
 
 test('ask-panel-render: markdown answers render once the real pins load; code highlighted', async () => {

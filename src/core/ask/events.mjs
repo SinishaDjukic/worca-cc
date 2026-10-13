@@ -235,8 +235,8 @@ export function scriptToolKey(name, input = {}) {
 }
 
 /**
- * What a script tool's RESULT adds to its thread row: `save script runTests → created`,
- * `test script runTests → blocking, exit 1`. Pure, tiny and enum-shaped on purpose — it is
+ * What a script tool's RESULT adds to its thread row: `save_script runTests → created`,
+ * `test_script runTests → blocking, exit 1`. Pure, tiny and enum-shaped on purpose — it is
  * merged into the persisted block.script, so nothing free-text (which would need redaction)
  * rides along. null = the row keeps its ordinary shape.
  */
